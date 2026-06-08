@@ -50,18 +50,18 @@
      :temp_c (parse-float-safe temp-c)
      :power_w (parse-float-safe power-w)}))
 
-(defn collect-nvidia-gpu-stats!
+(defn ^:async collect-nvidia-gpu-stats!
   [_runtime]
-  (-> (exec-file-async "nvidia-smi" nvidia-smi-query-args #js {:timeout 1200})
-      (.then (fn [result]
-               (->> (str/split-lines (or (aget result "stdout") ""))
-                    (map str/trim)
-                    (remove str/blank?)
-                    (mapv parse-nvidia-smi-line))))
-      (.catch (fn [_]
-                (js/Promise.resolve [])))))
+  (try
+    (let [result (await (exec-file-async "nvidia-smi" nvidia-smi-query-args #js {:timeout 1200}))]
+      (->> (str/split-lines (or (aget result "stdout") ""))
+           (map str/trim)
+           (remove str/blank?)
+           (mapv parse-nvidia-smi-line)))
+    (catch :default _
+      [])))
 
-(defn system-stats!
+(defn ^:async system-stats!
   [runtime active-runs-count]
   (let [cpu-count (max 1 (.availableParallelism os))
         load1 (or (aget (.loadavg os) 0) 0)
@@ -69,20 +69,19 @@
         free-mem (or (.freemem os) 0)
         used-mem (max 0 (- total-mem free-mem))
         cpu-percent (min 100 (* 100 (/ load1 cpu-count)))
-        mem-percent (min 100 (* 100 (- 1 (/ free-mem total-mem))))]
-    (-> (collect-nvidia-gpu-stats! runtime)
-        (.then (fn [gpu]
-                 {:timestamp (time/now-iso)
-                  :cpu_percent cpu-percent
-                  :memory_percent mem-percent
-                  :memory_used_bytes used-mem
-                  :memory_total_bytes total-mem
-                  :active_clients (count @ws-clients*)
-                  :active_runs (active-runs-count)
-                  :gpu gpu
-                  :network {:total_bytes_per_sec 0
-                            :rx_bytes_per_sec 0
-                            :tx_bytes_per_sec 0}})))))
+        mem-percent (min 100 (* 100 (- 1 (/ free-mem total-mem))))
+        gpu (await (collect-nvidia-gpu-stats! runtime))]
+    {:timestamp (time/now-iso)
+     :cpu_percent cpu-percent
+     :memory_percent mem-percent
+     :memory_used_bytes used-mem
+     :memory_total_bytes total-mem
+     :active_clients (count @ws-clients*)
+     :active_runs (active-runs-count)
+     :gpu gpu
+     :network {:total_bytes_per_sec 0
+               :rx_bytes_per_sec 0
+               :tx_bytes_per_sec 0}}))
 
 (defn broadcast-ws!
   [channel payload]
@@ -130,12 +129,12 @@
   (when-not @ws-stats-interval*
     (reset! ws-stats-interval*
             (js/setInterval
-             (fn []
+             (^:async fn []
                (when (seq @ws-clients*)
-                 (-> (system-stats! runtime active-runs-count)
-                     (.then (fn [stats]
-                              (broadcast-ws! "stats" stats)))
-                     (.catch (fn [_] nil)))))
+                 (try
+                   (let [stats (await (system-stats! runtime active-runs-count))]
+                     (broadcast-ws! "stats" stats))
+                   (catch :default _ nil))))
              5000))))
 
 (defn stop!
@@ -185,9 +184,10 @@
                                                           (swap! ws-clients* update client-id
                                                                  (fn [c] (when c (js/Object.assign #js {} c #js {:conversationId new-cid})))))))
                                                     (catch :default _ nil))))
-                              (-> (system-stats! runtime active-runs-count)
-                                  (.then (fn [stats]
-                                           (safe-ws-send! ws (ws-envelope "stats" stats))))
-                                  (.catch (fn [_] nil)))
+                              ((^:async fn []
+                                 (try
+                                   (let [stats (await (system-stats! runtime active-runs-count))]
+                                     (safe-ws-send! ws (ws-envelope "stats" stats)))
+                                   (catch :default _ nil))))
                               (doseq [msg (take-last 20 @lounge-messages*)]
                                 (safe-ws-send! ws (ws-envelope "lounge" msg)))))}))

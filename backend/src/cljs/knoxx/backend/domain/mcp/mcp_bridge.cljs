@@ -83,7 +83,7 @@
 (defn- create-http-client
   [config]
   (let [base-url (str/replace (or (:url config) "") #"/$" "")]
-    (fn [method params]
+    (^:async fn [method params]
       (let [id (swap! request-counter* inc)
             body (js/JSON.stringify
                   (clj->js {:jsonrpc "2.0"
@@ -95,48 +95,43 @@
                       (aset "Accept" "application/json, text/event-stream"))]
         (when (:shared-secret config)
           (aset headers "Authorization" (str "Bearer " (:shared-secret config))))
-        (-> (http/fetch-with-timeout
-             base-url
-             (clj->js {:method "POST"
-                       :headers (js/Object.entries headers)
-                       :body body})
-             30000)
-            (.then
-             (fn [response]
-               (if (not (.-ok response))
-                 (throw (js/Error.
-                         (str "MCP HTTP error: "
-                              (.-status response) " "
-                              (.-statusText response))))
-                 (-> (.text response)
-                     (.then (fn [text]
-                              (parse-sse-response text id))))))))))))
+        (let [response (await (http/fetch-with-timeout
+                               base-url
+                               (clj->js {:method "POST"
+                                         :headers (js/Object.entries headers)
+                                         :body body})
+                               30000))]
+          (if (not (.-ok response))
+            (throw (js/Error.
+                    (str "MCP HTTP error: "
+                         (.-status response) " "
+                         (.-statusText response))))
+            (let [text (await (.text response))]
+              (parse-sse-response text id))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Server connection
 ;; ---------------------------------------------------------------------------
 
-(defn- initialize-http-server!
+(defn- ^:async initialize-http-server!
   [server]
-  (let [client-fn (:client server)]
-    (-> (client-fn "initialize"
-                   (clj->js {:protocolVersion PROTOCOL-VERSION
-                             :capabilities {}
-                             :clientInfo {:name "knoxx" :version "1.0.0"}}))
-        (.then (fn [init-result]
-                 (js/console.log "[mcp-gateway]" (:id server) "initialized:"
-                                 (or (aget init-result "serverInfo" "name") "unknown"))
-                 (client-fn "tools/list" nil)))
-        (.then (fn [tools-result]
-                 (let [js-tools (or (aget tools-result "tools") #js [])
-                       tools (vec (for [i (range (.-length js-tools))]
-                                    (let [tool (aget js-tools i)]
-                                      {:name (or (aget tool "name") "")
-                                       :description (or (aget tool "description") "")
-                                       :input-schema (js->clj (or (aget tool "inputSchema") {}) :keywordize-keys true)})))]
-                   (swap! servers* assoc-in [(:id server) :tools] tools)
-                   (js/console.log "[mcp-gateway] Connected to" (:id server)
-                                   ", found" (count tools) "tools")))))))
+  (let [client-fn (:client server)
+        init-result (await (client-fn "initialize"
+                                      (clj->js {:protocolVersion PROTOCOL-VERSION
+                                                :capabilities {}
+                                                :clientInfo {:name "knoxx" :version "1.0.0"}})))]
+    (js/console.log "[mcp-gateway]" (:id server) "initialized:"
+                    (or (aget init-result "serverInfo" "name") "unknown"))
+    (let [tools-result (await (client-fn "tools/list" nil))
+          js-tools (or (aget tools-result "tools") #js [])
+          tools (vec (for [i (range (.-length js-tools))]
+                       (let [tool (aget js-tools i)]
+                         {:name (or (aget tool "name") "")
+                          :description (or (aget tool "description") "")
+                          :input-schema (js->clj (or (aget tool "inputSchema") {}) :keywordize-keys true)})))]
+      (swap! servers* assoc-in [(:id server) :tools] tools)
+      (js/console.log "[mcp-gateway] Connected to" (:id server)
+                      ", found" (count tools) "tools"))))
 
 (defn- connect-server!
   [id config]
@@ -165,21 +160,23 @@
   []
   (some? (seq @servers*)))
 
-(defn initialize!
+(defn ^:async initialize!
   "Initialize the MCP gateway with configured servers.
    Returns a Promise that resolves when all servers are connected."
   ([]
    (initialize! {}))
   ([config]
    (let [server-configs (or (:servers config) (get-mcp-servers-from-env))]
-     (-> (.all js/Promise
-               (into-array
-                (for [[id server-config] server-configs]
-                  (-> (js/Promise.resolve (connect-server! id server-config))
-                      (.catch (fn [err]
-                                (js/console.error "[mcp-gateway] Failed to connect to" id ":"
-                                                  (aget err "message"))))))))
-         (.then (fn [] @servers*))))))
+     (await (.all js/Promise
+                  (into-array
+                   (for [[id server-config] server-configs]
+                     ((^:async fn []
+                        (try
+                          (await (js/Promise.resolve (connect-server! id server-config)))
+                          (catch :default err
+                            (js/console.error "[mcp-gateway] Failed to connect to" id ":"
+                                              (aget err "message"))))))))))
+     @servers*)))
 
 (defn enabled?
   "Check if MCP is enabled and has connected servers."
@@ -232,7 +229,7 @@
       {:content (js/JSON.stringify result nil 2)
        :isError false})))
 
-(defn call-tool!
+(defn ^:async call-tool!
   "Call an MCP tool by its full ID (e.g. \"mcp.grep.searchGitHub\").
    Returns a Promise that resolves with {:content \"...\" :isError bool}."
   [tool-id args]
@@ -250,9 +247,9 @@
                       "with args:" (subs (js/JSON.stringify (clj->js (or args {}))) 0 200))
       (if (= (get-in server [:config :transport]) "http")
         (let [client-fn (:client server)]
-          (-> (client-fn "tools/call"
-                         (clj->js {:name tool-name :arguments (or args {})}))
-              (.then format-mcp-result)))
+          (format-mcp-result
+           (await (client-fn "tools/call"
+                             (clj->js {:name tool-name :arguments (or args {})})))))
         (throw (js/Error. (str "Transport not supported: "
                                (get-in server [:config :transport]))))))))
 
@@ -265,7 +262,7 @@
        (mapv (fn [tool]
                (let [tool-id (:id tool)
                      input-schema (or (:input-schema tool) {})
-                     execute-fn (fn [_tool-call-id tool-args a b c]
+                     execute-fn (^:async fn [_tool-call-id tool-args a b c]
                                   (let [on-update (or (when (fn? a) a)
                                                       (when (fn? b) b)
                                                       (when (fn? c) c))
@@ -273,15 +270,15 @@
                                     (when (fn? on-update)
                                       (on-update (clj->js {:content [{:type "text"
                                                                       :text (str "Calling MCP tool " tool-id "...")}]})))
-                                    (-> (call-tool! tool-id args)
-                                        (.then (fn [result]
-                                                 (clj->js {:content [{:type "text"
-                                                                      :text (or (:content result) "")}]})))
-                                        (.catch (fn [err]
-                                                  (clj->js {:content [{:type "text"
-                                                                       :text (str "MCP tool error: "
-                                                                                  (or (aget err "message")
-                                                                                      (str err)))}]}))))))]
+                                    (try
+                                      (let [result (await (call-tool! tool-id args))]
+                                        (clj->js {:content [{:type "text"
+                                                             :text (or (:content result) "")}]}))
+                                      (catch :default err
+                                        (clj->js {:content [{:type "text"
+                                                             :text (str "MCP tool error: "
+                                                                        (or (aget err "message")
+                                                                            (str err)))}]})))))]
                  {:name tool-id
                   :label (or (:name tool) tool-id)
                   :description (or (:description tool) "")

@@ -39,17 +39,17 @@
       (seq (str reasoning-content)) (assoc :reasoning-content reasoning-content)
       (some? body) (assoc :body body))))
 
-(defn chat-completion-with-fetch!
+(defn ^:async chat-completion-with-fetch!
   "POST a CLJS chat completion request map through fetch-json and return a CLJS
    response map. Accepts fetch-json as an argument so tests do not mutate global
    vars while async suites are running."
   [fetch-json config request]
-  (-> (fetch-json
-       (chat-completions-url config)
-       #js {:method "POST"
-            :headers (bearer-headers (:proxx-auth-token config))
-            :body (xjson/stringify request)})
-      (.then normalize-chat-completion-response)))
+  (normalize-chat-completion-response
+   (await (fetch-json
+           (chat-completions-url config)
+           #js {:method "POST"
+                :headers (bearer-headers (:proxx-auth-token config))
+                :body (xjson/stringify request)}))))
 
 (defn chat-completion!
   "POST a CLJS chat completion request map to Proxx and return a CLJS response

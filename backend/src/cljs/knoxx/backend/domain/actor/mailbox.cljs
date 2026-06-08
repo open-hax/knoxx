@@ -170,30 +170,30 @@
             [conversation-id*])
     (js/Promise.resolve nil)))
 
-(defn resolve-actor-session!
+(defn ^:async resolve-actor-session!
   [runtime actor-id]
   (if-let [actor-id* (nonblank actor-id)]
-    (-> (query! runtime
-                "SELECT * FROM actor_mailbox_routes
+    (let [result (await (query! runtime
+                                "SELECT * FROM actor_mailbox_routes
                  WHERE actor_id = $1
                    AND status = 'active'
                    AND (expires_at IS NULL OR expires_at > NOW())
                  ORDER BY last_seen_at DESC
                  LIMIT 1"
-                [actor-id*])
-        (.then (fn [result]
-                 (some-> (first (rows result)) row->route))))
-    (js/Promise.resolve nil)))
+                                [actor-id*]))]
+      (some-> (first (rows result)) row->route))
+    nil))
 
-(defn create-entry!
+(defn ^:async create-entry!
   [runtime raw-entry]
   (let [entry (mailbox-entry raw-entry)
         target (:mailbox/target entry)
         source (:mailbox/source entry)
         delivery (:mailbox/delivery entry)]
     (if-not (database-enabled? runtime)
-      (js/Promise.resolve (assoc entry :mailbox/durable? false))
-      (-> (query! runtime
+      (assoc entry :mailbox/durable? false)
+      (do
+        (await (query! runtime
                   "INSERT INTO actor_mailbox_entries
                    (id, kind, status,
                     source_actor_id, source_session_id, source_conversation_id, source_run_id, source_json,
@@ -227,9 +227,8 @@
                    (:mailbox/expires-at entry)
                    (json-param (:mailbox/content-ref entry))
                    (json-param (:mailbox/metadata entry))
-                   (:mailbox/preview entry)])
-          (.then (fn [_]
-                   (assoc entry :mailbox/durable? true)))))))
+                   (:mailbox/preview entry)]))
+        (assoc entry :mailbox/durable? true)))))
 
 (defn mark-delivery!
   [runtime mailbox-id status {:keys [content-ref error attempts next-at]}]
@@ -313,10 +312,10 @@
       fallback
       (min max-value (max 1 parsed)))))
 
-(defn list-entries!
+(defn ^:async list-entries!
   [runtime {:keys [status target-actor-id target-session-id source-actor-id source-run-id limit]}]
   (if-not (database-enabled? runtime)
-    (js/Promise.resolve {:entries [] :durable? false})
+    {:entries [] :durable? false}
     (let [{:keys [clauses params]}
           (reduce add-filter
                   {:clauses [] :params []}
@@ -329,35 +328,37 @@
           limit-idx (inc (count params))
           where-sql (if (seq clauses)
                       (str " WHERE " (str/join " AND " clauses))
-                      "")]
-      (-> (query! runtime
-                  (str "SELECT * FROM actor_mailbox_entries"
-                       where-sql
-                       " ORDER BY created_at DESC LIMIT $" limit-idx)
-                  (conj params limit*))
-          (.then (fn [result]
-                   {:entries (mapv row->entry (rows result))
-                    :durable? true}))))))
+                      "")
+          result (await (query! runtime
+                                (str "SELECT * FROM actor_mailbox_entries"
+                                     where-sql
+                                     " ORDER BY created_at DESC LIMIT $" limit-idx)
+                                (conj params limit*)))]
+      {:entries (mapv row->entry (rows result))
+       :durable? true})))
+
+(defn- ^:async acknowledge-entry-impl!
+  [runtime mailbox-id target-actor-id]
+  (if-let [mailbox-id* (nonblank mailbox-id)]
+    (if-not (database-enabled? runtime)
+      {:mailbox/id mailbox-id*
+       :mailbox/status "acknowledged"
+       :mailbox/durable? false}
+      (let [result (await (query! runtime
+                                  "UPDATE actor_mailbox_entries
+                    SET status = 'acknowledged', acknowledged_at = NOW(), updated_at = NOW()
+                    WHERE id = $1::uuid
+                      AND ($2::text IS NULL OR target_actor_id = $2)
+                    RETURNING *"
+                                  [mailbox-id* (nonblank target-actor-id)]))]
+        (some-> (first (rows result)) row->entry)))
+    (throw (js/Error. "mailbox id is required"))))
 
 (defn acknowledge-entry!
   ([runtime mailbox-id]
    (acknowledge-entry! runtime mailbox-id nil))
   ([runtime mailbox-id target-actor-id]
-   (if-let [mailbox-id* (nonblank mailbox-id)]
-     (if-not (database-enabled? runtime)
-       (js/Promise.resolve {:mailbox/id mailbox-id*
-                            :mailbox/status "acknowledged"
-                            :mailbox/durable? false})
-       (-> (query! runtime
-                   "UPDATE actor_mailbox_entries
-                    SET status = 'acknowledged', acknowledged_at = NOW(), updated_at = NOW()
-                    WHERE id = $1::uuid
-                      AND ($2::text IS NULL OR target_actor_id = $2)
-                    RETURNING *"
-                   [mailbox-id* (nonblank target-actor-id)])
-           (.then (fn [result]
-                    (some-> (first (rows result)) row->entry)))))
-     (js/Promise.reject (js/Error. "mailbox id is required")))))
+   (acknowledge-entry-impl! runtime mailbox-id target-actor-id)))
 
 (defn retry-request-event
   [entry]
@@ -373,16 +374,16 @@
              :metadata (:mailbox/metadata entry)
              :preview (:mailbox/preview entry)}})
 
-(defn retry-eligible!
+(defn ^:async retry-eligible!
   [runtime {:keys [mailbox-id statuses max-attempts limit delay-seconds]}]
   (if-not (database-enabled? runtime)
-    (js/Promise.resolve {:entries [] :durable? false})
+    {:entries [] :durable? false}
     (let [statuses* (or (seq statuses) ["pending" "failed"])
           max-attempts* (positive-int max-attempts 5 100)
           limit* (positive-int limit 25 200)
           delay-seconds* (let [parsed (js/parseInt (str (or delay-seconds 0)) 10)]
-                           (if (js/isNaN parsed) 0 (max 0 parsed)))]
-      (-> (query! runtime
+                           (if (js/isNaN parsed) 0 (max 0 parsed)))
+          result (await (query! runtime
                   "WITH candidates AS (
                      SELECT id
                      FROM actor_mailbox_entries
@@ -404,7 +405,6 @@
                    FROM candidates
                    WHERE m.id = candidates.id
                    RETURNING m.*"
-                  [statuses* max-attempts* limit* delay-seconds* (nonblank mailbox-id)])
-          (.then (fn [result]
-                   {:entries (mapv row->entry (rows result))
-                    :durable? true}))))))
+                  [statuses* max-attempts* limit* delay-seconds* (nonblank mailbox-id)]))]
+      {:entries (mapv row->entry (rows result))
+       :durable? true})))

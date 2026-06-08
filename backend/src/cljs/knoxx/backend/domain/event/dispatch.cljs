@@ -128,13 +128,14 @@
                _ (js/console.log "[event-dispatch] matching triggers:" (count matching-triggers) "for event" (pr-str (:event/type event')))
                results (await (js/Promise.all
                                (clj->js
-                                 (mapv (fn [trigger]
-                                         (-> (action-registry/run-action!
-                                              (actor-context config trigger event')
-                                              (action-registry/action-map trigger))
-                                             (.catch (fn [err]
-                                                       (js/console.error "[event-dispatch] action failed for trigger" (:trigger/id trigger) ":" (.-message err))
-                                                       (throw err)))))
+                                 (mapv (^:async fn [trigger]
+                                         (try
+                                           (await (action-registry/run-action!
+                                                   (actor-context config trigger event')
+                                                   (action-registry/action-map trigger)))
+                                           (catch :default err
+                                             (js/console.error "[event-dispatch] action failed for trigger" (:trigger/id trigger) ":" (.-message err))
+                                             (throw err))))
                                        matching-triggers))))]
            {:matchedTriggers (mapv :trigger/id matching-triggers)
             :event event'

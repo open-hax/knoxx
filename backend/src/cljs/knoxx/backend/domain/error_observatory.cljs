@@ -97,9 +97,12 @@
    Use this when a callback is intentionally fire-and-forget."
   [boundary context promise]
   (when (promise-like? promise)
-    (.catch promise (fn [err]
-                      (log-error! boundary context err)
-                      nil)))
+    ((^:async fn []
+       (try
+         (await promise)
+         (catch :default err
+           (log-error! boundary context err)
+           nil)))))
   promise)
 
 (defn call-observed!

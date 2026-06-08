@@ -125,16 +125,15 @@
       (= "event" target-type)
       (merge {:event-target target-id}))))
 
-(defn- resolve-session-conversation!
+(defn- ^:async resolve-session-conversation!
   [target]
   (let [session-id (:session-id target)
         conversation-id (:conversation-id target)]
     (if (or conversation-id (str/blank? (str session-id)))
-      (js/Promise.resolve target)
-      (-> (session-store/get-session session-id)
-          (.then (fn [session]
-                   (assoc target :conversation-id (or (:conversation_id session)
-                                                      (:conversation-id session)))))))))
+      target
+      (let [session (await (session-store/get-session session-id))]
+        (assoc target :conversation-id (or (:conversation_id session)
+                                           (:conversation-id session)))))))
 
 (defn- delivery-mode
   [mode]
@@ -191,20 +190,19 @@
                     :run_id run-id
                     :metadata metadata}))))
 
-(defn- resolve-actor-route!
+(defn- ^:async resolve-actor-route!
   [runtime target]
   (if (and (:actor-id target)
            (str/blank? (str (:conversation-id target)))
            (str/blank? (str (:session-id target))))
-    (-> (actor-mailbox/resolve-actor-session! runtime (:actor-id target))
-        (.then (fn [route]
-                 (if route
-                   (merge target {:conversation-id (:conversation-id route)
-                                  :session-id (:session-id route)
-                                  :run-id (or (:run-id target) (:run-id route))
-                                  :resolved-actor-route route})
-                   target))))
-    (js/Promise.resolve target)))
+    (let [route (await (actor-mailbox/resolve-actor-session! runtime (:actor-id target)))]
+      (if route
+        (merge target {:conversation-id (:conversation-id route)
+                       :session-id (:session-id route)
+                       :run-id (or (:run-id target) (:run-id route))
+                       :resolved-actor-route route})
+        target))
+    target))
 
 (defn- mailbox-delivery-mode
   [mode]
@@ -238,14 +236,34 @@
     (= "event" mode) (assoc :event-id (actor-mailbox/mailbox-event-id mailbox-id))
     (map? result) (assoc :result result)))
 
-(defn- mark-failed-and-rethrow!
+(defn- ^:async mark-failed-and-rethrow!
   [runtime mailbox-id err]
-  (-> (actor-mailbox/mark-failed! runtime mailbox-id err)
-      (.catch (fn [_] nil))
-      (.then (fn [_]
-               (throw err)))))
+  (try
+    (await (actor-mailbox/mark-failed! runtime mailbox-id err))
+    (catch :default _ nil))
+  (throw err))
 
-(defn actors-send-message-execute
+(defn- ^:async deliver-actor-message!
+  [runtime config mode content metadata resolved-target entry]
+  (let [mailbox-id (mailbox-id entry)
+        metadata* (assoc metadata :mailboxId mailbox-id)]
+    (try
+      (let [result (await (if (= "event" mode)
+                            (send-event! config resolved-target content metadata* mailbox-id)
+                            (send-control! config resolved-target mode content metadata*)))
+            result* (js->clj result :keywordize-keys true)]
+        (try
+          (await (actor-mailbox/mark-delivered!
+                  runtime mailbox-id
+                  (delivery-content-ref mode result* mailbox-id)))
+          (catch :default _ nil))
+        {:entry entry
+         :target resolved-target
+         :result result*})
+      (catch :default err
+        (await (mark-failed-and-rethrow! runtime mailbox-id err))))))
+
+(defn ^:async actors-send-message-execute
   [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         content (or (aget params "content") "")
@@ -256,40 +274,20 @@
     (when (str/blank? (str content))
       (throw (js/Error. "content is required")))
     (maybe-tool-update! on-update (str "Sending actor message via " mode "…"))
-    (-> (resolve-session-conversation! target)
-        (.then (fn [session-target]
-                 (resolve-actor-route! runtime session-target)))
-        (.then (fn [resolved-target]
-                 (-> (create-mailbox-entry! runtime resolved-target mode content metadata)
-                     (.then (fn [entry]
-                              (let [mailbox-id (mailbox-id entry)
-                                    metadata* (assoc metadata :mailboxId mailbox-id)]
-                                (-> (if (= "event" mode)
-                                      (send-event! config resolved-target content metadata* mailbox-id)
-                                      (send-control! config resolved-target mode content metadata*))
-                                    (.then (fn [result]
-                                             (let [result* (js->clj result :keywordize-keys true)]
-                                               (-> (actor-mailbox/mark-delivered!
-                                                    runtime mailbox-id
-                                                    (delivery-content-ref mode result* mailbox-id))
-                                                   (.catch (fn [_] nil))
-                                                   (.then (fn [_]
-                                                            {:entry entry
-                                                             :target resolved-target
-                                                             :result result*}))))))
-                                    (.catch (fn [err]
-                                              (mark-failed-and-rethrow! runtime mailbox-id err))))))))))
-        (.then (fn [{:keys [entry target result]}]
-                 (let [summary (str "Sent actor message to " (:target target)
-                                    " via " (if (= "message" mode) "follow-up" mode))]
-                   (tool-text-result summary
-                                     {:ok true
-                                      :tool "actors.send-message"
-                                      :mode mode
-                                      :mailbox_id (mailbox-id entry)
-                                      :mailbox_durable (boolean (:mailbox/durable? entry))
-                                      :target target
-                                      :result result})))))))
+    (let [session-target (await (resolve-session-conversation! target))
+          resolved-target (await (resolve-actor-route! runtime session-target))
+          entry (await (create-mailbox-entry! runtime resolved-target mode content metadata))
+          {:keys [entry target result]} (await (deliver-actor-message! runtime config mode content metadata resolved-target entry))
+          summary (str "Sent actor message to " (:target target)
+                       " via " (if (= "message" mode) "follow-up" mode))]
+      (tool-text-result summary
+                        {:ok true
+                         :tool "actors.send-message"
+                         :mode mode
+                         :mailbox_id (mailbox-id entry)
+                         :mailbox_durable (boolean (:mailbox/durable? entry))
+                         :target target
+                         :result result}))))
 
 (def actors-send-message-tool
   (partial create-tool-obj
