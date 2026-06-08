@@ -29,8 +29,9 @@
   [event k]
   (let [payload (:event/payload event)]
     (or (get payload k)
-        (get payload (keyword (name k)))
-        (get payload (name k)))))
+        (when-not (namespace k)
+          (or (get payload (keyword (name k)))
+              (get payload (name k)))))))
 
 (defn- qualified-name
   [value]
