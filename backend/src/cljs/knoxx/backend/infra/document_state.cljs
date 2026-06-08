@@ -162,24 +162,22 @@
         prefix (if (str/blank? base) "db" base)]
     (str prefix "-" (.slice (.randomUUID crypto) 0 8))))
 
-(defn list-files-recursive!
+(defn- ^:async list-files-recursive!
   [runtime dir-path]
-  (let [read-promise (.readdir fs dir-path #js {:withFileTypes true})]
-    (-> read-promise
-        (.then (fn [entries]
-                 (.then (js/Promise.all
+  (try
+    (let [entries (await (.readdir fs dir-path #js {:withFileTypes true}))
+          nested (await (js/Promise.all
                          (clj->js
                           (for [entry (js-array-seq entries)]
                             (let [full-path (.join path dir-path (.-name entry))]
                               (if (.isDirectory entry)
                                 (list-files-recursive! runtime full-path)
-                                (js/Promise.resolve #js [full-path]))))))
-                        (fn [nested]
-                          (into [] (mapcat js-array-seq) (js-array-seq nested))))))
-        (.catch (fn [err]
-                  (if (= (aget err "code") "ENOENT")
-                    (js/Promise.resolve [])
-                    (js/Promise.reject err)))))))
+                                (js/Promise.resolve #js [full-path])))))))]
+      (into [] (mapcat js-array-seq) (js-array-seq nested)))
+    (catch :default err
+      (if (= (aget err "code") "ENOENT")
+        []
+        (throw err)))))
 
 (defn file-chunk-count
   [text]
@@ -189,34 +187,31 @@
   [runtime config db-id rel-path]
   (get-in (ensure-database-state! runtime config) [:records db-id :indexed rel-path]))
 
-(defn document-entry!
+(defn- ^:async document-entry!
   [runtime config profile db-id abs-path]
-  (let [docs-path (:docsPath profile)]
-    (-> (.stat fs abs-path)
-        (.then (fn [stats]
-                 (let [rel-path (normalize-relative-path (.relative path docs-path abs-path))
-                       meta (indexed-meta runtime config db-id rel-path)]
-                   {:name (.basename path abs-path)
-                    :relativePath rel-path
-                    :size (or (aget stats "size") 0)
-                    :indexed (boolean meta)
-                    :chunkCount (or (:chunkCount meta) 0)
-                    :indexedAt (:indexedAt meta)}))))))
+  (let [docs-path (:docsPath profile)
+        stats (await (.stat fs abs-path))
+        rel-path (normalize-relative-path (.relative path docs-path abs-path))
+        meta (indexed-meta runtime config db-id rel-path)]
+    {:name (.basename path abs-path)
+     :relativePath rel-path
+     :size (or (aget stats "size") 0)
+     :indexed (boolean meta)
+     :chunkCount (or (:chunkCount meta) 0)
+     :indexedAt (:indexedAt meta)}))
 
-(defn list-documents!
+(defn ^:async list-documents!
   ([runtime config request] (list-documents! runtime config request nil))
   ([runtime config request auth-context]
    (let [profile (active-database-profile runtime config request auth-context)
          db-id (:id profile)]
-     (-> (ensure-dir! runtime (:docsPath profile))
-         (.then (fn [] (list-files-recursive! runtime (:docsPath profile))))
-         (.then (fn [paths]
-                  (-> (js/Promise.all
-                       (clj->js (map #(document-entry! runtime config profile db-id %) paths)))
-                      (.then (fn [items]
-                               {:documents (->> (js-array-seq items)
-                                                (sort-by :relativePath)
-                                                vec)})))))))))
+     (await (ensure-dir! runtime (:docsPath profile)))
+     (let [paths (await (list-files-recursive! runtime (:docsPath profile)))
+           items (await (js/Promise.all
+                         (clj->js (map #(document-entry! runtime config profile db-id %) paths))))]
+       {:documents (->> (js-array-seq items)
+                        (sort-by :relativePath)
+                        vec)}))))
 
 (defn active-record
   ([runtime config request] (active-record runtime config request nil))
@@ -309,11 +304,12 @@
   (.all js/Promise
         (clj->js
          (map (fn [{:keys [abs rel]}]
-                (-> (.readFile fs abs "utf8")
-                    (.then (fn [content]
-                             {:rel rel :content content :error false}))
-                    (.catch (fn [err]
-                              {:rel rel :content nil :error true :detail (str err)}))))
+                ((^:async fn []
+                  (try
+                    (let [content (await (.readFile fs abs "utf8"))]
+                      {:rel rel :content content :error false})
+                    (catch :default err
+                      {:rel rel :content nil :error true :detail (str err)})))))
               queue))))
 
 (defn- openplanner-documents
@@ -381,40 +377,37 @@
      :failedCount failed-count
      :openplanner true}))
 
-(defn- index-document-queue!
+(defn- ^:async index-document-queue!
   [config profile db-id project queue started-at mode]
-  (-> (read-ingestion-queue! queue)
-      (.then (fn [read-results]
-               (let [items (vec (js-array-seq read-results))
-                     read-failed (vec (filter :error items))
-                     valid-items (vec (remove :error items))]
-                 (-> (op-memory/batch-upsert-openplanner-documents!
-                      config
-                      (openplanner-documents db-id project profile valid-items)
-                      {:concurrency 3
-                       :project project
-                       :visibility "internal"
-                       :extra {:database-id db-id
-                               :org-id (:orgId profile)}})
-                     (.then (fn [index-result]
-                              (finish-document-ingestion! db-id queue started-at mode read-failed valid-items index-result)))))))))
+  (let [read-results (await (read-ingestion-queue! queue))
+        items (vec (js-array-seq read-results))
+        read-failed (vec (filter :error items))
+        valid-items (vec (remove :error items))
+        index-result (await (op-memory/batch-upsert-openplanner-documents!
+                             config
+                             (openplanner-documents db-id project profile valid-items)
+                             {:concurrency 3
+                              :project project
+                              :visibility "internal"
+                              :extra {:database-id db-id
+                                      :org-id (:orgId profile)}}))]
+    (finish-document-ingestion! db-id queue started-at mode read-failed valid-items index-result)))
 
-(defn start-document-ingestion!
+(defn ^:async start-document-ingestion!
   "Ingest documents into OpenPlanner for embedding and vector storage.
    Replaces previous metadata-only tracking with OpenPlanner /v1/documents indexing."
   [runtime config profile {:keys [full selected-files]}]
   (let [db-id (:id profile)
         docs-path (:docsPath profile)
-        project (or (:project-name config) "workspace")]
-    (-> (list-files-recursive! runtime docs-path)
-        (.then (fn [all-abs]
-                 (let [queue (ingestion-queue docs-path full selected-files all-abs)
-                       started-at (time/now-iso)
-                       mode (if full "full" "selected")]
-                   (mark-ingestion-started! db-id queue started-at mode full)
-                   (if (zero? (count queue))
-                     (complete-empty-ingestion! db-id started-at mode)
-                     (index-document-queue! config profile db-id project queue started-at mode))))))))
+        project (or (:project-name config) "workspace")
+        all-abs (await (list-files-recursive! runtime docs-path))
+        queue (ingestion-queue docs-path full selected-files all-abs)
+        started-at (time/now-iso)
+        mode (if full "full" "selected")]
+    (mark-ingestion-started! db-id queue started-at mode full)
+    (if (zero? (count queue))
+      (complete-empty-ingestion! db-id started-at mode)
+      (index-document-queue! config profile db-id project queue started-at mode))))
 
 
 (defn text-like-path?
@@ -431,25 +424,25 @@
                     ".css" ".scss" ".less" ".graphql" ".gql" ".proto" ".tf" ".hcl"}
                   (.slice lower idx)))))
 
-(defn- read-workspace-file!
+(defn- ^:async read-workspace-file!
   "Read a single workspace file and return a result map."
   [workspace-root rel-path]
   (let [abs-path (.resolve path workspace-root rel-path)]
-    (-> (.stat fs abs-path)
-        (.then (fn [stat]
-                 (if (and (.isFile stat) (text-like-path? abs-path))
-                   (-> (.readFile fs abs-path "utf8")
-                       (.then (fn [content]
-                                {:rel rel-path :abs abs-path :content content
-                                 :size (or (.-size stat) 0) :error false}))
-                       (.catch (fn [err]
-                                 {:rel rel-path :abs abs-path :content nil
-                                  :size 0 :error true :detail (str err)})))
-                   {:rel rel-path :abs abs-path :content nil
-                    :size (or (.-size stat) 0) :error true :detail "binary or unsupported file type"})))
-        (.catch (fn [err]
-                  {:rel rel-path :abs abs-path :content nil
-                   :size 0 :error true :detail (str err)})))))
+    (try
+      (let [stat (await (.stat fs abs-path))]
+        (if (and (.isFile stat) (text-like-path? abs-path))
+          (try
+            (let [content (await (.readFile fs abs-path "utf8"))]
+              {:rel rel-path :abs abs-path :content content
+               :size (or (.-size stat) 0) :error false})
+            (catch :default err
+              {:rel rel-path :abs abs-path :content nil
+               :size 0 :error true :detail (str err)}))
+          {:rel rel-path :abs abs-path :content nil
+           :size (or (.-size stat) 0) :error true :detail "binary or unsupported file type"}))
+      (catch :default err
+        {:rel rel-path :abs abs-path :content nil
+         :size 0 :error true :detail (str err)}))))
 
 (defn- classify-document-kind
   "Classify a file extension into a document kind."
@@ -488,29 +481,26 @@
                   (map (fn [f] (str (:rel-path f) " (index error)")) (when (pos? failed-index-count) [])))
    :source source})
 
-(defn priority-ingest-workspace-files!
+(defn ^:async priority-ingest-workspace-files!
   "Immediately ingest specific workspace files into OpenPlanner, bypassing queues.
    Takes workspace-relative paths, reads them from disk, and sends to /v1/documents.
   Returns {:ok true, :indexed N, :failed M, :files [...]} summary."
   [_runtime config {:keys [paths project source]}]
   (let [workspace-root (:workspace-root config)
         project (or project (:project-name config) "workspace")
-        source (or source "knoxx-priority-ingest")]
-    (-> (js/Promise.all
-         (clj->js
-          (map (fn [rel-path] (read-workspace-file! workspace-root rel-path))
-               paths)))
-        (.then (fn [read-results]
-                 (let [items (vec (js-array-seq read-results))
-                       valid (vec (remove :error items))
-                       failed-reads (vec (filter :error items))
-                       docs (build-priority-documents valid project source)]
-                   (if (seq docs)
-                     (-> (op-memory/batch-upsert-openplanner-documents!
-                          config docs {:concurrency 5 :project project :visibility "internal" :extra {:source source}})
-                         (.then (fn [index-result]
-                                  (priority-ingest-summary (count (:indexed index-result)) failed-reads (:failed-count index-result 0) (count paths) (map :rel (:indexed index-result)) source))))
-                     (js/Promise.resolve
-                      (priority-ingest-summary 0 failed-reads 0 (count paths) [] source)))))))))
+        source (or source "knoxx-priority-ingest")
+        read-results (await (js/Promise.all
+                             (clj->js
+                              (map (fn [rel-path] (read-workspace-file! workspace-root rel-path))
+                                   paths))))
+        items (vec (js-array-seq read-results))
+        valid (vec (remove :error items))
+        failed-reads (vec (filter :error items))
+        docs (build-priority-documents valid project source)]
+    (if (seq docs)
+      (let [index-result (await (op-memory/batch-upsert-openplanner-documents!
+                                config docs {:concurrency 5 :project project :visibility "internal" :extra {:source source}}))]
+        (priority-ingest-summary (count (:indexed index-result)) failed-reads (:failed-count index-result 0) (count paths) (map :rel (:indexed index-result)) source))
+      (priority-ingest-summary 0 failed-reads 0 (count paths) [] source))))
 
 ;; Route registration
