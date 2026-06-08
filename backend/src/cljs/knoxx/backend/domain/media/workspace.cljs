@@ -11,7 +11,7 @@
    [:path {:description "Workspace-relative path to the image, audio file, video, or document to attach."} :string]
    [:title {:optional true :description "Optional human-readable label for the attachment."} :string]])
 
-(defn attach-execute [runtime config _tool-call-id params a b c]
+(defn ^:async attach-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         raw-path (or (aget params "path") "")
         title (media/normalize-tool-path-arg (aget params "title"))
@@ -21,32 +21,30 @@
     (when-not mime-type
       (throw (js/Error. (str "Unsupported workspace media type for " relative ". Supported formats: images, audio, video, pdf, txt, md, csv, json."))))
     (maybe-tool-update! on-update (str "Attaching workspace file " relative "…"))
-    (-> (media/fs-stat! fs absolute)
-        (.then (fn [stat]
-                 (when-not (.isFile stat)
-                   (throw (js/Error. (str relative " is not a file"))))
-                 (when (> (.-size stat) media/workspace-media-max-bytes)
-                   (throw (js/Error. (str "File exceeds " media/workspace-media-max-bytes " bytes. Choose a smaller file or summarize it instead."))))
-                 (media/fs-read-file! fs absolute)))
-        (.then (fn [buffer]
-                 (let [size (.-length buffer)
-                       data-url (str "data:" mime-type ";base64," (.toString buffer "base64"))
-                       part {:type (media/workspace-media-type mime-type)
-                             :data data-url
-                             :mimeType mime-type
-                             :filename (or title filename)
-                             :size size}
-                       label (case (:type part)
-                               "image" "image"
-                               "audio" "audio file"
-                               "video" "video"
-                               "document" "document"
-                               "file")]
-                   #js {:content #js [#js {:type "text"
-                                           :text (str "Attached workspace " label " " relative " for the final reply.")}]
-                        :details #js {:path relative
-                                      :title (or title filename)
-                                      :content_parts (clj->js [part])}}))))))
+    (let [stat (await (media/fs-stat! fs absolute))
+          _ (when-not (.isFile stat)
+              (throw (js/Error. (str relative " is not a file"))))
+          _ (when (> (.-size stat) media/workspace-media-max-bytes)
+              (throw (js/Error. (str "File exceeds " media/workspace-media-max-bytes " bytes. Choose a smaller file or summarize it instead."))))
+          buffer (await (media/fs-read-file! fs absolute))
+          size (.-length buffer)
+          data-url (str "data:" mime-type ";base64," (.toString buffer "base64"))
+          part {:type (media/workspace-media-type mime-type)
+                :data data-url
+                :mimeType mime-type
+                :filename (or title filename)
+                :size size}
+          label (case (:type part)
+                  "image" "image"
+                  "audio" "audio file"
+                  "video" "video"
+                  "document" "document"
+                  "file")]
+      #js {:content #js [#js {:type "text"
+                              :text (str "Attached workspace " label " " relative " for the final reply.")}]
+           :details #js {:path relative
+                         :title (or title filename)
+                         :content_parts (clj->js [part])}})))
 
 (def attach-tool
   (partial create-tool-obj

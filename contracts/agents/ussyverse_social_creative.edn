@@ -26,7 +26,7 @@
      :role/fork-tales-composer
      ],
   :model "gemma4:31b",
-  :thinking :xhigh},
+  :thinking :high},
  :prompts
  {:system
   "
@@ -74,8 +74,8 @@ File organization discipline:
                      ;; "1494137016303095828"
                      "1444189585373663417"]}
   :source
-  {:max-messages 8
+  {:max-messages 80
    :max-total-messages 40
    :max-message-chars 1200
-   ;; :stickySession true
+   :stickySession true
    :sessionMaxMessages 240}}}

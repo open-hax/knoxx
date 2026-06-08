@@ -1,12 +1,12 @@
 ---
 uuid: "knoxx-knowledge-lake-self-hosted-provider-implementations"
 title: "knowledge-lake: Self-hosted provider implementations"
-status: incoming
-priority: P2
+status: "incoming"
+priority: "P2"
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 5
-category: tasks
+category: "tasks"
 ---
 
 # knowledge-lake: Self-hosted provider implementations
@@ -42,3 +42,7 @@ Each file must implement the interface from `src/core/interfaces.ts` and include
 ## Notes
 
 Split from parent epic `knoxx-knowledge-ops-provider-abstraction` on 2026-05-30.
+
+---
+I don't remember what this was for
+---

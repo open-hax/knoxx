@@ -7,8 +7,6 @@
             [knoxx.backend.infra.http :refer [json-response! require-openai-key! openai-auth-error send-fetch-response! error-response! http-error request-body request-query-string]]
             [knoxx.backend.domain.action.run-state :as run-state :refer [runs* run-order* summarize-run]]
             [knoxx.backend.domain.models :refer [allowlisted-model-id?]]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.domain.time :refer [now-iso]]))
 
 (defn- proxx-configured?
@@ -155,7 +153,7 @@
   (json-response! reply 502 {:error (str err)})
   reply)
 
-(defn- ^:async send-proxx-models!
+(defn ^:async send-proxx-models!
   [ctx]
   (try
     (let [resp (await (fetch-proxx-models ctx))]
@@ -331,18 +329,9 @@
                  (:agent_spec session) (assoc :agentSpec (:agent_spec session)))
      :resources {}}))
 
-(defn- ^:async redis-run-fallback
-  [run-id]
-  (when-let [redis-client (redis/get-client)]
-    (let [events (vec (or (await (redis/lrange-json redis-client (run-state/run-events-key run-id) 0 -1)) []))
-          session-id (event-session-id events)]
-      (when-let [session (and session-id (await (session-store/get-session redis-client session-id)))]
-        (run-from-session-and-events run-id session events)))))
-
 (defn- ^:async respond-run-detail!
   [reply ctx run-id]
-  (if-let [run (or (get @runs* run-id)
-                  (await (redis-run-fallback run-id)))]
+  (if-let [run (get @runs* run-id)]
     (if (run-visible? ctx run)
       (json-response! reply 200 run)
       (error-response! reply (http-error 403 "run_scope_denied" "Run is outside the current Knoxx scope")))

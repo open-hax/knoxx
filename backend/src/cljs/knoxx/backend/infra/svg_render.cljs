@@ -5,7 +5,6 @@
    cold-start cost. Uses puppeteer-core so deployments can provide Chromium via
    PUPPETEER_EXECUTABLE_PATH/KNOXX_CHROMIUM_PATH or a common system path."
   (:require [clojure.string :as str]
-            [shadow.cljs.modern :refer [js-await]]
             ["node:fs" :as fs]
             ["puppeteer-core" :as puppeteer-core]))
 
@@ -90,27 +89,30 @@
        svg-string
        "</body></html>"))
 
+(defn- ^:async render-svg!
+  [page svg-string width height]
+  (let [_ (await (.setViewport page #js {:width width :height height}))
+        _ (await (.setJavaScriptEnabled page false))
+        _ (await (.setContent page (svg-document svg-string) #js {:waitUntil "networkidle0"}))
+        element (await (.$ page "svg"))]
+    (when-not element
+      (throw (js/Error. "Cannot render SVG: no <svg> element found.")))
+    (let [png (await (.screenshot element #js {:type "png"
+                                               :omitBackground true}))]
+      (.from js/Buffer png))))
+
 (defn- render-page!
   [page svg-string width height]
-  (let [render-promise
-        (js-await [_ (.setViewport page #js {:width width :height height})]
-          (js-await [_ (.setJavaScriptEnabled page false)]
-            (js-await [_ (.setContent page (svg-document svg-string) #js {:waitUntil "networkidle0"})]
-              (js-await [element (.$ page "svg")]
-                (when-not element
-                  (throw (js/Error. "Cannot render SVG: no <svg> element found.")))
-                (js-await [png (.screenshot element #js {:type "png"
-                                                         :omitBackground true})]
-                  (.from js/Buffer png))))))]
+  (let [render-promise (render-svg! page svg-string width height)]
     (.finally render-promise (fn [] (.close page)))))
 
-(defn svg->png
+(defn ^:async svg->png
   "Renders an SVG string to a PNG Node Buffer via headless Chromium.
    Returns a js/Promise<Buffer>."
   [svg-string {:keys [width height] :or {width 600 height 300}}]
-  (js-await [browser (get-browser)]
-    (js-await [page (.newPage browser)]
-      (render-page! page svg-string width height))))
+  (let [browser (await (get-browser))
+        page (await (.newPage browser))]
+    (render-page! page svg-string width height)))
 
 (defn ^:async shutdown!
   "Closes the warm Chromium browser, if present. Returns a js/Promise."

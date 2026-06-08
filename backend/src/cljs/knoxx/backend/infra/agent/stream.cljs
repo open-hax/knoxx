@@ -11,6 +11,7 @@
             [knoxx.backend.domain.action.run-state :refer [append-limited tool-event-payload]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
+            [knoxx.backend.shape.agent :as agent-shape]
             [knoxx.backend.domain.time :refer [now-iso]]))
 
 (defn make-stream-state
@@ -31,8 +32,27 @@
    :aborting? (atom false)
    :abort-reason* (atom nil)
    :tool-loop* (atom {:last nil :streak 0 :counts {}})
+   :tool-call-ids* (atom tool-lifecycle/empty-tool-call-id-state)
    :seen-tool-lifecycle-events* (atom #{})
    :run-event-sink (sinks/live-run-event-sink)})
+
+(defn- register-tool-call-start!
+  "Reserve a per-occurrence unique id for a starting tool call so reused
+   provider ids (call_0 every round) stop collapsing receipts and events."
+  [state tool-name raw-tool-call-id]
+  (let [resolved (tool-lifecycle/resolve-tool-call-start-id
+                  @(:tool-call-ids* state)
+                  {:tool-name tool-name :tool-call-id raw-tool-call-id})]
+    (reset! (:tool-call-ids* state) (:state resolved))
+    (:tool-call-id resolved)))
+
+(defn- active-tool-call-id
+  "Resolve a raw provider tool-call id to the unique id of its latest start,
+   falling back to the trimmed raw id when no start was observed."
+  [state tool-name raw-tool-call-id]
+  (or (tool-lifecycle/active-tool-call-id @(:tool-call-ids* state)
+                                          {:tool-name tool-name :tool-call-id raw-tool-call-id})
+      (some-> raw-tool-call-id str str/trim not-empty)))
 
 (declare emit-streaming-delta!)
 
@@ -131,7 +151,9 @@
           full-reasoning (assistant-message-reasoning-text assistant-message)
           tool-previews (assistant-tool-call-previews assistant-message)]
       (doseq [{:keys [tool_call_id tool_name input_preview]} tool-previews]
-        (sinks/backfill-tool-input-preview! (sinks/sink-or-default state) (:run-id state) tool_call_id tool_name input_preview))
+        (sinks/backfill-tool-input-preview! (sinks/sink-or-default state) (:run-id state)
+                                            (active-tool-call-id state tool_name tool_call_id)
+                                            tool_name input_preview))
       ;; Treat message sync as a cumulative "authoritative" snapshot: diff and reset.
       ;; This avoids duplicating the appended delta into :last-*-text* when the
       ;; terminal message arrives immediately after streaming deltas.
@@ -152,7 +174,12 @@
                                                 {:status "aborting"
                                                  :reason reason})]
             (sinks/emit-run-event! sink abort-event)))
-        (.abort session)))))
+        ;; Abort at the provider via the IAgentSession protocol. The previous
+        ;; (.abort session) called a method that does not exist on the session
+        ;; wrapper record, so it threw inside the provider event handler and was
+        ;; silently swallowed — the death-spiral guard never actually stopped a
+        ;; runaway turn. Routing through abort! reaches the raw provider session.
+        (agent-shape/abort! session)))))
 
 (defn register-active-turn!
   ([state abort!] (register-active-turn! state abort! nil))
@@ -199,7 +226,7 @@
         (when-let [preview (tool-call-preview-from-part (:tool-call event))]
           (sinks/backfill-tool-input-preview! (sinks/sink-or-default state)
                                               (:run-id state)
-                                              (:tool_call_id preview)
+                                              (active-tool-call-id state (:tool_name preview) (:tool_call_id preview))
                                               (:tool_name preview)
                                               (:input_preview preview)))
         (sync-assistant-message! state (or (:partial-message event)
@@ -214,7 +241,7 @@
 (defn- handle-tool-execution-start!
   [state _session event]
   (let [tool-name (:tool-name event)
-        tool-call-id (or (:tool-call-id event) ((:random-uuid! state)))
+        tool-call-id (register-tool-call-start! state tool-name (:tool-call-id event))
         event (assoc event :tool-call-id tool-call-id)
         guard (turn-guards/observe-tool-call @(:tool-loop* state)
                                              {:tool-name tool-name
@@ -244,7 +271,8 @@
 (defn- handle-tool-execution-update!
   [state event]
   (let [tool-name (:tool-name event)
-        tool-call-id (or (:tool-call-id event) (str tool-name "-update"))
+        tool-call-id (or (active-tool-call-id state tool-name (:tool-call-id event))
+                         (str tool-name "-update"))
         preview (:preview event)
         at (now-iso)
         event (assoc event
@@ -262,7 +290,8 @@
 (defn- handle-tool-execution-end!
   [state event]
   (let [tool-name (:tool-name event)
-        tool-call-id (or (:tool-call-id event) ((:random-uuid! state)))
+        tool-call-id (or (active-tool-call-id state tool-name (:tool-call-id event))
+                         ((:random-uuid! state)))
         at (now-iso)
         event (assoc event
                      :tool-call-id tool-call-id

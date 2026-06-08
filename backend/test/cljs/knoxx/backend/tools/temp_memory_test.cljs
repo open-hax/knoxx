@@ -21,7 +21,7 @@
   (testing "nil falls back to default"
     (is (= (* 60 60 1000) (temp/parse-ttl-ms nil)))))
 
-;; ── local fallback (no Redis) ─────────────────────────────
+;; ── local fallback (no Mongo) ─────────────────────────────
 
 (deftest local-set-and-get
   (testing "set then get returns value"

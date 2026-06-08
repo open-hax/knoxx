@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.label.audio :as labels]
-            [knoxx.backend.infra.db.policy :as db-policy]
+            [knoxx.backend.infra.stores.mongo-policy-studio :as mongo-studio]
             [knoxx.backend.infra.routes.studio.discord-scan :as studio-discord-scan]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
@@ -82,9 +82,8 @@
             kind (or (aget request "query" "kind") "player")]
         (if (and user-id org-id)
           (try
-            (let [{:keys [rows]} (await (db-policy/query! db "SELECT state_json FROM studio_state WHERE user_id = $1 AND org_id = $2 AND kind = $3" [user-id org-id kind]))
-                  row (first rows)]
-              (json-response! reply 200 {:ok true :state (or (:state_json row) {})}))
+            (let [state (await (mongo-studio/get-studio-state! user-id org-id kind))]
+              (json-response! reply 200 {:ok true :state (or state {})}))
             (catch :default err
               (json-response! reply 500 {:detail (str "Load failed: " err)})))
           (json-response! reply 200 {:ok true :state {}})))
@@ -102,7 +101,7 @@
             state (js->clj (or (aget body "state") (js/Object.)) :keywordize-keys true)]
         (if (and user-id org-id)
           (try
-            (await (db-policy/query! db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW() RETURNING *" [user-id org-id kind (.stringify js/JSON (clj->js state))]))
+            (await (mongo-studio/put-studio-state! user-id org-id kind state))
             (json-response! reply 200 {:ok true :saved true})
             (catch :default err
               (json-response! reply 500 {:detail (str "Save failed: " err)})))
@@ -118,10 +117,8 @@
             org-id (or (:org-id ctx) (some-> ctx :org :id))]
         (if (and user-id org-id)
           (try
-            (let [{:keys [rows]} (await (db-policy/query! db "SELECT state_json FROM studio_state WHERE user_id=$1 AND org_id=$2 AND kind='playlist'" [user-id org-id]))
-                  row (first rows)
-                  state (or (:state_json row) {})]
-              (json-response! reply 200 {:ok true :playlist (or (:items state) [])}))
+            (let [items (await (mongo-studio/get-studio-playlist! user-id org-id))]
+              (json-response! reply 200 {:ok true :playlist (or items [])}))
             (catch :default err
               (json-response! reply 500 {:detail (str "Load failed: " err)})))
           (json-response! reply 200 {:ok true :playlist []})))
@@ -138,7 +135,7 @@
             items (js->clj (or (aget body "items") (js/Array.)) :keywordize-keys true)]
         (if (and user-id org-id)
           (try
-            (await (db-policy/query! db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,'playlist',$3::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW()" [user-id org-id (.stringify js/JSON (clj->js {:items items}))]))
+            (await (mongo-studio/put-studio-playlist! user-id org-id items))
             (json-response! reply 200 {:ok true :saved true :count (count items)})
             (catch :default err
               (json-response! reply 500 {:detail (str "Save failed: " err)})))
@@ -352,18 +349,17 @@
 (defroute studio-audio-asset-get! [policy-db]
   "GET" "/api/studio/audio-asset"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
-  (let [db (policy-db runtime)
+  (let [_db (policy-db runtime)
         audio-path (aget request "query" "path")
         asset-type (aget request "query" "type")]
     (if (and audio-path asset-type)
       (try
-        (let [{:keys [rows]} (await (db-policy/query! db "SELECT image_data, mime_type, width, height FROM studio_audio_assets WHERE audio_path = $1 AND asset_type = $2" [audio-path asset-type]))
-              row (first rows)]
+        (let [row (await (mongo-studio/get-audio-asset! audio-path asset-type))]
           (if row
             (do
-              (.header reply "Content-Type" (or (:mime_type row) "image/png"))
+              (.header reply "Content-Type" (or (:mime-type row) "image/png"))
               (.header reply "Cache-Control" "public, max-age=86400")
-              (.send reply (:image_data row)))
+              (.send reply (:image-data row)))
             (json-response! reply 404 {:detail "Asset not found"})))
         (catch :default err
           (json-response! reply 500 {:detail (str "Failed: " err)})))
@@ -372,7 +368,7 @@
 (defroute studio-audio-asset-save! [policy-db]
   "POST" "/api/studio/audio-asset"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
-  (let [db (policy-db runtime)
+  (let [_db (policy-db runtime)
         body (or (aget request "body") (js/Object.))
         audio-path (aget body "path")
         asset-type (aget body "type")
@@ -383,8 +379,7 @@
     (if (and audio-path asset-type image-data)
       (let [buffer (js/Buffer.from image-data "base64")]
         (try
-          (await (db-policy/query! db "INSERT INTO studio_audio_assets (audio_path, asset_type, image_data, mime_type, width, height) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (audio_path, asset_type) DO UPDATE SET image_data = $3, mime_type = $4, width = $5, height = $6, created_at = NOW()"
-                                   [audio-path asset-type buffer mime-type width height]))
+          (await (mongo-studio/save-audio-asset! audio-path asset-type buffer mime-type width height))
           (json-response! reply 200 {:ok true :path audio-path :type asset-type})
           (catch :default err
             (json-response! reply 500 {:detail (str "Failed: " err)}))))

@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-ollama-embedding-provider"
 title: "Implement Ollama embedding provider for knowledge ops"
-status: incoming
+status: rejected
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Implement Ollama embedding provider for knowledge ops
 
 > Parent epic: `knoxx-knowledge-ops-deploy-self-hosted`

@@ -60,7 +60,6 @@
    :knoxx-default-actor-id (env "KNOXX_DEFAULT_ACTOR_ID" "chat_primary")
    :knoxx-default-agent-contract (env "KNOXX_DEFAULT_AGENT_CONTRACT" "knoxx_default")
    :contracts-dir (env "CONTRACTS_DIR" "contracts")
-   :redis-url (env "REDIS_URL" "")
    :shutdown-grace-ms (env-int "KNOXX_SHUTDOWN_GRACE_MS" 25000)
    :shutdown-poll-ms (env-int "KNOXX_SHUTDOWN_POLL_MS" 250)})
 
@@ -124,7 +123,13 @@
     :agent-compaction-enabled? (not= "false" (str/lower-case (env "KNOXX_AGENT_COMPACTION_ENABLED" "true")))
     :agent-compaction-reserve-tokens (env-int "KNOXX_AGENT_COMPACTION_RESERVE_TOKENS" 16384)
     :agent-compaction-keep-recent-tokens (env-int "KNOXX_AGENT_COMPACTION_KEEP_RECENT_TOKENS" 20000)
-    :agent-turn-timeout-ms (env-int "KNOXX_AGENT_TURN_TIMEOUT_MS" 300000)
+    ;; 0 (the default) means no per-turn timeout: agents run as long as they
+    ;; need. Set KNOXX_AGENT_TURN_TIMEOUT_MS to a positive value to re-enable.
+    :agent-turn-timeout-ms (env-int "KNOXX_AGENT_TURN_TIMEOUT_MS" 0)
+    ;; Background safety net (session-flush): archives runs whose process appears
+    ;; dead. Generous by default (12h) so a quietly-thinking long run is never
+    ;; wrongly failed; only genuinely orphaned runs are eventually archived.
+    :run-stale-flush-ms (env-int "KNOXX_RUN_STALE_FLUSH_MS" (* 12 60 60 1000))
     :agent-auto-resume-sessions? (= "true" (str/lower-case (env "KNOXX_AGENT_AUTO_RESUME_SESSIONS" "false")))
     :agent-system-prompt (env
                           "KNOXX_AGENT_SYSTEM_PROMPT"

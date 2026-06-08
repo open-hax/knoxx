@@ -350,7 +350,7 @@
   (when (operational-failure-text? text)
     (quality-label-extra "bad" "operational provider error, not useful assistant output")))
 
-(declare index-run-memory-legacy!)
+(declare project-run-into-event-ledger!)
 
 (defn openplanner-event
   [config {:keys [id ts kind project session message role model text extra]}]
@@ -553,14 +553,23 @@
                 nil))))
 
 (defn index-run-memory!
+  "Persist the completed run to the session store AND project it into the
+   OpenPlanner event ledger. Both writes are required: the store is the
+   authoritative run record (knoxx_runs), while the ledger projection
+   (knoxx.message / knoxx.run events) is the only source the /v1/sessions
+   list and resume reads consume. Treating these as either/or made every
+   post-cutover thread invisible to the REST API (regression 2026-06-06)."
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
   (if-not (openplanner-configured? config)
     (js/Promise.resolve nil)
     (fail-open-indexing!
      run
-     (if-let [store @store-registry/session-store*]
-       (put-run! store run)
-       (index-run-memory-legacy! config run extract-mentioned-devel-paths extract-mentioned-urls)))))
+     (let [store @store-registry/session-store*
+           store-write (if store
+                         (put-run! store run)
+                         (js/Promise.resolve nil))
+           ledger-write (project-run-into-event-ledger! config run extract-mentioned-devel-paths extract-mentioned-urls)]
+       (js/Promise.all #js [store-write ledger-write])))))
 
 (defn- legacy-run-context
   [config run]
@@ -774,7 +783,10 @@
                  (legacy-tool-events config run extract-mentioned-devel-paths extract-mentioned-urls ctx)
                  (legacy-media-events config run ctx)))))
 
-(defn- index-run-memory-legacy!
+(defn- project-run-into-event-ledger!
+  "Translate a completed run into openplanner.event.v1 envelopes and append
+   them to the event ledger via the REST client. REST (not direct Mongo) so
+   the run text still flows through vector indexing and graph derivation."
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
   (let [all-events (legacy-run-events config run extract-mentioned-devel-paths extract-mentioned-urls)]
     (-> (openplanner-client/events! (openplanner-client/client config) all-events)

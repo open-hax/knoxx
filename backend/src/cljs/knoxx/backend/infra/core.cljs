@@ -6,7 +6,6 @@
             [knoxx.backend.infra.event-runtime :as event-runtime]
             [knoxx.backend.domain.mcp.mcp-bridge :as mcp]
             [knoxx.backend.domain.realtime :as realtime]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.infra.agent.resume :as agent-resume]
             [knoxx.backend.domain.action.run-state :refer [active-runs-count]]
             [knoxx.backend.infra.config :as runtime-config]
@@ -86,11 +85,7 @@
   (condition-builtins/register-builtins!)
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. The event runtime and MCP discovery remain background work.
-  ;;
-  ;; IMPORTANT: event-runtime/start! expects redis/get-client to be ready so it
-  ;; can load resource state before schedule rules are armed.
   (try
-    (await (redis/init-redis! (:redis-url resolved-config)))
     (event-runtime/start! resolved-config)
     (resource-routes/start-resource-watcher! resolved-config)
     (let [policy-context (:policy-context (lifecycle/context))]
@@ -132,22 +127,18 @@
     ;; upstream model fetch failures should degrade agent turns later; they must
     ;; never prevent the backend from binding /health and admin repair routes.
      (js/setTimeout
-      (fn []
-       (try
-         (-> (prewarm-sdk-runtime! runtime app resolved-config)
-             (.catch (fn [err]
-                       (app-log-error! app "Knoxx SDK runtime prewarm failed; startup continuing" err))))
-         (catch :default err
-           (app-log-error! app "Knoxx SDK runtime prewarm failed before promise creation; startup continuing" err))))
+      (^:async fn []
+        (try
+          (await (prewarm-sdk-runtime! runtime app resolved-config))
+          (catch :default err
+            (app-log-error! app "Knoxx SDK runtime prewarm failed; startup continuing" err))))
       1000)
     (js/setTimeout
-     (fn []
+     (^:async fn []
        (try
-         (-> (start-background-services! app resolved-config)
-             (.catch (fn [err]
-                       (app-log-error! app "Background startup services promise failed" err))))
+         (await (start-background-services! app resolved-config))
          (catch :default err
-           (app-log-error! app "Background startup services failed before promise creation" err))))
+           (app-log-error! app "Background startup services promise failed" err))))
      1500)
     (js/Promise.resolve (clj->js resolved-config))))
 
@@ -170,14 +161,11 @@
                             (register-ws-routes! runtime instance)
                             (done))))
         (app-routes/register-routes! runtime app config lounge-messages*)
-        ;; Bring Redis up before arming schedule resources.
+        ;; Sync the resource index before arming schedule resources.
         (try
-          (let [redis-client (await (redis/init-redis! (:redis-url config)))]
-            (when redis-client
-              (app-log-info! app "Redis client initialized")
-              (resource-routes/sync-resource-index! config)))
+          (resource-routes/sync-resource-index! config)
           (catch :default err
-            (app-log-error! app "Failed to initialize Redis" err)))
+            (app-log-error! app "Failed to sync resource index" err)))
         ;; Start the event runtime composition shell.
         (event-runtime/start! config)
         (resource-routes/start-resource-watcher! config)

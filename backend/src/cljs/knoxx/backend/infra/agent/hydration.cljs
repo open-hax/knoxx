@@ -42,21 +42,21 @@
   (boolean (re-find #"(?i)\b(previous|earlier|before|remember|last time|prior|session|you said|you did|we talked|we discussed)\b"
                     (or message ""))))
 
-(defn passive-hydration!
+(defn ^:async passive-hydration!
   ([runtime config mode message] (passive-hydration! runtime config mode message nil))
   ([runtime config mode message auth-context]
    (if (= mode "rag")
      (let [started-ms (.now js/Date)
            top-k (max 1 (min 4 (or (:retrievalTopK @settings-state*) 3)))]
-       (-> (semantic/semantic-search-documents! runtime config {:query message
-                                                               :top-k top-k
-                                                               :max-snippet-chars 240} auth-context)
-           (.then (fn [result]
-                    (assoc result :elapsedMs (- (.now js/Date) started-ms))))
-           (.catch (fn [err]
-                     (.warn js/console "[agent-hydration] passive semantic hydration failed; continuing without corpus context" err)
-                     nil))))
-     (js/Promise.resolve nil))))
+       (try
+         (let [result (await (semantic/semantic-search-documents! runtime config {:query message
+                                                                                  :top-k top-k
+                                                                                  :max-snippet-chars 240} auth-context))]
+           (assoc result :elapsedMs (- (.now js/Date) started-ms)))
+         (catch :default err
+           (.warn js/console "[agent-hydration] passive semantic hydration failed; continuing without corpus context" err)
+           nil)))
+     nil)))
 
 (defn- openplanner-memory-source-options
   [config agent-spec]
@@ -104,7 +104,7 @@
         (and (not= "off" mode)
              (memory-hydration-trigger? message)))))
 
-(defn passive-memory-hydration!
+(defn ^:async passive-memory-hydration!
   ([config conversation-id message] (passive-memory-hydration! config conversation-id message nil nil))
   ([config conversation-id message auth-context] (passive-memory-hydration! config conversation-id message auth-context nil))
   ([config conversation-id message auth-context agent-spec]
@@ -114,18 +114,17 @@
               (passive-memory-hydration-should-run? message opts))
        (let [started-ms (.now js/Date)
              k (max 1 (min 12 (positive-int-or (or (:k opts) (:top-k opts) (:topK opts)) 6)))]
-         (-> (openplanner-memory-search! config {:query message :k k})
-             (.then (fn [result]
-                      (-> (filter-authorized-memory-hits! config auth-context (:hits result))
-                          (.then (fn [hits]
-                                   (assoc result :hits hits
-                                                 :mode (or (passive-memory-hydration-mode opts) "triggered")
-                                                 :elapsedMs (- (.now js/Date) started-ms)
-                                                 :conversationId conversation-id))))))
-             (.catch (fn [err]
-                       (.warn js/console "[agent-hydration] passive OpenPlanner memory hydration failed; continuing without memory context" err)
-                       nil)))
-       (js/Promise.resolve nil))))))
+         (try
+           (let [result (await (openplanner-memory-search! config {:query message :k k}))
+                 hits (await (filter-authorized-memory-hits! config auth-context (:hits result)))]
+             (assoc result :hits hits
+                           :mode (or (passive-memory-hydration-mode opts) "triggered")
+                           :elapsedMs (- (.now js/Date) started-ms)
+                           :conversationId conversation-id))
+           (catch :default err
+             (.warn js/console "[agent-hydration] passive OpenPlanner memory hydration failed; continuing without memory context" err)
+             nil)))
+       nil))))
 
 
 (defn passive-hydration-text

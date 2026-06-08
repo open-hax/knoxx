@@ -272,10 +272,10 @@ function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
       ctx.setNotice({ tone: 'success', text: 'Actor profile updated.' }); await ctx.refresh();
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); }
   };
-  const saveActorCredential = async (userId: string, provider: string, draft: { kind: string; accountIdentifier: string; credentials: Record<string, string> }) => {
+  const saveActorCredential = async (userId: string, provider: string, draft: { kind: string; accountIdentifier: string; secretJson: Record<string, string> }) => {
     ctx.setNotice(null);
     try {
-      await (await import('../lib/nextApi')).upsertAdminActorCredential(userId, provider, { orgId: ctx.selectedOrgId, kind: draft.kind, accountIdentifier: draft.accountIdentifier.trim() || undefined, credentials: draft.credentials });
+      await (await import('../lib/nextApi')).upsertAdminActorCredential(userId, provider, { orgId: ctx.selectedOrgId, kind: draft.kind, accountIdentifier: draft.accountIdentifier.trim() || undefined, secretJson: draft.secretJson });
       ctx.setNotice({ tone: 'success', text: 'Actor credential saved.' }); await ctx.refresh();
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); }
   };

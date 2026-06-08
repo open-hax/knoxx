@@ -1,106 +1,98 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Markdown } from '@open-hax/uxx';
-import { opsRoutes } from '../lib/app-routes';
-import { isExternalHref, resolveDocumentHref } from '../lib/document-links';
-import { fetchDocumentContent } from '../lib/api';
-import { ForumThreadView, parseForumThread } from './source-doc-page/ForumThreadView';
+import React, { useEffect, useState } from "react";
 
-function useQuery() {
-  const { search } = useLocation();
-  return useMemo(() => new URLSearchParams(search), [search]);
+// CLJS (Helix) SourceDocPage loader.
+//
+// The real implementation lives in
+// knoxx.frontend.pages.source-doc.view/source-doc-page and is exposed on
+// window.knoxx.frontend.pages.source_doc.view.source_doc_page by the shadow-cljs
+// app bundle (required from knoxx.frontend.core). This wrapper does NOT fall back
+// to a legacy TS page — if the CLJS export is missing we want a loud, debuggable
+// failure so the migration stays honest.
+
+type CljsComponentType = React.ComponentType<Record<string, never>>;
+
+function getCljsComponent(): CljsComponentType | null {
+  const ns = (window as unknown as Record<string, unknown>).knoxx;
+  if (!ns) return null;
+  const frontend = (ns as Record<string, unknown>).frontend;
+  if (!frontend) return null;
+  const pages = (frontend as Record<string, unknown>).pages;
+  if (!pages) return null;
+  const sourceDoc = (pages as Record<string, unknown>).source_doc;
+  if (!sourceDoc) return null;
+  const view = (sourceDoc as Record<string, unknown>).view;
+  if (!view) return null;
+  const component = (view as Record<string, unknown>).source_doc_page;
+  return (component as CljsComponentType) ?? null;
+}
+
+class CljsErrorBoundary extends React.Component<
+  React.PropsWithChildren<{ onError: (error: Error) => void }>,
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    this.props.onError(error);
+  }
+
+  render() {
+    if (this.state.error) return null;
+    return this.props.children;
+  }
 }
 
 export default function SourceDocPage() {
-  const navigate = useNavigate();
-  const query = useQuery();
-  const rawPath = query.get('path') || '';
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [content, setContent] = useState('');
-  const isMarkdown = /\.(md|mdx)$/i.test(rawPath);
+  const [Component, setComponent] = useState<CljsComponentType | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    const relativePath = rawPath.replace(/^\/+/, '');
-    if (!relativePath) {
-      setError('Missing document path');
-      setLoading(false);
+    const comp = getCljsComponent();
+    if (comp) {
+      setComponent(() => comp);
       return;
     }
 
-    setLoading(true);
-    setError('');
-    void fetchDocumentContent(relativePath)
-      .then((data) => {
-        setContent(data.content || '');
-      })
-      .catch((err) => {
-        setError((err as Error).message || 'Failed to load document');
-      })
-      .finally(() => setLoading(false));
-  }, [rawPath]);
+    // Give the /cljs/app.js injector a moment to run.
+    const timer = setTimeout(() => {
+      const loaded = getCljsComponent();
+      if (loaded) {
+        setComponent(() => loaded);
+        return;
+      }
+      setLoadError(
+        "shadow-cljs SourceDocPage export not found on window.knoxx.frontend.pages.source_doc.view.source_doc_page. " +
+          "This is an integration/compile problem (not a reason to silently render legacy TS).",
+      );
+    }, 1500);
 
-  const forumThread = useMemo(() => parseForumThread(rawPath, content), [rawPath, content]);
+    return () => clearTimeout(timer);
+  }, []);
 
-  const handleMarkdownLink = (href: string) => {
-    if (!href) return;
+  if (loadError) {
+    return (
+      <div className="m-6 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-100">
+        <div className="font-semibold">Document Viewer (shadow-cljs) failed to load</div>
+        <div className="mt-2 font-mono text-xs whitespace-pre-wrap break-words">{loadError}</div>
+      </div>
+    );
+  }
 
-    if (href.startsWith('#')) {
-      const targetId = decodeURIComponent(href.slice(1));
-      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      return;
-    }
-
-    if (isExternalHref(href)) {
-      window.open(href, '_blank', 'noopener,noreferrer');
-      return;
-    }
-
-    const nextPath = resolveDocumentHref(rawPath, href);
-    if (!nextPath) {
-      window.open(href, '_blank', 'noopener,noreferrer');
-      return;
-    }
-
-    navigate(`${opsRoutes.docsView}?path=${encodeURIComponent(nextPath)}`);
-  };
+  if (!Component) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-slate-400">
+        Loading document viewer…
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto w-full max-w-6xl p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-100">Document Viewer</h1>
-          <p className="mt-1 font-mono text-xs text-slate-400">{rawPath || 'N/A'}</p>
-        </div>
-        <Link to="/" className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800">
-          Back to Chat
-        </Link>
-      </div>
-
-      <section className="rounded-xl border border-slate-700 bg-slate-900/80 p-4 shadow-xl">
-        {loading ? <p className="text-slate-300">Loading document...</p> : null}
-        {error ? <p className="text-rose-300">{error}</p> : null}
-
-        {!loading && !error ? (
-            <div className="max-h-[78vh] overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4">
-              {forumThread ? (
-                <ForumThreadView thread={forumThread} />
-              ) : isMarkdown ? (
-                <article className="text-slate-100">
-                  <Markdown
-                  content={content}
-                  theme="dark"
-                  variant="full"
-                  linkTarget="_self"
-                  onLinkClick={(href: string) => handleMarkdownLink(href)}
-                />
-              </article>
-            ) : (
-              <pre className="whitespace-pre-wrap text-sm leading-6 text-slate-100">{content}</pre>
-            )}
-          </div>
-        ) : null}
-      </section>
-    </div>
+    <CljsErrorBoundary onError={(error) => setLoadError(String(error?.message ?? error))}>
+      <Component />
+    </CljsErrorBoundary>
   );
 }

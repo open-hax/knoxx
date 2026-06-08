@@ -39,11 +39,15 @@
 
 (defn- load-trigger-resources
   [config]
-  (->> (resources/load-all-resources-sync config)
-       (filter #(= :trigger (:resource/kind %)))
-       (map :resource/definition)
-       (remove nil?)
-       vec))
+  (let [all-resources (resources/load-all-resources-sync config)
+        trigger-resources (filter #(= :trigger (:resource/kind %)) all-resources)
+        trigger-defs (map :resource/definition trigger-resources)]
+    (js/console.log "[event-dispatch] load-trigger-resources: all=" (count all-resources)
+                    " triggers=" (count trigger-resources)
+                    " defs=" (count trigger-defs)
+                    " kinds=" (pr-str (take 5 (map :resource/kind all-resources)))
+                    " sample=" (pr-str (take 1 (map :resource/id trigger-resources))))
+    (vec (remove nil? trigger-defs))))
 
 (defn- emitter-matches?
   "True if the trigger's emitter matches the event's actor."
@@ -109,27 +113,32 @@
   ([config event]
    (let [event' (event-normalize/normalize-event event)
          event-id (:event/id event')]
-     (append-recent-event! event')
-     (if-not (mark-event-dispatched! event-id)
-       {:matchedTriggers []
-        :event event'
-        :skipped true}
-       (let [matching-triggers (->> (load-trigger-resources config)
-                                    (map trigger-normalize/normalize-trigger)
-                                    (filter #(trigger-matches? % event'))
-                                    vec)
-             results (await (js/Promise.all
-                             (clj->js
-                              (mapv (fn [trigger]
-                                      (-> (action-registry/run-action!
-                                           (actor-context config trigger event')
-                                           (action-registry/action-map trigger))
-                                          (.catch (fn [err]
-                                                    (clj->js (trigger-failure-result trigger event' err))))))
-                                    matching-triggers))))]
-         {:matchedTriggers (mapv :trigger/id matching-triggers)
-          :event event'
-          :results (js->clj results :keywordize-keys true)})))))
+      (append-recent-event! event')
+      (if-not (mark-event-dispatched! event-id)
+        (do (js/console.log "[event-dispatch] event deduplicated:" event-id)
+            {:matchedTriggers []
+             :event event'
+             :skipped true})
+        (let [all-triggers (load-trigger-resources config)
+              _ (js/console.log "[event-dispatch] loaded triggers:" (count all-triggers))
+              matching-triggers (->> all-triggers
+                                     (map trigger-normalize/normalize-trigger)
+                                     (filter #(trigger-matches? % event'))
+                                     vec)
+               _ (js/console.log "[event-dispatch] matching triggers:" (count matching-triggers) "for event" (pr-str (:event/type event')))
+               results (await (js/Promise.all
+                               (clj->js
+                                 (mapv (fn [trigger]
+                                         (-> (action-registry/run-action!
+                                              (actor-context config trigger event')
+                                              (action-registry/action-map trigger))
+                                             (.catch (fn [err]
+                                                       (js/console.error "[event-dispatch] action failed for trigger" (:trigger/id trigger) ":" (.-message err))
+                                                       (throw err)))))
+                                       matching-triggers))))]
+           {:matchedTriggers (mapv :trigger/id matching-triggers)
+            :event event'
+            :results (js->clj results :keywordize-keys true)})))))
 
 (defn status-snapshot
   [config]

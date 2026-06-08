@@ -1,0 +1,175 @@
+(ns knoxx.backend.infra.stores.mongo-mcp-oauth
+  "Mongo twin for MCP OAuth state (replaces Redis knoxx:mcp:* keys).
+   Handles clients, auth codes, and access tokens."
+  (:require [knoxx.backend.infra.mongo-client :as mongo-client]
+            [knoxx.backend.infra.system-instance :as system-instance]))
+
+(def CLIENTS_COLLECTION "knoxx_mcp_clients")
+(def CODES_COLLECTION "knoxx_mcp_codes")
+(def TOKENS_COLLECTION "knoxx_mcp_tokens")
+
+(defn- clients-coll [db] (.collection db CLIENTS_COLLECTION))
+(defn- codes-coll [db] (.collection db CODES_COLLECTION))
+(defn- tokens-coll [db] (.collection db TOKENS_COLLECTION))
+
+(defn ^:async setup-indexes!
+  "Create required indexes. Idempotent."
+  [db]
+  (let [clients (clients-coll db)
+        codes (codes-coll db)
+        tokens (tokens-coll db)]
+    ;; Clients: unique index on client_id
+    (await (.createIndex clients #js {"client_id" 1} #js {"unique" true}))
+    ;; Codes: unique index on code, TTL on expiresAt
+    (await (.createIndex codes #js {"code" 1} #js {"unique" true}))
+    (await (.createIndex codes #js {"expiresAt" 1} #js {"expireAfterSeconds" 0}))
+    ;; Tokens: unique index on access_token, TTL on expiresAt, index on membership_id
+    (await (.createIndex tokens #js {"access_token" 1} #js {"unique" true}))
+    (await (.createIndex tokens #js {"expiresAt" 1} #js {"expireAfterSeconds" 0}))
+    (await (.createIndex tokens #js {"membership_id" 1}))
+    true))
+
+(defn- keywordize [doc]
+  (when doc (js->clj doc :keywordize-keys true)))
+
+;; ─── Clients ────────────────────────────────────────────────────────────────
+
+(defn ^:async get-client!
+  "Read registered OAuth client by client_id."
+  ([client-id] (get-client! (mongo-client/get-db) client-id))
+  ([db client-id]
+   (when (and db client-id)
+     (let [c (clients-coll db)
+           result (await (.findOne c #js {"client_id" (str client-id)}))]
+       (when result
+         (js/JSON.stringify (clj->js (keywordize result))))))))
+
+(defn ^:async set-client!
+  "Store registered OAuth client."
+  ([client-id client-json] (set-client! (mongo-client/get-db) client-id client-json))
+  ([db client-id client-json]
+   (when (and db client-id)
+     (let [c (clients-coll db)
+           now (js/Date.)
+           parsed (js/JSON.parse client-json)
+           doc {:client_id (str client-id)
+                :client_data parsed
+                :created_at now
+                :system_instance_id (system-instance/current-id)
+                :expiresAt nil}] ;; No TTL for clients
+       (await (.updateOne
+               c
+               #js {"client_id" (str client-id)}
+               #js {"$set" (clj->js {:client_data parsed})
+                    "$setOnInsert" (clj->js {:created_at now
+                                            :system_instance_id (system-instance/current-id)})}
+               #js {"upsert" true}))
+       true))))
+
+;; ─── Codes ──────────────────────────────────────────────────────────────────
+
+(defn ^:async get-code!
+  "Read OAuth auth code."
+  ([code] (get-code! (mongo-client/get-db) code))
+  ([db code]
+   (when (and db code)
+     (let [c (codes-coll db)
+           result (await (.findOne c #js {"code" (str code)}))]
+       (when result
+         (let [doc (keywordize result)]
+           (when (> (:expires-at doc 0) (.now js/Date))
+             (js/JSON.stringify (clj->js (:code_data doc))))))))))
+
+(defn ^:async set-code!
+  "Store OAuth auth code with TTL."
+  ([code code-json ttl-seconds] (set-code! (mongo-client/get-db) code code-json ttl-seconds))
+  ([db code code-json ttl-seconds]
+   (when (and db code)
+     (let [c (codes-coll db)
+           now (js/Date.)
+           parsed (js/JSON.parse code-json)
+           doc {:code (str code)
+                :code_data parsed
+                :created_at now
+                :system_instance_id (system-instance/current-id)
+                :expiresAt (js/Date. (+ (.now js/Date) (* ttl-seconds 1000)))}]
+       (await (.updateOne
+               c
+               #js {"code" (str code)}
+               #js {"$set" (clj->js {:code_data parsed
+                                     :expiresAt (:expiresAt doc)})
+                    "$setOnInsert" (clj->js {:created_at now
+                                            :system_instance_id (system-instance/current-id)})}
+               #js {"upsert" true}))
+       true))))
+
+(defn ^:async delete-code!
+  "Delete OAuth auth code."
+  ([code] (delete-code! (mongo-client/get-db) code))
+  ([db code]
+   (when (and db code)
+     (let [c (codes-coll db)]
+       (await (.deleteOne c #js {"code" (str code)}))
+       true))))
+
+;; ─── Tokens ─────────────────────────────────────────────────────────────────
+
+(defn ^:async get-token!
+  "Read access token."
+  ([access-token] (get-token! (mongo-client/get-db) access-token))
+  ([db access-token]
+   (when (and db access-token)
+     (let [c (tokens-coll db)
+           result (await (.findOne c #js {"access_token" (str access-token)}))]
+       (when result
+         (let [doc (keywordize result)]
+           (when (> (:expires-at doc 0) (.now js/Date))
+             (js/JSON.stringify (clj->js (:token_data doc))))))))))
+
+(defn ^:async set-token!
+  "Store access token with TTL."
+  ([access-token token-json ttl-seconds membership-id]
+   (set-token! (mongo-client/get-db) access-token token-json ttl-seconds membership-id))
+  ([db access-token token-json ttl-seconds membership-id]
+   (when (and db access-token)
+     (let [c (tokens-coll db)
+           now (js/Date.)
+           parsed (js/JSON.parse token-json)
+           doc {:access_token (str access-token)
+                :token_data parsed
+                :membership_id (str (or membership-id ""))
+                :created_at now
+                :system_instance_id (system-instance/current-id)
+                :expiresAt (js/Date. (+ (.now js/Date) (* ttl-seconds 1000)))}]
+       (await (.updateOne
+               c
+               #js {"access_token" (str access-token)}
+               #js {"$set" (clj->js {:token_data parsed
+                                     :membership_id (str (or membership-id ""))
+                                     :expiresAt (:expiresAt doc)})
+                    "$setOnInsert" (clj->js {:created_at now
+                                            :system_instance_id (system-instance/current-id)})}
+               #js {"upsert" true}))
+       true))))
+
+(defn ^:async delete-token!
+  "Delete access token."
+  ([access-token] (delete-token! (mongo-client/get-db) access-token))
+  ([db access-token]
+   (when (and db access-token)
+     (let [c (tokens-coll db)]
+       (await (.deleteOne c #js {"access_token" (str access-token)}))
+       true))))
+
+(defn ^:async list-tokens-for-membership!
+  "List all tokens for a membership."
+  ([membership-id] (list-tokens-for-membership! (mongo-client/get-db) membership-id))
+  ([db membership-id]
+   (when (and db membership-id)
+     (let [c (tokens-coll db)
+           cursor (.find c #js {"membership_id" (str membership-id)})
+           results (await (.toArray cursor))]
+       (vec (for [doc results
+                  :let [d (keywordize doc)]
+                  :when (> (:expires-at d 0) (.now js/Date))]
+              (js/JSON.stringify (clj->js (:token_data d)))))))))

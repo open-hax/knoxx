@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-futuresight-kms-cms-react-ui"
 title: "Build Layer 2 CMS React UI components for futuresight-kms"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "4sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 4
 category: tasks
 ---
-
 # Build Layer 2 CMS React UI components for futuresight-kms
 
 > Parent epic: `knoxx-knowledge-ops-chat-widget-layers`

@@ -1,5 +1,43 @@
 (ns knoxx.backend.domain.agent.tool-lifecycle
-  "Pure transformations for provider tool lifecycle events.")
+  "Pure transformations for provider tool lifecycle events."
+  (:require [clojure.string :as str]))
+
+(def empty-tool-call-id-state
+  "Per-turn occurrence tracking for provider tool-call ids."
+  {:counts {} :active {}})
+
+(defn- tool-call-alias-key
+  [tool-name tool-call-id]
+  (or (some-> tool-call-id str str/trim not-empty)
+      (str "tool:" (or (some-> tool-name str str/trim not-empty) "tool"))))
+
+(defn resolve-tool-call-start-id
+  "Uniquify a provider tool-call id at tool_execution_start.
+
+   Providers can reuse index-based ids across rounds (proxx/ollama emit call_0
+   for the first tool call of every round) or omit ids entirely. Receipts,
+   lifecycle events, and trace blocks keyed by the raw id then collapse onto
+   the first call. Returns {:state <next id-state> :tool-call-id <unique id>}:
+   the raw id for its first occurrence, raw#N for repeats, and tool:<name>#N
+   when the provider sent no id."
+  [id-state {:keys [tool-name tool-call-id]}]
+  (let [raw (some-> tool-call-id str str/trim not-empty)
+        alias-key (tool-call-alias-key tool-name tool-call-id)
+        n (inc (get-in id-state [:counts alias-key] 0))
+        unique-id (cond
+                    (and raw (= n 1)) raw
+                    raw (str raw "#" n)
+                    :else (str alias-key "#" n))]
+    {:state (-> id-state
+                (assoc-in [:counts alias-key] n)
+                (assoc-in [:active alias-key] unique-id))
+     :tool-call-id unique-id}))
+
+(defn active-tool-call-id
+  "Resolve a raw provider tool-call id (or bare tool name) to the unique id
+   registered by its most recent tool start, or nil when none started."
+  [id-state {:keys [tool-name tool-call-id]}]
+  (get-in id-state [:active (tool-call-alias-key tool-name tool-call-id)]))
 
 (defn start-receipt
   [receipt {:keys [tool-name input-raw input-preview at]}]

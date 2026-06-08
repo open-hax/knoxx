@@ -209,7 +209,8 @@
   (send-user-message!  [_ c] (.sendUserMessage raw c))
   (follow-up!          [_ m] (.followUp raw m))
   (steer!              [_ m] (.steer raw m))
-  (set-thinking-level! [_ l] (.setThinkingLevel raw l)))
+  (set-thinking-level! [_ l] (.setThinkingLevel raw l))
+  (abort!              [_]   (.abort raw)))
 
 (defn wrap-eta-mu-session
   "Wrap a raw eta-mu JS session object, optionally registering an after-tool-call

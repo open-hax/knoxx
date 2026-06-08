@@ -9,8 +9,7 @@
      them so wiring bugs fail fast."
   (:require [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.realtime :as realtime]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.session-store :as session-store]))
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]))
 
 (defprotocol IRunEventSink
   (emit-run-event! [sink run-event])
@@ -38,7 +37,7 @@
 
   (update-session-record! [_ session-id update]
     (case (:op update)
-      :mark-streaming (session-store/mark-session-streaming! (redis/get-client) session-id (:active? update))
+      :mark-streaming (session-store/mark-session-streaming! session-id (:active? update))
       nil))
 
   (finalize-run! [_ result]

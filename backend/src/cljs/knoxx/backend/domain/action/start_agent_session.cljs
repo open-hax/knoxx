@@ -140,20 +140,63 @@
       (id-segment (:event/id event))
       "event"))
 
+(defn agent-source-config
+  "Source/session config declared on the agent contract under :data :source."
+  [resolved]
+  (or (get-in resolved [:contract :data :source]) {}))
+
+(defn sticky-session-source?
+  "True when the agent contract asks event runs to share one session per
+   trigger+scope instead of minting a fresh session for every event."
+  [source]
+  (boolean (or (:stickySession source)
+               (:sticky-session source)
+               (:sticky_session source))))
+
+(defn- session-max-messages
+  [source]
+  (let [value (or (:sessionMaxMessages source)
+                  (:session-max-messages source)
+                  (:session_max_messages source))]
+    (when (and (number? value) (pos? value))
+      value)))
+
+(defn sticky-context-policy
+  "Context policy for the spawned agent: the contract's own policy, with the
+   source's sessionMaxMessages as the message cap when none is set."
+  [resolved source]
+  (let [base (:context-policy resolved)
+        max-messages (session-max-messages source)
+        has-cap? (some #(get base %) [:max-messages :maxMessages :max_messages])]
+    (if (and max-messages (not has-cap?))
+      (assoc (or base {}) :max-messages max-messages)
+      base)))
+
 (defn triggered-session-identifiers
-  "Return collision-resistant run, conversation, and session ids for event-triggered agent actions."
-  [trigger event agent-id ts]
-  (let [trigger-id' (trigger-id trigger event agent-id)
-        scope-id (event-scope-id event)
-        run-id (str "trigger-" trigger-id' "-" ts)]
-    {:trigger-id trigger-id'
-     :event-scope-id scope-id
-     :run-id run-id
-     :conversation-id (str run-id "-" scope-id)
-     :session-id (str "trigger-session-" trigger-id' "-" scope-id "-" ts)}))
+  "Return run, conversation, and session ids for event-triggered agent actions.
+
+   Default ids embed the spawn timestamp so concurrent runs never collide.
+   With {:sticky? true} the conversation and session ids drop the timestamp so
+   every event for the same trigger+scope (e.g. Discord channel) continues one
+   persistent session; only the run id stays unique per spawn."
+  ([trigger event agent-id ts]
+   (triggered-session-identifiers trigger event agent-id ts nil))
+  ([trigger event agent-id ts {:keys [sticky?]}]
+   (let [trigger-id' (trigger-id trigger event agent-id)
+         scope-id (event-scope-id event)
+         run-id (str "trigger-" trigger-id' "-" ts)]
+     {:trigger-id trigger-id'
+      :event-scope-id scope-id
+      :run-id run-id
+      :conversation-id (if sticky?
+                         (str "trigger-" trigger-id' "-sticky-" scope-id)
+                         (str run-id "-" scope-id))
+      :session-id (if sticky?
+                    (str "trigger-session-" trigger-id' "-" scope-id)
+                    (str "trigger-session-" trigger-id' "-" scope-id "-" ts))})))
 
 (defn triggered-audit-metadata
-  "Return audit metadata that should follow an event-triggered run into Redis and OpenPlanner."
+  "Return audit metadata that should follow an event-triggered run into the run store and OpenPlanner."
   [_trigger event ids]
   (let [event-types (->> (:event/types event)
                          (keep qualified-name)
@@ -174,7 +217,9 @@
         resolved (tooling/resolve-agent-contract config agent-id (actor-id ctx nil))
         actor-id' (actor-id ctx resolved)
         ts (.now js/Date)
-        ids (triggered-session-identifiers trigger event agent-id ts)
+        source (agent-source-config resolved)
+        ids (triggered-session-identifiers trigger event agent-id ts
+                                           {:sticky? (sticky-session-source? source)})
         task-input (action-task-input action trigger resolved)
         rendered-message (render-start-message trigger event task-input (:trigger-id ids))]
     (when (:deprecated-agent-task-fallback? task-input)
@@ -199,7 +244,7 @@
                           :tool_policies (:tool-policies resolved)
                           :sources (:sources resolved)
                           :memory_hydration (:memory-hydration resolved)
-                          :context_policy (:context-policy resolved)
+                          :context_policy (sticky-context-policy resolved source)
                           :task_source (some-> (:task-source task-input) qualified-name)
                           :rendered_task_prompt (:task task-input)
                           :deprecated_agent_task_fallback (:deprecated-agent-task-fallback? task-input)}

@@ -6,8 +6,7 @@
             [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.domain.voice.client :as voice-client]
             [knoxx.backend.infra.clients.knoxx-control :as knoxx-client]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             [promesa.core :as p]))
@@ -53,7 +52,7 @@
 
 (defn- start-voice-turn! [config session-id conversation-id text]
   (js/console.log "[voice:direct-start] starting idle session:" session-id "conv:" conversation-id)
-  (p/let [session (session-store/get-session (redis/get-client) session-id)
+  (p/let [session (session-store/get-session session-id)
           agent-spec (session-agent-spec session)
           body (cond-> {:message (str "[Voice] " text)
                         :conversation_id conversation-id
@@ -89,7 +88,7 @@
    [:channel_id {:description "Discord voice channel ID to join."} :string]
    [:guild_id {:optional true :description "Guild ID with an active voice connection."} :string]])
 
-(defn voice-join-execute [_runtime _config _tool-call-id params a b c]
+(defn ^:async voice-join-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         ch (or (aget params "channel_id") (aget params "channelId") "")
@@ -102,10 +101,9 @@
     (when (and m (seq sid) (seq cid))
       (aset m "__voiceSessionContext" #js {:sessionId sid :conversationId cid}))
     (maybe-tool-update! on-update (str "Joining voice " ch "…"))
-    (-> (.joinVoice m ch)
-        (.then (fn [r]
-                 (js/console.log "[voice:tool] joined voice, result:" (js/JSON.stringify r))
-                 (tool-text-result (str "Joined voice " ch " in guild " (aget r "guildId")) (js->clj r :keywordize-keys true)))))))
+    (let [r (await (.joinVoice m ch))]
+      (js/console.log "[voice:tool] joined voice, result:" (js/JSON.stringify r))
+      (tool-text-result (str "Joined voice " ch " in guild " (aget r "guildId")) (js->clj r :keywordize-keys true)))))
 
 (def voice-join-tool (partial create-tool-obj "discord.voice.join" "Join Voice"
                               "Join a Discord voice channel."
@@ -119,7 +117,7 @@
   [:map
    [:guild_id {:description "Guild ID with an active voice connection."} :string]])
 
-(defn voice-leave-execute [_runtime _config _tool-call-id params a b c]
+(defn ^:async voice-leave-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")]
@@ -131,8 +129,8 @@
       (when-let [sf (aget m "__voiceListener")] (try (sf) (catch js/Error _)))
       (aset m "__voiceListener" nil)
       (aset m "__voiceSessionContext" nil))
-    (-> (.leaveVoice m g)
-        (.then (fn [r] (tool-text-result (str "Left voice in guild " g) (js->clj r :keywordize-keys true)))))))
+    (let [r (await (.leaveVoice m g))]
+      (tool-text-result (str "Left voice in guild " g) (js->clj r :keywordize-keys true)))))
 
 (def voice-leave-tool (partial create-tool-obj "discord.voice.leave" "Leave Voice"
                                "Leave a Discord voice channel."
@@ -149,7 +147,7 @@
    [:voice_id {:optional true :description "Voxx/Kokoro voice ID. Default: af_jessica."} :string]
    [:model_id {:optional true :description "Voxx model ID. Default: kokoro."} :string]])
 
-(defn voice-say-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async voice-say-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")
@@ -165,11 +163,10 @@
     (when-not listening?
       (throw (js/Error. "Voice listener is not running. Use discord.voice.connect (preferred) before discord.voice.say.")))
     (maybe-tool-update! on-update (str "TTS: \"" (.slice text 0 40) "\"…"))
-    (-> (fetch-tts! config text vi mi)
-        (.then (fn [buf] (.playAudio m g buf)))
-        (.then (fn [_]
-                 (tool-text-result (str "Playing in guild " g ": \"" (.slice text 0 60) "\"")
-                                   {:guildId g :text text :played true :listening true}))))))
+    (let [buf (await (fetch-tts! config text vi mi))]
+      (await (.playAudio m g buf))
+      (tool-text-result (str "Playing in guild " g ": \"" (.slice text 0 60) "\"")
+                        {:guildId g :text text :played true :listening true}))))
 
 (def voice-say-tool (partial create-tool-obj "discord.voice.say" "Voice Say"
                              "Synthesize speech and play in a voice channel."
@@ -255,7 +252,7 @@
             (str "conversation_id required (auto-detect failed; no active agent turn context). "
                  "If calling manually, provide session_id and conversation_id explicitly.")))))
 
-(defn- flush-voice-buffer!
+(defn- ^:async flush-voice-buffer!
   "Send accumulated transcription text for a user as a single steer."
   [config sid cid uid]
   (let [m (gw)
@@ -267,9 +264,10 @@
           (let [merged (str/trim (str/join " " (js/Array.from texts)))]
             (js/console.log "[voice:tool] >>> FLUSHING buffer for" uid "concatenated:" (if (str/blank? merged) "[EMPTY]" merged))
             (when-not (str/blank? merged)
-              (-> (deliver-voice-text! config sid cid merged)
-                  (.catch (fn [e]
-                            (js/console.error "[voice:tool] voice delivery FAILED for" uid ":" (.-message e))))))))
+              (try
+                (await (deliver-voice-text! config sid cid merged))
+                (catch :default e
+                  (js/console.error "[voice:tool] voice delivery FAILED for" uid ":" (.-message e)))))))
         ;; Clear the buffer
         (aset user-buf "texts" #js [])
         (aset user-buf "timer" nil)))))
@@ -285,7 +283,7 @@
   (doseq [window (reverse windows)]
     (.unshift queue window)))
 
-(defn- trigger-agent-voice-event! [config loop-state windows]
+(defn- ^:async trigger-agent-voice-event! [config loop-state windows]
   (let [guild-id (aget loop-state "guildId")
         channel-id (aget loop-state "channelId")
         event-id (str "discord-voice-audio-" guild-id "-" (.now js/Date))
@@ -299,11 +297,10 @@
                         :content "Raw Discord voice audio window(s) are attached. Do not require ASR; perceive the audio directly if the model supports it."
                         :summary (str "Discord voice audio event with " (count windows) " window(s).")
                         :content_parts windows}}]
-    (-> (knoxx-client/dispatch-event! (knoxx-control-client config) body)
-        (.then (fn [_]
-                 {:event_id event-id :windows (count windows)})))))
+    (await (knoxx-client/dispatch-event! (knoxx-control-client config) body))
+    {:event_id event-id :windows (count windows)}))
 
-(defn- run-agent-event-loop-step! [config loop-state]
+(defn- ^:async run-agent-event-loop-step! [config loop-state]
   (let [queue (or (aget loop-state "audioWindows") #js [])]
     (if (or (aget loop-state "running") (zero? (.-length queue)))
       (js/Promise.resolve nil)
@@ -311,29 +308,31 @@
             n (min (.-length queue) max-windows)
             windows (vec (array-seq (.splice queue 0 n)))]
         (aset loop-state "running" true)
-        (-> (trigger-agent-voice-event! config loop-state windows)
-            (.catch (fn [err]
-                      ;; This is the trigger condition: only fire when the agent's own
-                      ;; session is idle. If direct/start says it is not idle, preserve
-                      ;; the audio windows and let the next cadence retry. Other errors
-                      ;; are real failures and should not create an infinite retry loop.
-                      (let [message (str (.-message err))
-                            busy? (or (str/includes? message "agent_already_processing")
-                                      (str/includes? message "already processing"))]
-                        (when busy?
-                          (requeue-front! queue windows))
-                        (js/console.log "[voice:agent-event] trigger not accepted:" message))))
-            (.finally (fn []
-                        (aset loop-state "running" false))))))))
+        (try
+          (await (trigger-agent-voice-event! config loop-state windows))
+          (catch :default err
+            ;; This is the trigger condition: only fire when the agent's own
+            ;; session is idle. If direct/start says it is not idle, preserve
+            ;; the audio windows and let the next cadence retry. Other errors
+            ;; are real failures and should not create an infinite retry loop.
+            (let [message (str (.-message err))
+                  busy? (or (str/includes? message "agent_already_processing")
+                            (str/includes? message "already processing"))]
+              (when busy?
+                (requeue-front! queue windows))
+              (js/console.log "[voice:agent-event] trigger not accepted:" message)))
+          (finally
+            (aset loop-state "running" false)))))))
 
 (defn- schedule-agent-event-loop! [config m loop-state]
   (when-not (aget loop-state "stopped")
     (aset loop-state "timer"
           (js/setTimeout
-           (fn []
-             (-> (run-agent-event-loop-step! config loop-state)
-                 (.finally (fn []
-                             (schedule-agent-event-loop! config m loop-state)))))
+           (^:async fn []
+             (try
+               (await (run-agent-event-loop-step! config loop-state))
+               (finally
+                 (schedule-agent-event-loop! config m loop-state))))
            (aget loop-state "tickMs")))))
 
 (defn- stop-agent-event-loop! [m]
@@ -346,7 +345,7 @@
     (aset m "__voiceAgentEventLoop" nil)
     (aset m "__voiceListener" nil)))
 
-(defn- start-agent-event-voice-listener!
+(defn- ^:async start-agent-event-voice-listener!
   [config m g ch sid cid auto? params on-update]
   (let [tick-ms (max 250 (param-int params "tick_ms" "tickMs" 1000))
         max-windows (max 1 (or (param-int params "max_windows_per_event" "maxWindowsPerEvent" nil)
@@ -355,73 +354,71 @@
     (stop-agent-event-loop! m)
     (maybe-tool-update! on-update (str "Listening in guild " g " as agent-event voice trigger…"))
     (js/console.log "[voice:tool] discord.voice.listen agent-event guild:" g "session:" sid "conv:" cid "auto-detect?" auto?)
-    (-> (.startVoiceListener
-         m g
-         (fn [uid]
-           (js/console.log "[voice:agent-event] speaker start:" uid))
-         (fn [uid buf]
-           (js/console.log "[voice:agent-event] audio window:" uid "bytes:" (.-length buf))
-           (when-let [loop-state (aget m "__voiceAgentEventLoop")]
-             (.push (aget loop-state "audioWindows") (audio-window-content-part uid buf)))))
-        (.then (fn [stop]
-                 (let [loop-state #js {:guildId g
-                                        :channelId ch
-                                        :sessionId sid
-                                        :conversationId cid
-                                        :modelId model-id
-                                        :tickMs tick-ms
-                                        :maxWindowsPerTurn max-windows
-                                        :audioWindows #js []
-                                        :running false
-                                        :stopped false
-                                        :listenerStop stop}]
-                   (aset m "__voiceAgentEventLoop" loop-state)
-                   (aset m "__voiceListener" stop)
-                   (schedule-agent-event-loop! config m loop-state)
-                   (tool-text-result (str "Listening in guild " g " as agent-event trigger for session " sid)
-                                     {:guildId g :listening true :mode "agent_event"
-                                      :sessionId sid :conversationId cid :tickMs tick-ms})))))))
+    (let [stop (await (.startVoiceListener
+                       m g
+                       (fn [uid]
+                         (js/console.log "[voice:agent-event] speaker start:" uid))
+                       (fn [uid buf]
+                         (js/console.log "[voice:agent-event] audio window:" uid "bytes:" (.-length buf))
+                         (when-let [loop-state (aget m "__voiceAgentEventLoop")]
+                           (.push (aget loop-state "audioWindows") (audio-window-content-part uid buf))))))
+          loop-state #js {:guildId g
+                          :channelId ch
+                          :sessionId sid
+                          :conversationId cid
+                          :modelId model-id
+                          :tickMs tick-ms
+                          :maxWindowsPerTurn max-windows
+                          :audioWindows #js []
+                          :running false
+                          :stopped false
+                          :listenerStop stop}]
+      (aset m "__voiceAgentEventLoop" loop-state)
+      (aset m "__voiceListener" stop)
+      (schedule-agent-event-loop! config m loop-state)
+      (tool-text-result (str "Listening in guild " g " as agent-event trigger for session " sid)
+                        {:guildId g :listening true :mode "agent_event"
+                         :sessionId sid :conversationId cid :tickMs tick-ms}))))
 
-(defn- start-asr-steer-voice-listener!
+(defn- ^:async start-asr-steer-voice-listener!
   [config m g sid auto? steer-debounce-ms on-update]
   (stop-agent-event-loop! m)
   (maybe-tool-update! on-update (str "Listening in guild " g "…"))
   (js/console.log "[voice:tool] discord.voice.listen guild:" g "session:" sid "auto-detect?" auto?)
-  (-> (.startVoiceListener
-       m g
-       (fn [uid]
-         (js/console.log "[voice:tool] >>> on-start callback fired for user:" uid)
-         (let [buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
-               user-buf (when buf-obj (aget buf-obj uid))]
-           (when user-buf
-             (when-let [t (aget user-buf "timer")]
-               (js/clearTimeout t)
-               (aset user-buf "timer" nil)))))
-       (fn [uid buf]
-         (js/console.log "[voice:tool] >>> on-audio callback fired for user:" uid "buffer length:" (.-length buf) "bytes")
-         (-> (transcribe! config buf)
-             (.then (fn [t]
-                      (js/console.log "[voice:tool] transcription result for" uid ":" (if (str/blank? t) "[EMPTY]" t))
-                      (when-not (str/blank? t)
-                        (let [buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
-                              _ (when (and m (not buf-obj))
-                                  (aset m "__voiceTranscriptionBuffer" #js {}))
-                              buf-obj (or buf-obj (aget m "__voiceTranscriptionBuffer"))
-                              user-buf (or (aget buf-obj uid) #js {:texts #js [] :timer nil})]
-                          (.push (aget user-buf "texts") t)
-                          (aset buf-obj uid user-buf)
-                          (when-let [old-timer (aget user-buf "timer")]
-                            (js/clearTimeout old-timer))
-                          (let [new-timer (js/setTimeout
-                                           #(flush-voice-buffer! config sid (aget (aget m "__voiceSessionContext") "conversationId") uid)
-                                           steer-debounce-ms)]
-                            (aset user-buf "timer" new-timer))))))
-             (.catch (fn [e]
-                       (js/console.error "[voice:tool] transcription/steering pipeline FAILED for" uid ":" (.-message e)))))))
-      (.then (fn [stop]
-               (aset m "__voiceListener" stop)
-               (tool-text-result (str "Listening in guild " g ". Transcriptions → session " sid)
-                                 {:guildId g :listening true :mode "asr_steer"})))))
+  (let [stop (await (.startVoiceListener
+                     m g
+                     (fn [uid]
+                       (js/console.log "[voice:tool] >>> on-start callback fired for user:" uid)
+                       (let [buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
+                             user-buf (when buf-obj (aget buf-obj uid))]
+                         (when user-buf
+                           (when-let [t (aget user-buf "timer")]
+                             (js/clearTimeout t)
+                             (aset user-buf "timer" nil)))))
+                     (^:async fn [uid buf]
+                       (js/console.log "[voice:tool] >>> on-audio callback fired for user:" uid "buffer length:" (.-length buf) "bytes")
+                       (try
+                         (let [t (await (transcribe! config buf))]
+                           (js/console.log "[voice:tool] transcription result for" uid ":" (if (str/blank? t) "[EMPTY]" t))
+                           (when-not (str/blank? t)
+                             (let [buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
+                                   _ (when (and m (not buf-obj))
+                                       (aset m "__voiceTranscriptionBuffer" #js {}))
+                                   buf-obj (or buf-obj (aget m "__voiceTranscriptionBuffer"))
+                                   user-buf (or (aget buf-obj uid) #js {:texts #js [] :timer nil})]
+                               (.push (aget user-buf "texts") t)
+                               (aset buf-obj uid user-buf)
+                               (when-let [old-timer (aget user-buf "timer")]
+                                 (js/clearTimeout old-timer))
+                               (let [new-timer (js/setTimeout
+                                                #(flush-voice-buffer! config sid (aget (aget m "__voiceSessionContext") "conversationId") uid)
+                                                steer-debounce-ms)]
+                                 (aset user-buf "timer" new-timer)))))
+                         (catch :default e
+                           (js/console.error "[voice:tool] transcription/steering pipeline FAILED for" uid ":" (.-message e)))))))]
+    (aset m "__voiceListener" stop)
+    (tool-text-result (str "Listening in guild " g ". Transcriptions → session " sid)
+                      {:guildId g :listening true :mode "asr_steer"})))
 
 (defn voice-listen-execute
   [_runtime config _tool-call-id params a b c]
@@ -438,7 +435,7 @@
       (aset m "__voiceTranscriptionBuffer" #js {}))
     (start-asr-steer-voice-listener! config m g sid auto? steer-debounce-ms on-update)))
 
-(defn voice-connect-execute
+(defn ^:async voice-connect-execute
   [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
@@ -452,18 +449,16 @@
     (when m
       (aset m "__voiceSessionContext" #js {:sessionId sid :conversationId cid}))
     (maybe-tool-update! on-update (str "Connecting voice + listener for channel " ch "…"))
-    (-> (.joinVoice m ch)
-        (.then (fn [r]
-                 (let [guild-id (or (aget r "guildId") "")]
-                   (when (str/blank? guild-id)
-                     (throw (js/Error. "joinVoice did not return guildId")))
-                   (js/console.log "[voice:tool] discord.voice.connect joined" ch "guild" guild-id "auto-detect?" auto?)
-                   (voice-listen-execute runtime config _tool-call-id (clj->js {:guild_id guild-id
-                                                                              :session_id sid
-                                                                              :conversation_id cid}) a b c))))
-        (.then (fn [_]
-                 (tool-text-result (str "Connected to voice " ch " and listening")
-                                   {:channelId ch :listening true :sessionId sid :conversationId cid}))))))
+    (let [r (await (.joinVoice m ch))
+          guild-id (or (aget r "guildId") "")]
+      (when (str/blank? guild-id)
+        (throw (js/Error. "joinVoice did not return guildId")))
+      (js/console.log "[voice:tool] discord.voice.connect joined" ch "guild" guild-id "auto-detect?" auto?)
+      (await (voice-listen-execute runtime config _tool-call-id (clj->js {:guild_id guild-id
+                                                                          :session_id sid
+                                                                          :conversation_id cid}) a b c))
+      (tool-text-result (str "Connected to voice " ch " and listening")
+                        {:channelId ch :listening true :sessionId sid :conversationId cid}))))
 
 (def voice-connect-tool
   (partial create-tool-obj
@@ -509,7 +504,7 @@
     (when (str/blank? g) (throw (js/Error. "guild_id required")))
     (start-agent-event-voice-listener! config m g ch sid cid auto? params on-update)))
 
-(defn voice-agent-event-connect-execute
+(defn ^:async voice-agent-event-connect-execute
   [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
@@ -517,19 +512,18 @@
     (when-not m (throw (js/Error. "Gateway not started")))
     (when (str/blank? ch) (throw (js/Error. "channel_id required")))
     (maybe-tool-update! on-update (str "Connecting voice event source for channel " ch "…"))
-    (-> (.joinVoice m ch)
-        (.then (fn [r]
-                 (let [guild-id (or (aget r "guildId") "")]
-                   (when (str/blank? guild-id)
-                     (throw (js/Error. "joinVoice did not return guildId")))
-                   (voice-agent-event-listen-execute runtime config _tool-call-id
-                                                     (clj->js {:guild_id guild-id
-                                                               :channel_id ch
-                                                               :tick_ms (or (aget params "tick_ms")
-                                                                            (aget params "tickMs"))
-                                                               :max_windows_per_event (or (aget params "max_windows_per_event")
-                                                                                          (aget params "maxWindowsPerEvent"))})
-                                                     a b c)))))))
+    (let [r (await (.joinVoice m ch))
+          guild-id (or (aget r "guildId") "")]
+      (when (str/blank? guild-id)
+        (throw (js/Error. "joinVoice did not return guildId")))
+      (await (voice-agent-event-listen-execute runtime config _tool-call-id
+                                               (clj->js {:guild_id guild-id
+                                                         :channel_id ch
+                                                         :tick_ms (or (aget params "tick_ms")
+                                                                      (aget params "tickMs"))
+                                                         :max_windows_per_event (or (aget params "max_windows_per_event")
+                                                                                    (aget params "maxWindowsPerEvent"))})
+                                               a b c)))))
 
 (def voice-agent-event-connect-tool
   (partial create-tool-obj
@@ -579,7 +573,7 @@
    [:guild_id {:description "Guild ID with an active voice connection."} :string]
    [:channel_id {:description "Voice channel ID to list members of."} :string]])
 
-(defn voice-list-members-execute [_runtime _config _tool-call-id params a b c]
+(defn ^:async voice-list-members-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")
@@ -588,13 +582,12 @@
     (when (str/blank? g) (throw (js/Error. "guild_id required")))
     (when (str/blank? ch) (throw (js/Error. "channel_id required")))
     (maybe-tool-update! on-update (str "Listing voice members in " ch "…"))
-    (-> (.listVoiceMembers m g ch)
-        (.then (fn [members]
-                 (let [ms (js->clj members :keywordize-keys true)
-                       lines (map (fn [m] (str (if (:isBot m) "[bot] " "") (:displayName m) " (" (:userId m) ")")) ms)]
-                   (tool-text-result
-                    (str "Voice members in " ch ":\n" (str/join "\n" lines))
-                    {:channelId ch :members ms :count (count ms)})))))))
+    (let [members (await (.listVoiceMembers m g ch))
+          ms (js->clj members :keywordize-keys true)
+          lines (map (fn [m] (str (if (:isBot m) "[bot] " "") (:displayName m) " (" (:userId m) ")")) ms)]
+      (tool-text-result
+       (str "Voice members in " ch ":\n" (str/join "\n" lines))
+       {:channelId ch :members ms :count (count ms)}))))
 
 (def voice-list-members-tool (partial create-tool-obj "discord.voice.list_members" "List Voice Members"
                                       "List members currently in a voice channel."

@@ -5,13 +5,14 @@
    turn runtime. This namespace provides a queue-style direct-start helper so
    non-HTTP callers can use the same semantics as /api/knoxx/direct/start."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.infra.agent.session :refer [active-agent-session]]
+            [knoxx.backend.infra.system-instance :as system-instance]
             [knoxx.backend.shape.agent :refer [streaming?]]
             [knoxx.backend.infra.agent.policy :as agent-policy]
             [knoxx.backend.infra.agent.turn :as agent-turns]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.extern.agent-runner :as xrunner]
             [knoxx.backend.extern.agent-turn-node :as xturn-node]))
@@ -162,19 +163,113 @@
       (run-state/append-run-event! run-id event))
     diagnostic))
 
-(defn- queue-turn!
+(defn- ^:async send-turn-and-record!
   [runtime config body]
-  (-> (agent-policy/validate-chat-policy! (:auth-context body) (policy-model config body))
-      (.then (fn [_]
-               (-> (agent-turns/send-agent-turn! runtime config body)
-                   (.then (fn [_] nil))
-                   (.catch (fn [err]
-                             (log-and-record-async-spawn-error! body err))))
-               (accepted-response body)))))
+  (try
+    (await (agent-turns/send-agent-turn! runtime config body))
+    nil
+    (catch :default err
+      (log-and-record-async-spawn-error! body err))))
+
+(defn- ^:async queue-turn!
+  [runtime config body]
+  (await (agent-policy/validate-chat-policy! (:auth-context body) (policy-model config body)))
+  (send-turn-and-record! runtime config body)
+  (accepted-response body))
 
 (defn- busy-error
   [message]
   (js/Promise.reject (js/Error. message)))
+
+;; ── Orphaned-session reclaim ──────────────────────────────────────────
+;;
+;; A session document can claim status "running" while no live run exists:
+;; either the process that owned it restarted (different system instance),
+;; or a run in this instance died without flipping the status. Without
+;; reclaim, background trigger dispatches bounce off the corpse with
+;; agent_already_processing until the 10-minute stale reaper fires.
+
+(def DISPATCH_RECLAIM_COOLDOWN_MS 60000)
+
+(defn- runtime-owns-live-run?
+  "True when this process is actively executing work for the conversation."
+  [conversation-id]
+  (let [agent-session (active-agent-session conversation-id)]
+    (or (and agent-session (streaming? agent-session))
+        (some? (turn-control/active-turn conversation-id)))))
+
+(defn- session-updated-ms
+  "Best-effort epoch millis of the session document's last update."
+  [session]
+  (let [ts (or (:updated_at session) (:created_at session))]
+    (cond
+      (number? ts) ts
+      (string? ts) (let [ms (.getTime (js/Date. ts))]
+                     (if (js/isNaN ms) 0 ms))
+      :else 0)))
+
+(defn- session-cold?
+  "True when the document is old enough that a live-but-unregistered run
+   (e.g. one orphaned in-memory by a hot reload) cannot plausibly own it."
+  [session]
+  (>= (- (js/Date.now) (session-updated-ms session))
+      DISPATCH_RECLAIM_COOLDOWN_MS))
+
+(defn- ^:async reclaim-orphaned-session!
+  "Mark a running session document that no live run owns as failed so the
+   pending dispatch can proceed. Returns true on success; failures are
+   logged and the caller falls through to the normal busy error."
+  [body session reason]
+  (try
+    (js/console.warn "[agent-runner] reclaiming orphaned session"
+                     (str (:session-id body)) "-" reason)
+    (await (session-store/complete-session!
+            (str (:session-id body))
+            (str (or (:conversation-id body) ""))
+            {:status "failed"
+             :error (str "Session reclaimed by dispatch: " reason)
+             :messages (:messages session)}))
+    true
+    (catch :default err
+      (js/console.warn "[agent-runner] orphan reclaim failed:" err)
+      false)))
+
+(defn- ^:async reclaim-and-dispatch!
+  "Reclaim an orphaned running session, then dispatch the pending turn."
+  [runtime config body session reason]
+  (await (reclaim-orphaned-session! body session reason))
+  (await (queue-turn! runtime config body)))
+
+(defn- ^:async dispatch-with-session-gate!
+  "Resolve the session busy-gate for a direct spawn.
+
+   running + stamped by a previous system instance  → reclaim, dispatch
+   running + no live run here + document gone cold  → reclaim, dispatch
+   running + live run in this instance              → busy error
+   otherwise                                        → dispatch"
+  [runtime config body]
+  (let [session (await (session-store/get-session (:session-id body)))
+        can-send-result (session-store/session-can-send? session)
+        conversation-id (:conversation-id body)
+        agent-session (active-agent-session conversation-id)]
+    (cond
+      (:can-send can-send-result)
+      (if (and agent-session (streaming? agent-session))
+        (await (busy-error "agent_already_processing: active stream"))
+        (await (queue-turn! runtime config body)))
+
+      (not (system-instance/owned-by-current-instance? session))
+      (await (reclaim-and-dispatch! runtime config body session
+                                    "owned by previous system instance (restart)"))
+
+      (and (not (runtime-owns-live-run? conversation-id))
+           (session-cold? session))
+      (await (reclaim-and-dispatch! runtime config body session
+                                    "no live run in current system instance"))
+
+      :else
+      (await (busy-error (str "agent_already_processing: "
+                              (:reason can-send-result)))))))
 
 (defn- normalize-body
   [_runtime payload]
@@ -201,14 +296,4 @@
                                    (:session-id payload))]
        (if-not provided-session-id
          (queue-turn! runtime config body)
-         (-> (session-store/get-session (redis/get-client) (:session-id body))
-             (.then
-              (fn [session]
-                (let [can-send-result (session-store/session-can-send? session)]
-                  (if-not (:can-send can-send-result)
-                    (busy-error (str "agent_already_processing: " (:reason can-send-result)))
-                    (let [agent-session (active-agent-session (:conversation-id body))
-                          actively-streaming? (and agent-session (streaming? agent-session))]
-                      (if actively-streaming?
-                        (busy-error "agent_already_processing: active stream")
-                        (queue-turn! runtime config body)))))))))))))
+         (dispatch-with-session-gate! runtime config body))))))

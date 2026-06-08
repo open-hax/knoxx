@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-cms-typebox-shapes"
 title: "CMS TypeBox Shapes — Document and Visibility Gate Type Definitions"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # CMS TypeBox Shapes — Document and Visibility Gate Type Definitions
 
 > Parent epic: `knoxx-knowledge-ops-cms-data-model`

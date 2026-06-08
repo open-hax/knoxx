@@ -20,17 +20,15 @@
             [knoxx.backend.law.guards :as guards]
             [knoxx.backend.infra.clients.proxx :as proxx-client]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.http :refer [forward-knoxx-request! json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openai-auth-error send-fetch-response! request-query-string request-body http-error error-response!]]
             [knoxx.backend.infra.routes.memory :as memory-routes]
             [knoxx.backend.infra.routes.models :as model-routes]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-export!]]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
             [knoxx.backend.domain.action.run-state :as run-state :refer [runs* run-order*]]
             [knoxx.backend.shape.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.domain.time :refer [now-iso]]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.infra.stores.session-titles :refer [start-session-title-backfill! session-title-backfill* session-titles* get-cached-session-title! session-title-seed-text heuristic-session-title stored-session-title-entry cache-session-title-entry! resolve-session-title! cache-session-title! normalize-session-title]]
             [knoxx.backend.domain.text :refer [count-occurrences replace-first clip-text]]
             [knoxx.backend.infra.routes.tools :as tool-routes]
@@ -41,7 +39,6 @@
             [knoxx.backend.infra.routes.studio :as studio-routes]
             [knoxx.backend.infra.routes.translation :as translation-routes]
             [knoxx.backend.extern.promise :as promise]
-            [shadow.cljs.modern :refer (js-await)]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]
@@ -277,8 +274,7 @@
 (defn ^:async live-active-agent-summaries!
   [limit include-all?]
   (let [limit (max 1 (or limit 25))
-        redis-client (redis/get-client)
-        sessions-by-id (into {}
+         sessions-by-id (into {}
                              (map (fn [session]
                                     [(:session_id session) session]))
                              (session-store/active-session-snapshots))
@@ -288,12 +284,8 @@
                        (filter #(contains? #{"queued" "running" "waiting_input"} (:status %)))
                        (map (fn [run]
                               (active-run-summary run (get sessions-by-id (:session_id run)))))
-                       vec)]
-    (if-not redis-client
-      (vec (take limit run-items))
-      (let [ids (await (session-store/list-active-sessions redis-client))
-            sessions (await (promise/all-vec (mapv #(session-store/get-session redis-client %) (vec ids))))]
-        (sort-active-items limit (concat run-items (live-session-items run-items include-all? sessions)))))))
+                                               vec)]
+    (sort-active-items limit (concat run-items (live-session-items run-items include-all? (await (session-store/list-active-sessions)))))))
 
 (def SESSION_RECOVERY_STALE_MS 60000)
 
@@ -338,13 +330,8 @@
       (seq (get-in @runs* [run-id :events]))
       (last (get-in @runs* [run-id :events]))
 
-      (nil? (redis/get-client))
-      nil
-
       :else
-      (try
-        (first (await (redis/lrange-json (redis/get-client) (run-state/run-events-key run-id) 0 0)))
-        (catch :default _ nil)))))
+      nil)))
 
 (defn- stale-running-session?
   [session latest-event]
@@ -374,17 +361,6 @@
 
 (defn- fetch-json-err-detail [reply prefix err]
   (json-response! reply 502 {:detail (str prefix err)}))
-
-(defn- pg-query-ok [reply result]
-  (let [rows (:rows result)]
-    (json-response! reply 200 {:ok true :rows rows :count (count rows)})))
-
-(defn- pg-query-table-ok [reply table result]
-  (let [rows (:rows result)]
-    (json-response! reply 200 {:ok true :table table :rows rows :count (count rows)})))
-
-(defn- pg-query-err [reply err]
-  (json-response! reply 400 {:error (.-message err)}))
 
 (defn- health-deps-ok [reply proxx-configured openplanner-configured [proxx-res openplanner-res]]
   (let [proxx-ok       (and proxx-configured (:ok proxx-res))
@@ -507,18 +483,6 @@
                                      {:ok true :body graph}]))
       (catch :default err
         (fetch-json-err reply err)))))
-
-(defn ^:async send-pg-query!
-  ([reply db sql-str]
-   (try
-     (pg-query-ok reply (await (db-policy/query! db sql-str [])))
-     (catch :default err
-       (pg-query-err reply err))))
-  ([reply table db sql-str]
-   (try
-     (pg-query-table-ok reply table (await (db-policy/query! db sql-str [])))
-     (catch :default err
-       (pg-query-err reply err)))))
 
 (defn ^:async send-data-browse!
   [reply target-url]
@@ -683,8 +647,7 @@
                       (stale-running-session? session latest-event))]
     (if stalled?
       (try
-        (await (session-store/complete-session! (redis/get-client)
-                                                session-id
+        (await (session-store/complete-session! session-id
                                                 conversation-id
                                                 {:status "failed"
                                                  :error "Session was stale/zombie; auto-aborted before new turn."
@@ -739,19 +702,19 @@
     (if-not provided-session-id
       (await (queue-turn! "Async agent chat failed"))
       (try
-        (let [session (await (session-store/get-session (redis/get-client) session-id))
-              can-send-result (session-store/session-can-send? session)]
-          (if (:can-send can-send-result)
-            (let [agent-session (active-agent-session conversation-id)
-                  actively-streaming? (and agent-session (streaming? agent-session))]
-              (if actively-streaming?
-                (json-response! reply 409
-                                {:ok false
-                                 :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
-                                 :code "agent-already-processing"
+         (let [session (await (session-store/get-session session-id))
+               can-send-result (session-store/session-can-send? session)]
+           (if (:can-send can-send-result)
+             (let [agent-session (active-agent-session conversation-id)
+                   actively-streaming? (and agent-session (streaming? agent-session))]
+               (if actively-streaming?
+                 (json-response! reply 409
+                                 {:ok false
+                                  :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
+                                  :code "agent-already-processing"
                                  :has-active-stream true
                                  :can-send false})
-                (await (queue-turn! "Async agent chat failed"))))
+                 (await (queue-turn! "Async agent chat failed"))))
             (let [latest-event (when (= "running" (:status session))
                                  (await (latest-run-event! (:run_id session))))]
               (await (detect-zombies conversation-id session session-id queue-turn!
@@ -787,7 +750,7 @@
     (if-not provided-session-id
       (await (queue-turn! "Async direct agent chat failed"))
       (try
-        (let [session (await (session-store/get-session (redis/get-client) session-id))
+        (let [session (await (session-store/get-session session-id))
               can-send-result (session-store/session-can-send? session)]
           (if (:can-send can-send-result)
             (let [agent-session (active-agent-session conversation-id)
@@ -818,15 +781,14 @@
         requested-run-id (str (or (aget raw "run_id")
                                   (aget raw "runId")
                                   ""))
-        reason (str (or (aget raw "reason") "operator_abort"))
-        redis-client (redis/get-client)
-        run (when-not (str/blank? requested-run-id)
-              (get @runs* requested-run-id))
-        session-id (or (some-> requested-session-id not-empty)
-                       (:session_id run))]
-    (-> (if (and redis-client (not (str/blank? (str session-id))))
-          (session-store/get-session redis-client session-id)
-          (js/Promise.resolve nil))
+         reason (str (or (aget raw "reason") "operator_abort"))
+         run (when-not (str/blank? requested-run-id)
+               (get @runs* requested-run-id))
+         session-id (or (some-> requested-session-id not-empty)
+                        (:session_id run))]
+     (-> (if (not (str/blank? (str session-id)))
+           (session-store/get-session session-id)
+           (js/Promise.resolve nil))
         (.then
          (fn [session]
            (let [conversation-id (str (or (some-> requested-conversation-id not-empty)
@@ -848,8 +810,8 @@
                                                      (assoc :status "aborted"
                                                             :error reason
                                                             :updated_at (now-iso))))))
-                      (-> (if (and redis-client (not (str/blank? resolved-session-id)))
-                            (session-store/update-session! redis-client resolved-session-id
+                      (-> (if (not (str/blank? resolved-session-id))
+                            (session-store/update-session! resolved-session-id
                                                            {:status "aborted"
                                                             :error reason
                                                             :has_active_stream false})
@@ -895,7 +857,7 @@
       (json-response! reply 400 {:error "session_id is required"})
 
       :else
-      (-> (session-store/get-session (redis/get-client) session-id)
+      (-> (session-store/get-session session-id)
           (.then (fn [session]
                    (if session
                      (let [conversation-id' (str (or (:conversation_id session) conversation-id ""))
@@ -915,7 +877,7 @@
                                       (json-response! reply 200
                                                       (session-status-running-response
                                                        session-id session runtime-active? can-send stalled? latest-event)))))))
-                     ;; No session in Redis - trust in-memory runtime if it still has a live turn.
+                     ;; No session in the store - trust in-memory runtime if it still has a live turn.
                      (if (runtime-processing-session? conversation-id)
                        (json-response! reply 200
                                        {:session_id session-id
@@ -1177,11 +1139,10 @@
 
 (defroute api-data-pg-tables! []
   "GET" "/api/data/pg/tables"
-  (json-response! reply 200
-                  {:ok true
-                   :tables ["ingestion_sources" "ingestion_jobs" "ingestion_file_state"
-                            "orgs" "users" "roles" "memberships" "data_lakes"
-                            "sessions" "audit_events" "permissions"]}))
+  ;; PostgreSQL was removed in the E14 Mongo migration (kanban 14-05).
+  ;; The Mongo explorer at /api/data/mongo/* is the replacement surface.
+  (json-response! reply 410 {:error "pg_removed"
+                             :detail "PostgreSQL backend removed; use /api/data/mongo/collections"}))
 
 (defroute api-data-jobs-build-semantic-edges! []
   "POST" "/api/data/jobs/build-semantic-edges"
@@ -1195,37 +1156,9 @@
 
 (defroute api-data-pg-query! []
   "POST" "/api/data/pg/query"
-  (let [body (request-body request)
-        raw-sql (or (aget body "sql") "")
-        table (or (aget body "table") "")
-        limit (or (aget body "limit") 50)
-        db (policy-db runtime)]
-    (cond
-      (nil? db)
-      (json-response! reply 503 {:error "Policy database not configured"})
-
-      (not (str/blank? raw-sql))
-      ;; Raw SQL mode — SELECT only
-      (let [trimmed (str/trim raw-sql)]
-        (if-not (str/starts-with? (str/upper-case trimmed) "SELECT")
-          (json-response! reply 400 {:error "Only SELECT queries are allowed"})
-          (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
-                ;; Inject LIMIT if none present
-                has-limit (re-find #"(?i)\bLIMIT\b" trimmed)
-                final-sql (if has-limit
-                            trimmed
-                            (str trimmed " LIMIT " enforced-limit))]
-            (send-pg-query! reply db final-sql))))
-
-      ;; Table browse mode
-      (or (str/blank? table)
-          (re-find #"[^a-zA-Z0-9_]" table))
-      (json-response! reply 400 {:error "Invalid table name"})
-
-      :else
-      (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
-            sql-str (str "SELECT * FROM " table " LIMIT " enforced-limit)]
-        (send-pg-query! reply table db sql-str)))))
+  ;; PostgreSQL was removed in the E14 Mongo migration (kanban 14-05).
+  (json-response! reply 410 {:error "pg_removed"
+                             :detail "PostgreSQL backend removed; use /api/data/mongo/collections"}))
 
 (defroute api-data-browse! []
   "GET" "/api/data/browse"
@@ -1381,7 +1314,7 @@
                 (if (js/isNaN parsed) 1 (max 1 parsed)))]
     (if (str/blank? session-id)
       (json-response! reply 400 {:ok false :error "session_id is required"})
-      (-> (session-store/get-session (redis/get-client) session-id)
+      (-> (session-store/get-session session-id)
           (.then
            (fn [session]
              (cond
@@ -1400,14 +1333,14 @@
                    (ensure-conversation-access! actor-ctx conversation-id))
                  (if (zero? removed-count)
                    (json-response! reply 409 {:ok false :error "No user turns available to undo"})
-                   (-> (session-store/undo-session-turns! (redis/get-client) session-id turns)
-                       (.then
-                        (fn [_]
-                          (json-response! reply 200 {:ok true
-                                                     :session_id session-id
-                                                     :conversation_id conversation-id
-                                                     :removed_count removed-count
-                                                     :remaining_messages (count rewound-messages)})))))))))
+                    (-> (session-store/undo-session-turns! session-id turns)
+                        (.then
+                         (fn [_]
+                           (json-response! reply 200 {:ok true
+                                                      :session_id session-id
+                                                      :conversation_id conversation-id
+                                                      :removed_count removed-count
+                                                      :remaining_messages (count rewound-messages)})))))))))
           (.catch (partial undo-session-err reply))))))
 
 
@@ -1465,7 +1398,7 @@
     (if (str/blank? run-id)
       (json-response! reply 400 {:error "runId is required"})
       (try
-        (run-events-ok reply run-id (await (run-state/get-run-events-since (redis/get-client) run-id since)))
+        (run-events-ok reply run-id (await (run-state/get-run-events-since run-id since)))
         (catch :default err
           (run-events-err reply err))))))
 

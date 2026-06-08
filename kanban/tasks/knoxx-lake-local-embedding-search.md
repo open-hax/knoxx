@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-lake-local-embedding-search"
 title: "Implement local/dev ChromaDB search and Ollama embedding providers"
-status: incoming
+status: rejected
 priority: P2
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 5
 category: tasks
 ---
-
 # Implement local/dev ChromaDB search and Ollama embedding providers
 
 > Parent epic: `knoxx-knowledge-ops-multi-provider-epic`

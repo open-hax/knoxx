@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-knowledge-ops-demo-seed"
 title: "Knowledge Ops — Demo Seed Spec"
-status: ready
+status: rejected
 priority: P2
 labels: ["tasks", "3sp"]
 created_at: "2026-05-28T22:40:14.397Z"
@@ -9,7 +9,6 @@ source: "specs/tasks/knowledge-ops-demo-seed.md"
 points: 3
 category: tasks
 ---
-
 # Knowledge Ops — Demo Seed Spec
 
 > Source: `specs/tasks/knowledge-ops-demo-seed.md`

@@ -1,5 +1,5 @@
 (ns knoxx.backend.infra.agent.stream.reducer
-  "Pure stream reducer used to test stream semantics independently from Redis,
+  "Pure stream reducer used to test stream semantics independently from the session store,
    run-state, WebSocket, and provider subscription side effects."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.reasoning :as reasoning]
@@ -14,6 +14,7 @@
    :replay-offsets {}
    :think-tag-mode :off
    :tool-loop turn-guards/empty-tool-loop-state
+   :tool-call-ids tool-lifecycle/empty-tool-call-id-state
    :aborting? false
    :seen-lifecycle-events #{}})
 
@@ -85,7 +86,11 @@
 
 (defn- handle-tool-start
   [state event]
-  (let [tool-call-id (:tool-call-id event)
+  (let [resolved (tool-lifecycle/resolve-tool-call-start-id (:tool-call-ids state)
+                                                            {:tool-name (:tool-name event)
+                                                             :tool-call-id (:tool-call-id event)})
+        tool-call-id (:tool-call-id resolved)
+        event (assoc event :tool-call-id tool-call-id)
         guard (turn-guards/observe-tool-call (:tool-loop state)
                                              {:tool-name (:tool-name event)
                                               :tool-call-id tool-call-id
@@ -104,27 +109,38 @@
                                     (merge event
                                            {:count (:count guard)
                                             :streak (:streak guard)}))})]
-    {:state (assoc state :tool-loop (:state guard))
+    {:state (assoc state
+                   :tool-loop (:state guard)
+                   :tool-call-ids (:state resolved))
      :effects (cond-> [base-effect]
                 abort-effect (conj abort-effect))}))
 
+(defn- resolved-tool-call-id
+  [state event]
+  (or (tool-lifecycle/active-tool-call-id (:tool-call-ids state)
+                                          {:tool-name (:tool-name event)
+                                           :tool-call-id (:tool-call-id event)})
+      (:tool-call-id event)))
+
 (defn- handle-tool-update
   [state event]
-  {:state state
-   :effects [{:effect :tool-update
-              :tool-name (:tool-name event)
-              :tool-call-id (:tool-call-id event)
-              :receipt (tool-lifecycle/update-receipt {} event)
-              :run-event (tool-lifecycle/run-event-extra :update event)}]})
+  (let [event (assoc event :tool-call-id (resolved-tool-call-id state event))]
+    {:state state
+     :effects [{:effect :tool-update
+                :tool-name (:tool-name event)
+                :tool-call-id (:tool-call-id event)
+                :receipt (tool-lifecycle/update-receipt {} event)
+                :run-event (tool-lifecycle/run-event-extra :update event)}]}))
 
 (defn- handle-tool-end
   [state event]
-  {:state state
-   :effects [{:effect :tool-end
-              :tool-name (:tool-name event)
-              :tool-call-id (:tool-call-id event)
-              :receipt (tool-lifecycle/end-receipt {} event)
-              :run-event (tool-lifecycle/run-event-extra :end event)}]})
+  (let [event (assoc event :tool-call-id (resolved-tool-call-id state event))]
+    {:state state
+     :effects [{:effect :tool-end
+                :tool-name (:tool-name event)
+                :tool-call-id (:tool-call-id event)
+                :receipt (tool-lifecycle/end-receipt {} event)
+                :run-event (tool-lifecycle/run-event-extra :end event)}]}))
 
 (defn reduce-event
   [state event]

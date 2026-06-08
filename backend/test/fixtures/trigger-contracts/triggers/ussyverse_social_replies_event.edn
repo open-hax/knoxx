@@ -1,0 +1,15 @@
+{:contract/kind :trigger
+ :contract/id "ussyverse_social_replies_event"
+ :contract/version 2
+ :enabled true
+
+ :trigger/kind :event
+ :trigger/actor "discord_automation"
+ :trigger/events [:discord.message]
+ :trigger/condition (or (conditions/discord.mention event)
+                        (conditions/discord.keyword event ["frankie" "yap" "music" "song" "slop" "ussy"
+                                                           "beat" "loop" "track" "art" "create" "mix" "drop"]))
+ :trigger/action :actions/start-agent-session
+ :trigger/agent "ussyverse_social_replies"
+ :trigger/task "A Discord event fired in one of your home channels. Read nearby context, inspect links or attachment URLs if useful, and decide whether to reply in-channel. Replies should feel alive, funny, musical, or socially connective."
+ :data {:context {:reason "contract event: ussyverse social replies"}}}

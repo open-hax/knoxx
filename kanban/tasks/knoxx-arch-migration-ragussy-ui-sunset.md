@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-arch-migration-ragussy-ui-sunset"
 title: "Architecture Migration — Sunset Ragussy UI in Favour of Knoxx Frontend"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Architecture Migration — Sunset Ragussy UI in Favour of Knoxx Frontend
 
 > Parent epic: `knoxx-knowledge-ops-architecture-migration`

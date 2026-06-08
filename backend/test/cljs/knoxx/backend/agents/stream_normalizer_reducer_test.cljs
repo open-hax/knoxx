@@ -94,6 +94,25 @@
       (is (= [{:effect :token :kind :reasoning :delta "secret"}
               {:effect :token :kind :agent_message :delta "shown"}]
              (:effects result)))))
+  (testing "reused provider tool-call ids (call_0 every round) stay distinct per occurrence"
+    (let [start {:type "tool_execution_start" :tool-name "discord_read" :tool-call-id "call_0" :input-preview "a"}
+          end {:type "tool_execution_end" :tool-name "discord_read" :tool-call-id "call_0"}
+          r1 (reducer/reduce-event (reducer/initial-state) start)
+          r1-end (reducer/reduce-event (:state r1) end)
+          r2 (reducer/reduce-event (:state r1-end) (assoc start :tool-name "bluesky_timeline" :input-preview "b"))
+          r2-end (reducer/reduce-event (:state r2) (assoc end :tool-name "bluesky_timeline"))]
+      (is (= "call_0" (-> r1 :effects first :tool-call-id)))
+      (is (= "call_0" (-> r1-end :effects first :tool-call-id)))
+      (is (= "call_0#2" (-> r2 :effects first :tool-call-id)))
+      (is (= "call_0#2" (-> r2-end :effects first :tool-call-id)))))
+  (testing "missing provider tool-call ids get deterministic per-occurrence ids"
+    (let [start {:type "tool_execution_start" :tool-name "bash"}
+          r1 (reducer/reduce-event (reducer/initial-state) start)
+          r2 (reducer/reduce-event (:state r1) start)
+          r2-end (reducer/reduce-event (:state r2) {:type "tool_execution_end" :tool-name "bash"})]
+      (is (= "tool:bash#1" (-> r1 :effects first :tool-call-id)))
+      (is (= "tool:bash#2" (-> r2 :effects first :tool-call-id)))
+      (is (= "tool:bash#2" (-> r2-end :effects first :tool-call-id)))))
   (testing "tool lifecycle and death spiral decisions are pure effects"
     (let [start-event {:type "tool_execution_start"
                        :tool-name "memory.search"

@@ -2,8 +2,7 @@
   (:require [clojure.string :as str]
             [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.routes.contracts :as contract-routes]
-            [knoxx.backend.infra.routes.resources :as resource-routes]
-            [knoxx.backend.infra.redis-client :as redis]))
+            [knoxx.backend.infra.routes.resources :as resource-routes]))
 
 (def fixture-config
   {:contracts-dir "test/fixtures/contracts"})
@@ -15,33 +14,26 @@
      :send! (fn [_status body] (reset! captured body))}))
 
 ;; ---------------------------------------------------------------------------
-;; Invariant: resource index sync is a no-op (not a crash) when Redis is absent.
-;; The old sync-contract-index! name remains as a compatibility alias.
+;; Invariant: resource index sync never crashes startup; it resolves to a
+;; status map. The old sync-contract-index! name remains as a compatibility
+;; alias.
 ;; ---------------------------------------------------------------------------
 
-(deftest ^:async sync-returns-promise-when-redis-absent
-  (testing "sync-resource-index! always returns a Promise even with no Redis client"
-    (with-redefs [redis/get-client (fn [] nil)]
-      (let [p (resource-routes/sync-resource-index! {})]
-        (is (instance? js/Promise p) "must be a Promise")
-        (let [result (await p)]
-          (is (false? (:ok result)))
-          (is (= "Redis not connected" (:error result))))))))
+(deftest ^:async sync-returns-promise-and-status-map
+  (testing "sync-resource-index! returns a Promise resolving to a status map"
+    (let [p (resource-routes/sync-resource-index! fixture-config)]
+      (is (instance? js/Promise p) "must be a Promise")
+      (let [result (await p)]
+        (is (true? (:ok result)))
+        (is (number? (:count result)))))))
 
-(deftest ^:async sync-does-not-throw-when-redis-absent
+(deftest ^:async sync-alias-does-not-throw
   (testing "sync-contract-index! compatibility alias resolves instead of rejecting"
-    (with-redefs [redis/get-client (fn [] nil)]
-      (try
-        (let [result (await (contract-routes/sync-contract-index! {}))]
-          (is (map? result) "resolves to a plain map"))
-        (catch :default err
-          (is false (str "must not reject when Redis absent: " (.-message err))))))))
-
-(deftest sync-no-redis-error-key-is-informative
-  (testing "the no-Redis sentinel message names the root cause unambiguously"
-    (with-redefs [redis/get-client (fn [] nil)]
-      (let [p (contract-routes/sync-contract-index! {})]
-        (is (instance? js/Promise p))))))
+    (try
+      (let [result (await (contract-routes/sync-contract-index! fixture-config))]
+        (is (map? result) "resolves to a plain map"))
+      (catch :default err
+        (is false (str "must not reject: " (.-message err)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Resource route handlers list resources; compatibility contract handlers still

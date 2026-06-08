@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-knowledge-ops-graph-memory-runtime-smoke-e2e"
 title: "Knowledge Ops — Graph Memory Runtime Smoke E2E"
-status: ready
+status: review
 priority: P1
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-04-05T00:00:00Z"
