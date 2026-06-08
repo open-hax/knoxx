@@ -129,6 +129,6 @@ The master role that knows how to compose layers together. Grants `:cap/voice-sy
 1. **Register the master role** in the Knoxx role registry
 2. **Test composition** — ask Knoxx to compose a song using these contracts
 3. **Iterate** — add more voices (more UTAU voicebanks), themes, or personas as the universe expands
-4. **MusicGen integration** — compose instrumental tracks using `music.generate_song` with themes as style prompts, then layer vocals via OpenUTAU
+4. **Vocal synthesis** — compose lyrics and vocal tracks using OpenUTAU with persona voicebanks
 
 No claim without anchor.

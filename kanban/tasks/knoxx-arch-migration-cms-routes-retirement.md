@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-arch-migration-cms-routes-retirement"
 title: "Architecture Migration — Retire Legacy CMS Backend Routes"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Architecture Migration — Retire Legacy CMS Backend Routes
 
 > Parent epic: `knoxx-knowledge-ops-architecture-migration`

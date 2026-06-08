@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-docker-compose-self-hosted"
 title: "Author Docker Compose stack for self-hosted knowledge ops deployment"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Author Docker Compose stack for self-hosted knowledge ops deployment
 
 > Parent epic: `knoxx-knowledge-ops-deploy-self-hosted`

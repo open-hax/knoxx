@@ -162,6 +162,11 @@
                                    (:at event))
                    :ts        (:at event)
                    :kind      (str "knoxx." (:type event))
+                   ;; Session-scoped diagnostics must carry the session project:
+                   ;; without it they default to the workspace project and the
+                   ;; /v1/sessions list (filtered by session project) cannot see
+                   ;; in-flight threads until their first run completes.
+                   :project   (:session-project-name config)
                    :session   (:conversation_id event)
                    :message   (:run_id event)
                    :role      "system"

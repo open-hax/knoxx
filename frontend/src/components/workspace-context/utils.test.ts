@@ -79,6 +79,69 @@ describe("workspace-context shared utilities", () => {
     ]);
   });
 
+  it("surfaces a failed run with no assistant answer as a structured assistant turn", () => {
+    // A failed/aborted run persists the user message + a knoxx.run summary +
+    // reasoning/tool_receipt rows, but NO assistant knoxx.message. Previously the
+    // reasoning/tool timeline was dropped and the session collapsed to just the
+    // user message. It must now reconstruct a structured assistant turn so the
+    // thinking + tool calls stay visible for auditing.
+    const rows: MemorySessionRow[] = [
+      {
+        id: "trigger-x:user",
+        kind: "knoxx.message",
+        role: "user",
+        text: "hey frankie",
+        session: "pi:test",
+        extra: { run_id: "trigger-x" },
+      },
+      {
+        id: "trigger-x:tool:call_0",
+        kind: "knoxx.tool_receipt",
+        role: "system",
+        text: "discord_read result",
+        session: "pi:test",
+        extra: { run_id: "trigger-x", receipt: { id: "call_0", tool_name: "discord_read", status: "completed" } },
+      },
+      {
+        id: "trigger-x:summary",
+        kind: "knoxx.run",
+        role: "system",
+        text: "Run trigger-x · status failed",
+        session: "pi:test",
+        extra: { run_id: "trigger-x", status: "failed" },
+      },
+    ];
+
+    const messages = memoryRowsToMessages(rows);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    const assistant = messages[1];
+    expect(assistant.status).toBe("error");
+    expect(assistant.runId).toBe("trigger-x");
+    expect(assistant.traceBlocks).toEqual([
+      {
+        id: "call_0",
+        kind: "tool_call",
+        status: "done",
+        at: undefined,
+        toolName: "discord_read",
+        toolCallId: "call_0",
+        inputPreview: undefined,
+        outputPreview: "discord_read result",
+        updates: undefined,
+        isError: undefined,
+      },
+    ]);
+  });
+
+  it("does not synthesize a run turn when the assistant answer is present", () => {
+    const rows: MemorySessionRow[] = [
+      { id: "r:assistant", kind: "knoxx.message", role: "assistant", text: "done", session: "s", extra: { run_id: "r" } },
+      { id: "r:summary", kind: "knoxx.run", role: "system", text: "Run r", session: "s", extra: { run_id: "r", status: "completed" } },
+    ];
+    // Only the real assistant message; the run summary must not become a duplicate turn.
+    expect(memoryRowsToMessages(rows).map((m) => m.id)).toEqual(["r:assistant"]);
+  });
+
   it("collapses overlapping streaming trace deltas", () => {
     const blocks: ChatTraceBlock[] = [{ id: "reasoning-1", kind: "reasoning", status: "streaming", content: "The answer" }];
 

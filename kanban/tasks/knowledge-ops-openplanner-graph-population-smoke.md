@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-knowledge-ops-openplanner-graph-population-smoke"
 title: "Knowledge Ops — OpenPlanner Graph Population Smoke"
-status: ready
+status: review
 priority: P1
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-04-05T00:00:00Z"
@@ -9,7 +9,6 @@ source: "specs/tasks/knowledge-ops-openplanner-graph-population-smoke.md"
 points: 5
 category: tasks
 ---
-
 # Knowledge Ops — OpenPlanner Graph Population Smoke
 
 > Source: `specs/tasks/knowledge-ops-openplanner-graph-population-smoke.md`

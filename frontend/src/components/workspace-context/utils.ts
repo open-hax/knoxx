@@ -253,7 +253,43 @@ export function memoryRowsToMessages(rows: MemorySessionRow[]): ChatMessage[] {
   const derivedTraceBlocks = fallbackTraceBlocksByRunId(rows);
   const hasPrimaryMessages = rows.some((row) => row.kind === "knoxx.message" && isChatRole(row.role) && typeof row.text === "string" && row.text.trim().length > 0);
 
+  // Runs whose assistant answer was persisted carry their own trace timeline.
+  // A run with no assistant message (failed, aborted, or empty output) would
+  // otherwise drop its reasoning/tool blocks entirely and collapse to the lone
+  // user message — losing the audit trail. Track which runs already have an
+  // assistant turn so we can synthesize one for those that don't.
+  const assistantRunIds = new Set<string>();
+  for (const row of rows) {
+    if (row.kind === "knoxx.message" && row.role === "assistant") {
+      const rid = memoryRowRunId(row);
+      if (rid) assistantRunIds.add(rid);
+    }
+  }
+
   return rows.flatMap((row, index) => {
+    // Surface a no-assistant run's summary as a structured assistant turn so the
+    // thinking + tool-call timeline stays visible for auditing instead of being
+    // discarded. Successful runs (assistant row present) are handled below.
+    if (row.kind === "knoxx.run") {
+      const runId = memoryRowRunId(row);
+      const blocks = runId ? derivedTraceBlocks.get(runId) : undefined;
+      if (runId && !assistantRunIds.has(runId) && blocks && blocks.length > 0) {
+        const extra = parseMemoryRowExtra(row);
+        const status = typeof extra?.status === "string" ? extra.status : undefined;
+        const synthesized: ChatMessage = {
+          id: row.id || `${runId}:run`,
+          role: "assistant",
+          content: typeof row.text === "string" ? row.text : "",
+          model: typeof row.model === "string" ? row.model : null,
+          runId,
+          status: status === "failed" ? "error" : "done",
+          traceBlocks: blocks,
+        };
+        return [synthesized];
+      }
+      return [];
+    }
+
     const text = typeof row.text === "string" ? row.text : "";
     const isPrimaryMessage = row.kind === "knoxx.message";
     const isLegacyReadableRow = !hasPrimaryMessages && !isPrimaryMessage && isChatRole(row.role) && text.trim().length > 0;

@@ -7,7 +7,8 @@
    Its job is to ensure CLJS namespaces are loaded so exported components are
    available under window.knoxx.* for TS wrappers to call." 
   (:require [knoxx.frontend.app :as app]
-            [knoxx.frontend.admin.event-agents-panel]))
+            [knoxx.frontend.admin.event-agents-panel]
+            [knoxx.frontend.pages.source-doc.view]))
 
 (defn ^:dev/after-load after-load []
   (js/console.log "[knoxx-frontend] hot reload")

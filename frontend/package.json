@@ -10,6 +10,7 @@
     "test": "NODE_ENV=test node ./node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "test:coverage": "NODE_ENV=test node ./node_modules/vitest/vitest.mjs run --config vitest.config.ts --coverage",
     "test:watch": "NODE_ENV=test node ./node_modules/vitest/vitest.mjs --config vitest.config.ts",
+    "test:cljs": "shadow-cljs compile test",
     "test:e2e:deps": "npm --prefix e2e install --no-audit --no-fund",
     "test:e2e:compile": "NODE_PATH=./e2e/node_modules shadow-cljs compile e2e",
     "test:e2e": "npm --prefix e2e install --no-audit --no-fund && vite build --config vite.bridge.config.ts && vite build --config vite.app-bridge.config.ts && shadow-cljs release app && NODE_PATH=./e2e/node_modules shadow-cljs compile e2e && NODE_PATH=./e2e/node_modules ./e2e/node_modules/.bin/ava dist/e2e/knoxx-e2e.cjs",

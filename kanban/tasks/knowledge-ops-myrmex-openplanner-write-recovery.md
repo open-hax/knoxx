@@ -1,13 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-myrmex-openplanner-write-recovery"
 title: "Knowledge Ops — Myrmex OpenPlanner Write Recovery"
-status: ready
-priority: P1
+status: review
+priority: "P1"
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-04-05T00:00:00Z"
 source: "specs/tasks/knowledge-ops-myrmex-openplanner-write-recovery.md"
 points: 3
-category: tasks
+category: "tasks"
 ---
 # Knowledge Ops — Myrmex OpenPlanner Write Recovery
 
@@ -64,5 +64,7 @@ The live `myrmex` runtime is repeatedly reporting:
 - OpenPlanner backpressure becomes exceptional, not steady-state.
 
 ---
-
 **Breakdown 2026-05-29 (accepted → ready):** 3sp, P1. Scope confirmed — runtime connectivity fix: (1) inspect Myrmex transport config and OpenPlanner URL/auth in `docker-compose.yml`, (2) identify the failing hop (health check vs write, network path vs auth vs contract drift), (3) fix and verify logs clear. No algorithm changes. Exit signal: Myrmex logs show successful writes and backpressure streak stops growing. Ready for implementation.
+
+Many of these older ones from march/april are likely done, but never progressed forward. I'm moving these to review
+---

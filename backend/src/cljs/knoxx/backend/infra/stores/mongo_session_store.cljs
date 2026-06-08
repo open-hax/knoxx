@@ -1,7 +1,9 @@
 (ns knoxx.backend.infra.stores.mongo-session-store
-  "MongoDB-backed session state for resilient Knoxx sessions.
+  "MongoDB-backed thread state for resilient Knoxx agent threads.
    Replaces Redis session store with MongoDB + TTL index.
-   Active sessions are stored in knoxx_sessions collection.
+   Active threads are stored in the knoxx_threads collection — 'thread'
+   (not 'session') is the canonical name for an agent conversation; auth
+   browser-sessions keep the word 'session' (knoxx_policy_sessions).
    In-memory cache preserved for fast access during streaming."
   (:require
     [clojure.string :as str]
@@ -12,7 +14,7 @@
 
 (def SESSION_TTL_SECONDS 3600) ; 1 hour TTL for active sessions
 (def STICKY_SESSION_TTL_SECONDS (* 24 60 60)) ; 24 hours for sticky sessions
-(def COLLECTION_NAME "knoxx_sessions")
+(def COLLECTION_NAME "knoxx_threads")
 (def ACTIVE_STATUS #{"running" "queued" "waiting_input"})
 
 ;; ── In-memory cache (preserved from Redis store) ──────────────────────
@@ -296,7 +298,7 @@
                                   (assoc :messages rewound-messages
                                          :status "waiting_input"
                                          :has_active_stream false
-                                         :updated_at (js/Date.)
+                                          :updated_at (js/Date.now)
                                          :answer nil
                                          :error nil)))))))))
 
@@ -307,14 +309,20 @@
   []
   (->> @session-cache*
        vals
-       (filter #(contains? #{"running" "queued" "waiting_input"} (:status %)))
-       (sort-by :updated_at #(compare %2 %1))
+        (filter #(contains? #{"running" "queued" "waiting_input"} (:status %)))
+        (sort-by #(let [v (:updated_at %)]
+                    (cond
+                      (number? v) v
+                      (instance? js/Date v) (.getTime v)
+                      (string? v) (.getTime (js/Date. v))
+                      :else 0))
+                  >)
        vec))
 
 ;; ── Setup ─────────────────────────────────────────────────────────────
 
 (defn ^:async setup-indexes!
-  "Create required indexes on knoxx_sessions collection."
+  "Create required indexes on knoxx_threads collection."
   [db]
   (let [coll (.collection db COLLECTION_NAME)]
     (await (.createIndex coll #js {"session_id" 1} #js {"unique" true}))

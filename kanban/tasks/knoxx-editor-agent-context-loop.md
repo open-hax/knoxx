@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-editor-agent-context-loop"
 title: "Editor Agent Context Loop"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Editor Agent Context Loop
 
 > Parent epic: `knoxx-unified-workplace-pattern`

@@ -4,7 +4,7 @@
   (:require [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.system-instance :as system-instance]))
 
-(def COLLECTION_NAME "knoxx_memory_sessions")
+(def COLLECTION_NAME "knoxx_memory_threads")
 (def ^:private DEFAULT_TTL_SECONDS 10) ;; 10 seconds, matching existing cache TTL
 
 (defn- coll [db] (.collection db COLLECTION_NAME))

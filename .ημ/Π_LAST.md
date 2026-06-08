@@ -1,30 +1,35 @@
-# Π Fork Tax 2026-06-04T18:33:20Z — trigger tests + domain refactor
+# Π Fork Tax 2026-06-08T00:00:00Z — infra fixes + frontend refactor
 
 ## Snapshot
 - **Branch:** `fix/frontend-es2022-lib`
-- **Base target:** `origin/staging`
-- **Scope:** Backend trigger test suite, domain condition registry refactor, event dispatch contract loading, source runtime discord integration
+- **Base target:** `origin/fix/frontend-es2022-lib` (2 commits ahead)
+- **Scope:** Backend infra fixes, frontend ES2022 lib + source doc refactor, contract updates, kanban task hygiene, ingestion clj-kondo imports
 
 ## Changed
 
-1. **domain-condition-registry** — `backend/src/cljs/knoxx/backend/domain/condition/registry.cljs`
-   and its test `backend/test/cljs/knoxx/backend/domain/condition/registry_test.cljs`.
-2. **contracts-loader** — `backend/src/cljs/knoxx/backend/domain/contracts/loader.cljs`.
-3. **discord-source** — `backend/src/cljs/knoxx/backend/domain/discord/source.cljs`.
-4. **event-dispatch** — `backend/src/cljs/knoxx/backend/domain/event/dispatch.cljs`.
-5. **source-runtime** — `backend/src/cljs/knoxx/backend/domain/source/runtime.cljs`.
-6. **trigger-tests** — 11 new trigger test namespaces under
-   `backend/test/cljs/knoxx/backend/triggers/` covering action invocation,
-   contract root mismatch, contracts discovery, error propagation,
-   event deduplication, production scenario, real contracts dispatch,
-   source dispatch, trigger loading, trigger matching, and trigger validation.
-7. **session-note** — `docs/notes/2026.06.04.09.47.41.md`.
+1. **backend-infra** — 5 modified files in `backend/src/cljs/knoxx/backend/infra/` covering agent turn, openplanner memory, and mongo stores (memory sessions, session store, session titles).
+2. **contracts** — 8 modified EDN files across `contracts/agents/`, `contracts/capabilities/`, `contracts/fork-tales/`, `contracts/roles/`.
+3. **frontend** — Extensive changes:
+   - `package.json`, `shadow-cljs.edn` build config updates
+   - `bridge/index.ts`, `core.cljs` runtime wiring
+   - Admin page components, workspace-context utils + tests
+   - API admin module + tests
+   - Document links removed (deleted `document-links.ts` + test)
+   - `SourceDocPage.tsx` refactored, `ForumThreadView.tsx` deleted
+   - New `frontend/src/cljs/knoxx/frontend/lib/` directory
+   - New `frontend/src/cljs/knoxx/frontend/pages/source_doc/` directory
+   - New `SourceDocPage.test.tsx`, `frontend/test/` directory
+4. **kanban** — 33 task files updated for hygiene.
+5. **ingestion-clj-kondo** — New clj-kondo import configs (malli, next.jdbc, babashka/fs, rewrite-clj).
 
 ## Verification
-- `pnpm -C backend exec shadow-cljs compile test` → pass (523 tests, 1528 assertions, 0 failures, 0 errors)
+- Prior Π commit `4a241e71` verified tests passing. No test command run this session.
 
 ## Concurrent Dirt
-None. All working-tree changes are owned by this snapshot.
+None. All working tree changes are owned by this snapshot.
+
+## Blocked
+- `.claude/` — agent runtime state (`scheduled_tasks.lock`); intentionally excluded.
 
 ## Follow-up
-- PR `fix/frontend-es2022-lib` → `staging`; merge after checks.
+- Push branch + Π tag to origin.

@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-futuresight-kms-cms-python-backend"
 title: "Build Layer 2 CMS Python backend in km_labels"
-status: incoming
+status: rejected
 priority: P2
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 5
 category: tasks
 ---
-
 # Build Layer 2 CMS Python backend in km_labels
 
 > Parent epic: `knoxx-knowledge-ops-chat-widget-layers`

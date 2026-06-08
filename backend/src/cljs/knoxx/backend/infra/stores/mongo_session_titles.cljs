@@ -1,10 +1,10 @@
 (ns knoxx.backend.infra.stores.mongo-session-titles
-  "Mongo twin for session title cache (replaces Redis knoxx:session-title: keys).
+  "Mongo twin for thread title cache (replaces Redis knoxx:session-title: keys).
    TTL-indexed documents with application-managed expiry."
   (:require [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.system-instance :as system-instance]))
 
-(def COLLECTION_NAME "knoxx_session_titles")
+(def COLLECTION_NAME "knoxx_thread_titles")
 (def ^:private DEFAULT_TTL_SECONDS (* 60 60 24 7)) ;; 7 days
 
 (defn- coll [db] (.collection db COLLECTION_NAME))
