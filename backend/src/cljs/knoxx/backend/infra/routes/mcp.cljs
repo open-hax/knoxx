@@ -1,7 +1,6 @@
 (ns knoxx.backend.infra.routes.mcp
   "Serve Knoxx tools over MCP (Model Context Protocol) Streamable HTTP."
-  (:require [shadow.cljs.modern :refer [js-await]]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [malli.core :as m]
             [malli.error :as me]
             [knoxx.backend.shape.app-shapes :refer [route!]]
@@ -180,8 +179,8 @@
 (defn- require-browser-auth!
   "Returns a Fastify preHandler hook that resolves browser auth context onto request.authContext."
   [policy-db config]
-  (fn [req reply]
-    (js-await [result (browser-auth-ctx! req policy-db config)]
+  (^:async fn [req reply]
+    (let [result (await (browser-auth-ctx! req policy-db config))]
       (when result
         (.redirect reply (:redirect result) 302)))))
 

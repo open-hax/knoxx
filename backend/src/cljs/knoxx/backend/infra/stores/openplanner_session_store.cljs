@@ -4,8 +4,7 @@
    Writes runs as structured events. Reads are best-effort via graph query.
    This store is authoritative for COMPLETED runs only.
    In-flight runs are owned by the Mongo session store."
-  (:require [shadow.cljs.modern :refer [js-await]]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run! get-run patch-run! put-run!]]
             [knoxx.backend.infra.openplanner.memory :as op-mem]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -103,29 +102,45 @@
                 :extra (merge scope extra)}))]
     (run-event-list run scope mk)))
 
+;; `await` requires a real async context, which `^:async` metadata on a
+;; defrecord protocol method does not establish — so the async bodies live in
+;; top-level `^:async` helpers and the protocol methods delegate to them.
+
+(defn- ^:async put-run-impl!
+  [config run]
+  (assert-run! run "OpenPlannerSessionStore/put-run!")
+  (let [events (run->events config run)
+        _ (await (openplanner-client/events! (openplanner-client/client config) events))]
+    run))
+
+(defn- ^:async get-run-impl!
+  [config run-id]
+  (let [result (await (openplanner-client/vector-search! (openplanner-client/client config)
+                                                         {:q run-id
+                                                          :k 1
+                                                          :project (:session-project-name config)
+                                                          :kind "knoxx.run"}))]
+    (when-let [hit (first (:hits result))]
+      (some-> hit :metadata :run_payload))))
+
+(defn- ^:async patch-run-impl!
+  [store run-id patch]
+  (let [current (await (get-run store run-id))
+        updated (merge (or current {:run_id run-id}) patch
+                       {:updated_at (time/now-iso)})]
+    (put-run! store updated)))
+
 (defrecord OpenPlannerSessionStore [config]
   ISessionStore
 
   (put-run! [_ run]
-    (assert-run! run "OpenPlannerSessionStore/put-run!")
-    (let [events (run->events config run)]
-      (js-await [_ (openplanner-client/events! (openplanner-client/client config) events)]
-        run)))
+    (put-run-impl! config run))
 
   (get-run [_ run-id]
-    (js-await [result (openplanner-client/vector-search! (openplanner-client/client config)
-                                                          {:q run-id
-                                                           :k 1
-                                                           :project (:session-project-name config)
-                                                           :kind "knoxx.run"})]
-      (when-let [hit (first (:hits result))]
-        (some-> hit :metadata :run_payload))))
+    (get-run-impl! config run-id))
 
   (patch-run! [store run-id patch]
-    (js-await [current (get-run store run-id)]
-      (let [updated (merge (or current {:run_id run-id}) patch
-                           {:updated_at (time/now-iso)})]
-        (put-run! store updated))))
+    (patch-run-impl! store run-id patch))
 
   (list-active-runs [_ _session-id]
     (js/Promise.resolve []))

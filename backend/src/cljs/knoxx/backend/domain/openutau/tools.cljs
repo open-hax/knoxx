@@ -1,7 +1,6 @@
 (ns knoxx.backend.domain.openutau.tools
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.openutau.openutau :as openutau]
-            [shadow.cljs.modern :refer [js-await]]))
+            [knoxx.backend.domain.openutau.openutau :as openutau]))
 
 (def default-render-script-path "render-ustx.sh")
 
@@ -29,18 +28,18 @@
 (def project->ustx-yaml openutau/project->ustx-yaml)
 (def readme-markdown openutau/readme-markdown)
 
-(defn render-ustx-to-wav
+(defn ^:async render-ustx-to-wav
   "Render a .ustx file to .wav using the headless OpenUTAU pipeline.
    Returns a promise that resolves to {:wav_path string} or rejects with error."
   [ustx-path output-wav-path]
   (let [child-process (js/require "node:child_process")
         util (js/require "node:util")
         exec-file (.promisify util (.-execFile child-process))
-        script (render-script-path)]
-    (js-await [result (exec-file script #js [ustx-path output-wav-path]
-                                 #js {:timeout 600000 :maxBuffer 4194304})]
-      (let [stdout (.-stdout result)]
-        (if (str/includes? stdout "Success!")
-          {:wav_path output-wav-path
-           :stdout stdout}
-          (throw (js/Error. (str "Render did not report success. stdout: " stdout))))))))
+        script (render-script-path)
+        result (await (exec-file script #js [ustx-path output-wav-path]
+                                 #js {:timeout 600000 :maxBuffer 4194304}))
+        stdout (.-stdout result)]
+    (if (str/includes? stdout "Success!")
+      {:wav_path output-wav-path
+       :stdout stdout}
+      (throw (js/Error. (str "Render did not report success. stdout: " stdout))))))
