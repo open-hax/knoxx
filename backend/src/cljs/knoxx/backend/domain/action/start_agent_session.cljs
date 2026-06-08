@@ -2,6 +2,7 @@
   "Agent session lifecycle actions."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.action.registry :refer [run-action!]]
+            [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.infra.agent.runner :as agents-runner]
             [knoxx.backend.infra.tooling :as tooling]))
 
@@ -28,7 +29,9 @@
   [event k]
   (let [payload (:event/payload event)]
     (or (get payload k)
-        (get payload (keyword (name k))))))
+        (when-not (namespace k)
+          (or (get payload (keyword (name k)))
+              (get payload (name k)))))))
 
 (defn- qualified-name
   [value]
@@ -39,18 +42,65 @@
     (nil? value) nil
     :else (some-> value str str/trim not-empty)))
 
-(defn- start-message
-  [trigger event resolved trigger-id]
+(defn- first-nonblank-path
+  [m candidates]
+  (some (fn [[path source]]
+          (when-let [value (nonblank (get-in m path))]
+            {:task value
+             :task-source source
+             :deprecated-agent-task-fallback? false}))
+        candidates))
+
+(def ^:private action-task-paths
+  [[[:action/with :task] :action/task]
+   [[:action/with :task-prompt] :action/task-prompt]
+   [[:action/with :taskPrompt] :action/task-prompt]
+   [[:action/with :message-template] :action/message-template]
+   [[:action/with :message_template] :action/message-template]
+   [[:action/with :user-message] :action/user-message]
+   [[:action/with :userMessage] :action/user-message]])
+
+(def ^:private trigger-task-paths
+  [[[:trigger/task] :trigger/task]
+   [[:trigger/task-prompt] :trigger/task-prompt]
+   [[:trigger/message-template] :trigger/message-template]
+   [[:trigger/user-message] :trigger/user-message]
+   [[:trigger/context :task] :trigger/context-task]
+   [[:trigger/raw :trigger/task] :trigger/task]
+   [[:trigger/raw :trigger/task-prompt] :trigger/task-prompt]
+   [[:trigger/raw :trigger/message-template] :trigger/message-template]
+   [[:trigger/raw :trigger/user-message] :trigger/user-message]
+   [[:trigger/raw :data :task] :trigger/data-task]
+   [[:trigger/raw :data :message-template] :trigger/data-message-template]
+   [[:trigger/raw :data :context :task] :trigger/context-task]])
+
+(defn action-task-input
+  "Resolve triggered-agent task text; agent :prompts :task is fallback only."
+  [action trigger resolved]
+  (or (first-nonblank-path action action-task-paths)
+      (first-nonblank-path trigger trigger-task-paths)
+      (when-let [task (nonblank (:task-prompt resolved))]
+        {:task task
+         :task-source :agent/task-prompt
+         :deprecated-agent-task-fallback? true})))
+
+(defn render-start-message
+  "Render the user message for an event-triggered agent session."
+  [trigger event task-input trigger-id]
   (let [payload (:event/payload event)
-        task-prompt (:task-prompt resolved)]
+        task (:task task-input)
+        task-source (:task-source task-input)
+        task-label (if (= task-source :agent/task-prompt)
+                     "Deprecated agent task prompt fallback:"
+                     "Action task prompt:")]
     (str "Event: " (qualified-name (:event/type event)) "\n"
          "Trigger: " (or (:trigger/id trigger) trigger-id) "\n"
          "Reason: " (or (get-in trigger [:trigger/context :reason]) "trigger action") "\n"
          "Channel ID: " (or (payload-value event :channelId) (payload-value event :channel-id) "") "\n"
          "Author: " (or (payload-value event :authorUsername) (payload-value event :author-username) "") "\n"
-         "Content: " (or (:content payload) "") "\n\n"
-         (when-not (str/blank? (str task-prompt))
-           (str "Agent task prompt:\n" task-prompt "\n")))))
+         "Content: " (or (:content payload) (payload-value event :content) "") "\n\n"
+         (when-not (str/blank? (str task))
+           (str task-label "\n" task "\n")))))
 
 (defn- action-agent-id
   [ctx action]
@@ -125,24 +175,35 @@
         resolved (tooling/resolve-agent-contract config agent-id (actor-id ctx nil))
         actor-id' (actor-id ctx resolved)
         ts (.now js/Date)
-        ids (triggered-session-identifiers trigger event agent-id ts)]
+        ids (triggered-session-identifiers trigger event agent-id ts)
+        task-input (action-task-input action trigger resolved)
+        rendered-message (render-start-message trigger event task-input (:trigger-id ids))]
+    (when (:deprecated-agent-task-fallback? task-input)
+      (errors/log-warning!
+       :action/start-agent-session.deprecated-agent-task-prompt
+       {:agent-id agent-id
+        :actor-id actor-id'
+        :trigger-id (:trigger-id ids)
+        :event-id (:event/id event)}))
     (agents-runner/spawn-direct!
      config
      {:conversation_id (:conversation-id ids)
       :session_id (:session-id ids)
       :run_id (:run-id ids)
-      :message (start-message trigger event resolved (:trigger-id ids))
+      :message rendered-message
       :agent_spec (merge {:contract_id agent-id
                           :actor_id actor-id'
                           :role (:role resolved)
                           :system_prompt (:system-prompt resolved)
-                          :task_prompt (:task-prompt resolved)
                           :model (:model resolved)
                           :thinking_level (:thinking-level resolved)
                           :tool_policies (:tool-policies resolved)
                           :sources (:sources resolved)
                           :memory_hydration (:memory-hydration resolved)
-                          :context_policy (:context-policy resolved)}
+                          :context_policy (:context-policy resolved)
+                          :task_source (some-> (:task-source task-input) qualified-name)
+                          :rendered_task_prompt (:task task-input)
+                          :deprecated_agent_task_fallback (:deprecated-agent-task-fallback? task-input)}
                          (triggered-audit-metadata trigger event ids))
       :model (:model resolved)})))
 

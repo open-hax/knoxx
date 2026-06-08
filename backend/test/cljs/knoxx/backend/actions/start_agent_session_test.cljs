@@ -1,5 +1,6 @@
 (ns knoxx.backend.actions.start-agent-session-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [knoxx.backend.domain.action.start-agent-session :as start-agent-session]))
 
 (deftest triggered-session-identifiers-include-trigger-scope-and-timestamp
@@ -52,3 +53,39 @@
             {:trigger/id "ussyverse_social_creative_cron"}
             event
             ids)))))
+
+(deftest action-task-input-prefers-action-or-trigger-over-agent-task-prompts
+  (testing "trigger/action task text is the primary source for triggered user messages"
+    (is (= {:task "Act from the trigger."
+            :task-source :action/task
+            :deprecated-agent-task-fallback? false}
+           (start-agent-session/action-task-input
+            {:action/with {:task "Act from the trigger."}}
+            {:trigger/task "Act from the trigger resource."}
+            {:task-prompt "Legacy agent task."}))))
+  (testing "legacy agent task prompts are only a deprecated fallback"
+    (is (= {:task "Legacy agent task."
+            :task-source :agent/task-prompt
+            :deprecated-agent-task-fallback? true}
+           (start-agent-session/action-task-input
+            {:action/with {}}
+            {}
+            {:task-prompt "Legacy agent task."})))))
+
+(deftest rendered-start-message-labels-action-task-source
+  (let [event {:event/type :discord.message
+               :event/payload {:channelId "chan-1"
+                               :authorUsername "err"
+                               :content "ping"}}
+        message (start-agent-session/render-start-message
+                 {:trigger/id "ussyverse_social_replies_event"
+                  :trigger/context {:reason "contract event: ussyverse social replies"}}
+                 event
+                 {:task "Use the action-owned task."
+                  :task-source :trigger/task}
+                 "ussyverse_social_replies_event")]
+    (is (str/includes? message "Event: discord.message"))
+    (is (str/includes? message "Reason: contract event: ussyverse social replies"))
+    (is (str/includes? message "Action task prompt:"))
+    (is (str/includes? message "Use the action-owned task."))
+    (is (not (str/includes? message "Agent task prompt:")))))
