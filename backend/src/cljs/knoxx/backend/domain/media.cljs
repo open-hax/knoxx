@@ -24,12 +24,11 @@
   [value]
   (some-> (str value) (str/includes? "cdn.discordapp.com/attachments")))
 
-(defn- discord-bot-token!
+(defn- ^:async discord-bot-token!
   "Get Discord bot token from the current actor credential."
   [runtime]
-  (-> (actor-credentials/get-credential! runtime "discord_bot")
-      (.then (fn [credential]
-               (actor-credentials/secret-value credential :botToken :bot-token :token)))))
+  (let [credential (await (actor-credentials/get-credential! runtime "discord_bot"))]
+    (actor-credentials/secret-value credential :botToken :bot-token :token)))
 
 ;; -------------------------------------------------------------------------
 ;; Path / FS shims
@@ -263,19 +262,18 @@
   [buffer mime-type]
   (str "data:" (sanitize-mime-type mime-type "application/octet-stream") ";base64," (.toString buffer "base64")))
 
-(defn temp-media-dir!
+(defn ^:async temp-media-dir!
   [_runtime name]
   (let [dir (.join path (os-tmpdir os) "knoxx-media" name)]
-    (-> (fs-mkdir! fs dir #js {:recursive true})
-        (.then (fn [] dir)))))
+    (await (fs-mkdir! fs dir #js {:recursive true}))
+    dir))
 
-(defn temp-file-path!
+(defn ^:async temp-file-path!
   [runtime name ext]
-  (-> (temp-media-dir! runtime name)
-      (.then (fn [dir]
-               (.join path
-                      dir
-                      (str (.randomUUID crypto) (or ext "")))))))
+  (let [dir (await (temp-media-dir! runtime name))]
+    (.join path
+           dir
+           (str (.randomUUID crypto) (or ext "")))))
 
 (defn infer-upload-filename
   [url idx]
@@ -283,7 +281,7 @@
         candidate (some-> pathname (str/split #"/") last str/trim not-empty)]
     (or candidate (str "attachment-" idx ".bin"))))
 
-(defn load-media-source!
+(defn ^:async load-media-source!
   [runtime config raw-source max-bytes]
   (let [source (or (normalize-tool-path-arg raw-source) raw-source "")]
     (cond
@@ -298,61 +296,54 @@
       (source-http-url? source)
       (let [token-promise (if (source-discord-cdn-url? source)
                             (discord-bot-token! runtime)
-                            (js/Promise.resolve nil))]
-        (-> token-promise
-            (.then (fn [token]
-                     (remote-client/fetch-bytes!
-                      (remote-client/client)
-                      source
-                      (cond-> {:max-bytes max-bytes
-                               :label "Source media"
-                               :fallback-mime-type (workspace-media-mime-type source)
-                               :filename (infer-upload-filename source 0)}
-                        token (assoc :authorization (str "Bot " token))))))))
+                            (js/Promise.resolve nil))
+            token (await token-promise)]
+        (remote-client/fetch-bytes!
+         (remote-client/client)
+         source
+         (cond-> {:max-bytes max-bytes
+                  :label "Source media"
+                  :fallback-mime-type (workspace-media-mime-type source)
+                  :filename (infer-upload-filename source 0)}
+           token (assoc :authorization (str "Bot " token)))))
 
       :else
       (let [{:keys [absolute relative]} (resolve-workspace-media-path runtime config source)
             mime-type (sanitize-mime-type (workspace-media-mime-type relative)
-                                          (workspace-media-mime-type absolute))]
-        (-> (fs-stat! fs absolute)
-            (.then (fn [stat]
-                     (when-not (.isFile stat)
-                       (throw (js/Error. (str relative " is not a file"))))
-                     (ensure-source-size! (.-size stat) max-bytes relative)
-                     (fs-read-file! fs absolute)))
-            (.then (fn [buffer]
-                     {:absolute-path absolute
-                      :relative relative
-                      :buffer buffer
-                      :mime-type mime-type
-                      :filename (path-basename path absolute)
-                      :size (.-length buffer)
-                      :source-kind "workspace"})))))))
+                                          (workspace-media-mime-type absolute))
+            stat (await (fs-stat! fs absolute))
+            _ (when-not (.isFile stat)
+                (throw (js/Error. (str relative " is not a file"))))
+            _ (ensure-source-size! (.-size stat) max-bytes relative)
+            buffer (await (fs-read-file! fs absolute))]
+        {:absolute-path absolute
+         :relative relative
+         :buffer buffer
+         :mime-type mime-type
+         :filename (path-basename path absolute)
+         :size (.-length buffer)
+         :source-kind "workspace"}))))
 
-(defn materialize-media-source!
+(defn ^:async materialize-media-source!
   [runtime config raw-source max-bytes]
-  (-> (load-media-source! runtime config raw-source max-bytes)
-      (.then (fn [source]
-               (if (:absolute-path source)
-                 source
-                 (-> (temp-file-path! runtime "inputs" (mime-type->extension (:mime-type source)))
-                     (.then (fn [absolute-path]
-                              (-> (fs-write-file! fs absolute-path (:buffer source))
-                                  (.then (fn []
-                                           (assoc source :absolute-path absolute-path))))))))))))
+  (let [source (await (load-media-source! runtime config raw-source max-bytes))]
+    (if (:absolute-path source)
+      source
+      (let [absolute-path (await (temp-file-path! runtime "inputs" (mime-type->extension (:mime-type source))))]
+        (await (fs-write-file! fs absolute-path (:buffer source)))
+        (assoc source :absolute-path absolute-path)))))
 
-(defn media-source->content-part!
+(defn ^:async media-source->content-part!
   [runtime config raw-source max-bytes]
-  (-> (load-media-source! runtime config raw-source max-bytes)
-      (.then (fn [source]
-               (let [mime-type (sanitize-mime-type (:mime-type source) "application/octet-stream")
-                     part-type (workspace-media-type mime-type)]
-                 {:source source
-                  :part {:type part-type
-                         :data (buffer->data-url (:buffer source) mime-type)
-                         :mimeType mime-type
-                         :filename (:filename source)
-                         :size (:size source)}})))))
+  (let [source (await (load-media-source! runtime config raw-source max-bytes))
+        mime-type (sanitize-mime-type (:mime-type source) "application/octet-stream")
+        part-type (workspace-media-type mime-type)]
+    {:source source
+     :part {:type part-type
+            :data (buffer->data-url (:buffer source) mime-type)
+            :mimeType mime-type
+            :filename (:filename source)
+            :size (:size source)}}))
 
 ;; -------------------------------------------------------------------------
 ;; Audio visualization
@@ -363,43 +354,36 @@
   (let [n (if (number? value) value fallback)]
     (-> n (max min-value) (min max-value))))
 
-(defn audio-visualization-result!
+(defn ^:async audio-visualization-result!
   [runtime config raw-source {:keys [kind width height title]}]
   (let [label (case kind
                 :waveform "waveform"
                 "spectrogram")
         out-width (clamp-dimension width (if (= kind :waveform) 1200 1024) 256 4096)
-        out-height (clamp-dimension height (if (= kind :waveform) 320 640) 128 2048)]
-    (-> (materialize-media-source! runtime config raw-source audio-render-max-bytes)
-        (.then
-         (fn [source]
-           (let [base-name (or title
-                               (some-> (:filename source) (str/replace #"\.[^.]+$" ""))
-                               "audio")]
-             (-> (temp-file-path! runtime "renders" ".png")
-                 (.then
-                  (fn [output-path]
-                    (let [filter-expr (if (= kind :waveform)
-                                        (str "showwavespic=s=" out-width "x" out-height ":colors=0x7dd3fc")
-                                        (str "showspectrumpic=s=" out-width "x" out-height ":legend=disabled"))
-                          args (clj->js ["-y"
-                                         "-i" (:absolute-path source)
-                                         "-lavfi" filter-expr
-                                         "-frames:v" "1"
-                                         output-path])]
-                      (-> (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576})
-                          (.then (fn [_]
-                                   (fs-read-file! fs output-path)))
-                          (.then
-                           (fn [buffer]
-                             (let [filename (str base-name "-" label ".png")
-                                   part {:type "image"
-                                         :data (buffer->data-url buffer "image/png")
-                                         :mimeType "image/png"
-                                         :filename filename
-                                         :size (.-length buffer)}]
-                               (tool-text-result
-                                (str "Rendered " label " for " (or (:filename source) (:relative source) raw-source) ".")
-                                {:source raw-source
-                                 :kind label
-                                 :content_parts [part]})))))))))))))))
+        out-height (clamp-dimension height (if (= kind :waveform) 320 640) 128 2048)
+        source (await (materialize-media-source! runtime config raw-source audio-render-max-bytes))
+        base-name (or title
+                      (some-> (:filename source) (str/replace #"\.[^.]+$" ""))
+                      "audio")
+        output-path (await (temp-file-path! runtime "renders" ".png"))
+        filter-expr (if (= kind :waveform)
+                      (str "showwavespic=s=" out-width "x" out-height ":colors=0x7dd3fc")
+                      (str "showspectrumpic=s=" out-width "x" out-height ":legend=disabled"))
+        args (clj->js ["-y"
+                       "-i" (:absolute-path source)
+                       "-lavfi" filter-expr
+                       "-frames:v" "1"
+                       output-path])
+        _ (await (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576}))
+        buffer (await (fs-read-file! fs output-path))
+        filename (str base-name "-" label ".png")
+        part {:type "image"
+              :data (buffer->data-url buffer "image/png")
+              :mimeType "image/png"
+              :filename filename
+              :size (.-length buffer)}]
+    (tool-text-result
+     (str "Rendered " label " for " (or (:filename source) (:relative source) raw-source) ".")
+     {:source raw-source
+      :kind label
+      :content_parts [part]})))

@@ -127,22 +127,18 @@
     ;; upstream model fetch failures should degrade agent turns later; they must
     ;; never prevent the backend from binding /health and admin repair routes.
      (js/setTimeout
-      (fn []
-       (try
-         (-> (prewarm-sdk-runtime! runtime app resolved-config)
-             (.catch (fn [err]
-                       (app-log-error! app "Knoxx SDK runtime prewarm failed; startup continuing" err))))
-         (catch :default err
-           (app-log-error! app "Knoxx SDK runtime prewarm failed before promise creation; startup continuing" err))))
+      (^:async fn []
+        (try
+          (await (prewarm-sdk-runtime! runtime app resolved-config))
+          (catch :default err
+            (app-log-error! app "Knoxx SDK runtime prewarm failed; startup continuing" err))))
       1000)
     (js/setTimeout
-     (fn []
+     (^:async fn []
        (try
-         (-> (start-background-services! app resolved-config)
-             (.catch (fn [err]
-                       (app-log-error! app "Background startup services promise failed" err))))
+         (await (start-background-services! app resolved-config))
          (catch :default err
-           (app-log-error! app "Background startup services failed before promise creation" err))))
+           (app-log-error! app "Background startup services promise failed" err))))
      1500)
     (js/Promise.resolve (clj->js resolved-config))))
 

@@ -153,7 +153,7 @@
   (json-response! reply 502 {:error (str err)})
   reply)
 
-(defn- ^:async send-proxx-models!
+(defn ^:async send-proxx-models!
   [ctx]
   (try
     (let [resp (await (fetch-proxx-models ctx))]

@@ -94,6 +94,11 @@
       (check-rate-limit! principal max-requests window-seconds)
       (js/Promise.resolve nil))))
 
+(defn- ^:async resolve-model-policy-impl!
+  [auth-context requested-model]
+  (await (enforce-chat-policy! auth-context requested-model))
+  {:model requested-model :allowed true})
+
 (defprotocol IPolicyEngine
   (authorize-turn [engine turn-request])
   (resolve-model-policy [engine auth-context requested-model])
@@ -108,8 +113,7 @@
                               (get-in turn-request [:agent-spec :model]))))
 
   (resolve-model-policy [_ auth-context requested-model]
-    (let [p (enforce-chat-policy! auth-context requested-model)]
-      (-> p (.then (fn [_] {:model requested-model :allowed true})))))
+    (resolve-model-policy-impl! auth-context requested-model))
 
   (resolve-tool-policy [_ auth-context agent-spec]
     (js/Promise.resolve {:auth-context auth-context

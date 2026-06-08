@@ -163,15 +163,19 @@
       (run-state/append-run-event! run-id event))
     diagnostic))
 
-(defn- queue-turn!
+(defn- ^:async send-turn-and-record!
   [runtime config body]
-  (-> (agent-policy/validate-chat-policy! (:auth-context body) (policy-model config body))
-      (.then (fn [_]
-               (-> (agent-turns/send-agent-turn! runtime config body)
-                   (.then (fn [_] nil))
-                   (.catch (fn [err]
-                             (log-and-record-async-spawn-error! body err))))
-               (accepted-response body)))))
+  (try
+    (await (agent-turns/send-agent-turn! runtime config body))
+    nil
+    (catch :default err
+      (log-and-record-async-spawn-error! body err))))
+
+(defn- ^:async queue-turn!
+  [runtime config body]
+  (await (agent-policy/validate-chat-policy! (:auth-context body) (policy-model config body)))
+  (send-turn-and-record! runtime config body)
+  (accepted-response body))
 
 (defn- busy-error
   [message]

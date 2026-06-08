@@ -39,7 +39,6 @@
             [knoxx.backend.infra.routes.studio :as studio-routes]
             [knoxx.backend.infra.routes.translation :as translation-routes]
             [knoxx.backend.extern.promise :as promise]
-            [shadow.cljs.modern :refer (js-await)]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]

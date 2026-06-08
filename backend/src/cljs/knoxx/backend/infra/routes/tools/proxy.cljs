@@ -3,8 +3,7 @@
 
    These used to live in src/server.mjs; keeping them in CLJS ensures the Node
    host shim stays a pure dependency injector."
-  (:require [shadow.cljs.modern :refer [js-await]]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.infra.core-memory :as core-memory]
@@ -161,8 +160,8 @@
 (defn- register-session-status-route!
   [^js app config path payload-key status! driver-type]
   (.get app path
-        (fn [_req reply]
-          (js-await [result (session-status-handler! config payload-key status! driver-type)]
+        (^:async fn [_req reply]
+          (let [result (await (session-status-handler! config payload-key status! driver-type))]
             (backend-http/json-response! reply (if (:ok result) 200 500) result)))))
 
 (defn- ^:async eta-mu-session-list-handler!
@@ -285,13 +284,13 @@
 (defn- register-openplanner-proxy-routes!
   [^js app config]
   (.get app "/api/openplanner/v1/sessions"
-        (fn [req reply]
-          (js-await [body (openplanner-client/sessions!
-                           (openplanner-client/client config)
-                           (js->clj (or (aget req "query") (js/Object.)) :keywordize-keys true))]
-            (js-await [enriched (js/Promise.all
-                                  (clj->js (map #(enrich-session-summary! config %) (vec (or (:rows body) [])))))]
-              (.send reply (clj->js (assoc body :rows (vec (array-seq enriched)))))))))
+        (^:async fn [req reply]
+          (let [body (await (openplanner-client/sessions!
+                             (openplanner-client/client config)
+                             (js->clj (or (aget req "query") (js/Object.)) :keywordize-keys true)))
+                enriched (await (js/Promise.all
+                                  (clj->js (map #(enrich-session-summary! config %) (vec (or (:rows body) []))))))]
+            (.send reply (clj->js (assoc body :rows (vec (array-seq enriched))))))))
   (.all app "/api/openplanner/*"
         (fn [req reply]
           (openplanner-proxy-handler! config req reply))))

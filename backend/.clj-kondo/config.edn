@@ -15,7 +15,12 @@
   :file-length/long                   {:level :warning}
   :file-length/too-long               {:level :error}
   :complexity/high                    {:level :warning}
-  :complexity/too-complex             {:level :error}}
+  :complexity/too-complex             {:level :error}
+  :discouraged-var
+  {shadow.cljs.modern/js-await  {:level :error
+                                 :message "js-await is the deprecated async form in Knoxx; use a bare (await ...) inside a ^:async fn — it compiles directly to ES async/await."}
+   shadow.cljs.modern/js-await* {:level :error
+                                 :message "js-await* is the deprecated async form in Knoxx; use a bare (await ...) inside a ^:async fn — it compiles directly to ES async/await."}}}
  :hooks
  {:analyze-call
   {knoxx.backend.macros/defroute hooks.defroute/defroute

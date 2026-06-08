@@ -11,17 +11,20 @@
   (send-message! [provider provider-session message-request])
   (subscribe-stream! [provider provider-session handlers]))
 
+(defn- ^:async ensure-runtime-impl!
+  [config]
+  (let [model-ids (await (fetch-proxx-model-ids! config))]
+    (eta-mu-extern/setup-runtime!
+     config
+     (models-config config model-ids)
+     {:enabled (not= false (:agent-compaction-enabled? config))
+      :reserveTokens (or (:agent-compaction-reserve-tokens config) 16384)
+      :keepRecentTokens (or (:agent-compaction-keep-recent-tokens config) 20000)})))
+
 (defrecord EtaMuProviderAdapter [runtime config]
   IAgentProviderAdapter
   (ensure-runtime! [_]
-    (-> (fetch-proxx-model-ids! config)
-        (.then (fn [model-ids]
-                 (eta-mu-extern/setup-runtime!
-                  config
-                  (models-config config model-ids)
-                  {:enabled (not= false (:agent-compaction-enabled? config))
-                   :reserveTokens (or (:agent-compaction-reserve-tokens config) 16384)
-                   :keepRecentTokens (or (:agent-compaction-keep-recent-tokens config) 20000)})))))
+    (ensure-runtime-impl! config))
 
   (resolve-model [_ model-registry model-provider-id model-id fallback-model-id]
     (eta-mu-extern/find-model model-registry model-provider-id model-id fallback-model-id))

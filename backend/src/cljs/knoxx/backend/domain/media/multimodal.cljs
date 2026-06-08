@@ -10,27 +10,26 @@
    [:source {:description "Workspace path, URL, or data URL for the media to load."} :string]
    [:title {:optional true :description "Optional human-readable title for the media."} :string]])
 
-(defn upload-execute [runtime config _tool-call-id params a b c]
+(defn ^:async upload-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         source (or (aget params "source") "")
         title (normalize-tool-path-arg (aget params "title"))]
     (maybe-tool-update! on-update "Loading multimodal media…")
-    (-> (media-source->content-part! runtime config source multimodal-upload-max-bytes)
-        (.then (fn [{asset :source part :part}]
-                 (let [part* (cond-> part
-                               title (assoc :filename title))
-                       label (case (:type part*)
-                               "image" "image"
-                               "audio" "audio"
-                               "video" "video"
-                               "document")]
-                   (tool-text-result
-                    (str "Loaded " label " " (or title (:filename part*) (:filename asset) source) " for multimodal model context.")
-                    {:source source
-                     :source_kind (:source-kind asset)
-                     :mimeType (:mimeType part*)
-                     :filename (:filename part*)
-                     :content_parts [part*]})))))))
+    (let [{asset :source part :part} (await (media-source->content-part! runtime config source multimodal-upload-max-bytes))
+          part* (cond-> part
+                  title (assoc :filename title))
+          label (case (:type part*)
+                  "image" "image"
+                  "audio" "audio"
+                  "video" "video"
+                  "document")]
+      (tool-text-result
+       (str "Loaded " label " " (or title (:filename part*) (:filename asset) source) " for multimodal model context.")
+       {:source source
+        :source_kind (:source-kind asset)
+        :mimeType (:mimeType part*)
+        :filename (:filename part*)
+        :content_parts [part*]}))))
 
 (def upload-tool
   (partial create-tool-obj
