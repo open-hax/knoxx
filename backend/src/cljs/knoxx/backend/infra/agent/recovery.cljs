@@ -80,11 +80,16 @@
 
                         :else
                         (js/setTimeout check! RECOVERED-SESSION-KICKOFF-POLL-MS)))]
-         (.catch launch-promise
-                 (fn [err]
-                   (when-not @done?
-                     (reset! done? true)
-                     (reject err))))
+         ;; Forward a launch failure to reject. The js/Promise. executor itself
+         ;; cannot be async, so we await launch-promise in a small non-awaited
+         ;; async closure rather than blocking the executor.
+         ((^:async fn []
+            (try
+              (await launch-promise)
+              (catch :default err
+                (when-not @done?
+                  (reset! done? true)
+                  (reject err))))))
          (check!))))))
 
 (defn- ^:async log-kickoff-failure!
