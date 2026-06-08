@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-events-agent-runtime-separation"
 title: "Events, Triggers, Actions, Schedules, and Agents Runtime Separation"
-status: "icebox"
+status: accepted
 priority: "P2"
 labels: "["epics"]"
 created_at: "2026-05-06T00:00:00Z"
@@ -9,7 +9,6 @@ source: "specs/epics/events-agent-runtime-separation.md"
 points: null
 category: "epics"
 ---
-
 # Events, Triggers, Actions, Schedules, and Agents Runtime Separation
 
 > Source: `specs/epics/events-agent-runtime-separation.md`

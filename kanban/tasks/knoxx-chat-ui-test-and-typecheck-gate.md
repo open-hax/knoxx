@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-chat-ui-test-and-typecheck-gate"
 title: "Chat UI — TypeScript build and test gate for @workspace/chat-ui"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Chat UI — TypeScript build and test gate for @workspace/chat-ui
 
 > Parent epic: `knoxx-knowledge-ops-chat-ui-library`

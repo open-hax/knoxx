@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-cms-backend-routes"
 title: "CMS Backend Routes — Document CRUD and Publish Endpoints"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # CMS Backend Routes — Document CRUD and Publish Endpoints
 
 > Parent epic: `knoxx-knowledge-ops-cms-data-model`

@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-chat-ui-package-scaffold-and-types"
 title: "Chat UI Library — Package Scaffold and Unified Types"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-29T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Chat UI Library — Package Scaffold and Unified Types
 
 > Parent epic: `knoxx-knowledge-ops-chat-ui-library`

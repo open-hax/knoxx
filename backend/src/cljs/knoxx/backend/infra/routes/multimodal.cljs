@@ -54,13 +54,12 @@
   []
   (str (js/Date.now) "-" (.. js/Math.random (toString 36) (slice 2 11))))
 
-(defn- ensure-upload-dir!
+(defn- ^:async ensure-upload-dir!
   "Ensure the upload directory exists."
   [_runtime]
   (let [upload-path (.join path upload-dir)]
-    (.then
-     (fs-mkdir! fs upload-path {:recursive true})
-     (fn [] upload-path))))
+    (await (fs-mkdir! fs upload-path {:recursive true}))
+    upload-path))
 
 (defn- fs-readdir!
   [^js node-fs path]
@@ -86,56 +85,48 @@
   [request]
   (xmultipart/parts! request))
 
-(defn- save-upload-file!
+(defn- ^:async save-upload-file!
   "Save an uploaded file and return its metadata."
   [runtime _config file-part filename]
-  (.then
-   (ensure-upload-dir! runtime)
-   (fn [upload-path]
-     (let [file-id (generate-file-id)
-           safe-name (sanitize-filename filename)
-           ext (if (str/includes? safe-name ".")
-                 (let [dot-idx (str/last-index-of safe-name ".")]
-                   (subs safe-name dot-idx))
-                 "")
-           stored-name (str file-id ext)
-           abs-path (.join path upload-path stored-name)]
-       (.then
-        (xmultipart/part-array-buffer! file-part)
-        (fn [buf]
-          (.then
-           (fs-write-buffer! fs abs-path (.from js/Buffer buf))
-           (fn []
-             {:file_id file-id
-              :filename safe-name
-              :stored_name stored-name
-              :path abs-path
-              :url (str "/api/multimodal/files/" file-id)
-              :size (.-byteLength buf)}))))))))
+  (let [upload-path (await (ensure-upload-dir! runtime))
+        file-id (generate-file-id)
+        safe-name (sanitize-filename filename)
+        ext (if (str/includes? safe-name ".")
+              (let [dot-idx (str/last-index-of safe-name ".")]
+                (subs safe-name dot-idx))
+              "")
+        stored-name (str file-id ext)
+        abs-path (.join path upload-path stored-name)
+        buf (await (xmultipart/part-array-buffer! file-part))]
+    (await (fs-write-buffer! fs abs-path (.from js/Buffer buf)))
+    {:file_id file-id
+     :filename safe-name
+     :stored_name stored-name
+     :path abs-path
+     :url (str "/api/multimodal/files/" file-id)
+     :size (.-byteLength buf)}))
 
-(defn- upload-file-part!
+(defn- ^:async upload-file-part!
   [runtime config part]
   (let [filename (xmultipart/part-filename part)
         mime-type (xmultipart/part-mime-type part)]
     (cond
       (not (mime-type-supported? mime-type))
-      (js/Promise.resolve {:error (str "Unsupported file type: " mime-type)
-                           :filename filename})
+      {:error (str "Unsupported file type: " mime-type)
+       :filename filename}
 
       (> (xmultipart/part-size part) max-file-size-bytes)
-      (js/Promise.resolve {:error (str "File too large. Max: "
-                                       (/ max-file-size-bytes 1024 1024)
-                                       "MB")
-                           :filename filename})
+      {:error (str "File too large. Max: "
+                   (/ max-file-size-bytes 1024 1024)
+                   "MB")
+       :filename filename}
 
       :else
-      (.then
-       (save-upload-file! runtime config part filename)
-       (fn [result]
-         (assoc result
-                :mime_type mime-type
-                :content_type (content-type-from-mime mime-type)
-                :uploaded_at (now-iso)))))))
+      (let [result (await (save-upload-file! runtime config part filename))]
+        (assoc result
+               :mime_type mime-type
+               :content_type (content-type-from-mime mime-type)
+               :uploaded_at (now-iso))))))
 
 (defn- send-upload-response!
   [reply uploads json-response!]

@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-uxx-button-chord-prop"
 title: "Add chord prop to @open-hax/uxx Button primitive"
-status: ready
+status: todo
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"

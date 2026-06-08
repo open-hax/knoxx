@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-trigger-action-task-prompt-migration"
 title: "Move triggered-run task prompts from agent contracts to trigger/action inputs"
-status: "in_progress"
+status: review
 priority: "P1"
 labels: ["tasks", "5sp", "events-agent-runtime-separation", "prompting", "audit"]
 created_at: "2026-06-02T00:00:00Z"
@@ -9,7 +9,6 @@ source: "docs/design/event-trigger-action-runtime.md"
 points: 5
 category: "tasks"
 ---
-
 # Move triggered-run task prompts from agent contracts to trigger/action inputs
 
 > Parent epic: `knoxx-events-agent-runtime-separation`
@@ -106,3 +105,7 @@ This causes three concrete failures:
 ---
 
 2026-06-03 continued pressure-test: added TDD coverage for JSON admin dispatch dotted event types preserving EDN keywords (`discord.message` -> `:discord.message`), fixed event normalization so `/api/admin/config/events/dispatch` can match Ussyverse trigger events, and added live-contract policy coverage keeping `ussyverse_social_replies` on `:thinking :off` after proving Proxx/Gemma `:xhigh` could return hidden reasoning with empty visible content. Also characterized Gemma tool-call incompatibility and disabled provider tools for `gemma4:31b`, so triggered runs now produce visible assistant output instead of `empty_output` when the event asks for no tool use. Verified event dispatch matched `ussyverse_social_replies_event`; run `trigger-ussyverse_social_replies_event-1780446180889` completed with `action_task_rendered`, `assistant_first_token`, and a non-empty answer. Separately posted a Discord smoke-proof message via actor-owned Discord bot credentials without logging secrets: message `1511524299230548048` in channel `1444189585373663417`. Full backend test/typecheck/server-dev/error-boundaries checks passed. Remaining separate issue: Gemma still reasons about Discord send rather than calling `discord.send`, so true model-driven Discord send needs a follow-up design/fix. --tasks-dir kanban
+
+---
+2026-06-08: Opened focused PR #36 (feat/trigger-action-task-prompt-migration, 13 files) off main — cherry-picked clean from the fork-tax integration branch so kimi/CodeRabbit can review in isolation. Status -> review pending kimi + CodeRabbit findings.
+---

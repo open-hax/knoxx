@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-uxx-chord-overlay-composite"
 title: "Implement ChordOverlay composite in @open-hax/uxx"
-status: incoming
+status: icebox
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Implement ChordOverlay composite in @open-hax/uxx
 
 > Parent epic: `knoxx-knowledge-ops-ui-design-system`

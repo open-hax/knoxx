@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-gardens-dep-truth-live-link"
 title: "Link Dependency Garden and Truth Workbench as live gardens"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Link Dependency Garden and Truth Workbench as live gardens
 
 > Parent epic: `knoxx-knowledge-ops-gardens`

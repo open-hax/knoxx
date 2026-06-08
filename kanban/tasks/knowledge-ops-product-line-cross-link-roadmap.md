@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-product-line-cross-link-roadmap"
 title: "Document cross-product integration flows and update roadmap status"
-status: incoming
+status: icebox
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Document cross-product integration flows and update roadmap status
 
 > Parent epic: `knoxx-knowledge-ops-product-line`

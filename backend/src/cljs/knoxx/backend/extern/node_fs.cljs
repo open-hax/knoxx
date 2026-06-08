@@ -5,11 +5,10 @@
   [node-fs p opts]
   (.mkdir node-fs p (clj->js opts)))
 
-(defn readdir-vector!
+(defn ^:async readdir-vector!
   [node-fs p]
-  (-> (.readdir node-fs p)
-      (.then (fn [files]
-               (vec (array-seq files))))))
+  (let [files (await (.readdir node-fs p))]
+    (vec (array-seq files))))
 
 (defn rm!
   [node-fs p]
@@ -23,8 +22,7 @@
   [node-fs p content]
   (.writeFile node-fs p content))
 
-(defn promise-all-vector
+(defn ^:async promise-all-vector
   [promises]
-  (-> (js/Promise.all (clj->js (vec promises)))
-      (.then (fn [results]
-               (vec (array-seq results))))))
+  (let [results (await (js/Promise.all (clj->js (vec promises))))]
+    (vec (array-seq results))))

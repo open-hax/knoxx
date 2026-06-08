@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-mongodb-migration-script"
 title: "Write one-time DuckDB + ChromaDB to MongoDB migration script"
-status: incoming
+status: rejected
 priority: P2
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 5
 category: tasks
 ---
-
 # Write one-time DuckDB + ChromaDB to MongoDB migration script
 
 > Parent epic: `knoxx-knowledge-ops-mongodb-vector-unification`

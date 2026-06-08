@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-tenant-policy-backed-tool-authz"
 title: "Tenant Policy: Replace Hardcoded Tool Authorization with Policy-DB Checks"
-status: ready
+status: review
 priority: "P2"
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-29T00:00:00Z"

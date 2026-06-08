@@ -70,31 +70,26 @@
    [:probability {:optional true :description "Confidence score from 0.0 to 1.0."} [:double {:min 0.0 :max 1.0}]]
    [:source {:optional true :description "The source of the claim (e.g. \"web-research\", \"llm-inference\")."} :string]])
 
-(defn- web-read-url! [url max-chars]
-  (-> (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
-      (.then
-       (fn [resp]
-         (let [content-type (or (.get (.-headers resp) "content-type") "application/octet-stream")]
-           (if-not (.-ok resp)
-             (-> (.text resp)
-                 (.then (fn [text]
-                          (throw (js/Error. (str "web.read failed " (.-status resp) ": " text))))))
-             (if (or (str/starts-with? content-type "text/")
-                     (str/includes? content-type "json")
-                     (str/includes? content-type "xml")
-                     (str/includes? content-type "html"))
-               (-> (.text resp)
-                   (.then (fn [text]
-                            (let [collapsed (-> text
-                                                (str/replace #"<[^>]+>" " ")
-                                                (str/replace #"\s+" " ")
-                                                str/trim)
-                                  clipped (subs collapsed 0 (min max-chars (count collapsed)))]
-                              (tool-text-result (str "Read URL " url " (" content-type "):\n\n" clipped)
-                                                {:url url :contentType content-type :text clipped})))))
-               (js/Promise.resolve
-                (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
-                                  {:url url :contentType content-type :binary true})))))))))
+(defn- ^:async web-read-url! [url max-chars]
+  (let [resp (await (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}}))
+        content-type (or (.get (.-headers resp) "content-type") "application/octet-stream")]
+    (if-not (.-ok resp)
+      (let [text (await (.text resp))]
+        (throw (js/Error. (str "web.read failed " (.-status resp) ": " text))))
+      (if (or (str/starts-with? content-type "text/")
+              (str/includes? content-type "json")
+              (str/includes? content-type "xml")
+              (str/includes? content-type "html"))
+        (let [text (await (.text resp))
+              collapsed (-> text
+                            (str/replace #"<[^>]+>" " ")
+                            (str/replace #"\s+" " ")
+                            str/trim)
+              clipped (subs collapsed 0 (min max-chars (count collapsed)))]
+          (tool-text-result (str "Read URL " url " (" content-type "):\n\n" clipped)
+                            {:url url :contentType content-type :text clipped}))
+        (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
+                          {:url url :contentType content-type :binary true})))))
 
 (defn- slugify [value]
   (let [raw (-> (str (or value "untitled-canvas"))
@@ -104,34 +99,31 @@
     (if (str/blank? raw) "untitled-canvas" raw)))
 
 (defn make-memory-search-execute [auth-context]
-  (fn [_runtime config _tool-call-id params a b c]
+  (^:async fn [_runtime config _tool-call-id params a b c]
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           query (or (aget params "query") "")
           k (aget params "k")
           session-id (or (aget params "sessionId") "")]
       (maybe-tool-update! on-update "Searching Knoxx memory in OpenPlanner…")
-      (-> (openplanner-memory-search! config {:query query :k k :session-id session-id})
-          (.then (fn [result]
-                   (-> (filter-authorized-memory-hits! config auth-context (:hits result))
-                       (.then (fn [hits]
-                                (let [filtered (assoc result :hits hits)]
-                                  (tool-text-result (openplanner-memory-search-text filtered) filtered)))))))))))
+      (let [result (await (openplanner-memory-search! config {:query query :k k :session-id session-id}))
+            hits (await (filter-authorized-memory-hits! config auth-context (:hits result)))
+            filtered (assoc result :hits hits)]
+        (tool-text-result (openplanner-memory-search-text filtered) filtered)))))
 
 (defn make-memory-session-execute [auth-context]
-  (fn [_runtime config _tool-call-id params a b c]
+  (^:async fn [_runtime config _tool-call-id params a b c]
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           session-id (or (aget params "sessionId") "")]
       (maybe-tool-update! on-update "Loading Knoxx session from OpenPlanner…")
-      (-> (fetch-openplanner-session-rows! config session-id)
-          (.then (fn [rows]
-                   (when-not (session-visible? auth-context rows)
-                     (throw (http-error 403 "memory_scope_denied" "OpenPlanner session is outside the current Knoxx scope")))
-                   (let [payload (doto (js-obj)
-                                   (aset "sessionId" session-id)
-                                   (aset "rows" (clj->js rows)))]
-                     (tool-text-result (openplanner-session-text session-id rows) payload))))))))
+      (let [rows (await (fetch-openplanner-session-rows! config session-id))]
+        (when-not (session-visible? auth-context rows)
+          (throw (http-error 403 "memory_scope_denied" "OpenPlanner session is outside the current Knoxx scope")))
+        (let [payload (doto (js-obj)
+                        (aset "sessionId" session-id)
+                        (aset "rows" (clj->js rows)))]
+          (tool-text-result (openplanner-session-text session-id rows) payload))))))
 
-(defn graph-query-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async graph-query-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         query (or (aget params "query") "")
         lake (or (aget params "lake") "")
@@ -139,11 +131,10 @@
         limit (aget params "limit")
         edge-limit (aget params "edgeLimit")]
     (maybe-tool-update! on-update "Querying canonical knowledge graph…")
-    (-> (openplanner-graph-query! config {:query query :lake lake :node-type node-type :limit limit :edge-limit edge-limit})
-        (.then (fn [result]
-                 (tool-text-result (graph-query-result-text result) result))))))
+    (let [result (await (openplanner-graph-query! config {:query query :lake lake :node-type node-type :limit limit :edge-limit edge-limit}))]
+      (tool-text-result (graph-query-result-text result) result))))
 
-(defn websearch-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async websearch-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         query (or (aget params "query") "")
         num-results (or (aget params "numResults") 8)
@@ -151,16 +142,15 @@
         allowed-domains (or (aget params "allowedDomains") [])
         model (aget params "model")]
     (maybe-tool-update! on-update "Searching the live web through Proxx…")
-    (-> (proxx-client/websearch! (proxx-client/client config)
-                                 {:query query
-                                  :numResults num-results
-                                  :searchContextSize search-context-size
-                                  :allowedDomains allowed-domains
-                                  :model model})
-        (.then (fn [resp]
-                 (if (:ok resp)
-                   (tool-text-result (websearch-result-text (:body resp)) (:body resp))
-                   (throw (js/Error. (str "websearch failed: " (pr-str (:body resp)))))))))))
+    (let [resp (await (proxx-client/websearch! (proxx-client/client config)
+                                               {:query query
+                                                :numResults num-results
+                                                :searchContextSize search-context-size
+                                                :allowedDomains allowed-domains
+                                                :model model}))]
+      (if (:ok resp)
+        (tool-text-result (websearch-result-text (:body resp)) (:body resp))
+        (throw (js/Error. (str "websearch failed: " (pr-str (:body resp)))))))))
 
 (defn web-read-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))

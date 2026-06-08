@@ -183,19 +183,19 @@
   "Build an eta-mu after-tool-call hook from a CLJS materialize fn.
    materialize! receives a CLJS media part map and resolves to a CLJS media map."
   [materialize!]
-  (fn [ctx _signal]
+  (^:async fn [ctx _signal]
     (let [result (aget ctx "result")
           media-parts (result-media-parts ctx)]
       (if (seq media-parts)
-        (-> (promise/all (mapv materialize! media-parts))
-            (.then (fn [materialized]
-                     (let [good (->> (js-array-seq materialized) (remove nil?) vec)]
-                       (when (seq good)
-                         (let [existing (or (some-> result (aget "content")) #js [])
-                               merged   (clj->js (into (vec (js-array-seq existing)) good))]
-                           #js {:content merged})))))
-            (.catch (fn [_] nil)))
-        (js/Promise.resolve nil)))))
+        (try
+          (let [materialized (await (promise/all (mapv materialize! media-parts)))
+                good (->> (js-array-seq materialized) (remove nil?) vec)]
+            (when (seq good)
+              (let [existing (or (some-> result (aget "content")) #js [])
+                    merged   (clj->js (into (vec (js-array-seq existing)) good))]
+                #js {:content merged})))
+          (catch :default _ nil))
+        nil))))
 
 ;; ─── Session wrapper / creation ──────────────────────────────────────────────
 
@@ -223,25 +223,24 @@
      (.setAfterToolCall (aget raw-session "agent") on-tool-call))
    (->EtaMuSession raw-session)))
 
-(defn create-session!
+(defn ^:async create-session!
   "Create and wrap an eta-mu agent session from CLJS options. Returns a Promise
    because the eta-mu SDK creates sessions asynchronously."
   [opts]
   (let [create-agent-session (create-agent-session-fn)
         runtime-dir-value    (or (:runtime-dir opts) (runtime-dir))
         hook                 (when-let [materialize! (:materialize! opts)]
-                               (media-materialize-hook materialize!))]
-    (-> (create-agent-session
-         #js {:cwd (:workspace-root opts)
-              :agentDir runtime-dir-value
-              :authStorage (:auth-storage opts)
-              :modelRegistry (:model-registry opts)
-              :resourceLoader (:loader opts)
-              :settingsManager (:settings-manager opts)
-              :sessionManager (:session-manager opts)
-              :model (:model opts)
-              :thinkingLevel (:thinking-level opts)
-              :tools (clj->js (or (:tool-name-allowlist opts) []))
-              :customTools (:custom-tools opts)})
-        (.then (fn [created]
-                 (wrap-eta-mu-session (aget created "session") hook))))))
+                               (media-materialize-hook materialize!))
+        created (await (create-agent-session
+                        #js {:cwd (:workspace-root opts)
+                             :agentDir runtime-dir-value
+                             :authStorage (:auth-storage opts)
+                             :modelRegistry (:model-registry opts)
+                             :resourceLoader (:loader opts)
+                             :settingsManager (:settings-manager opts)
+                             :sessionManager (:session-manager opts)
+                             :model (:model opts)
+                             :thinkingLevel (:thinking-level opts)
+                             :tools (clj->js (or (:tool-name-allowlist opts) []))
+                             :customTools (:custom-tools opts)}))]
+    (wrap-eta-mu-session (aget created "session") hook)))

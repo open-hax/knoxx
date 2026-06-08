@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-lake-local-storage-blob-queue"
 title: "Implement local/dev DuckDB storage, filesystem blob, and in-memory queue providers"
-status: incoming
+status: icebox
 priority: P2
 labels: ["tasks", "4sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 4
 category: tasks
 ---
-
 # Implement local/dev DuckDB storage, filesystem blob, and in-memory queue providers
 
 > Parent epic: `knoxx-knowledge-ops-multi-provider-epic`

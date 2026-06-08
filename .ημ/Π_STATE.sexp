@@ -1,56 +1,67 @@
 (fork-tax-state
-  (timestamp "2026-06-08T00:00:00Z")
+  (timestamp "2026-06-08T09:25:44Z")
   (repo "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx")
-  (branch "fix/frontend-es2022-lib")
+  (branch "lint/backend-async-chunk-4-routes-openplanner")
   (remote "origin" "git@github.com:open-hax/knoxx.git")
-  (base "origin/fix/frontend-es2022-lib")
-  (scope "Backend infra fixes, frontend ES2022 lib + source doc refactor, contract updates, kanban task hygiene, ingestion clj-kondo imports")
+  (base "origin/lint/backend-async-chunk-4-routes-openplanner")
+  (scope "Backend async/await refactor — routes chunk 4 (openplanner, multimodal, extern adapters)")
   (changes
+    (backend-extern
+      "Modified backend/src/cljs/knoxx/backend/extern/eta_mu.cljs"
+      "Modified backend/src/cljs/knoxx/backend/extern/multipart.cljs"
+      "Modified backend/src/cljs/knoxx/backend/extern/node_fs.cljs")
     (backend-infra
-      "Modified backend/src/cljs/knoxx/backend/infra/agent/turn.cljs"
-      "Modified backend/src/cljs/knoxx/backend/infra/openplanner/memory.cljs"
-      "Modified backend/src/cljs/knoxx/backend/infra/stores/mongo_memory_sessions.cljs"
-      "Modified backend/src/cljs/knoxx/backend/infra/stores/mongo_session_store.cljs"
-      "Modified backend/src/cljs/knoxx/backend/infra/stores/mongo_session_titles.cljs")
-    (contracts
-      "Modified contracts/agents/ussyverse_social_creative.edn"
-      "Modified contracts/agents/ussyverse_social_replies.edn"
-      "Modified contracts/capabilities/cap_music.edn"
-      "Modified contracts/capabilities/cap_music_composition.edn"
-      "Modified contracts/fork-tales/MANIFEST.md"
-      "Modified contracts/fork-tales/agents/fork_tales_deep_composer.edn"
-      "Modified contracts/fork-tales/agents/fork_tales_instrumentalist.edn"
-      "Modified contracts/roles/fork-tales-composer.edn")
-    (frontend
-      "Modified frontend/package.json"
-      "Modified frontend/shadow-cljs.edn"
-      "Modified frontend/src/bridge/index.ts"
-      "Modified frontend/src/cljs/knoxx/frontend/core.cljs"
-      "Modified frontend/src/components/admin-page/UsersMembershipsSection.tsx"
-      "New frontend/src/components/workspace-context/utils.test.ts"
-      "Modified frontend/src/components/workspace-context/utils.ts"
-      "Modified frontend/src/lib/api/admin.test.ts"
-      "Modified frontend/src/lib/api/admin.ts"
-      "Deleted frontend/src/lib/document-links.test.ts"
-      "Deleted frontend/src/lib/document-links.ts"
-      "Modified frontend/src/lib/types.ts"
-      "Modified frontend/src/pages/AdminLayout.tsx"
-      "Modified frontend/src/pages/SourceDocPage.tsx"
-      "Deleted frontend/src/pages/source-doc-page/ForumThreadView.tsx"
-      "New frontend/src/cljs/knoxx/frontend/lib/"
-      "New frontend/src/cljs/knoxx/frontend/pages/source_doc/"
-      "New frontend/src/pages/SourceDocPage.test.tsx"
-      "New frontend/test/")
+      "Modified backend/src/cljs/knoxx/backend/infra/openplanner/tools.cljs"
+      "Modified backend/src/cljs/knoxx/backend/infra/routes/multimodal.cljs")
     (kanban
-      "Modified kanban/tasks/*.md (33 task files)")
-    (ingestion-clj-kondo
-      "New ingestion/.clj-kondo/imports/ (malli, next.jdbc, babashka/fs, rewrite-clj configs)"))
+      "Modified kanban/epics/broadcast-studio-playlist-publication-and-block-cms.md"
+      "Modified kanban/epics/events-agent-runtime-separation.md"
+      "Modified kanban/tasks/knowledge-lake-azure-aws-provider-stubs.md"
+      "Modified kanban/tasks/knowledge-ops-openplanner-derived-edge-projections-slice.md"
+      "Modified kanban/tasks/knowledge-ops-pass5-rbac-refresh.md"
+      "Modified kanban/tasks/knowledge-ops-product-line-cross-link-roadmap.md"
+      "Modified kanban/tasks/knowledge-ops-product-line-exposure-monitor-specs.md"
+      "Modified kanban/tasks/knowledge-ops-product-line-kanban-grooming.md"
+      "Modified kanban/tasks/knoxx-chat-ui-hooks-and-utils.md"
+      "Modified kanban/tasks/knoxx-chat-ui-package-scaffold-and-types.md"
+      "Modified kanban/tasks/knoxx-chat-ui-test-and-typecheck-gate.md"
+      "Modified kanban/tasks/knoxx-cms-ai-draft-route.md"
+      "Modified kanban/tasks/knoxx-cms-backend-routes.md"
+      "Modified kanban/tasks/knoxx-futuresight-kms-sync-public-collection.md"
+      "Modified kanban/tasks/knoxx-gardens-dep-truth-live-link.md"
+      "Modified kanban/tasks/knoxx-kms-cms-clojure-service.md"
+      "Modified kanban/tasks/knoxx-knowledge-ops-filesystem-blob-store.md"
+      "Modified kanban/tasks/knoxx-knowledge-ops-jsonl-queue-provider.md"
+      "Modified kanban/tasks/knoxx-knowledge-ops-mongodb-storage-sink.md"
+      "Modified kanban/tasks/knoxx-lake-local-storage-blob-queue.md"
+      "Modified kanban/tasks/knoxx-mongodb-docker-compose-decommission.md"
+      "Modified kanban/tasks/knoxx-mongodb-migration-script.md"
+      "Modified kanban/tasks/knoxx-multi-tenant-migrations-prod-runbook.md"
+      "Modified kanban/tasks/knoxx-multi-tenant-review-workflow-queue.md"
+      "Modified kanban/tasks/knoxx-published-garden-broadcast-viewer-route.md"
+      "Modified kanban/tasks/knoxx-shibboleth-dsl-corporate-qa-macros.md"
+      "Modified kanban/tasks/knoxx-tenant-cross-org-denial-e2e.md"
+      "Modified kanban/tasks/knoxx-tenant-policy-backed-tool-authz.md"
+      "Modified kanban/tasks/knoxx-trigger-action-task-prompt-migration.md"
+      "Modified kanban/tasks/knoxx-trigger-runner-facade-delete.md"
+      "Modified kanban/tasks/knoxx-uxx-button-chord-prop.md"
+      "Modified kanban/tasks/knoxx-uxx-chord-overlay-composite.md"
+      "Modified kanban/workbench/1.2-dashboard-agent-runs.md"
+      "Modified kanban/workbench/1.3-dashboard-memory-activity.md"
+      "Modified kanban/workbench/2.2-content-editor-ai-suggestions.md"
+      "Modified kanban/workbench/2.3-content-editor-provenance.md"
+      "Modified kanban/workbench/4.2-memory-focal-node.md"
+      "Modified kanban/workbench/5.1-agent-run-list.md"
+      "Modified kanban/workbench/5.2-agent-run-detail.md"))
   (concurrent-dirt
     "none; all working tree changes are owned by this snapshot")
   (blocked-paths
-    ".claude/ (agent runtime state — scheduled_tasks.lock)")
+    ".claude/ (agent runtime state — excluded)")
   (verification
-    (skipped "No backend test command run this session; prior Π commit (4a241e71) verified tests passing"))
+    (passed "pnpm -C backend typecheck: 0 warnings")
+    (passed "pnpm -C backend exec shadow-cljs compile test: 578 tests, 1702 assertions, 0 failures, 0 errors"))
   (destructive-cleanup false)
+  (commit "858db8cb")
+  (tag "Π/20260608T092544Z-lint-backend-async-chunk-4-routes")
   (deployment
-    "pending: branch fix/frontend-es2022-lib is ahead of origin by 2 commits + this Π commit"))
+    "pending: branch push + tag push"))
