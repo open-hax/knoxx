@@ -138,19 +138,17 @@
                      :failed (vec failed)
                      :total (count uploads)})))
 
-(defn- handle-upload!
+(defn- ^:async handle-upload!
   [runtime config request reply json-response!]
-  (-> (request-parts-promise request)
-      (.then
-       (fn [parts]
-         (->> (xmultipart/file-parts parts)
-              (mapv #(upload-file-part! runtime config %))
-              (xnode-fs/promise-all-vector))))
-      (.then #(send-upload-response! reply % json-response!))
-      (.catch
-       (fn [err]
-         (json-response! reply 500
-                         {:detail (str "Upload failed: " err)})))))
+  (try
+    (let [parts (await (request-parts-promise request))
+          uploaded (await (->> (xmultipart/file-parts parts)
+                               (mapv #(upload-file-part! runtime config %))
+                               (xnode-fs/promise-all-vector)))]
+      (send-upload-response! reply uploaded json-response!))
+    (catch :default err
+      (json-response! reply 500
+                      {:detail (str "Upload failed: " err)}))))
 
 (defn- register-upload-route!
   [app runtime config {:keys [route! json-response! with-request-context!]}]
@@ -181,30 +179,26 @@
   [files file-id]
   (first (filter #(str/starts-with? % file-id) files)))
 
-(defn- send-file!
+(defn- ^:async send-file!
   [reply abs-path matching]
-  (-> (fs-read-file! fs abs-path)
-      (.then
-       (fn [buf]
-         (let [ext (if (str/includes? matching ".")
-                     (subs matching (str/last-index-of matching "."))
-                     "")]
-           (reply-header! reply "Content-Type" (extension-content-type ext))
-           (reply-header! reply "Cache-Control" "public, max-age=31536000")
-           (.send reply buf))))))
+  (let [buf (await (fs-read-file! fs abs-path))
+        ext (if (str/includes? matching ".")
+              (subs matching (str/last-index-of matching "."))
+              "")]
+    (reply-header! reply "Content-Type" (extension-content-type ext))
+    (reply-header! reply "Cache-Control" "public, max-age=31536000")
+    (.send reply buf)))
 
-(defn- handle-file-read!
+(defn- ^:async handle-file-read!
   [file-id reply json-response!]
-  (-> (fs-readdir! fs (.join path upload-dir))
-      (.then
-       (fn [files]
-         (if-let [matching (matching-upload-file files file-id)]
-           (send-file! reply (.join path upload-dir matching) matching)
-           (json-response! reply 404 {:detail "File not found"}))))
-      (.catch
-       (fn [err]
-         (json-response! reply 500
-                         {:detail (str "Failed to read file: " err)})))))
+  (try
+    (let [files (await (fs-readdir! fs (.join path upload-dir)))]
+      (if-let [matching (matching-upload-file files file-id)]
+        (await (send-file! reply (.join path upload-dir matching) matching))
+        (json-response! reply 404 {:detail "File not found"})))
+    (catch :default err
+      (json-response! reply 500
+                      {:detail (str "Failed to read file: " err)}))))
 
 (defn- register-file-read-route!
   [app {:keys [route! json-response!]}]
@@ -214,21 +208,18 @@
                                reply
                                json-response!))))
 
-(defn- delete-file!
+(defn- ^:async delete-file!
   [file-id reply json-response!]
-  (-> (fs-readdir! fs (.join path upload-dir))
-      (.then
-       (fn [files]
-         (if-let [matching (matching-upload-file files file-id)]
-           (-> (fs-rm! fs (.join path upload-dir matching))
-               (.then
-                (fn []
-                  (json-response! reply 200 {:ok true :deleted file-id}))))
-           (json-response! reply 404 {:detail "File not found"}))))
-      (.catch
-       (fn [err]
-         (json-response! reply 500
-                         {:detail (str "Delete failed: " err)})))))
+  (try
+    (let [files (await (fs-readdir! fs (.join path upload-dir)))]
+      (if-let [matching (matching-upload-file files file-id)]
+        (do
+          (await (fs-rm! fs (.join path upload-dir matching)))
+          (json-response! reply 200 {:ok true :deleted file-id}))
+        (json-response! reply 404 {:detail "File not found"})))
+    (catch :default err
+      (json-response! reply 500
+                      {:detail (str "Delete failed: " err)}))))
 
 (defn- register-file-delete-route!
   [app runtime {:keys [route! json-response! with-request-context!]}]

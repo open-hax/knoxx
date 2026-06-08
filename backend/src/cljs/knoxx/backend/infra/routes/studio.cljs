@@ -20,34 +20,35 @@
 
 (declare walk-audio-files!)
 
-(defn- process-entry [node-fs node-path root-dir base-relative depth max-depth entry]
+(defn- ^:async process-entry [node-fs node-path root-dir base-relative depth max-depth entry]
   (let [nm (.-name entry)
         abs (.join node-path root-dir nm)
         rel (if (str/blank? base-relative) nm (str base-relative "/" nm))]
     (cond
       (str/starts-with? nm ".")
-      (.resolve js/Promise [])
+      []
 
       (.isDirectory entry)
-      (walk-audio-files! node-fs node-path abs rel (inc depth) max-depth)
+      (await (walk-audio-files! node-fs node-path abs rel (inc depth) max-depth))
 
       :else
       (let [ext (str/lower-case (or (some-> (.extname node-path nm) str/trim) ""))]
         (if (contains? (audio-extensions) ext)
-          (-> (.stat node-fs abs)
-              (.then (fn [s] [{:name nm :path rel :ext ext :size (.-size s) :modified (-> (.-mtime s) (.getTime)) :mime (audio-mime-type ext)}]))
-              (.catch (fn [_] [])))
-          (.resolve js/Promise []))))))
+          (try
+            (let [s (await (.stat node-fs abs))]
+              [{:name nm :path rel :ext ext :size (.-size s) :modified (-> (.-mtime s) (.getTime)) :mime (audio-mime-type ext)}])
+            (catch :default _ []))
+          [])))))
 
-(defn- walk-audio-files! [node-fs node-path root-dir base-relative depth max-depth]
+(defn- ^:async walk-audio-files! [node-fs node-path root-dir base-relative depth max-depth]
   (if (> depth max-depth)
-    (.resolve js/Promise [])
-    (-> (.readdir node-fs root-dir (clj->js {:withFileTypes true}))
-        (.then (fn [entries]
-                 (let [promises (mapv #(process-entry node-fs node-path root-dir base-relative depth max-depth %) (vec (array-seq entries)))]
-                   (-> (.all js/Promise (into-array promises))
-                       (.then (fn [r] (vec (mapcat identity r))))))))
-        (.catch (fn [_] [])))))
+    []
+    (try
+      (let [entries (await (.readdir node-fs root-dir (clj->js {:withFileTypes true})))
+            promises (mapv #(process-entry node-fs node-path root-dir base-relative depth max-depth %) (vec (array-seq entries)))
+            r (await (.all js/Promise (into-array promises)))]
+        (vec (mapcat identity r)))
+      (catch :default _ []))))
 
 ;; -- Routes --
 

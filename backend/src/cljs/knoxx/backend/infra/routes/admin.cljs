@@ -81,19 +81,19 @@
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (policy-db-promise runtime reply 200
-                                       (-> (db-policy/get-role! (db-policy/context-pool db) role-id)
-                                           (.then (fn [result]
-                                                    (let [role (:role result)]
-                                                      (when-not role
-                                                        (throw (http-error 404 "role_not_found" "role not found")))
-                                                      (ensure-org-scope! ctx (:org-id role) "org.tool_policy.update")
-                                                      (db-policy/set-role-tool-policies!
-                                                       (db-policy/context-pool db)
-                                                       role-id
-                                                       (let [body (body-map request)]
-                                                         (or (:tool-policies body)
-                                                             (:toolPolicies body)
-                                                             (:tool_policies body))))))))))))
+                                       ((^:async fn []
+                                          (let [result (await (db-policy/get-role! (db-policy/context-pool db) role-id))
+                                                role (:role result)]
+                                            (when-not role
+                                              (throw (http-error 404 "role_not_found" "role not found")))
+                                            (ensure-org-scope! ctx (:org-id role) "org.tool_policy.update")
+                                            (db-policy/set-role-tool-policies!
+                                             (db-policy/context-pool db)
+                                             role-id
+                                             (let [body (body-map request)]
+                                               (or (:tool-policies body)
+                                                   (:toolPolicies body)
+                                                   (:tool_policies body)))))))))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"})))))
 
 (defn- register-admin-data-lake-routes!

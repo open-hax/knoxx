@@ -770,7 +770,7 @@
           (.error js/console "Session status check failed" err)
           (await (queue-turn! "Async direct agent chat failed")))))))
 
-(defn- handle-admin-abort [reply _ctx request]
+(defn- ^:async handle-admin-abort [reply _ctx request]
   (let [raw (request-body request)
         requested-conversation-id (str (or (aget raw "conversation_id")
                                            (aget raw "conversationId")
@@ -786,47 +786,42 @@
                (get @runs* requested-run-id))
          session-id (or (some-> requested-session-id not-empty)
                         (:session_id run))]
-     (-> (if (not (str/blank? (str session-id)))
-           (session-store/get-session session-id)
-           (js/Promise.resolve nil))
-        (.then
-         (fn [session]
-           (let [conversation-id (str (or (some-> requested-conversation-id not-empty)
-                                          (:conversation_id run)
-                                          (:conversation_id session)
-                                          ""))
-                 resolved-session-id (str (or session-id (:session_id session) ""))
-                 resolved-run-id (str (or requested-run-id (:run_id run) (:run_id session) ""))]
-             (if (str/blank? conversation-id)
-               (json-response! reply 400 {:ok false
-                                          :error "conversation_id, session_id, or run_id is required"})
-               (-> (turn-control/abort-active-turn! conversation-id reason)
-                   (.then
-                    (fn [abort-result]
-                      (when-not (str/blank? resolved-run-id)
-                        (run-state/update-run! resolved-run-id
-                                               (fn [r]
-                                                 (-> r
-                                                     (assoc :status "aborted"
-                                                            :error reason
-                                                            :updated_at (now-iso))))))
-                      (-> (if (not (str/blank? resolved-session-id))
-                            (session-store/update-session! resolved-session-id
-                                                           {:status "aborted"
-                                                            :error reason
-                                                            :has_active_stream false})
-                            (js/Promise.resolve nil))
-                          (.then
-                           (fn [_]
-                             (json-response! reply 200
-                                             (assoc abort-result
-                                                    :ok true
-                                                    :conversation_id conversation-id
-                                                    :session_id resolved-session-id
-                                                    :run_id resolved-run-id
-                                                    :marked_aborted true))))))))))))
-        (.catch (fn [err]
-                  (error-response! reply err 409))))))
+     (try
+       (let [session (await (if (not (str/blank? (str session-id)))
+                              (session-store/get-session session-id)
+                              (js/Promise.resolve nil)))
+             conversation-id (str (or (some-> requested-conversation-id not-empty)
+                                      (:conversation_id run)
+                                      (:conversation_id session)
+                                      ""))
+             resolved-session-id (str (or session-id (:session_id session) ""))
+             resolved-run-id (str (or requested-run-id (:run_id run) (:run_id session) ""))]
+         (if (str/blank? conversation-id)
+           (json-response! reply 400 {:ok false
+                                      :error "conversation_id, session_id, or run_id is required"})
+           (let [abort-result (await (turn-control/abort-active-turn! conversation-id reason))]
+             (when-not (str/blank? resolved-run-id)
+               (run-state/update-run! resolved-run-id
+                                      (fn [r]
+                                        (-> r
+                                            (assoc :status "aborted"
+                                                   :error reason
+                                                   :updated_at (now-iso))))))
+             (await (if (not (str/blank? resolved-session-id))
+                      (session-store/update-session! resolved-session-id
+                                                     {:status "aborted"
+                                                      :error reason
+                                                      :has_active_stream false})
+                      (js/Promise.resolve nil)))
+             (json-response! reply 200
+                             (assoc abort-result
+                                    :ok true
+                                    :conversation_id conversation-id
+                                    :session_id resolved-session-id
+                                    :run_id resolved-run-id
+                                    :marked_aborted true)))))
+       (catch :default err
+         (error-response! reply err 409)))))
 
 (defn- session-status-running-response
   [session-id session runtime-active? can-send stalled? latest-event]
@@ -845,7 +840,7 @@
    :latest_event_at (:at latest-event)
    :recovery_requested stalled?})
 
-(defn- handle-session-status [runtime config reply request]
+(defn- ^:async handle-session-status [runtime config reply request]
   (let [session-id (or (aget request "query" "session_id")
                        (aget request "query" "sessionId")
                        "")
@@ -857,45 +852,46 @@
       (json-response! reply 400 {:error "session_id is required"})
 
       :else
-      (-> (session-store/get-session session-id)
-          (.then (fn [session]
-                   (if session
-                     (let [conversation-id' (str (or (:conversation_id session) conversation-id ""))
-                           runtime-active? (runtime-processing-session? conversation-id')
-                           can-send (session-store/session-can-send? session)]
-                       (-> (if (= "running" (:status session))
-                             (latest-run-event! (:run_id session))
-                             (js/Promise.resolve nil))
-                           (.then (fn [latest-event]
-                                    (let [stalled? (and (= "running" (:status session))
-                                                        (not runtime-active?)
-                                                        (stale-running-session? session latest-event))]
-                                      (when stalled?
-                                        (-> (resume-recovered-session! runtime config session)
-                                            (.catch (fn [err]
-                                                      (js/console.error "On-demand session recovery failed" err)))))
-                                      (json-response! reply 200
-                                                      (session-status-running-response
-                                                       session-id session runtime-active? can-send stalled? latest-event)))))))
-                     ;; No session in the store - trust in-memory runtime if it still has a live turn.
-                     (if (runtime-processing-session? conversation-id)
-                       (json-response! reply 200
-                                       {:session_id session-id
-                                        :conversation_id conversation-id
-                                        :status "running"
-                                        :has_active_stream true
-                                        :can_send false
-                                        :reason "Session is already processing. Use steer, follow-up, abort, or wait."})
-                       (json-response! reply 200
-                                       {:session_id session-id
-                                        :conversation_id conversation-id
-                                        :status "not_found"
-                                        :has_active_stream false
-                                        :can_send true
-                                        :reason "No session state found. Ready for new turn."})))))
-          (.catch (fn [err]
-                    (js/console.error "Session status check failed" err)
-                    (json-response! reply 500 {:error (str err)})))))))
+      (try
+        (let [session (await (session-store/get-session session-id))]
+          (if session
+            (let [conversation-id' (str (or (:conversation_id session) conversation-id ""))
+                  runtime-active? (runtime-processing-session? conversation-id')
+                  can-send (session-store/session-can-send? session)
+                  latest-event (await (if (= "running" (:status session))
+                                        (latest-run-event! (:run_id session))
+                                        (js/Promise.resolve nil)))
+                  stalled? (and (= "running" (:status session))
+                                (not runtime-active?)
+                                (stale-running-session? session latest-event))]
+              (when stalled?
+                ((^:async fn []
+                   (try
+                     (await (resume-recovered-session! runtime config session))
+                     (catch :default err
+                       (js/console.error "On-demand session recovery failed" err))))))
+              (json-response! reply 200
+                              (session-status-running-response
+                               session-id session runtime-active? can-send stalled? latest-event)))
+            ;; No session in the store - trust in-memory runtime if it still has a live turn.
+            (if (runtime-processing-session? conversation-id)
+              (json-response! reply 200
+                              {:session_id session-id
+                               :conversation_id conversation-id
+                               :status "running"
+                               :has_active_stream true
+                               :can_send false
+                               :reason "Session is already processing. Use steer, follow-up, abort, or wait."})
+              (json-response! reply 200
+                              {:session_id session-id
+                               :conversation_id conversation-id
+                               :status "not_found"
+                               :has_active_stream false
+                               :can_send true
+                               :reason "No session state found. Ready for new turn."}))))
+        (catch :default err
+          (js/console.error "Session status check failed" err)
+          (json-response! reply 500 {:error (str err)}))))))
 
 (defroute health! []
   "GET" "/health"
@@ -909,9 +905,11 @@
                                              :status 503
                                              :body {:detail "Proxx is not configured"}}))
         openplanner-promise (openplanner-client/health! openplanner-client)]
-    (-> (promise/all-vec [proxx-promise openplanner-promise])
-        (.then (partial health-deps-ok reply proxx-configured openplanner-configured))
-        (.catch (partial health-deps-err reply)))))
+    (try
+      (health-deps-ok reply proxx-configured openplanner-configured
+                      (await (promise/all-vec [proxx-promise openplanner-promise])))
+      (catch :default err
+        (health-deps-err reply err)))))
 
 ;; Dev-only endpoint used to verify shadow-cljs hot-reload against a live
 ;; long-running Node runtime (shadow owns the process).
@@ -1314,34 +1312,33 @@
                 (if (js/isNaN parsed) 1 (max 1 parsed)))]
     (if (str/blank? session-id)
       (json-response! reply 400 {:ok false :error "session_id is required"})
-      (-> (session-store/get-session session-id)
-          (.then
-           (fn [session]
-             (cond
-               (nil? session)
-               (json-response! reply 404 {:ok false :error "Session not found or expired"})
+      (try
+        (let [session (await (session-store/get-session session-id))]
+          (cond
+            (nil? session)
+            (json-response! reply 404 {:ok false :error "Session not found or expired"})
 
-               (= "running" (:status session))
-               (json-response! reply 409 {:ok false :error "Cannot undo while a turn is still running"})
+            (= "running" (:status session))
+            (json-response! reply 409 {:ok false :error "Cannot undo while a turn is still running"})
 
-               :else
-               (let [conversation-id (str (or (:conversation_id session) provided-conversation-id ""))
-                     current-messages (vec (or (:messages session) []))
-                     rewound-messages (session-store/rewind-messages current-messages turns)
-                     removed-count (- (count current-messages) (count rewound-messages))]
-                 (when (and actor-ctx (not (str/blank? conversation-id)))
-                   (ensure-conversation-access! actor-ctx conversation-id))
-                 (if (zero? removed-count)
-                   (json-response! reply 409 {:ok false :error "No user turns available to undo"})
-                    (-> (session-store/undo-session-turns! session-id turns)
-                        (.then
-                         (fn [_]
-                           (json-response! reply 200 {:ok true
-                                                      :session_id session-id
-                                                      :conversation_id conversation-id
-                                                      :removed_count removed-count
-                                                      :remaining_messages (count rewound-messages)})))))))))
-          (.catch (partial undo-session-err reply))))))
+            :else
+            (let [conversation-id (str (or (:conversation_id session) provided-conversation-id ""))
+                  current-messages (vec (or (:messages session) []))
+                  rewound-messages (session-store/rewind-messages current-messages turns)
+                  removed-count (- (count current-messages) (count rewound-messages))]
+              (when (and actor-ctx (not (str/blank? conversation-id)))
+                (ensure-conversation-access! actor-ctx conversation-id))
+              (if (zero? removed-count)
+                (json-response! reply 409 {:ok false :error "No user turns available to undo"})
+                (do
+                  (await (session-store/undo-session-turns! session-id turns))
+                  (json-response! reply 200 {:ok true
+                                             :session_id session-id
+                                             :conversation_id conversation-id
+                                             :removed_count removed-count
+                                             :remaining_messages (count rewound-messages)}))))))
+        (catch :default err
+          (undo-session-err reply err))))))
 
 
 (defn- build-active-runs [ctx limit]

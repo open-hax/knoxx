@@ -86,22 +86,23 @@
     (if (or (str/starts-with? rel-to-root "..")
             (path-is-absolute? path rel-to-root))
       (json-response! reply 403 {:detail "Path escapes active docs root"})
-      (-> (fs-rm! fs abs-path (clj->js {:force true}))
-          (.then (fn []
-                   (swap! database-state* update-in [:records db-id :indexed] dissoc rel-path)
-                   (json-response! reply 200 {:ok true :path rel-path})))
-          (.catch (fn [err]
-                    (json-response! reply 500 {:detail (str "Delete failed: " err)})))))))
+      (try
+        (await (fs-rm! fs abs-path (clj->js {:force true})))
+        (swap! database-state* update-in [:records db-id :indexed] dissoc rel-path)
+        (json-response! reply 200 {:ok true :path rel-path})
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Delete failed: " err)}))))))
 
 (defroute api-documents-ingest! []
   "POST" "/api/documents/ingest"
   (when ctx (ensure-permission! ctx "datalake.ingest"))
   (let [profile (active-database-profile runtime config request ctx)
         body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
-    (-> (start-document-ingestion! runtime config profile body)
-        (.then (fn [resp] (json-response! reply 200 resp)))
-        (.catch (fn [err]
-                  (json-response! reply 500 {:detail (str "Ingestion failed to start: " err)}))))))
+    (try
+      (let [resp (await (start-document-ingestion! runtime config profile body))]
+        (json-response! reply 200 resp))
+      (catch :default err
+        (json-response! reply 500 {:detail (str "Ingestion failed to start: " err)})))))
 
 (defroute api-documents-ingest-priority! []
   "POST" "/api/documents/ingest/priority"

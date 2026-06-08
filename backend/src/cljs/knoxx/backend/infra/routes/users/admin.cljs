@@ -114,11 +114,11 @@
                   (fn [ctx]
                     (ensure-org-scope! ctx org-id "org.users.read")
                     (policy-db-promise runtime reply 200
-                                       (-> (db-policy/sync-actor-contracts-for-context! db)
-                                           (.then (fn [_]
-                                                    (db-policy/list-users!
-                                                     (db-policy/context-pool db)
-                                                     {:org-id org-id}))))))))
+                                       ((^:async fn []
+                                          (await (db-policy/sync-actor-contracts-for-context! db))
+                                          (db-policy/list-users!
+                                           (db-policy/context-pool db)
+                                           {:org-id org-id})))))))
               (unavailable! json-response! reply)))))
 
 (defn- register-org-user-create-routes!
@@ -202,16 +202,16 @@
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (policy-db-promise runtime reply 200
-                                       (-> (db-policy/get-membership! (db-policy/context-pool db) membership-id)
-                                           (.then (fn [result]
-                                                    (let [membership (:membership result)]
-                                                      (when-not membership
-                                                        (throw (http-error 404 "membership_not_found" "membership not found")))
-                                                      (ensure-org-scope! ctx (:org-id membership) "org.members.update")
-                                                      (db-policy/set-membership-roles-for-context!
-                                                       db
-                                                       membership-id
-                                                       (membership-roles-payload (body-map request)))))))))))
+                                       ((^:async fn []
+                                          (let [result (await (db-policy/get-membership! (db-policy/context-pool db) membership-id))
+                                                membership (:membership result)]
+                                            (when-not membership
+                                              (throw (http-error 404 "membership_not_found" "membership not found")))
+                                            (ensure-org-scope! ctx (:org-id membership) "org.members.update")
+                                            (db-policy/set-membership-roles-for-context!
+                                             db
+                                             membership-id
+                                             (membership-roles-payload (body-map request))))))))))
               (unavailable! json-response! reply)))))
 
 (defn- register-membership-policy-routes!
@@ -223,17 +223,17 @@
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (policy-db-promise runtime reply 200
-                                       (-> (db-policy/get-membership! (db-policy/context-pool db) membership-id)
-                                           (.then (fn [result]
-                                                    (let [membership (:membership result)
-                                                          body (body-map request)]
-                                                      (when-not membership
-                                                        (throw (http-error 404 "membership_not_found" "membership not found")))
-                                                      (ensure-org-scope! ctx (:org-id membership) "org.user_policy.update")
-                                                      (db-policy/set-membership-tool-policies!
-                                                       (db-policy/context-pool db)
-                                                       membership-id
-                                                       (:toolPolicies body))))))))))
+                                       ((^:async fn []
+                                          (let [result (await (db-policy/get-membership! (db-policy/context-pool db) membership-id))
+                                                membership (:membership result)
+                                                body (body-map request)]
+                                            (when-not membership
+                                              (throw (http-error 404 "membership_not_found" "membership not found")))
+                                            (ensure-org-scope! ctx (:org-id membership) "org.user_policy.update")
+                                            (db-policy/set-membership-tool-policies!
+                                             (db-policy/context-pool db)
+                                             membership-id
+                                             (:toolPolicies body)))))))))
               (unavailable! json-response! reply)))))
 
 (defn register-user-admin-routes!
