@@ -10,16 +10,14 @@
 (defprotocol IMediaMaterializer
   (materialize-media! [materializer content-part auth-context]))
 
-(defn fetch-b64!
+(defn ^:async fetch-b64!
   [url media-type]
-  (-> (js/fetch url)
-      (.then (fn [r]
-               (when-not (.-ok r)
-                 (throw (js/Error. (str media-type " fetch failed: " (.-status r)))))
-               (.arrayBuffer r)))
-      (.then (fn [ab]
-               (let [buf (js/Buffer.from ab)]
-                 (str "data:" media-type ";base64," (.toString buf "base64")))))))
+  (let [r (await (js/fetch url))]
+    (when-not (.-ok r)
+      (throw (js/Error. (str media-type " fetch failed: " (.-status r)))))
+    (let [ab (await (.arrayBuffer r))
+          buf (js/Buffer.from ab)]
+      (str "data:" media-type ";base64," (.toString buf "base64")))))
 
 (defn- audio-format
   [mime]
@@ -32,7 +30,7 @@
            :mimeType mime}
     (= "audio" part-type) (assoc :format (or (audio-format mime) "mp3"))))
 
-(defn materialize!
+(defn ^:async materialize!
   [part]
   (let [part-type (some-> (:type part) str str/lower-case)
         url (some-> (:url part) str not-empty)
@@ -49,10 +47,9 @@
       (js/Promise.resolve (media-map part-type data mime))
 
       url
-      (-> (fetch-b64! url mime)
-          (.then (fn [data-url]
-                   (let [comma (.indexOf data-url ",")]
-                     (media-map part-type (if (>= comma 0) (.slice data-url (inc comma)) data-url) mime)))))
+      (let [data-url (await (fetch-b64! url mime))
+            comma (.indexOf data-url ",")]
+        (media-map part-type (if (>= comma 0) (.slice data-url (inc comma)) data-url) mime))
 
       :else (js/Promise.resolve nil))))
 

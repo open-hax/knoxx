@@ -150,33 +150,54 @@
 (defn- install-openplanner-event-sink!
   [config]
   (set-event-stream-sink!
-     (fn [event]
+     (^:async fn [event]
        (let [client (openplanner-client/client config)]
          (when (openplanner-client/enabled? client)
-           (-> (openplanner-client/events!
-                client
-                [(openplanner-memory/openplanner-event
-                  config
-                  {:id        (str (:run_id event) ":"
-                                   (:type event) ":"
-                                   (:at event))
-                   :ts        (:at event)
-                   :kind      (str "knoxx." (:type event))
-                   ;; Session-scoped diagnostics must carry the session project:
-                   ;; without it they default to the workspace project and the
-                   ;; /v1/sessions list (filtered by session project) cannot see
-                   ;; in-flight threads until their first run completes.
-                   :project   (:session-project-name config)
-                   :session   (:conversation_id event)
-                   :message   (:run_id event)
-                   :role      "system"
-                   :text      (str (:type event)
-                                   (when (:tool_name event)
-                                     (str ": " (:tool_name event)))
-                                   (when (:preview event)
-                                     (str "\n" (:preview event))))
-                   :extra     event})])
-               (.catch (fn [_] nil))))))))
+           (try
+             (await (openplanner-client/events!
+                     client
+                     [(openplanner-memory/openplanner-event
+                       config
+                       {:id        (str (:run_id event) ":"
+                                        (:type event) ":"
+                                        (:at event))
+                        :ts        (:at event)
+                        :kind      (str "knoxx." (:type event))
+                        ;; Session-scoped diagnostics must carry the session project:
+                        ;; without it they default to the workspace project and the
+                        ;; /v1/sessions list (filtered by session project) cannot see
+                        ;; in-flight threads until their first run completes.
+                        :project   (:session-project-name config)
+                        :session   (:conversation_id event)
+                        :message   (:run_id event)
+                        :role      "system"
+                        :text      (str (:type event)
+                                        (when (:tool_name event)
+                                          (str ": " (:tool_name event)))
+                                        (when (:preview event)
+                                          (str "\n" (:preview event))))
+                        :extra     event})]))
+             (catch :default _ nil)))))))
+
+(defn- ^:async persist-initial-run!
+  [store base-run run-id]
+  (try
+    (await (put-run! store base-run))
+    (catch :default err
+      (.warn js/console "[turn] failed to persist initial run"
+             (clj->js {:run-id run-id
+                       :error (ex-message err)
+                       :error-data (clj->js (or (ex-data err) {}))})))))
+
+(defn- ^:async persist-initial-session!
+  [session-payload session-id]
+  (try
+    (await (session-store/put-session! session-payload))
+    (catch :default err
+      (.error js/console "[turn] failed to persist initial session"
+              (clj->js {:session-id session-id
+                        :error (ex-message err)
+                        :error-data (clj->js (or (ex-data err) {}))})))))
 
 (defn- create-initial-run!
   [run-id session-id conversation-id started-at model-id mode thinking-level
@@ -185,31 +206,22 @@
                                     agent-spec auth-extra request-messages config)]
     (store-run! run-id base-run)
     (when-let [store @store-registry/session-store*]
-      (-> (put-run! store base-run)
-          (.catch (fn [err]
-                    (.warn js/console "[turn] failed to persist initial run"
-                           (clj->js {:run-id run-id
-                                     :error (ex-message err)
-                                     :error-data (clj->js (or (ex-data err) {}))}))))))
+      (persist-initial-run! store base-run run-id))
     (install-openplanner-event-sink! config)
-    (-> (session-store/put-session! (merge (cond-> {:session_id session-id
-                                                     :conversation_id conversation-id
-                                                     :run_id run-id
-                                                     :status "running"
-                                                     :model model-id
-                                                     :mode mode
-                                                     :thinking_level thinking-level
-                                                     :created_at started-at
-                                                     :updated_at started-at
-                                                     :has_active_stream false
-                                                     :messages request-messages}
-                                              agent-spec (assoc :agent_spec (agent-spec-summary agent-spec)))
-                                            auth-extra))
-        (.catch (fn [err]
-                  (.error js/console "[turn] failed to persist initial session"
-                         (clj->js {:session-id session-id
-                                   :error (ex-message err)
-                                   :error-data (clj->js (or (ex-data err) {}))})))))
+    (persist-initial-session! (merge (cond-> {:session_id session-id
+                                              :conversation_id conversation-id
+                                              :run_id run-id
+                                              :status "running"
+                                              :model model-id
+                                              :mode mode
+                                              :thinking_level thinking-level
+                                              :created_at started-at
+                                              :updated_at started-at
+                                              :has_active_stream false
+                                              :messages request-messages}
+                                       agent-spec (assoc :agent_spec (agent-spec-summary agent-spec)))
+                                     auth-extra)
+                              session-id)
     (let [initial-event (tool-event-payload run-id conversation-id session-id "run_started"
                                             {:status "running"
                                              :mode mode
@@ -586,33 +598,31 @@
     (read-workspace-media-data-url! runtime config max-bytes stream-path fallback-mime label)
     (xturn-media/fetch-data-url! url fallback-mime label max-bytes auth-context)))
 
-(defn materialize-part!
+(defn ^:async materialize-part!
   [runtime config auth-context max-bytes part]
   (let [part-type (content-part-type part)]
     (cond
-      (not (#{"image" "audio"} part-type)) (js/Promise.resolve part)
+      (not (#{"image" "audio"} part-type)) part
 
-      (xturn-media/data-url? (:data part)) (js/Promise.resolve part)
+      (xturn-media/data-url? (:data part)) part
 
       (xturn-media/media-url? (:data part))
-      (-> (fetch-media-data-url! runtime config auth-context max-bytes (:data part)
-                                 (if (= part-type "audio") "audio/mpeg" "image/png")
-                                 part-type)
-          (.then (fn [data-url]
-                   (-> part
-                       (dissoc :url)
-                       (assoc :data data-url)))))
+      (let [data-url (await (fetch-media-data-url! runtime config auth-context max-bytes (:data part)
+                                                   (if (= part-type "audio") "audio/mpeg" "image/png")
+                                                   part-type))]
+        (-> part
+            (dissoc :url)
+            (assoc :data data-url)))
 
       (xturn-media/media-url? (:url part))
-      (-> (fetch-media-data-url! runtime config auth-context max-bytes (:url part)
-                                 (if (= part-type "audio") "audio/mpeg" "image/png")
-                                 part-type)
-          (.then (fn [data-url]
-                   (-> part
-                       (dissoc :url)
-                       (assoc :data data-url)))))
+      (let [data-url (await (fetch-media-data-url! runtime config auth-context max-bytes (:url part)
+                                                   (if (= part-type "audio") "audio/mpeg" "image/png")
+                                                   part-type))]
+        (-> part
+            (dissoc :url)
+            (assoc :data data-url)))
 
-      :else (js/Promise.resolve part))))
+      :else part)))
 (defn materialize-content-parts!
   [runtime config model-id auth-context max-bytes parts]
   (let [parts (vec (or parts []))
@@ -659,6 +669,20 @@
                                                                    "off"))}))
 
 (declare process-hydration-results-and-start-turn!)
+
+(defn- ^:async persist-running-session-update!
+  [session-id conversation-id run-id persisted-request-messages]
+  (try
+    (await (session-store/update-session! session-id
+                                          {:status "running"
+                                           :has_active_stream false
+                                           :messages persisted-request-messages
+                                           :conversation_id conversation-id
+                                           :run_id run-id}))
+    (catch :default err
+      (.error js/console "[turn] failed to update session"
+              (clj->js {:session-id session-id
+                        :error (ex-message err)})))))
 
 (defn- prepare-turn-context
   "Resolve turn parameters from the request and agent-spec.
@@ -747,16 +771,7 @@
       (let [persisted-request-messages (prune-session-messages
                                         agent-spec
                                         (transcript/transcript-before-prompt session user-message agent-spec))]
-        (-> (session-store/update-session! session-id
-                                          {:status "running"
-                                           :has_active_stream false
-                                           :messages persisted-request-messages
-                                           :conversation_id conversation-id
-                                           :run_id run-id})
-            (.catch (fn [err]
-                      (.error js/console "[turn] failed to update session"
-                             (clj->js {:session-id session-id
-                                       :error (ex-message err)})))))
+        (persist-running-session-update! session-id conversation-id run-id persisted-request-messages)
         (prompt-and-await! config session-id run-id conversation-id started-ms model-id mode
                            session turn-message prompt-content-parts hydration memory-hydration
                            persisted-request-messages agent-spec)))))

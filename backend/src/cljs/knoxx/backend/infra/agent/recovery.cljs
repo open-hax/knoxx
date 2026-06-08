@@ -87,6 +87,15 @@
                      (reject err))))
          (check!))))))
 
+(defn- ^:async log-kickoff-failure!
+  [send-promise session-id conversation-id]
+  (try
+    (await send-promise)
+    (catch :default err
+      (js/console.error "[knoxx] recovered session failed after kickoff"
+                        #js {:sessionId session-id :conversationId conversation-id :error (str err)})
+      nil)))
+
 (defn ^:async resume-with-message!
   [runtime config session-id conversation-id run-id message model-id mode
    thinking-level auth-context agent-spec wait-for resume-failed!]
@@ -104,10 +113,7 @@
                                                                :agent-spec agent-spec})]
       (if (= wait-for :kickoff)
         (do
-          (.catch send-promise (fn [err]
-                                 (js/console.error "[knoxx] recovered session failed after kickoff"
-                                                   #js {:sessionId session-id :conversationId conversation-id :error (str err)})
-                                 nil))
+          (log-kickoff-failure! send-promise session-id conversation-id)
           (await (wait-for-recovered-turn-kickoff! conversation-id send-promise))
           {:session_id session-id :conversation_id conversation-id :resumed true :wait_for "kickoff"})
         (do
@@ -132,21 +138,20 @@
          auth-context (recovered-auth-context session)
          agent-spec (recovered-agent-spec session)
          message (last-session-user-message session)
-         resume-failed! (fn [err]
+         resume-failed! (^:async fn [err]
                           (js/console.error "[knoxx] failed to resume recovered session"
                                             #js {:sessionId session-id
                                                  :conversationId conversation-id
                                                  :error (str err)})
-                           (-> (session-store/complete-session! session-id
-                                                                conversation-id
-                                                                {:status "failed"
-                                                                 :error (str "Session recovery failed: " err)
-                                                                 :messages (:messages session)})
-                              (.then (fn [_]
-                                       {:session_id session-id
-                                        :conversation_id conversation-id
-                                        :resumed false
-                                        :error (str err)}))))]
+                          (await (session-store/complete-session! session-id
+                                                                  conversation-id
+                                                                  {:status "failed"
+                                                                   :error (str "Session recovery failed: " err)
+                                                                   :messages (:messages session)}))
+                          {:session_id session-id
+                           :conversation_id conversation-id
+                           :resumed false
+                           :error (str err)})]
      (restored-conversation-access! session)
      (cond
        (or (str/blank? conversation-id)

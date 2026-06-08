@@ -331,9 +331,10 @@
   (when-not @interval-handle*
     (reset! interval-handle*
             (js/setInterval
-             (fn []
-               (-> (attempt-recovery! runtime app config)
-                   (.catch (fn [_] nil))))
+             (^:async fn []
+               (try
+                 (await (attempt-recovery! runtime app config))
+                 (catch :default _ nil)))
              RECOVERY_INTERVAL_MS))))
 
 (defn stop-periodic-recovery!

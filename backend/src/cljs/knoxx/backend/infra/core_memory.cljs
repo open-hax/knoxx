@@ -295,15 +295,14 @@
   [config rows page-actor-id]
   (session-matches-page-actor-filter? config rows page-actor-id []))
 
-(defn- fetch-openplanner-session-mode-rows!
+(defn- ^:async fetch-openplanner-session-mode-rows!
   [config session-id mode opts]
-  (-> (openplanner-client/session! (openplanner-client/client config)
-                                   session-id
-                                   (merge {:project (:session-project-name config)
-                                           :mode mode}
-                                          opts))
-      (.then (fn [body]
-               (vec (or (:rows body) []))))))
+  (let [body (await (openplanner-client/session! (openplanner-client/client config)
+                                                 session-id
+                                                 (merge {:project (:session-project-name config)
+                                                         :mode mode}
+                                                        opts)))]
+    (vec (or (:rows body) []))))
 
 (defn fetch-openplanner-session-rows!
   [config session-id]
@@ -313,7 +312,7 @@
   [config session-id]
   (fetch-openplanner-session-mode-rows! config session-id "visibility" {:limit 1}))
 
-(defn authorized-session-ids!
+(defn ^:async authorized-session-ids!
   [config ctx session-ids]
   (let [session-ids (->> session-ids
                          (map str)
@@ -321,22 +320,22 @@
                          distinct
                          vec)]
     (if (or (nil? ctx) (system-admin? ctx) (empty? session-ids))
-      (js/Promise.resolve (set session-ids))
-      (.then (promise/all-vec
-              (map (fn [session-id]
-                     (.then (fetch-openplanner-session-rows! config session-id)
-                            (fn [rows]
-                              {:session session-id
-                               :allowed (session-visible? ctx rows)})
-                            (fn [_]
-                              {:session session-id
-                               :allowed false})))
-                   session-ids))
-             (fn [results]
-               (->> results
-                    (filter :allowed)
-                    (map :session)
-                    set))))))
+      (set session-ids)
+      (let [results (await
+                     (promise/all-vec
+                      (map (^:async fn [session-id]
+                             (try
+                               (let [rows (await (fetch-openplanner-session-rows! config session-id))]
+                                 {:session session-id
+                                  :allowed (session-visible? ctx rows)})
+                               (catch :default _
+                                 {:session session-id
+                                  :allowed false})))
+                           session-ids)))]
+        (->> results
+             (filter :allowed)
+             (map :session)
+             set)))))
 
 (defn hit-session-id
   [hit]
@@ -373,15 +372,14 @@
          (re-find #"(?i)\bNo upstream providers are allowed for this tenant and request\b" text)
          (re-find #"(?i)\bprovider_not_allowed\b" text)))))
 
-(defn filter-authorized-memory-hits!
+(defn ^:async filter-authorized-memory-hits!
   [config ctx hits]
   (let [hits (vec hits)
-        session-ids (map hit-session-id hits)]
-    (-> (authorized-session-ids! config ctx session-ids)
-        (.then (fn [allowed]
-                 (->> hits
-                      (filter (fn [hit]
-                                (and (contains? allowed (str (or (hit-session-id hit) "")))
-                                     (not (reasoning-hit? hit))
-                                     (not (operational-failure-hit? hit)))))
-                      vec))))))
+        session-ids (map hit-session-id hits)
+        allowed (await (authorized-session-ids! config ctx session-ids))]
+    (->> hits
+         (filter (fn [hit]
+                   (and (contains? allowed (str (or (hit-session-id hit) "")))
+                        (not (reasoning-hit? hit))
+                        (not (operational-failure-hit? hit)))))
+         vec)))
