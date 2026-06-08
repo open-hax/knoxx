@@ -13,6 +13,13 @@
   [runtime]
   (some? (policy-db runtime)))
 
+(defn- ^:async normalize-handler-promise!
+  [value]
+  (let [resolved (await value)]
+    (if (nil? resolved)
+      js/undefined
+      resolved)))
+
 (defn- fastify-handler-result
   "Fastify treats a resolved promise value as a response payload.
 
@@ -23,10 +30,7 @@
   [value]
   (cond
     (instance? js/Promise value)
-    (.then value (fn [resolved]
-                   (if (nil? resolved)
-                     js/undefined
-                     resolved)))
+    (normalize-handler-promise! value)
 
     (nil? value)
     js/undefined
@@ -34,25 +38,25 @@
     :else
     value))
 
-(defn policy-db-promise
+(defn ^:async policy-db-promise
   [runtime reply status promise]
   (if-not (policy-db-enabled? runtime)
     (fastify-handler-result
      (http/json-response! reply 503 {:detail "Knoxx policy database is not configured"}))
-    (-> promise
-        (.then (fn [result]
-                 (http/json-response! reply status result)
-                 js/undefined))
-        (.catch (fn [err]
-                  (http/error-response! reply err)
-                  js/undefined)))))
+    (try
+      (let [result (await promise)]
+        (http/json-response! reply status result)
+        js/undefined)
+      (catch :default err
+        (http/error-response! reply err)
+        js/undefined))))
 
-(defn resolve-request-context!
+(defn ^:async resolve-request-context!
   [runtime request]
   (if-not (policy-db-enabled? runtime)
-    (js/Promise.resolve nil)
+    nil
     (if-let [cached (aget request "__knoxxRequestContext")]
-      (js/Promise.resolve cached)
+      cached
       (let [headers (or (aget request "headers") #js {})
             header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
             header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
@@ -61,11 +65,10 @@
                                 (not (str/blank? header-mid)))
                           (db-policy/resolve-context! policy-context headers)
                           ;; Fall back to cookie-backed auth context resolution.
-                          (auth-session/resolve-auth-context request policy-context))]
-        (-> ctx-promise
-            (.then (fn [ctx]
-                     (aset request "__knoxxRequestContext" ctx)
-                     ctx)))))))
+                          (auth-session/resolve-auth-context request policy-context))
+            ctx (await ctx-promise)]
+        (aset request "__knoxxRequestContext" ctx)
+        ctx))))
 
 (defn ^:async with-request-context!
   "Resolve auth context and call (f ctx). Returns a promise.

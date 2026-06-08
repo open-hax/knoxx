@@ -74,7 +74,7 @@
       (throw (js/Error. "Path escapes allowed workspace roots")))
     candidate))
 
-(defn queue-agent-control!
+(defn ^:async queue-agent-control!
   [_runtime _config {:keys [conversation-id session-id run-id message kind metadata]}]
   (cond
     (str/blank? conversation-id)
@@ -96,28 +96,28 @@
               invoke (if (= kind "follow_up")
                        #(follow-up! session message)
                        #(steer! session message))]
-          (-> (invoke)
-              (.then (fn []
-                       (let [event (tool-event-payload run-id conversation-id session-id event-type
-                                                       {:status "queued"
-                                                        :preview preview
-                                                        :metadata metadata})]
-                         (when run-id
-                           (append-run-event! run-id event))
-                         (broadcast-ws-session! session-id "events" event)
-                         {:ok true
-                          :conversation_id conversation-id
-                          :session_id session-id
-                          :run_id run-id
-                          :kind kind})))
-              (.catch (fn [err]
-                        (let [event (tool-event-payload run-id conversation-id session-id failure-type
-                                                        {:status "failed"
-                                                         :error (str err)
-                                                         :preview preview
-                                                         :metadata metadata})]
-                          (when run-id
-                            (append-run-event! run-id event))
-                          (broadcast-ws-session! session-id "events" event))
-                        (throw err))))))
+          (try
+            (await (invoke))
+            (let [event (tool-event-payload run-id conversation-id session-id event-type
+                                            {:status "queued"
+                                             :preview preview
+                                             :metadata metadata})]
+              (when run-id
+                (append-run-event! run-id event))
+              (broadcast-ws-session! session-id "events" event)
+              {:ok true
+               :conversation_id conversation-id
+               :session_id session-id
+               :run_id run-id
+               :kind kind})
+            (catch :default err
+              (let [event (tool-event-payload run-id conversation-id session-id failure-type
+                                              {:status "failed"
+                                               :error (str err)
+                                               :preview preview
+                                               :metadata metadata})]
+                (when run-id
+                  (append-run-event! run-id event))
+                (broadcast-ws-session! session-id "events" event))
+              (throw err)))))
       (js/Promise.reject (js/Error. "Conversation is not active in the agent runtime")))))

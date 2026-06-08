@@ -30,53 +30,49 @@
   [messages]
   (sort-by :timestamp #(compare %2 %1) messages))
 
-(defn read-channel!
+(defn ^:async read-channel!
   "Fetch up to `limit` messages from `channel-id` (max 100).
    Returns Promise<[{:id :channelId :content :authorId :authorUsername :authorIsBot :timestamp}]>."
   [channel-id & [limit]]
-  (-> (discord-rest/channel-messages! (discord-client) channel-id {:limit (max 1 (min 100 (or limit 25)))})
-      (.then (fn [payload]
-               (->> (or payload [])
-                    (map map-message)
-                    sort-newest-first
-                    vec)))))
+  (let [payload (await (discord-rest/channel-messages! (discord-client) channel-id {:limit (max 1 (min 100 (or limit 25)))}))]
+    (->> (or payload [])
+         (map map-message)
+         sort-newest-first
+         vec)))
 
-(defn search-channel!
+(defn ^:async search-channel!
   "Return messages in `channel-id` whose content contains `query`
    (case-insensitive). Scans up to 100 messages, returns up to `limit`."
   [channel-id query & [limit]]
-  (-> (read-channel! channel-id 100)
-      (.then (fn [messages]
-               (let [needle (str/lower-case (str (or query "")))]
-                 (->> messages
-                      (filter (fn [message]
-                                (str/includes? (str/lower-case (:content message)) needle)))
-                      (take (or limit 25))
-                      vec))))))
+  (let [messages (await (read-channel! channel-id 100))
+        needle (str/lower-case (str (or query "")))]
+    (->> messages
+         (filter (fn [message]
+                   (str/includes? (str/lower-case (:content message)) needle)))
+         (take (or limit 25))
+         vec)))
 
-(defn list-guilds!
+(defn ^:async list-guilds!
   "List guilds the bot is a member of."
   []
-  (-> (discord-rest/current-user-guilds! (discord-client))
-      (.then (fn [payload]
-               (->> (or payload [])
-                    (mapv (fn [guild]
-                            {:id (:id guild)
-                             :name (:name guild)})))))))
+  (let [payload (await (discord-rest/current-user-guilds! (discord-client)))]
+    (->> (or payload [])
+         (mapv (fn [guild]
+                 {:id (:id guild)
+                  :name (:name guild)})))))
 
-(defn list-channels!
+(defn ^:async list-channels!
   "List channels in `guild-id` (types 0, 5, 11, 12 only)."
   [guild-id]
-  (-> (discord-rest/guild-channels! (discord-client) guild-id)
-      (.then (fn [payload]
-               (->> (or payload [])
-                    (filter (fn [channel]
-                              (contains? #{0 5 11 12} (:type channel))))
-                    (mapv (fn [channel]
-                            {:id (:id channel)
-                             :guildId guild-id
-                             :name (or (:name channel) "")
-                             :type (:type channel)})))))))
+  (let [payload (await (discord-rest/guild-channels! (discord-client) guild-id))]
+    (->> (or payload [])
+         (filter (fn [channel]
+                   (contains? #{0 5 11 12} (:type channel))))
+         (mapv (fn [channel]
+                 {:id (:id channel)
+                  :guildId guild-id
+                  :name (or (:name channel) "")
+                  :type (:type channel)})))))
 
 (def ^:private default-discord-tool-policies
   [{:toolId "discord.read" :effect "allow"}
@@ -86,7 +82,7 @@
    {:toolId "memory_search" :effect "allow"}
    {:toolId "graph_query" :effect "allow"}])
 
-(defn start-agent-session!
+(defn ^:async start-agent-session!
   "Launch a normal Knoxx direct-mode turn for a Discord-triggered payload.
    `opts` map accepts :channelId :channelName :authorUsername :content :reason."
   [config job {:keys [channelId channelName authorUsername content reason]}]
@@ -136,11 +132,11 @@
                          (:model job-agent-spec)
                          (:proxx-default-model config)
                          "glm-5")}]
-    (-> (agents-runner/spawn-direct! config body)
-        (.then (fn [result]
-                 (println "[discord-io] queued agent run" run-id "for job" (:id job))
-                 result))
-        (.catch (fn [err]
-                  (println "[discord-io] failed to queue agent run for job" (:id job)
-                           ":" (.-message err))
-                  nil)))))
+    (try
+      (let [result (await (agents-runner/spawn-direct! config body))]
+        (println "[discord-io] queued agent run" run-id "for job" (:id job))
+        result)
+      (catch :default err
+        (println "[discord-io] failed to queue agent run for job" (:id job)
+                 ":" (.-message err))
+        nil))))

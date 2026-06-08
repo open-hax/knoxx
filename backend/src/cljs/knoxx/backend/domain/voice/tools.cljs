@@ -281,7 +281,7 @@
    [:ustx_path {:description "Path to the .ustx file to render."} :string]
    [:output_path {:optional true :description "Output .wav path. Defaults to same dir as .ustx."} :string]])
 
-(defn voice-openutau-render-execute [runtime config _call-id params a b c]
+(defn ^:async voice-openutau-render-execute [runtime config _call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         ustx-path (normalize-tool-path-arg (aget params "ustx_path"))
         output-path (or (when-let [p (aget params "output_path")]
@@ -290,14 +290,14 @@
         {:keys [absolute]} (media/resolve-workspace-media-path runtime config output-path)]
     (when-not ustx-path (throw (js/Error. "ustx_path is required")))
     (maybe-tool-update! on-update (str "Rendering " ustx-path " to WAV..."))
-    (-> (openutau/render-ustx-to-wav ustx-path absolute)
-        (.then (fn [result]
-                 (tool-text-result
-                  (str "Rendered OpenUTAU project to " output-path)
-                  {:wav_path output-path
-                   :stdout (:stdout result)})))
-        (.catch (fn [err]
-                  (throw (js/Error. (str "Render failed: " (.-message err)))))))))
+    (try
+      (let [result (await (openutau/render-ustx-to-wav ustx-path absolute))]
+        (tool-text-result
+         (str "Rendered OpenUTAU project to " output-path)
+         {:wav_path output-path
+          :stdout (:stdout result)}))
+      (catch :default err
+        (throw (js/Error. (str "Render failed: " (.-message err))))))))
 
 (def voice-openutau-render-tool
   (partial create-tool-obj

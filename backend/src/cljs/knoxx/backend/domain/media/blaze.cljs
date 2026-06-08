@@ -470,7 +470,7 @@
   [err]
   (str (or (.-message err) err)))
 
-(defn- attempt-generation!
+(defn- ^:async attempt-generation!
   [config params modality prompt models attempts log-context]
   (if-let [model (first models)]
     (let [body (build-body params modality model prompt)
@@ -479,23 +479,23 @@
                                  :model model)]
       (log-info! "attempt-start" (assoc attempt-context
                                         :remaining_models (count models)))
-      (-> (generate-payload! config body modality attempt-context)
-          (.then (fn [payload]
-                   (log-info! "attempt-ok" (assoc attempt-context
-                                                  :payload (summarize-payload payload)))
-                   {:payload payload
-                    :model model
-                    :attempts (conj attempts {:model model :status "ok"})}))
-          (.catch (fn [err]
-                    (let [msg (error-message err)
-                          next-attempts (conj attempts {:model model
-                                                        :status "failed"
-                                                        :error msg})]
-                      (log-warn! "attempt-failed" (assoc attempt-context
-                                                         :error msg
-                                                         :attempts next-attempts))
-                      (attempt-generation! config params modality prompt (rest models)
-                                           next-attempts log-context))))))
+      (try
+        (let [payload (await (generate-payload! config body modality attempt-context))]
+          (log-info! "attempt-ok" (assoc attempt-context
+                                         :payload (summarize-payload payload)))
+          {:payload payload
+           :model model
+           :attempts (conj attempts {:model model :status "ok"})})
+        (catch :default err
+          (let [msg (error-message err)
+                next-attempts (conj attempts {:model model
+                                              :status "failed"
+                                              :error msg})]
+            (log-warn! "attempt-failed" (assoc attempt-context
+                                               :error msg
+                                               :attempts next-attempts))
+            (attempt-generation! config params modality prompt (rest models)
+                                 next-attempts log-context)))))
     (do
       (log-error! "all-attempts-failed" (assoc log-context :attempts attempts))
       (js/Promise.reject
