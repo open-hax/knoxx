@@ -4,7 +4,7 @@
  :enabled true
 
  ;; Temporal resource split from deep_synthesis_trigger. It emits an event; the
- ;; matching trigger requests the pipeline action through normal event dispatch.
+ ;; matching trigger requests the action through normal event dispatch.
  :schedule/id "deep_synthesis"
  :schedule/rule "0 2 * * *"
  :schedule/generator "knoxx_schedule"

@@ -1,7 +1,6 @@
 {:contract/id "openplanner-memory"
  :contract/kind :source
  :contract/type :runtime/source
- :contract/version 1
  :source/id :source/openplanner-memory
  :source/name "OpenPlanner conversational memory"
  :source/type :context ;; this is conflating a few concepts here.

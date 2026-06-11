@@ -1,6 +1,5 @@
 {:contract/id "cms-templates"
  :contract/kind :cms-templates
- :contract/version 1
  :enabled true
  :templates
  {:studio-playlist-page

@@ -1,7 +1,6 @@
 {:contract/id :knoxx-session/eta-mu-sessions
  :contract/kind :ingest_source
  :contract/type :ingest/source
- :contract/version 1
  :tenant/id "knoxx-session"
  :source/id :eta-mu-sessions
  :source/name "eta-mu coding sessions"

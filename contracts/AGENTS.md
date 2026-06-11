@@ -19,6 +19,56 @@ The resource identity is declared inside the EDN body (`:contract/id`, `:actor/i
 human navigation and write tooling, but runtime truth comes from the parsed EDN
 body, not from directory placement alone.
 
+### Namespace files (preferred for new resources)
+
+Resources may also live in **namespace files** (see
+`docs/design/resource-architecture.md`): one file declaring `:namespace` and a
+`:resources` vector. Identity is the namespace plus the entry's local id —
+`:namespace :ussyverse` + `:trigger/id :social-replies` →
+`:ussyverse/social-replies`.
+
+The manifest grammar applies to **every resource kind** (trigger, action,
+store, agent, actor, role, capability, policy, schedule, generator, source,
+source-mode, ingest-source, model, model-family, runtime-feature, sub-agent):
+
+1. **`:K/id` registers** a resource of kind K under the namespace.
+2. **Registration is optional** — `:K/<field>` without `:K/id` is an
+   *anonymous facet* of kind K, owned by the kinds the entry does register;
+   it is read in place and never discoverable (`:action/fn` on a trigger is
+   the canonical example).
+3. **Composite** — one entry may register several kinds; each interpreter
+   reads only its own keys (`:trigger/*`, `:action/*`, `:store/*`, ...).
+4. **References live in the owner's namespace** (`:trigger/action`,
+   `:role/capabilities`, `:model/family`) — a bare `:K/id` is always
+   identity, never a reference.
+
+In manifests, `:data` is deprecated: every field belongs to a kind's
+namespace (e.g. `:trigger/context`, not `:data {:context ...}`).
+
+```clojure
+{:namespace :ussyverse
+ :resources
+ [{:trigger/id :social-replies
+   :trigger/events [:discord.message]
+   :trigger/with {:agent-id "ussyverse_social_replies" :task "..."}
+
+   :action/scope {:actions [:actions/start-agent-session]
+                  :stores [:ussyverse/observed-messages]}
+
+   :store/id :observed-messages
+   :store/schema [:map [:message-id :string]]}]}
+```
+
+- `:trigger/with` is the sole argument mechanism — the action receives it as
+  `:action/with`. Do not add new `:trigger/agent` / `:trigger/task` fields.
+- `:action/fn` declares an inline **anonymous action** — `(fn [ctx action] ...)`,
+  never registered, not discoverable, local to its resource. It is interpreted
+  against a whitelisted pure-function set (fail closed).
+- `:action/scope` declares what the action may reach: registered `:actions`,
+  pure `:filters`, and `:stores`. The resolved scope is injected as `(:scope ctx)`.
+- `:store/id` + `:store/schema` declare keyed persistence (IStore). Documents
+  are Malli-guarded on insert.
+
 ---
 
 ## Directory Layout
@@ -33,12 +83,12 @@ contracts/
   generators/     Generator resources — event-producing provenance/adapters
   schedules/      Schedule resources — temporal rules that emit synthetic events
   actions/        Action resources — registered behavior and schemas
-  pipelines/      Pipeline resources — ordered action sequences
   triggers/       Trigger resources — actor agreements to act after observing events
   source_modes/   Legacy source-mode resources during migration
   sources/        Source resources — actor-owned driver instances or context providers
   models/         Model resources — individual model metadata
   model_families/ Model family resources — shared properties across model variants
+  namespaces/     Namespace files — composite resources grouped under one :namespace
   ensemble/       Grouped agent resources for multi-agent sessions
 ```
 
@@ -86,7 +136,6 @@ Fix: use `:role/contract-librarian` in both files.
 
 {:contract/id    "my_agent"         ; must match filename stem
  :contract/kind  :agent
- :contract/version 1
  :enabled        true
  ; Actors allowed to invoke this agent (actor id strings)
  :contract/actors ["chat_primary" "knoxx_default"]
@@ -110,8 +159,7 @@ Fix: use `:role/contract-librarian` in both files.
            :max-chars 80000          ; approximate text budget across retained body messages
            :preserve-system true}    ; set false only if the system prompt may be pruned
 
- :data    {}                        ; static runtime config only; not mutable memory/state
- :hooks   {:before {} :after {}}}
+ :data    {}}                       ; static runtime config only; not mutable memory/state
 
 Roles are **composable**. Use `:role` for a single role or `:roles` for a vector of roles. Both feed into `agent-role-claims` which merges them. Tools, system prompts, and task prompts are composed across ALL declared roles.
 
@@ -195,10 +243,13 @@ schedule maps, or generator maps inside an action resource.
  :contract/id "hello-world"
  :action/id :actions/hello-world
  :action/kind :actions/hello-world
- :action/handler "knoxx.backend.domain.action.registry/run-action!"
- :action/responds-to [:message/greeting]
- :action/result :message/send.expectation}
+ :action/handler "knoxx.backend.domain.action.registry/run-action!"}
 ```
+
+Composed action sequences use `:action/kind :actions/run-steps` with
+`:action/with {:steps [{:action ... :with {...}} ...]}` and declare the step
+actions in `:action/scope {:actions [...]}`. Triggers may reference an action
+resource by its `:action/id` keyword; the action interpreter expands it.
 
 ### Trigger resource example
 
@@ -208,8 +259,14 @@ schedule maps, or generator maps inside an action resource.
  :trigger/kind :event
  :trigger/listener "system_admin"
  :trigger/events [:message/greeting]
- :trigger/action :actions/hello-world}
+ :trigger/action :actions/hello-world
+ :trigger/with {:actor-name "Knoxx"}}
 ```
+
+`:trigger/with` carries everything the action needs (e.g. `:agent-id`,
+`:task`); it reaches the action as `:action/with`. The legacy `:trigger/agent`
+and `:trigger/task` fields still normalize into `:trigger/with` for unmigrated
+resources, but new triggers must not use them.
 
 ### Schedule resource example
 
@@ -366,10 +423,14 @@ Result: ResolvedToolSuite { :tools :denied :denied-reasons }
 - capabilities live in `:actor {:capabilities [...]}`, not in `:agent`
 - tools are NOT declared in agent or role resources — only in capability resources
 - trigger resources use `:trigger/kind :event`, `:trigger/events`, and `:trigger/action`
+- trigger arguments live in `:trigger/with` — never new `:trigger/agent` / `:trigger/task` fields
+- dead fields stay dead: no `:contract/version`, `:hooks`, `:trigger/domain`, `:trigger/predicate`, `:action/responds-to`, `:action/result`, `:action/params`, or `:events` on agent resources
+- composite/namespace resources keep interpreter keys separate: `:trigger/*`, `:action/*`, `:store/*`
 - schedule resources use `:schedule/rule` / `:schedule/cron` / `:schedule/at` plus `:schedule/event`; they never call actions directly
 - generator resources use `:generator/kind` / `:generator/driver` and `:generator/emits`; new event provenance is `:event/generator`, not `:source-kind`
 - source resources use `:source/driver`, `:source/actor`, and `:source/listens`; do not put event shapes in `:source/emits`
 - action resources identify registered behavior with `:action/kind` and `:action/handler`; they do not contain trigger or schedule maps
+- composed action sequences (formerly pipelines) use `:actions/run-steps` with `:action/with {:steps [...]}`
 - `:data` is static config; do not put mutable logs, timestamps, world_state, rosters, or invented `data/` folder paths there unless a real state backend consumes them
 - `:contract/kind` is present and is a keyword while the loader migration keeps this discriminator
 - EDN is valid — balanced brackets, no trailing commas, no JSON syntax

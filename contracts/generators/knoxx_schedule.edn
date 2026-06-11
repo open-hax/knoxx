@@ -1,6 +1,5 @@
 {:contract/kind :generator
  :contract/id "knoxx_schedule"
- :contract/version 1
  :enabled true
 
  ;; Shared provenance for Knoxx-owned schedule resources. Schedules still own

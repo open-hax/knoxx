@@ -94,6 +94,37 @@
       (local-del! k)
       {:key k :deleted true :backend :local})))
 
+;; ─── temp-memory interpolation ───────────────────────────────────────────────────────────
+
+(def ^:private temp-key-re #"\{\{memory\.temp:([^}]+)\}\}")
+
+(defn- collect-temp-keys
+  "Walk a data structure and collect all {{memory.temp:k}} keys."
+  [m]
+  (let [keys-found (atom #{})]
+    (letfn [(walk [v]
+              (cond
+                (string? v) (doseq [[_ k] (re-seq temp-key-re v)]
+                              (swap! keys-found conj k))
+                (map? v) (doseq [val (vals v)] (walk val))
+                (sequential? v) (doseq [item v] (walk item))))]
+      (walk m))
+    @keys-found))
+
+(defn ^:async resolve-temps
+  "Given a map m, find all {{memory.temp:k}} keys and resolve them from temp memory.
+   Returns a map of {key resolved-value}."
+  [m]
+  (let [all-keys (vec (collect-temp-keys m))]
+    (if (empty? all-keys)
+      {}
+      (let [resolved (atom {})]
+        (doseq [k all-keys]
+          (let [result (await (mem-get k))]
+            (when result
+              (swap! resolved assoc k result))))
+        @resolved))))
+
 ;; ─── tool registration ────────────────────────────────────────────────────────────────────────
 
 (def tool-spec

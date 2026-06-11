@@ -17,7 +17,6 @@
    :ingest-source "ingest_sources"
    :model "models"
    :model-family "model_families"
-   :pipeline "pipelines"
    :policy "policies"
    :role "roles"
    :rule "rules"
@@ -25,6 +24,7 @@
    :schedule "schedules"
    :source "sources"
    :source-mode "source_modes"
+   :store "stores"
    :sub-agent "sub_agents"
    :trigger "triggers"
    :user "users"
@@ -65,6 +65,7 @@
     ("schedule" "schedules") :schedule
     ("source" "sources" "runtime-source" "runtime-sources" "runtime_source" "runtime_sources") :source
     ("source-mode" "source-modes" "source_mode" "source_modes") :source-mode
+    ("store" "stores") :store
     ("sub-agent" "sub-agents" "sub_agent" "sub_agents") :sub-agent
     ("trigger" "triggers") :trigger
     ("user" "users" "human" "humans") :user

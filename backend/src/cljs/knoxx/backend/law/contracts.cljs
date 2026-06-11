@@ -35,11 +35,6 @@
   [:map {:closed false}
    [:capabilities {:optional true} [:sequential keyword?]]])
 
-(def HookMap
-  [:map {:closed false}
-   [:before {:optional true} [:map {:closed false}]]
-   [:after  {:optional true} [:map {:closed false}]]])
-
 (def ContextPolicy
   [:map {:closed false}
    [:max-messages {:optional true} int?]
@@ -78,12 +73,8 @@
   [:map {:closed false}
    [:contract/id string?]
    [:contract/kind keyword?]
-   [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
    [:trigger-kind {:optional true} keyword?]
-   [:source-kind {:optional true} keyword?]
-   [:source-mode {:optional true} keyword?]
-   [:hooks {:optional true} HookMap]
    [:contract/actor {:optional true} string?]
    [:contract/actors {:optional true} [:or
                                         [:set [:or string? [:= actor-scope/wildcard-actor]]]
@@ -249,7 +240,6 @@
    [:contract/kind [:= :source]]
    [:contract/id ContractId]
    [:contract/type {:optional true} [:or string? keyword?]]
-   [:contract/version {:optional true} int?]
    [:source/id [:or string? keyword?]]
    [:source/type {:optional true} [:or string? keyword?]]
    [:source/name {:optional true} string?]
@@ -291,7 +281,6 @@
     [:contract/kind [:= :ingest_source]]
     [:contract/id ContractId]
     [:contract/type {:optional true} [:or string? keyword?]]
-    [:contract/version {:optional true} int?]
     [:tenant/id {:optional true} string?]
     [:source/id {:optional true} [:or string? keyword?]]
     [:source/name {:optional true} string?]
@@ -313,7 +302,6 @@
   [:map {:closed false}
    [:contract/kind [:= :sub-agent]]
    [:contract/id string?]
-   [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
    [:sub-agent/parent-capabilities {:optional true} [:enum :inherit :restrict :none]]
    [:sub-agent/capabilities {:optional true} [:vector any?]]
@@ -333,18 +321,27 @@
   [:map {:closed false}
    [:contract/kind [:= :action]]
    [:contract/id ContractId]
-   [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
    [:action/id {:optional true} ContractId]
    [:action/kind {:optional true} keyword?]
-   [:action/handler string?]
-   [:action/responds-to {:optional true} [:sequential keyword?]]
-   [:action/result {:optional true} keyword?]
+   [:action/handler {:optional true} string?]
+   [:action/fn {:optional true} any?]
+   [:action/with {:optional true} [:map {:closed false}]]
    [:action/scope {:optional true} [:map {:closed false}]]
-   [:action/params {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 
-(def PipelineStep
+(def StoreContract
+  "Store resources declare keyed persistence: a store id plus a Malli schema
+   for the documents the store accepts."
+  [:map {:closed false}
+   [:contract/kind {:optional true} [:= :store]]
+   [:contract/id {:optional true} ContractId]
+   [:store/id [:or keyword? string?]]
+   [:store/schema {:optional true} any?]
+   [:enabled {:optional true} boolean?]])
+
+(def ^:deprecated PipelineStep
+  "Deprecated: pipelines are now action contracts with :actions/run-steps."
   [:map {:closed false}
    [:step/id string?]
    [:step/contract ContractId]
@@ -352,11 +349,11 @@
    [:step/condition {:optional true} string?]
    [:step/data {:optional true} [:map {:closed false}]]])
 
-(def PipelineContract
+(def ^:deprecated PipelineContract
+  "Deprecated: pipelines are now action contracts with :actions/run-steps."
   [:map {:closed false}
    [:contract/kind [:= :pipeline]]
    [:contract/id ContractId]
-   [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
    [:pipeline/steps [:vector PipelineStep]]
    [:data {:optional true} [:map {:closed false}]]])
@@ -365,7 +362,6 @@
   [:map {:closed false}
    [:contract/kind [:= :trigger]]
    [:contract/id ContractId]
-   [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
    [:trigger/kind [:enum :event]]
    [:trigger/events [:vector [:or string? keyword?]]]
@@ -374,9 +370,7 @@
    [:trigger/actor {:optional true} ContractId]
    [:trigger/emitter {:optional true} ContractId]
    [:trigger/listener {:optional true} ContractId]
-   [:trigger/domain {:optional true} [:map {:closed false}]]
    [:trigger/condition {:optional true} any?]
-   [:trigger/predicate {:optional true} [:map {:closed false}]]
    [:trigger/with {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 
@@ -387,7 +381,6 @@
   [:map {:closed false}
    [:contract/id string?]
    [:contract/kind [:enum :cms-block-registry :cms-templates :cms-template-registry]]
-   [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
    [:blocks {:optional true} [:map {:closed false}]]
    [:templates {:optional true} [:map {:closed false}]]])
@@ -400,6 +393,7 @@
     :action "actions"
     :pipeline "pipelines"
     :trigger "triggers"
+    :store "stores"
     :generator "generators"
     :schedule "schedules"
     :source-mode "source_modes"
@@ -451,6 +445,7 @@
     "actions" ActionContract
     "pipelines" PipelineContract
     "triggers" TriggerContract
+    "stores" StoreContract
     "sub_agents" SubAgentContract
     "cms" CmsContract
     AgentContract))

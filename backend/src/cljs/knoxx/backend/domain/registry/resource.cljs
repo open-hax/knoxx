@@ -40,7 +40,6 @@
    {:id :registry/capabilities :kind :capability}
    {:id :registry/roles :kind :role}
    {:id :registry/workflows :kind :workflow}
-   {:id :registry/pipelines :kind :pipeline}
    {:id :registry/schedules :kind :schedule}
    {:id :registry/sources :kind :source}])
 
@@ -64,7 +63,6 @@
 (def capabilities-registry (get registries-by-kind :capability))
 (def roles-registry (get registries-by-kind :role))
 (def workflows-registry (get registries-by-kind :workflow))
-(def pipelines-registry (get registries-by-kind :pipeline))
 (def schedules-registry (get registries-by-kind :schedule))
 (def sources-registry (get registries-by-kind :source))
 

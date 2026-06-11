@@ -3,7 +3,7 @@
 
    Merges schemas from:
    - proxx.schema (provider/policy/strategy)
-   - knoxx.backend resource definitions (agent/actor/role/capability/action/pipeline/trigger/schedule/generator)
+   - knoxx.backend resource definitions (agent/actor/role/capability/action/trigger/schedule/generator)
    - eta-mu.contract-runtime-v2.core (policy-gate/fulfillment match maps)
 
    EDN files describe resources. Contracts are the schema/policy boundaries
@@ -68,11 +68,6 @@
   [:map {:closed false}
    [:capabilities {:optional true} [:sequential keyword?]]])
 
-(def HookMap
-  [:map {:closed false}
-   [:before {:optional true} [:map {:closed false}]]
-   [:after  {:optional true} [:map {:closed false}]]])
-
 (def ContextPolicy
   [:map {:closed false}
    [:max-messages    {:optional true} int?]
@@ -102,13 +97,9 @@
   [:map {:closed false}
    [:contract/id      string?]
    [:contract/kind    [:= :agent]]
-   [:contract/version {:optional true} int?]
    [:contract/actors  {:optional true} [:vector string?]]
    [:enabled          {:optional true} :boolean]
    [:trigger-kind     {:optional true} keyword?]
-   [:source-kind      {:optional true} keyword?]
-   [:source-mode      {:optional true} keyword?]
-   [:hooks            {:optional true} HookMap]
    [:agent            {:optional true} AgentSpec]
    [:actor            {:optional true} ActorCapSpec]
    [:prompts          {:optional true}
@@ -119,7 +110,6 @@
    [:sources          {:optional true} [:sequential RuntimeSourceRef]]
    [:context          {:optional true} ContextPolicy]
    [:context-policy   {:optional true} ContextPolicy]
-   [:sub-agents       {:optional true} [:vector string?]]
    [:data             {:optional true} [:map {:closed false}]]])
 
 (def SubAgentContract
@@ -128,7 +118,6 @@
   [:map {:closed false}
    [:contract/id      string?]
    [:contract/kind    [:= :sub-agent]]
-   [:contract/version {:optional true} int?]
    [:contract/actors  {:optional true} [:vector string?]]
    [:parent-agent     string?]
    [:sub-agent/config {:optional true} SubAgentConfig]
@@ -273,23 +262,43 @@
   [:map {:closed false}
    [:contract/kind   [:= :action]]
    [:contract/id     ContractId]
-   [:contract/version {:optional true} int?]
    [:action/id       {:optional true} ContractId]
    [:action/kind     {:optional true} keyword?]
-   [:action/handler  :string]
-   [:action/responds-to {:optional true} [:sequential keyword?]]
-   [:action/result   {:optional true} keyword?]
+   [:action/handler  {:optional true} :string]
+   [:action/fn       {:optional true} :any]
+   [:action/with     {:optional true} [:map {:closed false}]]
    [:action/scope    {:optional true} :map]
-   [:action/params   {:optional true} :map]
    [:enabled         {:optional true} :boolean]
    [:data            {:optional true}
     [:map {:closed false}
      [:context {:optional true} :map]
      [:output  {:optional true} :map]]]])
 
-;; ── Pipeline contract (knoxx heritage) ────────────────────────────────────────
+;; ── Store resource (resource architecture) ────────────────────────────────────
 
-(def PipelineStep
+(def StoreContract
+  "Keyed persistence resource: a store id plus a Malli schema for documents."
+  [:map {:closed false}
+   [:contract/kind {:optional true} [:= :store]]
+   [:contract/id   {:optional true} ContractId]
+   [:store/id      [:or keyword? string?]]
+   [:store/schema  {:optional true} :any]
+   [:enabled       {:optional true} :boolean]])
+
+;; ── Namespace resource file (resource architecture) ───────────────────────────
+
+(def NamespaceFile
+  "Namespace resource file: groups composite resources under one :namespace.
+   Each entry may declare :trigger/*, :action/*, and :store/* keys at once;
+   interpreters read only their own keys."
+  [:map {:closed false}
+   [:namespace [:or keyword? string?]]
+   [:resources [:sequential [:map {:closed false}]]]])
+
+;; ── Pipeline contract (DEPRECATED — use :actions/run-steps) ──────────────────
+
+(def ^:deprecated PipelineStep
+  "Deprecated: pipelines are now action contracts with :actions/run-steps."
   [:map {:closed false}
    [:step/id         :string]
    [:step/contract   ContractId]
@@ -297,11 +306,11 @@
    [:step/condition  {:optional true} :string]
    [:step/data       {:optional true} :map]])
 
-(def PipelineContract
+(def ^:deprecated PipelineContract
+  "Deprecated: pipelines are now action contracts with :actions/run-steps."
   [:map {:closed false}
    [:contract/kind   [:= :pipeline]]
    [:contract/id     ContractId]
-   [:contract/version {:optional true} int?]
    [:pipeline/steps  [:vector PipelineStep]]
    [:enabled         {:optional true} :boolean]
    [:data            {:optional true} :map]])
@@ -312,7 +321,6 @@
   [:map {:closed false}
    [:contract/kind     [:= :trigger]]
    [:contract/id       ContractId]
-   [:contract/version  {:optional true} int?]
    [:trigger/kind      [:enum :event]]
    [:trigger/events    [:sequential [:or string? keyword?]]]
    [:trigger/action    {:optional true} ContractId]
@@ -320,9 +328,7 @@
    [:trigger/actor     {:optional true} ContractId]
    [:trigger/emitter   {:optional true} ContractId]
    [:trigger/listener  {:optional true} ContractId]
-   [:trigger/domain    {:optional true} :map]
    [:trigger/condition {:optional true} :any]
-   [:trigger/predicate {:optional true} :map]
    [:trigger/with      {:optional true} [:map {:closed false}]]
    [:enabled           {:optional true} :boolean]
    [:data              {:optional true} :map]])
@@ -331,7 +337,6 @@
   [:map {:closed false}
    [:contract/kind     [:= :generator]]
    [:contract/id       ContractId]
-   [:contract/version  {:optional true} int?]
    [:generator/id      {:optional true} ContractId]
    [:generator/kind    {:optional true} [:or string? keyword?]]
    [:generator/driver  {:optional true} [:or string? keyword?]]
@@ -345,7 +350,6 @@
   [:map {:closed false}
    [:contract/kind     [:= :schedule]]
    [:contract/id       ContractId]
-   [:contract/version  {:optional true} int?]
    [:schedule/id       {:optional true} ContractId]
    [:schedule/rule     {:optional true} [:or string? keyword?]]
    [:schedule/cron     {:optional true} string?]
@@ -382,7 +386,6 @@
    [:contract/kind    [:= :source]]
    [:contract/id      ContractId]
    [:contract/type    {:optional true} [:or string? keyword?]]
-   [:contract/version {:optional true} int?]
    [:source/id        [:or string? keyword?]]
    [:source/type      {:optional true} [:or string? keyword?]]
    [:source/name      {:optional true} string?]
@@ -441,7 +444,6 @@
    [:contract/kind     [:= :ingest_source]]
    [:contract/id       ContractId]
    [:contract/type     {:optional true} [:or string? keyword?]]
-   [:contract/version  {:optional true} int?]
    [:tenant/id         {:optional true} string?]
    [:source/id         {:optional true} [:or string? keyword?]]
    [:source/name       {:optional true} string?]
@@ -484,6 +486,8 @@
    :action       ActionContract
    :pipeline     PipelineContract
    :trigger      TriggerContract
+   :store        StoreContract
+   :namespace    NamespaceFile
    :generator    GeneratorContract
    :schedule     ScheduleContract
    :source       RuntimeSourceContract

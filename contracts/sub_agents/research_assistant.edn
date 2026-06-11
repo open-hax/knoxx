@@ -1,6 +1,5 @@
 {:contract/id      "research_assistant"
  :contract/kind    :sub-agent
- :contract/version 1
  :enabled          true
 
  ;; Capability strategy: inherit parent's capabilities, but the sub-agent

@@ -6,8 +6,6 @@
                               :mode :triggered
                               :k 6}},
  :sources [:source/openplanner-memory],
- :hooks {:before {}, :after {}},
- :contract/version 3,
  :enabled true,
  :context {:max-messages 240
            :max-chars 600000

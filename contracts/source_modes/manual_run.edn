@@ -1,6 +1,5 @@
 {:contract/id "manual-run"
  :contract/kind :source-mode
- :contract/version 1
  :source-mode/id :source-mode/manual-run
  :source/kind :manual
  :source/mode :run

@@ -1,6 +1,5 @@
 {:contract/id "discord-synthesis"
  :contract/kind :source-mode
- :contract/version 1
  :source-mode/id :source-mode/discord-synthesis
  :source/kind :discord
  :source/mode :template-synthesize

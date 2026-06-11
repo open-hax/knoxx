@@ -46,7 +46,6 @@
     "policies" (some-> (:contract/id value) str)
     "sources" (some-> (:contract/id value) str)
     "actions" (some-> (:contract/id value) str)
-    "pipelines" (some-> (:contract/id value) str)
     "triggers" (some-> (:contract/id value) str)
     "sub_agents" (some-> (:contract/id value) str)
     "actors" (some-> (:actor/id value) str)
@@ -102,18 +101,13 @@
   (let [resource (record-definition record)
         events (wire-value (:trigger/events resource))]
     {:kind   (keywordish-name (:trigger/kind resource))
-     :target (or (:trigger/target resource) (:trigger/agent resource))
+     :target (or (:trigger/target resource)
+                 (get-in resource [:trigger/with :agent-id])
+                 (:trigger/agent resource))
      :events events
      :source {:events events}
      :filters (wire-value (get-in resource [:data :filters]))
      :context (wire-value (get-in resource [:data :context]))}))
-
-(defn- pipeline-summary
-  [record]
-  {:steps (mapv (fn [step]
-                  {:id (:step/id step)
-                   :resource (:step/contract step)})
-                (get-in (record-definition record) [:pipeline/steps]))})
 
 (defn- action-summary
   [record]
@@ -132,9 +126,6 @@
     (cond-> summary
       (= :trigger resource-kind)
       (assoc :trigger (trigger-summary record))
-
-      (= :pipeline resource-kind)
-      (assoc :pipeline (pipeline-summary record))
 
       (= :action resource-kind)
       (assoc :action (action-summary record)))))

@@ -2,6 +2,7 @@
   "Contract-native event dispatcher."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [knoxx.backend.domain.action.interpreter :as action-interpreter]
             [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.action.start-agent-session]
             [knoxx.backend.domain.action.run-pipeline]
@@ -88,7 +89,7 @@
    :trigger trigger
    :actor/id (or (nonblank (:trigger/actor trigger))
                  (nonblank (:trigger/listener trigger)))
-   :agent/id (:trigger/agent trigger)
+   :agent/id (get-in trigger [:trigger/with :agent-id])
    :trigger-ctx (merge (get-in trigger [:data :context]) {}
                        (get-in event [:event/payload]) {})})
 
@@ -155,7 +156,7 @@
                         :kind (:trigger/kind trigger)
                         :events (:trigger/events trigger)
                         :action (:trigger/action trigger)
-                        :agent (:trigger/agent trigger)
+                        :agent (get-in trigger [:trigger/with :agent-id])
                         :listener (:trigger/listener trigger)})
                      triggers)}))
 

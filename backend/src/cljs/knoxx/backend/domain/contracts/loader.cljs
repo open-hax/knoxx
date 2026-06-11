@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [cljs.reader :as reader]
             [knoxx.backend.domain.actor.scope :as actor-scope]
+            [knoxx.backend.domain.resources.namespace-file :as ns-file]
             [knoxx.backend.law.contracts :as v]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
@@ -12,7 +13,7 @@
 
 (def contract-class-order
   ["agents" "actors" "roles" "capabilities" "policies"
-   "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents" "cms"])
+   "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "triggers" "stores" "sub_agents" "cms"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@
       ("action" "actions") "actions"
       ("pipeline" "pipelines") "pipelines"
       ("trigger" "triggers") "triggers"
+      ("store" "stores") "stores"
       ("sub-agent" "sub-agents" "sub_agent" "sub_agents") "sub_agents"
       (throw (js/Error. (str "Unknown contract class: " value))))))
 
@@ -194,15 +196,40 @@
                      " — " (pr-str (:errors valid)))
             nil)))))
 
-(defn parse-contract-file!
-  "Parse + validate a single .edn file. Returns contract record or nil."
+(defn- namespace-resource-record
+  "Validate one expanded namespace resource definition into a contract record."
+  [file-path edn-text {:resource/keys [kind definition]}]
+  (let [klass (normalize-contract-class (name kind))
+        valid (v/validate klass definition)]
+    (if (:ok valid)
+      {:ok? true
+       :id (:contract/id definition)
+       :contractClass klass
+       :contract definition
+       :file-path file-path
+       :edn-text (str edn-text)}
+      (do (stderr! "[contracts] namespace resource validation failed: " file-path
+                   " " (pr-str (:resource/qualified-id definition))
+                   " — " (pr-str (:errors valid)))
+          nil))))
+
+(defn parse-contract-file-records!
+  "Parse + validate a single .edn file into a vector of contract records.
+   Namespace files ({:namespace ... :resources [...]}) expand to one record per
+   interpreter kind per resource entry; plain contract files yield one record."
   [file-path edn-text]
   (try
     (let [raw (reader/read-string (str edn-text))]
-      (validate-and-build file-path edn-text raw))
+      (if (ns-file/namespace-file? raw)
+        (->> (ns-file/namespace-file-definitions raw)
+             (keep (partial namespace-resource-record file-path edn-text))
+             vec)
+        (if-let [record (validate-and-build file-path edn-text raw)]
+          [record]
+          [])))
     (catch :default err
       (stderr! "[contracts] parse error: " file-path " — " (.-message err))
-      nil)))
+      [])))
 
 (defn- ^:async read-contract-file!
   [file-path]

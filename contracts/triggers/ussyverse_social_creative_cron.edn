@@ -1,6 +1,5 @@
 {:contract/kind :trigger
  :contract/id "ussyverse_social_creative_cron"
- :contract/version 4
  :enabled true
 
  ;; Trigger agreement: discord_automation may start the creative social agent
@@ -9,8 +8,9 @@
  :trigger/listener "discord_automation"
  :trigger/events [:schedule/ussyverse-social-creative]
  :trigger/action :actions/start-agent-session
- :trigger/agent "ussyverse_social_creative"
- :trigger/task "Inspect the current Ussyverse server conversation around the two home channels and the wider guild they belong to.
+ :trigger/with
+ {:agent-id "ussyverse_social_creative"
+  :task "Inspect the current Ussyverse server conversation around the two home channels and the wider guild they belong to.
 
 If you have something genuinely fun, musical, witty, or socially catalytic to add, post as many messages as you want
  either 1494137016303095828 (frankie-infinite-yap) or 1444189585373663417 (errorcoded-slop).
@@ -37,5 +37,5 @@ BLUESKY is the preferred outlet when you have a concrete creative artifact or so
 - Do not claim you checked Bluesky unless a Bluesky tool actually ran.
 
 
-"
+"}
  :data {:context {:reason "schedule event: ussyverse social creative"}}}

@@ -1,0 +1,6 @@
+{:contract/id "tr_graphics_review"
+ :contract/kind :trigger
+ :trigger/kind :event
+ :trigger/events ["graphics.svg.rendered"]
+ :trigger/action :actions/graphics-review
+ :trigger/listener "system_admin"}

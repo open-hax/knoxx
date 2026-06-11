@@ -1,7 +1,6 @@
 {:contract/id "translation_events"
  :contract/kind :source
  :contract/type :runtime/source
- :contract/version 1
  :enabled true
 
  :source/id :source/translation-events

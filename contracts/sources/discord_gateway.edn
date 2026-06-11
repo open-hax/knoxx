@@ -1,7 +1,6 @@
 {:contract/id "discord_gateway"
  :contract/kind :source
  :contract/type :runtime/source
- :contract/version 1
  :enabled true
 
  ;; Source instance for the Discord automation actor. The driver is ClojureScript

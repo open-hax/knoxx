@@ -1,0 +1,27 @@
+{:namespace :hello-world
+
+ ;; The entire hello-world demo as one resource manifest.
+ ;;
+ ;; Grammar notes (docs/design/resource-architecture.md):
+ ;; - :K/id registers a resource of kind K; identity is :hello-world/<local-id>.
+ ;; - Registration is optional for every kind: the :actions/hello-world
+ ;;   behavior is registered in code (domain/action/registry.cljs) and needs
+ ;;   no EDN registration at all.
+ ;; - Fields live under the owning kind's namespace — no :data noise.
+ :resources
+ [{;; Event provenance: a demo fixture that may emit greeting events.
+   :generator/id :demo
+   :generator/kind :demo
+   :generator/driver :manual-or-schedule
+   :generator/actor "system_admin"
+   :generator/emits [:message/greeting]}
+
+  {;; Trigger agreement: system_admin may run the greeting action after
+   ;; observing a greeting event. :trigger/with is the argument map the
+   ;; action receives as :action/with.
+   :trigger/id :inbox
+   :trigger/listener "system_admin"
+   :trigger/events [:message/greeting]
+   :trigger/action :actions/hello-world
+   :trigger/with {:actor-name "Knoxx"}
+   :trigger/context {:reason "hello-world greeting demo"}}]}

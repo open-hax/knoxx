@@ -1,0 +1,20 @@
+{:contract/kind  :action
+ :contract/id    "deep_synthesis_action"
+ :enabled        false
+
+ :action/id      :actions/deep-synthesis
+ :action/kind    :actions/run-steps
+ :action/handler "knoxx.backend.domain.action.registry/run-action!"
+
+ :action/with
+ {:steps
+  [{:action :actions/start-agent-session
+    :with   {:agent-id "discord_deep_synthesis"
+             :output   {:key "synthesis_data" :ttl "PT6H"}}}]
+  :output {:key "deep_synthesis_result" :ttl "PT6H"}}
+
+ :action/scope
+ {:actions [:actions/start-agent-session]}
+
+ :data
+ {:context {:source "discord-deep-synthesis"}}}

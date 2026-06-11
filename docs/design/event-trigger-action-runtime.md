@@ -1,3 +1,5 @@
+> **SUPERSEDED** by `resource-architecture.md` (2026-06-10). This document is retained for historical reference only.
+
 # Event, Trigger, Action, Actor, Agent Runtime
 
 ## Goal

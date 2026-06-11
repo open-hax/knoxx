@@ -1,0 +1,7 @@
+{:contract/id "action_graphics_review"
+ :contract/kind :action
+ :action/id :actions/graphics-review
+ :action/kind :agent-call
+ :action/handler "graphics_reviewer"
+ :action/responds-to ["graphics.svg.rendered"]
+ :action/result :session}

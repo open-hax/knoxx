@@ -1,6 +1,5 @@
 {:contract/id      "code_reviewer"
  :contract/kind    :sub-agent
- :contract/version 1
  :enabled          true
 
  :sub-agent/parent-capabilities :restrict

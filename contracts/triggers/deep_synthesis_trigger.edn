@@ -1,14 +1,13 @@
 {:contract/kind :trigger
  :contract/id "deep_synthesis_trigger"
- :contract/version 4
- :enabled true
+ :enabled false
 
- ;; Trigger agreement: system_admin may run the deep synthesis pipeline after
+ ;; Trigger agreement: system_admin may run the deep synthesis action after
  ;; observing the schedule-generated deep synthesis event.
+ ;; Disabled until :actions/deep-synthesis (deep_synthesis_action.edn) is enabled.
  :trigger/kind :event
  :trigger/listener "system_admin"
  :trigger/events [:schedule/deep-synthesis]
- :trigger/action :actions/run-pipeline
- :trigger/with {:pipeline-id "deep_synthesis_pipeline"}
+ :trigger/action :actions/deep-synthesis
  :data {:context {:timezone "America/Chicago"
                   :report-window-hours 24}}}

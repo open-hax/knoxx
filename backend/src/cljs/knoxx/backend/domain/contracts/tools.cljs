@@ -8,12 +8,12 @@
 
 (def contract-list-params
   [:map
-  [:contract_class {:optional true :description "Contract class to list: agents, roles, capabilities, actors, policies, source_modes, sources, models, model_families, actions, pipelines, triggers, sub_agents. Defaults to agents."} :string]])
+  [:contract_class {:optional true :description "Contract class to list: agents, roles, capabilities, actors, policies, source_modes, sources, models, model_families, actions, triggers, sub_agents. Defaults to agents."} :string]])
 
 (def contract-read-params
   [:map
    [:contract_id {:description "Contract ID to read. For roles/capabilities, use the body identity slug such as fork-tales-composer or contract-write."} :string]
-   [:contract_class {:optional true :description "Contract class: agents, roles, capabilities, actors, policies, source_modes, sources, models, model_families, actions, pipelines, triggers, sub_agents. Defaults to agents."} :string]])
+   [:contract_class {:optional true :description "Contract class: agents, roles, capabilities, actors, policies, source_modes, sources, models, model_families, actions, triggers, sub_agents. Defaults to agents."} :string]])
 
 (def contract-write-params
   [:map
@@ -24,7 +24,7 @@
 (def contract-validate-params
   [:map
    [:edn_text {:description "EDN contract text to validate. Returns :ok, :errors, :warnings, :contract-class, and parsed :contract on success."} :string]
-   [:contract_class {:optional true :description "Contract class hint: agents, roles, capabilities, actors, policies, source_modes, sources, models, model_families, actions, pipelines, triggers, sub_agents. Defaults to agents."} :string]])
+   [:contract_class {:optional true :description "Contract class hint: agents, roles, capabilities, actors, policies, source_modes, sources, models, model_families, actions, triggers, sub_agents. Defaults to agents."} :string]])
 
 (defn- param-value
   [params snake camel fallback]

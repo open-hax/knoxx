@@ -1,6 +1,5 @@
 {:contract/id "discord_voice_audio_event_agent"
  :contract/kind :agent
- :contract/version 1
  :enabled false
  :contract/actors ["discord_automation"]
  :agent {:role :role/voice-audio-event-listener

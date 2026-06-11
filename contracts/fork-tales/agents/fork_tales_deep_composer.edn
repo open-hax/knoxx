@@ -1,6 +1,5 @@
 {:contract/id      "fork_tales_deep_composer"
  :contract/kind    :agent
- :contract/version 2
  :enabled          true
 
  :agent {:role      "fork-tales-composer"

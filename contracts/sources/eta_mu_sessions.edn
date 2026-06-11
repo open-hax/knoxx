@@ -1,7 +1,6 @@
 {:contract/id "eta_mu_sessions"
  :contract/kind :source
  :contract/type :runtime/source
- :contract/version 1
  :enabled true
 
  ;; Source instance for eta-mu session ingestion. The driver is ClojureScript

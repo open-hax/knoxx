@@ -1,0 +1,14 @@
+{:cap/id :cap/graphics-svg-pipeline
+ :cap/tools [:mcp.graphics-svg-pipeline.view_svg_raw
+             :mcp.graphics-svg-pipeline.view_rendered
+             :mcp.graphics-svg-pipeline.submit_description
+             :mcp.graphics-svg-pipeline.submit_review
+             :mcp.graphics-svg-pipeline.submit_labels
+             :mcp.graphics-svg-pipeline.submit_kind
+             :mcp.graphics-svg-pipeline.submit_quality_score]
+ :cap/user-surfaces
+ [{:surface/id :workspace/graphics-review
+   :surface/label "Graphics Review"
+   :surface/kind :editor
+   :surface/routes ["/graphics" "/graphics/review"]
+   :surface/description "Review and classify SVG graphics assets via MCP tools."}]}

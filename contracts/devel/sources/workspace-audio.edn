@@ -1,7 +1,6 @@
 {:contract/id :devel/workspace-audio
  :contract/kind :ingest_source
  :contract/type :ingest/source
- :contract/version 1
  :tenant/id "devel"
  :source/id :workspace-audio
  :source/name "devel workspace audio"
