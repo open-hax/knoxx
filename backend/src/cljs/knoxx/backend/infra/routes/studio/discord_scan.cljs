@@ -69,151 +69,149 @@
     (or (some-> content-type (str/starts-with? "image/"))
         (contains? discord-scan-image-extensions ext))))
 
-(defn- discord-list-guilds!
+(defn- ^:async discord-list-guilds!
   [client]
-  (-> (discord-rest/current-user-guilds! client)
-      (.then (fn [payload]
-               (->> (or payload [])
-                    (mapv (fn [guild]
-                            {:id (or (:id guild) "")
-                             :name (or (:name guild) "unknown-guild")})))))))
+  (let [payload (await (discord-rest/current-user-guilds! client))]
+    (->> (or payload [])
+         (mapv (fn [guild]
+                 {:id (or (:id guild) "")
+                  :name (or (:name guild) "unknown-guild")})))))
 
-(defn- discord-list-channels!
+(defn- ^:async discord-list-channels!
   [client guild]
-  (-> (discord-rest/guild-channels! client (:id guild))
-      (.then (fn [payload]
-               (->> (or payload [])
-                    (filter (fn [channel]
-                              (contains? #{0 5 11 12} (:type channel))))
-                    (mapv (fn [channel]
-                            {:id (or (:id channel) "")
-                             :name (or (:name channel) "unknown-channel")
-                             :guildId (:id guild)
-                             :guildName (:name guild)})))))))
+  (let [payload (await (discord-rest/guild-channels! client (:id guild)))]
+    (->> (or payload [])
+         (filter (fn [channel]
+                   (contains? #{0 5 11 12} (:type channel))))
+         (mapv (fn [channel]
+                 {:id (or (:id channel) "")
+                  :name (or (:name channel) "unknown-channel")
+                  :guildId (:id guild)
+                  :guildName (:name guild)})))))
 
-(defn- discord-fetch-channel-messages!
+(defn- ^:async discord-fetch-channel-messages!
   [client channel-id before limit]
-  (-> (discord-rest/channel-messages! client channel-id {:limit (max 1 (min 100 (or limit 100)))
-                                                         :before before})
-      (.then (fn [payload]
-               (->> (or payload [])
-                    (mapv (fn [message]
-                            (let [author (or (:author message) {})]
-                              {:id (or (:id message) "")
-                               :channelId (or (:channel_id message) channel-id)
-                               :content (or (:content message) "")
-                               :authorId (or (:id author) "")
-                               :authorUsername (or (:username author) "unknown")
-                               :timestamp (or (:timestamp message) "")
-                               :attachments (->> (or (:attachments message) [])
-                                                 (mapv (fn [attachment]
-                                                         {:id (or (:id attachment) "")
-                                                          :filename (or (:filename attachment) "attachment.bin")
-                                                          :contentType (:content_type attachment)
-                                                          :size (or (:size attachment) 0)
-                                                          :url (or (:url attachment) "")})))}))))))))
+  (let [payload (await (discord-rest/channel-messages! client channel-id {:limit (max 1 (min 100 (or limit 100)))
+                                                                          :before before}))]
+    (->> (or payload [])
+         (mapv (fn [message]
+                 (let [author (or (:author message) {})]
+                   {:id (or (:id message) "")
+                    :channelId (or (:channel_id message) channel-id)
+                    :content (or (:content message) "")
+                    :authorId (or (:id author) "")
+                    :authorUsername (or (:username author) "unknown")
+                    :timestamp (or (:timestamp message) "")
+                    :attachments (->> (or (:attachments message) [])
+                                      (mapv (fn [attachment]
+                                              {:id (or (:id attachment) "")
+                                               :filename (or (:filename attachment) "attachment.bin")
+                                               :contentType (:content_type attachment)
+                                               :size (or (:size attachment) 0)
+                                               :url (or (:url attachment) "")})))}))))))
 
-(defn- promise-reduce
+(defn- ^:async promise-reduce
   [items init step-fn]
-  (reduce (fn [promise item]
-            (.then promise (fn [state] (step-fn state item))))
-          (js/Promise.resolve init)
-          items))
+  (loop [state init
+         remaining (seq items)]
+    (if-let [item (first remaining)]
+      (let [next-state (await (step-fn state item))]
+        (recur next-state (rest remaining)))
+      state)))
 
-(defn- collect-discord-scan-channels!
+(defn- ^:async list-channels-into-acc!
+  [client acc guild]
+  (let [channels (await (discord-list-channels! client guild))]
+    (into acc channels)))
+
+(defn- ^:async collect-discord-scan-channels!
   [client channel-ids max-channels]
   (if (seq channel-ids)
-    (js/Promise.resolve
-     (vec (map (fn [channel-id]
-                 {:id (str channel-id)
-                  :name (str channel-id)
-                  :guildId nil
-                  :guildName "manual"})
-               channel-ids)))
-    (-> (discord-list-guilds! client)
-        (.then (fn [guilds]
-                 (-> (promise-reduce guilds []
-                                     (fn [acc guild]
-                                       (-> (discord-list-channels! client guild)
-                                           (.then (fn [channels]
-                                                    (into acc channels))))))
-                     (.then (fn [channels]
-                              (vec (take max-channels channels))))))))))
+    (vec (map (fn [channel-id]
+                {:id (str channel-id)
+                 :name (str channel-id)
+                 :guildId nil
+                 :guildName "manual"})
+              channel-ids))
+    (let [guilds (await (discord-list-guilds! client))
+          channels (await (promise-reduce guilds [] (partial list-channels-into-acc! client)))]
+      (vec (take max-channels channels)))))
 
-(defn- scan-channel-audio!
+(defn- ^:async scan-channel-audio-step!
+  [client channel cutoff-ms pages-per-channel limit-per-page before page messages-scanned attachments]
+  (if (>= page pages-per-channel)
+    {:messages-scanned messages-scanned
+     :attachments attachments}
+    (let [messages (await (discord-fetch-channel-messages! client (:id channel) before limit-per-page))
+          message-vec (vec messages)
+          matching (->> message-vec
+                        (filter #(recent-enough? cutoff-ms %))
+                        (mapcat (fn [message]
+                                  (->> (:attachments message)
+                                       (filter discord-audio-attachment?)
+                                       (map (fn [attachment]
+                                              (assoc attachment
+                                                     :guildId (:guildId channel)
+                                                     :guildName (:guildName channel)
+                                                     :channelId (:id channel)
+                                                     :channelName (:name channel)
+                                                     :messageId (:id message)
+                                                     :messageUrl (when (:guildId channel)
+                                                                   (str "https://discord.com/channels/"
+                                                                        (:guildId channel) "/" (:id channel) "/" (:id message)))
+                                                     :authorId (:authorId message)
+                                                     :authorUsername (:authorUsername message)
+                                                     :timestamp (:timestamp message)
+                                                     :content (:content message)))))))
+                        vec)
+          next-attachments (into attachments matching)
+          total-scanned (+ messages-scanned (count message-vec))
+          oldest-id (:id (last message-vec))
+          stop? (or (empty? message-vec)
+                    (< (count message-vec) limit-per-page)
+                    (every? #(not (recent-enough? cutoff-ms %)) message-vec))]
+      (if (or stop? (str/blank? (str oldest-id)))
+        {:messages-scanned total-scanned
+         :attachments next-attachments}
+        (await (scan-channel-audio-step! client channel cutoff-ms pages-per-channel limit-per-page oldest-id (inc page) total-scanned next-attachments))))))
+
+(defn- ^:async scan-channel-audio!
   [client channel {:keys [cutoff-ms pages-per-channel limit-per-page]}]
-  (letfn [(step [before page messages-scanned attachments]
-            (if (>= page pages-per-channel)
-              (js/Promise.resolve {:messages-scanned messages-scanned
-                                   :attachments attachments})
-              (-> (discord-fetch-channel-messages! client (:id channel) before limit-per-page)
-                  (.then (fn [messages]
-                           (let [message-vec (vec messages)
-                                 matching (->> message-vec
-                                               (filter #(recent-enough? cutoff-ms %))
-                                               (mapcat (fn [message]
-                                                         (->> (:attachments message)
-                                                              (filter discord-audio-attachment?)
-                                                              (map (fn [attachment]
-                                                                     (assoc attachment
-                                                                            :guildId (:guildId channel)
-                                                                            :guildName (:guildName channel)
-                                                                            :channelId (:id channel)
-                                                                            :channelName (:name channel)
-                                                                            :messageId (:id message)
-                                                                            :messageUrl (when (:guildId channel)
-                                                                                          (str "https://discord.com/channels/"
-                                                                                               (:guildId channel) "/" (:id channel) "/" (:id message)))
-                                                                            :authorId (:authorId message)
-                                                                            :authorUsername (:authorUsername message)
-                                                                            :timestamp (:timestamp message)
-                                                                            :content (:content message)))))))
-                                               vec)
-                                 next-attachments (into attachments matching)
-                                 total-scanned (+ messages-scanned (count message-vec))
-                                 oldest-id (:id (last message-vec))
-                                 stop? (or (empty? message-vec)
-                                           (< (count message-vec) limit-per-page)
-                                           (every? #(not (recent-enough? cutoff-ms %)) message-vec))]
-                             (if (or stop? (str/blank? (str oldest-id)))
-                               {:messages-scanned total-scanned
-                                :attachments next-attachments}
-                               (step oldest-id (inc page) total-scanned next-attachments))))))))]
-    (step nil 0 0 [])))
+  (await (scan-channel-audio-step! client channel cutoff-ms pages-per-channel limit-per-page nil 0 0 [])))
 
-(defn- scan-channel-images!
+(defn- ^:async scan-channel-images!
   [client channel {:keys [cutoff-ms limit-per-page]}]
-  (-> (discord-fetch-channel-messages! client (:id channel) nil limit-per-page)
-      (.then (fn [messages]
-               (let [message-vec (vec messages)
-                     matching (->> message-vec
-                                   (filter #(recent-enough? cutoff-ms %))
-                                   (mapcat (fn [message]
-                                             (->> (:attachments message)
-                                                  (filter discord-image-attachment?)
-                                                  (map (fn [attachment]
-                                                         (assoc attachment
-                                                                :guildId (:guildId channel)
-                                                                :guildName (:guildName channel)
-                                                                :channelId (:id channel)
-                                                                :channelName (:name channel)
-                                                                :messageId (:id message)
-                                                                :messageUrl (when (:guildId channel)
-                                                                              (str "https://discord.com/channels/"
-                                                                                   (:guildId channel) "/" (:id channel) "/" (:id message)))
-                                                                :authorId (:authorId message)
-                                                                :authorUsername (:authorUsername message)
-                                                                :timestamp (:timestamp message)
-                                                                :content (:content message)))))))
-                                   vec)]
-                 {:messages-scanned (count message-vec)
-                  :attachments matching})))))
+  (let [messages (await (discord-fetch-channel-messages! client (:id channel) nil limit-per-page))
+        message-vec (vec messages)
+        matching (->> message-vec
+                      (filter #(recent-enough? cutoff-ms %))
+                      (mapcat (fn [message]
+                                (->> (:attachments message)
+                                     (filter discord-image-attachment?)
+                                     (map (fn [attachment]
+                                            (assoc attachment
+                                                   :guildId (:guildId channel)
+                                                   :guildName (:guildName channel)
+                                                   :channelId (:id channel)
+                                                   :channelName (:name channel)
+                                                   :messageId (:id message)
+                                                   :messageUrl (when (:guildId channel)
+                                                                 (str "https://discord.com/channels/"
+                                                                      (:guildId channel) "/" (:id channel) "/" (:id message)))
+                                                   :authorId (:authorId message)
+                                                   :authorUsername (:authorUsername message)
+                                                   :timestamp (:timestamp message)
+                                                   :content (:content message)))))))
+                      vec)]
+    {:messages-scanned (count message-vec)
+     :attachments matching}))
 
-(defn- fs-path-exists!
+(defn- ^:async fs-path-exists!
   [node-fs path]
-  (-> (.stat node-fs path)
-      (.then (fn [_] true))
-      (.catch (fn [_] false))))
+  (try
+    (await (.stat node-fs path))
+    true
+    (catch :default _ false)))
 
 (defn- discord-audio-import-result
   ([status file-relative meta-relative attachment]
@@ -269,7 +267,7 @@
    :size (:size loaded)
    :saved_path file-relative})
 
-(defn- import-audio-attachment!
+(defn- ^:async import-audio-attachment!
   [runtime config import-root attachment]
   (let [workspace-root (:workspace-root config)
         day (let [ts (str (or (:timestamp attachment) ""))]
@@ -283,24 +281,18 @@
         file-absolute (.join path dir-absolute target-name)
         file-relative (str import-root "/" guild-segment "/" channel-segment "/" day "/" target-name)
         meta-absolute (str file-absolute ".json")
-        meta-relative (str file-relative ".json")]
-    (-> (fs-path-exists! fs file-absolute)
-        (.then
-         (fn [exists?]
-           (if exists?
-             (discord-audio-import-result "skipped" file-relative meta-relative attachment)
-             (-> (media/load-media-source! runtime (live-config config) (:url attachment) media/audio-render-max-bytes)
-                 (.then
-                  (fn [loaded]
-                    (let [metadata (discord-audio-import-metadata attachment loaded file-relative)]
-                      (-> (media/fs-mkdir! fs dir-absolute (clj->js {:recursive true}))
-                          (.then (fn [] (media/fs-write-file! fs file-absolute (:buffer loaded))))
-                          (.then (fn []
-                                   (media/fs-write-file! fs meta-absolute (.stringify js/JSON (clj->js metadata) nil 2) "utf8")))
-                          (.then (fn []
-                                   (discord-audio-import-result "imported" file-relative meta-relative attachment))))))))))))))
+        meta-relative (str file-relative ".json")
+        exists? (await (fs-path-exists! fs file-absolute))]
+    (if exists?
+      (discord-audio-import-result "skipped" file-relative meta-relative attachment)
+      (let [loaded (await (media/load-media-source! runtime (live-config config) (:url attachment) media/audio-render-max-bytes))
+            metadata (discord-audio-import-metadata attachment loaded file-relative)]
+        (await (media/fs-mkdir! fs dir-absolute (clj->js {:recursive true})))
+        (await (media/fs-write-file! fs file-absolute (:buffer loaded)))
+        (await (media/fs-write-file! fs meta-absolute (.stringify js/JSON (clj->js metadata) nil 2) "utf8"))
+        (discord-audio-import-result "imported" file-relative meta-relative attachment)))))
 
-(defn- import-image-attachment!
+(defn- ^:async import-image-attachment!
   [runtime config import-root attachment]
   (let [workspace-root (:workspace-root config)
         day (let [ts (str (or (:timestamp attachment) ""))]
@@ -314,24 +306,18 @@
         file-absolute (.join path dir-absolute target-name)
         file-relative (str import-root "/" guild-segment "/" channel-segment "/" day "/" target-name)
         meta-absolute (str file-absolute ".json")
-        meta-relative (str file-relative ".json")]
-    (-> (fs-path-exists! fs file-absolute)
-        (.then
-         (fn [exists?]
-           (if exists?
-             (discord-audio-import-result "skipped" file-relative meta-relative attachment)
-             (-> (media/load-media-source! runtime (live-config config) (:url attachment) media/multimodal-upload-max-bytes)
-                 (.then
-                  (fn [loaded]
-                    (let [metadata (discord-image-import-metadata attachment loaded file-relative)]
-                      (-> (media/fs-mkdir! fs dir-absolute (clj->js {:recursive true}))
-                          (.then (fn [] (media/fs-write-file! fs file-absolute (:buffer loaded))))
-                          (.then (fn []
-                                   (media/fs-write-file! fs meta-absolute (.stringify js/JSON (clj->js metadata) nil 2) "utf8")))
-                          (.then (fn []
-                                   (discord-audio-import-result "imported" file-relative meta-relative attachment))))))))))))))
+        meta-relative (str file-relative ".json")
+        exists? (await (fs-path-exists! fs file-absolute))]
+    (if exists?
+      (discord-audio-import-result "skipped" file-relative meta-relative attachment)
+      (let [loaded (await (media/load-media-source! runtime (live-config config) (:url attachment) media/multimodal-upload-max-bytes))
+            metadata (discord-image-import-metadata attachment loaded file-relative)]
+        (await (media/fs-mkdir! fs dir-absolute (clj->js {:recursive true})))
+        (await (media/fs-write-file! fs file-absolute (:buffer loaded)))
+        (await (media/fs-write-file! fs meta-absolute (.stringify js/JSON (clj->js metadata) nil 2) "utf8"))
+        (discord-audio-import-result "imported" file-relative meta-relative attachment)))))
 
-(defn- write-scan-manifest!
+(defn- ^:async write-scan-manifest!
   [_runtime config import-root manifest]
   (let [workspace-root (:workspace-root config)
         stamp (timestamp-token (:scanned_at manifest))
@@ -339,10 +325,9 @@
         file-name (str "scan-" stamp ".json")
         file-absolute (.join path dir-absolute file-name)
         file-relative (str import-root "/_scan_logs/" file-name)]
-    (-> (media/fs-mkdir! fs dir-absolute (clj->js {:recursive true}))
-        (.then (fn []
-                 (media/fs-write-file! fs file-absolute (.stringify js/JSON (clj->js manifest) nil 2) "utf8")))
-        (.then (fn [] file-relative)))))
+    (await (media/fs-mkdir! fs dir-absolute (clj->js {:recursive true})))
+    (await (media/fs-write-file! fs file-absolute (.stringify js/JSON (clj->js manifest) nil 2) "utf8"))
+    file-relative))
 
 (defn- bounded-body-int
   [body key-name default min-value max-value]
@@ -365,29 +350,34 @@
                     :pages-per-channel pages-per-channel
                     :limit-per-page limit-per-page}}))
 
-(defn- collect-attachments!
-  [client channels scan-channel! scan-options]
-  (promise-reduce channels
-                  {:messages-scanned 0 :attachments []}
-                  (fn [state channel]
-                    (-> (scan-channel! client channel scan-options)
-                        (.then (fn [result]
-                                 {:messages-scanned (+ (:messages-scanned state) (:messages-scanned result))
-                                  :attachments (into (:attachments state) (:attachments result))}))))))
+(defn- ^:async scan-channel-into-state!
+  [client scan-channel! scan-options state channel]
+  (let [result (await (scan-channel! client channel scan-options))]
+    {:messages-scanned (+ (:messages-scanned state) (:messages-scanned result))
+     :attachments (into (:attachments state) (:attachments result))}))
 
-(defn- import-attachment-results!
+(defn- ^:async collect-attachments!
+  [client channels scan-channel! scan-options]
+  (await (promise-reduce channels
+                         {:messages-scanned 0 :attachments []}
+                         (partial scan-channel-into-state! client scan-channel! scan-options))))
+
+(defn- ^:async import-attachment-into-results!
+  [runtime config import-root import-attachment! results attachment]
+  (try
+    (let [result (await (import-attachment! runtime config import-root attachment))]
+      (conj results result))
+    (catch :default error
+      (conj results (discord-audio-import-result "failed"
+                                                 ""
+                                                 ""
+                                                 attachment
+                                                 (or (.-message error) (str error)))))))
+
+(defn- ^:async import-attachment-results!
   [runtime config import-root attachments import-attachment!]
-  (promise-reduce attachments []
-                  (fn [results attachment]
-                    (-> (import-attachment! runtime config import-root attachment)
-                        (.then (fn [result]
-                                 (conj results result)))
-                        (.catch (fn [error]
-                                  (conj results (discord-audio-import-result "failed"
-                                                                             ""
-                                                                             ""
-                                                                             attachment
-                                                                             (or (.-message error) (str error))))))))))
+  (await (promise-reduce attachments []
+                         (partial import-attachment-into-results! runtime config import-root import-attachment!))))
 
 (defn- scan-summary
   [import-root channels messages-scanned attachments results]
@@ -405,34 +395,30 @@
                    (take 50 channels))
    :results (vec results)})
 
-(defn- run-discord-media-scan!
+(defn- ^:async run-discord-media-scan!
   [runtime config {:keys [client channel-ids max-channels import-root scan-options]} scan-channel! import-attachment!]
-  (-> (collect-discord-scan-channels! client channel-ids max-channels)
-      (.then (fn [channels]
-               (-> (collect-attachments! client channels scan-channel! scan-options)
-                   (.then (fn [{:keys [messages-scanned attachments]}]
-                            (-> (import-attachment-results! runtime config import-root attachments import-attachment!)
-                                (.then (fn [results]
-                                         {:channels channels
-                                          :messages-scanned messages-scanned
-                                          :attachments attachments
-                                          :results results}))))))))))
+  (let [channels (await (collect-discord-scan-channels! client channel-ids max-channels))
+        {:keys [messages-scanned attachments]} (await (collect-attachments! client channels scan-channel! scan-options))
+        results (await (import-attachment-results! runtime config import-root attachments import-attachment!))]
+    {:channels channels
+     :messages-scanned messages-scanned
+     :attachments attachments
+     :results results}))
 
-(defn- handle-discord-media-scan!
+(defn- ^:async handle-discord-media-scan!
   [runtime config reply body default-import-root scan-channel! import-attachment! failure-message]
   (let [token (discord-bot-token config)
         options (assoc (scan-request-options body default-import-root)
                        :client (when token (discord-rest/client token {:user-agent "Knoxx-Studio/1.0"})))]
     (if-not token
       (json-response! reply 503 {:detail "Discord bot token is not configured"})
-      (-> (run-discord-media-scan! runtime config options scan-channel! import-attachment!)
-          (.then (fn [{:keys [channels messages-scanned attachments results]}]
-                   (let [summary (scan-summary (:import-root options) channels messages-scanned attachments results)]
-                     (-> (write-scan-manifest! runtime config (:import-root options) summary)
-                         (.then (fn [manifest-path]
-                                  (json-response! reply 200 (assoc summary :manifest_path manifest-path))))))))
-          (.catch (fn [err]
-                    (json-response! reply 500 {:detail (str failure-message err)})))))))
+      (try
+        (let [{:keys [channels messages-scanned attachments results]} (await (run-discord-media-scan! runtime config options scan-channel! import-attachment!))
+              summary (scan-summary (:import-root options) channels messages-scanned attachments results)
+              manifest-path (await (write-scan-manifest! runtime config (:import-root options) summary))]
+          (json-response! reply 200 (assoc summary :manifest_path manifest-path)))
+        (catch :default err
+          (json-response! reply 500 {:detail (str failure-message err)}))))))
 
 (defroute studio-discord-audio-scan! []
   "POST" "/api/studio/discord-audio-scan"

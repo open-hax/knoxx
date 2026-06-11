@@ -123,17 +123,17 @@
   (when (and (.isFile ent) (contract-edn-filename? (.-name ent)))
     (.join path (.-parentPath ent) (.-name ent))))
 
-(defn discover-contract-files!
+(defn ^:async discover-contract-files!
   "Find all .edn files under root via recursive readdir. Returns Promise<vector<string>>."
   [root]
-  (-> (.readdir fs root #js {:withFileTypes true :recursive true})
-      (.then (fn [entries]
-               (->> (js/Array.from entries)
-                    (keep entry->file-path)
-                    vec)))
-      (.catch (fn [err]
-                (stderr! "[contracts] readdir failed: " root " — " (.-message err))
-                []))))
+  (try
+    (let [entries (await (.readdir fs root #js {:withFileTypes true :recursive true}))]
+      (->> (js/Array.from entries)
+           (keep entry->file-path)
+           vec))
+    (catch :default err
+      (stderr! "[contracts] readdir failed: " root " — " (.-message err))
+      [])))
 
 ;; ── Per-file parsing ───────────────────────────────────────────────────────
 
@@ -204,13 +204,13 @@
       (stderr! "[contracts] parse error: " file-path " — " (.-message err))
       nil)))
 
-(defn- read-contract-file!
+(defn- ^:async read-contract-file!
   [file-path]
-  (-> (.readFile fs file-path "utf8")
-      (.then (partial parse-contract-file! file-path))
-      (.catch (fn [err]
-                (stderr! "[contracts] read error: " file-path " — " (.-message err))
-                nil))))
+  (try
+    (parse-contract-file! file-path (await (.readFile fs file-path "utf8")))
+    (catch :default err
+      (stderr! "[contracts] read error: " file-path " — " (.-message err))
+      nil)))
 
 ;; ── Deduplication ──────────────────────────────────────────────────────────
 
@@ -234,29 +234,21 @@
    still parse the files through parse-contract-file! so identity comes from the
    contract body, not from the directory or filename."
   [root]
-  (try
-    (->> (.readdirSync node-fs root #js {:withFileTypes true :recursive true})
-         array-seq
-         (keep entry->file-path)
-         vec)
-    (catch :default err
-      (stderr! "[contracts] sync readdir failed: " root " — " (.-message err))
-      [])))
+  (->> (.readdirSync node-fs root #js {:withFileTypes true :recursive true})
+       array-seq
+       (keep entry->file-path)
+       vec))
 
 (defn- load-all-contracts-sync-uncached
   [config]
   (->> (contract-root-paths config)
        (mapcat discover-contract-files-sync)
        distinct
-       (keep (fn [file-path]
-               (try
-                 (parse-contract-file!
-                  file-path
-                  (.readFileSync node-fs file-path "utf8"))
-                 (catch :default err
-                   (stderr! "[contracts] sync read error: " file-path " — " (.-message err))
-                   nil))))
-       dedup-contracts))
+        (map (fn [file-path]
+               (parse-contract-file!
+                file-path
+                (.readFileSync node-fs file-path "utf8"))))
+        dedup-contracts))
 
 (defn load-all-contracts-sync
   "Synchronously load all contract records through the same parser/validator and
@@ -296,33 +288,29 @@
 
 ;; ── Public API ─────────────────────────────────────────────────────────────
 
-(defn load-all-contracts!
+(defn ^:async load-all-contracts!
   "Discover all .edn files under all contract roots, parse+validate each,
    deduplicate on [kind id]. Returns Promise<vector<contract-record>>."
   [config]
-  (let [roots (contract-root-paths config)]
-    (-> (js/Promise.all (clj->js (map discover-contract-files! roots)))
-        (.then (fn [file-lists]
-                 (->> (js/Array.from file-lists)
-                      (mapcat #(js/Array.from %))
-                      distinct
-                      vec)))
-        (.then (fn [files]
-                 (js/Promise.all (clj->js (map read-contract-file! files)))))
-        (.then (fn [results]
-                 (dedup-contracts (js/Array.from results)))))))
+  (let [roots (contract-root-paths config)
+        file-lists (await (js/Promise.all (clj->js (map discover-contract-files! roots))))
+        files (->> (js/Array.from file-lists)
+                   (mapcat #(js/Array.from %))
+                   distinct
+                   vec)
+        results (await (js/Promise.all (clj->js (map read-contract-file! files))))]
+    (dedup-contracts (js/Array.from results))))
 
-(defn list-contract-ids!
+(defn ^:async list-contract-ids!
   ([config] (list-contract-ids! config "agents"))
   ([config contract-class]
-   (let [klass (normalize-contract-class contract-class)]
-     (-> (load-all-contracts! config)
-         (.then (fn [all]
-                  (->> all
-                       (filter #(= (:contractClass %) klass))
-                       (mapv :id)
-                       sort
-                       vec)))))))
+   (let [klass (normalize-contract-class contract-class)
+         all (await (load-all-contracts! config))]
+     (->> all
+          (filter #(= (:contractClass %) klass))
+          (mapv :id)
+          sort
+          vec))))
 
 (defn list-agent-contract-ids!
   [config]
@@ -372,21 +360,21 @@
 (defn capability-file-path [config slug]     (contract-file-path config "capabilities" slug))
 (defn actor-file-path      [config actor-id] (contract-file-path config "actors"       actor-id))
 
-(defn read-edn-file!
+(defn ^:async read-edn-file!
   [file-path]
-  (-> (.readFile fs file-path "utf8")
-      (.then (fn [text] (reader/read-string (str text))))))
+  (let [text (await (.readFile fs file-path "utf8"))]
+    (reader/read-string (str text))))
 
 (defn ensure-dir!
   [dir]
   (.mkdir fs dir #js {:recursive true}))
 
-(defn write-edn-file!
+(defn ^:async write-edn-file!
   [file-path edn-text]
   (invalidate-sync-contract-cache!)
   (let [dir (.dirname path file-path)]
-    (-> (ensure-dir! dir)
-        (.then (fn [] (.writeFile fs file-path edn-text "utf8"))))))
+    (await (ensure-dir! dir))
+    (await (.writeFile fs file-path edn-text "utf8"))))
 
 (defn list-contract-ids-sync
   [config contract-class]
@@ -398,23 +386,22 @@
          sort
          vec)))
 
-(defn load-contract!
+(defn ^:async load-contract!
   ([config contract-id] (load-contract! config "agents" contract-id))
   ([config contract-class contract-id]
    (let [klass (normalize-contract-class contract-class)
-         wanted-id (some-> contract-id str str/trim not-empty)]
-     (-> (load-all-contracts! config)
-         (.then (fn [records]
-                  (if-let [record (some (fn [candidate]
-                                          (when (and (= klass (:contractClass candidate))
-                                                     (= wanted-id (:id candidate)))
-                                            candidate))
-                                        records)]
-                    {:ok? true
-                     :edn-text (:edn-text record)
-                     :contract (if (= klass "agents")
-                                 (actor-scope/normalize-agent-contract (:contract record))
-                                 (:contract record))
-                     :validation {:ok true :errors []}}
-                    {:ok? false :edn-text "" :contract nil
-                     :validation {:ok false :errors [{:path [] :message "Contract not found"}]}})))))))
+         wanted-id (some-> contract-id str str/trim not-empty)
+         records (await (load-all-contracts! config))]
+     (if-let [record (some (fn [candidate]
+                             (when (and (= klass (:contractClass candidate))
+                                        (= wanted-id (:id candidate)))
+                               candidate))
+                           records)]
+       {:ok? true
+        :edn-text (:edn-text record)
+        :contract (if (= klass "agents")
+                    (actor-scope/normalize-agent-contract (:contract record))
+                    (:contract record))
+        :validation {:ok true :errors []}}
+       {:ok? false :edn-text "" :contract nil
+        :validation {:ok false :errors [{:path [] :message "Contract not found"}]}}))))

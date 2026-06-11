@@ -2,7 +2,6 @@
 
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
-            [shadow.cljs.modern :refer [js-await]]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.document-state
              :refer [database-state*
@@ -48,20 +47,20 @@
   [^js node-fs path encoding]
   (.readFile node-fs path encoding))
 
-(defn- process-file-part
+(defn- ^:async process-file-part
   [^string docs-path part]
   (let [safe-name (sanitize-upload-name (or (aget part "filename") "upload.bin"))
         abs-path (.join path docs-path safe-name)
-        rel-path (normalize-relative-path (path-relative path docs-path abs-path))]
-    (js-await [buf (.arrayBuffer (js/Response. (aget part "file")))]
-              (fs-write-buffer! fs abs-path (.from js/Buffer buf))
-              rel-path)))
+        rel-path (normalize-relative-path (path-relative path docs-path abs-path))
+        buf (await (.arrayBuffer (js/Response. (aget part "file"))))]
+    (fs-write-buffer! fs abs-path (.from js/Buffer buf))
+    rel-path))
 
 (defroute api-documents-list! []
   "GET" "/api/documents"
   (when ctx (ensure-permission! ctx "datalake.read"))
-  (js-await [resp (list-documents! runtime config request ctx)]
-            (json-response! reply 200 resp)))
+  (let [resp (await (list-documents! runtime config request ctx))]
+    (json-response! reply 200 resp)))
 
 (defroute api-documents-content! []
   "GET" "/api/documents/content/*"
@@ -73,8 +72,8 @@
     (if (or (str/starts-with? rel-to-root "..")
             (path-is-absolute? path rel-to-root))
       (json-response! reply 403 {:detail "Path escapes active docs root"})
-      (js-await [content (fs-read-file! fs abs-path "utf8")]
-                (json-response! reply 200 {:path rel-path :content content})))))
+      (let [content (await (fs-read-file! fs abs-path "utf8"))]
+        (json-response! reply 200 {:path rel-path :content content})))))
 
 (defroute api-documents-delete! [openplanner-graph-export!]
   "DELETE" "/api/documents/*"
@@ -87,22 +86,23 @@
     (if (or (str/starts-with? rel-to-root "..")
             (path-is-absolute? path rel-to-root))
       (json-response! reply 403 {:detail "Path escapes active docs root"})
-      (-> (fs-rm! fs abs-path (clj->js {:force true}))
-          (.then (fn []
-                   (swap! database-state* update-in [:records db-id :indexed] dissoc rel-path)
-                   (json-response! reply 200 {:ok true :path rel-path})))
-          (.catch (fn [err]
-                    (json-response! reply 500 {:detail (str "Delete failed: " err)})))))))
+      (try
+        (await (fs-rm! fs abs-path (clj->js {:force true})))
+        (swap! database-state* update-in [:records db-id :indexed] dissoc rel-path)
+        (json-response! reply 200 {:ok true :path rel-path})
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Delete failed: " err)}))))))
 
 (defroute api-documents-ingest! []
   "POST" "/api/documents/ingest"
   (when ctx (ensure-permission! ctx "datalake.ingest"))
   (let [profile (active-database-profile runtime config request ctx)
         body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
-    (-> (start-document-ingestion! runtime config profile body)
-        (.then (fn [resp] (json-response! reply 200 resp)))
-        (.catch (fn [err]
-                  (json-response! reply 500 {:detail (str "Ingestion failed to start: " err)}))))))
+    (try
+      (let [resp (await (start-document-ingestion! runtime config profile body))]
+        (json-response! reply 200 resp))
+      (catch :default err
+        (json-response! reply 500 {:detail (str "Ingestion failed to start: " err)})))))
 
 (defroute api-documents-ingest-priority! []
   "POST" "/api/documents/ingest/priority"

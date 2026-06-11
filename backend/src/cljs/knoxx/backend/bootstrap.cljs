@@ -17,12 +17,17 @@
             [knoxx.backend.infra.http-server :as http-server]
             [knoxx.backend.infra.lifecycle :as lifecycle]
             [knoxx.backend.infra.db.policy :as policy-db]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.composite-session-store :refer [->CompositeSessionStore]]
-            [knoxx.backend.infra.stores.openplanner-session-store :refer [->OpenPlannerSessionStore]]
-            [knoxx.backend.infra.stores.redis-session-store :refer [->RedisSessionStore]]
-            [knoxx.backend.infra.stores.session-store-registry :as store-registry]
-            [knoxx.backend.infra.stores.session-flush :as session-flush]
+             [knoxx.backend.infra.mongo-client :as mongo-client]
+             [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy-store]
+             [knoxx.backend.infra.stores.mongo-run-store :as mongo-run-store]
+             [knoxx.backend.infra.stores.mongo-session-store :as mongo-session-store]
+             [knoxx.backend.infra.stores.mongo-session-titles :as mongo-session-titles]
+             [knoxx.backend.infra.stores.mongo-temp-memory :as mongo-temp-memory]
+             [knoxx.backend.infra.stores.mongo-memory-sessions :as mongo-memory-sessions]
+             [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp-oauth]
+             [knoxx.backend.infra.stores.mongo-rate-limits :as mongo-rate-limits]
+             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+             [knoxx.backend.infra.stores.session-flush :as session-flush]
             [knoxx.backend.infra.routes.auth :as auth-routes]
             [knoxx.backend.infra.routes.mcp :as mcp-http]
             [knoxx.backend.infra.routes.tools.proxy :as proxy-routes]
@@ -69,10 +74,7 @@
 
 (defn- policy-options
   []
-  #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
-                             (aget js/process.env "DATABASE_URL")
-                             "")
-       :primaryOrgSlug (env "KNOXX_PRIMARY_ORG_SLUG" "open-hax")
+  #js {:primaryOrgSlug (env "KNOXX_PRIMARY_ORG_SLUG" "open-hax")
        :primaryOrgName (env "KNOXX_PRIMARY_ORG_NAME" "Open Hax")
        :primaryOrgKind (env "KNOXX_PRIMARY_ORG_KIND" "platform_owner")
        :bootstrapSystemAdminEmail (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL" "system-admin@open-hax.local")
@@ -122,24 +124,40 @@
   (proxy-routes/register-proxy-routes! app cfg)
   (mcp-http/register-mcp-http-routes! app runtime cfg))
 
+(defn- ^:async start-mongo-persistence!
+  [runtime app cfg log]
+  (try
+    (let [db (await (mongo-client/init-mongo!))]
+      (when db
+        (.info log "MongoDB connected for session persistence")
+        (mongo-session-store/setup-indexes! db)
+        (mongo-run-store/setup-indexes! db)
+        ;; Cache stores for session titles, temp memory, memory sessions
+        (mongo-session-titles/setup-indexes! db)
+        (mongo-temp-memory/setup-indexes! db)
+        (mongo-memory-sessions/setup-indexes! db)
+        ;; MCP OAuth store
+        (mongo-mcp-oauth/setup-indexes! db)
+        ;; Rate limits store
+        (mongo-rate-limits/setup-indexes! db)
+        ;; ensure-indexes! (not setup-indexes!): it catches index
+        ;; failures so a bad index spec can never crash-loop the
+        ;; process from this fire-and-forget bootstrap path.
+        (mongo-policy-store/ensure-indexes! db)
+        (reset! store-registry/session-store*
+                (mongo-run-store/create-mongo-run-store db))
+        ;; Fire-and-forget: must not block startup.
+        ;; Guarded so shadow-cljs hot reload does not spawn
+        ;; recovery jobs as if the Node process had restarted.
+        (agent-resume/resume-on-process-startup! runtime app cfg)
+        (agent-resume/start-periodic-recovery! runtime app cfg)
+        (session-flush/start-periodic-flush! (:run-stale-flush-ms cfg))))
+    (catch :default err
+      (.warn log "MongoDB initialization failed" err))))
+
 (defn- start-session-persistence!
   [runtime app cfg log]
-  (-> (redis/init-redis! (:redis-url cfg))
-      (.then (fn [client]
-               (when client
-                 (.info log "Redis connected for session persistence")
-                 (reset! store-registry/session-store*
-                         (->CompositeSessionStore
-                          (->RedisSessionStore client)
-                          (->OpenPlannerSessionStore cfg)))
-                 ;; Fire-and-forget: must not block startup.
-                 ;; Guarded so shadow-cljs hot reload does not spawn
-                 ;; recovery jobs as if the Node process had restarted.
-                 (agent-resume/resume-on-process-startup! runtime app cfg)
-                 (agent-resume/start-periodic-recovery! runtime app cfg)
-                 (session-flush/start-periodic-flush! client))))
-      (.catch (fn [err]
-                (.warn log "Redis initialization failed" err)))))
+  (start-mongo-persistence! runtime app cfg log))
 
 (defn- handle-app-listening!
   [runtime app cfg]
@@ -151,21 +169,21 @@
     (start-session-persistence! runtime app cfg log)
     app))
 
-(defn start-http!
+(defn ^:async start-http!
   "Create a fresh Fastify app and bind HTTP routes around durable runtime state."
   [runtime cfg policy-context cookie-hook?]
   (runtime-state/remember-context! runtime cfg policy-context)
   (let [app (http-server/create-app!)]
     (http-server/ensure-json-empty-body-parser! app)
     (add-request-debug-hook! app)
-    (-> (http-server/register-default-plugins! app)
-        (.then #(register-ws-routes-plugin! runtime app))
-        (.then #(add-session-hook! app policy-context cookie-hook?))
-        (.then #(register-http-routes! runtime app cfg policy-context))
-        (.then #(http-server/listen! app (:host cfg) (:port cfg)))
-        (.then #(handle-app-listening! runtime app cfg)))))
+    (await (http-server/register-default-plugins! app))
+    (await (register-ws-routes-plugin! runtime app))
+    (await (add-session-hook! app policy-context cookie-hook?))
+    (await (register-http-routes! runtime app cfg policy-context))
+    (await (http-server/listen! app (:host cfg) (:port cfg)))
+    (handle-app-listening! runtime app cfg)))
 
-(defn bootstrap!
+(defn ^:async bootstrap!
   "Main entrypoint called by shadow-cljs."
   []
   (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
@@ -177,45 +195,54 @@
     (discord-reaction-labels/bind! cfg)
     (graph-policy-registry/init!)
 
-    (-> (policy-db/create-policy-db (policy-options))
-        (.then (fn [policy-context]
-                 (let [runtime #js {}]
-                   (lifecycle/remember-context! runtime cfg policy-context cookie-hook?)
-                   (start-http! runtime cfg policy-context cookie-hook?))))
-        (.catch (fn [err]
-                  (.error js/console "Knoxx policy DB failed to initialize" err)
-                  (js/process.exit 1))))))
+    (try
+      (let [policy-context (await (policy-db/create-policy-db (policy-options)))
+            runtime #js {}]
+        (lifecycle/remember-context! runtime cfg policy-context cookie-hook?)
+        (await (start-http! runtime cfg policy-context cookie-hook?)))
+      (catch :default err
+        (.error js/console "Knoxx policy DB failed to initialize" err)
+        (js/process.exit 1)))))
 
-(defn ^:dev/before-load-async stop-http-before-load!
+(defn ^:async ^:dev/before-load-async stop-http-before-load!
   [done]
   (.log js/console "[knoxx-hot-reload] before-load: closing HTTP server"
         #js {:pid (.-pid js/process)
              :uptimeMs (process-uptime-ms)})
   (session-flush/stop-periodic-flush!)
-  (-> (lifecycle/close-current-http!)
-      (.then (fn [_]
-               (.log js/console "[knoxx-hot-reload] before-load: HTTP server closed"
-                     #js {:pid (.-pid js/process)
-                          :uptimeMs (process-uptime-ms)})))
-      (.catch (fn [err]
-                (.error js/console "[knoxx-hot-reload] failed to close HTTP server" err)))
-      (.finally done)))
+  (try
+    (await (lifecycle/close-current-http!))
+    (.log js/console "[knoxx-hot-reload] before-load: HTTP server closed"
+          #js {:pid (.-pid js/process)
+               :uptimeMs (process-uptime-ms)})
+    (catch :default err
+      (.error js/console "[knoxx-hot-reload] failed to close HTTP server" err))
+    (finally (done))))
 
-(defn ^:dev/after-load-async start-http-after-load!
+(defn ^:async ^:dev/after-load-async start-http-after-load!
   [done]
   (.log js/console "[knoxx-hot-reload] after-load: starting HTTP server"
         #js {:pid (.-pid js/process)
              :uptimeMs (process-uptime-ms)})
-  (let [{:keys [runtime config policy-context cookie-hook?]} (lifecycle/context)]
-    (if (and runtime config policy-context)
-      (-> (start-http! runtime config policy-context cookie-hook?)
-          (.then (fn [_]
-                   (.log js/console "[knoxx-hot-reload] after-load: HTTP server started"
-                         #js {:pid (.-pid js/process)
-                              :uptimeMs (process-uptime-ms)})))
-          (.catch (fn [err]
-                    (.error js/console "[knoxx-hot-reload] failed to restart HTTP server" err)))
-          (.finally done))
+  ;; Re-read config from env on every hot reload so changed config defaults and
+  ;; env vars take effect without a full process restart — the durable runtime
+  ;; and policy-context handles survive, only the (data) config is refreshed.
+  ;; This refresh also flows into the stale-run flush, which start-http! restarts
+  ;; via start-session-persistence!. Event/cron turns already read (cfg) fresh
+  ;; per dispatch, so this closes the gap for the HTTP-served path and the flush.
+  (let [{:keys [runtime policy-context cookie-hook?]} (lifecycle/context)
+        config (runtime-models/enrich-config (runtime-config/cfg))]
+    (if (and runtime policy-context)
+      (do
+        (lifecycle/remember-context! runtime config policy-context cookie-hook?)
+        (try
+          (await (start-http! runtime config policy-context cookie-hook?))
+          (.log js/console "[knoxx-hot-reload] after-load: HTTP server started"
+                #js {:pid (.-pid js/process)
+                     :uptimeMs (process-uptime-ms)})
+          (catch :default err
+            (.error js/console "[knoxx-hot-reload] failed to restart HTTP server" err))
+          (finally (done))))
       (do
         (.warn js/console "[knoxx-hot-reload] no lifecycle context; skipping HTTP restart")
         (done)))))

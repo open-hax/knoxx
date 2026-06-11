@@ -14,12 +14,11 @@
       (boolean (or (aget status "ready")
                    (aget status "started"))))))
 
-(defn promise-all-vector
+(defn ^:async promise-all-vector
   "Resolve a CLJS collection of promises into a CLJS vector of JS/CLJS results."
   [promises]
-  (-> (js/Promise.all (clj->js (vec promises)))
-      (.then (fn [results]
-               (vec (array-seq results))))))
+  (let [results (await (js/Promise.all (clj->js (vec promises))))]
+    (vec (array-seq results))))
 
 (defn message-form-data
   "Build Discord multipart message FormData from a CLJS payload and files.

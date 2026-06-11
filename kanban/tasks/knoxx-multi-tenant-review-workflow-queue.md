@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-multi-tenant-review-workflow-queue"
 title: "Multi-Tenant Review Workflow Queue Enforcement"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Multi-Tenant Review Workflow Queue Enforcement
 
 > Parent epic: `knoxx-knowledge-ops-multi-tenant-control-plane`

@@ -122,10 +122,6 @@
                                             #js [#js {:id "memory.search"}
                                                  #js {:label "write"}]))))
 
-(deftest provider-tools-are-disabled-for-known-incompatible-models
-  (is (false? (tool-catalog/provider-tools-enabled-for-model? "gpt-5.5")))
-  (is (true? (tool-catalog/provider-tools-enabled-for-model? "glm-5"))))
-
 (deftest tool-policy-and-catalog-ports-preserve-visibility
   (testing "allowed tool ids and auth context are resolved behind ports"
     (with-redefs [tool-catalog/allowed-tool-ids (fn [_config auth-context agent-spec]

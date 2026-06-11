@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-jsonl-queue-provider"
 title: "Implement JSONL file-backed job queue provider for knowledge ops"
-status: incoming
+status: icebox
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Implement JSONL file-backed job queue provider for knowledge ops
 
 > Parent epic: `knoxx-knowledge-ops-deploy-self-hosted`

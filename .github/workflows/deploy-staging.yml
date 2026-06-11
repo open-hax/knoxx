@@ -1,0 +1,79 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # ubuntu runners ship a snap-wrapper /usr/bin/chromium-browser that hangs
+  # under CI; point puppeteer-core at the real Chrome binary instead.
+  PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+
+concurrency:
+  group: knoxx-staging
+  cancel-in-progress: true
+
+jobs:
+  staging-preflight:
+    name: staging-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Knoxx
+        uses: actions/checkout@v5
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install root dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install backend dependencies
+        run: pnpm -C backend install --frozen-lockfile
+
+      - name: Install frontend dependencies
+        run: pnpm -C frontend install --frozen-lockfile
+
+      - name: Backend typecheck
+        run: pnpm -C backend run typecheck
+
+      - name: Backend tests with coverage
+        run: pnpm -C backend run test:coverage
+
+      - name: Frontend typecheck
+        run: pnpm -C frontend run typecheck
+
+      - name: Frontend tests with coverage
+        run: pnpm -C frontend run test:coverage
+
+      - name: Frontend build
+        run: pnpm -C frontend run build
+
+  deploy-staging:
+    name: deploy-staging
+    needs: staging-preflight
+    uses: open-hax/services/.github/workflows/deploy-promethean.yml@main
+    with:
+      environment: staging
+      service: knoxx
+      source_repository: ${{ github.repository }}
+      source_ref: ${{ github.sha }}
+    secrets: inherit

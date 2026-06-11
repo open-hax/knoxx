@@ -48,49 +48,50 @@
   [p]
   (.mkdir fs (str p) #js {:recursive true}))
 
-(defn write-file-ensure-dir!
+(defn ^:async write-file-ensure-dir!
   "mkdir -p the parent dir then write. Returns Promise<nil>."
   [p text]
-  (-> (mkdir! (.dirname path (str p)))
-      (.then (fn [_] (write-file! p text)))))
+  (await (mkdir! (.dirname path (str p))))
+  (write-file! p text))
 
-(defn stat!
+(defn ^:async stat!
   "Promise<{:size :mtime-ms :is-file? :is-dir?}>. Rejects if not found."
   [p]
-  (-> (.stat fs (str p))
-      (.then (fn [s]
-               {:size     (.-size s)
-                :mtime-ms (.getTime (.-mtime s))
-                :mtime    (.toISOString (.-mtime s))
-                :is-file? (.isFile s)
-                :is-dir?  (.isDirectory s)}))))
+  (let [s (await (.stat fs (str p)))]
+    {:size     (.-size s)
+     :mtime-ms (.getTime (.-mtime s))
+     :mtime    (.toISOString (.-mtime s))
+     :is-file? (.isFile s)
+     :is-dir?  (.isDirectory s)}))
 
-(defn stat-or-nil!
+(defn ^:async stat-or-nil!
   "Like stat! but resolves to nil if file does not exist."
   [p]
-  (-> (stat! p)
-      (.catch (fn [_] nil))))
+  (try
+    (await (stat! p))
+    (catch :default _ nil)))
 
-(defn readdir!
+(defn ^:async readdir!
   "Promise<vec<string>> — immediate child names only. [] on ENOENT."
   [p]
-  (-> (.readdir fs (str p))
-      (.then (fn [entries] (vec (js/Array.from entries))))
-      (.catch (fn [_] []))))
+  (try
+    (let [entries (await (.readdir fs (str p)))]
+      (vec (js/Array.from entries)))
+    (catch :default _ [])))
 
-(defn readdir-deep!
+(defn ^:async readdir-deep!
   "Recursively find all files under root whose names pass pred.
    Returns Promise<vec<string>> of absolute paths. [] on ENOENT."
   ([root] (readdir-deep! root (constantly true)))
   ([root pred]
-   (-> (.readdir fs (str root) #js {:withFileTypes true :recursive true})
-       (.then (fn [entries]
-                (->> (js/Array.from entries)
-                     (keep (fn [e]
-                             (when (and (.isFile e) (pred (.-name e)))
-                               (.join path (.-parentPath e) (.-name e)))))
-                     vec)))
-       (.catch (fn [_] [])))))
+   (try
+     (let [entries (await (.readdir fs (str root) #js {:withFileTypes true :recursive true}))]
+       (->> (js/Array.from entries)
+            (keep (fn [e]
+                    (when (and (.isFile e) (pred (.-name e)))
+                      (.join path (.-parentPath e) (.-name e)))))
+            vec))
+     (catch :default _ []))))
 
 (defn watch!
   "Watch path recursively. cb called with [event filename-str].
@@ -101,10 +102,11 @@
           (fn [event filename]
             (cb event (some-> filename str)))))
 
-(defn unlink!
+(defn ^:async unlink!
   "Promise<nil>. Delete a file. Resolves (not rejects) if already gone."
   [p]
-  (-> (.unlink fs (str p))
-      (.catch (fn [err]
-                (when-not (= "ENOENT" (.-code err))
-                  (throw err))))))
+  (try
+    (await (.unlink fs (str p)))
+    (catch :default err
+      (when-not (= "ENOENT" (.-code err))
+        (throw err)))))

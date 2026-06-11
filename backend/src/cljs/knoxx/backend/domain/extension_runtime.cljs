@@ -65,7 +65,7 @@
                       (filter #(= event-name (:event %))))))
        (keep :handler)))
 
-(defn dispatch-event
+(defn ^:async dispatch-event
   "Dispatch an event to all registered handlers.
 
    event-name – keyword or string
@@ -82,19 +82,21 @@
   [event-name event ctx]
   (let [handlers (event-handlers event-name)]
     (if (empty? handlers)
-      (js/Promise.resolve {})
-      (-> (reduce (fn [promise handler]
-                    (.then promise
-                           (fn [acc]
-                             (let [result (handler event ctx)]
-                               (if (instance? js/Promise result)
-                                 (.then result (fn [r] (merge acc (or r {}))))
-                                 (js/Promise.resolve (merge acc (or result {}))))))))
-                  (js/Promise.resolve {})
-                  handlers)
-          (.catch (fn [err]
-                    (.warn js/console "[extension-runtime] event" event-name "handler failed:" err)
-                    {}))))))
+      {}
+      (try
+        (loop [acc {}
+               remaining (seq handlers)]
+          (if-not remaining
+            acc
+            (let [handler (first remaining)
+                  result (handler event ctx)
+                  acc' (if (instance? js/Promise result)
+                         (merge acc (or (await result) {}))
+                         (merge acc (or result {})))]
+              (recur acc' (next remaining)))))
+        (catch :default err
+          (.warn js/console "[extension-runtime] event" event-name "handler failed:" err)
+          {})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Command registry
@@ -116,7 +118,7 @@
   []
   (sort (keys @command-handlers*)))
 
-(defn handle-command
+(defn ^:async handle-command
   "Try to handle a slash command.  Returns a Promise of
    {:handled true :result ...} or {:handled false}.
 
@@ -125,7 +127,7 @@
   [text ctx]
   (let [trimmed (str/trim (str text))]
     (if-not (str/starts-with? trimmed "/")
-      (js/Promise.resolve #js {:handled false})
+      #js {:handled false}
       (let [without-slash (subs trimmed 1)
             tokens (str/split without-slash #"\s+")
             cmd (str/lower-case (first tokens))
@@ -134,9 +136,9 @@
         (if handler
           (let [result (handler args ctx)]
             (if (instance? js/Promise result)
-              (.then result (fn [r] #js {:handled true :result r}))
-              (js/Promise.resolve #js {:handled true :result result})))
-          (js/Promise.resolve #js {:handled false}))))))
+              #js {:handled true :result (await result)}
+              #js {:handled true :result result}))
+          #js {:handled false})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Context helpers

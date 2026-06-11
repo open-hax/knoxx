@@ -8,6 +8,11 @@
 
 export { EmptyState } from "../components/EmptyState";
 
+// uxx UI primitives exposed for shadow-cljs/Helix consumption. The bridge's Vite
+// build bundles react-markdown's transitive deps (comma-separated-tokens, etc.)
+// that shadow-cljs cannot resolve directly under pnpm's nested node_modules.
+export { Markdown } from "@open-hax/uxx";
+
 // APIs for shadow-cljs consumption
 export {
   // Auth context (permissions / isSystemAdmin)

@@ -40,7 +40,7 @@
   (let [app (:app @http-state*)]
     (swap! http-state* assoc :app nil)
     ;; Realtime WebSocket clients and its stats interval are tied to Fastify.
-    ;; Keep wider process services (Redis, Discord gateway, event runtime, MCP)
+    ;; Keep wider process services (Mongo, Discord gateway, event runtime, MCP)
     ;; alive across hot reloads.
     (realtime/stop!)
     (if app

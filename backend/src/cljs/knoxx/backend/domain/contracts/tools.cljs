@@ -49,19 +49,18 @@
   (param-string params "contract_class" "contractClass" "agents"))
 
 
-(defn contract-list-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async contract-list-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         klass (contract-class-param params)
         client (contract-client/client config)]
     (maybe-tool-update! on-update (str "Listing " klass " contracts…"))
-    (-> (contract-client/list-contracts! client klass)
-        (.then (fn [{:keys [ok status text]}]
-                 (tool-text-result
-                  (str (if ok "Contract list" "Contract list failed")
-                       " for class " klass " (HTTP " status "):\n" text)
-                  {:contract_class klass :ok ok :status status :result text}))))))
+    (let [{:keys [ok status text]} (await (contract-client/list-contracts! client klass))]
+      (tool-text-result
+       (str (if ok "Contract list" "Contract list failed")
+            " for class " klass " (HTTP " status "):\n" text)
+       {:contract_class klass :ok ok :status status :result text}))))
 
-(defn contract-read-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async contract-read-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         contract-id (param-string params "contract_id" "contractId" "")
         klass (contract-class-param params)
@@ -69,14 +68,13 @@
     (when (str/blank? contract-id)
       (throw (js/Error. "contract_id is required")))
     (maybe-tool-update! on-update (str "Reading " klass "/" contract-id "…"))
-    (-> (contract-client/read-contract! client klass contract-id)
-        (.then (fn [{:keys [ok status text]}]
-                 (tool-text-result
-                  (str (if ok "Contract read" "Contract read failed")
-                       " for " klass "/" contract-id " (HTTP " status "):\n" text)
-                  {:contract_id contract-id :contract_class klass :ok ok :status status :edn_text text}))))))
+    (let [{:keys [ok status text]} (await (contract-client/read-contract! client klass contract-id))]
+      (tool-text-result
+       (str (if ok "Contract read" "Contract read failed")
+            " for " klass "/" contract-id " (HTTP " status "):\n" text)
+       {:contract_id contract-id :contract_class klass :ok ok :status status :edn_text text}))))
 
-(defn contract-write-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async contract-write-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         contract-id (param-string params "contract_id" "contractId" "")
         edn-text (param-text params "edn_text" "ednText" "")
@@ -87,14 +85,13 @@
     (when (str/blank? edn-text)
       (throw (js/Error. "edn_text is required")))
     (maybe-tool-update! on-update (str "Saving " klass "/" contract-id "…"))
-    (-> (contract-client/write-contract! client klass contract-id edn-text)
-        (.then (fn [{:keys [ok status text]}]
-                 (tool-text-result
-                  (str (if ok "Contract save result" "Contract save failed")
-                       " for " klass "/" contract-id " (HTTP " status "):\n" text)
-                  {:contract_id contract-id :contract_class klass :ok ok :status status :result text}))))))
+    (let [{:keys [ok status text]} (await (contract-client/write-contract! client klass contract-id edn-text))]
+      (tool-text-result
+       (str (if ok "Contract save result" "Contract save failed")
+            " for " klass "/" contract-id " (HTTP " status "):\n" text)
+       {:contract_id contract-id :contract_class klass :ok ok :status status :result text}))))
 
-(defn contract-validate-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async contract-validate-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         edn-text (param-text params "edn_text" "ednText" "")
         klass (contract-class-param params)
@@ -102,32 +99,31 @@
     (when (str/blank? edn-text)
       (throw (js/Error. "edn_text is required")))
     (maybe-tool-update! on-update (str "Validating " klass " contract EDN…"))
-    (-> (contract-client/validate-contract! client klass edn-text)
-        (.then (fn [r]
-                 (let [ok? (:ok r)
-                       errors (or (:errors r) [])
-                       warnings (or (:warnings r) [])]
-                   (tool-text-result
-                    (str
-                     (if ok?
-                       (str "✓ Contract valid"
-                            (when-let [cid (get-in r [:contract :contract/id])]
-                              (str " — :contract/id " cid))
-                            "\nClass: " (or (:contractClass r) (:contract-class r) klass))
-                       (str "✗ Validation failed:\n"
-                            (str/join "\n" (map (fn [err]
-                                                   (let [path (or (:path err) "root")
-                                                         msg (or (:message err) "Unknown error")]
-                                                     (str "  • [" (str/join " > " path) "]: " msg)))
-                                                 errors))))
-                     (when (seq warnings)
-                       (str "\nWarnings:\n"
-                            (str/join "\n" (map (fn [warning]
-                                                   (let [path (or (:path warning) "root")
-                                                         msg (or (:message warning) "Warning")]
-                                                     (str "  • [" (str/join " > " path) "]: " msg)))
-                                                 warnings)))))
-                    r)))))))
+    (let [r (await (contract-client/validate-contract! client klass edn-text))
+          ok? (:ok r)
+          errors (or (:errors r) [])
+          warnings (or (:warnings r) [])]
+      (tool-text-result
+       (str
+        (if ok?
+          (str "✓ Contract valid"
+               (when-let [cid (get-in r [:contract :contract/id])]
+                 (str " — :contract/id " cid))
+               "\nClass: " (or (:contractClass r) (:contract-class r) klass))
+          (str "✗ Validation failed:\n"
+               (str/join "\n" (map (fn [err]
+                                      (let [path (or (:path err) "root")
+                                            msg (or (:message err) "Unknown error")]
+                                        (str "  • [" (str/join " > " path) "]: " msg)))
+                                    errors))))
+        (when (seq warnings)
+          (str "\nWarnings:\n"
+               (str/join "\n" (map (fn [warning]
+                                      (let [path (or (:path warning) "root")
+                                            msg (or (:message warning) "Warning")]
+                                        (str "  • [" (str/join " > " path) "]: " msg)))
+                                    warnings)))))
+       r))))
 
 (def contract-list-tool
   (partial create-tool-obj

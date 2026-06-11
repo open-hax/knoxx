@@ -10,9 +10,13 @@
     (is (true? (registry/evaluate '(conditions/test.always event)
                                   {:event/type :test/event}
                                   nil nil nil)))
-    (is (false? (registry/evaluate '(conditions/test.never event)
-                                   {:event/type :test/event}
-                                   nil nil nil)))))
+    (try
+      (registry/evaluate '(conditions/test.never event)
+                         {:event/type :test/event}
+                         nil nil nil)
+      (is false "Should have thrown for unregistered condition")
+      (catch :default err
+        (is (some? err) "Error should be thrown for unregistered condition")))))
 
 (deftest safe-eval-boolean-combinators
   (testing "and/or/not work in condition expressions"
@@ -41,10 +45,14 @@
   (testing "event/actor/trigger/config bindings are available"
     (is (= "hello" (registry/safe-eval 'event {'event "hello"})))))
 
-(deftest condition-fails-closed-on-error
-  (testing "unknown condition returns false, not throws"
-    (is (false? (registry/evaluate '(conditions/test.does-not-exist event)
-                                   {} nil nil nil)))))
+(deftest condition-fails-open-on-error
+  (testing "unknown condition throws instead of silently returning false"
+    (try
+      (registry/evaluate '(conditions/test.does-not-exist event)
+                         {} nil nil nil)
+      (is false "Should have thrown for unknown condition")
+      (catch :default err
+        (is (some? err) "Error should be thrown for unknown condition")))))
 
 (deftest builtin-discord-mention-condition
   (testing "discord.mention detects bot mentions in event payload"

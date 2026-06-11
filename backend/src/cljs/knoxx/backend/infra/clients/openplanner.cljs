@@ -142,7 +142,7 @@
                                   :opts (body-opts method (headers-for config) body)
                                   :timeout-ms (or timeout-ms 60000)})]
         (checked-body! resp "OpenPlanner request"))
-      (.catch (fn [err]
+      (p/catch (fn [err]
                 (log-openplanner-down! (str method " " suffix) err)
                 (throw err)))))
 
@@ -157,7 +157,7 @@
                                           :headers (merge (headers-for config) (or headers {}))}
                                    (some? body) (assoc :body body))
                            :timeout-ms (or timeout-ms 60000)})
-        (.catch (fn [err]
+        (p/catch (fn [err]
                   (log-openplanner-down! (str method " " suffix) err)
                   (throw err))))))
 
@@ -223,7 +223,7 @@
                                            :headers (headers-for config)}
                                     :timeout-ms (or timeout-ms 60000)})]
           (checked-text! resp "OpenPlanner translation SFT export"))
-        (.catch (fn [err]
+        (p/catch (fn [err]
                   (log-openplanner-down! "GET /v1/translations/export/sft" err)
                   (throw err)))))
   (create-translation-segments-batch! [_ payload]

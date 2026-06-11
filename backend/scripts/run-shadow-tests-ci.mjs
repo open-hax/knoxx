@@ -6,7 +6,13 @@ function run() {
 
   const child = spawn(cmd, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: {
+      ...process.env,
+      // Hermetic tests: never let default contract-root resolution reach the
+      // live, operator-owned contracts/ folder. Tests that need contracts must
+      // pass an explicit :contracts-dir pointing at a test/fixtures snapshot.
+      CONTRACTS_DIR: process.env.CONTRACTS_DIR ?? 'test/fixtures/empty-contracts',
+    },
   });
 
   let combined = '';

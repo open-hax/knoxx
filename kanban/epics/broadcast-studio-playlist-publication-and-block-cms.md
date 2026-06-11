@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-broadcast-studio-playlist-publication-and-block-cms"
 title: "Broadcast Studio Playlist Publication + Block CMS"
-status: icebox
+status: accepted
 priority: "P2"
 labels: "["epics"]"
 created_at: "2026-05-28T22:40:14.377Z"
@@ -9,7 +9,6 @@ source: "specs/epics/broadcast-studio-playlist-publication-and-block-cms.md"
 points: null
 category: "epics"
 ---
-
 # Broadcast Studio Playlist Publication + Block CMS
 
 > Source: `specs/epics/broadcast-studio-playlist-publication-and-block-cms.md`

@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-product-line-exposure-monitor-specs"
 title: "Exposure Monitor spec authoring (exposure-monitor-*.md)"
-status: incoming
+status: icebox
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Exposure Monitor spec authoring (exposure-monitor-*.md)
 
 > Parent epic: `knoxx-knowledge-ops-product-line`

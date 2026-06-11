@@ -47,14 +47,6 @@
   (boolean (and (string? tool-name)
                 (re-matches #"^[A-Za-z0-9_-]{1,64}$" tool-name))))
 
-(def ^:private provider-tool-disabled-models
-  #{"gpt-5.5"})
-
-(defn provider-tools-enabled-for-model?
-  "True when Knoxx should expose runtime tools to the provider for this model."
-  [model-id]
-  (not (contains? provider-tool-disabled-models (some-> model-id str str/trim))))
-
 (defn tool-runtime-names
   [builtin-tools custom-tools]
   (->> (concat (or builtin-tools [])

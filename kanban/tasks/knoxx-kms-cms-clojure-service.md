@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-kms-cms-clojure-service"
 title: "kms-cms — Clojure CMS Service (Phase 3 Bootstrap)"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 5
 category: tasks
 ---
-
 # kms-cms — Clojure CMS Service (Phase 3 Bootstrap)
 
 > Parent epic: `knoxx-knowledge-ops-clojure-backend-migration`

@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-arch-migration-devel-smoke-verification"
 title: "Architecture Migration — Devel Stack Smoke Verification"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Architecture Migration — Devel Stack Smoke Verification
 
 > Parent epic: `knoxx-knowledge-ops-architecture-migration`

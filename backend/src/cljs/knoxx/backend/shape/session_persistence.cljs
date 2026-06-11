@@ -1,7 +1,7 @@
 (ns knoxx.backend.shape.session-persistence
   "Shared persistence contract for knoxx session state.
 
-   Both Redis and OpenPlanner implement ISessionStore.
+   Both Mongo and OpenPlanner implement ISessionStore.
    The composite driver writes to both and verifies they agree."
   (:require [malli.core :as m]
             [malli.error :as me]))

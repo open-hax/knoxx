@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-multi-tenant-migrations-prod-runbook"
 title: "Multi-Tenant Migrations Production Runbook"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Multi-Tenant Migrations Production Runbook
 
 > Parent epic: `knoxx-knowledge-ops-multi-tenant-control-plane`

@@ -67,7 +67,7 @@
                   roles/role-tool-ids (fn [_ _] ["read"])]
       (is (= #{"mcp.shoedelussy.write_pattern" "audio.spectrogram" "music.identify_file"}
              (set (tooling/allowed-tool-id-set
-                   {}
+                   test-config
                    "knowledge_worker"
                    {:roleSlugs ["system-admin"]
                     :toolPolicies [{:toolId "read" :effect "allow"}]}
@@ -104,7 +104,7 @@
                                                                   "workspace_media.attach"
                                                                   "sandbox_container.exec"]}))]
       (let [tool-ids (set (tooling/allowed-tool-id-set
-                           {}
+                           test-config
                            "executive"
                            {:roleSlugs ["basic-user"]
                             :toolPolicies [{:toolId "memory_search" :effect "allow"}
@@ -160,7 +160,7 @@
                   roles/role-tool-ids (fn [_ _] ["read" "write"])]
       (is (= #{"read"}
              (set (tooling/allowed-tool-id-set
-                   {}
+                   test-config
                    "knowledge_worker"
                    {:toolPolicies [{:toolId "read" :effect "allow"}]}
                    nil

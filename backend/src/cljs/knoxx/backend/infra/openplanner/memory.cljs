@@ -38,7 +38,7 @@
       (contains? #{"csv" "tsv" "sql" "xml"} ext) "data"
       :else "docs")))
 
-(defn upsert-openplanner-document!
+(defn ^:async upsert-openplanner-document!
   "Send a document to OpenPlanner's /v1/documents endpoint for indexing.
    Returns {:ok true, :document ...} on success, or {:ok false ...} on failure."
   [config {:keys [id rel-path content project kind title source-path domain visibility extra]}]
@@ -62,19 +62,19 @@
                             :createdBy "knoxx-ingestion"
                             :metadata (merge {:indexed_from "knoxx"}
                                              extra)}}]
-    (-> (openplanner-client/upsert-document! (openplanner-client/client config) (:document payload))
-        (.then (fn [resp]
-                 {:ok true
-                  :document (:document resp)
-                  :indexed (:indexed resp)
-                  :rel-path rel-path}))
-        (.catch (fn [err]
-                  (.warn js/console "[knoxx] failed to index document into OpenPlanner:" rel-path err)
-                  {:ok false
-                   :error (str err)
-                   :rel-path rel-path})))))
+    (try
+      (let [resp (await (openplanner-client/upsert-document! (openplanner-client/client config) (:document payload)))]
+        {:ok true
+         :document (:document resp)
+         :indexed (:indexed resp)
+         :rel-path rel-path})
+      (catch :default err
+        (.warn js/console "[knoxx] failed to index document into OpenPlanner:" rel-path err)
+        {:ok false
+         :error (str err)
+         :rel-path rel-path}))))
 
-(defn batch-upsert-openplanner-documents!
+(defn ^:async batch-upsert-openplanner-documents!
   "Ingest multiple documents into OpenPlanner with concurrency control.
    Returns {:ok true, :indexed [...], :failed [...]} summary."
   [config documents {:keys [concurrency project visibility extra]
@@ -82,52 +82,48 @@
                           visibility "internal"}}]
   (cond
     (empty? documents)
-    (js/Promise.resolve {:ok true
-                         :indexed []
-                         :failed []
-                         :total 0
-                         :indexed-count 0
-                         :failed-count 0})
+    {:ok true
+     :indexed []
+     :failed []
+     :total 0
+     :indexed-count 0
+     :failed-count 0}
 
     (not (openplanner-configured? config))
-    (js/Promise.resolve {:ok false
-                         :indexed []
-                         :failed []
-                         :total (count documents)
-                         :indexed-count 0
-                         :failed-count (count documents)
-                         :error "OpenPlanner is not configured"})
+    {:ok false
+     :indexed []
+     :failed []
+     :total (count documents)
+     :indexed-count 0
+     :failed-count (count documents)
+     :error "OpenPlanner is not configured"}
 
     :else
     (let [chunks (vec (partition-all concurrency documents))
           results (atom {:indexed []
                          :failed []})
-          process-chunk! (fn [chunk]
-                           (-> (promise/all-vec
-                                (map (fn [doc]
-                                       (upsert-openplanner-document! config
-                                                                     (merge {:project project
-                                                                             :visibility visibility
-                                                                             :extra extra}
-                                                                            doc)))
-                                     chunk))
-                               (.then (fn [chunk-results]
-                                        (doseq [result chunk-results]
-                                          (if (:ok result)
-                                            (swap! results update :indexed conj result)
-                                            (swap! results update :failed conj result)))
-                                        nil))))]
-      (-> (reduce (fn [promise chunk]
-                    (.then promise (fn [] (process-chunk! chunk))))
-                  (js/Promise.resolve nil)
-                  chunks)
-          (.then (fn []
-                   {:ok true
-                    :indexed (:indexed @results)
-                    :failed (:failed @results)
-                    :total (count documents)
-                    :indexed-count (count (:indexed @results))
-                    :failed-count (count (:failed @results))}))))))
+          process-chunk! (^:async fn [chunk]
+                           (let [chunk-results (await (promise/all-vec
+                                                       (map (fn [doc]
+                                                              (upsert-openplanner-document! config
+                                                                                            (merge {:project project
+                                                                                                    :visibility visibility
+                                                                                                    :extra extra}
+                                                                                                   doc)))
+                                                            chunk)))]
+                             (doseq [result chunk-results]
+                               (if (:ok result)
+                                 (swap! results update :indexed conj result)
+                                 (swap! results update :failed conj result)))
+                             nil))]
+      (doseq [chunk chunks]
+        (await (process-chunk! chunk)))
+      {:ok true
+       :indexed (:indexed @results)
+       :failed (:failed @results)
+       :total (count documents)
+       :indexed-count (count (:indexed @results))
+       :failed-count (count (:failed @results))})))
 
 (defn planner-row-timestamp-ms
   [row]
@@ -161,20 +157,20 @@
              :content content-arr
              :timestamp (planner-row-timestamp-ms row)}))))
 
-(defn rehydrate-session-manager!
+(defn ^:async rehydrate-session-manager!
   [config session-manager conversation-id _model-id]
   (if (or (str/blank? conversation-id)
           (not (openplanner-configured? config)))
-    (js/Promise.resolve session-manager)
-    (-> (openplanner-client/session! (openplanner-client/client config) conversation-id nil)
-        (.then (fn [body]
-                 (doseq [row (or (:rows body) [])]
-                   (when-let [message (planner-row->agent-message row)]
-                     (.appendMessage session-manager message)))
-                 session-manager))
-        (.catch (fn [err]
-                  (.warn js/console "[knoxx] failed to rehydrate session from OpenPlanner" err)
-                  session-manager)))))
+    session-manager
+    (try
+      (let [body (await (openplanner-client/session! (openplanner-client/client config) conversation-id nil))]
+        (doseq [row (or (:rows body) [])]
+          (when-let [message (planner-row->agent-message row)]
+            (.appendMessage session-manager message)))
+        session-manager)
+      (catch :default err
+        (.warn js/console "[knoxx] failed to rehydrate session from OpenPlanner" err)
+        session-manager))))
 
 (defn first-result-array
   [value]
@@ -308,22 +304,21 @@
        lakes (assoc :lakes lakes)
        max-cost (assoc :maxCost max-cost)))))
 
-(defn openplanner-semantic-search!
+(defn ^:async openplanner-semantic-search!
   [config {:keys [query k project source kind visibility]}]
   (let [query (str/trim (or query ""))
         k (max 1 (min 20 (or k 10)))]
     (if (str/blank? query)
-      (js/Promise.resolve {:query "" :hits [] :mode :none})
-      (-> (openplanner-client/vector-search!
-           (openplanner-client/client config)
-           (cond-> {:q query :k k :project (or project (:project-name config) "workspace")}
-             source (assoc :source source)
-             kind (assoc :kind kind)
-             visibility (assoc :visibility visibility)))
-          (.then (fn [body]
-                   {:query query
-                    :mode :vector
-                    :hits (vector-result-hits (:result body))}))))))
+      {:query "" :hits [] :mode :none}
+      (let [body (await (openplanner-client/vector-search!
+                         (openplanner-client/client config)
+                         (cond-> {:q query :k k :project (or project (:project-name config) "workspace")}
+                           source (assoc :source source)
+                           kind (assoc :kind kind)
+                           visibility (assoc :visibility visibility))))]
+        {:query query
+         :mode :vector
+         :hits (vector-result-hits (:result body))}))))
 
 (defn openplanner-graph-export!
   [config request]
@@ -350,7 +345,7 @@
   (when (operational-failure-text? text)
     (quality-label-extra "bad" "operational provider error, not useful assistant output")))
 
-(declare index-run-memory-legacy!)
+(declare project-run-into-event-ledger!)
 
 (defn openplanner-event
   [config {:keys [id ts kind project session message role model text extra]}]
@@ -537,30 +532,40 @@
                                                                     scope-extra)}))]
     (into [node-event] (concat workspace-edges web-edges))))
 
-(defn- fail-open-indexing!
+(defn- ^:async fail-open-indexing!
   [run indexing-promise]
-  (-> indexing-promise
-      (.catch (fn [err]
-                (.warn js/console "[openplanner-memory] run indexing failed"
-                       (clj->js {:phase          "index-run-memory"
-                                 :run-id         (:run_id run)
-                                 :session-id     (:session_id run)
-                                 :conversation-id (:conversation_id run)
-                                 :run-status     (:status run)
-                                 :error-message  (ex-message err)
-                                 :error-data     (clj->js (or (ex-data err) {}))
-                                 :fail-open      true}))
-                nil))))
+  (try
+    (await indexing-promise)
+    (catch :default err
+      (.warn js/console "[openplanner-memory] run indexing failed"
+             (clj->js {:phase          "index-run-memory"
+                       :run-id         (:run_id run)
+                       :session-id     (:session_id run)
+                       :conversation-id (:conversation_id run)
+                       :run-status     (:status run)
+                       :error-message  (ex-message err)
+                       :error-data     (clj->js (or (ex-data err) {}))
+                       :fail-open      true}))
+      nil)))
 
 (defn index-run-memory!
+  "Persist the completed run to the session store AND project it into the
+   OpenPlanner event ledger. Both writes are required: the store is the
+   authoritative run record (knoxx_runs), while the ledger projection
+   (knoxx.message / knoxx.run events) is the only source the /v1/sessions
+   list and resume reads consume. Treating these as either/or made every
+   post-cutover thread invisible to the REST API (regression 2026-06-06)."
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
   (if-not (openplanner-configured? config)
     (js/Promise.resolve nil)
     (fail-open-indexing!
      run
-     (if-let [store @store-registry/session-store*]
-       (put-run! store run)
-       (index-run-memory-legacy! config run extract-mentioned-devel-paths extract-mentioned-urls)))))
+     (let [store @store-registry/session-store*
+           store-write (if store
+                         (put-run! store run)
+                         (js/Promise.resolve nil))
+           ledger-write (project-run-into-event-ledger! config run extract-mentioned-devel-paths extract-mentioned-urls)]
+       (js/Promise.all #js [store-write ledger-write])))))
 
 (defn- legacy-run-context
   [config run]
@@ -774,10 +779,14 @@
                  (legacy-tool-events config run extract-mentioned-devel-paths extract-mentioned-urls ctx)
                  (legacy-media-events config run ctx)))))
 
-(defn- index-run-memory-legacy!
+(defn- ^:async project-run-into-event-ledger!
+  "Translate a completed run into openplanner.event.v1 envelopes and append
+   them to the event ledger via the REST client. REST (not direct Mongo) so
+   the run text still flows through vector indexing and graph derivation."
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
   (let [all-events (legacy-run-events config run extract-mentioned-devel-paths extract-mentioned-urls)]
-    (-> (openplanner-client/events! (openplanner-client/client config) all-events)
-        (.catch (fn [err]
-                  (.warn js/console "[knoxx] failed to index run memory into OpenPlanner" err)
-                  nil)))))
+    (try
+      (await (openplanner-client/events! (openplanner-client/client config) all-events))
+      (catch :default err
+        (.warn js/console "[knoxx] failed to index run memory into OpenPlanner" err)
+        nil))))

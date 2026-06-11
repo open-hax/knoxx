@@ -8,10 +8,7 @@
   (:require [knoxx.backend.domain.control.catalog :as control-catalog]
             [knoxx.backend.domain.driver.builtin :as driver-builtin]
             [knoxx.backend.domain.resources.loader :as resources]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.roles :as roles]))
-
-(def ^:private control-redis-key "events:control-config")
 
 (defn- resource-records
   [config]
@@ -45,21 +42,12 @@
    The new runtime is resource-backed, so this stores only the submitted control
    view for client round-tripping and does not become runtime truth."
   [control]
-  (if-let [client (redis/get-client)]
-    (try
-      (await (redis/set-json client control-redis-key control))
-      control
-      (catch :default _
-        control))
-    control))
+  ;; Redis removed — this is a no-op compatibility shim
+  control)
 
 (defn ^:async load-event-control
   "Load a legacy persisted admin control snapshot, if present. Runtime truth is
    still the resource catalog returned by event-control-config."
   []
-  (if-let [client (redis/get-client)]
-    (try
-      (await (redis/get-json client control-redis-key))
-      (catch :default _
-        nil))
-    nil))
+  ;; Redis removed — this is a no-op compatibility shim
+  nil)

@@ -87,29 +87,25 @@
              (> size max-bytes))
     (throw (js/Error. message))))
 
-(defn fetch-data-url-with-fetch!
+(defn ^:async fetch-data-url-with-fetch!
   [fetch-fn url fallback-mime label max-bytes auth-context]
   (let [resolved-url (resolve-media-url url)
-        label (or label "media")]
-    (-> (fetch-fn resolved-url #js {:method "GET"
-                                    :headers (auth-headers auth-context resolved-url)})
-        (.then
-         (fn [resp]
-           (when-not (.-ok resp)
-             (throw (js/Error. (str "Failed to fetch " label ": HTTP " (.-status resp)))))
-           (let [len-header (some-> resp (.-headers) (.get "content-length"))
-                 len (when len-header (js/parseInt len-header 10))]
-             (when (and (number? len) (not (js/isNaN len)) (pos? len) (> len max-bytes))
-               (throw (js/Error. (str "Remote " label " exceeds max bytes: " len))))
-             (-> (.arrayBuffer resp)
-                 (.then
-                  (fn [array-buffer]
-                    (let [buffer (js/Buffer.from array-buffer)
-                          size (.-length buffer)
-                          _ (ensure-max-bytes! size max-bytes (str "Remote " label " exceeds max bytes: " size))
-                          mime-type (or (some-> resp (.-headers) (.get "content-type")) fallback-mime)
-                          payload (.toString buffer "base64")]
-                      (str "data:" mime-type ";base64," payload)))))))))))
+        label (or label "media")
+        resp (await (fetch-fn resolved-url #js {:method "GET"
+                                                :headers (auth-headers auth-context resolved-url)}))]
+    (when-not (.-ok resp)
+      (throw (js/Error. (str "Failed to fetch " label ": HTTP " (.-status resp)))))
+    (let [len-header (some-> resp (.-headers) (.get "content-length"))
+          len (when len-header (js/parseInt len-header 10))]
+      (when (and (number? len) (not (js/isNaN len)) (pos? len) (> len max-bytes))
+        (throw (js/Error. (str "Remote " label " exceeds max bytes: " len))))
+      (let [array-buffer (await (.arrayBuffer resp))
+            buffer (js/Buffer.from array-buffer)
+            size (.-length buffer)
+            _ (ensure-max-bytes! size max-bytes (str "Remote " label " exceeds max bytes: " size))
+            mime-type (or (some-> resp (.-headers) (.get "content-type")) fallback-mime)
+            payload (.toString buffer "base64")]
+        (str "data:" mime-type ";base64," payload)))))
 
 (defn fetch-data-url!
   [url fallback-mime label max-bytes auth-context]

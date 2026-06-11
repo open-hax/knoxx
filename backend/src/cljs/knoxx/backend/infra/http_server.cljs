@@ -36,16 +36,16 @@
   [^js app hook-name handler]
   (.addHook app hook-name handler))
 
-(defn register-default-plugins!
+(defn ^:async register-default-plugins!
   [^js app]
-  (-> (.register app fastifyCors #js {:origin true})
-      (.then (fn [] (.register app fastifyCookie)))
-      (.then (fn [] (.register app fastifyFormbody)))
-      (.then (fn [] (.register app fastifyMultipart
-                                #js {:limits #js {:fileSize (* 50 1024 1024)
-                                                  :fieldSize (* 1 1024 1024)
-                                                  :files 10}})))
-      (.then (fn [] (.register app fastifyWebsocket)))))
+  (await (.register app fastifyCors #js {:origin true}))
+  (await (.register app fastifyCookie))
+  (await (.register app fastifyFormbody))
+  (await (.register app fastifyMultipart
+                    #js {:limits #js {:fileSize (* 50 1024 1024)
+                                      :fieldSize (* 1 1024 1024)
+                                      :files 10}}))
+  (await (.register app fastifyWebsocket)))
 
 (defn listen!
   [^js app host port]

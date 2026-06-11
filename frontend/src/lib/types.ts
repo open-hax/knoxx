@@ -539,6 +539,7 @@ export interface AdminActorCredentialSummary {
   accountIdentifier?: string | null;
   status: string;
   configuredFields: string[];
+  secretJson?: Record<string, string>;
   createdAt?: string;
   updatedAt?: string;
 }

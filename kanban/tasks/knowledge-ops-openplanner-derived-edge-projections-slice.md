@@ -1,12 +1,12 @@
 ---
 uuid: "knoxx-knowledge-ops-openplanner-derived-edge-projections-slice"
 title: "Knowledge Ops — OpenPlanner Derived Edge Projections Slice (Phase 1)"
-status: incoming
-priority: P1
+status: "rejected"
+priority: "P1"
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-04-05T00:00:00Z"
 points: 5
-category: tasks
+category: "tasks"
 ---
 
 # Knowledge Ops — OpenPlanner Derived Edge Projections Slice (Phase 1)

@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-pass1-path-canonicalization"
 title: "Knowledge-ops consistency pass 1: path canonicalization"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Knowledge-ops consistency pass 1: path canonicalization
 
 > Parent epic: `knoxx-knowledge-ops-consistency-review`

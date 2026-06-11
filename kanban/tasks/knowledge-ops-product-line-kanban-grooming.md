@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-product-line-kanban-grooming"
 title: "Groom and accept product-line subtasks into the kanban backlog"
-status: incoming
+status: icebox
 priority: P2
 labels: ["tasks", "1sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 1
 category: tasks
 ---
-
 # Groom and accept product-line subtasks into the kanban backlog
 
 > Parent epic: `knoxx-knowledge-ops-product-line`

@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-pii-redaction-logs-training-export"
 title: "PII Redaction in Logs and Training/SFT Exports"
-status: ready
+status: icebox
 priority: "P2"
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-29T00:00:00Z"

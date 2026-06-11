@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-chat-ui-core-components"
 title: "Chat UI — Core React components (MessageBubble, Composer, ChatPanel)"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Chat UI — Core React components (MessageBubble, Composer, ChatPanel)
 
 > Parent epic: `knoxx-knowledge-ops-chat-ui-library`

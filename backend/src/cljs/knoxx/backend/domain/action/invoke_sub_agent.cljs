@@ -30,33 +30,31 @@
     (some? value) (keyword (str/replace (str/lower-case (str/trim (str value))) #"_" "-"))
     :else nil))
 
-(defn- load-sub-agent-contract!
+(defn- ^:async load-sub-agent-contract!
   "Load a sub-agent contract by ID. Resolves to the parsed contract map or nil.
 
    Tries contracts/sub_agents/ first, then falls back to contracts/agents/
    so any agent contract can be spawned as a sub-agent."
   [config sub-agent-id]
   (if-let [id (id->string sub-agent-id)]
-    (-> (contracts/load-contract! config "sub_agents" id)
-        (.then (fn [{:keys [ok? contract validation]}]
-                 (cond
-                   ok?
-                   contract
+    (let [{:keys [ok? contract validation]} (await (contracts/load-contract! config "sub_agents" id))]
+      (cond
+        ok?
+        contract
 
-                   (= "Contract not found" (some-> validation :errors first :message))
-                   ;; Fallback: try agents/
-                   (-> (contracts/load-contract! config "agents" id)
-                       (.then (fn [{:keys [ok? contract]}]
-                                (if ok?
-                                  (do (js/console.log "[sub-agent] resolved agent contract as sub-agent:" id)
-                                      contract)
-                                  (do (js/console.warn "[sub-agent] contract not found in sub_agents or agents:" id)
-                                      nil)))))
+        (= "Contract not found" (some-> validation :errors first :message))
+        ;; Fallback: try agents/
+        (let [{:keys [ok? contract]} (await (contracts/load-contract! config "agents" id))]
+          (if ok?
+            (do (js/console.log "[sub-agent] resolved agent contract as sub-agent:" id)
+                contract)
+            (do (js/console.warn "[sub-agent] contract not found in sub_agents or agents:" id)
+                nil)))
 
-                   :else
-                   (do (js/console.warn "[sub-agent] invalid contract" id (pr-str validation))
-                       nil)))))
-    (js/Promise.resolve nil)))
+        :else
+        (do (js/console.warn "[sub-agent] invalid contract" id (pr-str validation))
+            nil)))
+    nil))
 
 (defn- contract-from-action
   [action-with sub-agent-id]
@@ -290,38 +288,37 @@
   (let [{:keys [run-agent! config event job]} ctx]
     (run-agent! config (sub-agent-job job payload) (sub-agent-event event payload))))
 
-(defn- fire-and-forget!
+(defn- ^:async fire-and-forget!
   [ctx payload]
-  (-> (spawn-once! ctx payload)
-      (.then (fn [result]
-               {:ok true
-                :action/kind :invoke/sub-agent
-                :mode :fire-and-forget
-                :sub-agent-id (:sub-agent-id payload)
-                :parent-id (:parent-id payload)
-                :result-key (:result-key payload)
-                :spawn-result result}))))
+  (let [result (await (spawn-once! ctx payload))]
+    {:ok true
+     :action/kind :invoke/sub-agent
+     :mode :fire-and-forget
+     :sub-agent-id (:sub-agent-id payload)
+     :parent-id (:parent-id payload)
+     :result-key (:result-key payload)
+     :spawn-result result}))
 
-(defn- await-result!
+(defn- ^:async await-result!
   [ctx payload]
-  (-> (js/Promise.race (clj->js [(spawn-once! ctx payload)
-                                 (timeout-promise payload)]))
-      (.then (fn [result]
-               {:ok true
-                :action/kind :invoke/sub-agent
-                :mode :await
-                :sub-agent-id (:sub-agent-id payload)
-                :parent-id (:parent-id payload)
-                :result-key (:result-key payload)
-                :result result}))
-      (.catch (fn [err]
-                {:ok false
-                 :action/kind :invoke/sub-agent
-                 :mode :await
-                 :sub-agent-id (:sub-agent-id payload)
-                 :parent-id (:parent-id payload)
-                 :result-key (:result-key payload)
-                 :error (or (.-message err) (str err))}))))
+  (try
+    (let [result (await (js/Promise.race (clj->js [(spawn-once! ctx payload)
+                                                   (timeout-promise payload)])))]
+      {:ok true
+       :action/kind :invoke/sub-agent
+       :mode :await
+       :sub-agent-id (:sub-agent-id payload)
+       :parent-id (:parent-id payload)
+       :result-key (:result-key payload)
+       :result result})
+    (catch :default err
+      {:ok false
+       :action/kind :invoke/sub-agent
+       :mode :await
+       :sub-agent-id (:sub-agent-id payload)
+       :parent-id (:parent-id payload)
+       :result-key (:result-key payload)
+       :error (or (.-message err) (str err))})))
 
 (defn- run-payload!
   [ctx payload]
@@ -331,31 +328,38 @@
     :collect (await-result! ctx payload)
     (fire-and-forget! ctx payload)))
 
-(defn- collect-results!
+(defn- ^:async collect-results!
   [ctx payloads]
-  (-> (js/Promise.all (clj->js (mapv #(run-payload! ctx %) payloads)))
-      (.then (fn [results]
-               {:ok (every? :ok results)
-                :action/kind :invoke/sub-agent
-                :mode :collect
-                :results (reduce (fn [acc result]
-                                   (assoc acc (:result-key result) result))
-                                 {}
-                                 results)
-                :count (count results)}))))
+  (let [results (await (js/Promise.all (clj->js (mapv #(run-payload! ctx %) payloads))))]
+    {:ok (every? :ok results)
+     :action/kind :invoke/sub-agent
+     :mode :collect
+     :results (reduce (fn [acc result]
+                        (assoc acc (:result-key result) result))
+                      {}
+                      results)
+     :count (count results)}))
 
-(defn- payload-for-id!
+(defn- ^:async payload-for-id!
   [ctx action-with shared-config sub-id]
   (let [{:keys [config event job]} ctx
-        id (id->string sub-id)]
-    (-> (resolve-sub-agent-contract! config action-with id)
-        (.then (fn [loaded-contract]
-                 (let [sub-agent-contract (or loaded-contract (fallback-contract id))]
-                   (if-not (enabled-contract? sub-agent-contract)
-                     (throw (js/Error. (str "Sub-agent disabled: " id)))
-                     (build-sub-agent-payload config job event id shared-config sub-agent-contract))))))))
+        id (id->string sub-id)
+        loaded-contract (await (resolve-sub-agent-contract! config action-with id))
+        sub-agent-contract (or loaded-contract (fallback-contract id))]
+    (if-not (enabled-contract? sub-agent-contract)
+      (throw (js/Error. (str "Sub-agent disabled: " id)))
+      (build-sub-agent-payload config job event id shared-config sub-agent-contract))))
 
-(defmethod run-action! :invoke/sub-agent
+(defn- ^:async fire-and-forget-many!
+  [ctx payloads]
+  (let [results (await (js/Promise.all (clj->js (mapv #(fire-and-forget! ctx %) payloads))))]
+    {:ok (every? :ok results)
+     :action/kind :invoke/sub-agent
+     :mode :fire-and-forget
+     :results (vec results)
+     :count (count results)}))
+
+(defn- ^:async run-sub-agent-action!
   [{:keys [_config] :as ctx} action]
   (let [action-with (:action/with action {})
         sub-agent-ids (or (:sub-agents action-with)
@@ -367,26 +371,20 @@
                         explicit-mode (assoc :mode explicit-mode))]
     (cond
       (:sub-agent-id action-with)
-      (-> (payload-for-id! ctx action-with shared-config (:sub-agent-id action-with))
-          (.then #(run-payload! ctx %)))
+      (run-payload! ctx (await (payload-for-id! ctx action-with shared-config (:sub-agent-id action-with))))
 
       (seq sub-agent-ids)
-      (-> (js/Promise.all (clj->js (mapv #(payload-for-id! ctx action-with shared-config %) sub-agent-ids)))
-          (.then (fn [payloads]
-                   (let [payloads (vec payloads)
-                         mode (or explicit-mode (:mode (first payloads)) :fire-and-forget)]
-                     (if (= :fire-and-forget mode)
-                       (-> (js/Promise.all (clj->js (mapv #(fire-and-forget! ctx %) payloads)))
-                           (.then (fn [results]
-                                    {:ok (every? :ok results)
-                                     :action/kind :invoke/sub-agent
-                                     :mode :fire-and-forget
-                                     :results (vec results)
-                                     :count (count results)})))
-                       (collect-results! ctx payloads))))))
+      (let [payloads (vec (await (js/Promise.all (clj->js (mapv #(payload-for-id! ctx action-with shared-config %) sub-agent-ids)))))
+            mode (or explicit-mode (:mode (first payloads)) :fire-and-forget)]
+        (if (= :fire-and-forget mode)
+          (await (fire-and-forget-many! ctx payloads))
+          (await (collect-results! ctx payloads))))
 
       :else
-      (js/Promise.resolve
-       {:ok false
-        :action/kind :invoke/sub-agent
-        :error "No sub-agent-id or sub-agents specified in action/with"}))))
+      {:ok false
+       :action/kind :invoke/sub-agent
+       :error "No sub-agent-id or sub-agents specified in action/with"})))
+
+(defmethod run-action! :invoke/sub-agent
+  [ctx action]
+  (run-sub-agent-action! ctx action))

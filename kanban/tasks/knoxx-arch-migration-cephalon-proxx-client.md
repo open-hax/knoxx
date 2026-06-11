@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-arch-migration-cephalon-proxx-client"
 title: "Architecture Migration — Cephalon Provider Wired into Proxx Client"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Architecture Migration — Cephalon Provider Wired into Proxx Client
 
 > Parent epic: `knoxx-knowledge-ops-architecture-migration`
