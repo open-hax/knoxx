@@ -1,14 +1,8 @@
 (ns knoxx.backend.law.url
-  (:require [clojure.string :as str]))
+  "Delegates to the contract-runtime law url module.
+   Re-exports all public vars for backward compatibility."
+  (:require [open-hax.contract-runtime.law.url :as core]))
 
-(defn looks-like-url?  [value]
-  (and (string? value)
-       (or (str/starts-with? value "http://")
-           (str/starts-with? value "https://"))))
-(defn media-url?  [value]
-  (and (string? value)
-       (or (looks-like-url? value)
-           (str/starts-with? value "/"))))
-
-(defn data-url?  [value]
-  (and (string? value) (str/starts-with? value "data:")))
+(def looks-like-url? core/looks-like-url?)
+(def media-url? core/media-url?)
+(def data-url? core/data-url?)

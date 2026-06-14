@@ -55,18 +55,36 @@
     (when (seq merged) merged)))
 
 (defn- keywordish->role-slug
+  "Convert a value to a role slug string. Preserves namespace-qualified keywords
+   (e.g. :deploy/greeter-role -> \"deploy/greeter-role\") while stripping
+   standard namespaces like :role/."
   [value]
   (let [raw (cond
-              (keyword? value) (name value)
+              (keyword? value)
+              (let [ns-part (namespace value)
+                    name-part (some-> value name str/trim not-empty)]
+                (when name-part
+                  (if (and ns-part (not (roles/standard-namespaces ns-part)))
+                    (str ns-part "/" name-part)
+                    name-part)))
               (string? value) value
               (nil? value) nil
               :else (str value))]
     (some-> raw str str/trim not-empty)))
 
 (defn- keywordish->capability-ref
+  "Convert a value to a capability id string. Preserves namespace-qualified
+   keywords (e.g. :deploy/greet -> \"deploy/greet\") while stripping standard
+   namespaces like :cap/ and the cap_ prefix."
   [value]
   (let [raw (cond
-              (keyword? value) (name value)
+              (keyword? value)
+              (let [ns-part (namespace value)
+                    name-part (some-> value name str/trim not-empty)]
+                (when name-part
+                  (if (and ns-part (not (roles/standard-namespaces ns-part)))
+                    (str ns-part "/" name-part)
+                    name-part)))
               (string? value) value
               (nil? value) nil
               :else (str value))]

@@ -81,13 +81,13 @@
   (->> (contracts-loader/contract-root-paths (loader-config store))
        (mapcat edn-file-paths-under-root)
        distinct
-       (keep (fn [file-path]
-               (try
-                 (contracts-loader/parse-contract-file!
-                  file-path
-                  (.readFileSync fs file-path "utf8"))
-                 (catch :default _
-                   nil))))
+       (mapcat (fn [file-path]
+                 (try
+                   (contracts-loader/parse-contract-file-records!
+                    file-path
+                    (.readFileSync fs file-path "utf8"))
+                   (catch :default _
+                     []))))
        contracts-loader/dedup-contracts))
 
 (defn- validate-contract-for-class!

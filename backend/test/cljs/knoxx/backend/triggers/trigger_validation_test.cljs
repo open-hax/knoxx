@@ -16,7 +16,7 @@
                            "triggers"
                            "ussyverse_social_replies_event.edn")
           edn-text (.readFileSync (js/require "node:fs") file-path "utf8")
-          record (contract-loader/parse-contract-file! file-path edn-text)]
+          record (first (contract-loader/parse-contract-file-records! file-path edn-text))]
       (is (some? record)
           (str "Trigger should parse and validate. File: " file-path))
       (when record
@@ -33,7 +33,7 @@
                            "sources"
                            "discord_gateway.edn")
           edn-text (.readFileSync (js/require "node:fs") file-path "utf8")
-          record (contract-loader/parse-contract-file! file-path edn-text)]
+          record (first (contract-loader/parse-contract-file-records! file-path edn-text))]
       (is (some? record)
           (str "Source should parse and validate. File: " file-path))
       (when record

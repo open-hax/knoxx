@@ -11,6 +11,7 @@
              [helix.hooks :as hooks]
              [helix.dom :as d]
              [knoxx.frontend.admin.event-agents-panel :as event-panel]
+             [knoxx.frontend.auth.context :as auth-ctx]
              [knoxx.frontend.components.layout.workbench :as layout]
              ["@open-hax/knoxx-frontend-bridge" :as bridge]
              ["@open-hax/knoxx-app-bridge" :as app]
@@ -179,7 +180,7 @@
      ($ events-chat-panel {:chat chat})))
 
 (defnc EventsPage []
-  (let [auth (app/useAuth)
+  (let [auth (auth-ctx/use-auth)
          [selected-job set-selected-job] (hooks/use-state nil)
          chat (useChatWorkspaceController
                #js {:initialShowCanvas false

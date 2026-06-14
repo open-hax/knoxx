@@ -6,8 +6,8 @@
                       :cap/memory
                      :cap/semantic
                      :cap/canvas
-                     :cap/multimodal
-                     :cap/workspace-media
+                     ;; :cap/multimodal
+                     ;; :cap/workspace-media
                      :cap/audio
                      :cap/music
                      ;; :cap/image-generation

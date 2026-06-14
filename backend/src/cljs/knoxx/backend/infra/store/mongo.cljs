@@ -6,8 +6,8 @@
    runtime provides the handle decides connection lifecycle. Documents are
    schema-guarded before they cross the boundary."
   (:require [knoxx.backend.extern.mongo :as mongo-extern]
-            [knoxx.backend.infra.store.protocol :as store]
-            [knoxx.backend.law.store :as store-law]))
+            [open-hax.contract-runtime.store.protocol :as store]
+            [open-hax.contract-runtime.store.law :as store-law]))
 
 (defrecord MongoCollection [store-id guard collection-handle]
   store/IStore

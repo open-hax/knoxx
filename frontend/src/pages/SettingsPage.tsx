@@ -1,69 +1,97 @@
-import React, { useState } from 'react';
-import { getFrontendConfig } from '../lib/api';
+import React, { useEffect, useState } from "react";
 
-export default function SettingsPage() {
-  const [config, setConfig] = useState<any>(null);
-  const [loaded, setLoaded] = useState(false);
+// CLJS (Helix) SettingsPage loader.
+//
+// The real implementation lives in knoxx.frontend.pages.settings.view/settings-page
+// and is exposed on window.knoxx.frontend.pages.settings.view.settings_page by the
+// shadow-cljs app bundle (required from knoxx.frontend.core). This wrapper does NOT
+// fall back to a legacy TS page — if the CLJS export is missing we want a loud,
+// debuggable failure so the migration stays honest.
 
-  React.useEffect(() => {
-    getFrontendConfig()
-      .then((c) => { setConfig(c); setLoaded(true); })
-      .catch(() => setLoaded(true));
-  }, []);
+type CljsComponentType = React.ComponentType<Record<string, never>>;
 
-  if (!loaded) return <div className="p-6 text-sm text-slate-400">Loading…</div>;
-
-  return (
-    <div data-page="settings" className="p-6 max-w-3xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-slate-100">Settings</h1>
-        <p className="mt-1 text-sm text-slate-400">Knoxx runtime configuration.</p>
-      </div>
-
-      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-slate-200 border-b border-slate-800 pb-2">Instance</h2>
-        <div className="grid gap-3 sm:grid-cols-2 text-sm">
-          <div><span className="text-slate-500">Environment</span><div className="font-medium text-slate-200 mt-0.5">{config?.env ?? '—'}</div></div>
-          <div><span className="text-slate-500">Version</span><div className="font-medium text-slate-200 mt-0.5">{config?.version ?? '—'}</div></div>
-          <div><span className="text-slate-500">GitHub OAuth</span><div className="font-medium mt-0.5">{config?.github_enabled ? <span className="text-emerald-400">Enabled</span> : <span className="text-rose-400">Disabled</span>}</div></div>
-          <div><span className="text-slate-500">Auth Required</span><div className="font-medium mt-0.5">{config?.auth_required ? <span className="text-emerald-400">Yes</span> : <span className="text-slate-400">No</span>}</div></div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-slate-200 border-b border-slate-800 pb-2">Runtime Status</h2>
-        <div className="space-y-2 text-sm">
-          <StatusRow label="Backend API" url="/api/config" />
-          <StatusRow label="Proxx Health" url="/api/proxx/health" />
-          <StatusRow label="Events" url="/api/admin/config/events" />
-          <StatusRow label="Agents" url="/api/admin/agents/active?limit=1" />
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-amber-300">
-        Legacy settings (model selection, RAG config, forum mode) have been moved to the admin control plane or environment configuration.
-      </div>
-    </div>
-  );
+function getCljsComponent(): CljsComponentType | null {
+  const ns = (window as unknown as Record<string, unknown>).knoxx;
+  if (!ns) return null;
+  const frontend = (ns as Record<string, unknown>).frontend;
+  if (!frontend) return null;
+  const pages = (frontend as Record<string, unknown>).pages;
+  if (!pages) return null;
+  const settings = (pages as Record<string, unknown>).settings;
+  if (!settings) return null;
+  const view = (settings as Record<string, unknown>).view;
+  if (!view) return null;
+  const component = (view as Record<string, unknown>).settings_page;
+  return (component as CljsComponentType) ?? null;
 }
 
-function StatusRow({ label, url }: { label: string; url: string }) {
-  const [status, setStatus] = useState<'checking' | 'ok' | 'error'>('checking');
+class CljsErrorBoundary extends React.Component<
+  React.PropsWithChildren<{ onError: (error: Error) => void }>,
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
 
-  React.useEffect(() => {
-    let cancelled = false;
-    fetch(url, { credentials: 'same-origin' })
-      .then((r) => { if (!cancelled) setStatus(r.ok ? 'ok' : 'error'); })
-      .catch(() => { if (!cancelled) setStatus('error'); });
-    return () => { cancelled = true; };
-  }, [url]);
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    this.props.onError(error);
+  }
+
+  render() {
+    if (this.state.error) return null;
+    return this.props.children;
+  }
+}
+
+export default function SettingsPage() {
+  const [Component, setComponent] = useState<CljsComponentType | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const comp = getCljsComponent();
+    if (comp) {
+      setComponent(() => comp);
+      return;
+    }
+
+    // Give the /cljs/app.js injector a moment to run.
+    const timer = setTimeout(() => {
+      const loaded = getCljsComponent();
+      if (loaded) {
+        setComponent(() => loaded);
+        return;
+      }
+      setLoadError(
+        "shadow-cljs SettingsPage export not found on window.knoxx.frontend.pages.settings.view.settings_page. " +
+          "This is an integration/compile problem (not a reason to silently render legacy TS).",
+      );
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (loadError) {
+    return (
+      <div className="m-6 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-100">
+        <div className="font-semibold">Settings (shadow-cljs) failed to load</div>
+        <div className="mt-2 font-mono text-xs whitespace-pre-wrap break-words">{loadError}</div>
+      </div>
+    );
+  }
+
+  if (!Component) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-slate-400">
+        Loading settings…
+      </div>
+    );
+  }
 
   return (
-    <div className="flex items-center justify-between py-1.5">
-      <span className="text-slate-400">{label}</span>
-      <span className={status === 'checking' ? 'text-slate-500' : status === 'ok' ? 'text-emerald-400' : 'text-rose-400'}>
-        {status === 'checking' ? '…' : status === 'ok' ? '● OK' : '✕ Unavailable'}
-      </span>
-    </div>
+    <CljsErrorBoundary onError={(error) => setLoadError(String(error?.message ?? error))}>
+      <Component />
+    </CljsErrorBoundary>
   );
 }

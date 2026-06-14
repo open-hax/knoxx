@@ -8,7 +8,7 @@
  [{;; Trigger agreement: discord_automation may start the social replies agent
    ;; after observing a mention or keyword event in a home channel.
    :trigger/id :social-replies
-   :trigger/actor "discord_automation"
+   :trigger/listener "discord_automation"
    :trigger/events [:discord.message]
    :trigger/condition (or (conditions/discord.mention event)
                           (conditions/discord.keyword event ["frankie" "yap" "music" "song" "slop" "ussy"
@@ -30,4 +30,4 @@
                   [:author-id {:optional true} :string]
                   [:timestamp {:optional true} :int]]
 
-   :data {:context {:reason "contract event: ussyverse social replies"}}}]}
+   :trigger/context {:reason "contract event: ussyverse social replies"}}]}

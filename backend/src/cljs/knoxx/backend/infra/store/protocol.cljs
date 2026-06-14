@@ -1,24 +1,13 @@
 (ns knoxx.backend.infra.store.protocol
-  "IStore: keyed persistence with schemas.
+  "Delegates to the contract-runtime store protocol.
+   Re-exports all public vars for backward compatibility."
+  (:require [open-hax.contract-runtime.store.protocol :as core]))
 
-   Stores are declared by resources via :store/id and :store/schema and
-   resolved into action scope as instances. Both operations return Promises so
-   memory- and database-backed stores share one calling convention. Store
-   instances are also callable: (store query) is shorthand for find-docs."
-  (:refer-clojure :exclude [-find]))
+;; Re-export the protocol functions
+(def insert! core/insert!)
+(def find-docs core/find-docs)
 
-(defprotocol IStore
-  (-insert [this doc] "Insert one schema-guarded document. Returns Promise<doc>.")
-  (-find [this query] "Find documents matching a field-equality query map.
-                       The :limit key caps the result count. Returns Promise<vector>."))
-
-(defn insert!
-  "Insert a document into a store. Returns Promise<doc>."
-  [store doc]
-  (-insert store doc))
-
-(defn find-docs
-  "Query a store. Query is a map of field -> expected value; :limit caps the
-   result count. Returns Promise<vector<doc>>."
-  [store query]
-  (-find store query))
+;; The IStore protocol is defined in open-hax.contract-runtime.store.protocol
+;; and should be used directly from there. This namespace provides backward
+;; compatibility for callers that use the old namespace.
+;; For protocol implementation, use: open-hax.contract-runtime.store.protocol/IStore

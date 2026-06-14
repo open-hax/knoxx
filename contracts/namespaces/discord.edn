@@ -1,0 +1,55 @@
+{:namespace :discord
+ :resources
+ [{:source/id :source/discord-gateway
+   :source/type :event-generator
+   :source/name "Discord gateway"
+   :source/driver :driver/discord
+   :source/actor "discord_automation"
+   :source/listens [:discord.message
+                    :discord.message.mention
+                    :discord.message.created
+                    :discord.voice.state-update]
+   :source/protocol {:lifecycle :long-running
+                     :dispatch :event-dispatch
+                     :credentials-owner "discord_automation"}
+   :enabled true}
+
+  {:source/id :source/discord-voice-audio
+   :source/type :event-generator
+   :source/name "Discord voice audio"
+   :source/driver :driver/discord
+   :source/actor "discord_automation"
+   :source/listens [:discord.voice.audio.window]
+   :source/protocol {:lifecycle :on-demand
+                     :dispatch :event-dispatch
+                     :credentials-owner "discord_automation"}
+   :enabled true}
+
+  {:trigger/id :mentions-trigger
+   :trigger/kind :event
+   :trigger/listener "discord_automation"
+   :trigger/events [:discord.message]
+   :trigger/condition (conditions/discord.mention event)
+   :trigger/action :actions/mentions
+   :trigger/context {:check-mentions true}
+   :enabled false}
+
+  {:action/id :mentions
+   :action/kind :actions/run-steps
+   :action/handler "knoxx.backend.domain.action.registry/run-action!"
+   :action/with {:steps [{:action :actions/start-agent-session
+                          :with {:agent-id "discord_mention_check"
+                                 :output {:key "mention_queue" :ttl "PT30M"}}}]
+                 :output {:key "mentions_result" :ttl "PT1H"}}
+   :action/scope {:actions [:actions/start-agent-session]}
+   :action/context {:source "discord-mentions"}
+   :enabled false}
+
+  {:trigger/id :voice-audio-event
+   :trigger/kind :event
+   :trigger/listener "discord_automation"
+   :trigger/events [:discord.voice.audio.window]
+   :trigger/action :actions/start-agent-session
+   :trigger/with {:agent-id "discord_voice_audio_event_agent"}
+   :enabled true
+   :trigger/doc "Raw Discord voice audio events are emitted only by the contract-gated discord.voice.agent_event.* tools and handled by discord_voice_audio_event_agent. The target agent resource sets streamingBehavior=idle-only, so audio events are real events but only become runs when the sticky voice session is idle."}]}

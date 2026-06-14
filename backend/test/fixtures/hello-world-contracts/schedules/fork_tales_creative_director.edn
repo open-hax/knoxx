@@ -1,6 +1,5 @@
 {:contract/kind :schedule
  :contract/id "fork_tales_creative_director"
- :contract/version 1
  :enabled true
 
  ;; Temporal resource split from fork_tales_creative_director_cron. It emits an

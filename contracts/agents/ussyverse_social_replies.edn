@@ -1,17 +1,10 @@
-{:contract/id "ussyverse_social_replies",
+ {:contract/id "ussyverse_social_replies",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
  :memory {:passive-hydration {:enabled? true
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :events
- {:always [:discord.message/mention]
-  :maybe [:discord.message/keyword]
-  :threshold 1
-  :weights {"discord.message/mention" 1
-            "discord.message/keyword" 1}},
- :hooks {:before {}, :after {}},
  :agent
  {:roles [:role/creative-catalyst :role/open-hax ], :model "gemma4:31b", :thinking :xhigh},
  ;; Replies are delivered via discord.send; the chat-surface attach tool is

@@ -1,6 +1,5 @@
 {:contract/kind :schedule
  :contract/id "hello_world_morning_tick"
- :contract/version 1
  :enabled false
 
  ;; A schedule is a temporal agreement to emit a synthetic event. It never calls

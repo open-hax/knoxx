@@ -1,6 +1,5 @@
 {:contract/kind :trigger
  :contract/id "patrol_trigger"
- :contract/version 5
  :enabled true
 
  ;; Trigger agreement: discord_automation may run the patrol action after

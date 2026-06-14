@@ -234,7 +234,7 @@
 (defn- ^:async read-contract-file!
   [file-path]
   (try
-    (parse-contract-file! file-path (await (.readFile fs file-path "utf8")))
+    (parse-contract-file-records! file-path (await (.readFile fs file-path "utf8")))
     (catch :default err
       (stderr! "[contracts] read error: " file-path " — " (.-message err))
       nil)))
@@ -271,10 +271,10 @@
   (->> (contract-root-paths config)
        (mapcat discover-contract-files-sync)
        distinct
-        (map (fn [file-path]
-               (parse-contract-file!
-                file-path
-                (.readFileSync node-fs file-path "utf8"))))
+        (mapcat (fn [file-path]
+                  (parse-contract-file-records!
+                   file-path
+                   (.readFileSync node-fs file-path "utf8"))))
         dedup-contracts))
 
 (defn load-all-contracts-sync
@@ -326,7 +326,10 @@
                    distinct
                    vec)
         results (await (js/Promise.all (clj->js (map read-contract-file! files))))]
-    (dedup-contracts (js/Array.from results))))
+    (->> (js/Array.from results)
+         (remove nil?)
+         (mapcat identity)
+         dedup-contracts)))
 
 (defn ^:async list-contract-ids!
   ([config] (list-contract-ids! config "agents"))

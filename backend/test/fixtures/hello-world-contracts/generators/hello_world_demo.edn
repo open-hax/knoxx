@@ -1,6 +1,5 @@
 {:contract/kind :generator
  :contract/id "hello_world_demo"
- :contract/version 1
  :enabled true
 
  ;; A generator is event provenance: it declares a process, adapter, actor, or

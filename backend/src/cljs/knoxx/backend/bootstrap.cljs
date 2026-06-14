@@ -7,6 +7,7 @@
    - This namespace orchestrates startup but should not be a dependency-injection
      dump for the whole backend."
   (:require [clojure.string :as str]
+            [knoxx.backend.contract-runtime-deps :as contract-runtime-deps]
             [knoxx.backend.infra.agent.resume :as agent-resume]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.core :as core]
@@ -186,7 +187,8 @@
 (defn ^:async bootstrap!
   "Main entrypoint called by shadow-cljs."
   []
-  (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
+  (let [cfg (contract-runtime-deps/inject-deps!
+             (runtime-models/enrich-config (runtime-config/cfg)))
         cookie-hook? (truthy? (aget js/process.env "KNOXX_ENABLE_SESSION_HOOK"))]
     ;; Initialize global durable process state once at process boot. The HTTP app
     ;; can be closed/recreated by shadow-cljs lifecycle hooks without touching
@@ -231,7 +233,8 @@
   ;; via start-session-persistence!. Event/cron turns already read (cfg) fresh
   ;; per dispatch, so this closes the gap for the HTTP-served path and the flush.
   (let [{:keys [runtime policy-context cookie-hook?]} (lifecycle/context)
-        config (runtime-models/enrich-config (runtime-config/cfg))]
+        config (contract-runtime-deps/inject-deps!
+                (runtime-models/enrich-config (runtime-config/cfg)))]
     (if (and runtime policy-context)
       (do
         (lifecycle/remember-context! runtime config policy-context cookie-hook?)

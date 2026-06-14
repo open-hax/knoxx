@@ -1,6 +1,5 @@
 {:contract/kind :schedule
  :contract/id "daily_synthesis"
- :contract/version 1
  :enabled false
 
  ;; Temporal resource split from the daily_synthesis trigger. It emits an event;

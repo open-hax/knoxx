@@ -1,0 +1,17 @@
+{:namespace :fork-tales
+ :resources
+ [{:schedule/id :creative-director
+   :schedule/rule "*/30 * * * *"
+   :schedule/generator "knoxx_schedule"
+   :schedule/event {:event/type :schedule/fork-tales-creative-director
+                    :event/payload {:reason "schedule event: fork tales creative director"}}
+   :enabled true}
+
+  {:trigger/id :creative-director-cron
+   :trigger/kind :event
+   :trigger/listener "discord_automation"
+   :trigger/events [:schedule/fork-tales-creative-director]
+   :trigger/action :actions/start-agent-session
+   :trigger/with {:agent-id "fork_tales_creative_director"}
+   :trigger/context {:reason "schedule event: fork tales creative director"}
+   :enabled true}]}

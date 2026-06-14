@@ -62,5 +62,11 @@
    :output-to "dist/test/frontend-tests.cjs"
    :ns-regex ["knoxx.frontend.*-test$"]
    :autorun true
+   ;; jsdom globals MUST exist before react-dom's module load: React
+   ;; feature-detects event support at load time, and without a document it
+   ;; falls back to a legacy change-tracking path where dispatched change
+   ;; events never reach onChange on text inputs (selects/clicks still work,
+   ;; which makes the failure look selective).
+   :prepend-js "const { JSDOM } = require('jsdom'); const __jsdom = new JSDOM('<!doctype html><html><body></body></html>'); globalThis.window = __jsdom.window; globalThis.document = __jsdom.window.document; Object.defineProperty(globalThis, 'navigator', { value: __jsdom.window.navigator, configurable: true }); globalThis.IS_REACT_ACT_ENVIRONMENT = true;"
    :compiler-options
    {:output-feature-set :es-next}}}}

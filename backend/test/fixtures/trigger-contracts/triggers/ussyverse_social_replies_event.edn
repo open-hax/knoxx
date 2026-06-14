@@ -1,6 +1,5 @@
 {:contract/kind :trigger
  :contract/id "ussyverse_social_replies_event"
- :contract/version 2
  :enabled true
 
  :trigger/kind :event

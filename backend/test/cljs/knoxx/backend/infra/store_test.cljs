@@ -6,10 +6,17 @@
             [knoxx.backend.infra.store.mongo :as mongo]
             [knoxx.backend.infra.store.protocol :as store]
             [knoxx.backend.infra.store.registry :as store-registry]
-            [knoxx.backend.law.store :as store-law]))
+            [knoxx.backend.domain.resources.loader :as resources]
+            [open-hax.contract-runtime.store.law :as store-law]))
+
+(defn- build-test-deps
+  "Build contract-runtime deps for tests."
+  []
+  {:load-resources (fn [config] (resources/load-all-resources-sync config))})
 
 (def fixture-config
-  {:contracts-dir "test/fixtures/interpreter-contracts"})
+  {:contracts-dir "test/fixtures/interpreter-contracts"
+   :contract-runtime/deps (build-test-deps)})
 
 ;; ── schema guard ─────────────────────────────────────────────────────
 

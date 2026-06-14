@@ -4,12 +4,33 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.action.interpreter :as interpreter]
             [knoxx.backend.domain.action.registry :as registry]
+            [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.domain.filter.registry :as filter-registry]
+            [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.infra.store.protocol :as store]
             [knoxx.backend.infra.store.registry :as store-registry]))
 
+(defn- build-test-deps
+  "Build contract-runtime deps for tests."
+  []
+  {:run-action!    (fn [ctx action] (registry/run-action! ctx action))
+   :get-action     (fn [kind] (registry/get-action kind))
+   :get-scope-declaration (fn [kind] (registry/get-scope-declaration kind))
+   :filter-fn      (fn [filter-id] (filter-registry/filter-fn filter-id))
+   :load-resources (fn [config] (resources/load-all-resources-sync config))
+   :get-store      (fn [config store-id] (store-registry/get-store! config store-id))
+   :list-resource-ids (fn [config resource-kind] (resources/list-resource-ids-sync config resource-kind))
+   :get-resource   (fn [config resource-kind resource-id] (resources/resource-record-sync config resource-kind resource-id))
+   :resource-class (fn [resource-kind] (resources/resource-class resource-kind))})
+
 (def fixture-config
-  {:contracts-dir "test/fixtures/interpreter-contracts"})
+  {:contracts-dir "test/fixtures/interpreter-contracts"
+   :contract-runtime/deps (build-test-deps)})
+
+(defn- ctx-with-deps
+  "Create a test ctx with contract-runtime deps injected."
+  [base-ctx]
+  (assoc-in base-ctx [:config :contract-runtime/deps] (build-test-deps)))
 
 ;; ── inline :action/fn ────────────────────────────────────────────────
 
@@ -20,7 +41,7 @@
      {}
      (fn [_ _] (js/Promise.resolve {:ok true :from :registered})))
     (let [result (await (interpreter/execute!
-                         {:config nil}
+                         (ctx-with-deps {:config nil})
                          {:action/kind ::shadowed
                           :action/fn (fn [_ctx _action] {:ok true :from :inline})}))]
       (is (= :inline (:from result))))))
@@ -32,7 +53,7 @@
      {}
      (fn [_ _] (js/Promise.resolve {:ok true :from ::scope-probe})))
     (let [result (await (interpreter/execute!
-                         {:config nil}
+                         (ctx-with-deps {:config nil})
                          {:action/fn (fn [ctx _action]
                                        {:ok true
                                         :scope-keys (vec (keys (:scope ctx)))})
@@ -42,7 +63,7 @@
 (deftest ^:async inline-edn-action-fn-runs
   (testing "EDN (fn ...) forms run through the anonymous interpreter"
     (let [result (await (interpreter/execute!
-                         {:config nil :actor/id "pi"}
+                         (ctx-with-deps {:config nil :actor/id "pi"})
                          {:action/fn '(fn [ctx action]
                                         {:ok true :actor (:actor/id ctx)})}))]
       (is (true? (:ok result)))
@@ -75,7 +96,7 @@
      (fn [ctx _action]
        (js/Promise.resolve {:ok true :scope-keys (vec (keys (:scope ctx)))})))
     (let [result (await (interpreter/execute!
-                         {:config nil}
+                         (ctx-with-deps {:config nil})
                          {:action/kind ::meta-scoped}))]
       (is (= [:actions/noop] (:scope-keys result))))))
 
@@ -91,7 +112,9 @@
     (is (= [:actions/noop] (vec (keys scope))))))
 
 (deftest resolve-scope-decl-resolves-filters
-  (let [scope (interpreter/resolve-scope-decl nil {:filters [:vector/exclude-shared]})
+  (let [scope (interpreter/resolve-scope-decl
+               (assoc fixture-config :contract-runtime/deps (build-test-deps))
+               {:filters [:vector/exclude-shared]})
         exclude-shared (get scope :vector/exclude-shared)]
     (is (fn? exclude-shared))
     (is (= [{:id 2}] (exclude-shared [{:id 1} {:id 2}] [{:id 1}])))))

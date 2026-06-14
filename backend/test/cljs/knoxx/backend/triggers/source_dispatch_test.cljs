@@ -28,7 +28,7 @@
 
 (def trigger-edn
   (reader/read-string
-    "{:contract/kind :trigger\n     :contract/id \"ussyverse_social_replies_event\"\n     :contract/version 2\n     :enabled true\n     :trigger/kind :event\n     :trigger/actor \"discord_automation\"\n     :trigger/events [:discord.message]\n     :trigger/condition (or (conditions/discord.mention event)\n                            (conditions/discord.keyword event [\"frankie\"]))\n     :trigger/action :actions/start-agent-session\n     :trigger/agent \"ussyverse_social_replies\"\n     :trigger/task \"Test task\"\n     :data {:context {:reason \"test\"}}}"))
+    "{:contract/kind :trigger\n     :contract/id \"ussyverse_social_replies_event\"\n     :enabled true\n     :trigger/kind :event\n     :trigger/actor \"discord_automation\"\n     :trigger/events [:discord.message]\n     :trigger/condition (or (conditions/discord.mention event)\n                            (conditions/discord.keyword event [\"frankie\"]))\n     :trigger/action :actions/start-agent-session\n     :trigger/agent \"ussyverse_social_replies\"\n     :trigger/task \"Test task\"\n     :data {:context {:reason \"test\"}}}"))
 
 (def trigger-record
   {:resource/id "ussyverse_social_replies_event"

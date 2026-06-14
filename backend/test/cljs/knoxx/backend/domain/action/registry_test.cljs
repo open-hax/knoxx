@@ -214,3 +214,47 @@
     (let [tool (registry/get-tool :actions/agent-control)]
       (is (some? tool))
       (is (= "agent.control" (:name tool))))))
+
+;; ── Anonymous action tests ──────────────────────────────────────────────
+
+(deftest ^:async anonymous-action-fn-is-executed
+  (testing "run-action! executes :action/fn directly when present"
+    (let [ctx {:event {:event/type :test} :scope {} :actor {:id "anon"}}
+          action {:action/kind :some/anonymous
+                  :action/with {:msg "hello"}
+                  :action/fn (fn [c a]
+                               (js/Promise.resolve
+                                {:ok true
+                                 :anon-worked true
+                                 :msg (get-in a [:action/with :msg])
+                                 :actor (:actor/id c)}))}
+          result (await (registry/run-action! ctx action))]
+      (is (true? (:ok result)))
+      (is (true? (:anon-worked result)))
+      (is (= "hello" (:msg result))))))
+
+(deftest ^:async anonymous-action-not-in-list-actions
+  (testing "anonymous actions are not discoverable via list-actions"
+    (let [before (set (registry/list-actions))
+          _ (registry/run-action!
+             {:event nil :scope {} :actor {}}
+             {:action/kind :anon/hidden
+              :action/fn (fn [_ _] (js/Promise.resolve {:ok true}))})
+          after (set (registry/list-actions))]
+      (is (not (contains? after :anon/hidden))
+          "anonymous action should not appear in list-actions")
+      (is (= before after)
+          "list-actions should be unchanged after running anonymous action"))))
+
+(deftest ^:async registered-action-still-works-without-action-fn
+  (testing "registered handler is invoked when :action/fn is absent"
+    (registry/register-action!
+     ::registered-no-fn
+     {}
+     (fn [ctx action]
+       (js/Promise.resolve {:ok true :registered-worked true})))
+    (let [result (await (registry/run-action!
+                         {:event nil :scope {} :actor {}}
+                         {:action/kind ::registered-no-fn :action/with {}}))]
+      (is (true? (:ok result)))
+      (is (true? (:registered-worked result))))))

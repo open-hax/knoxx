@@ -16,6 +16,9 @@
              ["react-router-dom" :as rr]
              ["@open-hax/knoxx-app-bridge" :as app]
               ["@open-hax/knoxx-app-bridge" :refer [useChatWorkspaceController ChatWorkspacePane]]
+             [knoxx.frontend.auth.context :as auth-ctx]
+             [knoxx.frontend.components.agent-audit.session-list
+              :refer [agent-audit-session-list]]
              [knoxx.frontend.components.layout.workbench :as layout]))
 
 (def useLocation (.-useLocation rr))
@@ -723,8 +726,8 @@
   (d/section {:class-name (str "flex min-h-0 flex-col border-b border-slate-800 " (if open? "flex-1" "shrink-0"))}
              ($ sidebar-section-toggle {:title "Audit sessions" :count "chat" :open? open? :on-toggle on-toggle})
              (when (and open? chat)
-               ($ app/AgentAuditSessionList {:controller chat
-                                             :builtInContractId selected-contract-id}))))
+               ($ agent-audit-session-list {:controller chat
+                                            :built-in-contract-id selected-contract-id}))))
 
 (defnc agent-workbench-sidebar
   [{:keys [agents triggers pipelines selected-id on-select loading-agents selected-contract-id runtime-status loading-runtime
@@ -883,7 +886,7 @@
          :onShowFiles #()})))
 
 (defnc AgentsPage []
-  (let [auth (app/useAuth)
+  (let [auth (auth-ctx/use-auth)
         location (useLocation)
         navigate (useNavigate)
         [tab set-tab] (hooks/use-state (fn [] (get-tab-from-location location)))

@@ -1,6 +1,5 @@
 {:contract/kind :trigger
  :contract/id "daily_synthesis"
- :contract/version 5
  :enabled false
 
  ;; Trigger agreement: system_admin may run the synthesis action after

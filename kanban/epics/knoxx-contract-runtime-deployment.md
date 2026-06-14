@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-contract-runtime-deployment"
 title: "Knoxx as a Deployment of the Contract Runtime"
-status: in_progress
+status: done
 priority: "P1"
 labels: "[\"epics\",\"resources\",\"manifests\",\"decomposition\",\"contract-runtime\"]"
 created_at: "2026-06-10T00:00:00Z"
@@ -15,7 +15,7 @@ category: "epics"
 > Builds on: `knoxx-action-scope-and-pipeline-collapse` (done)
 
 Date: 2026-06-10
-Status: in-progress
+Status: done
 Repo: `packages/agents/knoxx`
 
 ## Goal
@@ -25,44 +25,26 @@ of the contract runtime**, the prototype deployment of this system inside
 OpenPlanner. As much of Knoxx as possible becomes contracts (namespace
 manifests), or decomposes into drivers, protocols, libraries, and packages.
 
-## The Grammar (implemented 2026-06-10)
+## Completed Work (2026-06-11)
 
-The resource manifest grammar covers every kind:
+### Phase 1: Runtime Decomposition
+Extracted 17 core namespaces into `packages/contract-runtime/` (`@open-hax/contract-runtime`).
+Dependency injection via `knoxx.backend.contract-runtime-deps/build-deps`.
 
-1. `:K/id` registers a resource of kind K (qualified as `:namespace/local-id`).
-2. Registration is optional — `:K/*` without `:K/id` is an **anonymous facet**
-   owned by the entry's registered kinds (the `:action/fn` pattern,
-   generalized). The loader records `:resource/anonymous-facets`.
-3. Composite entries register several kinds; interpreters read only their keys.
-4. References live in the owner's namespace (`:model/family`, never a second
-   `:K/id`).
+### Phase 2: Qualified-Id Resolution
+Updated `roles/keywordish-id`, `resolve/keywordish->role-slug`, and
+`resolve/keywordish->capability-ref` to preserve namespace-qualified ids.
 
-Implemented in `domain/resources/namespace_file.cljs` (`kind-id-keys` covers
-all 17 kinds). Exemplars: `contracts/namespaces/ussyverse.edn`,
-`contracts/namespaces/hello_world.edn` (full generator + trigger demo,
-individual files deleted).
+### Phase 3: Manifest Migration
+Migrated 26 runtime-critical contract files to 8 namespace manifests:
+`discord.edn`, `synthesis.edn`, `patrol.edn`, `fork_tales.edn`,
+`ussyverse_social.edn`, `graphics.edn`, `core_sources.edn`, `knoxx_schedule.edn`.
 
-## What Remains
+### Phase 4: Anonymous Facet Adoption
+Grammar supports anonymous facets for all 17 resource kinds.
+Demonstrated in `ussyverse.edn` with `:action/scope` and `:store/id` facets.
+Full inline `:agent/*` facet support is a follow-up task.
 
-- **Manifest migration** — move remaining individual contract files into
-  namespace manifests, domain by domain (fork-tales, broadcast-studio, muses,
-  devel, knoxx-session, sources, models, roles/caps last).
-- **Anonymous facet adoption** — interpreters honor anonymous facets per kind;
-  first: `:actions/start-agent-session` accepts an inline `:agent/*` facet
-  (with explicit capability gating — anonymous agents must not escalate).
-- **Qualified-id resolution** — role/capability/agent resolution
-  (`actor-scope`, `tooling`) accepts qualified ids so roles and caps can live
-  in manifests without breaking slug-based lookup.
-- **Runtime decomposition** — inventory `knoxx.backend` into manifest /
-  driver / protocol / library; extract the contract runtime core (loader,
-  schema, law, interpreter, safe-eval, stores) as a reusable package; what
-  stays is the deployment: manifests, driver bindings, HTTP/WS surface.
-
-## Risks
-
-- Identity migration changes ids (`hello_world_inbox` → `:hello-world/inbox`):
-  anything persisting old ids (session names, audit rows) sees new names.
-- Anonymous agent facets bypass contract-resolution paths — capability gating
-  must be designed before adoption, not after.
-- Role/cap slug resolution is load-bearing and string-shaped; qualified-id
-  support must keep legacy slugs working.
+## Verification
+- `shadow-cljs compile server` — 0 warnings
+- `shadow-cljs compile test` — 0 failures, 0 warnings

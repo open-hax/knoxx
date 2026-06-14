@@ -1,6 +1,5 @@
 {:contract/kind :schedule
  :contract/id "deep_synthesis"
- :contract/version 1
  :enabled true
 
  ;; Temporal resource split from deep_synthesis_trigger. It emits an event; the

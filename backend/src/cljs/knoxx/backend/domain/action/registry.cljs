@@ -106,15 +106,18 @@
   (fn [_ctx action] (:action/kind action)))
 
 ;; Bridge: when a registered action exists, route multimethod calls through it.
+;; Anonymous actions (:action/fn) take priority over the registry lookup.
 (defmethod run-action! :default [ctx action]
   (let [kind (:action/kind action)]
-    (if-let [handler (action-handler kind)]
-      (handler ctx action)
-      (do
-        (if (string? kind)
-          (js/console.warn "[knoxx/actions] string actions are not supported; use a keyword from the action registry. Got:" kind)
-          (js/console.warn "[knoxx/actions] unknown action/kind" (pr-str kind)))
-        (js/Promise.resolve {:ok false :error "unknown action/kind" :action/kind kind})))))
+    (if-let [anon-fn (:action/fn action)]
+      (anon-fn ctx action)
+      (if-let [handler (action-handler kind)]
+        (handler ctx action)
+        (do
+          (if (string? kind)
+            (js/console.warn "[knoxx/actions] string actions are not supported; use a keyword from the action registry. Got:" kind)
+            (js/console.warn "[knoxx/actions] unknown action/kind" (pr-str kind)))
+          (js/Promise.resolve {:ok false :error "unknown action/kind" :action/kind kind}))))))
 
 ;; ── Scope Resolution (Phase 1: flat) ───────────────────────────────────
 

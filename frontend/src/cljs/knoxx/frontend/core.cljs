@@ -8,6 +8,8 @@
    available under window.knoxx.* for TS wrappers to call." 
   (:require [knoxx.frontend.app :as app]
             [knoxx.frontend.admin.event-agents-panel]
+            [knoxx.frontend.pages.documents.page]
+            [knoxx.frontend.pages.settings.view]
             [knoxx.frontend.pages.source-doc.view]))
 
 (defn ^:dev/after-load after-load []

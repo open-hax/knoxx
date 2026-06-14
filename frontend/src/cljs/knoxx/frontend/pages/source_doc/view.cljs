@@ -8,7 +8,7 @@
    loader shim. Not node-testable (uxx ESM) — verified via the app build/e2e;
    the parsing/preparation logic it relies on is unit-tested separately."
   (:require [clojure.string :as str]
-            [helix.core :refer [$ defnc]]
+            [helix.core :refer [$ defnc <>]]
             [helix.dom :as d]
             [helix.hooks :as hooks]
             [knoxx.frontend.lib.app-routes :refer [ops-routes]]
@@ -226,7 +226,10 @@
                     :on-error #(set-zoom-failed true)
                     :on-click #(.stopPropagation %)}))
           (when (> (count zoom-gallery) 1)
-            ($ :<>
+            ;; ($ :<> ...) is NOT a fragment in helix 0.2.2 — it createElements a
+            ;; literal "<>" tag, which throws InvalidCharacterError on client
+            ;; render (server/static markup masks it). <> is the fragment macro.
+            (<>
               (d/button {:type "button" :on-click (fn [e] (.stopPropagation e) (step-zoom -1))
                          :class "absolute left-4 top-1/2 -translate-y-1/2 rounded bg-slate-900/80 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800"} "Prev")
               (d/button {:type "button" :on-click (fn [e] (.stopPropagation e) (step-zoom 1))

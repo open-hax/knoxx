@@ -53,12 +53,14 @@
   (is (= "roles"  (sut/normalize-contract-class "ROLES"))))
 
 ;; ---------------------------------------------------------------------------
-;; parse-contract-file! (tested via exposed helper)
+;; parse-contract-file-records! (tested via exposed helper)
 ;; ---------------------------------------------------------------------------
 
 (deftest parse-contract-file-valid-agent
   (let [edn-text "{:contract/id \"test-agent\" :contract/kind :agent :trigger-kind :manual :agent {:role :knowledge_worker} :contract/actors #{\"chat_primary\"}}"
-        result   (#'sut/parse-contract-file! "/fake/path.edn" edn-text)]
+        records  (sut/parse-contract-file-records! "/fake/path.edn" edn-text)
+        result   (first records)]
+    (is (= 1 (count records)))
     (is (some? result))
     (is (:ok? result))
     (is (= "test-agent" (:id result)))
@@ -66,7 +68,9 @@
 
 (deftest parse-contract-file-runtime-feature
   (let [edn-text "{:contract/kind :runtime-feature :contract/id \"eta-mu.opmf-contract-gate\" :runtime/feature :opmf-contract-gate :enabled false}"
-        result   (#'sut/parse-contract-file! "/fake/runtime_features/opmf_contract_gate.edn" edn-text)]
+        records  (sut/parse-contract-file-records! "/fake/runtime_features/opmf_contract_gate.edn" edn-text)
+        result   (first records)]
+    (is (= 1 (count records)))
     (is (some? result))
     (is (:ok? result))
     (is (= "eta-mu.opmf-contract-gate" (:id result)))
@@ -75,7 +79,9 @@
 (deftest parse-contract-file-source-mode
   (testing ":source-mode kind is canonicalized before raw :contract/kind reaches class normalization"
     (let [edn-text "{:contract/kind :source-mode :contract/id \"discord-synthesis\" :source-mode/id :source-mode/discord-synthesis :source/kind :discord :source/mode :template-synthesize}"
-          result   (#'sut/parse-contract-file! "/fake/source_modes/discord_synthesis.edn" edn-text)]
+          records  (sut/parse-contract-file-records! "/fake/source_modes/discord_synthesis.edn" edn-text)
+          result   (first records)]
+      (is (= 1 (count records)))
       (is (some? result))
       (is (:ok? result))
       (is (= "discord-synthesis" (:id result)))
@@ -83,25 +89,27 @@
 
 (deftest parse-contract-file-runtime-source
   (let [edn-text "{:contract/kind :source :contract/id \"openplanner-memory\" :source/id :source/openplanner-memory :source/provider :openplanner :source/hydration {:mode :triggered :k 6}}"
-        result   (#'sut/parse-contract-file! "/fake/sources/openplanner_memory.edn" edn-text)]
+        records  (sut/parse-contract-file-records! "/fake/sources/openplanner_memory.edn" edn-text)
+        result   (first records)]
+    (is (= 1 (count records)))
     (is (some? result))
     (is (:ok? result))
     (is (= "openplanner-memory" (:id result)))
     (is (= "sources" (:contractClass result)))))
 
-(deftest parse-contract-file-missing-id-returns-nil
+(deftest parse-contract-file-missing-id-returns-empty
   (let [edn-text "{:contract/kind :agent :trigger-kind :manual :agent {:role :knowledge_worker}}"
-        result   (#'sut/parse-contract-file! "/fake/path.edn" edn-text)]
-    (is (nil? result))))
+        records  (sut/parse-contract-file-records! "/fake/path.edn" edn-text)]
+    (is (empty? records))))
 
-(deftest parse-contract-file-missing-kind-returns-nil
+(deftest parse-contract-file-missing-kind-returns-empty
   (let [edn-text "{:contract/id \"orphan\"}"
-        result   (#'sut/parse-contract-file! "/fake/path.edn" edn-text)]
-    (is (nil? result))))
+        records  (sut/parse-contract-file-records! "/fake/path.edn" edn-text)]
+    (is (empty? records))))
 
-(deftest parse-contract-file-invalid-edn-returns-nil
-  (let [result (#'sut/parse-contract-file! "/bad.edn" "this is not edn {{{")]
-    (is (nil? result))))
+(deftest parse-contract-file-invalid-edn-returns-empty
+  (let [records (sut/parse-contract-file-records! "/bad.edn" "this is not edn {{{")]
+    (is (empty? records))))
 
 ;; ---------------------------------------------------------------------------
 ;; dedup-contracts

@@ -1,4 +1,5 @@
-{:source-paths ["src/cljs" "test/cljs"],
+{:source-paths ["src/cljs" "test/cljs"
+                "../../../contract-runtime/src/cljs"],
  :dependencies
  [[cider/cider-nrepl "0.50.2"]
   [refactor-nrepl "3.9.1"]

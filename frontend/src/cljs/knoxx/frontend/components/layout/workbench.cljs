@@ -3,37 +3,12 @@
 
    Shared across all pages. Provides collapsible, resizable sidebars
    and a main content area."
-  (:require [clojure.string :as str]
-            [helix.core :as hx :refer [$ defnc]]
+  (:require [helix.core :as hx :refer [$ defnc]]
             [helix.hooks :as hooks]
             [helix.dom :as d]
-            ["@open-hax/knoxx-app-bridge" :refer [CollapsedPanelTab]]))
-
-;; ── safe localStorage helpers ───────────────────────────────────────────────
-
-(defn- safe-set-item [key value]
-  (try
-    (.setItem js/localStorage key value)
-    (catch js/Error _
-      ;; quota exceeded — clear old knoxx keys
-      (try
-        (let [keys-to-remove (atom [])]
-          (doseq [i (range (.-length js/localStorage))]
-            (when-let [k (.key js/localStorage i)]
-              (when (and (str/starts-with? k "knoxx_")
-                         (not= k key))
-                (swap! keys-to-remove conj k))))
-          (doseq [k (take (Math/floor (/ (count @keys-to-remove) 2))
-                          @keys-to-remove)]
-            (try (.removeItem js/localStorage k)
-                 (catch js/Error _ nil))))
-        (.setItem js/localStorage key value)
-        (catch js/Error _ nil)))))
-
-(defn- safe-get-item [key]
-  (try
-    (.getItem js/localStorage key)
-    (catch js/Error _ nil)))
+            [knoxx.frontend.components.layout.collapsed-panel-tab
+             :refer [collapsed-panel-tab]]
+            [knoxx.frontend.lib.storage :as storage]))
 
 (defn- stored-int-or [stored fallback min-value max-value]
   (let [parsed (when stored (js/parseInt stored 10))]
@@ -57,7 +32,7 @@
          children))
 
 (defn- initial-open? [storage-key]
-  (let [stored (safe-get-item (str storage-key "_open"))]
+  (let [stored (storage/safe-get-item (str storage-key "_open"))]
     (if (some? stored) (= stored "true") true)))
 
 (defn- begin-window-drag! [cursor on-move]
@@ -163,27 +138,27 @@
   (let [[open? set-open!] (hooks/use-state #(initial-open? storage-key))
          [width set-width!] (hooks/use-state
                               (fn []
-                                (stored-int-or (safe-get-item (str storage-key "_width"))
+                                (stored-int-or (storage/safe-get-item (str storage-key "_width"))
                                                default-width
                                                min-width
                                                max-width)))]
 
     (hooks/use-effect
      [open?]
-     (safe-set-item (str storage-key "_open") (str open?))
+     (storage/safe-set-item (str storage-key "_open") (str open?))
      nil)
 
     (hooks/use-effect
      [width]
-     (safe-set-item (str storage-key "_width") (str width))
+     (storage/safe-set-item (str storage-key "_width") (str width))
      nil)
 
     (if-not open?
-      ($ CollapsedPanelTab
+      ($ collapsed-panel-tab
          {:label label
-           :edge edge
-           :onExpand #(set-open! true)
-           :title (str "Show " label " panel")})
+          :edge edge
+          :on-expand #(set-open! true)
+          :title (str "Show " label " panel")})
        (let [resize-handle ($ SideResizeHandle {:label label
                                                 :edge edge
                                                 :width width
@@ -285,27 +260,27 @@
   (let [[open? set-open!] (hooks/use-state #(initial-open? storage-key))
          [height set-height!] (hooks/use-state
                                (fn []
-                                 (stored-int-or (safe-get-item (str storage-key "_height"))
+                                 (stored-int-or (storage/safe-get-item (str storage-key "_height"))
                                                 default-height
                                                 min-height
                                                 max-height)))]
 
     (hooks/use-effect
      [open?]
-     (safe-set-item (str storage-key "_open") (str open?))
+     (storage/safe-set-item (str storage-key "_open") (str open?))
      nil)
 
     (hooks/use-effect
      [height]
-     (safe-set-item (str storage-key "_height") (str height))
+     (storage/safe-set-item (str storage-key "_height") (str height))
      nil)
 
     (if-not open?
-      ($ CollapsedPanelTab
+      ($ collapsed-panel-tab
          {:label label
-           :edge "bottom"
-           :onExpand #(set-open! true)
-           :title (str "Show " label " panel")})
+          :edge "bottom"
+          :on-expand #(set-open! true)
+          :title (str "Show " label " panel")})
       ($ BottomPanelFrame {:label label
                            :header header
                            :class-name class-name

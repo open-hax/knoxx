@@ -1,6 +1,5 @@
 {:contract/kind :schedule
  :contract/id "patrol"
- :contract/version 1
  :enabled true
 
  ;; Temporal resource split from patrol_trigger. It emits an event; the matching
