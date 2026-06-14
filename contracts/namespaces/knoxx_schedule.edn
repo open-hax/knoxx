@@ -1,0 +1,12 @@
+{:namespace :knoxx-schedule
+ :resources
+ [{:generator/id :knoxx-schedule
+   :generator/kind :schedule
+   :generator/driver :knoxx.schedule/runtime
+   :generator/actor "system_admin"
+   :generator/emits [:schedule/daily-synthesis
+                     :schedule/deep-synthesis
+                     :schedule/fork-tales-creative-director
+                     :schedule/patrol
+                     :schedule/ussyverse-social-creative]
+   :enabled true}]}

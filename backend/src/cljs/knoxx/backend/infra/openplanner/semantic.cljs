@@ -54,30 +54,28 @@
      :snippet (first (clip-text (or (:document hit) "") max-snippet-chars))
      :metadata metadata}))
 
-(defn semantic-search-documents!
+(defn ^:async semantic-search-documents!
   "Search OpenPlanner for passive semantic hydration and return the legacy
    document-result shape expected by agent hydration. Returns a Promise."
   [_runtime config {:keys [query top-k max-snippet-chars]} _auth-context]
   (let [k (max 1 (min 10 (or top-k 5)))
-        max-snippet-chars (max 160 (min 1200 (or max-snippet-chars 240)))]
-    (-> (openplanner-semantic-search! config {:query query :k k})
-        (.then (fn [result]
-                 {:query query
-                  :database {:name "OpenPlanner"}
-                  :results (mapv (partial semantic-hit-result max-snippet-chars)
-                                 (take k (:hits result)))})))))
+        max-snippet-chars (max 160 (min 1200 (or max-snippet-chars 240)))
+        result (await (openplanner-semantic-search! config {:query query :k k}))]
+    {:query query
+     :database {:name "OpenPlanner"}
+     :results (mapv (partial semantic-hit-result max-snippet-chars)
+                    (take k (:hits result)))}))
 
-(defn semantic-query-execute [runtime config _tool-call-id params a b c]
+(defn ^:async semantic-query-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         query (or (aget params "query") "")
         top-k (or (aget params "topK") (aget params "top_k"))
         max-snippet-chars (or (aget params "maxSnippetChars") (aget params "max_snippet_chars"))]
     (maybe-tool-update! on-update "Searching corpus via OpenPlanner…")
-    (-> (semantic-search-documents! runtime config {:query query
-                                                    :top-k (or top-k 5)
-                                                    :max-snippet-chars (or max-snippet-chars 600)} nil)
-        (.then (fn [result]
-                 (tool-text-result (semantic-search-result-text result) result))))))
+    (let [result (await (semantic-search-documents! runtime config {:query query
+                                                                    :top-k (or top-k 5)
+                                                                    :max-snippet-chars (or max-snippet-chars 600)} nil))]
+      (tool-text-result (semantic-search-result-text result) result))))
 
 
 (def semantic-query-tool

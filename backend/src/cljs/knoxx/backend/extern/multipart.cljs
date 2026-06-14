@@ -2,11 +2,10 @@
   "Multipart upload boundary helpers for Fastify parts."
   (:require [clojure.string :as str]))
 
-(defn parts!
+(defn ^:async parts!
   [request]
-  (-> (.fromAsync js/Array (.parts request))
-      (.then (fn [parts]
-               (vec (array-seq parts))))))
+  (let [parts (await (.fromAsync js/Array (.parts request)))]
+    (vec (array-seq parts))))
 
 (defn file-part?
   [part]
@@ -30,11 +29,10 @@
   [part]
   (or (aget part "size") 0))
 
-(defn part-buffer!
+(defn ^:async part-buffer!
   [part]
-  (-> (.arrayBuffer (js/Response. (aget part "file")))
-      (.then (fn [buf]
-               (.from js/Buffer buf)))))
+  (let [buf (await (.arrayBuffer (js/Response. (aget part "file"))))]
+    (.from js/Buffer buf)))
 
 (defn part-array-buffer!
   [part]

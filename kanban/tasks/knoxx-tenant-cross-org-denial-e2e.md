@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-tenant-cross-org-denial-e2e"
 title: "Tenant Isolation: Cross-Org Denial E2E Test Suite"
-status: "blocked"
+status: ready
 priority: "P2"
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-29T00:00:00Z"
 points: 2
 category: "tasks"
 ---
-
 # Tenant Isolation: Cross-Org Denial E2E Test Suite
 
 > Parent epic: `knoxx-knowledge-ops-mvp-phase1-epics` (Epic 1, Story 1.5)

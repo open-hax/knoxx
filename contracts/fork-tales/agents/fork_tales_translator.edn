@@ -1,6 +1,5 @@
 {:contract/id      "fork_tales_translator"
  :contract/kind    :agent
- :contract/version 1
  :enabled          true
 
  :agent {:role      "translator"

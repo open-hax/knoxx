@@ -1,6 +1,5 @@
 {:contract/id "cms-block-registry"
  :contract/kind :cms-block-registry
- :contract/version 1
  :enabled true
  :blocks
  {:hero

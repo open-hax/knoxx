@@ -1,0 +1,13 @@
+{:namespace :testns
+
+ ;; Fixture namespace file for action interpreter + store registry tests.
+ :resources
+ [{:store/id :events-seen
+   :store/schema [:map
+                  [:id :string]
+                  [:n {:optional true} :int]]}
+
+  {:action/id :testns/echo
+   :action/kind :interpreter-test/echo
+   :action/with {:source "resource" :base 1}
+   :action/scope {:actions [:actions/noop]}}]}

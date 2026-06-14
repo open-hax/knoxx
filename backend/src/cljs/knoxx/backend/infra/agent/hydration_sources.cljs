@@ -23,12 +23,15 @@
   (hydrate [_ request]
     (memory-hydrate! config request)))
 
+(defn- ^:async composite-hydrate-impl!
+  [sources request]
+  (let [results (await (.all js/Promise (clj->js (mapv #(hydrate % request) sources))))]
+    (vec (js->clj results :keywordize-keys true))))
+
 (defrecord CompositeHydrationSource [sources]
   IHydrationSource
   (hydrate [_ request]
-    (-> (.all js/Promise (clj->js (mapv #(hydrate % request) sources)))
-        (.then (fn [results]
-                 (vec (js->clj results :keywordize-keys true)))))))
+    (composite-hydrate-impl! sources request)))
 
 (defn semantic-source
   [runtime config]

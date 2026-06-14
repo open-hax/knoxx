@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-knowledge-ops-knoxx-graph-query-contract-v1"
 title: "Knowledge Ops — Knoxx Graph Query Contract v1"
-status: ready
+status: review
 priority: P1
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-04-05T00:00:00Z"

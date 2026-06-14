@@ -11,11 +11,7 @@
  - Lyrics
  - Mixed output
 
- Until then, use the INSTRUMENTAL pipeline:
- 1. music.generate_song for instrumental backing (WAV, 30s+)
- 2. voice.openutau_project for vocal track with lyrics
- 3. voice.openutau_render to synthesize vocals
- 4. Mix in external DAW if needed
+ Until then, use voice.openutau_project + voice.openutau_render for vocal synthesis.
 
  This capability exists as a placeholder so agents know the difference
  between instrumental generation and full composition."

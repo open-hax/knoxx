@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-shibboleth-dsl-corporate-qa-macros"
 title: "Define Shibboleth-Lite DSL macros for corporate knowledge QA"
-status: incoming
+status: icebox
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Define Shibboleth-Lite DSL macros for corporate knowledge QA
 
 > Parent epic: `knoxx-knowledge-ops-shibboleth-lite-labeling`

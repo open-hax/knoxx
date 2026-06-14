@@ -1,4 +1,4 @@
-{:source-paths ["src/cljs" "src/dev" "src/e2e"]
+{:source-paths ["src/cljs" "src/dev" "src/e2e" "test/cljs"]
  :dependencies [[lilactown/helix "0.2.2"]]
  :nrepl {:port 4501}
 
@@ -9,7 +9,7 @@
  :dev-http
  {5173 {:roots ["." "dist"]
         :push-state/index "index.html"
-        :proxy-url "http://knoxx-backend:8000"
+        :proxy-url "http://127.0.0.1:8000"
         :proxy-predicate knoxx.frontend.dev-http/proxy-predicate}}
 
  :builds
@@ -49,4 +49,24 @@
    :output-to "dist/e2e/knoxx-e2e.cjs"
    :compiler-options
    {:output-feature-set :es-next
-    :source-map true}}}}
+    :source-map true}}
+
+  ;; CLJS unit tests for migrated frontend logic. Mirrors the backend :test
+  ;; build so Helix/logic ported from TypeScript keeps real (not shim-only)
+  ;; coverage as the TS→CLJS migration proceeds.
+  :test
+  {:target :node-test
+   ;; .cjs (not .js): frontend package.json is "type": "module", and the
+   ;; node-test harness uses __dirname (CommonJS). A .js output would be loaded
+   ;; as ESM and crash on __dirname.
+   :output-to "dist/test/frontend-tests.cjs"
+   :ns-regex ["knoxx.frontend.*-test$"]
+   :autorun true
+   ;; jsdom globals MUST exist before react-dom's module load: React
+   ;; feature-detects event support at load time, and without a document it
+   ;; falls back to a legacy change-tracking path where dispatched change
+   ;; events never reach onChange on text inputs (selects/clicks still work,
+   ;; which makes the failure look selective).
+   :prepend-js "const { JSDOM } = require('jsdom'); const __jsdom = new JSDOM('<!doctype html><html><body></body></html>'); globalThis.window = __jsdom.window; globalThis.document = __jsdom.window.document; Object.defineProperty(globalThis, 'navigator', { value: __jsdom.window.navigator, configurable: true }); globalThis.IS_REACT_ACT_ENVIRONMENT = true;"
+   :compiler-options
+   {:output-feature-set :es-next}}}}

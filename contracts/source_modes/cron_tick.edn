@@ -1,6 +1,5 @@
 {:contract/id "cron-tick"
  :contract/kind :source-mode
- :contract/version 1
  :source-mode/id :source-mode/cron-tick
  :source/kind :cron
  :source/mode :tick

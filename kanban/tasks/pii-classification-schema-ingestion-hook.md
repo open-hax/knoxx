@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-pii-classification-schema-ingestion-hook"
 title: "PII Classification Schema and Ingestion Detection Hook"
-status: ready
+status: icebox
 priority: "P2"
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-29T00:00:00Z"

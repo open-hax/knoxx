@@ -1,6 +1,5 @@
 {:contract/id "fork_tales_creative_director"
  :contract/kind :agent
- :contract/version 2
  :enabled true
  :contract/actors ["knoxx_default" "discord_automation"]
  :memory {:passive-hydration {:enabled? true
@@ -8,7 +7,6 @@
                               :mode :always
                               :k 10}}
  :sub-agents [:fork_tales_deep_composer :fork_tales_translator :fork_tales_instrumentalist]
- :hooks {:before {} :after {}}
  :agent
  {:roles
   [:role/discord-source-synthesizer

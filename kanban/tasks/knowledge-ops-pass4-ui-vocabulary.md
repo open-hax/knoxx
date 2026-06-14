@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-pass4-ui-vocabulary"
 title: "Knowledge-ops consistency pass 4: UI vocabulary normalization"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Knowledge-ops consistency pass 4: UI vocabulary normalization
 
 > Parent epic: `knoxx-knowledge-ops-consistency-review`

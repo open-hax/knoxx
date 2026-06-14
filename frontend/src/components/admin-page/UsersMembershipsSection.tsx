@@ -15,7 +15,7 @@ type ActorProfileDraft = {
 type ActorCredentialDraft = {
   kind: string;
   accountIdentifier: string;
-  credentials: Record<string, string>;
+  secretJson: Record<string, string>;
 };
 
 type CredentialDescriptor = {
@@ -98,8 +98,8 @@ function draftCredentialForDescriptor(
   return {
     kind: current?.kind || descriptor.kind,
     accountIdentifier: current?.accountIdentifier || '',
-    credentials: descriptor.fields.reduce<Record<string, string>>((acc, field) => {
-      acc[field.key] = '';
+    secretJson: descriptor.fields.reduce<Record<string, string>>((acc, field) => {
+      acc[field.key] = current?.secretJson?.[field.key] || '';
       return acc;
     }, {}),
   };
@@ -484,12 +484,12 @@ export function UsersMembershipsSection({
                                   type={field.secret ? 'password' : 'text'}
                                   className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
                                   placeholder={field.placeholder || (field.secret ? 'leave blank to keep saved value' : '')}
-                                  value={draft.credentials[field.key] || ''}
+                                  value={draft.secretJson[field.key] || ''}
                                   onChange={(event) => setCredentialDrafts((currentDrafts) => ({
                                     ...currentDrafts,
                                     [key]: {
                                       ...draft,
-                                      credentials: { ...draft.credentials, [field.key]: event.target.value },
+                                      secretJson: { ...draft.secretJson, [field.key]: event.target.value },
                                     },
                                   }))}
                                 />

@@ -11,7 +11,7 @@
             [knoxx.backend.infra.http :refer [no-content?]]
             [knoxx.backend.infra.stores.composite-message-source :refer [->CompositeMessageSource]]
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
-            [knoxx.backend.infra.stores.redis-message-source :refer [->RedisMessageSource]]
+            [knoxx.backend.infra.stores.mongo-message-source :refer [->MongoMessageSource]]
             [knoxx.backend.domain.extension-runtime :as ext-runtime]
             [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
@@ -61,19 +61,20 @@
   [agent-spec messages]
   (history/prune-session-messages agent-spec messages))
 
-(defn- register-actor-live-route!
+(defn- ^:async register-actor-live-route!
   [runtime conversation-id session-id agent-spec]
   (when-let [actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)]
-    (-> (actor-mailbox/register-live-session!
-         runtime
-         {:actor-id actor-id
-          :conversation-id conversation-id
-          :session-id session-id
-          :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
-          :source {:registeredBy "agent-runtime"
-                   :contractId (:contract-id agent-spec)}})
-        (.catch (fn [err]
-                  (.warn js/console "[actor-mailbox] failed to register live actor route" (.-message err)))))))
+    (try
+      (await (actor-mailbox/register-live-session!
+              runtime
+              {:actor-id actor-id
+               :conversation-id conversation-id
+               :session-id session-id
+               :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
+               :source {:registeredBy "agent-runtime"
+                        :contractId (:contract-id agent-spec)}}))
+      (catch :default err
+        (.warn js/console "[actor-mailbox] failed to register live actor route" (.-message err))))))
 
 ;; ─── Session registry ────────────────────────────────────────────────────────
 
@@ -123,19 +124,15 @@
   (tool-catalog/visible-session-signature runtime config auth-context agent-spec))
 
 (defn- session-provider-tools
-  [runtime config tool-auth-context agent-spec allowed-tool-ids model-id session-id conversation-id]
-  (if-not (tool-catalog/provider-tools-enabled-for-model? model-id)
-    (do
-      (.info js/console "[agent-session] provider tools disabled" #js {:modelId model-id})
-      {:custom-tools nil :tool-name-allowlist []})
-    (let [builtin-tools (tool-catalog/builtin-tools runtime config tool-auth-context agent-spec)
-          custom-tools (wrap-custom-tools-with-agent-context!
-                        (tool-catalog/custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
-                        {:session-id session-id
-                         :conversation-id conversation-id
-                         :agent-spec agent-spec})]
-      {:custom-tools custom-tools
-       :tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)})))
+  [runtime config tool-auth-context agent-spec allowed-tool-ids _model-id session-id conversation-id]
+  (let [builtin-tools (tool-catalog/builtin-tools runtime config tool-auth-context agent-spec)
+        custom-tools (wrap-custom-tools-with-agent-context!
+                      (tool-catalog/custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
+                      {:session-id session-id
+                       :conversation-id conversation-id
+                       :agent-spec agent-spec})]
+    {:custom-tools custom-tools
+     :tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)}))
 
 (defn ^:async create-session-manager!
   ([runtime config conversation-id model-id] (create-session-manager! runtime config conversation-id model-id nil (:agent-thinking-level config)))
@@ -165,31 +162,29 @@
           preferred-session-id (some-> session-id str str/trim not-empty)
           message-source (->CompositeMessageSource
                            (->OpenPlannerMessageSource config)
-                          (->RedisMessageSource preferred-session-id))]
+                          (->MongoMessageSource preferred-session-id))]
      (if (no-content? model)
        (js/Promise.reject (js/Error. (str "No eta-mu model configured for " model-id)))
        (let [session-manager (eta-mu-extern/make-session-manager! (:workspace-root config) preferred-session-id)]
          (eta-mu-extern/append-model-change! session-manager model-provider-id model-id)
          (eta-mu-extern/append-thinking-level-change! session-manager thinking-level)
-         (-> (rehydrate-session-manager! message-source session-manager conversation-id agent-spec)
-             (.then (fn [{:keys [session-manager]}]
-                      (-> (eta-mu-provider/create-session!
-                          provider
-                          {:workspace-root (:workspace-root config)
-                           :runtime-dir runtime-dir
-                           :auth-storage auth-storage
-                           :model-registry model-registry
-                           :loader loader
-                           :settings-manager settings-manager
-                           :session-manager session-manager
-                           :model model
-                           :thinking-level thinking-level
-                           :tool-name-allowlist tool-name-allowlist
-                           :custom-tools custom-tools
-                           :materialize! materialize!})
-                         (.then (fn [session]
-                                  (set-thinking-level! session thinking-level)
-                                  session)))))))))))
+         (let [{:keys [session-manager]} (await (rehydrate-session-manager! message-source session-manager conversation-id agent-spec))
+               session (await (eta-mu-provider/create-session!
+                               provider
+                               {:workspace-root (:workspace-root config)
+                                :runtime-dir runtime-dir
+                                :auth-storage auth-storage
+                                :model-registry model-registry
+                                :loader loader
+                                :settings-manager settings-manager
+                                :session-manager session-manager
+                                :model model
+                                :thinking-level thinking-level
+                                :tool-name-allowlist tool-name-allowlist
+                                :custom-tools custom-tools
+                                :materialize! materialize!}))]
+           (set-thinking-level! session thinking-level)
+           session))))))
 
 (defn ^:async construct-session-and-ext-ctx!
   [runtime config conversation-id model-id auth-context thinking-level session-id agent-spec current-tool-signature life-cycle-event-name]

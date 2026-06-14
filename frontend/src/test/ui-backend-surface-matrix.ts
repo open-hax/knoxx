@@ -51,7 +51,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "renders login on 401 auth context",
         assertion: "mock /api/auth/context as 401 and assert LazyLoginPage appears",
         status: "implemented",
-        implementedBy: ["frontend/src/pages/AuthContext.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/auth/boundary_interaction_test.cljs"],
       },
       {
         kind: "component-integration",
@@ -59,7 +59,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "refreshes auth after invite redemption",
         assertion: "submit invite token, assert /api/auth/invite/redeem then /api/auth/context are called",
         status: "implemented",
-        implementedBy: ["frontend/src/pages/AuthContext.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/auth/boundary_interaction_test.cljs"],
       },
       { kind: "ava-puppeteer-e2e", priority: "P1", name: "logout returns shell to login", assertion: "authenticated fixture opens user menu, clicks sign out, asserts login surface" },
     ],
@@ -174,8 +174,8 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
   {
     id: "mail-actor-mailbox",
     route: "/mail",
-    owner: "tsx",
-    surface: "MailPage inbox/outbox cards",
+    owner: "cljs",
+    surface: "Mail page (knoxx.frontend.pages.mail) inbox/outbox cards",
     backend: [
       "GET /api/actors/mailbox?box=&status=&limit=100",
       "POST /api/actors/mailbox/:mailboxId/ack",
@@ -192,7 +192,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "filters mailbox entries by box and status",
         assertion: "change select/buttons and assert query params",
         status: "implemented",
-        implementedBy: ["frontend/src/pages/MailPage.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/pages/mail/page_interaction_test.cljs"],
       },
       {
         kind: "component-integration",
@@ -200,7 +200,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "acknowledge posts ack and refreshes",
         assertion: "click Acknowledge and assert ack endpoint then mailbox reload",
         status: "implemented",
-        implementedBy: ["frontend/src/pages/MailPage.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/pages/mail/page_interaction_test.cljs"],
       },
       { kind: "ava-puppeteer-e2e", priority: "P2", name: "mail links navigate into audit/events surfaces", assertion: "fixture entry with run/session/event refs exposes working links" },
     ],
@@ -467,7 +467,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "mergeAuditSessions dedupes active/history and computes status",
         assertion: "pure helper tests cover active, completed, failed, missing ids",
         status: "implemented",
-        implementedBy: ["frontend/src/components/agent-audit/AgentAuditSessionList.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/components/agent_audit/session_list_interaction_test.cljs"],
       },
       {
         kind: "component-integration",
@@ -475,7 +475,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "session list loads active/history and filters selected contract",
         assertion: "mock active/memory endpoints and assert cards update on prop change",
         status: "implemented",
-        implementedBy: ["frontend/src/components/agent-audit/AgentAuditSessionList.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/components/agent_audit/session_list_interaction_test.cljs"],
       },
       {
         kind: "ava-puppeteer-e2e",
@@ -601,8 +601,8 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
   {
     id: "gardens-crud-public-preview",
     route: "/gardens",
-    owner: "tsx",
-    surface: "GardensPage",
+    owner: "cljs",
+    surface: "Gardens page (knoxx.frontend.pages.gardens)",
     backend: [
       "GET /api/openplanner/v1/gardens",
       "POST /api/openplanner/v1/gardens",
@@ -622,7 +622,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "create garden posts form and refreshes list",
         assertion: "fill form, assert POST payload, new garden appears",
         status: "implemented",
-        implementedBy: ["frontend/src/pages/GardensPage.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/pages/gardens/page_interaction_test.cljs"],
       },
       {
         kind: "component-integration",
@@ -630,7 +630,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "delete garden asks confirmation and removes row",
         assertion: "mock confirm true/false and assert DELETE only on true",
         status: "implemented",
-        implementedBy: ["frontend/src/pages/GardensPage.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/pages/gardens/page_interaction_test.cljs"],
       },
       { kind: "ava-puppeteer-e2e", priority: "P2", name: "public preview link is generated for garden", assertion: "browser fixture asserts preview href for selected garden" },
     ],
@@ -639,7 +639,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
     id: "translations-review-workbench",
     route: "/translations, /translations/:documentId/:targetLang",
     owner: "tsx",
-    surface: "TranslationReviewPage and translation cards",
+    surface: "Translation review page (knoxx.frontend.pages.translations)",
     backend: [
       "GET /api/translations/segments",
       "GET /api/translations/segments/:segmentId",
@@ -669,7 +669,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
         name: "model config selects Proxx model and saves PATCH",
         assertion: "mock models/config, change model, assert PATCH body",
         status: "implemented",
-        implementedBy: ["frontend/src/components/admin-page/TranslationModelSection.test.tsx"],
+        implementedBy: ["frontend/test/cljs/knoxx/frontend/pages/translations/page_interaction_test.cljs"],
       },
     ],
   },

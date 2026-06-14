@@ -4,8 +4,7 @@
             [knoxx.backend.infra.agent.session :refer [ensure-agent-session!]]
             [knoxx.backend.infra.agent.turn :as turn]
             [knoxx.backend.infra.auth.authz :as authz :refer [auth-snapshot-has-principal?]]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.domain.time :refer [now-iso]]))
 
@@ -81,18 +80,32 @@
 
                         :else
                         (js/setTimeout check! RECOVERED-SESSION-KICKOFF-POLL-MS)))]
-         (.catch launch-promise
-                 (fn [err]
-                   (when-not @done?
-                     (reset! done? true)
-                     (reject err))))
+         ;; Forward a launch failure to reject. The js/Promise. executor itself
+         ;; cannot be async, so we await launch-promise in a small non-awaited
+         ;; async closure rather than blocking the executor.
+         ((^:async fn []
+            (try
+              (await launch-promise)
+              (catch :default err
+                (when-not @done?
+                  (reset! done? true)
+                  (reject err))))))
          (check!))))))
+
+(defn- ^:async log-kickoff-failure!
+  [send-promise session-id conversation-id]
+  (try
+    (await send-promise)
+    (catch :default err
+      (js/console.error "[knoxx] recovered session failed after kickoff"
+                        #js {:sessionId session-id :conversationId conversation-id :error (str err)})
+      nil)))
 
 (defn ^:async resume-with-message!
   [runtime config session-id conversation-id run-id message model-id mode
    thinking-level auth-context agent-spec wait-for resume-failed!]
   (try
-    (await (session-store/update-session! (redis/get-client) session-id
+    (await (session-store/update-session! session-id
                                           {:status "running" :has_active_stream false :recovered_at (now-iso)}))
     (let [send-promise (turn/send-agent-turn! runtime config {:conversation-id conversation-id
                                                                :session-id session-id
@@ -105,10 +118,7 @@
                                                                :agent-spec agent-spec})]
       (if (= wait-for :kickoff)
         (do
-          (.catch send-promise (fn [err]
-                                 (js/console.error "[knoxx] recovered session failed after kickoff"
-                                                   #js {:sessionId session-id :conversationId conversation-id :error (str err)})
-                                 nil))
+          (log-kickoff-failure! send-promise session-id conversation-id)
           (await (wait-for-recovered-turn-kickoff! conversation-id send-promise))
           {:session_id session-id :conversation_id conversation-id :resumed true :wait_for "kickoff"})
         (do
@@ -133,22 +143,20 @@
          auth-context (recovered-auth-context session)
          agent-spec (recovered-agent-spec session)
          message (last-session-user-message session)
-         resume-failed! (fn [err]
+         resume-failed! (^:async fn [err]
                           (js/console.error "[knoxx] failed to resume recovered session"
                                             #js {:sessionId session-id
                                                  :conversationId conversation-id
                                                  :error (str err)})
-                          (-> (session-store/complete-session! (redis/get-client)
-                                                               session-id
-                                                               conversation-id
-                                                               {:status "failed"
-                                                                :error (str "Session recovery failed: " err)
-                                                                :messages (:messages session)})
-                              (.then (fn [_]
-                                       {:session_id session-id
-                                        :conversation_id conversation-id
-                                        :resumed false
-                                        :error (str err)}))))]
+                          (await (session-store/complete-session! session-id
+                                                                  conversation-id
+                                                                  {:status "failed"
+                                                                   :error (str "Session recovery failed: " err)
+                                                                   :messages (:messages session)}))
+                          {:session_id session-id
+                           :conversation_id conversation-id
+                           :resumed false
+                           :error (str err)})]
      (restored-conversation-access! session)
      (cond
        (or (str/blank? conversation-id)
@@ -158,10 +166,10 @@
        (str/blank? message)
        (do
          (await (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec))
-         (await (session-store/update-session! (redis/get-client) session-id
-                                               {:status "waiting_input"
-                                                :has_active_stream false
-                                                :recovered_at (now-iso)}))
+          (await (session-store/update-session! session-id
+                                                {:status "waiting_input"
+                                                 :has_active_stream false
+                                                 :recovered_at (now-iso)}))
          {:session_id session-id :conversation_id conversation-id :resumed false :reason "no pending user message to resume"})
 
        :else
@@ -169,8 +177,8 @@
                                     thinking-level auth-context agent-spec wait-for resume-failed!))))))
 
 (defn ^:async recover-active-agent-sessions!
-  [runtime config redis-client]
-  (let [sessions (await (session-store/recover-sessions! redis-client))
+  [runtime config]
+  (let [sessions (await (session-store/recover-sessions!))
         items (vec sessions)]
     (if (seq items)
       (let [results (await (.all js/Promise (clj->js (mapv #(resume-recovered-session! runtime config %) items))))]

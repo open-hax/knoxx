@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.http
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.extern.fastify :as xfastify]
             [knoxx.backend.extern.fetch :as xfetch]
             [promesa.core :as p]))
@@ -123,9 +124,19 @@
 (defn error-response!
   ([reply err] (error-response! reply err 500))
   ([reply err default-status]
-   (json-response! reply (error-status err default-status)
-                   (cond-> {:detail (error-message err)}
-                     (xfastify/error-code err) (assoc :error_code (xfastify/error-code err))))))
+   (error-response! reply err default-status {}))
+  ([reply err default-status context]
+   (let [status (error-status err default-status)
+         code (xfastify/error-code err)
+         payload (cond-> {:detail (error-message err)}
+                   code (assoc :error_code code))]
+     (when (>= status 500)
+       (errors/log-error! :http/error-response
+                          (merge {:status status
+                                  :error/code code}
+                                 context)
+                          err))
+     (json-response! reply status payload))))
 
 (defn no-content?
   [x]

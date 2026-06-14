@@ -98,9 +98,11 @@
         (when (due-cron-job? {:job-state* job-state*
                               :normalize-job-state normalize-job-state}
                              now job)
-          (-> (run-job! (:id job))
-              (.catch (fn [err]
-                        (println "[events.cron] cron ticker job failed for" (:id job) ":" (.-message err))))))))))
+          ((^:async fn []
+             (try
+               (await (run-job! (:id job)))
+               (catch :default err
+                 (println "[events.cron] cron ticker job failed for" (:id job) ":" (.-message err)))))))))))
 
 (defn schedule-cron-ticker!
   [{:keys [scheduled-tasks* job-state* running?* control-config-fn run-job! update-job-state! normalize-job-state]

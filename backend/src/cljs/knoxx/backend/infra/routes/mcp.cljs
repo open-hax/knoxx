@@ -7,7 +7,7 @@
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
-            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
             [knoxx.backend.runtime.state :as runtime-state]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
             ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
@@ -122,13 +122,6 @@
   (-> (reply-header! reply "WWW-Authenticate" (www-authenticate-challenge base))
       (.code 401) (.send "Unauthorized")))
 
-(defn- redis-set!      [^js c k v o]  (.set c k v o))
-(defn- redis-get!      [^js c k]      (.get c k))
-(defn- redis-del!      [^js c k]      (.del c k))
-(defn- redis-sadd!     [^js c k v]    (.sAdd c k v))
-(defn- redis-smembers! [^js c k]      (.sMembers c k))
-(defn- redis-srem!     [^js c k v]    (.sRem c k v))
-
 (defn- transport-handle-request!
   ([^js t req reply]      (.handleRequest t req reply))
   ([^js t req reply body] (.handleRequest t req reply body)))
@@ -170,31 +163,26 @@
                        (or error "invalid_request")
                        (or detail (validation-detail schema value) "Invalid request")))))
 
-(defn- require-redis!
-  "Returns a Fastify preHandler hook that attaches redis client to request.redis.
-   Derefs the global redis-client atom at request time, not at route-registration time,
-   so connections established after startup are visible to all handlers."
-  [_ignored]
-  (fn [req _reply done]
-    (if-let [client (redis/get-client)]
-      (do (aset req "redis" client) (done))
-      (done (ex-info "Redis unavailable" {:status 503 :error "redis_unavailable"})))))
+(defn- ^:async browser-auth-ctx!
+  [req policy-db config]
+  (try
+    (let [auth-ctx (await (auth-session/resolve-auth-context req policy-db))]
+      (aset req "authContext" auth-ctx)
+      nil)
+    (catch :default _
+      (let [base (public-base-url config)
+            current-path (or (some-> req (aget "raw") (aget "url")) "/api/mcp/oauth/authorize")
+            login-url (js/URL. "/api/auth/login" base)]
+        (.set (.-searchParams login-url) "redirect" current-path)
+        {:redirect (.toString login-url)}))))
 
 (defn- require-browser-auth!
   "Returns a Fastify preHandler hook that resolves browser auth context onto request.authContext."
   [policy-db config]
-  (fn [req reply done]
-    (-> (auth-session/resolve-auth-context req policy-db)
-        (.then (fn [auth-ctx]
-                 (aset req "authContext" auth-ctx)
-                 (done)))
-        (.catch
-         (fn [_]
-           (let [base         (public-base-url config)
-                 current-path (or (some-> req (aget "raw") (aget "url")) "/api/mcp/oauth/authorize")
-                 login-url    (js/URL. "/api/auth/login" base)]
-             (.set (.-searchParams login-url) "redirect" current-path)
-             (.redirect reply (.toString login-url) 302)))))))
+  (^:async fn [req reply]
+    (let [result (await (browser-auth-ctx! req policy-db config))]
+      (when result
+        (.redirect reply (:redirect result) 302)))))
 
 (defn- require-bearer-token!
   "Returns a Fastify preHandler hook that extracts bearer token onto request.bearerToken."
@@ -276,12 +264,14 @@
             (str/blank? code-challenge) (not= code-challenge-method "S256"))
     (throw (http-error 400 "invalid_request" "Missing required OAuth parameters"))))
 
-(defn- get-registered-client [redis-client client-id]
+(defn- ^:async get-registered-client [client-id]
   (if (str/blank? (str client-id))
-    (js/Promise.resolve nil)
-    (-> (redis-get! redis-client (str "knoxx:mcp:client:" client-id))
-        (.then (fn [raw] (when raw (try (js/JSON.parse raw) (catch :default _ nil)))))
-        (.catch (fn [_] nil)))))
+    nil
+    (try
+      (let [raw (await (mongo-mcp/get-client! client-id))]
+        (when raw (try (js/JSON.parse raw) (catch :default _ nil))))
+      (catch :default _
+        nil))))
 
 (defn- redirect-uri-allowed? [client redirect-uri]
   (if-not client true
@@ -380,12 +370,14 @@
          "<a href=\"/\">Cancel</a>\n"
          "</div></form></div></body></html>")))
 
-(defn- load-token-record! [redis-client access-token]
+(defn- ^:async load-token-record! [access-token]
   (if (str/blank? (str access-token))
-    (js/Promise.resolve nil)
-    (-> (redis-get! redis-client (str "knoxx:mcp:token:" access-token))
-        (.then (fn [raw] (when raw (try (js/JSON.parse raw) (catch :default _ nil)))))
-        (.catch (fn [_] nil)))))
+    nil
+    (try
+      (let [raw (await (mongo-mcp/get-token! access-token))]
+        (when raw (try (js/JSON.parse raw) (catch :default _ nil))))
+      (catch :default _
+        nil))))
 
 (defn- resolve-token-context! [policy-context token-record]
   (let [headers-like (cond-> {}
@@ -458,9 +450,8 @@
 
 ;; preHandler-mode routes
 
-(defroute mcp-register-client! [crypto redis-guard] "POST" "/api/mcp/oauth/register" [redis-guard]
-  (let [redis  (aget request "redis")
-        {:keys [redirect-uris client-name]} (parse-register-client-body request)
+(defroute mcp-register-client! [crypto] "POST" "/api/mcp/oauth/register" []
+  (let [{:keys [redirect-uris client-name]} (parse-register-client-body request)
         client-id (.randomUUID crypto)
         client    {:client_id                  client-id
                    :client_name                (or client-name "mcp-client")
@@ -469,57 +460,54 @@
                    :grant_types                ["authorization_code"]
                    :response_types             ["code"]
                    :created_at                 (.toISOString (js/Date.))}]
-    (-> (redis-set! redis (str "knoxx:mcp:client:" client-id) (js/JSON.stringify (clj->js client)) js/undefined)
-        (.then (fn [_] (json-send! reply 201 client)))
-        (.catch (fn [err] (throw (http-error 500 "registration_failed" (or (.-message err) (str err)))))))))
+    (try
+      (await (mongo-mcp/set-client! client-id (js/JSON.stringify (clj->js client))))
+      (json-send! reply 201 client)
+      (catch :default err
+        (throw (http-error 500 "registration_failed" (or (.-message err) (str err))))))))
 
-(defroute mcp-authorize-client! [base config runtime redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [redis-guard browser-auth-guard]
-  (let [redis        (aget request "redis")
-        auth-context (aget request "authContext")
+(defroute mcp-authorize-client! [base config runtime browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [browser-auth-guard]
+  (let [auth-context (aget request "authContext")
         {:keys [client-id redirect-uri state code-challenge scope] :as params} (parse-authorize-query request)]
     (ensure-oauth-request! params)
-    (-> (get-registered-client redis client-id)
-        (.then (fn [client]
-                 (ensure-redirect-uri-allowed! client redirect-uri "invalid_request")
-                 (let [tools    (available-tools runtime config auth-context)
-                       selected (let [explicit (selected-tools-from-scope tools scope)]
-                                  (if (seq explicit) explicit (default-selected-tools (tool-name-set tools))))
-                       html     (authorization-consent-html
-                                 {:base base :auth-context auth-context
-                                  :client-id client-id :redirect-uri redirect-uri
-                                  :state state :code-challenge code-challenge
-                                  :requested-scope (or scope "") :tools tools :selected selected})]
-                   (.send (reply-header! reply "content-type" "text/html; charset=utf-8") html)))))))
+    (let [client (await (get-registered-client client-id))]
+      (ensure-redirect-uri-allowed! client redirect-uri "invalid_request")
+      (let [tools    (available-tools runtime config auth-context)
+            selected (let [explicit (selected-tools-from-scope tools scope)]
+                       (if (seq explicit) explicit (default-selected-tools (tool-name-set tools))))
+            html     (authorization-consent-html
+                      {:base base :auth-context auth-context
+                       :client-id client-id :redirect-uri redirect-uri
+                       :state state :code-challenge code-challenge
+                       :requested-scope (or scope "") :tools tools :selected selected})]
+        (.send (reply-header! reply "content-type" "text/html; charset=utf-8") html)))))
 
-(defroute mcp-authorize-confirm! [base crypto config runtime code-ttl token-ttl redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize/confirm" [redis-guard browser-auth-guard]
-  (let [redis        (aget request "redis")
-        auth-context (aget request "authContext")
+(defroute mcp-authorize-confirm! [base crypto config runtime code-ttl token-ttl browser-auth-guard] "GET" "/api/mcp/oauth/authorize/confirm" [browser-auth-guard]
+  (let [auth-context (aget request "authContext")
         {:keys [client-id redirect-uri state code-challenge selected-tools] :as params}
         (parse-authorize-confirm-query request)]
     (ensure-oauth-confirm-request! params)
-    (-> (get-registered-client redis client-id)
-        (.then (fn [client]
-                 (ensure-redirect-uri-allowed! client redirect-uri "invalid_request")
-                 (let [requested (requested-tools runtime config auth-context selected-tools)]
-                   (when (empty? requested)
-                     (throw (http-error 400 "invalid_scope" "No valid tools selected")))
-                   (let [membership-id (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))
-                         user-email    (str (or (aget auth-context "user" "email") (aget auth-context "userEmail") ""))
-                         org-slug      (str (or (aget auth-context "org" "slug") (aget auth-context "orgSlug") ""))
-                         code          (.randomUUID crypto)
-                         payload       {:code code :clientId client-id :redirectUri redirect-uri
-                                        :codeChallenge code-challenge :codeChallengeMethod "S256"
-                                        :tools requested
-                                        :membershipId membership-id :userEmail user-email :orgSlug org-slug
-                                        :createdAt (.toISOString (js/Date.))}]
-                     (-> (redis-set! redis (str "knoxx:mcp:code:" code) (js/JSON.stringify (clj->js payload)) (clj->js {:EX code-ttl}))
-                         (.then (fn [_]
-                                  (let [redir (js/URL. redirect-uri)]
-                                    (.set (.-searchParams redir) "code" code)
-                                    (when state (.set (.-searchParams redir) "state" state))
-                                    (.redirect reply (.toString redir) 302))))))))))))
+    (let [client (await (get-registered-client client-id))]
+      (ensure-redirect-uri-allowed! client redirect-uri "invalid_request")
+      (let [requested (requested-tools runtime config auth-context selected-tools)]
+        (when (empty? requested)
+          (throw (http-error 400 "invalid_scope" "No valid tools selected")))
+        (let [membership-id (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))
+              user-email    (str (or (aget auth-context "user" "email") (aget auth-context "userEmail") ""))
+              org-slug      (str (or (aget auth-context "org" "slug") (aget auth-context "orgSlug") ""))
+              code          (.randomUUID crypto)
+              payload       {:code code :clientId client-id :redirectUri redirect-uri
+                             :codeChallenge code-challenge :codeChallengeMethod "S256"
+                             :tools requested
+                             :membershipId membership-id :userEmail user-email :orgSlug org-slug
+                             :createdAt (.toISOString (js/Date.))}]
+          (await (mongo-mcp/set-code! code (js/JSON.stringify (clj->js payload)) code-ttl))
+          (let [redir (js/URL. redirect-uri)]
+            (.set (.-searchParams redir) "code" code)
+            (when state (.set (.-searchParams redir) "state" state))
+            (.redirect reply (.toString redir) 302)))))))
 
-(defn- persist-access-token! [redis crypto token-ttl client-id record]
+(defn- ^:async persist-access-token! [crypto token-ttl client-id record]
   (let [access-token (.randomUUID crypto)
         token-value  {:accessToken access-token :clientId client-id
                       :membershipId (aget record "membershipId")
@@ -528,68 +516,49 @@
                       :tools        (aget record "tools")
                       :createdAt    (.toISOString (js/Date.))
                       :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
-    (-> (redis-set! redis (str "knoxx:mcp:token:" access-token) (js/JSON.stringify (clj->js token-value)) (clj->js {:EX token-ttl}))
-        (.then (fn [_]
-                 (if-let [mid (aget record "membershipId")]
-                   (redis-sadd! redis (str "knoxx:mcp:user:" mid ":tokens") access-token)
-                   (js/Promise.resolve nil))))
-        (.then (fn [_]
-                 {:access_token access-token :token_type "Bearer"
-                  :scope        (->> (array-seq (or (aget record "tools") (js/Array.))) (str/join " "))
-                  :expires_in   token-ttl})))))
+    (await (mongo-mcp/set-token! access-token (js/JSON.stringify (clj->js token-value)) token-ttl (aget record "membershipId")))
+    {:access_token access-token :token_type "Bearer"
+     :scope        (->> (array-seq (or (aget record "tools") (js/Array.))) (str/join " "))
+     :expires_in   token-ttl}))
 
-(defroute mcp-exchange-token! [crypto token-ttl redis-guard] "POST" "/api/mcp/oauth/token" [redis-guard]
-  (let [redis (aget request "redis")
-        {:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
+(defroute mcp-exchange-token! [crypto token-ttl] "POST" "/api/mcp/oauth/token" []
+  (let [{:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
     (when (or (not= grant-type "authorization_code")
               (str/blank? code) (str/blank? code-verifier)
               (str/blank? client-id) (str/blank? redirect-uri))
       (throw (http-error 400 "invalid_request" "Missing required token exchange parameters")))
-    (-> (get-registered-client redis client-id)
-        (.then (fn [client]
-                 (ensure-redirect-uri-allowed! client redirect-uri "invalid_grant")
-                 (redis-get! redis (str "knoxx:mcp:code:" code))))
-        (.then (fn [raw]
-                 (when-not raw (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
-                 (let [record   (js/JSON.parse raw)
-                       expected (str (or (aget record "codeChallenge") ""))
-                       actual   (pkce-challenge crypto code-verifier)]
-                   (when (or (not= (aget record "clientId") client-id)
-                             (not= (aget record "redirectUri") redirect-uri))
-                     (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
-                   (when (or (str/blank? expected) (not= expected actual))
-                     (throw (http-error 400 "invalid_grant" "PKCE verification failed")))
-                   (-> (redis-del! redis (str "knoxx:mcp:code:" code))
-                       (.then (fn [_] (persist-access-token! redis crypto token-ttl client-id record)))))))
-        (.then (fn [token-response] (json-send! reply 200 token-response))))))
+    (let [client (await (get-registered-client client-id))]
+      (ensure-redirect-uri-allowed! client redirect-uri "invalid_grant")
+      (let [raw (await (mongo-mcp/get-code! code))]
+        (when-not raw (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
+        (let [record   (js/JSON.parse raw)
+              expected (str (or (aget record "codeChallenge") ""))
+              actual   (pkce-challenge crypto code-verifier)]
+          (when (or (not= (aget record "clientId") client-id)
+                    (not= (aget record "redirectUri") redirect-uri))
+            (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
+          (when (or (str/blank? expected) (not= expected actual))
+            (throw (http-error 400 "invalid_grant" "PKCE verification failed")))
+          (await (mongo-mcp/delete-code! code))
+          (let [token-response (await (persist-access-token! crypto token-ttl client-id record))]
+            (json-send! reply 200 token-response)))))))
 
-(defroute mcp-list-user-tokens! [redis-guard browser-auth-guard] "GET" "/api/mcp/tokens" [redis-guard browser-auth-guard]
-  (let [redis         (aget request "redis")
-        auth-context  (aget request "authContext")
+(defroute mcp-list-user-tokens! [browser-auth-guard] "GET" "/api/mcp/tokens" [browser-auth-guard]
+  (let [auth-context  (aget request "authContext")
         membership-id (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))]
     (when (str/blank? membership-id)
       (throw (http-error 400 "missing_membership" "No membership available for this session")))
-    (-> (redis-smembers! redis (str "knoxx:mcp:user:" membership-id ":tokens"))
-        (.then (fn [token-ids]
-                 (js/Promise.all
-                  (clj->js (for [tid (array-seq token-ids)]
-                              (-> (redis-get! redis (str "knoxx:mcp:token:" tid))
-                                  (.then (fn [raw]
-                                           (when raw (try (js/JSON.parse raw)
-                                                         (catch :default _ nil)))))))))))
-        (.then (fn [records]
-                 (json-send! reply 200 {:ok true :tokens (->> (array-seq records) (remove nil?) into-array)}))))))
+    (let [records (await (mongo-mcp/list-tokens-for-membership! membership-id))]
+      (json-send! reply 200 {:ok true :tokens (->> records (remove nil?) into-array)}))))
 
-(defroute mcp-revoke-user-token! [redis-guard browser-auth-guard] "DELETE" "/api/mcp/tokens/:tokenId" [redis-guard browser-auth-guard]
-  (let [redis         (aget request "redis")
-        auth-context  (aget request "authContext")
+(defroute mcp-revoke-user-token! [browser-auth-guard] "DELETE" "/api/mcp/tokens/:tokenId" [browser-auth-guard]
+  (let [auth-context  (aget request "authContext")
         {:keys [token-id]}    (parse-revoke-token-params request)
         membership-id         (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))]
     (when (or (str/blank? membership-id) (str/blank? token-id))
       (throw (http-error 400 "invalid_request" "membership and tokenId are required")))
-    (-> (redis-del! redis (str "knoxx:mcp:token:" token-id))
-        (.then (fn [_] (redis-srem! redis (str "knoxx:mcp:user:" membership-id ":tokens") token-id)))
-        (.then (fn [_] (json-send! reply 200 {:ok true}))))))
+    (await (mongo-mcp/delete-token! token-id))
+    (json-send! reply 200 {:ok true})))
 
 (defroute mcp-handle-session! [base bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
@@ -627,65 +596,58 @@
     (.hijack reply)
     (let [^js raw-req (aget request "raw")
           ^js raw-res (aget reply "raw")
-          redis   (redis/get-client)
           bearer  (bearer-token request)]
-    (if (str/blank? bearer)
-      (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
-                                             "Content-Type" "text/plain"}))
-          (.end raw-res "Unauthorized"))
-      (-> (load-token-record! redis bearer)
-          (.then
-           (fn [token-record]
-             (if-not token-record
-               (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
-                                                      "Content-Type" "text/plain"}))
-                   (.end raw-res "Unauthorized"))
-               (-> (resolve-token-context! policy-db token-record)
-                   (.then
-                    (fn [token-ctx]
-                      (let [all-tools (available-tools runtime config token-ctx)
-                            allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") (js/Array.))))
-                            effective (->> (array-seq all-tools)
-                                           (filter (fn [t] (contains? allowed (str (aget t "name")))))
-                                           into-array)
-                            server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
-                            transport (new StreamableHTTPServerTransport
-                                          (clj->js {:sessionIdGenerator js/undefined}))]
-                        (doseq [tool (array-seq effective)]
-                          (let [n (some-> (aget tool "name") str str/trim not-empty)
-                                s (or (when z (typebox->zod-shape z (or (aget tool "parameters") (js/Object.)))) (js-obj))]
-                            (when n
-                              (let [tool-config (clj->js {:description (str (or (aget tool "description") (aget tool "label") n))
-                                                          :inputSchema s})]
-                                (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
-                                  (aset tool-config "title" title))
-                                (when-let [annotations (aget tool "annotations")]
-                                  (aset tool-config "annotations" annotations))
-                                (when-let [meta (aget tool "_meta")]
-                                  (aset tool-config "_meta" meta))
-                                (.registerTool server n
-                                               tool-config
-                                               (fn [params] (tool-execute! tool params)))))))
-                        (-> (.connect server transport)
-                            (.then (fn [_]
-                                     (ensure-streamable-accept! request)
-                                     (transport-handle-request! transport raw-req raw-res (aget request "body"))))))))))))
-          (.catch (fn [err]
-                    (.error js/console "[knoxx-mcp] post failed" err)
-                    (when-not (.-headersSent raw-res)
-                      (.writeHead raw-res 500 (clj->js {"Content-Type" "application/json"}))
-                      (.end raw-res (js/JSON.stringify (clj->js {:error "mcp_post_failed"
-                                                                  :detail (or (.-message err) (str err))})))))))))))
+      (if (str/blank? bearer)
+        (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
+                                               "Content-Type" "text/plain"}))
+            (.end raw-res "Unauthorized"))
+        (try
+          (let [token-record (await (load-token-record! bearer))]
+            (if-not token-record
+              (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
+                                                     "Content-Type" "text/plain"}))
+                  (.end raw-res "Unauthorized"))
+              (let [token-ctx (await (resolve-token-context! policy-db token-record))
+                    all-tools (available-tools runtime config token-ctx)
+                    allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") (js/Array.))))
+                    effective (->> (array-seq all-tools)
+                                   (filter (fn [t] (contains? allowed (str (aget t "name")))))
+                                   into-array)
+                    server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
+                    transport (new StreamableHTTPServerTransport
+                                   (clj->js {:sessionIdGenerator js/undefined}))]
+                (doseq [tool (array-seq effective)]
+                  (let [n (some-> (aget tool "name") str str/trim not-empty)
+                        s (or (when z (typebox->zod-shape z (or (aget tool "parameters") (js/Object.)))) (js-obj))]
+                    (when n
+                      (let [tool-config (clj->js {:description (str (or (aget tool "description") (aget tool "label") n))
+                                                  :inputSchema s})]
+                        (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
+                          (aset tool-config "title" title))
+                        (when-let [annotations (aget tool "annotations")]
+                          (aset tool-config "annotations" annotations))
+                        (when-let [meta (aget tool "_meta")]
+                          (aset tool-config "_meta" meta))
+                        (.registerTool server n
+                                       tool-config
+                                       (fn [params] (tool-execute! tool params)))))))
+                (await (.connect server transport))
+                (ensure-streamable-accept! request)
+                (transport-handle-request! transport raw-req raw-res (aget request "body")))))
+          (catch :default err
+            (.error js/console "[knoxx-mcp] post failed" err)
+            (when-not (.-headersSent raw-res)
+              (.writeHead raw-res 500 (clj->js {"Content-Type" "application/json"}))
+              (.end raw-res (js/JSON.stringify (clj->js {:error "mcp_post_failed"
+                                                          :detail (or (.-message err) (str err))}))))))))))
 
 (defn register-mcp-http-routes!
   [app runtime config]
-  (let [redis-client (redis/get-client)
-        base         (public-base-url config)
+  (let [base         (public-base-url config)
         policy-db    (runtime-state/current-policy-db)
         code-ttl     (js/parseInt (env "KNOXX_MCP_CODE_TTL_SECONDS" "300") 10)
         token-ttl    (js/parseInt (env "KNOXX_MCP_TOKEN_TTL_SECONDS" (str (* 60 60 24 30))) 10)
         deps {:route!              route!
-              :redis-guard         (require-redis! redis-client)
               :browser-auth-guard  (require-browser-auth! policy-db config)
               :bearer-token-guard  (require-bearer-token! base)
               :base                base

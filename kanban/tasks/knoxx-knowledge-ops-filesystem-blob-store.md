@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-filesystem-blob-store"
 title: "Implement SHA-256 sharded filesystem blob store for knowledge ops"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Implement SHA-256 sharded filesystem blob store for knowledge ops
 
 > Parent epic: `knoxx-knowledge-ops-deploy-self-hosted`

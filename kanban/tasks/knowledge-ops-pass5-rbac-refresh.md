@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-pass5-rbac-refresh"
 title: "Knowledge-ops consistency pass 5: RBAC role and policy refresh"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Knowledge-ops consistency pass 5: RBAC role and policy refresh
 
 > Parent epic: `knoxx-knowledge-ops-consistency-review`

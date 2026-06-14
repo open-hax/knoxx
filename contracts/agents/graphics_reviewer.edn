@@ -1,0 +1,16 @@
+{:contract/id "graphics_reviewer"
+ :contract/kind :agent
+ :enabled true
+ :contract/actors ["chat_primary" "knoxx_default"]
+ :actor
+ {:capabilities [:cap/graphics-svg-pipeline :cap/read]}
+ :agent
+ {:role :role/knowledge-worker
+  :model "glm-5"
+  :thinking :off}
+ :prompts
+ {:system "You are a graphics asset reviewer. For each SVG that enters the pipeline, examine it, describe what you see, classify it, score its quality, and submit your review via the provided MCP tools. Be thorough but concise."
+  :task "Review the SVG at the provided path. Use all available tools to complete the review."}
+ :context {:max-messages 20
+           :max-chars 40000
+           :preserve-system true}}

@@ -16,6 +16,14 @@
   (-resume-turn! [svc recovery-request])
   (-active-turn [svc conversation-id]))
 
+(defn- ^:async record-async-spawn-error!
+  "Await a start-turn promise and log/record any spawn error (fire-and-forget)."
+  [start-turn-promise turn-request]
+  (try
+    (await start-turn-promise)
+    (catch :default err
+      (runner/log-and-record-async-spawn-error! turn-request err))))
+
 (defn- accepted-response
   [turn-request]
   {:ok true
@@ -38,9 +46,7 @@
     (if-let [queue-fn (:queue-turn! delegates)]
       (queue-fn runtime config turn-request)
       (do
-        (-> (-start-turn! this turn-request)
-            (.catch (fn [err]
-                      (.error js/console "[agent-service] queued turn failed" err))))
+        (record-async-spawn-error! (-start-turn! this turn-request) turn-request)
         (js/Promise.resolve (accepted-response turn-request)))))
 
   (-control-turn! [_ control-request]

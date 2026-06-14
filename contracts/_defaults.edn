@@ -1,7 +1,6 @@
 {:contract/id :defaults/ingestion
  :contract/kind :ingest_source
  :contract/type :ingest/source
- :contract/version 1
  :tenant/id "_defaults"
  :source/id :defaults
  :source/name "Global ingestion defaults"

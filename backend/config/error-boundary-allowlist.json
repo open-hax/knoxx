@@ -1,0 +1,761 @@
+{
+  "description": "Baseline of pre-existing silent catch sites. New sites fail backend:error-boundaries unless explicitly documented with knoxx-lint/allow-silent-catch or added here during debt migration.",
+  "allowedSilentCatchSites": [
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/action/run_state.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/domain/action/run_state.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/action/run_state.cljs#687ce9dab4d2",
+      "file": "backend/src/cljs/knoxx/backend/domain/action/run_state.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (sink event) (catch :default _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/action/run_state.cljs#fdae95cf095f",
+      "file": "backend/src/cljs/knoxx/backend/domain/action/run_state.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/actor/mailbox.cljs#0bcd0949048a",
+      "file": "backend/src/cljs/knoxx/backend/domain/actor/mailbox.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ {}))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/actor/tools.cljs#58331dd49afb",
+      "file": "backend/src/cljs/knoxx/backend/domain/actor/tools.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] nil))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/agent/content.cljs#0e5740d848e3",
+      "file": "backend/src/cljs/knoxx/backend/domain/agent/content.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/contracts/loader.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/domain/contracts/loader.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#44f735fda0d0",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#4997201d6541",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ (.toISOString (js/Date.))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#9861b440ccba",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ nil))))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#6708f6be8773",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (.destroy new-client) (catch js/Error _))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#fb0b4215c4ab",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#c580a174de78",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(aset \"ready\" (try (.isReady c) (catch js/Error _ false)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#37bcd1c26d61",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(aset \"userId\" (try (.-id (.-user c)) (catch js/Error _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#32e0d4305479",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(aset \"userTag\" (try (.-tag (.-user c)) (catch js/Error _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#6ab3730ffbb5",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(aset \"guildCount\" (try (.. c -guilds -cache -size) (catch js/Error _ 0)))))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#47677e23a070",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (.destroy audio-stream) (catch js/Error _))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#a3f68d64cdc4",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (.destroy decoder) (catch js/Error _))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#ff88343f79c4",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (.destroy s) (catch js/Error _)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#961a095e8bb6",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (.destroy d) (catch js/Error _)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#d973e0c23282",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(.forEach voice-connections (fn [conn _key] (try (.destroy conn) (catch js/Error _))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs#682407c5ae3d",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/gateway.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _)"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/tools.cljs#fb19d19787da",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/tools.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(let [pathname (try (.-pathname (js/URL. (str url))) (catch :default _ \"\"))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/tools.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/tools.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/voice_tools.cljs#b81331772e78",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/voice_tools.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(when-let [sf (aget m \"__voiceListener\")] (try (sf) (catch js/Error _)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/discord/voice_tools.cljs#ed6f643e32ac",
+      "file": "backend/src/cljs/knoxx/backend/domain/discord/voice_tools.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (stop) (catch js/Error _)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/error_observatory.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/domain/error_observatory.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/error_observatory.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/error_observatory.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs#0e99b3ce38ac",
+      "file": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ {}))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs#0e5740d848e3",
+      "file": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs#8ff7a0096442",
+      "file": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs#8563c8946e6b",
+      "file": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ 0))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs#fd3ad6deb041",
+      "file": "backend/src/cljs/knoxx/backend/domain/label/audio.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ 0)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/mcp/mcp_bridge.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/mcp/mcp_bridge.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/media.cljs#fb19d19787da",
+      "file": "backend/src/cljs/knoxx/backend/domain/media.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(let [pathname (try (.-pathname (js/URL. (str url))) (catch :default _ \"\"))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/media/remote_client.cljs#fb19d19787da",
+      "file": "backend/src/cljs/knoxx/backend/domain/media/remote_client.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(let [pathname (try (.-pathname (js/URL. (str url))) (catch :default _ \"\"))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/music.cljs#273ed31871fb",
+      "file": "backend/src/cljs/knoxx/backend/domain/music.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs#b0b57ac13d7d",
+      "file": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ [])))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs#fab0f3c6b113",
+      "file": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs#88caf2562308",
+      "file": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] []))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs#dfbae9a3f97a",
+      "file": "backend/src/cljs/knoxx/backend/domain/node/fs.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] [])))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/nrepl.cljs#0b7aff22b067",
+      "file": "backend/src/cljs/knoxx/backend/domain/nrepl.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (aget js/process \"env\" k) (catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/nrepl.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/nrepl.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/nrepl.cljs#273ed31871fb",
+      "file": "backend/src/cljs/knoxx/backend/domain/nrepl.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/policy/edn_adapter.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/policy/edn_adapter.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/policy/tools.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/policy/tools.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/realtime.cljs#fdae95cf095f",
+      "file": "backend/src/cljs/knoxx/backend/domain/realtime.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/realtime.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/realtime.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/realtime.cljs#69dc87fe0a8f",
+      "file": "backend/src/cljs/knoxx/backend/domain/realtime.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] nil)))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/realtime.cljs#8ff7a0096442",
+      "file": "backend/src/cljs/knoxx/backend/domain/realtime.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/realtime.cljs#2a3377a5b2ca",
+      "file": "backend/src/cljs/knoxx/backend/domain/realtime.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ \"\"))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/realtime.cljs#18a5bdd567c4",
+      "file": "backend/src/cljs/knoxx/backend/domain/realtime.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ \"\"))]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/realtime.cljs#0e5740d848e3",
+      "file": "backend/src/cljs/knoxx/backend/domain/realtime.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/realtime.cljs#57f95d825f78",
+      "file": "backend/src/cljs/knoxx/backend/domain/realtime.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/sandbox_container.cljs#0e5740d848e3",
+      "file": "backend/src/cljs/knoxx/backend/domain/sandbox_container.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/sandbox_container.cljs#8ff7a0096442",
+      "file": "backend/src/cljs/knoxx/backend/domain/sandbox_container.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/session_mycology.cljs#72060ad11ae5",
+      "file": "backend/src/cljs/knoxx/backend/domain/session_mycology.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(.map (fn [line] (try (js/JSON.parse line) (catch js/Error _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/session_mycology.cljs#a2dab00e0b67",
+      "file": "backend/src/cljs/knoxx/backend/domain/session_mycology.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ #js [])))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/session_mycology.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/session_mycology.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/text.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/domain/text.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/domain/text.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/domain/text.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/extern/agent_runner.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/extern/agent_runner.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/extern/agent_runner.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/extern/agent_runner.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/extern/agent_turn_media.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/extern/agent_turn_media.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/extern/eta_mu.cljs#57f95d825f78",
+      "file": "backend/src/cljs/knoxx/backend/extern/eta_mu.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/extern/fetch.cljs#8ff7a0096442",
+      "file": "backend/src/cljs/knoxx/backend/extern/fetch.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/extern/fetch.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/extern/fetch.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/extern/json.cljs#8ff7a0096442",
+      "file": "backend/src/cljs/knoxx/backend/extern/json.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/extern/websocket.cljs#9ac52bffc982",
+      "file": "backend/src/cljs/knoxx/backend/extern/websocket.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/agent/resume.cljs#8563c8946e6b",
+      "file": "backend/src/cljs/knoxx/backend/infra/agent/resume.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ 0))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/agent/resume.cljs#a2e7aa07d160",
+      "file": "backend/src/cljs/knoxx/backend/infra/agent/resume.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ false)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/agent/resume.cljs#fab0f3c6b113",
+      "file": "backend/src/cljs/knoxx/backend/infra/agent/resume.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/agent/stream/provider_events.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/agent/stream/provider_events.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/agent/tools.cljs#8ff7a0096442",
+      "file": "backend/src/cljs/knoxx/backend/infra/agent/tools.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/agent/turn.cljs#9a0c1a785fad",
+      "file": "backend/src/cljs/knoxx/backend/infra/agent/turn.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] nil)))))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs#a2bc29815d15",
+      "file": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ nil)))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs#eec448fbf5b3",
+      "file": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs#fb0b4215c4ab",
+      "file": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs#47b62b44ff8b",
+      "file": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ nil))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs#3a09b7ac97a7",
+      "file": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ false)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs#aa205833a7f2",
+      "file": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ false))]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs#c2b45f843f90",
+      "file": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ \"\")))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/control_config.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/control_config.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/core_memory.cljs#9ac52bffc982",
+      "file": "backend/src/cljs/knoxx/backend/infra/core_memory.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/db/policy.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/infra/db/policy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/db/policy.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/db/policy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/db/policy.cljs#b0b57ac13d7d",
+      "file": "backend/src/cljs/knoxx/backend/infra/db/policy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ [])))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs#b625ebe6f602",
+      "file": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] #js {:sessions (js/Object.create nil)}))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs#04dba7587853",
+      "file": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] nil))))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs#a2f4510b12a9",
+      "file": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] #js [])))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs#9ac52bffc982",
+      "file": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/http.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/http.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/redis_client.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/redis_client.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/redis_client.cljs#0e5740d848e3",
+      "file": "backend/src/cljs/knoxx/backend/infra/redis_client.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/app.cljs#697e4e587944",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/app.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ false)))]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/app.cljs#a2e7aa07d160",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/app.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch js/Error _ false)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/app.cljs#9ac52bffc982",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/app.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/auth.cljs#3a09b7ac97a7",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/auth.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ false)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/auth.cljs#9ac52bffc982",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/auth.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs#e9cadd64843f",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ (js/URL. \"http://localhost\"))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs#0f4afa108966",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(when raw (try (js/JSON.parse raw) (catch :default _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs#d002a71c99ed",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))))))))]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/memory.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/memory.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/resources.cljs#0e5740d848e3",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/resources.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/studio.cljs#2249883dee91",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/studio.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] [])))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/studio.cljs#dfbae9a3f97a",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/studio.cljs",
+      "kind": "ignored-promise-catch-binding",
+      "snippet": "(.catch (fn [_] [])))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/studio/discord_scan.cljs#3a09b7ac97a7",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/studio/discord_scan.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ false)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/tools.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/tools.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs#74ef1b39d64d",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ nil)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs#c2b45f843f90",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ \"\")))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs#42253d26a568",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (await (.json sources-r)) (catch :default _ (js/Array.)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs#12a22e175728",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (await (.json jobs-r)) (catch :default _ (js/Array.)))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs#6ff73e737e50",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(try (await (.json job-r)) (catch :default _ (await (safe-json job-r))))"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/routes/workspace_media.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/workspace_media.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/stores/session_flush.cljs#1720d7683aa9",
+      "file": "backend/src/cljs/knoxx/backend/infra/stores/session_flush.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _ 0))]"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/stores/session_flush.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/stores/session_flush.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/stores/session_titles.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/stores/session_titles.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/svg_render.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/svg_render.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/infra/temp_memory.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/infra/temp_memory.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    },
+    {
+      "id": "backend/src/cljs/knoxx/backend/law/guards.cljs#7f0abd94b39a",
+      "file": "backend/src/cljs/knoxx/backend/law/guards.cljs",
+      "kind": "ignored-catch-binding",
+      "snippet": "(catch :default _"
+    }
+  ]
+}

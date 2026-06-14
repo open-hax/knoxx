@@ -1,85 +1,33 @@
 (ns knoxx.backend.domain.registry.resource
-  "Generic registry protocol for EDN-described resources.
+  "Generic registry protocol: delegates to the contract-runtime resource registry.
 
-   A registry advertises resources of one kind. Actions, triggers, schedules,
-   roles, and the rest are separate resource kinds; all can share this registry
-   protocol without pretending the resource definition itself is a contract."
-  (:require [knoxx.backend.domain.resources.loader :as resources]))
+   This is a thin wrapper that provides backward compatibility for existing
+   Knoxx callers. The actual implementation lives in the extracted
+   contract-runtime package.
 
-(defprotocol Registry
-  (registry-id [registry]
-    "Return the stable registry id keyword.")
-  (registry-resource-kind [registry]
-    "Return the singular resource kind owned by this registry.")
-  (registered-resource-ids [registry config]
-    "Return sorted resource ids visible to this registry.")
-  (registry-resource [registry config resource-id]
-    "Return one resource record by id, or nil.")
-  (registry-catalog [registry config]
-    "Return a catalog map for this registry."))
+   The config map must contain :contract-runtime/deps (see
+   knoxx.backend.contract-runtime-deps/build-deps)."
+  (:require [open-hax.contract-runtime.registry.resource :as core-registry]))
 
-(defrecord EdnResourceRegistry [id resource-kind resource-class]
-  Registry
-  (registry-id [_] id)
-  (registry-resource-kind [_] resource-kind)
-  (registered-resource-ids [_ config]
-    (resources/list-resource-ids-sync config resource-kind))
-  (registry-resource [_ config resource-id]
-    (resources/resource-record-sync config resource-kind resource-id))
-  (registry-catalog [this config]
-    {:catalog/resources {(registry-resource-kind this)
-                         (registered-resource-ids this config)}}))
+(def registry-id core-registry/registry-id)
+(def registry-resource-kind core-registry/registry-resource-kind)
+(def registered-resource-ids core-registry/registered-resource-ids)
+(def registry-resource core-registry/registry-resource)
+(def registry-catalog core-registry/registry-catalog)
 
-(def registry-specs
-  [{:id :registry/actions :kind :action}
-   {:id :registry/rules :kind :rule}
-   {:id :registry/triggers :kind :trigger}
-   {:id :registry/actors :kind :actor}
-   {:id :registry/users :kind :user}
-   {:id :registry/agents :kind :agent}
-   {:id :registry/capabilities :kind :capability}
-   {:id :registry/roles :kind :role}
-   {:id :registry/workflows :kind :workflow}
-   {:id :registry/pipelines :kind :pipeline}
-   {:id :registry/schedules :kind :schedule}
-   {:id :registry/sources :kind :source}])
-
-(defn make-registry
-  [{:keys [id kind]}]
-  (->EdnResourceRegistry id kind (resources/resource-class kind)))
-
-(def registries-by-kind
-  (->> registry-specs
-       (map make-registry)
-       (map (fn [registry]
-              [(registry-resource-kind registry) registry]))
-       (into {})))
-
-(def actions-registry (get registries-by-kind :action))
-(def rules-registry (get registries-by-kind :rule))
-(def triggers-registry (get registries-by-kind :trigger))
-(def actors-registry (get registries-by-kind :actor))
-(def users-registry (get registries-by-kind :user))
-(def agents-registry (get registries-by-kind :agent))
-(def capabilities-registry (get registries-by-kind :capability))
-(def roles-registry (get registries-by-kind :role))
-(def workflows-registry (get registries-by-kind :workflow))
-(def pipelines-registry (get registries-by-kind :pipeline))
-(def schedules-registry (get registries-by-kind :schedule))
-(def sources-registry (get registries-by-kind :source))
-
-(defn registry
-  [resource-kind]
-  (get registries-by-kind (resources/normalize-resource-kind resource-kind)))
-
-(defn catalog
-  ([config]
-   (catalog config (keys registries-by-kind)))
-  ([config resource-kinds]
-   {:catalog/resources
-    (->> resource-kinds
-         (keep (fn [resource-kind]
-                 (when-let [owned-registry (registry resource-kind)]
-                   [(registry-resource-kind owned-registry)
-                    (registered-resource-ids owned-registry config)])))
-         (into {}))}))
+(def registry-specs core-registry/registry-specs)
+(def make-registry core-registry/make-registry)
+(def registries-by-kind core-registry/registries-by-kind)
+(def actions-registry core-registry/actions-registry)
+(def rules-registry core-registry/rules-registry)
+(def triggers-registry core-registry/triggers-registry)
+(def actors-registry core-registry/actors-registry)
+(def users-registry core-registry/users-registry)
+(def agents-registry core-registry/agents-registry)
+(def capabilities-registry core-registry/capabilities-registry)
+(def roles-registry core-registry/roles-registry)
+(def workflows-registry core-registry/workflows-registry)
+(def schedules-registry core-registry/schedules-registry)
+(def sources-registry core-registry/sources-registry)
+(def registry core-registry/registry)
+(def catalog core-registry/catalog)

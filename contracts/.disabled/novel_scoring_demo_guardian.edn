@@ -1,6 +1,5 @@
 {:contract/id "novel_scoring_demo_guardian"
  :contract/kind :agent
- :contract/version 1
  :enabled false
  :trigger-kind :event
  :source-kind :discord
@@ -21,7 +20,6 @@
           :threshold 2
           :weights {"discord.message/mention" 1
                     "discord.message/keyword" 1}}
- :hooks {:before {} :after {}}
  :agent {:roles [:role/basic-user]
          :model "gemma4:31b"
          :thinking :medium}

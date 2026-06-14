@@ -5,7 +5,7 @@
             [knoxx.backend.infra.agent.recovery-coordinator :as recovery-coordinator]))
 
 (deftest ^:async policy-engine-can-be-faked-and-default-preserves-model-check
-  (testing "fake policy engine supports turn orchestration tests without Redis/authz"
+  (testing "fake policy engine supports turn orchestration tests without store/authz"
     (let [calls* (atom [])
           fake (reify policy/IPolicyEngine
                  (authorize-turn [_ turn-request]

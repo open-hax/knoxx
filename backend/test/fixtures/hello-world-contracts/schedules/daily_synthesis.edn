@@ -1,10 +1,9 @@
 {:contract/kind :schedule
  :contract/id "daily_synthesis"
- :contract/version 1
  :enabled false
 
  ;; Temporal resource split from the daily_synthesis trigger. It emits an event;
- ;; it does not directly run the synthesis pipeline.
+ ;; it does not directly run the synthesis action.
  :schedule/id "daily_synthesis"
  :schedule/rule "0 9 * * *"
  :schedule/generator "knoxx_schedule"

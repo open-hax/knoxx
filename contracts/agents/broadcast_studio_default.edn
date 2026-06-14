@@ -1,7 +1,6 @@
 {:contract/id "broadcast_studio_default"
  :contract/kind :agent
  :contract/actors ["broadcast_studio"]
- :hooks {:before {} :after {}}
  :agent {:roles [:role/creative-catalyst :role/developer]
          :model "gemma4:31b"
          :thinking :minimal}
@@ -28,7 +27,6 @@ Always confirm actions with the user. Keep the playlist organized and suggest im
  :sub-agents ["broadcast_studio_audio_transcriber"
               "broadcast_studio_audio_describer"
               "broadcast_studio_audio_labeler"]
- :contract/version 1
  :enabled true
  :data {:audio-sub-agent-contracts ["broadcast_studio_audio_transcriber"
                                     "broadcast_studio_audio_describer"

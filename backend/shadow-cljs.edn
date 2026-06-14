@@ -1,8 +1,8 @@
-{:source-paths ["src/cljs" "test/cljs"],
+{:source-paths ["src/cljs" "test/cljs"
+                "../../../contract-runtime/src/cljs"],
  :dependencies
  [[cider/cider-nrepl "0.50.2"]
   [refactor-nrepl "3.9.1"]
-  [com.github.seancorfield/honeysql "2.7.1368"]
   [metosin/malli "0.16.4"]
   [funcool/promesa "11.0.678"]],
  :nrepl {:port 4500},
@@ -37,15 +37,13 @@
    :js-options
    {:js-provider :import,
     :keep-as-import
-    #{"pg"
-      "node:child_process"
+    #{"node:child_process"
       "node:fs/promises"
       "node:crypto"
       "@open-hax/eta-mu-cli"
       "node:fs"
       "node:path"
       "node:url"
-      "redis"
       "discord.js"
       "@discordjs/voice"
       "libsodium-wrappers"
@@ -67,14 +65,12 @@
     :keep-as-import
     #{"puppeteer-core"
       "@modelcontextprotocol/sdk"
-      "pg"
       "node:child_process"
       "node:fs/promises"
       "node:crypto"
       "node:fs"
       "node:path"
       "node:url"
-      "redis"
       "@open-hax/eta-mu-cli"
       "discord.js"
       "@discordjs/voice"
@@ -104,14 +100,12 @@
     :keep-as-import
     #{"puppeteer-core"
       "@modelcontextprotocol/sdk"
-      "pg"
       "node:child_process"
       "node:fs/promises"
       "node:crypto"
       "node:fs"
       "node:path"
       "node:url"
-      "redis"
       "@open-hax/eta-mu-cli"
       "discord.js"
       "@discordjs/voice"
@@ -141,9 +135,9 @@
    :autorun false,
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                      :file "test/js/eta_mu_cli_test_stub.cjs"}}},
-   :compiler-options
-   {:output-feature-set :es-next,
-    :optimizations :none,
-    :source-map true,
-    :infer-externs false,
-    :macros {:knoxx.backend.macros true}}}}}
+    :compiler-options
+    {:output-feature-set :es-next,
+     :optimizations :none,
+     :source-map true,
+     :infer-externs false,
+     :macros {:knoxx.backend.macros true}}}}}

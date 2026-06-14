@@ -3,7 +3,8 @@
 
    Trigger and schedule domains remain separate. This namespace only starts,
    stops, and reloads the two runtimes together for process lifecycle needs."
-  (:require [knoxx.backend.domain.models :as models]
+  (:require [knoxx.backend.domain.error-observatory :as errors]
+            [knoxx.backend.domain.models :as models]
             [knoxx.backend.domain.schedule.runtime :as schedule-runtime]
             [knoxx.backend.domain.source.runtime :as source-runtime]
             [knoxx.backend.domain.trigger.runtime :as trigger-runtime]
@@ -24,7 +25,9 @@
      (reset! running?* true)
      (trigger-runtime/start! config)
      (schedule-runtime/start! config)
-     (source-runtime/start! config))))
+     (errors/observe-promise! :event-runtime/source-start
+                              {}
+                              (source-runtime/start! config)))))
 
 (defn stop!
   []

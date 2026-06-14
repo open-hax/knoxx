@@ -9,14 +9,13 @@
   [promises]
   (.all js/Promise (clj->js (vec promises))))
 
-(defn all-vec
+(defn ^:async all-vec
   "Promise.all for a CLJS collection of promises. Resolves to a CLJS vector."
   [promises]
-  (-> (all promises)
-      (.then (fn [values]
-               (if (array? values)
-                 (vec (array-seq values))
-                 [])))))
+  (let [values (await (all promises))]
+    (if (array? values)
+      (vec (array-seq values))
+      [])))
 
 (defn reject-after
   "Return a Promise that rejects with an Error after timeout-ms."

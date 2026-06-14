@@ -9,11 +9,20 @@
             [helix.hooks :as hooks]
             [helix.dom :as d]
             [knoxx.frontend.app-routes :as routes]
+            [knoxx.frontend.auth.boundary :refer [auth-boundary]]
+            [knoxx.frontend.auth.context :as auth-ctx]
             [knoxx.frontend.pages.agents :as agents-page]
             [knoxx.frontend.pages.events :as events-page]
+            [knoxx.frontend.pages.gardens.view :as gardens-page]
+            [knoxx.frontend.pages.mail.view :as mail-page]
+            [knoxx.frontend.pages.translations.view :as translations-page]
             ["react-router-dom" :as rr]
             ["react-dom/client" :as rdom]
             ["@open-hax/knoxx-app-bridge" :as app]))
+
+;; The shared auth React context instance must be the bridge's module
+;; instance so TS pages' useAuth reads the value the CLJS boundary provides.
+(auth-ctx/set-context-instance! (.-AuthContextInstance app))
 
 (def NavLink (.-NavLink rr))
 (def Navigate (.-Navigate rr))
@@ -23,7 +32,7 @@
 (def useLocation (.-useLocation rr))
 
 (defnc ProtectedSurface [{:keys [children]}]
-  (let [auth (app/useAuth)
+  (let [auth (auth-ctx/use-auth)
         location (useLocation)]
     (if (routes/can-access-path? (.-pathname location) (.-roleSlugs auth))
       children
@@ -38,7 +47,7 @@
 
 (defnc UserMenu []
   (let [[open? set-open] (hooks/use-state false)
-        auth (app/useAuth)]
+        auth (auth-ctx/use-auth)]
     (when (.-user auth)
       (let [display (or (.. auth -user -displayName) (.. auth -user -email) "")
             org-name (some-> auth .-org .-name)]
@@ -71,7 +80,7 @@
                      "Route is now owned by shadow-cljs. Page implementation is pending migration."))))
 
 (defnc AppShell []
-  (let [auth (app/useAuth)
+  (let [auth (auth-ctx/use-auth)
         basic-user? (routes/basic-user-role? (.-roleSlugs auth))
         nav-class (fn [^js args]
                     (str "app-shell__nav-link" (when (.-isActive args) " app-shell__nav-link--active")))]
@@ -117,7 +126,7 @@
                                 :element ($ Navigate {:to routes/chat-route :replace true})})
 
                       ($ Route {:path routes/mail-route
-                                :element ($ ProtectedSurface {:children ($ app/MailPage)})})
+                                :element ($ ProtectedSurface {:children ($ mail-page/mail-page)})})
                       ($ Route {:path routes/studio-route
                                 :element ($ ProtectedSurface {:children ($ app/BroadcastStudioPage)})})
 
@@ -135,12 +144,12 @@
                                 :element ($ ProtectedSurface {:children ($ app/DataPage)})})
 
                       ($ Route {:path routes/gardens-route
-                                :element ($ ProtectedSurface {:children ($ app/GardensPage)})})
+                                :element ($ ProtectedSurface {:children ($ gardens-page/gardens-page)})})
 
                       ($ Route {:path routes/translations-route
-                                :element ($ ProtectedSurface {:children ($ app/TranslationReviewPage)})})
+                                :element ($ ProtectedSurface {:children ($ translations-page/translation-review-page)})})
                       ($ Route {:path (str routes/translations-route "/:documentId/:targetLang")
-                                :element ($ ProtectedSurface {:children ($ app/TranslationReviewPage)})})
+                                :element ($ ProtectedSurface {:children ($ translations-page/translation-review-page)})})
 
                       ($ Route {:path routes/events-route
                                 :element ($ ProtectedSurface {:children ($ events-page/EventsPage)})})
@@ -166,7 +175,7 @@
      {:future #js {:v7_startTransition true
                    :v7_relativeSplatPath true}
       :children
-      ($ app/AuthBoundary {:children ($ AppShell)})}))
+      ($ auth-boundary {:children ($ AppShell)})}))
 
 (defonce root-instance* (atom nil))
 

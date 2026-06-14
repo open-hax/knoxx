@@ -5,7 +5,7 @@
              [knoxx.backend.infra.agent.tools :as tools]
              [knoxx.backend.infra.agent.transcript :as transcript]
              [knoxx.backend.infra.agent.turn :as agent-turns]
-             [knoxx.backend.infra.stores.session-store :as session-store]
+             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
              [knoxx.backend.extern.agent-turn-node :as xturn-node]
              [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]
              [knoxx.backend.shape.agent :as agent-shape]))
@@ -142,15 +142,56 @@
     (send-user-message! [_ _content] (js/Promise. (fn [_resolve _reject] nil)))
     (follow-up! [_ _message] (js/Promise.resolve nil))
     (steer! [_ _message] (js/Promise.resolve nil))
-    (set-thinking-level! [_ _level] nil)))
+    (set-thinking-level! [_ _level] nil)
+    (abort! [_] (js/Promise.resolve nil))))
+
+(defn- delayed-send-session
+  "A session whose send-user-message! resolves to `value` after `delay-ms`."
+  [value delay-ms]
+  (reify agent-shape/IAgentSession
+    (streaming? [_] true)
+    (current-turn [_] nil)
+    (messages [_] [])
+    (subscribe! [_ _handler] (fn [] nil))
+    (send-user-message! [_ _content]
+      (js/Promise. (fn [resolve _reject]
+                     (js/setTimeout #(resolve value) delay-ms))))
+    (follow-up! [_ _message] (js/Promise.resolve nil))
+    (steer! [_ _message] (js/Promise.resolve nil))
+    (set-thinking-level! [_ _level] nil)
+    (abort! [_] (js/Promise.resolve nil))))
+
+(deftest ^:async send-user-message-runs-unbounded-when-timeout-disabled
+  (testing "a zero/nil timeout means the provider send is never raced against a timer"
+    ;; A 20ms send would lose to a 1ms race timer; with the timeout disabled it
+    ;; resolves normally, proving autonomous agents can run as long as they need.
+    (is (= "agent-done"
+           (await (agent-turns/send-user-message-with-timeout!
+                   (delayed-send-session "agent-done" 20) "hello" 0))))
+    (is (= "agent-done"
+           (await (agent-turns/send-user-message-with-timeout!
+                   (delayed-send-session "agent-done" 20) "hello" nil))))))
+
+(deftest ^:async send-user-message-still-races-when-timeout-positive
+  (testing "an explicit positive timeout still force-closes a turn that overruns it"
+    (try
+      (await (agent-turns/send-user-message-with-timeout!
+              (delayed-send-session "agent-done" 50) "hello" 1))
+      (is false "should have rejected on timeout")
+      (catch :default err
+        (is (re-find #"Agent turn timed out after 1ms" (.-message err)))))))
 
 (deftest ^:async prompt-timeout-finalizes-session-as-failed
   (testing "provider turns that never settle clear the active stream through failure finalization"
     (let [completed* (atom nil)]
-      (with-redefs [session-store/complete-session! (fn [_client session-id conversation-id payload]
-                                                      (reset! completed* {:session-id session-id
-                                                                          :conversation-id conversation-id
-                                                                          :payload payload}))]
+      (with-redefs [session-store/complete-session! (fn ([session-id conversation-id payload]
+                                                          (reset! completed* {:session-id session-id
+                                                                              :conversation-id conversation-id
+                                                                              :payload payload}))
+                                                        ([_db session-id conversation-id payload]
+                                                          (reset! completed* {:session-id session-id
+                                                                              :conversation-id conversation-id
+                                                                              :payload payload})))]
         (try
           (await (agent-turns/prompt-and-await!
                   {:agent-turn-timeout-ms 1}

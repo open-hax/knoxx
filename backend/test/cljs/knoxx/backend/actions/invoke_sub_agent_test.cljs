@@ -12,7 +12,6 @@
   (testing "A well-formed sub-agent contract passes validation"
     (let [contract {:contract/id "test_sub_agent"
                     :contract/kind :sub-agent
-                    :contract/version 1
                     :enabled true
                     :sub-agent/parent-capabilities :restrict
                     :sub-agent/capabilities [:read :semantic_query]

@@ -14,39 +14,35 @@
 
 (def ^:private exec-file-async (promisify execFile))
 
-(defn- music-audd-lookup!
+(defn- ^:async music-audd-lookup!
   "Identify a song from an audio file using AudD API."
   [runtime config source]
   (if (str/blank? (:audd-api-token config))
-    (js/Promise.resolve {:error "AUDD_API_TOKEN not configured"
-                         :hint "Set AUDD_API_TOKEN to enable music identification"})
-    (-> (media/materialize-media-source! runtime config source media/audio-render-max-bytes)
-        (.then (fn [media]
-                 (-> (audd-client/recognize! (audd-client/client config) media)
-                     (.then (fn [payload]
-                              {:status (or (:status payload) "unknown")
-                               :source source
-                               :filename (:filename media)
-                               :result (:result payload)}))))))))
+    {:error "AUDD_API_TOKEN not configured"
+     :hint "Set AUDD_API_TOKEN to enable music identification"}
+    (let [media (await (media/materialize-media-source! runtime config source media/audio-render-max-bytes))
+          payload (await (audd-client/recognize! (audd-client/client config) media))]
+      {:status (or (:status payload) "unknown")
+       :source source
+       :filename (:filename media)
+       :result (:result payload)})))
 
-(defn- music-acoustid-lookup!
+(defn- ^:async music-acoustid-lookup!
   "Look up audio fingerprint via AcoustID API."
   [config fingerprint duration]
-  (-> (audd-client/acoustid-lookup! (audd-client/client config) fingerprint duration)
-      (.then (fn [result]
-               (if (:error result)
-                 result
-                 {:status "ok"
-                  :result result})))))
+  (let [result (await (audd-client/acoustid-lookup! (audd-client/client config) fingerprint duration))]
+    (if (:error result)
+      result
+      {:status "ok"
+       :result result})))
 
-(defn- music-musicbrainz-recording!
+(defn- ^:async music-musicbrainz-recording!
   "Look up MusicBrainz recording by MBID."
   [config mbid]
-  (-> (audd-client/musicbrainz-recording! (audd-client/client config) mbid)
-      (.then (fn [result]
-               {:status "ok"
-                :mbid mbid
-                :result result}))))
+  (let [result (await (audd-client/musicbrainz-recording! (audd-client/client config) mbid))]
+    {:status "ok"
+     :mbid mbid
+     :result result}))
 
 (defn- music-copyright-check!
   "Check if audio is likely copyrighted based on ISRC presence."
@@ -65,24 +61,20 @@
              :apple_music apple-music-isrc
              :spotify spotify-isrc}}))
 
-(defn- music-generate!
+(defn- ^:async music-generate!
   "Generate a WAV file from a JSON music spec using the native Node.js synthesis engine."
   [runtime config spec-json output-path]
-  (let [script-path (media/path-resolve path (or (.cwd js/process) "/") "scripts" "synthesize-music.mjs")]
-    (-> (media/temp-file-path! runtime "music-specs" ".json")
-        (.then (fn [spec-path]
-                 (-> (media/fs-write-file! fs spec-path spec-json)
-                     (.then (fn []
-                              (let [out-path (or output-path
-                                                 (str "Music/generated/" (.randomUUID crypto) ".wav"))
-                                    {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config out-path)]
-                                (-> (media/fs-mkdir! fs (media/path-resolve path absolute "..") #js {:recursive true})
-                                    (.then (fn []
-                                             (-> (exec-file-async "node" #js [script-path spec-path absolute]
-                                                                 #js {:timeout 120000 :maxBuffer 1048576})
-                                                 (.then (fn [stdout _stderr]
-                                                          (let [result (js->clj (.parse js/JSON stdout) :keywordize-keys true)]
-                                                            (assoc result :workspace-path relative :absolute-path absolute)))))))))))))))))
+  (let [script-path (media/path-resolve path (or (.cwd js/process) "/") "scripts" "synthesize-music.mjs")
+        spec-path (await (media/temp-file-path! runtime "music-specs" ".json"))]
+    (await (media/fs-write-file! fs spec-path spec-json))
+    (let [out-path (or output-path
+                       (str "Music/generated/" (.randomUUID crypto) ".wav"))
+          {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config out-path)]
+      (await (media/fs-mkdir! fs (media/path-resolve path absolute "..") #js {:recursive true}))
+      (let [stdout (await (exec-file-async "node" #js [script-path spec-path absolute]
+                                           #js {:timeout 120000 :maxBuffer 1048576}))
+            result (js->clj (.parse js/JSON stdout) :keywordize-keys true)]
+        (assoc result :workspace-path relative :absolute-path absolute)))))
 
 (defn- json-object-type?
   [value]
@@ -151,42 +143,39 @@
    [:spec_json {:description "JSON music specification as an object or JSON string. Supports bpm, tracks, instruments, notes, patterns, and nested patterns[].notes with Tone-style times like 0:1:2 and durations like 4n/8n."} :any]
    [:output_path {:optional true :description "Optional workspace-relative output path for the WAV file. Defaults to Music/generated/<uuid>.wav"} :string]])
 
-(defn identify-file-execute [runtime config _tool-call-id params a b c]
+(defn ^:async identify-file-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         file-path (aget params "file_path")]
     (maybe-tool-update! on-update (str "Identifying song from file: " file-path "…"))
-    (-> (music-audd-lookup! runtime config file-path)
-        (.then (fn [result]
-                 (tool-text-result
-                  (str "Music identification result: " (:status result)
-                       (when-let [song (get-in result [:result :title])]
-                         (str " - " song " by " (get-in result [:result :artist]))))
-                  result))))))
+    (let [result (await (music-audd-lookup! runtime config file-path))]
+      (tool-text-result
+       (str "Music identification result: " (:status result)
+            (when-let [song (get-in result [:result :title])]
+              (str " - " song " by " (get-in result [:result :artist]))))
+       result))))
 
-(defn acoustid-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async acoustid-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         fingerprint (aget params "fingerprint")
         duration (aget params "duration")]
     (maybe-tool-update! on-update "Looking up AcoustID fingerprint…")
-    (-> (music-acoustid-lookup! config fingerprint duration)
-        (.then (fn [result]
-                 (tool-text-result
-                  (str "AcoustID lookup: " (:status result)
-                       (when-let [results (get-in result [:result :results])]
-                         (str " - found " (count results) " matches")))
-                  result))))))
+    (let [result (await (music-acoustid-lookup! config fingerprint duration))]
+      (tool-text-result
+       (str "AcoustID lookup: " (:status result)
+            (when-let [results (get-in result [:result :results])]
+              (str " - found " (count results) " matches")))
+       result))))
 
-(defn musicbrainz-execute [_runtime config _tool-call-id params a b c]
+(defn ^:async musicbrainz-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         mbid (aget params "mbid")]
     (maybe-tool-update! on-update (str "Looking up MusicBrainz recording " mbid "…"))
-    (-> (music-musicbrainz-recording! config mbid)
-        (.then (fn [result]
-                 (tool-text-result
-                  (str "MusicBrainz recording: " mbid
-                       (when-let [title (get-in result [:result :title])]
-                         (str " - " title)))
-                  result))))))
+    (let [result (await (music-musicbrainz-recording! config mbid))]
+      (tool-text-result
+       (str "MusicBrainz recording: " mbid
+            (when-let [title (get-in result [:result :title])]
+              (str " - " title)))
+       result))))
 
 (defn copyright-check-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
@@ -226,7 +215,7 @@
                                                               :height height
                                                               :title title})))
 
-(defn generate-execute [runtime config _tool-call-id params a b c]
+(defn ^:async generate-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         raw-spec-json (or (aget params "spec_json")
                           (aget params "specJson")
@@ -235,12 +224,11 @@
         output-path (media/normalize-tool-path-arg (or (aget params "output_path")
                                                        (aget params "outputPath")))]
     (maybe-tool-update! on-update "Generating music from spec…")
-    (-> (music-generate! runtime config spec-json output-path)
-        (.then (fn [result]
-                 (tool-text-result
-                  (str "Generated WAV: " (:workspace-path result)
-                       " (" (:durationSec result) "s, " (:sampleRate result) "Hz)")
-                  result))))))
+    (let [result (await (music-generate! runtime config spec-json output-path))]
+      (tool-text-result
+       (str "Generated WAV: " (:workspace-path result)
+            " (" (:durationSec result) "s, " (:sampleRate result) "Hz)")
+       result))))
 
 (def identify-file-tool
   (partial create-tool-obj

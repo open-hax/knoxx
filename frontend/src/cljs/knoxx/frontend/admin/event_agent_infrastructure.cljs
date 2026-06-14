@@ -34,7 +34,7 @@
 
 (defnc source-defaults
   "Default source configuration values."
-  [{:keys [discord-source on-update can-manage saving-control]}]
+  [{:keys [^js discord-source on-update can-manage saving-control]}]
   (d/div {:class-name "space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4"}
          (d/div
            (d/div {:class-name "text-sm font-semibold text-slate-100"} "Source defaults")

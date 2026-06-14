@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-futuresight-kms-sync-public-collection"
 title: "Write sync_public_collection.py to mirror published docs to Qdrant"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # Write sync_public_collection.py to mirror published docs to Qdrant
 
 > Parent epic: `knoxx-knowledge-ops-chat-widget-layers`

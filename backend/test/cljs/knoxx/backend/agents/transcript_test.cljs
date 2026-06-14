@@ -13,7 +13,8 @@
     (send-user-message! [_ _content] (js/Promise.resolve nil))
     (follow-up! [_ _message] (js/Promise.resolve nil))
     (steer! [_ _message] (js/Promise.resolve nil))
-    (set-thinking-level! [_ _level] nil)))
+    (set-thinking-level! [_ _level] nil)
+    (abort! [_] (js/Promise.resolve nil))))
 
 (deftest session->stored-messages-normalizes-supported-provider-content
   (testing "text content arrays are joined and unsupported roles/blank messages are skipped"

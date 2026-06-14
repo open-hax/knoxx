@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-events-agent-runtime-separation"
 title: "Events, Triggers, Actions, Schedules, and Agents Runtime Separation"
-status: "icebox"
+status: accepted
 priority: "P2"
 labels: "["epics"]"
 created_at: "2026-05-06T00:00:00Z"
@@ -9,7 +9,6 @@ source: "specs/epics/events-agent-runtime-separation.md"
 points: null
 category: "epics"
 ---
-
 # Events, Triggers, Actions, Schedules, and Agents Runtime Separation
 
 > Source: `specs/epics/events-agent-runtime-separation.md`
@@ -43,4 +42,6 @@ GAPS FOUND:
 (4) domain/discord/discord_io.cljs docstring line 2 still names trigger-runner as a consumer — stale after the facade became a pure delegation shim.
 
 Total scope: 13sp. Four independent streams, each bounded. Original epic → icebox. Split into 4 subtasks. --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
+---
+2026-06-02 breakdown addendum: Added task `knoxx-trigger-action-task-prompt-migration` (P1, 5sp, ready) to move triggered-run task prompts out of agent resources and into trigger/action invocation input, with audit visibility for rendered user tasks and deprecated fallback warnings for legacy agent `:prompts :task`. --tasks-dir .
 ---

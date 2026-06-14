@@ -4,18 +4,41 @@
             [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.infra.registry.tools :as tools]))
 
+(def standard-namespaces
+  "Set of keyword namespaces that are standard resource kind prefixes.
+   These are stripped during id normalization; non-standard namespaces are preserved."
+  #{"role" "cap" "roles" "capabilities" "action" "actor"
+    "agent" "trigger" "store" "source" "policy"
+    "schedule" "generator" "model" "model-family"
+    "sub-agent" "runtime-feature" "source-mode"
+    "ingest-source"})
+
 (defn- keywordish-id
+  "Convert a value to a string id. Preserves namespace-qualified keywords
+   (e.g. :deploy/greeter-role -> \"deploy/greeter-role\") while stripping
+   standard namespaces like :role/ or :cap/."
   [value]
   (cond
-    (keyword? value) (some-> value name str/trim not-empty)
+    (keyword? value)
+    (let [ns-part (namespace value)
+          name-part (some-> value name str/trim not-empty)]
+      (when name-part
+        (if (and ns-part (not (standard-namespaces ns-part)))
+          (str ns-part "/" name-part)
+          name-part)))
     (string? value) (some-> value str str/trim not-empty)
     (nil? value) nil
     :else (some-> value str str/trim not-empty)))
 
 (defn- id-candidates
+  "Generate candidate ids for lookup. For qualified ids (containing /),
+   also generates the unqualified local name as a fallback candidate."
   [value]
   (let [raw (keywordish-id value)]
     (->> [raw
+          ;; For qualified ids, also try the unqualified local name
+          (when (and raw (str/includes? raw "/"))
+            (last (str/split raw #"/")))
           (some-> raw (str/replace #"_" "-"))
           (some-> raw (str/replace #"-" "_"))
           (when (some-> raw (str/starts-with? "cap_"))

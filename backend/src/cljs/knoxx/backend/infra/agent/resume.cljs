@@ -2,20 +2,21 @@
   "Isolated module for session resumption across backend restarts.
 
    Startup:
-   - Scan Redis for sessions that were active when the previous process exited.
+   - Scan Mongo for sessions that were active when the previous process exited.
    - Recent sessions (< 10 min) are resumed in the background (non-blocking).
    - Stale sessions (>= 10 min) are aborted so the UI does not show ghost
      'active' sessions forever.
 
    Shutdown:
    - Wait for in-flight proxx SDK turns to finish.
-   - Give Redis a grace window to persist final state.
+   - Give the session store a grace window to persist final state.
    - If turns time out, mark their sessions resumable for the next startup."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.agent.recovery :as agent-recovery]
             [knoxx.backend.infra.agent.session :as agent-session]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.mongo-client :as mongo-client]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
+            [knoxx.backend.infra.system-instance :as system-instance]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.domain.time :refer [now-iso]]
             [knoxx.backend.shape.agent :refer [streaming?]]))
@@ -23,7 +24,7 @@
 ;; ─── Config ───────────────────────────────────────────────────────────
 
 (def STALE_THRESHOLD_MS (* 10 60 1000)) ; 10 minutes
-(def POST_DRAIN_GRACE_MS 1000)          ; let Redis writes flush after turns complete
+(def POST_DRAIN_GRACE_MS 1000)          ; let session-store writes flush after turns complete
 (def RECOVERY_INTERVAL_MS 15000)        ; periodic recovery tick
 (def STARTUP_RESUME_CONCURRENCY 2)      ; keep HTTP/event loop responsive after restart
 (def RECOVERY_COOLDOWN_MS 60000)        ; skip sessions touched within last 60s
@@ -78,6 +79,16 @@
     (and (pos? last-ms)
          (>= (- (.now js/Date) last-ms) STALE_THRESHOLD_MS))))
 
+(defn- session-dead?
+  "True when the session cannot belong to a live run: either stale past the
+   threshold, or stamped by a previous system instance whose process no
+   longer exists. With auto-resume enabled, instance-orphaned sessions are
+   handed to the resume path instead of being treated as dead."
+  [config session]
+  (or (session-stale? session)
+      (and (not (auto-resume-enabled? config))
+           (not (system-instance/owned-by-current-instance? session)))))
+
 (defn- runtime-processing-session?
   [conversation-id]
   (let [active (agent-session/active-agent-session conversation-id)
@@ -109,15 +120,16 @@
 (defn ^:async abort-stale-session!
   [session]
   (let [session-id (str (or (:session_id session) ""))
-        conversation-id (str (or (:conversation_id session) ""))
-        client (redis/get-client)]
-    (if (or (str/blank? session-id) (nil? client))
-      {:session_id session-id :action "abort_skipped" :reason "missing session_id or redis"}
+        conversation-id (str (or (:conversation_id session) ""))]
+    (if (str/blank? session-id)
+      {:session_id session-id :action "abort_skipped" :reason "missing session_id"}
       (try
         (await (session-store/complete-session!
-                client session-id conversation-id
+                session-id conversation-id
                 {:status "failed"
-                 :error "Session aborted automatically: stale (> 10 min)"
+                 :error (if (system-instance/owned-by-current-instance? session)
+                          "Session aborted automatically: stale (> 10 min)"
+                          "Session aborted automatically: orphaned by previous system instance")
                  :messages (:messages session)}))
         {:session_id session-id :conversation_id conversation-id :action "aborted" :reason "stale"}
         (catch :default err
@@ -173,12 +185,12 @@
 
 (defn ^:async process-sessions!
   [runtime app config sessions]
-  (let [{stale true recent false} (group-by session-stale? sessions)
+  (let [{stale true recent false} (group-by #(session-dead? config %) sessions)
         resumable-recent (if (auto-resume-enabled? config)
                            (filter session-resumable? recent)
                            [])]
     (when (seq stale)
-      (log-warn! app (str "[agent-resume] aborting " (count stale) " stale session(s)")))
+      (log-warn! app (str "[agent-resume] aborting " (count stale) " dead session(s) (stale or orphaned by restart)")))
     (when (and (seq recent) (not (auto-resume-enabled? config)))
       (log-warn! app (str "[agent-resume] auto resume disabled; leaving " (count recent)
                           " recent running session(s) untouched")))
@@ -203,13 +215,16 @@
   (js/Math.round (* 1000 (.uptime js/process))))
 
 (defn ^:async resume-on-startup!
-  "Fire-and-forget scan of Redis active sessions on startup.
+  "Fire-and-forget scan of Mongo running sessions on startup.
+   At true process startup every running document was stamped by a previous
+   system instance, so it is aborted (auto-resume off) or resumed
+   (auto-resume on) immediately — no staleness wait.
    Returns a promise for testability, but callers should not await it
    on the critical startup path."
   [runtime app config]
-  (if-let [client (redis/get-client)]
+  (if-let [db (mongo-client/get-db)]
     (try
-      (let [sessions (await (session-store/recover-sessions! client))
+      (let [sessions (await (session-store/recover-sessions! db))
             running (vec (filter #(= "running" (:status %)) sessions))
             result (if (seq running)
                      (await (process-sessions! runtime app config running))
@@ -220,8 +235,8 @@
         (log-info! app "[agent-resume] startup scan failed" err)
         {:error (str err)}))
     (do
-      (log-warn! app "[agent-resume] Redis unavailable; skipping startup scan")
-      {:skipped true :reason "redis_not_connected"})))
+      (log-warn! app "[agent-resume] MongoDB unavailable; skipping startup scan")
+      {:skipped true :reason "mongodb_not_connected"})))
 
 (defn resume-on-process-startup!
   "Run startup recovery once per Node process, not once per shadow-cljs reload.
@@ -260,41 +275,53 @@
 
 ;; ─── Public API: periodic recovery ────────────────────────────────────
 
+(defn- log-recovery-partition!
+  "Log the abort/skip/resume decision for one recovery tick."
+  [app config {:keys [stale recent resumable]}]
+  (when (seq stale)
+    (log-warn! app (str "[agent-resume] aborting " (count stale)
+                        " dead session(s) (stale or orphaned by restart)")))
+  (when (and (seq recent) (not (auto-resume-enabled? config)))
+    (log-warn! app (str "[agent-resume] auto resume disabled; periodic recovery leaving "
+                        (count recent) " recent running session(s) untouched")))
+  (when (seq resumable)
+    (log-info! app (str "[agent-resume] resuming " (count resumable) " recent session(s)"))))
+
+(defn- ^:async run-recovery-batches!
+  "Abort dead sessions and resume resumable ones; errors are logged, not thrown."
+  [runtime app config {:keys [stale resumable]}]
+  (try
+    (await (.all js/Promise (clj->js (mapv abort-stale-session! stale))))
+    (catch :default err
+      (log-info! app "[agent-resume] abort batch error" err)))
+  (try
+    (await (.all js/Promise (clj->js (mapv #(agent-recovery/resume-recovered-session!
+                                             runtime config % {:wait-for :kickoff})
+                                            resumable))))
+    (catch :default err
+      (log-info! app "[agent-resume] resume batch error" err))))
+
 (defn ^:async attempt-recovery!
   [runtime app config]
-  (if-let [client (redis/get-client)]
+  (if-let [db (mongo-client/get-db)]
     (try
-      (let [sessions (await (session-store/recover-sessions! client))
+      (let [sessions (await (session-store/recover-sessions! db))
             running (vec (filter #(= "running" (:status %)) sessions))
-            {stale true recent false} (group-by session-stale? running)
+            {stale true recent false} (group-by #(session-dead? config %) running)
             resumable (if (auto-resume-enabled? config)
                         (filter session-resumable? recent)
-                        [])]
-        (when (seq stale)
-          (log-warn! app (str "[agent-resume] aborting " (count stale) " stale session(s)")))
-        (when (and (seq recent) (not (auto-resume-enabled? config)))
-          (log-warn! app (str "[agent-resume] auto resume disabled; periodic recovery leaving "
-                              (count recent) " recent running session(s) untouched")))
-        (when (seq resumable)
-          (log-info! app (str "[agent-resume] resuming " (count resumable) " recent session(s)")))
-        (try
-          (await (.all js/Promise (clj->js (mapv abort-stale-session! stale))))
-          (catch :default err
-            (log-info! app "[agent-resume] abort batch error" err)))
-        (try
-          (await (.all js/Promise (clj->js (mapv #(agent-recovery/resume-recovered-session!
-                                                   runtime config % {:wait-for :kickoff})
-                                                  resumable))))
-          (catch :default err
-            (log-info! app "[agent-resume] resume batch error" err)))
+                        [])
+            partition {:stale stale :recent recent :resumable resumable}]
+        (log-recovery-partition! app config partition)
+        (await (run-recovery-batches! runtime app config partition))
         {:stale (count stale)
          :resumed (count resumable)
          :skipped (- (count recent) (count resumable))})
       (catch :default err
         (log-info! app "[agent-resume] recovery tick error" err)
-        (log-info! app "[agent-resume] redis:" (nil? (redis/get-client)))
+        (log-info! app "[agent-resume] mongo:" (nil? (mongo-client/get-db)))
         {:error (str err)}))
-    {:skipped true :reason "redis_not_connected"}))
+    {:skipped true :reason "mongodb_not_connected"}))
 
 (defn start-periodic-recovery!
   [runtime app config]
@@ -304,9 +331,10 @@
   (when-not @interval-handle*
     (reset! interval-handle*
             (js/setInterval
-             (fn []
-               (-> (attempt-recovery! runtime app config)
-                   (.catch (fn [_] nil))))
+             (^:async fn []
+               (try
+                 (await (attempt-recovery! runtime app config))
+                 (catch :default _ nil)))
              RECOVERY_INTERVAL_MS))))
 
 (defn stop-periodic-recovery!
@@ -319,14 +347,14 @@
 
 (defn ^:async mark-sessions-resumable!
   "Called by graceful-shutdown when active turns time out."
-  [client active-turns signal]
+  [active-turns signal]
   (let [stamp (now-iso)]
     (when (seq active-turns)
       (await (.all js/Promise
                    (clj->js
                     (mapv (fn [{:keys [session_id conversation_id run_id]}]
                             (when-not (str/blank? (str (or session_id "")))
-                              (session-store/update-session! client session_id
+                              (session-store/update-session! session_id
                                                              {:status "running"
                                                               :conversation_id conversation_id
                                                               :run_id run_id
@@ -337,7 +365,7 @@
     (count active-turns)))
 
 (defn wait-for-turns-and-flush!
-  "Wait for turn-control to drain, then give Redis a grace window to persist.
+  "Wait for turn-control to drain, then give the session store a grace window to persist.
    Returns a promise."
   [app config]
   (let [grace-ms (let [v (:shutdown-grace-ms config)]
@@ -352,7 +380,7 @@
                    (cond
                      (zero? remaining)
                      (do (log-info! app (str "[agent-resume] turns drained; waiting "
-                                             POST_DRAIN_GRACE_MS "ms for Redis flush"))
+                                             POST_DRAIN_GRACE_MS "ms for session-store flush"))
                          (js/setTimeout #(resolve #js {:timed_out false :remaining 0})
                                         POST_DRAIN_GRACE_MS))
 

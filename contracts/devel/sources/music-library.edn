@@ -1,7 +1,6 @@
 {:contract/id :devel/music-library
  :contract/kind :ingest_source
  :contract/type :ingest/source
- :contract/version 1
  :tenant/id "devel"
  :source/id :music-library
  :source/name "devel music library"

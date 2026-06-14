@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-trigger-runner-facade-delete"
 title: "Delete infra/trigger-runner deprecated facade after confirming zero callers"
-status: ready
+status: review
 priority: "P3"
 labels: ["tasks", "1sp"]
 created_at: "2026-05-29T00:00:00Z"

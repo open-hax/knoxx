@@ -1,0 +1,33 @@
+{:namespace :ussyverse
+
+ ;; Namespace resource file (see docs/design/resource-architecture.md).
+ ;; Each entry may declare trigger, action, and store keys simultaneously;
+ ;; each interpreter reads only its own keys. Identity is :namespace plus the
+ ;; entry's local id: :trigger/id :social-replies -> :ussyverse/social-replies.
+ :resources
+ [{;; Trigger agreement: discord_automation may start the social replies agent
+   ;; after observing a mention or keyword event in a home channel.
+   :trigger/id :social-replies
+   :trigger/listener "discord_automation"
+   :trigger/events [:discord.message]
+   :trigger/condition (or (conditions/discord.mention event)
+                          (conditions/discord.keyword event ["frankie" "yap" "music" "song" "slop" "ussy"
+                                                             "beat" "loop" "track" "art" "create" "mix" "drop"]))
+   :trigger/action :actions/start-agent-session
+   :trigger/with
+   {:agent-id "ussyverse_social_replies"
+    :task "A Discord event fired in one of your home channels. Read nearby context, inspect links or attachment URLs if useful, and decide whether to reply in-channel. Replies should feel alive, funny, musical, or socially connective."}
+
+   ;; Action facet: what this resource's action may reach at dispatch time.
+   :action/scope
+   {:actions [:actions/start-agent-session]
+    :stores [:ussyverse/observed-messages]}
+
+   ;; Store facet: keyed persistence for messages this trigger has observed.
+   :store/id :observed-messages
+   :store/schema [:map
+                  [:message-id :string]
+                  [:author-id {:optional true} :string]
+                  [:timestamp {:optional true} :int]]
+
+   :trigger/context {:reason "contract event: ussyverse social replies"}}]}

@@ -126,7 +126,7 @@
    "mcp.shoedelussy.render_loop" {:id "mcp.shoedelussy.render_loop" :label "Shoedelussy Render Loop" :description "Create a share-backed browser playback/render URL for Strudel code; this is a browser render link, not a server wav/mp3 export" :risk-level "low"}
     "mcp.shoedelussy.render_wav" {:id "mcp.shoedelussy.render_wav" :label "Shoedelussy Render WAV" :description "Create a browser URL that attempts WAV capture/download from the Shoedelussy frontend shell; this is browser-side export, not a headless server renderer" :risk-level "medium"}
 
-    "memory.temp" {:id "memory.temp" :label "Temporary Memory" :description "Read or write short-lived keyed data with a TTL for pipeline steps" :risk-level "low"}})
+    "memory.temp" {:id "memory.temp" :label "Temporary Memory" :description "Read or write short-lived keyed data with a TTL for action steps or caching within a session" :risk-level "low"}})
 
 (defn known-tool-ids
   []

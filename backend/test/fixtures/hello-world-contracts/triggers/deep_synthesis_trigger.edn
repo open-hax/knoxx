@@ -1,10 +1,11 @@
 {:contract/kind :trigger
  :contract/id "deep_synthesis_trigger"
- :contract/version 4
  :enabled true
 
- ;; Trigger agreement: system_admin may run the deep synthesis pipeline after
+ ;; Trigger agreement: system_admin may run the deep synthesis action after
  ;; observing the schedule-generated deep synthesis event.
+ ;; NOTE: Pipeline contracts removed. Use :actions/run-steps with
+ ;; :action/with {:steps [...]} for composed action sequences.
  :trigger/kind :event
  :trigger/listener "system_admin"
  :trigger/events [:schedule/deep-synthesis]

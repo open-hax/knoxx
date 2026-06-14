@@ -4,8 +4,8 @@
             [knoxx.backend.infra.agent.stream.sinks :as sinks]
             [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.realtime :as realtime]
-            [knoxx.backend.infra.stores.session-store :as session-store]
-            [knoxx.backend.infra.redis-client :as redis]))
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
+            [knoxx.backend.shape.agent :as agent-shape]))
 
 (defn- assistant-message
   [{:keys [content reasoning tool-previews]}]
@@ -60,6 +60,34 @@
   (apply-tool-trace-event! [_ _ _] nil)
   (backfill-tool-input-preview! [_ _ _ _ _] nil))
 
+(defn- recording-abort-session
+  [aborts*]
+  (reify agent-shape/IAgentSession
+    (streaming? [_] true)
+    (current-turn [_] nil)
+    (messages [_] [])
+    (subscribe! [_ _handler] (fn [] nil))
+    (send-user-message! [_ _content] (js/Promise. (fn [_resolve _reject] nil)))
+    (follow-up! [_ _message] (js/Promise.resolve nil))
+    (steer! [_ _message] (js/Promise.resolve nil))
+    (set-thinking-level! [_ _level] nil)
+    (abort! [_] (swap! aborts* inc) (js/Promise.resolve :aborted))))
+
+(deftest request-abort-reaches-the-provider-session
+  (testing "death-spiral / explicit abort routes through IAgentSession abort! to the raw provider"
+    ;; Regression: request-abort! previously called (.abort session) on the wrapper
+    ;; record, which has no such method — it threw and was swallowed, so runaway
+    ;; turns were never actually stopped (only the now-removed timeout caught them).
+    (let [events* (atom [])
+          aborts* (atom 0)
+          state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                       :run-event-sink (RecordingSink. events*))
+          session (recording-abort-session aborts*)]
+      (stream/request-abort! state session "death_spiral_detected")
+      (is (= 1 @aborts*) "abort! must be invoked exactly once on the provider session")
+      (is (some #(= "abort_requested" (get-in % [:event :type])) @events*)
+          "an abort_requested run event should be emitted"))))
+
 (deftest emit-streaming-delta-can-use-fake-run-event-sink
   (testing "stream token side effects are routed through IRunEventSink"
     (let [events* (atom [])
@@ -79,6 +107,32 @@
               :token "Hello"}
              (get-in @events* [4 :event]))))))
 
+(deftest subscribe-handler-uniquifies-reused-provider-tool-call-ids
+  (testing "rounds reusing toolCallId call_0 keep distinct receipts and emit every lifecycle event"
+    (let [events* (atom [])
+          state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                       :run-event-sink (RecordingSink. events*))
+          handle! (stream/build-subscribe-handler state nil)]
+      (handle! #js {:type "tool_execution_start" :toolName "discord_read" :toolCallId "call_0"
+                    :params #js {:limit 20}})
+      (handle! #js {:type "tool_execution_end" :toolName "discord_read" :toolCallId "call_0"
+                    :result "ok"})
+      (handle! #js {:type "tool_execution_start" :toolName "bluesky_timeline" :toolCallId "call_0"
+                    :params #js {:limit 10}})
+      (handle! #js {:type "tool_execution_end" :toolName "bluesky_timeline" :toolCallId "call_0"
+                    :result "ok"})
+      (let [receipts (filterv #(= :tool-receipt (:op %)) @events*)
+            lifecycle-events (->> @events*
+                                  (filter #(= :run-event (:op %)))
+                                  (mapv (fn [{:keys [event]}] [(:type event) (:tool_call_id event)])))]
+        (is (= ["call_0" "call_0" "call_0#2" "call_0#2"]
+               (mapv :receipt-id receipts)))
+        (is (= ["discord_read" "discord_read" "bluesky_timeline" "bluesky_timeline"]
+               (mapv (comp :tool_name :receipt) receipts)))
+        (is (= [["tool_start" "call_0"] ["tool_end" "call_0"]
+                ["tool_start" "call_0#2"] ["tool_end" "call_0#2"]]
+               lifecycle-events))))))
+
 (deftest stream-sink-synchronous-failures-propagate
   (testing "sink wiring bugs are fatal instead of silently hiding stream corruption"
     (let [state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 #js {:randomUUID (fn [] "uuid")})
@@ -97,8 +151,7 @@
                                                        (swap! tokens* conj {:kind kind :delta delta}))
                     run-state/backfill-run-tool-input-preview! (fn [& _] nil)
                     realtime/broadcast-ws-session! (fn [& args] (swap! events* conj args))
-                    session-store/mark-session-streaming! (fn [& _] nil)
-                    redis/get-client (fn [] nil)]
+                    session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
         (stream/emit-streaming-delta! state :reasoning "The")
         (stream/emit-streaming-delta! state :reasoning "TheThe model should reason once.")
         (is (= "The model should reason once." @(:last-reasoning-text* state)))
@@ -117,8 +170,7 @@
                                                        (swap! tokens* conj {:kind kind :delta delta}))
                     run-state/backfill-run-tool-input-preview! (fn [& _] nil)
                     realtime/broadcast-ws-session! (fn [& args] (swap! events* conj args))
-                    session-store/mark-session-streaming! (fn [& _] nil)
-                    redis/get-client (fn [] nil)]
+                    session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
         (doseq [delta ["Ready." " How" "Ready" "." " How" " can" " I" " help" "?"]]
           (stream/emit-streaming-delta! state :agent_message delta))
         (is (= "Ready. How can I help?" @(:last-assistant-text* state)))
@@ -141,8 +193,7 @@
                                                        (swap! tokens* conj {:kind kind :delta delta}))
                     run-state/backfill-run-tool-input-preview! (fn [& _] nil)
                     realtime/broadcast-ws-session! (fn [& args] (swap! events* conj args))
-                    session-store/mark-session-streaming! (fn [& _] nil)
-                    redis/get-client (fn [] nil)]
+                    session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
         (stream/emit-streaming-delta! state :reasoning "The")
         (stream/sync-assistant-message! state (assistant-message {:reasoning "The reply has been sent."}))
         (is (= "The reply has been sent." @(:last-reasoning-text* state)))

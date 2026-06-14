@@ -1,10 +1,11 @@
 {:contract/kind :trigger
  :contract/id "daily_synthesis"
- :contract/version 4
  :enabled false
 
- ;; Trigger agreement: system_admin may run the synthesis pipeline after
+ ;; Trigger agreement: system_admin may run the synthesis action after
  ;; observing the schedule-generated daily synthesis event.
+ ;; NOTE: Pipeline contracts removed. Use :actions/run-steps with
+ ;; :action/with {:steps [...]} for composed action sequences.
  :trigger/kind :event
  :trigger/listener "system_admin"
  :trigger/events [:schedule/daily-synthesis]

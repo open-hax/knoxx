@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-canvas-tool-backend-handler"
 title: "Canvas Tool Backend Handler"
-status: incoming
+status: icebox
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Canvas Tool Backend Handler
 
 > Parent epic: `knoxx-unified-workplace-pattern`

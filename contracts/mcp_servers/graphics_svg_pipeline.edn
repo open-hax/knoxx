@@ -1,0 +1,7 @@
+{:contract/kind :mcp-server
+ :contract/id "graphics_svg_pipeline"
+ :mcp-server/id "graphics-svg-pipeline"
+ :mcp-server/transport :http
+ :mcp-server/url "http://127.0.0.1:8020/mcp"
+ :mcp-server/auth-token "from GRAPHICS_MCP_TOKEN env"
+ :enabled true}

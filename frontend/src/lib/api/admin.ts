@@ -155,32 +155,34 @@ function normalizeMembership(value: unknown): AdminMembershipSummary {
   const record = asRecord(value);
   return {
     id: stringValue(record, ["id"]),
-    userId: optionalStringValue(record, ["userId", "user-id", "user_id"]),
-    orgId: stringValue(record, ["orgId", "org-id", "org_id"]),
-    actorId: optionalStringValue(record, ["actorId", "actor-id", "actor_id"]),
-    orgName: optionalStringValue(record, ["orgName", "org-name", "org_name"]),
-    orgSlug: optionalStringValue(record, ["orgSlug", "org-slug", "org_slug"]),
+    userId: optionalStringValue(record, ["userId"]),
+    orgId: stringValue(record, ["orgId"]),
+    actorId: optionalStringValue(record, ["actorId"]),
+    orgName: optionalStringValue(record, ["orgName"]),
+    orgSlug: optionalStringValue(record, ["orgSlug"]),
     status: stringValue(record, ["status"], "active"),
-    isDefault: optionalBooleanValue(record, ["isDefault", "is-default", "is_default"]),
-    createdAt: optionalStringValue(record, ["createdAt", "created-at", "created_at"]),
-    updatedAt: optionalStringValue(record, ["updatedAt", "updated-at", "updated_at"]),
+    isDefault: optionalBooleanValue(record, ["isDefault"]),
+    createdAt: optionalStringValue(record, ["createdAt"]),
+    updatedAt: optionalStringValue(record, ["updatedAt"]),
     roles: recordArrayValue(valueAt(record, "roles")).map(normalizeRole),
-    toolPolicies: normalizeToolPolicies(valueAt(record, "toolPolicies", "tool-policies", "tool_policies")),
+    toolPolicies: normalizeToolPolicies(valueAt(record, "toolPolicies")),
   };
 }
 
 function normalizeActorCredential(value: unknown): AdminActorCredentialSummary {
   const record = asRecord(value);
+  const rawSecrets = optionalRecordValue(record, ["secretJson"]);
   return {
     id: stringValue(record, ["id"]),
     provider: stringValue(record, ["provider"]),
     label: optionalStringValue(record, ["label"]),
     kind: stringValue(record, ["kind"], "credential"),
-    accountIdentifier: optionalNullableStringValue(record, ["accountIdentifier", "account-identifier", "account_identifier"]),
+    accountIdentifier: optionalNullableStringValue(record, ["accountIdentifier"]),
     status: stringValue(record, ["status"], "active"),
-    configuredFields: stringArrayValue(valueAt(record, "configuredFields", "configured-fields", "configured_fields")),
-    createdAt: optionalStringValue(record, ["createdAt", "created-at", "created_at"]),
-    updatedAt: optionalStringValue(record, ["updatedAt", "updated-at", "updated_at"]),
+    configuredFields: stringArrayValue(valueAt(record, "configuredFields")),
+    secretJson: rawSecrets ? Object.fromEntries(Object.entries(rawSecrets).map(([k, v]) => [k, String(v ?? "")])) : undefined,
+    createdAt: optionalStringValue(record, ["createdAt"]),
+    updatedAt: optionalStringValue(record, ["updatedAt"]),
   };
 }
 
@@ -189,12 +191,12 @@ function normalizeUser(value: unknown): AdminUserSummary {
   return {
     id: stringValue(record, ["id"]),
     email: stringValue(record, ["email"]),
-    displayName: stringValue(record, ["displayName", "display-name", "display_name"], stringValue(record, ["email"])),
-    authProvider: optionalStringValue(record, ["authProvider", "auth-provider", "auth_provider"]),
-    externalSubject: optionalNullableStringValue(record, ["externalSubject", "external-subject", "external_subject"]),
+    displayName: stringValue(record, ["displayName"], stringValue(record, ["email"])),
+    authProvider: optionalStringValue(record, ["authProvider"]),
+    externalSubject: optionalNullableStringValue(record, ["externalSubject"]),
     status: stringValue(record, ["status"], "active"),
-    createdAt: optionalStringValue(record, ["createdAt", "created-at", "created_at"]),
-    updatedAt: optionalStringValue(record, ["updatedAt", "updated-at", "updated_at"]),
+    createdAt: optionalStringValue(record, ["createdAt"]),
+    updatedAt: optionalStringValue(record, ["updatedAt"]),
     credentials: recordArrayValue(valueAt(record, "credentials")).map(normalizeActorCredential),
     memberships: recordArrayValue(valueAt(record, "memberships")).map(normalizeMembership),
   };
@@ -283,7 +285,7 @@ export async function upsertAdminActorCredential(userId: string, provider: strin
   orgId: string;
   kind: string;
   accountIdentifier?: string;
-  credentials: Record<string, string>;
+  secretJson: Record<string, string>;
 }): Promise<{ credential: unknown }> {
   return request<{ credential: unknown }>(`/api/admin/actors/${encodeURIComponent(userId)}/credentials/${encodeURIComponent(provider)}`, {
     method: "PUT",

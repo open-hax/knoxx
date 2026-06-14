@@ -1,5 +1,10 @@
 (ns knoxx.backend.domain.trigger.normalize
-  "Normalize trigger contracts into the event/action runtime shape."
+  "Normalize trigger contracts into the event/action runtime shape.
+
+   :trigger/with is the sole argument mechanism: everything the action needs
+   travels in that map and reaches the action as :action/with. Legacy
+   :trigger/agent and :trigger/task fields fold into it during normalization
+   (explicit :trigger/with keys win) so unmigrated contracts keep working."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.event.normalize :as event-normalize]))
 
@@ -27,6 +32,25 @@
      :emitter (or (nonblank (:trigger/emitter trigger)) explicit-actor)
      :listener (or (nonblank (:trigger/listener trigger)) explicit-actor contract-actors)}))
 
+(defn- legacy-trigger-task
+  [trigger]
+  (or (nonblank (:trigger/task trigger))
+      (nonblank (:trigger/task-prompt trigger))
+      (nonblank (:trigger/message-template trigger))
+      (nonblank (get-in trigger [:data :task]))
+      (nonblank (get-in trigger [:data :message-template]))
+      (nonblank (get-in trigger [:data :context :task]))))
+
+(defn- trigger-with
+  "Build the trigger argument map: explicit :trigger/with keys over folded
+   legacy :trigger/agent and :trigger/task fields."
+  [trigger target]
+  (let [agent-id (or (nonblank (:trigger/agent trigger)) target)
+        task (legacy-trigger-task trigger)]
+    (merge (when agent-id {:agent-id agent-id})
+           (when task {:task task})
+           (:trigger/with trigger))))
+
 (defn normalize-trigger
   [trigger]
   (let [target (nonblank (:trigger/target trigger))
@@ -39,21 +63,12 @@
      :trigger/actor actor
      :trigger/emitter emitter
      :trigger/listener listener
-     :trigger/predicate (or (:trigger/predicate trigger)
-                            (get-in trigger [:data :filters])
-                            {})
      :trigger/condition (or (:trigger/condition trigger)
                             (get-in trigger [:data :condition]))
      :trigger/action (or (:trigger/action trigger)
                          (when target :actions/start-agent-session))
-     :trigger/agent (or (nonblank (:trigger/agent trigger))
-                        target)
-     :trigger/with (:trigger/with trigger)
-     :trigger/task (or (nonblank (:trigger/task trigger))
-                       (nonblank (:trigger/task-prompt trigger))
-                       (nonblank (:trigger/message-template trigger))
-                       (nonblank (get-in trigger [:data :task]))
-                       (nonblank (get-in trigger [:data :message-template]))
-                       (nonblank (get-in trigger [:data :context :task])))
-     :trigger/context (or (get-in trigger [:data :context]) {})
+     :trigger/with (trigger-with trigger target)
+     :trigger/context (or (:trigger/context trigger)
+                          (get-in trigger [:data :context])
+                          {})
      :trigger/raw trigger}))

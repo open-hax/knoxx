@@ -1,6 +1,5 @@
 {:contract/id      "audio_agent"
  :contract/kind    :sub-agent
- :contract/version 1
  :enabled          true
 
  ;; Inherit parent capabilities but restrict to audio-relevant tools

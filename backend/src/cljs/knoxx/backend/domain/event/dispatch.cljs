@@ -2,10 +2,12 @@
   "Contract-native event dispatcher."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [knoxx.backend.domain.action.interpreter :as action-interpreter]
             [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.action.start-agent-session]
             [knoxx.backend.domain.action.run-pipeline]
             [knoxx.backend.domain.condition.registry :as condition-registry]
+            [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.domain.event.normalize :as event-normalize]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
@@ -38,11 +40,15 @@
 
 (defn- load-trigger-resources
   [config]
-  (->> (resources/load-all-resources-sync config)
-       (filter #(= :trigger (:resource/kind %)))
-       (map :resource/definition)
-       (remove nil?)
-       vec))
+  (let [all-resources (resources/load-all-resources-sync config)
+        trigger-resources (filter #(= :trigger (:resource/kind %)) all-resources)
+        trigger-defs (map :resource/definition trigger-resources)]
+    (js/console.log "[event-dispatch] load-trigger-resources: all=" (count all-resources)
+                    " triggers=" (count trigger-resources)
+                    " defs=" (count trigger-defs)
+                    " kinds=" (pr-str (take 5 (map :resource/kind all-resources)))
+                    " sample=" (pr-str (take 1 (map :resource/id trigger-resources))))
+    (vec (remove nil? trigger-defs))))
 
 (defn- emitter-matches?
   "True if the trigger's emitter matches the event's actor."
@@ -83,9 +89,24 @@
    :trigger trigger
    :actor/id (or (nonblank (:trigger/actor trigger))
                  (nonblank (:trigger/listener trigger)))
-   :agent/id (:trigger/agent trigger)
+   :agent/id (get-in trigger [:trigger/with :agent-id])
    :trigger-ctx (merge (get-in trigger [:data :context]) {}
                        (get-in event [:event/payload]) {})})
+
+(defn- trigger-failure-result
+  [trigger event err]
+  (let [diagnostic (errors/log-error!
+                    :event-dispatch/trigger-action
+                    {:trigger/id (:trigger/id trigger)
+                     :event/id (:event/id event)
+                     :event/types (:event/types event)}
+                    err)]
+    {:ok false
+     :failed true
+     :reason (or (:code diagnostic) "action_error")
+     :error (:message diagnostic)
+     :trigger (:trigger/id trigger)
+     :event/id (:event/id event)}))
 
 (defn ^:async dispatch!
   ([event]
@@ -93,31 +114,33 @@
   ([config event]
    (let [event' (event-normalize/normalize-event event)
          event-id (:event/id event')]
-     (append-recent-event! event')
-     (if-not (mark-event-dispatched! event-id)
-       {:matchedTriggers []
-        :event event'
-        :skipped true}
-       (let [matching-triggers (->> (load-trigger-resources config)
-                                    (map trigger-normalize/normalize-trigger)
-                                    (filter #(trigger-matches? % event'))
-                                    vec)
-             results (await (js/Promise.all
-                             (clj->js
-                              (mapv (fn [trigger]
-                                      (-> (action-registry/run-action!
-                                           (actor-context config trigger event')
-                                           (action-registry/action-map trigger))
-                                          (.catch (fn [err]
-                                                    (let [code (or (aget err "code") "action_error")]
-                                                      (js/console.warn "[event-dispatch] trigger" (:trigger/id trigger)
-                                                                       "skipped:" (.-message err))
-                                                      #js {:skipped true :reason code
-                                                           :trigger (:trigger/id trigger)})))))
-                                    matching-triggers))))]
-         {:matchedTriggers (mapv :trigger/id matching-triggers)
-          :event event'
-          :results (js->clj results :keywordize-keys true)})))))
+      (append-recent-event! event')
+      (if-not (mark-event-dispatched! event-id)
+        (do (js/console.log "[event-dispatch] event deduplicated:" event-id)
+            {:matchedTriggers []
+             :event event'
+             :skipped true})
+        (let [all-triggers (load-trigger-resources config)
+              _ (js/console.log "[event-dispatch] loaded triggers:" (count all-triggers))
+              matching-triggers (->> all-triggers
+                                     (map trigger-normalize/normalize-trigger)
+                                     (filter #(trigger-matches? % event'))
+                                     vec)
+               _ (js/console.log "[event-dispatch] matching triggers:" (count matching-triggers) "for event" (pr-str (:event/type event')))
+               results (await (js/Promise.all
+                               (clj->js
+                                 (mapv (^:async fn [trigger]
+                                         (try
+                                           (await (action-registry/run-action!
+                                                   (actor-context config trigger event')
+                                                   (action-registry/action-map trigger)))
+                                           (catch :default err
+                                             (js/console.error "[event-dispatch] action failed for trigger" (:trigger/id trigger) ":" (.-message err))
+                                             (throw err))))
+                                       matching-triggers))))]
+           {:matchedTriggers (mapv :trigger/id matching-triggers)
+            :event event'
+            :results (js->clj results :keywordize-keys true)})))))
 
 (defn status-snapshot
   [config]
@@ -133,7 +156,7 @@
                         :kind (:trigger/kind trigger)
                         :events (:trigger/events trigger)
                         :action (:trigger/action trigger)
-                        :agent (:trigger/agent trigger)
+                        :agent (get-in trigger [:trigger/with :agent-id])
                         :listener (:trigger/listener trigger)})
                      triggers)}))
 

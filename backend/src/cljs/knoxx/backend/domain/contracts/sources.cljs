@@ -102,7 +102,6 @@
       (cond-> (select-keys contract
                            [:contract/id
                             :contract/type
-                            :contract/version
                             :source/name
                             :source/type
                             :source/enabled?

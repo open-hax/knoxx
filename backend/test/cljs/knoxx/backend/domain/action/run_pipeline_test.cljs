@@ -4,10 +4,13 @@
             [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.action.run-pipeline]))
 
+(def empty-fixture-config
+  {:contracts-dir "test/fixtures/empty-contracts"})
+
 (deftest ^:async run-pipeline-rejects-without-pipeline-id
   (try
     (await (action-registry/run-action!
-            {:config {} :trigger {}}
+            {:config empty-fixture-config :trigger {}}
             {:action/kind :actions/run-pipeline
              :action/with {}}))
     (is false "should have rejected")
@@ -17,7 +20,7 @@
 (deftest ^:async run-pipeline-rejects-when-pipeline-not-found
   (try
     (await (action-registry/run-action!
-            {:config {} :trigger {}}
+            {:config empty-fixture-config :trigger {}}
             {:action/kind :actions/run-pipeline
              :action/with {:pipeline-id "nonexistent"}}))
     (is false "should have rejected")

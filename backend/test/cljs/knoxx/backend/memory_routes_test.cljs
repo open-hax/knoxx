@@ -55,14 +55,14 @@
                        0))))]
     ;; Two concurrent calls should coalesce into one fetch
     (let [results (js->clj (await (.all js/Promise
-                                        (clj->js [(memory-routes/cached-memory-sessions-source! nil cache-key fetch-fn)
-                                                  (memory-routes/cached-memory-sessions-source! nil cache-key fetch-fn)])))
+                                        (clj->js [(memory-routes/cached-memory-sessions-source! cache-key fetch-fn)
+                                                  (memory-routes/cached-memory-sessions-source! cache-key fetch-fn)])))
                            :keywordize-keys true)]
       (is (= 1 @calls*))
       (is (= [{:session "s1"}] (get-in (first results) [:value :rows])))
       (is (= "miss" (get-in (first results) [:cache :tier]))))
     ;; Third call should hit memory cache
-    (let [cached (js->clj (await (memory-routes/cached-memory-sessions-source! nil cache-key fetch-fn))
+    (let [cached (js->clj (await (memory-routes/cached-memory-sessions-source! cache-key fetch-fn))
                           :keywordize-keys true)]
       (is (= 1 @calls*))
       (is (= "memory" (get-in cached [:cache :tier])))

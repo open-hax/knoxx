@@ -228,6 +228,30 @@
                                                     :tag tag}]})))))]
     (when (seq matches) matches)))
 
+(defn- build-url-facets [text]
+  (let [url-re (js/RegExp. "(https?://[^\\s]+)" "g")
+        matches (loop [m (.exec url-re text)
+                       acc []]
+                  (if (nil? m)
+                    acc
+                    (let [full-match (aget m 0)
+                          start-char (.-index m)
+                          prefix (.substring text 0 start-char)
+                          start-byte (.-length (text->utf8-bytes prefix))
+                          end-byte (+ start-byte (.-length (text->utf8-bytes full-match)))]
+                      (recur (.exec url-re text)
+                             (conj acc {"$type" "app.bsky.richtext.facet"
+                                        :index {:byteStart start-byte :byteEnd end-byte}
+                                        :features [{"$type" "app.bsky.richtext.facet#link"
+                                                    :uri full-match}]})))))]
+    (when (seq matches) matches)))
+
+(defn- build-facets [text]
+  (let [hashtags (build-hashtag-facets text)
+        urls (build-url-facets text)]
+    (when (or hashtags urls)
+      (vec (concat hashtags urls)))))
+
 (defn ^:async load-and-upload-image! [runtime config session alts idx img-src]
   (let [source (await (media/load-media-source! runtime config img-src media/multimodal-upload-max-bytes))
         blob-result (await (bluesky-upload-blob! session (:buffer source) (:mime-type source)))
@@ -254,7 +278,7 @@
   (let [session (await (bluesky-create-session! runtime))
         embed (await (load-and-upload-images! runtime config session images image-alts))
         reply-refs (await (resolve-reply-refs! reply-to))
-        facets (build-hashtag-facets text)
+        facets (build-facets text)
         record (cond-> {"$type" "app.bsky.feed.post"
                         :text text
                         :createdAt (.toISOString (js/Date.))}
@@ -664,6 +688,7 @@
      "Post a concise update to Bluesky when public social publishing is useful."
      ["Use for original posts, replies (replyTo), and image posts (images param)."
       "Always include relevant hashtags in the text body; they will be auto-faceted."
+      "URLs in the text body are auto-faceted as clickable links."
       "For image posts, provide workspace paths, URLs, or data URLs in the images vector."
       "When replying, pass the parent post AT-URI as replyTo."]
      publish-params

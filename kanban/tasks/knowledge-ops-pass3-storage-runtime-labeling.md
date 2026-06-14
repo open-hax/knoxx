@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-pass3-storage-runtime-labeling"
 title: "Knowledge-ops consistency pass 3: storage and runtime labeling"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Knowledge-ops consistency pass 3: storage and runtime labeling
 
 > Parent epic: `knoxx-knowledge-ops-consistency-review`

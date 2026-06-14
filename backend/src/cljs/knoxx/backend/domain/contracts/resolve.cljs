@@ -10,7 +10,7 @@
 (def known-actor-keys #{:id :kind :default-agent :role-slugs :capability-ids :system-prompt :task-prompt :thinking-level :model :contract-id :model-profile :tool-policies :ui/actions :actor/sources :sources})
 (def known-role-keys #{:id :role/capabilities :role/permissions :role/prompts :role/sources :sources})
 (def known-capability-keys #{:id :capability/description :capability/tools})
-(def known-agent-keys #{:id :enabled :agent/model :agent/thinking :prompts/task :prompts/system :trigger-kind :contract/actor :contract/actors :contract/uses :ui/actions :agent/sources :sources})
+(def known-agent-keys #{:id :enabled :agent/model :agent/thinking :prompts/task :prompts/system :trigger-kind :contract/actor :contract/actors :contract/uses :ui/actions :agent/sources :sources :tool-deny})
 
 (defn contract-extras
   [contract-data known-set]
@@ -55,18 +55,36 @@
     (when (seq merged) merged)))
 
 (defn- keywordish->role-slug
+  "Convert a value to a role slug string. Preserves namespace-qualified keywords
+   (e.g. :deploy/greeter-role -> \"deploy/greeter-role\") while stripping
+   standard namespaces like :role/."
   [value]
   (let [raw (cond
-              (keyword? value) (name value)
+              (keyword? value)
+              (let [ns-part (namespace value)
+                    name-part (some-> value name str/trim not-empty)]
+                (when name-part
+                  (if (and ns-part (not (roles/standard-namespaces ns-part)))
+                    (str ns-part "/" name-part)
+                    name-part)))
               (string? value) value
               (nil? value) nil
               :else (str value))]
     (some-> raw str str/trim not-empty)))
 
 (defn- keywordish->capability-ref
+  "Convert a value to a capability id string. Preserves namespace-qualified
+   keywords (e.g. :deploy/greet -> \"deploy/greet\") while stripping standard
+   namespaces like :cap/ and the cap_ prefix."
   [value]
   (let [raw (cond
-              (keyword? value) (name value)
+              (keyword? value)
+              (let [ns-part (namespace value)
+                    name-part (some-> value name str/trim not-empty)]
+                (when name-part
+                  (if (and ns-part (not (roles/standard-namespaces ns-part)))
+                    (str ns-part "/" name-part)
+                    name-part)))
               (string? value) value
               (nil? value) nil
               :else (str value))]
@@ -289,13 +307,28 @@
                                      vec)]
     {:capability-ids (vec (distinct (concat actor-capability-ids role-capability-ids contract-capability-ids)))}))
 
+(defn- denied-tool-ids
+  "Tool ids an agent contract explicitly removes from its otherwise-granted set.
+   Declared on the contract as :tool-deny (or :data :tool-deny). Lets a specific
+   agent shed a tool granted by a shared role/capability without forking the role
+   — e.g. Discord-delivery agents dropping workspace_media.attach, which they do
+   not need (they deliver via discord.send) and otherwise loop on."
+  [contract]
+  (->> (concat (or (:tool-deny contract) [])
+               (or (get-in contract [:data :tool-deny]) []))
+       (map tool-registry/normalize-tool-id)
+       (remove str/blank?)
+       (into #{})))
+
 (defn- tool-context
   [config role-slugs capability-ids contract]
   (let [role-tool-ids (collect-role-tool-ids config role-slugs)
         capability-tool-ids (collect-capability-tool-ids config capability-ids)
         explicit-tool-ids (legacy-explicit-tool-ids contract)
+        denied (denied-tool-ids contract)
         tool-ids (->> (concat role-tool-ids capability-tool-ids explicit-tool-ids)
                       distinct
+                      (remove denied)
                       sort
                       vec)]
     {:tool-ids tool-ids

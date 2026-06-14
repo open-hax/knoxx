@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-cms-ai-draft-route"
 title: "CMS AI Draft Route — Agent-Assisted Document Draft Generation Endpoint"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # CMS AI Draft Route — Agent-Assisted Document Draft Generation Endpoint
 
 > Parent epic: `knoxx-knowledge-ops-cms-data-model`

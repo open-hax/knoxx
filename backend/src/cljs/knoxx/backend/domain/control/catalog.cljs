@@ -15,7 +15,6 @@
    "capabilities" :capability
    "generators" :generator
    "sources" :source
-   "pipelines" :pipeline
    "roles" :role
    "schedules" :schedule
    "triggers" :trigger

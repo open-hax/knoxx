@@ -69,6 +69,18 @@
               (= quality "good") (assoc-in [:openplanner_labels :explicit_meaning] "good output")
               (= quality "bad") (assoc-in [:openplanner_labels :explicit_meaning] "bad output"))}))
 
+(defn- ^:async ingest-reaction-events!
+  [client record-id event emoji user-id]
+  (try
+    (await (openplanner-client/events! client [event]))
+    (await (openplanner-client/record-reaction! client record-id
+                                                {:emoji emoji
+                                                 :source "discord-gateway-reaction"
+                                                 :user_id user-id}))
+    (catch :default err
+      (.warn js/console "[discord-reaction-labels] failed to ingest reaction" err)
+      {:ok false :error (.-message err)})))
+
 (defn ingest-reaction!
   [config reaction]
   (let [message (js-get reaction "message")
@@ -81,15 +93,7 @@
         (js/Promise.resolve {:ok false :skipped true})
         (let [record-id (discord-record-id channel-id message-id)
               event (message->openplanner-event config message emoji user-id)]
-          (-> (openplanner-client/events! client [event])
-              (.then (fn [_]
-                       (openplanner-client/record-reaction! client record-id
-                                                            {:emoji emoji
-                                                             :source "discord-gateway-reaction"
-                                                             :user_id user-id})))
-              (.catch (fn [err]
-                        (.warn js/console "[discord-reaction-labels] failed to ingest reaction" err)
-                        {:ok false :error (.-message err)})))))))
+          (ingest-reaction-events! client record-id event emoji user-id)))))
 
 (defn bind!
   [config]

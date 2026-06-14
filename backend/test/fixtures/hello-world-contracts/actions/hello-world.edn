@@ -1,6 +1,5 @@
 {:contract/kind :action
  :contract/id "hello-world"
- :contract/version 1
  :enabled true
 
  ;; This resource describes executable behavior exposed by the action registry.
@@ -8,8 +7,6 @@
  :action/id :actions/hello-world
  :action/kind :actions/hello-world
  :action/handler "knoxx.backend.domain.action.registry/run-action!"
- :action/responds-to [:message/greeting]
- :action/result :message/send.expectation
 
  ;; A catalog declares the resources this action expects to be meaningful.
  ;; Authorization/policy checks decide whether the receiving actor may use them.

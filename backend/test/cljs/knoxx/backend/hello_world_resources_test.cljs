@@ -60,7 +60,7 @@
   [relative-path]
   (let [file-path (.join path (resource-root) relative-path)
         edn-text (.readFileSync node-fs file-path "utf8")]
-    (or (contract-loader/parse-contract-file! file-path edn-text)
+    (or (first (contract-loader/parse-contract-file-records! file-path edn-text))
         (throw (js/Error. (str "hello-world resource failed to parse: " relative-path))))))
 
 (defn- parsed-resource
@@ -103,7 +103,6 @@
       (is (= :schedule (:contract/kind schedule))))
     (testing "action advertises behavior but does not subscribe or schedule"
       (is (= :actions/hello-world (:action/kind action)))
-      (is (= [:message/greeting] (:action/responds-to action)))
       (is (nil? (:trigger/events action)))
       (is (nil? (:schedule/rule action))))
     (testing "trigger hears events and requests an action without a schedule"

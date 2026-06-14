@@ -1,0 +1,11 @@
+{:namespace :graphics
+ :resources
+ [{:trigger/id :svg-rendered
+   :trigger/kind :event
+   :trigger/listener "system_admin"
+   :trigger/events [:graphics.svg.rendered]
+   :trigger/action :actions/graphics-review}
+
+  {:action/id :graphics-review
+   :action/kind :agent-call
+   :action/handler "graphics_reviewer"}]}

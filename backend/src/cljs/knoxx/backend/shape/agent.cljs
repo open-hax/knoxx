@@ -93,4 +93,9 @@
   (steer! [s message]
     "Steer the current generation. Returns a Promise.")
   (set-thinking-level! [s level]
-    "Set the thinking/reasoning level on the session."))
+    "Set the thinking/reasoning level on the session.")
+  (abort! [s]
+    "Abort the in-flight agent turn at the provider, stopping the tool/generation
+     loop. Returns a Promise. Used by the death-spiral guard and explicit aborts;
+     this is the only mechanism that halts a runaway turn now that turns may run
+     unbounded."))

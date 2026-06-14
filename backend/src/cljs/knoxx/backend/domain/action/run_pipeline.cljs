@@ -1,9 +1,11 @@
 (ns knoxx.backend.domain.action.run-pipeline
-  "Built-in action: run a :pipeline contract."
+  "DEPRECATED: Use :actions/run-steps instead.
+
+   Built-in action: run a :pipeline contract. This action is retained for
+   backward compatibility only. Delegates to :actions/run-steps handler."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.contracts.loader :as loader]
-            [knoxx.backend.domain.action.registry :refer [run-action!]]
-            [knoxx.backend.infra.pipeline-runner :as pipeline-runner]))
+            [knoxx.backend.domain.action.registry :as registry]))
 
 (defn- nonblank
   [value]
@@ -19,25 +21,21 @@
               (:contract record)))
           (loader/load-all-contracts-sync config))))
 
-(defn- trigger-ctx
-  "Extract trigger context from the execution ctx map.
-   For events: merge event payload with trigger data context.
-   For cron/manual: use trigger data context directly."
-  [{:keys [event trigger trigger-ctx]}]
-  (or trigger-ctx
-      (merge (get-in trigger [:data :context]) {})
-      (get-in event [:event/payload]) {}))
-
-(defmethod run-action! :actions/run-pipeline
-  [{:keys [config _trigger] :as ctx} action]
+(defmethod registry/run-action! :actions/run-pipeline
+  [{:keys [config] :as ctx} action]
+  (js/console.warn "[knoxx/actions] :actions/run-pipeline is deprecated; use :actions/run-steps")
   (let [pipeline-id (or (get-in action [:action/with :pipeline-id])
                         (get-in action [:action/with :pipelineId]))]
     (if-not pipeline-id
       (js/Promise.reject
        (js/Error. "Action :actions/run-pipeline requires :pipeline-id in :action/with"))
       (if-let [contract (load-contract-sync config "pipelines" pipeline-id)]
-        (pipeline-runner/run-pipeline! config
-                                       (assoc contract
-                                              :trigger-ctx (trigger-ctx ctx)))
+        (let [steps (or (:pipeline/steps contract) [])
+              run-steps-action {:action/kind :actions/run-steps
+                                :action/with {:steps (mapv (fn [step]
+                                                             {:action (keyword (:step/contract step))
+                                                              :with (get-in step [:step/data :context] {})})
+                                                           steps)}}]
+          (registry/run-steps-handler ctx run-steps-action))
         (js/Promise.reject
          (js/Error. (str "Pipeline contract not found: " pipeline-id)))))))

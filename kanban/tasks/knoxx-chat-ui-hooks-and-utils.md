@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-chat-ui-hooks-and-utils"
 title: "Chat UI — useChat hook and shared transport utilities"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Chat UI — useChat hook and shared transport utilities
 
 > Parent epic: `knoxx-knowledge-ops-chat-ui-library`

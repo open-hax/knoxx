@@ -5,8 +5,7 @@
  ;; If the receiving actor doesn't  have permission to use them, an error is emitted
 ;; these are requirements.
 ;; a catalog of resources that must be available to the calling context
- :action/scope {:conditions [:time/is-morning? :time/is-night?]
-                }
+ :action/scope {:conditions [:time/is-morning? :time/is-night?]}
 ;; this is how we actually described how the action operated
 
  :action/handler

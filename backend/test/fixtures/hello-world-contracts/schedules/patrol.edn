@@ -1,10 +1,9 @@
 {:contract/kind :schedule
  :contract/id "patrol"
- :contract/version 1
  :enabled true
 
  ;; Temporal resource split from patrol_trigger. It emits an event; the matching
- ;; trigger requests the patrol pipeline through normal event dispatch.
+ ;; trigger requests the patrol action through normal event dispatch.
  :schedule/id "patrol"
  :schedule/rule "*/5 * * * *"
  :schedule/generator "knoxx_schedule"

@@ -1,7 +1,6 @@
 {:contract/id :knoxx-session/opencode-sessions
  :contract/kind :ingest_source
  :contract/type :ingest/source
- :contract/version 1
  :tenant/id "knoxx-session"
  :source/id :opencode-sessions
  :source/name "OpenCode coding sessions"

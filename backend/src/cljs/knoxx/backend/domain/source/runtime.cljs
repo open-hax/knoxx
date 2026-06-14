@@ -6,8 +6,10 @@
    dispatch-source-event! (or receives :dispatch! in start-source!) with a plain
    event map. This namespace attaches source/driver provenance and forwards the
    normalized event into the generic event dispatcher."
-  (:require [knoxx.backend.domain.driver.builtin :as driver-builtin]
+  (:require [knoxx.backend.domain.contracts.loader :as contract-loader]
+            [knoxx.backend.domain.driver.builtin :as driver-builtin]
             [knoxx.backend.domain.driver.registry :as driver-registry]
+            [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.domain.resources.loader :as resources]))
 
@@ -82,6 +84,12 @@
   (when-let [driver (driver-registry/driver (:source/driver source))]
     (driver-registry/source-event driver source event)))
 
+(defn- skip-result
+  [reason data]
+  (let [result (merge {:skipped true :reason reason} data)]
+    (errors/log-warning! :source-runtime/dispatch-skipped result)
+    result))
+
 (defn ^:async dispatch-source-event!
   "Dispatch one event through a concrete source resource if it selected the event.
 
@@ -93,17 +101,15 @@
         driver (:source/driver source)]
     (cond
       (not (driver-registry/registered-driver? driver))
-      {:skipped true
-       :reason :unknown-driver
-       :driver driver
-       :source/id (:source/id source)}
+      (skip-result :unknown-driver
+                   {:driver driver
+                    :source/id (:source/id source)})
 
       (not (source-listens-to? source event-type))
-      {:skipped true
-       :reason :source-not-listening
-       :driver driver
-       :source/id (:source/id source)
-       :event/type (driver-registry/event-type event-type)}
+      (skip-result :source-not-listening
+                   {:driver driver
+                    :source/id (:source/id source)
+                    :event/type (driver-registry/event-type event-type)})
 
       :else
       (await (event-dispatch/dispatch! config (source-event source event))))))
@@ -114,13 +120,18 @@
    The event is admitted only if an enabled source resource for that actor uses
    the driver and lists the event type in :source/listens."
   [config driver-id actor-id event]
-  (if-let [source (matching-source config driver-id actor-id (event-entry event))]
-    (await (dispatch-source-event! config source event))
-    {:skipped true
-     :reason :no-matching-source
-     :driver (driver-registry/normalize-driver-id driver-id)
-     :actor/id actor-id
-     :event/type (driver-registry/event-type (event-entry event))}))
+  (let [event-type (event-entry event)
+        source (matching-source config driver-id actor-id event-type)]
+    (js/console.log "[source-runtime] dispatch-driver-event:"
+                    (pr-str driver-id) (pr-str actor-id) (pr-str event-type)
+                    (if source "found-source" "no-matching-source")
+                    "config-roots=" (pr-str (contract-loader/contract-root-paths config)))
+    (if source
+      (await (dispatch-source-event! config source event))
+      (skip-result :no-matching-source
+                   {:driver (driver-registry/normalize-driver-id driver-id)
+                   :actor/id actor-id
+                   :event/type (driver-registry/event-type (event-entry event))}))))
 
 (defn- source-start-context
   [config source]
@@ -134,13 +145,29 @@
   (driver-builtin/register-built-in-drivers!)
   (let [driver-id (:source/driver source)]
     (if-let [driver (driver-registry/driver driver-id)]
-      (let [result (await (driver-registry/start-source! driver (source-start-context config source)))
-            status (merge {:driver/id (driver-registry/driver-id driver)
-                           :source/id (:source/id source)
-                           :source/actor (:source/actor source)}
-                          (when (map? result) result))]
-        (swap! source-status* assoc (:source/id source) status)
-        status)
+      (try
+        (let [result (await (driver-registry/start-source! driver (source-start-context config source)))
+              status (merge {:driver/id (driver-registry/driver-id driver)
+                             :source/id (:source/id source)
+                             :source/actor (:source/actor source)}
+                            (when (map? result) result))]
+          (swap! source-status* assoc (:source/id source) status)
+          status)
+        (catch :default err
+          (let [diagnostic (errors/log-error! :source-runtime/start-source
+                                              {:driver/id (driver-registry/driver-id driver)
+                                               :source/id (:source/id source)
+                                               :source/actor (:source/actor source)}
+                                              err)
+                status {:started? false
+                        :failed true
+                        :reason :source-start-failed
+                        :error (:message diagnostic)
+                        :driver/id (driver-registry/driver-id driver)
+                        :source/id (:source/id source)
+                        :source/actor (:source/actor source)}]
+            (swap! source-status* assoc (:source/id source) status)
+            status)))
       (let [status {:started? false
                     :reason :unknown-driver
                     :driver/id driver-id

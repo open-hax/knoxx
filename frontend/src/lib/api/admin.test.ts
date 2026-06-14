@@ -14,6 +14,7 @@ import {
   stopEventAgentRuntime,
   startEventAgentRuntime,
   resetEventAgentRuntime,
+  upsertAdminActorCredential,
 } from "./admin";
 
 // Mock the core request module
@@ -87,15 +88,15 @@ describe("Admin API", () => {
         users: [{
           id: "user-1",
           email: "agent@example.test",
-          "display-name": "Agent",
+          displayName: "Agent",
           status: "active",
           memberships: [{
             id: "membership-1",
-            "org-id": "org-1",
-            "actor-id": "agent",
+            orgId: "org-1",
+            actorId: "agent",
             status: "active",
             roles: [{ id: "role-1", slug: "basic-user", name: "Basic user" }],
-            "tool-policies": [{ "tool-id": "read", effect: "deny" }],
+            toolPolicies: [{ toolId: "read", effect: "deny" }],
           }],
         }],
       });
@@ -194,5 +195,51 @@ describe("Admin API", () => {
       "/api/admin/config/events/runtime/reset",
       { method: "POST" }
     );
+  });
+
+  it("upsertAdminActorCredential sends secretJson in body", async () => {
+    mockRequest.mockResolvedValueOnce({
+      credential: { id: "cred-1", provider: "discord_bot", configuredFields: ["botToken", "applicationId"] },
+    });
+
+    const result = await upsertAdminActorCredential("user-1", "discord_bot", {
+      orgId: "org-1",
+      kind: "bot-token",
+      accountIdentifier: "app-123",
+      secretJson: { botToken: "tok", applicationId: "123" },
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith("/api/admin/actors/user-1/credentials/discord_bot", {
+      method: "PUT",
+      body: JSON.stringify({
+        orgId: "org-1",
+        kind: "bot-token",
+        accountIdentifier: "app-123",
+        secretJson: { botToken: "tok", applicationId: "123" },
+      }),
+    });
+    expect(result.credential).toMatchObject({
+      id: "cred-1",
+      configuredFields: ["botToken", "applicationId"],
+    });
+  });
+
+  it("upsertAdminActorCredential omits accountIdentifier when blank", async () => {
+    mockRequest.mockResolvedValueOnce({ credential: { id: "cred-2" } });
+
+    await upsertAdminActorCredential("user-2", "bluesky", {
+      orgId: "org-1",
+      kind: "app-password",
+      secretJson: { identifier: "handle.bsky.social", appPassword: "pass" },
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith("/api/admin/actors/user-2/credentials/bluesky", {
+      method: "PUT",
+      body: JSON.stringify({
+        orgId: "org-1",
+        kind: "app-password",
+        secretJson: { identifier: "handle.bsky.social", appPassword: "pass" },
+      }),
+    });
   });
 });

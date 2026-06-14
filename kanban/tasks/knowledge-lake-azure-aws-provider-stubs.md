@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-knowledge-lake-azure-aws-provider-stubs"
 title: "knowledge-lake: Azure and AWS provider stubs"
-status: incoming
+status: accepted
 priority: P2
 labels: ["tasks", "2sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 2
 category: tasks
 ---
-
 # knowledge-lake: Azure and AWS provider stubs
 
 > Parent epic: `knoxx-knowledge-ops-provider-abstraction`

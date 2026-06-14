@@ -1,14 +1,13 @@
 ---
 uuid: "knoxx-uxx-export-editor-statusbar-toolbar"
 title: "Add status bar and toolbar exports to @open-hax/uxx"
-status: incoming
+status: breakdown
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-30T00:00:00Z"
 points: 3
 category: tasks
 ---
-
 # Add status bar and toolbar exports to @open-hax/uxx
 
 > Parent epic: `knoxx-knowledge-ops-ui-design-system`

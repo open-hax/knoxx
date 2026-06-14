@@ -207,19 +207,18 @@
        (.on socket "error" on-error)
        (.on socket "close" on-close)))))
 
-(defn- nrepl-clone! [socket timeout-ms]
+(defn- ^:async nrepl-clone! [socket timeout-ms]
   (let [id (uuid-str)
         msg {"op" "clone" "id" id}]
     (socket-write! socket msg)
-    (-> (collect-responses! socket id timeout-ms)
-        (.then (fn [responses]
-                 (let [session (some (fn [m]
-                                       (or (get m "new-session")
-                                           (get m "session")))
-                                     responses)]
-                   (when (str/blank? (str (or session "")))
-                     (throw (js/Error. (str "nREPL clone did not return a session: " (pr-str responses)))))
-                   session))))))
+    (let [responses (await (collect-responses! socket id timeout-ms))
+          session (some (fn [m]
+                          (or (get m "new-session")
+                              (get m "session")))
+                        responses)]
+      (when (str/blank? (str (or session "")))
+        (throw (js/Error. (str "nREPL clone did not return a session: " (pr-str responses)))))
+      session)))
 
 (defn- nrepl-eval! [socket session code {:keys [timeout-ms]}]
   (let [id (uuid-str)
@@ -271,7 +270,7 @@
        "{:ns " (escape-clj-string (or ns "cljs.user")) "})"
        ")"))
 
-(defn nrepl-eval-execute [_runtime _config _tool-call-id params a b c]
+(defn ^:async nrepl-eval-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a)
                       (when (fn? b) b)
                       (when (fn? c) c))
@@ -284,43 +283,39 @@
     (when (str/blank? (str code))
       (throw (js/Error. "code is required")))
     (maybe-tool-update! on-update (str "Connecting to nREPL at " (nrepl-host) ":" (nrepl-port) "…"))
-    (-> (connect-socket!)
-        (.then
-         (fn [socket]
-           (-> (nrepl-clone! socket timeout-ms)
-               (.then
-                (fn [session]
-                  (maybe-tool-update! on-update (str "nREPL session ready; evaluating " target "…"))
-                  (let [eval-code (if (= target "clj")
-                                    code
-                                    (shadow-cljs-eval-form {:build-id build-id
-                                                           :ns ns
-                                                           :code code}))]
-                    (-> (nrepl-eval! socket session eval-code {:timeout-ms timeout-ms})
-                        (.then
-                         (fn [responses]
-                           (.end socket)
-                           (let [summary (summarize-eval responses)
-                                 [clipped-out _] (clip-text (:out summary) 20000)
-                                 [clipped-err _] (clip-text (:err summary) 20000)
-                                 headline (str "nREPL " target " eval"
-                                               (when (= target "cljs") (str " build=" build-id " ns=" ns))
-                                               ": " (or (:value summary) "(no value)"))]
-                             (tool-text-result
-                              (str headline
-                                   (when-not (str/blank? clipped-out) (str "\n\n[stdout]\n" clipped-out))
-                                   (when-not (str/blank? clipped-err) (str "\n\n[stderr]\n" clipped-err)))
-                              (assoc summary
-                                     :target target
-                                     :build_id build-id
-                                     :ns ns
-                                     :code code)))))
-                        (.catch (fn [err]
-                                  (.end socket)
-                                  (throw err)))))))
-               (.catch (fn [err]
-                         (.end socket)
-                         (throw err)))))))))
+    (let [socket (await (connect-socket!))]
+      (try
+        (let [session (await (nrepl-clone! socket timeout-ms))]
+          (maybe-tool-update! on-update (str "nREPL session ready; evaluating " target "…"))
+          (let [eval-code (if (= target "clj")
+                            code
+                            (shadow-cljs-eval-form {:build-id build-id
+                                                    :ns ns
+                                                    :code code}))]
+            (try
+              (let [responses (await (nrepl-eval! socket session eval-code {:timeout-ms timeout-ms}))]
+                (.end socket)
+                (let [summary (summarize-eval responses)
+                      [clipped-out _] (clip-text (:out summary) 20000)
+                      [clipped-err _] (clip-text (:err summary) 20000)
+                      headline (str "nREPL " target " eval"
+                                    (when (= target "cljs") (str " build=" build-id " ns=" ns))
+                                    ": " (or (:value summary) "(no value)"))]
+                  (tool-text-result
+                   (str headline
+                        (when-not (str/blank? clipped-out) (str "\n\n[stdout]\n" clipped-out))
+                        (when-not (str/blank? clipped-err) (str "\n\n[stderr]\n" clipped-err)))
+                   (assoc summary
+                          :target target
+                          :build_id build-id
+                          :ns ns
+                          :code code))))
+              (catch :default err
+                (.end socket)
+                (throw err)))))
+        (catch :default err
+          (.end socket)
+          (throw err))))))
 
 (def nrepl-eval-tool
   (partial create-tool-obj

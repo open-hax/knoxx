@@ -1,6 +1,5 @@
 {:contract/kind :schedule
  :contract/id "ussyverse_social_creative"
- :contract/version 1
  :enabled true
 
  ;; Temporal resource split from ussyverse_social_creative_cron. It emits an
