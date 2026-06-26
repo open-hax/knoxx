@@ -3,7 +3,6 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.action.registry :refer [run-action!]]
             [knoxx.backend.domain.error-observatory :as errors]
-            [knoxx.backend.infra.agent.runner :as agents-runner]
             [knoxx.backend.infra.tooling :as tooling]))
 
 (defn- nonblank
@@ -223,34 +222,36 @@
                                            {:sticky? (sticky-session-source? source)})
         task-input (action-task-input action trigger resolved)
         rendered-message (render-start-message trigger event task-input (:trigger-id ids))]
-    (when (:deprecated-agent-task-fallback? task-input)
-      (errors/log-warning!
-       :action/start-agent-session.deprecated-agent-task-prompt
-       {:agent-id agent-id
-        :actor-id actor-id'
-        :trigger-id (:trigger-id ids)
-        :event-id (:event/id event)}))
-    (agents-runner/spawn-direct!
-     config
-     {:conversation_id (:conversation-id ids)
-      :session_id (:session-id ids)
-      :run_id (:run-id ids)
-      :message rendered-message
-      :agent_spec (merge {:contract_id agent-id
-                          :actor_id actor-id'
-                          :role (:role resolved)
-                          :system_prompt (:system-prompt resolved)
-                          :model (:model resolved)
-                          :thinking_level (:thinking-level resolved)
-                          :tool_policies (:tool-policies resolved)
-                          :sources (:sources resolved)
-                          :memory_hydration (:memory-hydration resolved)
-                          :context_policy (sticky-context-policy resolved source)
-                          :task_source (some-> (:task-source task-input) qualified-name)
-                          :rendered_task_prompt (:task task-input)
-                          :deprecated_agent_task_fallback (:deprecated-agent-task-fallback? task-input)}
-                         (triggered-audit-metadata trigger event ids))
-      :model (:model resolved)})))
+     (when (:deprecated-agent-task-fallback? task-input)
+       (errors/log-warning!
+        :action/start-agent-session.deprecated-agent-task-prompt
+        {:agent-id agent-id
+         :actor-id actor-id'
+         :trigger-id (:trigger-id ids)
+         :event-id (:event/id event)}))
+     (when-not (:spawn-agent! ctx)
+       (throw (js/Error. "No :spawn-agent! in action context")))
+     ((:spawn-agent! ctx)
+      config
+      {:conversation_id (:conversation-id ids)
+       :session_id (:session-id ids)
+       :run_id (:run-id ids)
+       :message rendered-message
+       :agent_spec (merge {:contract_id agent-id
+                           :actor_id actor-id'
+                           :role (:role resolved)
+                           :system_prompt (:system-prompt resolved)
+                           :model (:model resolved)
+                           :thinking_level (:thinking-level resolved)
+                           :tool_policies (:tool-policies resolved)
+                           :sources (:sources resolved)
+                           :memory_hydration (:memory-hydration resolved)
+                           :context_policy (sticky-context-policy resolved source)
+                           :task_source (some-> (:task-source task-input) qualified-name)
+                           :rendered_task_prompt (:task task-input)
+                           :deprecated_agent_task_fallback (:deprecated-agent-task-fallback? task-input)}
+                          (triggered-audit-metadata trigger event ids))
+       :model (:model resolved)})))
 
 (defmethod run-action! :actions/start-agent
   [ctx action]

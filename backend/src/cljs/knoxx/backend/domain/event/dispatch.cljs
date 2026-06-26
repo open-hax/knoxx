@@ -11,6 +11,7 @@
             [knoxx.backend.domain.event.normalize :as event-normalize]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
+            [knoxx.backend.infra.agent.runner :as agents-runner]
             [knoxx.backend.infra.config :as runtime-config]
             [knoxx.backend.domain.models :as runtime-models]))
 
@@ -88,8 +89,12 @@
    :event event
    :trigger trigger
    :actor/id (or (nonblank (:trigger/actor trigger))
-                 (nonblank (:trigger/listener trigger)))
+                  (nonblank (:trigger/listener trigger)))
    :agent/id (get-in trigger [:trigger/with :agent-id])
+   ;; The spawn function is injected here so domain actions can remain
+   ;; infra-free. Keeping the seam in the dispatcher avoids passing the
+   ;; runner through config while still centralizing the boundary crossing.
+   :spawn-agent! agents-runner/spawn-direct!
    :trigger-ctx (merge (get-in trigger [:data :context]) {}
                        (get-in event [:event/payload]) {})})
 
