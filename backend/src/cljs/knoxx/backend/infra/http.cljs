@@ -40,6 +40,7 @@
               scheme (request-scheme request)]
           (set! (.-protocol parsed) (str scheme ":"))
           (set! (.-hostname parsed) req-host)
+          (set! (.-port parsed) "")
           (.toString parsed))
         url))
     (catch :default _
