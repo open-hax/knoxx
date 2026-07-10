@@ -77,7 +77,10 @@
    :openplanner-base-url (or (aget js/process.env "OPENPLANNER_BASE_URL")
                              (aget js/process.env "OPENPLANNER_URL")
                              "http://host.docker.internal:7777")
-   :openplanner-api-key (env "OPENPLANNER_API_KEY" "")})
+   :openplanner-api-key (env "OPENPLANNER_API_KEY" "")
+   ;; "mongo" = data plane in-process via @open-hax/openplanner-sdk (direct
+   ;; MongoDB + self-sourced embeddings); "rest" = force the fetch client.
+   :openplanner-client-mode (env "KNOXX_OPENPLANNER_CLIENT_MODE" "mongo")})
 
 (defn- provider-config
   []

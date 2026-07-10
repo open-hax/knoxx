@@ -10,6 +10,7 @@
             [knoxx.backend.contract-runtime-deps :as contract-runtime-deps]
             [knoxx.backend.infra.agent.resume :as agent-resume]
             [knoxx.backend.infra.auth.session :as auth-session]
+            [knoxx.backend.infra.clients.openplanner-mongo]
             [knoxx.backend.infra.core :as core]
             [knoxx.backend.domain.discord.gateway :as discord-gateway]
             [knoxx.backend.domain.discord.discord-reaction-labels :as discord-reaction-labels]

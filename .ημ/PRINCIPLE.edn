@@ -240,7 +240,10 @@
     "If a skill emits EDN contracts/facts in assistant output, they SHOULD appear in fenced ```edn blocks so runtime linting can validate them."))
 
 (skill-registry
-  (root "~/.pi/agent/skills")
+  ;; Path migrated 2026-07-10: the pi-era `~/.pi/agent/skills` root is dead.
+  ;; Live skills load from `~/.agents/skills`; deliberately benched skills are
+  ;; parked in `~/.agents/skills.disabled` (move a directory back to enable).
+  (root "~/.agents/skills")
 
   ;; ============================================================
   ;; CORE SKILLS (autoloaded)
@@ -248,42 +251,42 @@
 
   (entry
     (name "work-cycle")
-    (contract "~/.pi/agent/skills/work-cycle/CONTRACT.edn")
+    (contract "~/.agents/skills/work-cycle/CONTRACT.edn")
     (priority 100)
     (autoload true)
     (description "Foundational cognitive loop: observe→model→plan→execute→verify→record, PRNPA loop, methodology."))
 
   (entry
     (name "agent-runtime-state")
-    (contract "~/.pi/agent/skills/agent-runtime-state/CONTRACT.edn")
+    (contract "~/.agents/skills/agent-runtime-state/CONTRACT.edn")
     (priority 85)
     (autoload true)
     (description "Runtime registers, startup procedure, drift detection, session continuity, tick model."))
 
   (entry
     (name "fork-tax")
-    (contract "~/.pi/agent/skills/fork-tax/CONTRACT.edn")
+    (contract "~/.agents/skills/fork-tax/CONTRACT.edn")
     (priority 90)
     (autoload false)
     (description "Persist working state into git: commit + tag + push + manifest artifacts."))
 
   (entry
     (name "receipt-river")
-    (contract "~/.pi/agent/skills/receipt-river/CONTRACT.edn")
+    (contract "~/.agents/skills/receipt-river/CONTRACT.edn")
     (priority 62)
     (autoload true)
     (description "Append-only receipts.log for execution state recovery."))
 
   (entry
     (name "regression-triage")
-    (contract "~/.pi/agent/skills/regression-triage/CONTRACT.edn")
+    (contract "~/.agents/skills/regression-triage/CONTRACT.edn")
     (priority 80)
     (autoload false)
     (description "Investigate regressions: locate introducing change, choose rollback vs fix-forward, add regression test."))
 
   (entry
     (name "spec-driven-dev")
-    (contract "~/.pi/agent/skills/spec-driven-dev/CONTRACT.edn")
+    (contract "~/.agents/skills/spec-driven-dev/CONTRACT.edn")
     (priority 70)
     (autoload false)
     (description "Spec + phases + verification. Kanban FSM integration."))
@@ -294,7 +297,7 @@
 
   (entry
     (name "contract-governance")
-    (contract "~/.pi/agent/skills/contract-governance/CONTRACT.edn")
+    (contract "~/.agents/skills/contract-governance/CONTRACT.edn")
     (priority 30)
     (autoload false)
     (description "Amendments, versioning, rollback, constitutional layers."))
@@ -305,17 +308,17 @@
 
   (entry
     (name "atproto-auth-standardization")
-    (contract "~/.pi/agent/skills/atproto-auth-standardization/CONTRACT.edn")
+    (contract "~/.agents/skills/atproto-auth-standardization/CONTRACT.edn")
     (priority 72))
 
   (entry
     (name "promethean-host-runtime-inventory")
-    (contract "~/.pi/agent/skills/promethean-host-runtime-inventory/CONTRACT.edn")
+    (contract "~/.agents/skills/promethean-host-runtime-inventory/CONTRACT.edn")
     (priority 75))
 
   (entry
     (name "promptdb-contracts")
-    (contract "~/.pi/agent/skills/promptdb-contracts/CONTRACT.edn")
+    (contract "~/.agents/skills/promptdb-contracts/CONTRACT.edn")
     (priority 60)))
 
 ;; ============================================================

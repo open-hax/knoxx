@@ -250,7 +250,27 @@
   (forward-v1! [_ request]
     (request-response! http-client config timeout-ms request)))
 
+(defonce ^:private direct-client-factory*
+  ;; Populated by knoxx.backend.infra.clients.openplanner-mongo at load time;
+  ;; a registration hook keeps the protocol namespace free of a require cycle
+  ;; on the direct-mongo record.
+  (atom nil))
+
+(defn register-direct-client-factory!
+  "Register (fn [config rest-client] client) used when mongo mode is selected."
+  [factory]
+  (reset! direct-client-factory* factory))
+
 (defn client
+  "Build the OpenPlanner client for internal use. Mode comes from
+   :openplanner-client-mode (KNOXX_OPENPLANNER_CLIENT_MODE): \"mongo\"
+   (default) runs the data plane in-process via the OpenPlanner SDK with REST
+   delegation for unported operations; \"rest\" forces the fetch client."
   ([config] (client config {}))
-  ([config {:keys [http-client timeout-ms]}]
-   (->FetchOpenPlannerClient config (or http-client xfetch/default-client) (or timeout-ms 60000))))
+  ([config {:keys [http-client timeout-ms mode]}]
+   (let [rest-client (->FetchOpenPlannerClient config (or http-client xfetch/default-client) (or timeout-ms 60000))
+         selected-mode (or mode (:openplanner-client-mode config) "mongo")
+         make-direct @direct-client-factory*]
+     (if (and (= selected-mode "mongo") make-direct)
+       (make-direct config rest-client)
+       rest-client))))

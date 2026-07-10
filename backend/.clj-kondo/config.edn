@@ -2,7 +2,10 @@
            shadow.cljs.modern/js-await* clojure.core/let}
  :linters
  {:unresolved-symbol
-  {:exclude [js/console js/Promise js/Error js/JSON js/Object
+  ;; `await` is the sanctioned async form (see :discouraged-var below banning
+  ;; js-await in its favor); kondo has no ^:async awareness, so exclude it.
+  {:exclude [await
+             js/console js/Promise js/Error js/JSON js/Object
              js/Array js/fetch js/parseInt js/parseFloat js/Boolean
              js/clearTimeout js/setTimeout js/setInterval js/clearInterval
              js/process js/Buffer js/Symbol js/Date js/Math js/Number

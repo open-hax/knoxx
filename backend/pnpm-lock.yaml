@@ -35,6 +35,9 @@ importers:
       '@open-hax/eta-mu-cli':
         specifier: ^0.70.14
         version: 0.70.16(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(@types/react@19.2.16)(ws@8.20.0)(zod@3.25.76)
+      '@open-hax/openplanner-sdk':
+        specifier: link:../../openplanner/packages/openplanner-sdk
+        version: link:../../openplanner/packages/openplanner-sdk
       '@sinclair/typebox':
         specifier: ^0.34.41
         version: 0.34.49
