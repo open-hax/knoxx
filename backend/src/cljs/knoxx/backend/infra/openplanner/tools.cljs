@@ -213,6 +213,7 @@
           document-id (or (aget params "document_id") (:document_id resource-policies) (:document-id resource-policies))
           garden-id (or (aget params "garden_id") (:garden_id resource-policies) (:garden-id resource-policies))
           project (or (aget params "project") (:project resource-policies) (:project-name config))
+          org-id (or (:orgId auth-context) (:org-id auth-context) (:org_id auth-context))
           segment-index (aget params "segment_index")
           normalized-source (str/trim (str (or source-text "")))
           normalized-translated (str/trim (str (or translated-text "")))
@@ -226,6 +227,8 @@
                                       "; provide an actual " target-lang " translation"))))
           _ (when (str/blank? (str document-id))
               (throw (js/Error. "document_id is required for save_translation")))
+          _ (when (str/blank? (str org-id))
+              (throw (js/Error. "organization is required for save_translation")))
           segment {:source_text source-text
                    :translated_text translated-text
                    :source_lang source-lang
@@ -233,6 +236,7 @@
                    :document_id document-id
                    :garden_id garden-id
                    :project project
+                   :org_id (str org-id)
                    :segment_index segment-index
                    :status "pending"
                    :mt_model "translation-agent"}]
