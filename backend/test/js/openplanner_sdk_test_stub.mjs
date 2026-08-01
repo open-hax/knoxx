@@ -9,16 +9,6 @@ function record(name, args) {
   calls.push({ name, args });
 }
 
-const manifestLanguage = {
-  total_segments: 1,
-  approved: 1,
-  rejected: 0,
-  pending: 0,
-  in_review: 0,
-  with_corrections: 0,
-  avg_labels_per_segment: 0,
-};
-
 const stubSdk = {
   mongo: {
     db: {
@@ -55,104 +45,6 @@ const stubSdk = {
     };
   },
   async close() {},
-  translation: {
-    async listSegments(opts) {
-      record("translation.listSegments", opts);
-      return { segments: [], total: 0, has_more: false };
-    },
-    async segment(id, opts) {
-      record("translation.segment", { id, opts });
-      return {
-        id,
-        source_text: "Hello",
-        translated_text: "Hola",
-        source_lang: "en",
-        target_lang: "es",
-        document_id: "doc-1",
-        segment_index: 0,
-        status: "approved",
-        org_id: opts?.org_id ?? null,
-        labels: [],
-      };
-    },
-    async createSegment(payload) {
-      record("translation.createSegment", payload);
-      return { ok: true, id: "segment-1", status: "pending", upserted: true, modified: false };
-    },
-    async labelSegment(id, payload) {
-      record("translation.labelSegment", { id, payload });
-      return { ok: true, label: { id: "label-1", segment_id: id }, new_status: "approved", graph_memory: { success: true } };
-    },
-    async manifest(input) {
-      record("translation.manifest", input);
-      const project = typeof input === "string" ? input : input?.project ?? "all";
-      return {
-        project,
-        languages: { es: manifestLanguage },
-        labelers: [],
-        export_sizes: { sft_es: { rows: 1, bytes_estimate: 500 } },
-        generated_at: "2026-08-01T00:00:00.000Z",
-      };
-    },
-    async exportSft(opts) {
-      record("translation.exportSft", opts);
-      return `${JSON.stringify({ prompt: "Translate Hello", target: "Hola" })}\n`;
-    },
-    async createSegmentsBatch(payload) {
-      record("translation.createSegmentsBatch", payload);
-      return { ok: true, imported: 1, errors: 0, results: [{ index: 0, id: "segment-1", status: "pending" }] };
-    },
-    async documents(opts) {
-      record("translation.documents", opts);
-      return {
-        documents: [{
-          document_id: "doc-1",
-          target_lang: "es",
-          title: "Document",
-          document_status: "internal",
-          total_segments: 1,
-          approved: 1,
-          pending: 0,
-          rejected: 0,
-          in_review: 0,
-          overall_status: "fully_approved",
-        }],
-        total: 1,
-      };
-    },
-    async document(documentId, targetLang, opts) {
-      record("translation.document", { documentId, targetLang, opts });
-      return {
-        document: { id: documentId, title: "Document", source_lang: "en" },
-        segments: [{ id: "segment-1", document_id: documentId, target_lang: targetLang, org_id: opts?.org_id ?? null, status: "approved", labels: [] }],
-        summary: { total_segments: 1, approved: 1, pending: 0, rejected: 0, in_review: 0, overall_status: "fully_approved" },
-      };
-    },
-    async reviewDocument(documentId, targetLang, payload) {
-      record("translation.reviewDocument", { documentId, targetLang, payload });
-      return { ok: true, document_id: documentId, target_lang: targetLang, segments_reviewed: 1, segments_failed: 0, overall: payload.overall };
-    },
-    async createBatch(payload) {
-      record("translation.createBatch", payload);
-      return { ok: true, batch_id: "batch-1", id: "mongo-batch-1", status: "queued", document_ids: payload.document_ids };
-    },
-    async listBatches(opts) {
-      record("translation.listBatches", opts);
-      return { batches: [{ id: "mongo-batch-1", batch_id: "batch-1", org_id: opts?.org_id ?? null, status: "queued" }] };
-    },
-    async nextBatch(opts) {
-      record("translation.nextBatch", opts);
-      return { batch: { id: "mongo-batch-1", batch_id: "batch-1", org_id: opts?.org_id ?? null, status: "processing" } };
-    },
-    async batch(id, opts) {
-      record("translation.batch", { id, opts });
-      return { id, batch_id: "batch-1", org_id: opts?.org_id ?? null, status: "processing" };
-    },
-    async updateBatch(id, payload) {
-      record("translation.updateBatch", { id, payload });
-      return { ok: true, batch_id: id, status: payload.status };
-    },
-  },
 };
 
 export async function createOpenPlannerSdk() {
