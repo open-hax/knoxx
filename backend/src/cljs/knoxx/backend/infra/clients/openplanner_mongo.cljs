@@ -3,9 +3,8 @@
 
    Data-plane operations (events, sessions, vector search, mongo browse,
    health) run in-process through @open-hax/openplanner-sdk — direct MongoDB
-   with self-sourced embeddings, no REST hop. Operations not yet ported
-   delegate to the wrapped REST client, which also remains the transport for
-   external consumers of the OpenPlanner API.
+   with self-sourced embeddings, no REST hop. Translation is also a direct
+   Mongo projection; only unrelated legacy operations delegate to REST.
 
    Loading this namespace registers the record constructor with the client
    factory in knoxx.backend.infra.clients.openplanner (which cannot require
@@ -50,43 +49,43 @@
   (record-reaction! [_ record-id payload]
     (openplanner-client/record-reaction! rest-client record-id payload))
   (translation-segments! [_ opts]
-    (openplanner-client/translation-segments! rest-client opts))
+    (xsdk/translation-segments! opts))
   (translation-segment! [_ segment-id]
-    (openplanner-client/translation-segment! rest-client segment-id))
+    (xsdk/translation-segment! segment-id))
   (create-translation-segment! [_ segment]
-    (openplanner-client/create-translation-segment! rest-client segment))
+    (xsdk/create-translation-segment! segment))
   (label-translation-segment! [_ segment-id payload]
-    (openplanner-client/label-translation-segment! rest-client segment-id payload))
+    (xsdk/label-translation-segment! segment-id payload))
   (translation-export-manifest! [_ project]
-    (openplanner-client/translation-export-manifest! rest-client project))
+    (xsdk/translation-export-manifest! project))
   (translation-export-sft! [_ opts]
-    (openplanner-client/translation-export-sft! rest-client opts))
+    (xsdk/translation-export-sft! opts))
   (create-translation-segments-batch! [_ payload]
-    (openplanner-client/create-translation-segments-batch! rest-client payload))
+    (xsdk/create-translation-segments-batch! payload))
   (translation-documents! [_ opts]
-    (openplanner-client/translation-documents! rest-client opts))
+    (xsdk/translation-documents! opts))
   (translation-document! [_ document-id target-lang]
-    (openplanner-client/translation-document! rest-client document-id target-lang))
+    (xsdk/translation-document! document-id target-lang))
   (review-translation-document! [_ document-id target-lang payload]
-    (openplanner-client/review-translation-document! rest-client document-id target-lang payload))
+    (xsdk/review-translation-document! document-id target-lang payload))
   (create-translation-batch! [_ payload]
-    (openplanner-client/create-translation-batch! rest-client payload))
+    (xsdk/create-translation-batch! payload))
   (translation-batches! [_ opts]
-    (openplanner-client/translation-batches! rest-client opts))
+    (xsdk/translation-batches! opts))
   (next-translation-batch! [_]
-    (openplanner-client/next-translation-batch! rest-client))
+    (xsdk/next-translation-batch!))
   (translation-batch! [_ batch-id]
-    (openplanner-client/translation-batch! rest-client batch-id))
+    (xsdk/translation-batch! batch-id))
   (update-translation-batch-status! [_ batch-id payload]
-    (openplanner-client/update-translation-batch-status! rest-client batch-id payload))
+    (xsdk/update-translation-batch-status! batch-id payload))
   (v1-json! [_ method path body]
     (openplanner-client/v1-json! rest-client method path body))
   (forward-v1! [_ request]
     (openplanner-client/forward-v1! rest-client request)))
 
 (defn client
-  "Build a direct-mongo OpenPlanner client wrapping a REST client for the
-   operations that have not been ported off the API yet."
+  "Build a direct-mongo OpenPlanner client. REST remains only for legacy
+   non-translation operations that have not been ported into the SDK."
   [config rest-client]
   (->MongoOpenPlannerClient config rest-client))
 
