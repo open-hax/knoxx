@@ -30,13 +30,18 @@
             (js/Promise.resolve (fake-json-response response-body))))
     original-fetch))
 
+(def rest-config
+  {:openplanner-base-url "http://openplanner.test"
+   :openplanner-api-key "test-key"
+   ;; These tests exercise the HTTP boundary and fake global fetch. Mongo is
+   ;; the production default, so REST must be selected explicitly here.
+   :openplanner-client-mode "rest"})
+
 (deftest ^:async openplanner-semantic-search-resolves-vector-hits
   (let [requests* (atom [])
         original-fetch (install-fake-fetch! requests* vector-search-body)]
     (try
-      (let [result (await (memory/openplanner-semantic-search! {:openplanner-base-url "http://openplanner.test"
-                                                                :openplanner-api-key "test-key"
-                                                                :project-name "workspace-test"}
+      (let [result (await (memory/openplanner-semantic-search! (assoc rest-config :project-name "workspace-test")
                                                                {:query "knoxx" :k 1}))]
         (is (= [{:url "http://openplanner.test/v1/search/vector"
                  :method "POST"
@@ -55,8 +60,7 @@
   (let [requests* (atom [])
         original-fetch (install-fake-fetch! requests* vector-search-body)]
     (try
-      (let [result (await (memory/openplanner-semantic-search! {:openplanner-base-url "http://openplanner.test"
-                                                                :openplanner-api-key "test-key"}
+      (let [result (await (memory/openplanner-semantic-search! rest-config
                                                                {:query "knoxx" :k 1}))]
         (is (= [{:url "http://openplanner.test/v1/search/vector"
                  :method "POST"
@@ -71,9 +75,7 @@
         original-fetch (install-fake-fetch! requests* vector-search-body)]
     (try
       (let [result (await (semantic/semantic-search-documents! nil
-                                                               {:openplanner-base-url "http://openplanner.test"
-                                                                :openplanner-api-key "test-key"
-                                                                :project-name "workspace-test"}
+                                                               (assoc rest-config :project-name "workspace-test")
                                                                {:query "knoxx"
                                                                 :top-k 1
                                                                 :max-snippet-chars 240}
