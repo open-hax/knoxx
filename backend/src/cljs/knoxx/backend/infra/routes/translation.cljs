@@ -83,11 +83,12 @@
 
 (defn- translation-segments-op
   [config]
-  (fn [request _ctx _handlers]
+  (fn [request ctx {:keys [ctx-org-id]}]
     (let [q (query request)]
       (openplanner-client/translation-segments!
        (op-client config)
        {:project (or (aget q "project") (:session-project-name config))
+        :org_id (str (or (ctx-org-id ctx) ""))
         :limit (or (aget q "limit") "50")
         :offset (or (aget q "offset") "0")
         :status (aget q "status")
@@ -107,11 +108,12 @@
 
 (defn- export-sft-op
   [config]
-  (fn [request _ctx _handlers]
+  (fn [request ctx {:keys [ctx-org-id]}]
     (let [q (query request)]
       (openplanner-client/translation-export-sft!
        (op-client config)
        {:project (or (aget q "project") (:session-project-name config))
+        :org_id (str (or (ctx-org-id ctx) ""))
         :target_lang (aget q "target_lang")
         :include_corrected (aget q "include_corrected")}))))
 
@@ -124,11 +126,12 @@
 
 (defn- documents-op
   [config]
-  (fn [request _ctx _handlers]
+  (fn [request ctx {:keys [ctx-org-id]}]
     (let [q (query request)]
       (openplanner-client/translation-documents!
        (op-client config)
        {:project (or (aget q "project") (:session-project-name config))
+        :org_id (str (or (ctx-org-id ctx) ""))
         :target_lang (aget q "target_lang")
         :source_lang (aget q "source_lang")
         :garden_id (aget q "garden_id")}))))
@@ -171,10 +174,11 @@
   [app runtime config handlers]
   (register-json-route! app "GET" "/api/translations/export/manifest" runtime config handlers
                         "org.translations.export"
-                        (fn [request _ctx _handlers]
+                        (fn [request ctx {:keys [ctx-org-id]}]
                           (openplanner-client/translation-export-manifest!
                            (op-client config)
-                           (or (aget (query request) "project") (:session-project-name config)))))
+                           {:project (or (aget (query request) "project") (:session-project-name config))
+                            :org_id (str (or (ctx-org-id ctx) ""))})))
   (register-ndjson-route! app "GET" "/api/translations/export/sft" runtime config handlers
                           "org.translations.export" (export-sft-op config)))
 
