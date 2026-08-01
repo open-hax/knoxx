@@ -107,3 +107,69 @@
       {:ok false
        :status 503
        :body {:detail (str "OpenPlanner SDK mongo ping failed: " (.-message err))}})))
+
+;; Translation is an SDK-owned Mongo projection.  Keep this boundary here so
+;; callers cannot accidentally fall back to the OpenPlanner HTTP API.
+(defn- ^:async translation-store!
+  []
+  (.-translation (await (get-sdk!))))
+
+(defn ^:async translation-segments!
+  [opts]
+  (xjson/to-cljs (await (.listSegments (await (translation-store!)) (clj->js (or opts {}))))))
+
+(defn ^:async translation-segment!
+  [segment-id]
+  (xjson/to-cljs (await (.segment (await (translation-store!)) (str segment-id)))))
+
+(defn ^:async create-translation-segment!
+  [segment]
+  (xjson/to-cljs (await (.createSegment (await (translation-store!)) (clj->js (or segment {}))))))
+
+(defn ^:async label-translation-segment!
+  [segment-id payload]
+  (xjson/to-cljs (await (.labelSegment (await (translation-store!)) (str segment-id) (clj->js (or payload {}))))))
+
+(defn ^:async translation-export-manifest!
+  [project]
+  (xjson/to-cljs (await (.manifest (await (translation-store!)) project))))
+
+(defn ^:async translation-export-sft!
+  [opts]
+  (await (.exportSft (await (translation-store!)) (clj->js (or opts {})))))
+
+(defn ^:async create-translation-segments-batch!
+  [payload]
+  (xjson/to-cljs (await (.createSegmentsBatch (await (translation-store!)) (clj->js (or payload {}))))))
+
+(defn ^:async translation-documents!
+  [opts]
+  (xjson/to-cljs (await (.documents (await (translation-store!)) (clj->js (or opts {}))))))
+
+(defn ^:async translation-document!
+  [document-id target-lang]
+  (xjson/to-cljs (await (.document (await (translation-store!)) (str document-id) (str target-lang)))))
+
+(defn ^:async review-translation-document!
+  [document-id target-lang payload]
+  (xjson/to-cljs (await (.reviewDocument (await (translation-store!)) (str document-id) (str target-lang) (clj->js (or payload {}))))))
+
+(defn ^:async create-translation-batch!
+  [payload]
+  (xjson/to-cljs (await (.createBatch (await (translation-store!)) (clj->js (or payload {}))))))
+
+(defn ^:async translation-batches!
+  [opts]
+  (xjson/to-cljs (await (.listBatches (await (translation-store!)) (clj->js (or opts {}))))))
+
+(defn ^:async next-translation-batch!
+  []
+  (xjson/to-cljs (await (.nextBatch (await (translation-store!))))))
+
+(defn ^:async translation-batch!
+  [batch-id]
+  (xjson/to-cljs (await (.batch (await (translation-store!)) (str batch-id)))))
+
+(defn ^:async update-translation-batch-status!
+  [batch-id payload]
+  (xjson/to-cljs (await (.updateBatch (await (translation-store!)) (str batch-id) (clj->js (or payload {}))))))
