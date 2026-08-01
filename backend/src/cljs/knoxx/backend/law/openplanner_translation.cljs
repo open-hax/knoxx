@@ -140,7 +140,8 @@
    [:project {:optional true} OptionalString]
    [:target_lang {:optional true} OptionalString]
    [:org_id NonBlankString]
-   [:include_corrected {:optional true} [:maybe [:or boolean? string?]]]])
+   [:include_corrected {:optional true} [:maybe [:or boolean? string?]]]
+   [:limit {:optional true} QueryNumber]])
 
 (def TranslationSftResponse string?)
 
