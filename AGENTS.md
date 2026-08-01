@@ -1,5 +1,11 @@
 # Knoxx Agent Style Guide
 
+# Language and Repository Ownership
+- Knoxx backend, domain, persistence, and service features are ClojureScript-first. Do not add or expand TypeScript for Knoxx backend work unless the user explicitly authorizes it.
+- Do not create coordinated implementation changes in OpenPlanner to deliver a Knoxx feature unless the user explicitly requests a cross-repository change.
+- Prefer an existing stable boundary or a Knoxx-owned ClojureScript adapter over a companion pull request. One feature should normally be completed in one repository.
+- TypeScript remains acceptable only in existing frontend surfaces or established JavaScript/TypeScript boundaries that are not being expanded into new backend domain logic.
+
 # Architecture Paradigm: Categories vs. Contracts
 When modeling domains, you must strictly differentiate between the grammar of motion and the enforcement of that motion.
 - Categories: Describe the space of lawful possible transformations. They dictate "what kind of move this is" and define the state space, transition vocabulary, and general laws of composition for the runtime or a subsystem.
@@ -63,4 +69,3 @@ Always prefer modern shadow-cljs patterns over legacy verbose forms:
 - Use `when-let` instead of nesting `let` + `if` checks
 - Prefer threading macros `->` and `->>` over manual nested let forms
 - Use `some->` for optional chaining through potential nils
-
