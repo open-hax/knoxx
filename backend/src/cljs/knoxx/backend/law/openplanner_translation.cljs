@@ -61,7 +61,7 @@
    [:domain {:optional true} OptionalString]
    [:content_type {:optional true} OptionalString]
    [:url_context {:optional true} OptionalString]
-   [:org_id {:optional true} OptionalString]
+   [:org_id NonBlankString]
    [:project {:optional true} OptionalString]])
 
 (def BatchTranslationSegmentRequest
