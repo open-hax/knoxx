@@ -276,7 +276,7 @@
                  (array-seq rows))))))
 
 (defn ^:async export-sft!
-  "Export approved tenant segments as newline-delimited prompt/target rows."
+  "Export approved tenant segments as a bounded newline-delimited prompt/target payload."
   [opts]
   (await (common/ensure-indexes!))
   (let [request (contract/assert-valid! :translation-export-sft/request
@@ -286,11 +286,13 @@
         selector (assoc (common/filter-map request [:project :target_lang])
                         :status "approved"
                         :org_id org-id)
+        limit (common/normalized-query-number (:limit request) 5000 1 50000)
         {:keys [segments labels]} (common/collections (await (common/db!)))
         rows (vec (array-seq
                    (await (.toArray
                            (-> (.find segments (clj->js selector))
-                               (.sort #js {"_id" 1}))))))
+                               (.sort #js {"_id" 1})
+                               (.limit limit))))))
         include-corrected? (not (contains? #{false "false"}
                                            (:include_corrected request)))
         corrections (if include-corrected?
