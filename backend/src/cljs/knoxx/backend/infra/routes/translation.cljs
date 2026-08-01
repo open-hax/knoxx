@@ -46,6 +46,13 @@
                          "organization_context_required"
                          "A nonblank organization context is required for translation operations"))))
 
+(defn- membership-id!
+  [ctx ctx-membership-id]
+  (or (some-> (ctx-membership-id ctx) str str/trim not-empty)
+      (throw (http-error 403
+                         "membership_context_required"
+                         "A nonblank membership context is required for translation batches"))))
+
 (defn- org-scope
   [ctx ctx-org-id]
   {:org_id (org-id! ctx ctx-org-id)})
@@ -218,10 +225,12 @@
   [app runtime config handlers]
   (register-json-route! app "POST" "/api/translations/batches" runtime config handlers
                         "org.translations.manage"
-                        (fn [request ctx {:keys [ctx-org-id]}]
+                        (fn [request ctx {:keys [ctx-org-id ctx-membership-id]}]
                           (openplanner-client/create-translation-batch!
                            (op-client config)
-                           (assoc (body-clj request) :org_id (org-id! ctx ctx-org-id)))))
+                           (merge (body-clj request)
+                                  {:org_id (org-id! ctx ctx-org-id)
+                                   :membership_id (membership-id! ctx ctx-membership-id)}))))
   (register-json-route! app "GET" "/api/translations/batches" runtime config handlers
                         "org.translations.read" (batches-op config))
   (register-json-route! app "GET" "/api/translations/batches/next" runtime config handlers
