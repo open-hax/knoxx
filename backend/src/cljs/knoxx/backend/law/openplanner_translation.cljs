@@ -1,5 +1,5 @@
 (ns knoxx.backend.law.openplanner-translation
-  "Malli contracts for Knoxx's direct OpenPlanner translation SDK boundary."
+  "Malli contracts for Knoxx's direct OpenPlanner translation Mongo boundary."
   (:require [clojure.string :as str]
             [malli.core :as m]
             [malli.error :as me]))
@@ -21,12 +21,12 @@
 
 (def TenantScopeRequest
   [:map {:closed false}
-   [:org_id {:optional true} OptionalString]])
+   [:org_id NonBlankString]])
 
 (def TranslationSegmentsRequest
   [:map {:closed false}
    [:project {:optional true} OptionalString]
-   [:org_id {:optional true} OptionalString]
+   [:org_id NonBlankString]
    [:status {:optional true} OptionalString]
    [:source_lang {:optional true} OptionalString]
    [:target_lang {:optional true} OptionalString]
@@ -65,7 +65,7 @@
    [:project {:optional true} OptionalString]])
 
 (def BatchTranslationSegmentRequest
-  "Batch imports may omit segment_index; OpenPlanner assigns the row position."
+  "Batch imports may omit segment_index; Knoxx assigns the row position."
   [:map {:closed false}
    [:source_text NonBlankString]
    [:translated_text NonBlankString]
@@ -102,21 +102,20 @@
    [:editor_notes {:optional true} OptionalString]
    [:labeler_id {:optional true} OptionalString]
    [:labeler_email {:optional true} OptionalString]
-   [:org_id {:optional true} OptionalString]])
+   [:org_id NonBlankString]])
 
 (def LabelTranslationSegmentResponse
   [:map {:closed false}
    [:ok boolean?]
+   [:label_id NonBlankString]
    [:label [:map {:closed false}]]
    [:new_status SegmentStatus]
    [:graph_memory {:optional true} [:maybe [:map {:closed false}]]]])
 
 (def TranslationManifestRequest
-  [:or
-   NonBlankString
-   [:map {:closed false}
-    [:project {:optional true} OptionalString]
-    [:org_id {:optional true} OptionalString]]])
+  [:map {:closed false}
+   [:project {:optional true} OptionalString]
+   [:org_id NonBlankString]])
 
 (def ManifestLanguage
   [:map {:closed false}
@@ -140,7 +139,7 @@
   [:map {:closed false}
    [:project {:optional true} OptionalString]
    [:target_lang {:optional true} OptionalString]
-   [:org_id {:optional true} OptionalString]
+   [:org_id NonBlankString]
    [:include_corrected {:optional true} [:maybe [:or boolean? string?]]]])
 
 (def TranslationSftResponse string?)
@@ -148,7 +147,7 @@
 (def CreateTranslationSegmentsBatchRequest
   [:map {:closed false}
    [:segments [:vector BatchTranslationSegmentRequest]]
-   [:org_id {:optional true} OptionalString]
+   [:org_id NonBlankString]
    [:project {:optional true} OptionalString]])
 
 (def CreateTranslationSegmentsBatchResponse
@@ -165,7 +164,7 @@
    [:target_lang {:optional true} OptionalString]
    [:source_lang {:optional true} OptionalString]
    [:garden_id {:optional true} OptionalString]
-   [:org_id {:optional true} OptionalString]])
+   [:org_id NonBlankString]])
 
 (def TranslationDocumentsResponse
   [:map {:closed false}
@@ -187,7 +186,7 @@
 (def ReviewTranslationDocumentRequest
   [:map {:closed false}
    [:overall LabelOverall]
-   [:org_id {:optional true} OptionalString]
+   [:org_id NonBlankString]
    [:editor_notes {:optional true} OptionalString]
    [:labeler_email {:optional true} OptionalString]
    [:labeler_id {:optional true} OptionalString]
@@ -216,7 +215,8 @@
    [:document_ids [:vector NonBlankString]]
    [:source_lang {:optional true} OptionalString]
    [:project {:optional true} OptionalString]
-   [:org_id {:optional true} OptionalString]])
+   [:org_id NonBlankString]
+   [:membership_id NonBlankString]])
 
 (def CreateTranslationBatchResponse
   [:map {:closed false}
@@ -231,7 +231,7 @@
    [:garden_id {:optional true} OptionalString]
    [:target_lang {:optional true} OptionalString]
    [:status {:optional true} OptionalString]
-   [:org_id {:optional true} OptionalString]])
+   [:org_id NonBlankString]])
 
 (def TranslationBatchesResponse
   [:map {:closed false}
@@ -250,7 +250,7 @@
 (def UpdateTranslationBatchRequest
   [:map {:closed false}
    [:status [:enum "processing" "complete" "partial" "failed"]]
-   [:org_id {:optional true} OptionalString]
+   [:org_id NonBlankString]
    [:completed_document {:optional true} OptionalString]
    [:failed_document {:optional true} [:maybe [:map {:closed false}]]]
    [:agent_session_id {:optional true} OptionalString]
