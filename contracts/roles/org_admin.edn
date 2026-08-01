@@ -15,7 +15,8 @@
                      :cap/music
                      :cap/audio
                      :cap/multimodal
-                     :cap/openplanner]
+                     :cap/openplanner
+                     :cap/translation]
  :role/permissions ["org.settings.read"
                      "org.settings.update"
                      "org.members.read"
