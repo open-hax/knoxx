@@ -50,9 +50,13 @@
 (deftest ^:async memory-collection-guards-inserts
   (let [coll (memory/memory-collection {:store/id :t
                                         :store/schema [:map [:message-id :string]]})]
-    (let [err (await (-> (store/insert! coll {:message-id 7})
-                         (.then (fn [_] nil))
-                         (.catch (fn [e] e))))]
+    ;; Catch the rejected Promise at the await boundary. Chaining .catch onto
+    ;; the protocol call can still be reported as unhandled by the Shadow Node
+    ;; test runner before the handler is observed.
+    (let [err (try
+                (await (store/insert! coll {:message-id 7}))
+                nil
+                (catch :default e e))]
       (is (some? err) "invalid doc must reject"))
     (is (= [] (await (store/find-docs coll {}))) "invalid doc must not persist")))
 

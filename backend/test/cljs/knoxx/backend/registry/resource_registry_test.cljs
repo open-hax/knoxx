@@ -1,6 +1,5 @@
 (ns knoxx.backend.registry.resource-registry-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [knoxx.backend.domain.contracts.loader :as contract-loader]
+  (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.driver.builtin :as driver-builtin]
             [knoxx.backend.domain.driver.registry :as driver-registry]
             [knoxx.backend.domain.registry.resource :as registry]
@@ -19,6 +18,28 @@
    {:id "discord_gateway"
     :contractClass "sources"
     :contract {:source/id :source/discord-gateway}}])
+
+(defn- records-of-kind
+  [resource-kind]
+  (filter #(= resource-kind (resources/normalize-resource-kind (:contractClass %)))
+          sample-records))
+
+(def registry-test-config
+  ;; Extracted contract-runtime registries receive resource access explicitly.
+  ;; Keep this test hermetic instead of redefining Knoxx's legacy loader, which
+  ;; the reusable registry no longer imports.
+  {:contract-runtime/deps
+   {:list-resource-ids (fn [_config resource-kind]
+                         (->> (records-of-kind resource-kind)
+                              (map :id)
+                              sort
+                              vec))
+    :get-resource (fn [_config resource-kind resource-id]
+                    (first (filter #(and (= resource-id (:id %))
+                                         (= resource-kind
+                                            (resources/normalize-resource-kind (:contractClass %))))
+                                   sample-records)))
+    :resource-class resources/resource-class}})
 
 (deftest resource-loader-normalizes-resource-kind
   (testing "resource names are singular even when storage directories are plural"
@@ -49,16 +70,15 @@
              (:event/generator event))))))
 
 (deftest registry-records-advertise-resource-catalogs
-  (with-redefs [contract-loader/load-all-contracts-sync (fn [_] sample-records)]
-    (testing "each registry has a stable resource kind"
-      (is (= :action (registry/registry-resource-kind registry/actions-registry)))
-      (is (= :schedule (registry/registry-resource-kind registry/schedules-registry)))
-      (is (= :source (registry/registry-resource-kind (registry/registry :source)))))
-    (testing "catalogs are maps from resource kind to visible ids"
-      (is (= {:catalog/resources {:action ["spawn_session"]}}
-             (registry/registry-catalog registry/actions-registry {})))
-      (is (= {:catalog/resources {:action ["spawn_session"]
-                                  :schedule ["creative_tick"]
-                                  :trigger ["creative_loop"]
-                                  :source ["discord_gateway"]}}
-             (registry/catalog {} [:action :schedule :trigger :source]))))))
+  (testing "each registry has a stable resource kind"
+    (is (= :action (registry/registry-resource-kind registry/actions-registry)))
+    (is (= :schedule (registry/registry-resource-kind registry/schedules-registry)))
+    (is (= :source (registry/registry-resource-kind (registry/registry :source)))))
+  (testing "catalogs are maps from resource kind to visible ids"
+    (is (= {:catalog/resources {:action ["spawn_session"]}}
+           (registry/registry-catalog registry/actions-registry registry-test-config)))
+    (is (= {:catalog/resources {:action ["spawn_session"]
+                                :schedule ["creative_tick"]
+                                :trigger ["creative_loop"]
+                                :source ["discord_gateway"]}}
+           (registry/catalog registry-test-config [:action :schedule :trigger :source])))))

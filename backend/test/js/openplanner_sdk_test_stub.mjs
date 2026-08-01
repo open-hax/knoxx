@@ -51,18 +51,18 @@ export async function createOpenPlannerSdk() {
   return stubSdk;
 }
 export async function listSessionsResponse(_ctx, query) {
-    record("listSessionsResponse", query);
-    return { ok: true, rows: [{ project: "p", session: "s", last_ts: "2026-01-01T00:00:00Z", event_count: 1 }], total: 1, offset: 0, limit: 50, has_more: false, storageBackend: "mongodb" };
+  record("listSessionsResponse", query);
+  return { ok: true, rows: [{ project: "p", session: "s", last_ts: "2026-01-01T00:00:00Z", event_count: 1 }], total: 1, offset: 0, limit: 50, has_more: false, storageBackend: "mongodb" };
 }
 export async function getSessionResponse(_ctx, sessionId, query) {
-    record("getSessionResponse", { sessionId, query });
-    return { ok: true, session: sessionId, rows: [], storageBackend: "mongodb" };
+  record("getSessionResponse", { sessionId, query });
+  return { ok: true, session: sessionId, rows: [], storageBackend: "mongodb" };
 }
 export async function listCollectionsResponse() {
-    record("listCollectionsResponse", null);
-    return { ok: true, collections: [{ name: "events", count: 1, type: "collection" }] };
+  record("listCollectionsResponse", null);
+  return { ok: true, collections: [{ name: "events", count: 1, type: "collection" }] };
 }
 export async function queryCollectionResponse(_ctx, body) {
-    record("queryCollectionResponse", body);
-    return { ok: true, collection: body.collection, count: 0, total: 0, skip: 0, limit: 50, rows: [] };
+  record("queryCollectionResponse", body);
+  return { ok: true, collection: body.collection, count: 0, total: 0, skip: 0, limit: 50, rows: [] };
 }

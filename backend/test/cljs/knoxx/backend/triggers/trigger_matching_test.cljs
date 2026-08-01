@@ -17,7 +17,7 @@
   {:contracts-dir "test/fixtures/trigger-contracts"})
 
 (deftest trigger-normalizes-correctly
-  (testing "the trigger EDN normalizes into the expected runtime shape"
+  (testing "the trigger EDN normalizes legacy arguments into :trigger/with"
     (let [normalized (trigger-normalize/normalize-trigger trigger-edn)]
       (is (= "ussyverse_social_replies_event" (:trigger/id normalized)))
       (is (= :event (:trigger/kind normalized)))
@@ -25,7 +25,9 @@
       (is (= ["discord_automation"] (mapv str [(:trigger/actor normalized)])))
       (is (= [:discord.message] (:trigger/events normalized)))
       (is (= :actions/start-agent-session (:trigger/action normalized)))
-      (is (= "ussyverse_social_replies" (:trigger/agent normalized))))))
+      (is (= "ussyverse_social_replies" (get-in normalized [:trigger/with :agent-id])))
+      (is (string? (get-in normalized [:trigger/with :task])))
+      (is (nil? (:trigger/agent normalized)) "legacy agent must not remain a parallel runtime field"))))
 
 (deftest keyword-condition-matches
   (testing "the trigger condition matches when message contains a keyword"

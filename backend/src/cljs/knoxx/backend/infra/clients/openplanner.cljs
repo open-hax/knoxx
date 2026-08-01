@@ -27,19 +27,19 @@
   (record-labels! [client record-ids])
   (record-reaction! [client record-id payload])
   (translation-segments! [client opts])
-  (translation-segment! [client segment-id])
+  (translation-segment! [client segment-id opts])
   (create-translation-segment! [client segment])
   (label-translation-segment! [client segment-id payload])
-  (translation-export-manifest! [client project])
+  (translation-export-manifest! [client opts])
   (translation-export-sft! [client opts])
   (create-translation-segments-batch! [client payload])
   (translation-documents! [client opts])
-  (translation-document! [client document-id target-lang])
+  (translation-document! [client document-id target-lang opts])
   (review-translation-document! [client document-id target-lang payload])
   (create-translation-batch! [client payload])
   (translation-batches! [client opts])
-  (next-translation-batch! [client])
-  (translation-batch! [client batch-id])
+  (next-translation-batch! [client opts])
+  (translation-batch! [client batch-id opts])
   (update-translation-batch-status! [client batch-id payload])
   (v1-json! [client method path body]
     "Compatibility for explicit admin/data proxy routes; prefer named methods.")
@@ -205,14 +205,15 @@
     (request-json! http-client config timeout-ms "POST" (str "/v1/labels/records/" (encode record-id) "/reaction") payload))
   (translation-segments! [_ opts]
     (request-json! http-client config timeout-ms "GET" (str "/v1/translations/segments" (query-string opts)) nil))
-  (translation-segment! [_ segment-id]
-    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/segments/" (encode segment-id)) nil))
+  (translation-segment! [_ segment-id opts]
+    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/segments/" (encode segment-id) (query-string opts)) nil))
   (create-translation-segment! [_ segment]
     (request-json! http-client config timeout-ms "POST" "/v1/translations/segments" segment))
   (label-translation-segment! [_ segment-id payload]
     (request-json! http-client config timeout-ms "POST" (str "/v1/translations/segments/" (encode segment-id) "/labels") payload))
-  (translation-export-manifest! [_ project]
-    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string {:project project})) nil))
+  (translation-export-manifest! [_ input]
+    (let [opts (if (map? input) input {:project input})]
+      (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string opts)) nil)))
   (translation-export-sft! [client opts]
     (ensure-enabled! client)
     (-> (p/let [resp (xfetch/text! (or http-client xfetch/default-client)
@@ -230,18 +231,18 @@
     (request-json! http-client config timeout-ms "POST" "/v1/translations/segments/batch" payload))
   (translation-documents! [_ opts]
     (request-json! http-client config timeout-ms "GET" (str "/v1/translations/documents" (query-string opts)) nil))
-  (translation-document! [_ document-id target-lang]
-    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/documents/" (encode document-id) "/" (encode target-lang)) nil))
+  (translation-document! [_ document-id target-lang opts]
+    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/documents/" (encode document-id) "/" (encode target-lang) (query-string opts)) nil))
   (review-translation-document! [_ document-id target-lang payload]
     (request-json! http-client config timeout-ms "POST" (str "/v1/translations/documents/" (encode document-id) "/" (encode target-lang) "/review") payload))
   (create-translation-batch! [_ payload]
     (request-json! http-client config timeout-ms "POST" "/v1/translations/batches" payload))
   (translation-batches! [_ opts]
     (request-json! http-client config timeout-ms "GET" (str "/v1/translations/batches" (query-string opts)) nil))
-  (next-translation-batch! [_]
-    (request-json! http-client config timeout-ms "GET" "/v1/translations/batches/next" nil))
-  (translation-batch! [_ batch-id]
-    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/batches/" (encode batch-id)) nil))
+  (next-translation-batch! [_ opts]
+    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/batches/next" (query-string opts)) nil))
+  (translation-batch! [_ batch-id opts]
+    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/batches/" (encode batch-id) (query-string opts)) nil))
   (update-translation-batch-status! [_ batch-id payload]
     (request-json! http-client config timeout-ms "POST" (str "/v1/translations/batches/" (encode batch-id) "/status") payload))
   (v1-json! [_ method path body]
