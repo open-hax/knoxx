@@ -60,8 +60,8 @@ const stubSdk = {
       record("translation.listSegments", opts);
       return { segments: [], total: 0, has_more: false };
     },
-    async segment(id) {
-      record("translation.segment", id);
+    async segment(id, opts) {
+      record("translation.segment", { id, opts });
       return {
         id,
         source_text: "Hello",
@@ -71,6 +71,7 @@ const stubSdk = {
         document_id: "doc-1",
         segment_index: 0,
         status: "approved",
+        org_id: opts?.org_id ?? null,
         labels: [],
       };
     },
@@ -119,17 +120,17 @@ const stubSdk = {
         total: 1,
       };
     },
-    async document(documentId, targetLang) {
-      record("translation.document", { documentId, targetLang });
+    async document(documentId, targetLang, opts) {
+      record("translation.document", { documentId, targetLang, opts });
       return {
         document: { id: documentId, title: "Document", source_lang: "en" },
-        segments: [{ id: "segment-1", document_id: documentId, target_lang: targetLang, status: "approved", labels: [] }],
+        segments: [{ id: "segment-1", document_id: documentId, target_lang: targetLang, org_id: opts?.org_id ?? null, status: "approved", labels: [] }],
         summary: { total_segments: 1, approved: 1, pending: 0, rejected: 0, in_review: 0, overall_status: "fully_approved" },
       };
     },
     async reviewDocument(documentId, targetLang, payload) {
       record("translation.reviewDocument", { documentId, targetLang, payload });
-      return { ok: true, document_id: documentId, target_lang: targetLang, segments_reviewed: 1, failed_segments: [], overall: payload.overall };
+      return { ok: true, document_id: documentId, target_lang: targetLang, segments_reviewed: 1, segments_failed: 0, overall: payload.overall };
     },
     async createBatch(payload) {
       record("translation.createBatch", payload);
@@ -137,15 +138,15 @@ const stubSdk = {
     },
     async listBatches(opts) {
       record("translation.listBatches", opts);
-      return { batches: [{ id: "mongo-batch-1", batch_id: "batch-1", status: "queued" }] };
+      return { batches: [{ id: "mongo-batch-1", batch_id: "batch-1", org_id: opts?.org_id ?? null, status: "queued" }] };
     },
-    async nextBatch() {
-      record("translation.nextBatch", null);
-      return { batch: { id: "mongo-batch-1", batch_id: "batch-1", status: "processing" } };
+    async nextBatch(opts) {
+      record("translation.nextBatch", opts);
+      return { batch: { id: "mongo-batch-1", batch_id: "batch-1", org_id: opts?.org_id ?? null, status: "processing" } };
     },
-    async batch(id) {
-      record("translation.batch", id);
-      return { id, batch_id: "batch-1", status: "processing" };
+    async batch(id, opts) {
+      record("translation.batch", { id, opts });
+      return { id, batch_id: "batch-1", org_id: opts?.org_id ?? null, status: "processing" };
     },
     async updateBatch(id, payload) {
       record("translation.updateBatch", { id, payload });
