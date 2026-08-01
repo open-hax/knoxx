@@ -32,15 +32,19 @@
       (is (re-find #"Translate the following text" (:prompt row))))))
 
 (deftest document-review-labels-preserve-quality-semantics
-  (testing "approved and non-approved reviews use the established rubric"
+  (testing "review plans preserve rubric and underscore wire values"
     (let [approved (translation/document-review-label-plan
                     {:segment-id "segment-1" :overall "approve"})
+          needs-edit (translation/document-review-label-plan
+                      {:segment-id "segment-2" :overall "needs_edit"})
           rejected (translation/document-review-label-plan
-                    {:segment-id "segment-2" :overall "reject"})]
+                    {:segment-id "segment-3" :overall "reject"})]
       (is (= "good" (:adequacy approved)))
       (is (= "good" (:fluency approved)))
       (is (= "correct" (:terminology approved)))
       (is (= "approved" (:next_status approved)))
+      (is (= "needs_edit" (:overall needs-edit)))
+      (is (= "in_review" (:next_status needs-edit)))
       (is (= "adequate" (:adequacy rejected)))
       (is (= "minor_errors" (:terminology rejected)))
       (is (= "rejected" (:next_status rejected))))))
