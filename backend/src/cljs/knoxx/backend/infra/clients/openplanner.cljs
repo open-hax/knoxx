@@ -211,9 +211,10 @@
     (request-json! http-client config timeout-ms "POST" "/v1/translations/segments" segment))
   (label-translation-segment! [_ segment-id payload]
     (request-json! http-client config timeout-ms "POST" (str "/v1/translations/segments/" (encode segment-id) "/labels") payload))
-  (translation-export-manifest! [_ input]
-    (let [opts (if (map? input) input {:project input})]
-      (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string opts)) nil)))
+  (translation-export-manifest! [_ opts]
+    (when-not (map? opts)
+      (throw (js/Error. "translation manifest requests require a scoped options map")))
+    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string opts)) nil))
   (translation-export-sft! [client opts]
     (ensure-enabled! client)
     (-> (p/let [resp (xfetch/text! (or http-client xfetch/default-client)
