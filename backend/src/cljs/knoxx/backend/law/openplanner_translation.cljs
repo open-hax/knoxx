@@ -60,6 +60,25 @@
    [:org_id {:optional true} OptionalString]
    [:project {:optional true} OptionalString]])
 
+(def BatchTranslationSegmentRequest
+  "Batch imports may omit segment_index; OpenPlanner assigns the row position."
+  [:map {:closed false}
+   [:source_text NonBlankString]
+   [:translated_text NonBlankString]
+   [:target_lang NonBlankString]
+   [:document_id NonBlankString]
+   [:segment_index {:optional true} int?]
+   [:source_lang {:optional true} OptionalString]
+   [:status {:optional true} [:maybe SegmentStatus]]
+   [:garden_id {:optional true} OptionalString]
+   [:mt_model {:optional true} OptionalString]
+   [:confidence {:optional true} [:maybe number?]]
+   [:domain {:optional true} OptionalString]
+   [:content_type {:optional true} OptionalString]
+   [:url_context {:optional true} OptionalString]
+   [:org_id {:optional true} OptionalString]
+   [:project {:optional true} OptionalString]])
+
 (def CreateTranslationSegmentResponse
   [:map {:closed false}
    [:ok boolean?]
@@ -124,7 +143,7 @@
 
 (def CreateTranslationSegmentsBatchRequest
   [:map {:closed false}
-   [:segments [:vector CreateTranslationSegmentRequest]]
+   [:segments [:vector BatchTranslationSegmentRequest]]
    [:org_id {:optional true} OptionalString]
    [:project {:optional true} OptionalString]])
 
@@ -182,7 +201,8 @@
    [:segments_reviewed int?]
    [:overall LabelOverall]
    [:overrides_applied {:optional true} int?]
-   [:failed_segments {:optional true} [:vector any?]]])
+   [:segments_failed {:optional true} int?]
+   [:graph_memory_failures {:optional true} int?]])
 
 (def CreateTranslationBatchRequest
   [:map {:closed false}
