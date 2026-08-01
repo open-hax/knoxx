@@ -1,0 +1,65 @@
+(ns knoxx.backend.openplanner-translation-contract-test
+  (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.extern.openplanner-translation-mongo.common :as common]
+            [knoxx.backend.law.openplanner-translation :as contract]
+            [malli.core :as m]))
+
+(deftest tenant-scope-is-required-at-the-contract-boundary
+  (testing "direct storage request contracts reject missing org_id"
+    (doseq [schema [contract/TenantScopeRequest
+                    contract/TranslationSegmentsRequest
+                    contract/LabelTranslationSegmentRequest
+                    contract/TranslationManifestRequest
+                    contract/TranslationSftRequest
+                    contract/CreateTranslationSegmentsBatchRequest
+                    contract/TranslationDocumentsRequest
+                    contract/ReviewTranslationDocumentRequest
+                    contract/CreateTranslationBatchRequest
+                    contract/TranslationBatchesRequest
+                    contract/UpdateTranslationBatchRequest]]
+      (is (false? (m/validate schema {}))))))
+
+(deftest manifest-requires-a-scoped-map
+  (testing "the legacy bare-project string cannot bypass organization scope"
+    (is (false? (m/validate contract/TranslationManifestRequest "project-only")))
+    (is (true? (m/validate contract/TranslationManifestRequest
+                           {:project "knoxx" :org_id "org-1"})))))
+
+(deftest label-response-advertises-top-level-id
+  (testing "frontend-compatible label responses include label_id"
+    (is (false? (m/validate contract/LabelTranslationSegmentResponse
+                            {:ok true
+                             :label {:id "label-1"}
+                             :new_status "approved"})))
+    (is (true? (m/validate contract/LabelTranslationSegmentResponse
+                           {:ok true
+                            :label_id "label-1"
+                            :label {:id "label-1"}
+                            :new_status "approved"})))))
+
+(deftest batch-creation-binds-membership
+  (let [base {:garden_id "garden-1"
+              :target_lang "es"
+              :document_ids ["doc-1"]
+              :org_id "org-1"}]
+    (is (false? (m/validate contract/CreateTranslationBatchRequest base)))
+    (is (true? (m/validate contract/CreateTranslationBatchRequest
+                           (assoc base :membership_id "membership-1"))))))
+
+(deftest pagination-falls-back-and-clamps
+  (testing "malformed query values never become NaN"
+    (is (= 50 (common/normalized-query-number "not-a-number" 50 1 100)))
+    (is (= 1 (common/normalized-query-number -20 50 1 100)))
+    (is (= 100 (common/normalized-query-number 200 50 1 100)))
+    (is (= 4 (common/normalized-query-number 4.9 50 1 100)))))
+
+(deftest segment-change-detection-is-content-based
+  (let [row #js {"source_text" "Hello"
+                 "translated_text" "Hola"
+                 "status" "pending"}
+        unchanged {:source_text "Hello"
+                   :translated_text "Hola"
+                   :status "pending"}
+        changed (assoc unchanged :translated_text "Buenas")]
+    (is (true? (common/segment-doc-matches? row unchanged)))
+    (is (false? (common/segment-doc-matches? row changed)))))
