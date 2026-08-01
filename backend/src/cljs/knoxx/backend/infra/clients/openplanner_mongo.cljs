@@ -2,21 +2,21 @@
   "Direct-mongo OpenPlanner client.
 
    Data-plane operations (events, sessions, vector search, mongo browse,
-   health) run in-process through @open-hax/openplanner-sdk — direct MongoDB
-   with self-sourced embeddings, no REST hop. Translation is also a direct
-   Mongo projection; only unrelated legacy operations delegate to REST.
+   health) run in-process through @open-hax/openplanner-sdk. Translation runs
+   through Knoxx's ClojureScript Mongo boundary and OpenPlanner's existing
+   ClojureScript translation domain rules. Only unrelated legacy operations
+   delegate to REST.
 
    Loading this namespace registers the record constructor with the client
    factory in knoxx.backend.infra.clients.openplanner (which cannot require
    this namespace without creating a cycle)."
   (:require [knoxx.backend.extern.openplanner-sdk :as xsdk]
+            [knoxx.backend.extern.openplanner-translation-mongo :as translations]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]))
 
 (defrecord MongoOpenPlannerClient [config rest-client]
   openplanner-client/IOpenPlannerClient
   (enabled? [_]
-    ;; The mongo data plane configures itself from env with working defaults;
-    ;; REST-delegated operations still check the wrapped client themselves.
     true)
   (health! [_]
     (xsdk/health))
@@ -49,46 +49,44 @@
   (record-reaction! [_ record-id payload]
     (openplanner-client/record-reaction! rest-client record-id payload))
   (translation-segments! [_ opts]
-    (xsdk/translation-segments! opts))
+    (translations/list-segments! opts))
   (translation-segment! [_ segment-id opts]
-    (xsdk/translation-segment! segment-id opts))
+    (translations/segment! segment-id opts))
   (create-translation-segment! [_ segment]
-    (xsdk/create-translation-segment! segment))
+    (translations/create-segment! segment))
   (label-translation-segment! [_ segment-id payload]
-    (xsdk/label-translation-segment! segment-id payload))
+    (translations/label-segment! segment-id payload))
   (translation-export-manifest! [_ opts]
-    (xsdk/translation-export-manifest! opts))
+    (translations/manifest! opts))
   (translation-export-sft! [_ opts]
-    (xsdk/translation-export-sft! opts))
+    (translations/export-sft! opts))
   (create-translation-segments-batch! [_ payload]
-    (xsdk/create-translation-segments-batch! payload))
+    (translations/create-segments-batch! payload))
   (translation-documents! [_ opts]
-    (xsdk/translation-documents! opts))
+    (translations/documents! opts))
   (translation-document! [_ document-id target-lang opts]
-    (xsdk/translation-document! document-id target-lang opts))
+    (translations/document! document-id target-lang opts))
   (review-translation-document! [_ document-id target-lang payload]
-    (xsdk/review-translation-document! document-id target-lang payload))
+    (translations/review-document! document-id target-lang payload))
   (create-translation-batch! [_ payload]
-    (xsdk/create-translation-batch! payload))
+    (translations/create-batch! payload))
   (translation-batches! [_ opts]
-    (xsdk/translation-batches! opts))
+    (translations/list-batches! opts))
   (next-translation-batch! [_ opts]
-    (xsdk/next-translation-batch! opts))
+    (translations/next-batch! opts))
   (translation-batch! [_ batch-id opts]
-    (xsdk/translation-batch! batch-id opts))
+    (translations/batch! batch-id opts))
   (update-translation-batch-status! [_ batch-id payload]
-    (xsdk/update-translation-batch-status! batch-id payload))
+    (translations/update-batch! batch-id payload))
   (v1-json! [_ method path body]
     (openplanner-client/v1-json! rest-client method path body))
   (forward-v1! [_ request]
     (openplanner-client/forward-v1! rest-client request)))
 
 (defn client
-  "Build a direct-mongo OpenPlanner client. REST remains only for legacy
-   non-translation operations that have not been ported into the SDK."
+  "Build a direct-mongo OpenPlanner client. Translation stays in Knoxx CLJS;
+   REST remains only for unrelated legacy operations."
   [config rest-client]
   (->MongoOpenPlannerClient config rest-client))
 
-;; Register with the factory so (openplanner-client/client config) returns the
-;; direct-mongo record whenever mongo mode is selected.
 (openplanner-client/register-direct-client-factory! client)
