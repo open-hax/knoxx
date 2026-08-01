@@ -16,9 +16,9 @@ env:
   # ubuntu runners ship a snap-wrapper /usr/bin/chromium-browser that hangs
   # under CI; point puppeteer-core at the real Chrome binary instead.
   PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
-  # Immutable companion OpenPlanner SDK revision used by this stacked change.
-  # Update deliberately after the SDK PR lands; never depend on a disposable branch.
-  OPENPLANNER_REF: 235f4dd9b5838c8bc185b1dd68cbe3d345364dd1
+  # Knoxx uses the existing OpenPlanner SDK for the non-translation data plane.
+  # Translation storage is Knoxx-owned ClojureScript and has no companion PR.
+  OPENPLANNER_REF: main
 
 jobs:
   knoxx:
