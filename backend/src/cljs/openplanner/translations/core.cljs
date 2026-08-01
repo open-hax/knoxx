@@ -231,7 +231,7 @@
    :fluency (if (= :approve (token overall)) "good" "adequate")
    :terminology (if (= :approve (token overall)) "correct" "minor_errors")
    :risk "safe"
-   :overall (name (or (token overall) :needs-edit))
+   :overall (status-wire (or (token overall) :needs-edit))
    :corrected_text (nonblank-string corrected-text)
    :editor_notes (nonblank-string editor-notes)
    :next_status (status-wire (next-segment-status {:overall overall :corrected-text corrected-text}))})
