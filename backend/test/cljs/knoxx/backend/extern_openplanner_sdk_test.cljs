@@ -66,3 +66,13 @@
           result (await (openplanner-client/vector-search! built {:q "hello" :k 3}))]
       (is (true? (:ok result)))
       (is (= [["stub-1"]] (get-in result [:result :ids]))))))
+
+(deftest ^:async mongo-client-keeps-translations-in-process
+  (testing "translation calls use the SDK projection, never the wrapped REST client"
+    (let [rest-client (openplanner-client/client {:openplanner-base-url "http://intentionally-unused"
+                                                  :openplanner-api-key "unused"
+                                                  :openplanner-client-mode "rest"})
+          built (openplanner-mongo/client {} rest-client)
+          result (await (openplanner-client/translation-segments! built {:project "knoxx" :limit 1}))]
+      (is (= [] (:segments result)))
+      (is (= 0 (:total result))))))
