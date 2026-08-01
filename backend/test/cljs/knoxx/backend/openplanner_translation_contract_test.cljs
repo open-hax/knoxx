@@ -1,6 +1,7 @@
 (ns knoxx.backend.openplanner-translation-contract-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.openplanner-translation-mongo.common :as common]
+            [knoxx.backend.infra.openplanner.translation-scope :as translation-scope]
             [knoxx.backend.law.openplanner-translation :as contract]
             [malli.core :as m]))
 
@@ -63,3 +64,26 @@
         changed (assoc unchanged :translated_text "Buenas")]
     (is (true? (common/segment-doc-matches? row unchanged)))
     (is (false? (common/segment-doc-matches? row changed)))))
+
+(deftest managed-translation-scope-is-fail-closed
+  (testing "ordinary memberships remain in their current organization"
+    (is (= "org-1"
+           (translation-scope/translation-org-id!
+            {:orgId "org-1" :roleSlugs ["org_admin"]}
+            {:org_id "org-1"})))
+    (is (thrown-with-msg?
+         js/Error
+         #"cannot target another organization"
+         (translation-scope/translation-org-id!
+          {:orgId "org-1" :roleSlugs ["org_admin"]}
+          {:org_id "org-2"}))))
+  (testing "system admins may carry an explicit legacy batch organization"
+    (is (= "org-2"
+           (translation-scope/translation-org-id!
+            {:orgId "primary" :roleSlugs ["system_admin"]}
+            {:org_id "org-2"}))))
+  (testing "a target organization is always required"
+    (is (thrown-with-msg?
+         js/Error
+         #"organization is required"
+         (translation-scope/translation-org-id! {} {})))))
