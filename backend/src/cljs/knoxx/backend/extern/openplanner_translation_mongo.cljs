@@ -309,20 +309,22 @@
            results []
            errors []]
       (if-let [row (first remaining)]
-        (try
-          (let [created (await (create-segment! (assoc row
-                                                       :segment_index (or (:segment_index row) index)
-                                                       :org_id org-id
-                                                       :project (or (:project request) (:project row)))))]
+        (let [attempt (try
+                        {:created (await (create-segment! (assoc row
+                                                                :segment_index (or (:segment_index row) index)
+                                                                :org_id org-id
+                                                                :project (or (:project request) (:project row)))))}
+                        (catch :default err
+                          {:error (or (.-message err) (str err))}))]
+          (if-let [created (:created attempt)]
             (recur (inc index)
                    (next remaining)
                    (conj results {:index index :id (:id created) :status (:status created)})
-                   errors))
-          (catch :default err
+                   errors)
             (recur (inc index)
                    (next remaining)
                    results
-                   (conj errors {:index index :error (or (.-message err) (str err))}))))
+                   (conj errors {:index index :error (:error attempt)}))))
         (assert-response!
          :create-translation-segments-batch/response
          contract/CreateTranslationSegmentsBatchResponse
