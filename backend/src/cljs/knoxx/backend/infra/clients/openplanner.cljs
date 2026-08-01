@@ -30,7 +30,7 @@
   (translation-segment! [client segment-id])
   (create-translation-segment! [client segment])
   (label-translation-segment! [client segment-id payload])
-  (translation-export-manifest! [client project])
+  (translation-export-manifest! [client opts])
   (translation-export-sft! [client opts])
   (create-translation-segments-batch! [client payload])
   (translation-documents! [client opts])
@@ -211,8 +211,9 @@
     (request-json! http-client config timeout-ms "POST" "/v1/translations/segments" segment))
   (label-translation-segment! [_ segment-id payload]
     (request-json! http-client config timeout-ms "POST" (str "/v1/translations/segments/" (encode segment-id) "/labels") payload))
-  (translation-export-manifest! [_ project]
-    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string {:project project})) nil))
+  (translation-export-manifest! [_ input]
+    (let [opts (if (map? input) input {:project input})]
+      (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string opts)) nil)))
   (translation-export-sft! [client opts]
     (ensure-enabled! client)
     (-> (p/let [resp (xfetch/text! (or http-client xfetch/default-client)
