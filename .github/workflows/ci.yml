@@ -16,6 +16,9 @@ env:
   # ubuntu runners ship a snap-wrapper /usr/bin/chromium-browser that hangs
   # under CI; point puppeteer-core at the real Chrome binary instead.
   PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+  # This is a stacked PR. Switch this to main after the companion OpenPlanner
+  # SDK PR lands.
+  OPENPLANNER_REF: codex/sdk-direct-translations
 
 jobs:
   knoxx:
@@ -26,6 +29,13 @@ jobs:
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
+
+      - name: Checkout OpenPlanner SDK source
+        uses: actions/checkout@v5
+        with:
+          repository: open-hax/openplanner
+          ref: ${{ env.OPENPLANNER_REF }}
+          path: _deps/openplanner
 
       - name: Setup Java (required by shadow-cljs / Closure Compiler)
         uses: actions/setup-java@v4
@@ -43,9 +53,23 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            backend/pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+            _deps/openplanner/pnpm-lock.yaml
 
-      - name: Install (Knoxx workspace)
-        run: pnpm install --frozen-lockfile
+      - name: Build linked OpenPlanner SDK
+        run: |
+          ln -sfn "$GITHUB_WORKSPACE/_deps/openplanner" "$GITHUB_WORKSPACE/../openplanner"
+          pnpm -C _deps/openplanner --filter @open-hax/openplanner-sdk... install --frozen-lockfile
+          pnpm -C _deps/openplanner --filter @open-hax/openplanner-sdk... run build
+
+      - name: Install Knoxx packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -C backend install --frozen-lockfile
+          pnpm -C frontend install --frozen-lockfile
 
       - name: Backend typecheck (shadow-cljs compile app)
         run: pnpm -C backend run typecheck
