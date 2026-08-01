@@ -107,15 +107,28 @@
   (let [indexes (await (collection-indexes segments))
         current (index-by-name indexes segment-org-index-name)
         legacy (index-by-name indexes legacy-segment-index-name)]
-    (when (and current (not (index-key-matches? current)))
-      (throw (js/Error. "segment_org_unique_idx has an incompatible key pattern")))
-    ;; Build the replacement first. If same-tenant duplicates exist, Mongo
-    ;; rejects the build and the stricter legacy index remains intact.
-    (await (.createIndex segments
-                         segment-org-index-key
-                         #js {"unique" true "name" segment-org-index-name}))
-    (when legacy
-      (await (.dropIndex segments legacy-segment-index-name)))))
+    (cond
+      current
+      (do
+        (when-not (index-key-matches? current)
+          (throw (js/Error. "segment_org_unique_idx has an incompatible key pattern")))
+        (when legacy
+          (await (.dropIndex segments legacy-segment-index-name))))
+
+      (and legacy (index-key-matches? legacy))
+      ;; #210 may already have migrated the key while retaining the legacy
+      ;; name. That state is fully safe and avoids an equivalent-index conflict.
+      true
+
+      :else
+      (do
+        ;; Build the replacement first. If same-tenant duplicates exist,
+        ;; Mongo rejects the build and the stricter legacy index remains intact.
+        (await (.createIndex segments
+                             segment-org-index-key
+                             #js {"unique" true "name" segment-org-index-name}))
+        (when legacy
+          (await (.dropIndex segments legacy-segment-index-name)))))))
 
 (defn- ^:async backfill-label-scope!
   [labels]
