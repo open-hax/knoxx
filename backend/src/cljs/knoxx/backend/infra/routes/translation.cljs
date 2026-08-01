@@ -37,6 +37,10 @@
   [request]
   (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true))
 
+(defn- org-scope
+  [ctx ctx-org-id]
+  {:org_id (str (or (ctx-org-id ctx) ""))})
+
 (defn- unavailable!
   [{:keys [json-response!]} reply]
   (json-response! reply 503 {:detail "OpenPlanner is not configured"}))
@@ -138,23 +142,25 @@
 
 (defn- review-document-op
   [config]
-  (fn [request ctx {:keys [ctx-user-id ctx-user-email]}]
+  (fn [request ctx {:keys [ctx-user-id ctx-user-email ctx-org-id]}]
     (let [p (params request)
           body-with-auth (merge (body-clj request)
                                 {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
-                                 :labeler_email (str (or (ctx-user-email ctx) "unknown"))})]
+                                 :labeler_email (str (or (ctx-user-email ctx) "unknown"))
+                                 :org_id (str (or (ctx-org-id ctx) ""))})]
       (openplanner-client/review-translation-document!
        (op-client config) (aget p "documentId") (aget p "targetLang") body-with-auth))))
 
 (defn- batches-op
   [config]
-  (fn [request _ctx _handlers]
+  (fn [request ctx {:keys [ctx-org-id]}]
     (let [q (query request)]
       (openplanner-client/translation-batches!
        (op-client config)
        {:status (aget q "status")
         :garden_id (aget q "garden_id")
-        :target_lang (aget q "target_lang")}))))
+        :target_lang (aget q "target_lang")
+        :org_id (str (or (ctx-org-id ctx) ""))}))))
 
 (defn- register-segment-routes!
   [app runtime config handlers]
@@ -162,9 +168,11 @@
                         "org.translations.read" (translation-segments-op config))
   (register-json-route! app "GET" "/api/translations/segments/:id" runtime config handlers
                         "org.translations.read"
-                        (fn [request _ctx _handlers]
+                        (fn [request ctx {:keys [ctx-org-id]}]
                           (openplanner-client/translation-segment!
-                           (op-client config) (aget (params request) "id"))))
+                           (op-client config)
+                           (aget (params request) "id")
+                           (org-scope ctx ctx-org-id))))
   (register-json-route! app "POST" "/api/translations/segments/:id/labels" runtime config handlers
                         "org.translations.review" (label-segment-op config))
   (register-json-route! app "POST" "/api/translations/segments/batch" runtime config handlers
@@ -188,11 +196,12 @@
                         "org.translations.read" (documents-op config))
   (register-json-route! app "GET" "/api/translations/documents/:documentId/:targetLang" runtime config handlers
                         "org.translations.read"
-                        (fn [request _ctx _handlers]
+                        (fn [request ctx {:keys [ctx-org-id]}]
                           (openplanner-client/translation-document!
                            (op-client config)
                            (aget (params request) "documentId")
-                           (aget (params request) "targetLang"))))
+                           (aget (params request) "targetLang")
+                           (org-scope ctx ctx-org-id))))
   (register-json-route! app "POST" "/api/translations/documents/:documentId/:targetLang/review" runtime config handlers
                         "org.translations.review" (review-document-op config)))
 
@@ -200,25 +209,32 @@
   [app runtime config handlers]
   (register-json-route! app "POST" "/api/translations/batches" runtime config handlers
                         "org.translations.manage"
-                        (fn [request _ctx _handlers]
+                        (fn [request ctx {:keys [ctx-org-id]}]
                           (openplanner-client/create-translation-batch!
-                           (op-client config) (aget request "body"))))
+                           (op-client config)
+                           (assoc (body-clj request) :org_id (str (or (ctx-org-id ctx) ""))))))
   (register-json-route! app "GET" "/api/translations/batches" runtime config handlers
                         "org.translations.read" (batches-op config))
   (register-json-route! app "GET" "/api/translations/batches/next" runtime config handlers
                         "org.translations.manage"
-                        (fn [_request _ctx _handlers]
-                          (openplanner-client/next-translation-batch! (op-client config))))
+                        (fn [_request ctx {:keys [ctx-org-id]}]
+                          (openplanner-client/next-translation-batch!
+                           (op-client config)
+                           (org-scope ctx ctx-org-id))))
   (register-json-route! app "GET" "/api/translations/batches/:id" runtime config handlers
                         "org.translations.read"
-                        (fn [request _ctx _handlers]
+                        (fn [request ctx {:keys [ctx-org-id]}]
                           (openplanner-client/translation-batch!
-                           (op-client config) (aget (params request) "id"))))
+                           (op-client config)
+                           (aget (params request) "id")
+                           (org-scope ctx ctx-org-id))))
   (register-json-route! app "POST" "/api/translations/batches/:id/status" runtime config handlers
                         "org.translations.manage"
-                        (fn [request _ctx _handlers]
+                        (fn [request ctx {:keys [ctx-org-id]}]
                           (openplanner-client/update-translation-batch-status!
-                           (op-client config) (aget (params request) "id") (aget request "body")))))
+                           (op-client config)
+                           (aget (params request) "id")
+                           (assoc (body-clj request) :org_id (str (or (ctx-org-id ctx) "")))))))
 
 (defn register-translation-routes!
   [app runtime config handlers]
