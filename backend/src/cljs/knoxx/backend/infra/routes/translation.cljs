@@ -10,8 +10,10 @@
   ;;
   ;; WORKAROUND: Import `route!` directly via :refer instead of passing through parameter maps.
   ;; See backend/README.md "Cannot read properties of undefined" section for full diagnosis.
-  (:require [knoxx.backend.shape.app-shapes :refer [route!]]
-            [knoxx.backend.infra.clients.openplanner :as openplanner-client]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.shape.app-shapes :refer [route!]]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.http :refer [http-error]]))
 
 (defn- op-client
   [config]
@@ -37,9 +39,16 @@
   [request]
   (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true))
 
+(defn- org-id!
+  [ctx ctx-org-id]
+  (or (some-> (ctx-org-id ctx) str str/trim not-empty)
+      (throw (http-error 403
+                         "organization_context_required"
+                         "A nonblank organization context is required for translation operations"))))
+
 (defn- org-scope
   [ctx ctx-org-id]
-  {:org_id (str (or (ctx-org-id ctx) ""))})
+  {:org_id (org-id! ctx ctx-org-id)})
 
 (defn- unavailable!
   [{:keys [json-response!]} reply]
@@ -92,7 +101,7 @@
       (openplanner-client/translation-segments!
        (op-client config)
        {:project (or (aget q "project") (:session-project-name config))
-        :org_id (str (or (ctx-org-id ctx) ""))
+        :org_id (org-id! ctx ctx-org-id)
         :limit (or (aget q "limit") "50")
         :offset (or (aget q "offset") "0")
         :status (aget q "status")
@@ -106,7 +115,7 @@
     (let [body (body-clj request)
           body-with-auth (merge body {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
                                       :labeler_email (str (or (ctx-user-email ctx) "unknown"))
-                                      :org_id (str (or (ctx-org-id ctx) ""))})]
+                                      :org_id (org-id! ctx ctx-org-id)})]
       (openplanner-client/label-translation-segment!
        (op-client config) (aget (params request) "id") body-with-auth))))
 
@@ -117,7 +126,7 @@
       (openplanner-client/translation-export-sft!
        (op-client config)
        {:project (or (aget q "project") (:session-project-name config))
-        :org_id (str (or (ctx-org-id ctx) ""))
+        :org_id (org-id! ctx ctx-org-id)
         :target_lang (aget q "target_lang")
         :include_corrected (aget q "include_corrected")}))))
 
@@ -126,7 +135,7 @@
   (fn [request ctx {:keys [ctx-org-id]}]
     (openplanner-client/create-translation-segments-batch!
      (op-client config)
-     (assoc (body-clj request) :org_id (str (or (ctx-org-id ctx) ""))))))
+     (assoc (body-clj request) :org_id (org-id! ctx ctx-org-id)))))
 
 (defn- documents-op
   [config]
@@ -135,7 +144,7 @@
       (openplanner-client/translation-documents!
        (op-client config)
        {:project (or (aget q "project") (:session-project-name config))
-        :org_id (str (or (ctx-org-id ctx) ""))
+        :org_id (org-id! ctx ctx-org-id)
         :target_lang (aget q "target_lang")
         :source_lang (aget q "source_lang")
         :garden_id (aget q "garden_id")}))))
@@ -147,7 +156,7 @@
           body-with-auth (merge (body-clj request)
                                 {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
                                  :labeler_email (str (or (ctx-user-email ctx) "unknown"))
-                                 :org_id (str (or (ctx-org-id ctx) ""))})]
+                                 :org_id (org-id! ctx ctx-org-id)})]
       (openplanner-client/review-translation-document!
        (op-client config) (aget p "documentId") (aget p "targetLang") body-with-auth))))
 
@@ -160,7 +169,7 @@
        {:status (aget q "status")
         :garden_id (aget q "garden_id")
         :target_lang (aget q "target_lang")
-        :org_id (str (or (ctx-org-id ctx) ""))}))))
+        :org_id (org-id! ctx ctx-org-id)}))))
 
 (defn- register-segment-routes!
   [app runtime config handlers]
@@ -186,7 +195,7 @@
                           (openplanner-client/translation-export-manifest!
                            (op-client config)
                            {:project (or (aget (query request) "project") (:session-project-name config))
-                            :org_id (str (or (ctx-org-id ctx) ""))})))
+                            :org_id (org-id! ctx ctx-org-id)})))
   (register-ndjson-route! app "GET" "/api/translations/export/sft" runtime config handlers
                           "org.translations.export" (export-sft-op config)))
 
@@ -212,7 +221,7 @@
                         (fn [request ctx {:keys [ctx-org-id]}]
                           (openplanner-client/create-translation-batch!
                            (op-client config)
-                           (assoc (body-clj request) :org_id (str (or (ctx-org-id ctx) ""))))))
+                           (assoc (body-clj request) :org_id (org-id! ctx ctx-org-id)))))
   (register-json-route! app "GET" "/api/translations/batches" runtime config handlers
                         "org.translations.read" (batches-op config))
   (register-json-route! app "GET" "/api/translations/batches/next" runtime config handlers
@@ -234,7 +243,7 @@
                           (openplanner-client/update-translation-batch-status!
                            (op-client config)
                            (aget (params request) "id")
-                           (assoc (body-clj request) :org_id (str (or (ctx-org-id ctx) "")))))))
+                           (assoc (body-clj request) :org_id (org-id! ctx ctx-org-id))))))
 
 (defn register-translation-routes!
   [app runtime config handlers]
