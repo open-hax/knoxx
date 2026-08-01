@@ -12,9 +12,17 @@
   []
   (set! (.-length (.-__calls sdk-stub)) 0))
 
+(defn- sdk-calls
+  []
+  (mapv #(js->clj % :keywordize-keys true) (array-seq (.-__calls sdk-stub))))
+
 (defn- sdk-call-names
   []
-  (mapv #(aget % "name") (array-seq (.-__calls sdk-stub))))
+  (mapv :name (sdk-calls)))
+
+(defn- sdk-call
+  [name]
+  (first (filter #(= name (:name %)) (sdk-calls))))
 
 (deftest ^:async events-conversion
   (testing "ingest result arrives as keywordized CLJS without transport-only keys"
@@ -82,45 +90,51 @@
                                                   :openplanner-api-key "unused"
                                                   :openplanner-client-mode "rest"})
           built (openplanner-mongo/client {} rest-client)
-          result (await (openplanner-client/translation-segments! built {:project "knoxx" :limit 1}))]
+          result (await (openplanner-client/translation-segments! built {:project "knoxx" :org_id "org-1" :limit 1}))]
       (is (= [] (:segments result)))
       (is (= 0 (:total result))))))
 
 (deftest ^:async translation-sdk-boundary-contracts
-  (testing "every translation operation reaches the direct SDK and preserves established response shapes"
+  (testing "every translation operation reaches the direct SDK with tenant scope and preserves established response shapes"
     (reset-sdk-calls!)
-    (let [segments (await (xsdk/translation-segments! {:project "knoxx" :limit 1}))
-          segment (await (xsdk/translation-segment! "segment-1"))
+    (let [scope {:org_id "org-1"}
+          segments (await (xsdk/translation-segments! {:project "knoxx" :org_id "org-1" :limit 1}))
+          segment (await (xsdk/translation-segment! "segment-1" scope))
           created (await (xsdk/create-translation-segment! {:source_text "Hello"
                                                             :translated_text "Hola"
                                                             :target_lang "es"
                                                             :document_id "doc-1"
-                                                            :segment_index 0}))
+                                                            :segment_index 0
+                                                            :org_id "org-1"}))
           labeled (await (xsdk/label-translation-segment! "segment-1" {:adequacy "good"
                                                                        :fluency "good"
                                                                        :terminology "correct"
                                                                        :risk "safe"
-                                                                       :overall "approve"}))
+                                                                       :overall "approve"
+                                                                       :org_id "org-1"}))
           manifest (await (xsdk/translation-export-manifest! {:project "knoxx" :org_id "org-1"}))
           sft (await (xsdk/translation-export-sft! {:project "knoxx" :org_id "org-1"}))
           ;; Batch imports intentionally permit omitted segment_index; the SDK
           ;; assigns the row position while single-segment creates require it.
-          imported (await (xsdk/create-translation-segments-batch! {:segments [{:source_text "Hello"
+          imported (await (xsdk/create-translation-segments-batch! {:org_id "org-1"
+                                                                    :segments [{:source_text "Hello"
                                                                                 :translated_text "Hola"
                                                                                 :target_lang "es"
                                                                                 :document_id "doc-1"}]}))
           documents (await (xsdk/translation-documents! {:project "knoxx" :org_id "org-1"}))
-          document (await (xsdk/translation-document! "doc-1" "es"))
-          reviewed (await (xsdk/review-translation-document! "doc-1" "es" {:overall "approve"}))
+          document (await (xsdk/translation-document! "doc-1" "es" scope))
+          reviewed (await (xsdk/review-translation-document! "doc-1" "es" {:overall "approve" :org_id "org-1"}))
           created-batch (await (xsdk/create-translation-batch! {:garden_id "garden-1"
                                                                :target_lang "es"
-                                                               :document_ids ["doc-1"]}))
-          batches (await (xsdk/translation-batches! {:status "queued"}))
-          next-batch (await (xsdk/next-translation-batch!))
-          batch (await (xsdk/translation-batch! "mongo-batch-1"))
-          updated-batch (await (xsdk/update-translation-batch-status! "mongo-batch-1" {:status "complete"}))]
+                                                               :document_ids ["doc-1"]
+                                                               :org_id "org-1"}))
+          batches (await (xsdk/translation-batches! {:status "queued" :org_id "org-1"}))
+          next-batch (await (xsdk/next-translation-batch! scope))
+          batch (await (xsdk/translation-batch! "mongo-batch-1" scope))
+          updated-batch (await (xsdk/update-translation-batch-status! "mongo-batch-1" {:status "complete" :org_id "org-1"}))]
       (is (= 0 (:total segments)))
       (is (= "segment-1" (:id segment)))
+      (is (= "org-1" (:org_id segment)))
       (is (= "segment-1" (:id created)))
       (is (= "approved" (:new_status labeled)))
       (is (= 1 (get-in manifest [:languages :es :approved])))
@@ -129,13 +143,20 @@
       (is (= 1 (:imported imported)))
       (is (= "fully_approved" (-> documents :documents first :overall_status)))
       (is (= 1 (get-in document [:summary :total_segments])))
+      (is (= "org-1" (get-in document [:segments 0 :org_id])))
       (is (not (contains? document :labels)))
       (is (= 1 (:segments_reviewed reviewed)))
       (is (= "batch-1" (:batch_id created-batch)))
       (is (= "batch-1" (-> batches :batches first :batch_id)))
       (is (= "processing" (get-in next-batch [:batch :status])))
+      (is (= "org-1" (get-in next-batch [:batch :org_id])))
       (is (= "mongo-batch-1" (:id batch)))
+      (is (= "org-1" (:org_id batch)))
       (is (= "complete" (:status updated-batch)))
+      (is (= "org-1" (get-in (sdk-call "translation.segment") [:args :opts :org_id])))
+      (is (= "org-1" (get-in (sdk-call "translation.document") [:args :opts :org_id])))
+      (is (= "org-1" (get-in (sdk-call "translation.nextBatch") [:args :org_id])))
+      (is (= "org-1" (get-in (sdk-call "translation.batch") [:args :opts :org_id])))
       (is (= ["translation.listSegments"
               "translation.segment"
               "translation.createSegment"
