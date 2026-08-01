@@ -16,6 +16,13 @@
 (def ^:private event-collection-name "events")
 (def ^:private graph-node-collection-name "graph_nodes")
 (def ^:private graph-edge-collection-name "graph_edges")
+(def ^:private segment-unique-index-key
+  #js {"org_id" 1 "document_id" 1 "segment_index" 1 "target_lang" 1})
+(def ^:private segment-unique-index-fields
+  [["org_id" 1]
+   ["document_id" 1]
+   ["segment_index" 1]
+   ["target_lang" 1]])
 
 (defonce ^:private index-promise* (atom nil))
 
@@ -66,14 +73,36 @@
       (await (mongo-client/init-mongo!))
       (throw (js/Error. "MongoDB is unavailable for direct translation storage"))))
 
+(defn- index-key-matches?
+  [index]
+  (let [key (jget index "key")]
+    (and key
+         (= (count segment-unique-index-fields)
+            (.-length (js/Object.keys key)))
+         (every? (fn [[field direction]]
+                   (= direction (jget key field)))
+                 segment-unique-index-fields))))
+
+(defn- ^:async ensure-segment-unique-index!
+  [segments]
+  (let [indexes (try
+                  (await (.indexes segments))
+                  (catch :default err
+                    (if (= "NamespaceNotFound" (jget err "codeName"))
+                      #js []
+                      (throw err))))
+        existing (first (filter #(= "segment_unique_idx" (jget % "name"))
+                                (array-seq indexes)))]
+    (when (and existing (not (index-key-matches? existing)))
+      (await (.dropIndex segments "segment_unique_idx")))
+    (await (.createIndex segments
+                         segment-unique-index-key
+                         #js {"unique" true "name" "segment_unique_idx"}))))
+
 (defn- ^:async create-indexes!
   [db]
   (let [{:keys [segments labels batches]} (collections db)]
-    ;; Keep the established OpenPlanner index definition. Tenant scope is
-    ;; enforced in every selector without changing the shared index contract.
-    (await (.createIndex segments
-                         #js {"document_id" 1 "segment_index" 1 "target_lang" 1}
-                         #js {"unique" true "name" "segment_unique_idx"}))
+    (await (ensure-segment-unique-index! segments))
     (await (js/Promise.all
             #js [(.createIndex segments #js {"status" 1})
                  (.createIndex segments #js {"target_lang" 1})
@@ -105,6 +134,22 @@
               result))
           {}
           keys))
+
+(defn- event-org-selector
+  [org-id]
+  {:$or [{:org_id org-id}
+         {:orgId org-id}
+         {:tenant_id org-id}
+         {"extra.org_id" org-id}
+         {"extra.orgId" org-id}
+         {"extra.tenant_id" org-id}
+         {"meta.org_id" org-id}
+         {"meta.orgId" org-id}
+         {"meta.tenant_id" org-id}]})
+
+(defn- event-selector
+  [id-clause org-id]
+  (assoc (event-org-selector org-id) :_id id-clause))
 
 (defn- segment-view
   ([row] (segment-view row [] nil))
@@ -565,7 +610,9 @@
                                            {:$sort {"_id.document_id" 1 "_id.target_lang" 1}}]))))
         document-ids (mapv #(jget (jget % "_id") "document_id") (array-seq rows))
         event-rows (if (seq document-ids)
-                     (await (.toArray (.find events (clj->js {:_id {:$in document-ids}}))))
+                     (await (.toArray
+                             (.find events
+                                    (clj->js (event-selector {:$in document-ids} org-id)))))
                      #js [])
         titles (into {} (map (fn [row]
                                (let [extra (jget row "extra")]
@@ -615,7 +662,8 @@
                                            {:$sort {:segment_index 1}}]))))]
     (when (zero? (.-length rows))
       (throw (js/Error. "Document translation not found")))
-    (let [event (await (.findOne (:events cs) #js {"_id" (str document-id)}))]
+    (let [event (await (.findOne (:events cs)
+                                 (clj->js (event-selector (str document-id) org-id))))]
       (when-not event
         (throw (js/Error. "Document not found")))
       (let [segments (vec (array-seq rows))
@@ -649,9 +697,13 @@
 
 (defn- override-for
   [overrides segment]
-  (or (get overrides (str (jget segment "segment_index")))
-      (get overrides (string-id segment))
-      {}))
+  (let [index-key (str (jget segment "segment_index"))
+        segment-key (string-id segment)]
+    (or (get overrides index-key)
+        (get overrides (keyword index-key))
+        (get overrides segment-key)
+        (get overrides (keyword segment-key))
+        {})))
 
 (defn ^:async review-document!
   [document-id target-lang payload]
