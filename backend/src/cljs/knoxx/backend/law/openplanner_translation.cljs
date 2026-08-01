@@ -19,6 +19,10 @@
 (def LabelOverall
   [:enum "approve" "needs_edit" "reject"])
 
+(def TenantScopeRequest
+  [:map {:closed false}
+   [:org_id {:optional true} OptionalString]])
+
 (def TranslationSegmentsRequest
   [:map {:closed false}
    [:project {:optional true} OptionalString]
@@ -183,6 +187,7 @@
 (def ReviewTranslationDocumentRequest
   [:map {:closed false}
    [:overall LabelOverall]
+   [:org_id {:optional true} OptionalString]
    [:editor_notes {:optional true} OptionalString]
    [:labeler_email {:optional true} OptionalString]
    [:labeler_id {:optional true} OptionalString]
@@ -210,7 +215,8 @@
    [:target_lang NonBlankString]
    [:document_ids [:vector NonBlankString]]
    [:source_lang {:optional true} OptionalString]
-   [:project {:optional true} OptionalString]])
+   [:project {:optional true} OptionalString]
+   [:org_id {:optional true} OptionalString]])
 
 (def CreateTranslationBatchResponse
   [:map {:closed false}
@@ -224,7 +230,8 @@
   [:map {:closed false}
    [:garden_id {:optional true} OptionalString]
    [:target_lang {:optional true} OptionalString]
-   [:status {:optional true} OptionalString]])
+   [:status {:optional true} OptionalString]
+   [:org_id {:optional true} OptionalString]])
 
 (def TranslationBatchesResponse
   [:map {:closed false}
@@ -243,6 +250,7 @@
 (def UpdateTranslationBatchRequest
   [:map {:closed false}
    [:status [:enum "processing" "complete" "partial" "failed"]]
+   [:org_id {:optional true} OptionalString]
    [:completed_document {:optional true} OptionalString]
    [:failed_document {:optional true} [:maybe [:map {:closed false}]]]
    [:agent_session_id {:optional true} OptionalString]
