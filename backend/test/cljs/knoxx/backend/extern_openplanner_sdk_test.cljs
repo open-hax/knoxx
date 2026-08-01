@@ -103,11 +103,12 @@
                                                                        :overall "approve"}))
           manifest (await (xsdk/translation-export-manifest! "knoxx"))
           sft (await (xsdk/translation-export-sft! {:project "knoxx"}))
+          ;; Batch imports intentionally permit omitted segment_index; the SDK
+          ;; assigns the row position while single-segment creates require it.
           imported (await (xsdk/create-translation-segments-batch! {:segments [{:source_text "Hello"
                                                                                 :translated_text "Hola"
                                                                                 :target_lang "es"
-                                                                                :document_id "doc-1"
-                                                                                :segment_index 0}]}))
+                                                                                :document_id "doc-1"}]}))
           documents (await (xsdk/translation-documents! {:project "knoxx"}))
           document (await (xsdk/translation-document! "doc-1" "es"))
           reviewed (await (xsdk/review-translation-document! "doc-1" "es" {:overall "approve"}))
