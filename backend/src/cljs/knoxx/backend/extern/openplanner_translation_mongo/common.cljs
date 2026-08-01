@@ -80,13 +80,14 @@
 
 (defn- index-key-matches?
   [index]
-  (let [index-key (jget index "key")]
+  (let [index-key (jget index "key")
+        ordered-fields (when index-key
+                         (mapv (fn [field]
+                                 [field (jget index-key field)])
+                               (array-seq (js/Object.keys index-key))))]
     (and index-key
-         (= (count segment-org-index-fields)
-            (.-length (js/Object.keys index-key)))
-         (every? (fn [[field direction]]
-                   (= direction (jget index-key field)))
-                 segment-org-index-fields))))
+         (= (count segment-org-index-fields) (count ordered-fields))
+         (= segment-org-index-fields ordered-fields))))
 
 (defn- index-by-name
   [indexes index-name]
@@ -162,6 +163,7 @@
   (let [{:keys [segments labels batches]} (collections db)]
     (await (ensure-segment-org-index! segments))
     (await (.createIndex labels #js {"segment_id" 1 "created_at" -1}))
+    (await (.createIndex labels #js {"org_id" 1 "project" 1}))
     (await (backfill-label-scope! labels))
     (await (js/Promise.all
             #js [(.createIndex segments #js {"status" 1})
@@ -169,7 +171,6 @@
                  (.createIndex segments #js {"garden_id" 1})
                  (.createIndex segments #js {"org_id" 1})
                  (.createIndex segments #js {"project" 1})
-                 (.createIndex labels #js {"org_id" 1 "project" 1})
                  (.createIndex batches #js {"garden_id" 1 "target_lang" 1 "status" 1})
                  (.createIndex batches #js {"org_id" 1 "status" 1 "created_at" 1})]))
     true))
