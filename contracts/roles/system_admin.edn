@@ -16,7 +16,8 @@
                      :cap/music
                      :cap/audio
                      :cap/multimodal
-                     :cap/openplanner]
+                     :cap/openplanner
+                     :cap/translation]
  :role/permissions ["platform.org.create"
                      "platform.org.read"
                      "platform.org.update"
