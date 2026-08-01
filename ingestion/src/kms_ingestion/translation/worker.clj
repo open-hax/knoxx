@@ -22,6 +22,7 @@
 (defonce poll-interval-ms (atom 10000))
 
 (def ^:private translation-config-ttl-ms 30000)
+(def ^:private system-admin-role-slugs #{"system_admin" "system-admin"})
 (def translation-model-cache* (atom {:model nil :fetched-at 0}))
 
 (defn- openplanner-url
@@ -197,6 +198,60 @@
             (Thread/sleep 2000)
             (recur)))))))
 
+(defn- context-org-id
+  [context]
+  (or (get-in context [:org :id])
+      (:orgId context)
+      (:org_id context)))
+
+(defn- context-membership-id
+  [context]
+  (or (get-in context [:membership :id])
+      (:membershipId context)
+      (:membership_id context)))
+
+(defn- system-admin-context?
+  [context]
+  (or (true? (:isSystemAdmin context))
+      (boolean (some system-admin-role-slugs
+                     (map str (or (:roleSlugs context)
+                                  (:role_slugs context)
+                                  []))))))
+
+(defn- legacy-batch-principal
+  "Resolve the configured worker identity for a pre-membership batch.
+
+  System admins may safely carry the explicit batch org in agent resource
+  policy. Non-system principals are accepted only when their current
+  membership already belongs to that same org."
+  [org-id]
+  (try
+    (let [context (fetch-json (knoxx-url "/api/auth/context")
+                              (knoxx-headers))
+          context-org (some-> (context-org-id context) str)
+          membership-id (some-> (context-membership-id context) str)]
+      (cond
+        (system-admin-context? context)
+        {:membership-id nil :mode :system-admin}
+
+        (and (= (str org-id) context-org)
+             (not (str/blank? membership-id)))
+        {:membership-id membership-id :mode :same-org-membership}
+
+        :else
+        nil))
+    (catch Exception e
+      (println "[translation-worker] Could not resolve legacy batch identity:"
+               (.getMessage e))
+      nil)))
+
+(defn- batch-principal
+  [batch]
+  (let [membership-id (some-> (:membership_id batch) str str/trim not-empty)]
+    (if membership-id
+      {:membership-id membership-id :mode :batch-membership}
+      (legacy-batch-principal (:org_id batch)))))
+
 ;; ─── Batch processing ─────────────────────────────────────────────────
 
 (defn- build-batch-prompt
@@ -237,27 +292,24 @@
          "DOCUMENT INVENTORY:\n" inventory "\n\n"
          "FULL DOCUMENT CONTENT:\n" contents)))
 
-(defn- process-batch
-  "Process a translation batch under its owning Knoxx membership."
-  [batch]
+(defn- process-batch-with-principal
+  [batch principal]
   (let [batch-id (or (:batch_id batch) (:id batch) (str (:_id batch)))
         garden-id (:garden_id batch)
         project (:project batch)
         org-id (:org_id batch)
-        membership-id (:membership_id batch)
+        membership-id (:membership-id principal)
         source-lang (:source_lang batch "en")
         target-lang (:target_lang batch)
         document-ids (:document_ids batch)]
     (println "[translation-worker] Processing batch" batch-id
              "garden" garden-id "->" target-lang
-             (count document-ids) "documents")
+             (count document-ids) "documents"
+             "principal" (name (:mode principal)))
     (try
       (when (str/blank? (str org-id))
         (throw (ex-info "Translation batch is missing org_id"
                         {:batch-id batch-id})))
-      (when (str/blank? (str membership-id))
-        (throw (ex-info "Translation batch is missing membership_id"
-                        {:batch-id batch-id :org-id org-id})))
 
       (mark-batch-status batch-id "processing")
 
@@ -378,6 +430,15 @@
         (println "[translation-worker] Batch" batch-id "failed:"
                  (.getMessage e))
         (mark-batch-status batch-id "failed" :error (.getMessage e))))))
+
+(defn- process-batch
+  "Process a batch or leave a legacy batch queued when no safe principal exists."
+  [batch]
+  (if-let [principal (batch-principal batch)]
+    (process-batch-with-principal batch principal)
+    (println "[translation-worker] Leaving legacy batch queued; configured Knoxx identity"
+             "is neither system admin nor a member of org" (:org_id batch)
+             "batch" (or (:batch_id batch) (:id batch) (str (:_id batch))))))
 
 ;; ─── Legacy single-job support (backward compat) ─────────────────────
 
