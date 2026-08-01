@@ -50,32 +50,32 @@
     (openplanner-client/record-reaction! rest-client record-id payload))
   (translation-segments! [_ opts]
     (xsdk/translation-segments! opts))
-  (translation-segment! [_ segment-id]
-    (xsdk/translation-segment! segment-id))
+  (translation-segment! [_ segment-id opts]
+    (xsdk/translation-segment! segment-id opts))
   (create-translation-segment! [_ segment]
     (xsdk/create-translation-segment! segment))
   (label-translation-segment! [_ segment-id payload]
     (xsdk/label-translation-segment! segment-id payload))
-  (translation-export-manifest! [_ project]
-    (xsdk/translation-export-manifest! project))
+  (translation-export-manifest! [_ opts]
+    (xsdk/translation-export-manifest! opts))
   (translation-export-sft! [_ opts]
     (xsdk/translation-export-sft! opts))
   (create-translation-segments-batch! [_ payload]
     (xsdk/create-translation-segments-batch! payload))
   (translation-documents! [_ opts]
     (xsdk/translation-documents! opts))
-  (translation-document! [_ document-id target-lang]
-    (xsdk/translation-document! document-id target-lang))
+  (translation-document! [_ document-id target-lang opts]
+    (xsdk/translation-document! document-id target-lang opts))
   (review-translation-document! [_ document-id target-lang payload]
     (xsdk/review-translation-document! document-id target-lang payload))
   (create-translation-batch! [_ payload]
     (xsdk/create-translation-batch! payload))
   (translation-batches! [_ opts]
     (xsdk/translation-batches! opts))
-  (next-translation-batch! [_]
-    (xsdk/next-translation-batch!))
-  (translation-batch! [_ batch-id]
-    (xsdk/translation-batch! batch-id))
+  (next-translation-batch! [_ opts]
+    (xsdk/next-translation-batch! opts))
+  (translation-batch! [_ batch-id opts]
+    (xsdk/translation-batch! batch-id opts))
   (update-translation-batch-status! [_ batch-id payload]
     (xsdk/update-translation-batch-status! batch-id payload))
   (v1-json! [_ method path body]
