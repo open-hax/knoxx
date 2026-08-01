@@ -8,6 +8,7 @@
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.http :refer [http-error]]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
+            [knoxx.backend.infra.openplanner.translation-scope :as translation-scope]
             [knoxx.backend.domain.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
@@ -213,7 +214,7 @@
           document-id (or (aget params "document_id") (:document_id resource-policies) (:document-id resource-policies))
           garden-id (or (aget params "garden_id") (:garden_id resource-policies) (:garden-id resource-policies))
           project (or (aget params "project") (:project resource-policies) (:project-name config))
-          org-id (or (:orgId auth-context) (:org-id auth-context) (:org_id auth-context))
+          org-id (translation-scope/translation-org-id! auth-context resource-policies)
           segment-index (aget params "segment_index")
           normalized-source (str/trim (str (or source-text "")))
           normalized-translated (str/trim (str (or translated-text "")))
@@ -227,8 +228,6 @@
                                       "; provide an actual " target-lang " translation"))))
           _ (when (str/blank? (str document-id))
               (throw (js/Error. "document_id is required for save_translation")))
-          _ (when (str/blank? (str org-id))
-              (throw (js/Error. "organization is required for save_translation")))
           segment {:source_text source-text
                    :translated_text translated-text
                    :source_lang source-lang
@@ -236,7 +235,7 @@
                    :document_id document-id
                    :garden_id garden-id
                    :project project
-                   :org_id (str org-id)
+                   :org_id org-id
                    :segment_index segment-index
                    :status "pending"
                    :mt_model "translation-agent"}]
@@ -251,7 +250,7 @@
            "Query the canonical OpenPlanner knowledge graph across the workspace, web, bluesky, and knoxx-session lakes."
            "Search the canonical knowledge graph when you need entities or cross-lake links rather than plain transcript memory or semantic document snippets."
            ["Use graph_query when the question is about entities, paths, URLs, provenance across lakes, or graph connectivity."
-            "Prefer graph_query over semantic_query when node/edge structure matters."
+            "Prefer graph_query over guessing about prior conversations or actions."
             "Use the lake filter to focus on workspace, web, bluesky, or knoxx-session when the search space is obvious."]
            graph-query-params
            graph-query-execute))
