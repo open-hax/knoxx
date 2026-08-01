@@ -113,6 +113,13 @@
   [value]
   (xjson/to-cljs (or value {})))
 
+(defn- tenant-scope
+  [contract-id opts]
+  (translation-contract/assert-valid!
+   contract-id
+   translation-contract/TenantScopeRequest
+   (request-map opts)))
+
 ;; Translation is an SDK-owned Mongo projection. Keep this boundary here so
 ;; callers cannot accidentally fall back to the OpenPlanner HTTP API.
 (defn- ^:async translation-store!
@@ -133,13 +140,16 @@
      response)))
 
 (defn ^:async translation-segment!
-  [segment-id]
-  (let [request (translation-contract/assert-valid!
-                 :translation-segment/request
-                 translation-contract/NonBlankString
-                 (str segment-id))
+  [segment-id opts]
+  (let [validated-id (translation-contract/assert-valid!
+                      :translation-segment/id
+                      translation-contract/NonBlankString
+                      (str segment-id))
+        scope (tenant-scope :translation-segment/scope opts)
         response (xjson/to-cljs
-                  (await (.segment (await (translation-store!)) request)))]
+                  (await (.segment (await (translation-store!))
+                                   validated-id
+                                   (clj->js scope))))]
     (translation-contract/assert-valid!
      :translation-segment/response
      translation-contract/TranslationSegmentResponse
@@ -233,7 +243,7 @@
      response)))
 
 (defn ^:async translation-document!
-  [document-id target-lang]
+  [document-id target-lang opts]
   (let [validated-document-id (translation-contract/assert-valid!
                                :translation-document/document-id
                                translation-contract/NonBlankString
@@ -242,10 +252,12 @@
                                :translation-document/target-lang
                                translation-contract/NonBlankString
                                (str target-lang))
+        scope (tenant-scope :translation-document/scope opts)
         response (xjson/to-cljs
                   (await (.document (await (translation-store!))
                                     validated-document-id
-                                    validated-target-lang)))]
+                                    validated-target-lang
+                                    (clj->js scope))))]
     (translation-contract/assert-valid!
      :translation-document/response
      translation-contract/TranslationDocumentResponse
@@ -302,22 +314,26 @@
      response)))
 
 (defn ^:async next-translation-batch!
-  []
-  (let [response (xjson/to-cljs
-                  (await (.nextBatch (await (translation-store!)))))]
+  [opts]
+  (let [scope (tenant-scope :next-translation-batch/scope opts)
+        response (xjson/to-cljs
+                  (await (.nextBatch (await (translation-store!)) (clj->js scope))))]
     (translation-contract/assert-valid!
      :next-translation-batch/response
      translation-contract/NextTranslationBatchResponse
      response)))
 
 (defn ^:async translation-batch!
-  [batch-id]
-  (let [request (translation-contract/assert-valid!
-                 :translation-batch/request
-                 translation-contract/NonBlankString
-                 (str batch-id))
+  [batch-id opts]
+  (let [validated-id (translation-contract/assert-valid!
+                      :translation-batch/id
+                      translation-contract/NonBlankString
+                      (str batch-id))
+        scope (tenant-scope :translation-batch/scope opts)
         response (xjson/to-cljs
-                  (await (.batch (await (translation-store!)) request)))]
+                  (await (.batch (await (translation-store!))
+                                 validated-id
+                                 (clj->js scope))))]
     (translation-contract/assert-valid!
      :translation-batch/response
      translation-contract/TranslationBatchResponse
