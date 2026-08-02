@@ -23,6 +23,26 @@
   [:map {:closed false}
    [:org_id NonBlankString]])
 
+(def ScopeOrgId
+  "An organization identifier carried by authorization data: absent, or a nonblank string.
+
+  Non-string truthy values must never be coerced into a tenant identifier."
+  [:maybe NonBlankString])
+
+(def TranslationScopeAuthContext
+  [:maybe
+   [:map {:closed false}
+    [:orgId {:optional true} ScopeOrgId]
+    [:org-id {:optional true} ScopeOrgId]
+    [:org_id {:optional true} ScopeOrgId]]])
+
+(def TranslationScopeResourcePolicies
+  [:maybe
+   [:map {:closed false}
+    [:orgId {:optional true} ScopeOrgId]
+    [:org-id {:optional true} ScopeOrgId]
+    [:org_id {:optional true} ScopeOrgId]]])
+
 (def TranslationSegmentsRequest
   [:map {:closed false}
    [:project {:optional true} OptionalString]

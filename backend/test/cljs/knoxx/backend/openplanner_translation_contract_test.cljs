@@ -86,4 +86,29 @@
     (is (thrown-with-msg?
          js/Error
          #"organization is required"
-         (translation-scope/translation-org-id! {} {})))))
+         (translation-scope/translation-org-id! {} {}))))
+  (testing "non-string authorization values never become tenant identifiers"
+    (is (thrown-with-msg?
+         js/Error
+         #"contract violation"
+         (translation-scope/translation-org-id! {:orgId false} {})))
+    (is (thrown-with-msg?
+         js/Error
+         #"contract violation"
+         (translation-scope/translation-org-id! {:orgId "org-1"} {:org_id 42})))))
+
+(deftest batch-views-keep-the-owning-membership-private
+  (let [row #js {"_id" "batch-row-1"
+                 "batch_id" "batch-1"
+                 "org_id" "org-1"
+                 "membership_id" "membership-1"
+                 "status" "queued"}]
+    (testing "tenant-facing batch responses omit the creator's membership"
+      (let [view (common/batch-view row)]
+        (is (= "org-1" (:org_id view)))
+        (is (not (contains? view :membership_id)))))
+    (testing "the worker claim path still carries the owning membership"
+      (is (= "membership-1" (:membership_id (common/worker-batch-view row)))))
+    (testing "a missing row yields no view on either path"
+      (is (nil? (common/batch-view nil)))
+      (is (nil? (common/worker-batch-view nil))))))

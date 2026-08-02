@@ -6,6 +6,7 @@
    inline. Generic HTTP semantics stay private to this boundary."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.fetch :as xfetch]
+            [knoxx.backend.law.openplanner-translation :as translation-contract]
             [promesa.core :as p]))
 
 (defprotocol IOpenPlannerClient
@@ -212,9 +213,11 @@
   (label-translation-segment! [_ segment-id payload]
     (request-json! http-client config timeout-ms "POST" (str "/v1/translations/segments/" (encode segment-id) "/labels") payload))
   (translation-export-manifest! [_ opts]
-    (when-not (map? opts)
-      (throw (js/Error. "translation manifest requests require a scoped options map")))
-    (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string opts)) nil))
+    (let [request (translation-contract/assert-valid!
+                   :translation-export-manifest/request
+                   translation-contract/TranslationManifestRequest
+                   opts)]
+      (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string request)) nil)))
   (translation-export-sft! [client opts]
     (ensure-enabled! client)
     (-> (p/let [resp (xfetch/text! (or http-client xfetch/default-client)

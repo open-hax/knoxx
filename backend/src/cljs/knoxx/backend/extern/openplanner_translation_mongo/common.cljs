@@ -263,7 +263,13 @@
      (some? label-count) (assoc :label_count label-count))))
 
 (defn batch-view
-  "Normalize a Mongo batch row, including owning tenant and membership."
+  "Normalize a Mongo batch row for tenant-facing responses.
+
+  The owning `membership_id` is deliberately omitted: request authentication
+  accepts an `x-knoxx-membership-id` header without binding it to the caller's
+  identity, so echoing a batch creator's membership to every reader with
+  `org.translations.read` would hand them that creator's authorization
+  context. Use `worker-batch-view` on the worker claim path instead."
   [row]
   (when row
     {:id (string-id row)
@@ -273,7 +279,6 @@
      :source_lang (jget row "source_lang")
      :project (jget row "project")
      :org_id (jget row "org_id")
-     :membership_id (jget row "membership_id")
      :status (jget row "status")
      :document_ids (vec (or (some-> (jget row "document_ids") array-seq) []))
      :completed_documents (vec (or (some-> (jget row "completed_documents") array-seq) []))
@@ -288,6 +293,15 @@
      :agent_conversation_id (jget row "agent_conversation_id")
      :agent_run_id (jget row "agent_run_id")
      :error (jget row "error")}))
+
+(defn worker-batch-view
+  "Normalize a claimed batch for the translation worker, including `membership_id`.
+
+  Only the worker claim path may see the owning membership; every tenant-facing
+  batch response must use `batch-view`."
+  [row]
+  (when-let [view (batch-view row)]
+    (assoc view :membership_id (jget row "membership_id"))))
 
 (defn assert-response!
   "Validate and return a boundary response map."

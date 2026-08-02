@@ -79,7 +79,7 @@
                          "$inc" #js {"attempts" 1}}
                     #js {"sort" #js {"created_at" 1}
                          "returnDocument" "after"}))
-        response {:batch (common/batch-view row)}]
+        response {:batch (common/worker-batch-view row)}]
     (common/assert-response! :next-translation-batch/response
                              contract/NextTranslationBatchResponse
                              response)))

@@ -23,7 +23,14 @@
 
 (def ^:private translation-config-ttl-ms 30000)
 (def ^:private system-admin-role-slugs #{"system_admin" "system-admin"})
+(def ^:private unresolved-principal-cooldown-ms 300000)
 (def translation-model-cache* (atom {:model nil :fetched-at 0}))
+
+;; Batch ids whose execution principal could not be resolved safely, mapped to
+;; the millisecond timestamp of that decision. A cooled-down batch keeps its
+;; queue position instead of being failed, but the worker stops re-resolving
+;; its identity on every poll.
+(defonce ^:private unresolved-principals* (atom {}))
 
 (defn- openplanner-url
   [path]
@@ -431,14 +438,43 @@
                  (.getMessage e))
         (mark-batch-status batch-id "failed" :error (.getMessage e))))))
 
-(defn- process-batch
-  "Process a batch or leave a legacy batch queued when no safe principal exists."
+(defn- batch-identity
   [batch]
-  (if-let [principal (batch-principal batch)]
-    (process-batch-with-principal batch principal)
-    (println "[translation-worker] Leaving legacy batch queued; configured Knoxx identity"
-             "is neither system admin nor a member of org" (:org_id batch)
-             "batch" (or (:batch_id batch) (:id batch) (str (:_id batch))))))
+  (or (:batch_id batch) (:id batch) (str (:_id batch))))
+
+(defn- batch-cooling-down?
+  "True when this batch already failed principal resolution inside the cooldown window.
+
+  Expired entries are dropped so the map stays bounded by the number of batches
+  seen within one cooldown window."
+  [batch-id now]
+  (-> (swap! unresolved-principals*
+             (fn [entries]
+               (into {}
+                     (remove (fn [[_ at]] (>= (- now at) unresolved-principal-cooldown-ms)))
+                     entries)))
+      (contains? batch-id)))
+
+(defn- process-batch
+  "Process a batch, or cool a legacy batch down when no safe principal exists.
+
+  A batch with no resolvable principal keeps its queue position rather than
+  being failed, but it is skipped for `unresolved-principal-cooldown-ms` so a
+  re-served batch cannot spin the poll loop on identity resolution."
+  [batch]
+  (let [batch-id (batch-identity batch)
+        now (System/currentTimeMillis)]
+    (if (batch-cooling-down? batch-id now)
+      (println "[translation-worker] Skipping batch" batch-id
+               "- unresolved principal, still cooling down")
+      (if-let [principal (batch-principal batch)]
+        (do (swap! unresolved-principals* dissoc batch-id)
+            (process-batch-with-principal batch principal))
+        (do (swap! unresolved-principals* assoc batch-id now)
+            (println "[translation-worker] Leaving legacy batch queued; configured Knoxx identity"
+                     "is neither system admin nor a member of org" (:org_id batch)
+                     "batch" batch-id
+                     "- retrying in" (quot unresolved-principal-cooldown-ms 1000) "s"))))))
 
 ;; ─── Legacy single-job support (backward compat) ─────────────────────
 
