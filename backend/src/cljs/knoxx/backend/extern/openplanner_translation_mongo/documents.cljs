@@ -5,124 +5,6 @@
             [knoxx.backend.law.openplanner-translation :as contract]
             [openplanner.translations.core :as translation]))
 
-(defn- status-count
-  "Aggregation expression counting segments whose status equals `status`."
-  [status]
-  {:$sum {:$cond [{:$eq ["$status" status]} 1 0]}})
-
-(defn- language-stats-pipeline
-  "Per-language segment status totals for the matched tenant scope."
-  [segment-selector]
-  [{:$match segment-selector}
-   {:$group {:_id "$target_lang"
-             :total {:$sum 1}
-             :approved (status-count "approved")
-             :rejected (status-count "rejected")
-             :pending (status-count "pending")
-             :in_review (status-count "in_review")}}])
-
-(defn- label-stats-pipeline
-  "Correction, labeler, and label-count facets joined back to their segments."
-  [label-selector]
-  [{:$match label-selector}
-   {:$addFields {:segment_object_id {:$convert {:input "$segment_id"
-                                                :to "objectId"
-                                                :onError nil
-                                                :onNull nil}}}}
-   {:$lookup {:from common/segment-collection-name
-              :localField "segment_object_id"
-              :foreignField "_id"
-              :as "segment"}}
-   {:$unwind "$segment"}
-   {:$facet
-    {:corrections
-     [{:$match {:corrected_text {:$exists true :$nin [nil ""]}}}
-      {:$group {:_id {:target_lang "$segment.target_lang"
-                      :segment_id "$segment_id"}}}
-      {:$group {:_id "$_id.target_lang" :count {:$sum 1}}}]
-     :labelers
-     [{:$group {:_id "$labeler_email" :segments_labeled {:$sum 1}}}]
-     :label_counts
-     [{:$group {:_id "$segment.target_lang" :count {:$sum 1}}}]}}])
-
-(defn- facet-rows
-  [stats facet]
-  (array-seq (or (common/jget stats facet) #js [])))
-
-(defn- count-by-id
-  "Index `{_id count}` facet rows by their grouping key."
-  [rows]
-  (into {}
-        (map (fn [row] [(common/jget row "_id") (common/jget row "count")]))
-        rows))
-
-(defn- language-summary
-  [row]
-  {:target-lang (common/jget row "_id")
-   :total (common/jget row "total")
-   :approved (common/jget row "approved")
-   :rejected (common/jget row "rejected")
-   :pending (common/jget row "pending")
-   :in-review (common/jget row "in_review")})
-
-(defn- labeler-summary
-  [row]
-  {:email (common/jget row "_id")
-   :segments-labeled (common/jget row "segments_labeled")})
-
-(defn- with-average-labels
-  "Annotate each shaped language with its mean label count per segment."
-  [shaped label-counts]
-  (update shaped :languages
-          (fn [by-language]
-            (into {}
-                  (map (fn [[language data]]
-                         [language
-                          (assoc data :avg_labels_per_segment
-                                 (if (pos? (:total_segments data))
-                                   (/ (get label-counts language 0)
-                                      (:total_segments data))
-                                   0))]))
-                  by-language))))
-
-(defn- manifest-response
-  "Shape the manifest wire response from the language and label aggregations."
-  [request language-rows stats]
-  (-> (translation/manifest-shape
-       {:project (:project request)
-        :languages (mapv language-summary language-rows)
-        :corrections-by-language (count-by-id (facet-rows stats "corrections"))
-        :labelers (mapv labeler-summary (facet-rows stats "labelers"))})
-      (with-average-labels (count-by-id (facet-rows stats "label_counts")))
-      (assoc :generated_at (.toISOString (js/Date.)))))
-
-(defn ^:async manifest!
-  "Build a tenant-scoped translation manifest with indexed label filtering."
-  [opts]
-  (await (common/ensure-indexes!))
-  (let [request (contract/assert-valid! :translation-export-manifest/request
-                                        contract/TranslationManifestRequest
-                                        (or opts {}))
-        org-id (common/required-org-id! (:org_id request))
-        segment-selector (assoc (common/filter-map request [:project])
-                                :org_id org-id)
-        label-selector (cond-> {:org_id org-id}
-                         (:project request) (assoc :project (:project request)))
-        {:keys [segments labels]} (common/collections (await (common/db!)))
-        language-rows (await
-                       (.toArray
-                        (.aggregate segments
-                                    (clj->js (language-stats-pipeline segment-selector)))))
-        label-rows (await
-                    (.toArray
-                     (.aggregate labels
-                                 (clj->js (label-stats-pipeline label-selector)))))
-        response (manifest-response request
-                                    (array-seq language-rows)
-                                    (first (array-seq label-rows)))]
-    (common/assert-response! :translation-export-manifest/response
-                             contract/TranslationManifestResponse
-                             response)))
 
 (defn- document-stats-pipeline
   "Per document+language status totals for the matched tenant scope."
@@ -133,10 +15,10 @@
              :garden_id {:$first "$garden_id"}
              :project {:$first "$project"}
              :total_segments {:$sum 1}
-             :approved (status-count "approved")
-             :pending (status-count "pending")
-             :rejected (status-count "rejected")
-             :in_review (status-count "in_review")}}
+             :approved (common/status-count "approved")
+             :pending (common/status-count "pending")
+             :rejected (common/status-count "rejected")
+             :in_review (common/status-count "in_review")}}
    {:$sort {"_id.document_id" 1 "_id.target_lang" 1}}])
 
 (defn- event-metadata-index
@@ -258,6 +140,19 @@
      :in_review (:in-review summary)
      :overall_status (translation/status-wire (:overall-status summary))}))
 
+(defn- latest-document-segments!
+  "Load the newest revision of every segment in one document+language pair."
+  [collection-map document-id target-lang org-id]
+  (.toArray
+   (.aggregate (:segments collection-map)
+               (clj->js (document-segments-pipeline document-id target-lang org-id)))))
+
+(defn- source-event!
+  "Load the source event backing a document, if it has one."
+  [collection-map document-id org-id]
+  (.findOne (:events collection-map)
+            (clj->js (common/event-selector (str document-id) org-id))))
+
 (defn ^:async document!
   "Load a tenant document, using segment text as source metadata for manual imports."
   [document-id target-lang opts]
@@ -267,32 +162,25 @@
                                       (or opts {}))
         org-id (common/required-org-id! (:org_id scope))
         collection-map (common/collections (await (common/db!)))
-        rows (await
-              (.toArray
-               (.aggregate
-                (:segments collection-map)
-                (clj->js (document-segments-pipeline document-id target-lang org-id)))))]
+        rows (await (latest-document-segments!
+                     collection-map document-id target-lang org-id))]
     (when (zero? (.-length rows))
       (throw (js/Error. "Document translation not found")))
-    (let [event (await
-                 (.findOne
-                  (:events collection-map)
-                  (clj->js (common/event-selector (str document-id) org-id))))
+    (let [event (await (source-event! collection-map document-id org-id))
           segments (vec (array-seq rows))
           labels-by-id (await (labels-by-segment-id (:labels collection-map)
                                                     (mapv common/string-id segments)))
           shaped-segments (mapv #(common/segment-view
                                   % (get labels-by-id (common/string-id %) []) nil)
-                                segments)
-          response {:document (document-metadata
-                               document-id
-                               (when event (common/jget event "extra"))
-                               segments)
-                    :segments shaped-segments
-                    :summary (document-summary shaped-segments)}]
-      (common/assert-response! :translation-document/response
-                               contract/TranslationDocumentResponse
-                               response))))
+                                segments)]
+      (common/assert-response!
+       :translation-document/response
+       contract/TranslationDocumentResponse
+       {:document (document-metadata document-id
+                                     (when event (common/jget event "extra"))
+                                     segments)
+        :segments shaped-segments
+        :summary (document-summary shaped-segments)}))))
 
 (defn- override-for
   [overrides segment]
@@ -396,6 +284,20 @@
                           (array-seq chunk-results)))))
       results)))
 
+(defn- review-counts
+  "Shape the review response from per-segment outcomes, not from the attempt count."
+  [results total-segments {:keys [document-id target-lang overall overrides-applied]}]
+  (let [successful (filter :success results)
+        reviewed-count (count successful)]
+    {:ok true
+     :document_id (str document-id)
+     :target_lang (str target-lang)
+     :segments_reviewed reviewed-count
+     :segments_failed (- total-segments reviewed-count)
+     :overall overall
+     :overrides_applied overrides-applied
+     :graph_memory_failures (count (remove :graph-success successful))}))
+
 (defn ^:async review-document!
   "Review a tenant document in bounded chunks with exact success/failure counts."
   [document-id target-lang payload]
@@ -417,18 +319,12 @@
       (throw (js/Error. "No segments found for this document+language pair")))
     (let [overrides (or (:segment_overrides request) {})
           results (await (review-in-chunks!
-                          collection-map org-id request overrides segments))
-          successful (filter :success results)
-          reviewed-count (count successful)
-          graph-failures (count (remove :graph-success successful))
-          response {:ok true
-                    :document_id (str document-id)
-                    :target_lang (str target-lang)
-                    :segments_reviewed reviewed-count
-                    :segments_failed (- (count segments) reviewed-count)
-                    :overall (:overall request)
-                    :overrides_applied (count overrides)
-                    :graph_memory_failures graph-failures}]
-      (common/assert-response! :review-translation-document/response
-                               contract/ReviewTranslationDocumentResponse
-                               response))))
+                          collection-map org-id request overrides segments))]
+      (common/assert-response!
+       :review-translation-document/response
+       contract/ReviewTranslationDocumentResponse
+       (review-counts results (count segments)
+                      {:document-id document-id
+                       :target-lang target-lang
+                       :overall (:overall request)
+                       :overrides-applied (count overrides)})))))

@@ -203,42 +203,57 @@
       (let [resp (await (openplanner-client/events! (openplanner-client/client config) [event]))]
         (tool-text-result (str "Successfully pushed claim to graph: " claim) resp)))))
 
+(defn- policy-value
+  "Read a tool param, falling back to either spelling of the resource policy key."
+  [params resource-policies param-name snake-key kebab-key]
+  (or (aget params param-name)
+      (get resource-policies snake-key)
+      (get resource-policies kebab-key)))
+
+(defn- assert-translated!
+  "Reject a prose segment whose translation is byte-identical to its source."
+  [{:keys [source-text translated-text source-lang target-lang segment-index]}]
+  (let [normalized-source (str/trim (str (or source-text "")))
+        normalized-translated (str/trim (str (or translated-text "")))
+        prose-like? (or (> (count normalized-source) 24)
+                        (str/includes? normalized-source " "))]
+    (when (and (not (str/blank? source-lang))
+               (not (str/blank? target-lang))
+               (not= source-lang target-lang)
+               prose-like?
+               (= normalized-source normalized-translated))
+      (throw (js/Error. (str "translated_text matches source_text for segment " segment-index
+                             "; provide an actual " target-lang " translation"))))))
+
+(defn- save-translation-segment
+  "Build the pending segment a save_translation call persists."
+  [auth-context config params]
+  (let [policies (:resourcePolicies auth-context)]
+    {:source_text (aget params "source_text")
+     :translated_text (aget params "translated_text")
+     :source_lang (policy-value params policies "source_lang" :source_lang :source-lang)
+     :target_lang (policy-value params policies "target_lang" :target_lang :target-lang)
+     :document_id (policy-value params policies "document_id" :document_id :document-id)
+     :garden_id (policy-value params policies "garden_id" :garden_id :garden-id)
+     :project (or (aget params "project") (:project policies) (:project-name config))
+     :org_id (translation-scope/translation-org-id! auth-context policies)
+     :segment_index (aget params "segment_index")
+     :status "pending"
+     :mt_model "translation-agent"}))
+
 (defn make-save-translation-execute [auth-context]
   (^:async fn [_runtime config _tool-call-id params a b c]
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-          resource-policies (:resourcePolicies auth-context)
-          source-text (aget params "source_text")
-          translated-text (aget params "translated_text")
-          source-lang (or (aget params "source_lang") (:source_lang resource-policies) (:source-lang resource-policies))
-          target-lang (or (aget params "target_lang") (:target_lang resource-policies) (:target-lang resource-policies))
-          document-id (or (aget params "document_id") (:document_id resource-policies) (:document-id resource-policies))
-          garden-id (or (aget params "garden_id") (:garden_id resource-policies) (:garden-id resource-policies))
-          project (or (aget params "project") (:project resource-policies) (:project-name config))
-          org-id (translation-scope/translation-org-id! auth-context resource-policies)
-          segment-index (aget params "segment_index")
-          normalized-source (str/trim (str (or source-text "")))
-          normalized-translated (str/trim (str (or translated-text "")))
-          prose-like? (or (> (count normalized-source) 24) (str/includes? normalized-source " "))
-          _ (when (and (not (str/blank? source-lang))
-                       (not (str/blank? target-lang))
-                       (not= source-lang target-lang)
-                       prose-like?
-                       (= normalized-source normalized-translated))
-              (throw (js/Error. (str "translated_text matches source_text for segment " segment-index
-                                      "; provide an actual " target-lang " translation"))))
-          _ (when (str/blank? (str document-id))
-              (throw (js/Error. "document_id is required for save_translation")))
-          segment {:source_text source-text
-                   :translated_text translated-text
-                   :source_lang source-lang
-                   :target_lang target-lang
-                   :document_id document-id
-                   :garden_id garden-id
-                   :project project
-                   :org_id org-id
-                   :segment_index segment-index
-                   :status "pending"
-                   :mt_model "translation-agent"}]
+          segment (save-translation-segment auth-context config params)
+          translated-text (:translated_text segment)
+          segment-index (:segment_index segment)]
+      (assert-translated! {:source-text (:source_text segment)
+                           :translated-text translated-text
+                           :source-lang (:source_lang segment)
+                           :target-lang (:target_lang segment)
+                           :segment-index segment-index})
+      (when (str/blank? (str (:document_id segment)))
+        (throw (js/Error. "document_id is required for save_translation")))
       (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
       (let [result (await (openplanner-client/create-translation-segment! (openplanner-client/client config) segment))]
         (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
@@ -329,34 +344,29 @@
            push-claim-params
            (make-push-claim-execute auth-context)))
 
+(defn- any-tool-allowed?
+  "True when the context may use any of `tool-ids`; a nil context allows all."
+  [auth-context tool-ids]
+  (or (nil? auth-context)
+      (boolean (some #(ctx-tool-allowed? auth-context %) tool-ids))))
+
+(defn- openplanner-tool-builders
+  "Tool factories keyed by the tool ids that authorize them."
+  [auth-context]
+  [[["graph_query" "semantic_query"] graph-query-tool]
+   [["websearch"] websearch-tool]
+   [["web.read"] web-read-tool]
+   [["memory_search"] (memory-search-tool auth-context)]
+   [["memory_session"] (memory-session-tool auth-context)]
+   [["save_translation"] (save-translation-tool auth-context)]
+   [["create_new_file"] (create-new-file-tool auth-context)]
+   [["push_claim"] (push-claim-tool auth-context)]])
+
 (defn create-openplanner-custom-tools
   ([runtime config] (create-openplanner-custom-tools runtime config nil))
   ([runtime config auth-context]
    (clj->js
-    (vec
-     (remove nil?
-             [(when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "graph_query")
-                        (ctx-tool-allowed? auth-context "semantic_query"))
-                (graph-query-tool runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "websearch"))
-                (websearch-tool runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "web.read"))
-                (web-read-tool runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "memory_search"))
-                ((memory-search-tool auth-context) runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "memory_session"))
-                ((memory-session-tool auth-context) runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "save_translation"))
-                ((save-translation-tool auth-context) runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "create_new_file"))
-                ((create-new-file-tool auth-context) runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "push_claim"))
-                ((push-claim-tool auth-context) runtime config))])))))
+    (into []
+          (comp (filter (fn [[tool-ids _]] (any-tool-allowed? auth-context tool-ids)))
+                (map (fn [[_ build]] (build runtime config))))
+          (openplanner-tool-builders auth-context)))))

@@ -11,6 +11,29 @@
           str/trim
           not-empty))
 
+(defn- resolve-org
+  [auth context-value policy-value]
+  (cond
+    (and policy-value
+         context-value
+         (not= policy-value context-value)
+         (not (system-admin? auth)))
+    (throw (ex-info "save_translation cannot target another organization"
+                    {:type ::cross-organization-translation
+                     :context-org context-value
+                     :policy-org policy-value}))
+
+    (and policy-value (or (= policy-value context-value)
+                          (system-admin? auth)))
+    policy-value
+
+    context-value
+    context-value
+
+    :else
+    (throw (ex-info "organization is required for save_translation"
+                    {:type ::missing-translation-organization}))))
+
 (defn translation-org-id!
   "Resolve the organization used by save_translation.
 
@@ -26,26 +49,5 @@
                                      auth-context)
         policies (contract/assert-valid! :translation-scope/resource-policies
                                          contract/TranslationScopeResourcePolicies
-                                         resource-policies)
-        context-value (scope-org-id auth)
-        policy-value (scope-org-id policies)]
-    (cond
-      (and policy-value
-           context-value
-           (not= policy-value context-value)
-           (not (system-admin? auth)))
-      (throw (ex-info "save_translation cannot target another organization"
-                      {:type ::cross-organization-translation
-                       :context-org context-value
-                       :policy-org policy-value}))
-
-      (and policy-value (or (= policy-value context-value)
-                            (system-admin? auth)))
-      policy-value
-
-      context-value
-      context-value
-
-      :else
-      (throw (ex-info "organization is required for save_translation"
-                      {:type ::missing-translation-organization})))))
+                                         resource-policies)]
+    (resolve-org auth (scope-org-id auth) (scope-org-id policies))))

@@ -3,6 +3,8 @@
   (:require [knoxx.backend.extern.openplanner-translation-mongo.batches :as batches]
             [knoxx.backend.extern.openplanner-translation-mongo.common :as common]
             [knoxx.backend.extern.openplanner-translation-mongo.documents :as documents]
+            [knoxx.backend.extern.openplanner-translation-mongo.labels :as labels]
+            [knoxx.backend.extern.openplanner-translation-mongo.manifest :as manifest]
             [knoxx.backend.extern.openplanner-translation-mongo.segments :as segments]))
 
 (defn ensure-indexes!
@@ -33,7 +35,7 @@
 (defn label-segment!
   "Label one tenant-scoped translation segment."
   [segment-id payload]
-  (segments/label-segment! segment-id payload))
+  (labels/label-segment! segment-id payload))
 
 (defn export-sft!
   "Export tenant-scoped approved segments as SFT rows."
@@ -43,7 +45,7 @@
 (defn manifest!
   "Build a tenant-scoped translation manifest."
   [opts]
-  (documents/manifest! opts))
+  (manifest/manifest! opts))
 
 (defn documents!
   "List tenant-scoped translated documents."

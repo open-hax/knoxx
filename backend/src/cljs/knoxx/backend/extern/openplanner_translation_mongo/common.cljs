@@ -211,6 +211,11 @@
         bounded (max lower-bound (js/Math.floor finite))]
     (if upper-bound (min upper-bound bounded) bounded)))
 
+(defn status-count
+  "Aggregation expression counting segments whose status equals `status`."
+  [status]
+  {:$sum {:$cond [{:$eq ["$status" status]} 1 0]}})
+
 (defn event-selector
   "Build a tenant-scoped source-event selector for one id or an id clause."
   [id-clause org-id]
@@ -224,6 +229,22 @@
          {"meta.org_id" org-id}
          {"meta.orgId" org-id}
          {"meta.tenant_id" org-id}]})
+
+(defn- label-view
+  "Normalize one Mongo label row into the API wire map."
+  [label]
+  {:id (string-id label)
+   :segment_id (jget label "segment_id")
+   :labeler_id (jget label "labeler_id")
+   :labeler_email (jget label "labeler_email")
+   :adequacy (jget label "adequacy")
+   :fluency (jget label "fluency")
+   :terminology (jget label "terminology")
+   :risk (jget label "risk")
+   :overall (jget label "overall")
+   :corrected_text (jget label "corrected_text")
+   :editor_notes (jget label "editor_notes")
+   :ts (iso (jget label "created_at"))})
 
 (defn segment-view
   "Normalize a Mongo segment row and its labels into the API wire map."
@@ -245,22 +266,33 @@
      :tenant_id (jget row "org_id")
      :org_id (jget row "org_id")
      :project (jget row "project")
-     :labels (mapv (fn [label]
-                     {:id (string-id label)
-                      :segment_id (jget label "segment_id")
-                      :labeler_id (jget label "labeler_id")
-                      :labeler_email (jget label "labeler_email")
-                      :adequacy (jget label "adequacy")
-                      :fluency (jget label "fluency")
-                      :terminology (jget label "terminology")
-                      :risk (jget label "risk")
-                      :overall (jget label "overall")
-                      :corrected_text (jget label "corrected_text")
-                      :editor_notes (jget label "editor_notes")
-                      :ts (iso (jget label "created_at"))})
-                   labels)
+     :labels (mapv label-view labels)
      :ts (iso (jget row "created_at"))}
      (some? label-count) (assoc :label_count label-count))))
+
+(defn- array-seq-or-empty
+  "Seq over a Mongo array field, treating a missing field as empty."
+  [row field]
+  (or (some-> (jget row field) array-seq) []))
+
+(defn- string-array
+  [row field]
+  (vec (array-seq-or-empty row field)))
+
+(defn- batch-lifecycle
+  "ISO lifecycle timestamps for a batch row."
+  [row]
+  {:created_at (iso (jget row "created_at"))
+   :updated_at (iso (jget row "updated_at"))
+   :started_at (iso (jget row "started_at"))
+   :completed_at (iso (jget row "completed_at"))})
+
+(defn- batch-agent-refs
+  "Agent session, conversation, and run identifiers recorded on a batch."
+  [row]
+  {:agent_session_id (jget row "agent_session_id")
+   :agent_conversation_id (jget row "agent_conversation_id")
+   :agent_run_id (jget row "agent_run_id")})
 
 (defn batch-view
   "Normalize a Mongo batch row for tenant-facing responses.
@@ -272,27 +304,23 @@
   context. Use `worker-batch-view` on the worker claim path instead."
   [row]
   (when row
-    {:id (string-id row)
-     :batch_id (jget row "batch_id")
-     :garden_id (jget row "garden_id")
-     :target_lang (jget row "target_lang")
-     :source_lang (jget row "source_lang")
-     :project (jget row "project")
-     :org_id (jget row "org_id")
-     :status (jget row "status")
-     :document_ids (vec (or (some-> (jget row "document_ids") array-seq) []))
-     :completed_documents (vec (or (some-> (jget row "completed_documents") array-seq) []))
-     :failed_documents (mapv #(js->clj % :keywordize-keys true)
-                             (or (some-> (jget row "failed_documents") array-seq) []))
-     :attempts (or (jget row "attempts") 0)
-     :created_at (iso (jget row "created_at"))
-     :updated_at (iso (jget row "updated_at"))
-     :started_at (iso (jget row "started_at"))
-     :completed_at (iso (jget row "completed_at"))
-     :agent_session_id (jget row "agent_session_id")
-     :agent_conversation_id (jget row "agent_conversation_id")
-     :agent_run_id (jget row "agent_run_id")
-     :error (jget row "error")}))
+    (merge
+     {:id (string-id row)
+      :batch_id (jget row "batch_id")
+      :garden_id (jget row "garden_id")
+      :target_lang (jget row "target_lang")
+      :source_lang (jget row "source_lang")
+      :project (jget row "project")
+      :org_id (jget row "org_id")
+      :status (jget row "status")
+      :document_ids (string-array row "document_ids")
+      :completed_documents (string-array row "completed_documents")
+      :failed_documents (mapv #(js->clj % :keywordize-keys true)
+                              (array-seq-or-empty row "failed_documents"))
+      :attempts (or (jget row "attempts") 0)
+      :error (jget row "error")}
+     (batch-lifecycle row)
+     (batch-agent-refs row))))
 
 (defn worker-batch-view
   "Normalize a claimed batch for the translation worker, including `membership_id`.
@@ -335,34 +363,41 @@
       (throw (js/Error. "Segment disappeared while reserving label version")))
     (jget row "label_version_counter")))
 
+(defn- graph-memory-plan-for
+  [segment corrected-text]
+  (translation/graph-memory-plan
+   {:segment-id (string-id segment)
+    :source-text (jget segment "source_text")
+    :translated-text (jget segment "translated_text")
+    :corrected-text corrected-text
+    :source-lang (jget segment "source_lang")
+    :target-lang (jget segment "target_lang")
+    :document-id (jget segment "document_id")
+    :domain (jget segment "domain")
+    :content-type (jget segment "content_type")}))
+
+(defn- upsert-graph-element!
+  "Upsert one planned graph node or edge, stamping create and update times."
+  [collection element now]
+  (.updateOne collection
+              #js {"id" (:id element)}
+              #js {"$set" (clj->js (assoc element :updated_at now))
+                   "$setOnInsert" #js {"created_at" now}}
+              #js {"upsert" true}))
+
 (defn ^:async upsert-graph-memory!
   "Upsert an approved segment into graph memory, returning {:success ...}."
   [collection-map segment corrected-text]
-  (let [plan (translation/graph-memory-plan
-              {:segment-id (string-id segment)
-               :source-text (jget segment "source_text")
-               :translated-text (jget segment "translated_text")
-               :corrected-text corrected-text
-               :source-lang (jget segment "source_lang")
-               :target-lang (jget segment "target_lang")
-               :document-id (jget segment "document_id")
-               :domain (jget segment "domain")
-               :content-type (jget segment "content_type")})]
+  (let [plan (graph-memory-plan-for segment corrected-text)]
     (if-not (:ok? plan)
       {:success false :error (:error plan)}
       (try
         (let [now (js/Date.)]
           (await (js/Promise.all
-                  #js [(.updateOne (:graph-nodes collection-map)
-                                   #js {"id" (get-in plan [:node :id])}
-                                   #js {"$set" (clj->js (assoc (:node plan) :updated_at now))
-                                        "$setOnInsert" #js {"created_at" now}}
-                                   #js {"upsert" true})
-                       (.updateOne (:graph-edges collection-map)
-                                   #js {"id" (get-in plan [:edge :id])}
-                                   #js {"$set" (clj->js (assoc (:edge plan) :updated_at now))
-                                        "$setOnInsert" #js {"created_at" now}}
-                                   #js {"upsert" true})]))
+                  #js [(upsert-graph-element! (:graph-nodes collection-map)
+                                              (:node plan) now)
+                       (upsert-graph-element! (:graph-edges collection-map)
+                                              (:edge plan) now)]))
           {:success true})
         (catch :default err
           {:success false :error (or (.-message err) (str err))})))))

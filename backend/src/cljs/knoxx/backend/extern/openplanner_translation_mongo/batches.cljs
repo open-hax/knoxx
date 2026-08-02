@@ -4,6 +4,24 @@
             [knoxx.backend.law.openplanner-translation :as contract]
             ["mongodb" :refer [ObjectId]]))
 
+(defn- queued-batch
+  "Build a freshly queued batch document bound to its owning tenant and membership."
+  [request org-id document-ids now]
+  {:batch_id (.randomUUID js/crypto)
+   :garden_id (:garden_id request)
+   :target_lang (:target_lang request)
+   :source_lang (or (:source_lang request) "en")
+   :project (or (:project request) "devel")
+   :org_id org-id
+   :membership_id (:membership_id request)
+   :status "queued"
+   :document_ids document-ids
+   :completed_documents []
+   :failed_documents []
+   :attempts 0
+   :created_at now
+   :updated_at now})
+
 (defn ^:async create-batch!
   "Create a tenant- and membership-scoped batch; returns its public identifiers."
   [payload]
@@ -13,21 +31,7 @@
                                         (or payload {}))
         org-id (common/required-org-id! (:org_id request))
         document-ids (mapv str (:document_ids request))
-        now (js/Date.)
-        batch {:batch_id (.randomUUID js/crypto)
-               :garden_id (:garden_id request)
-               :target_lang (:target_lang request)
-               :source_lang (or (:source_lang request) "en")
-               :project (or (:project request) "devel")
-               :org_id org-id
-               :membership_id (:membership_id request)
-               :status "queued"
-               :document_ids document-ids
-               :completed_documents []
-               :failed_documents []
-               :attempts 0
-               :created_at now
-               :updated_at now}
+        batch (queued-batch request org-id document-ids (js/Date.))
         {:keys [batches]} (common/collections (await (common/db!)))
         inserted (await (.insertOne batches (clj->js batch)))
         response {:ok true
@@ -107,6 +111,31 @@
                              contract/TranslationBatchResponse
                              (common/batch-view row))))
 
+(def ^:private terminal-batch-statuses #{"complete" "partial" "failed"})
+
+(defn- batch-status-fields
+  "Fields set when a batch enters `status`, including its lifecycle stamps."
+  [request status now]
+  (cond-> {:status status :updated_at now}
+    (= status "processing")
+    (merge {:started_at now}
+           (select-keys request [:agent_session_id
+                                 :agent_conversation_id
+                                 :agent_run_id]))
+
+    (contains? terminal-batch-statuses status)
+    (merge {:completed_at now} (select-keys request [:error]))))
+
+(defn- batch-progress-pushes
+  "Per-document progress appended by this update, if any."
+  [request]
+  (cond-> {}
+    (:completed_document request)
+    (assoc :completed_documents (:completed_document request))
+
+    (:failed_document request)
+    (assoc :failed_documents (:failed_document request))))
+
 (defn ^:async update-batch!
   "Update one tenant-scoped batch; returns its id and new status."
   [batch-id payload]
@@ -116,23 +145,8 @@
                                         (or payload {}))
         org-id (common/required-org-id! (:org_id request))
         status (:status request)
-        now (js/Date.)
-        set-fields (cond-> {:status status :updated_at now}
-                     (= status "processing")
-                     (merge {:started_at now}
-                            (select-keys request
-                                         [:agent_session_id
-                                          :agent_conversation_id
-                                          :agent_run_id]))
-                     (contains? #{"complete" "partial" "failed"} status)
-                     (merge {:completed_at now}
-                            (select-keys request [:error])))
-        push-fields (cond-> {}
-                      (:completed_document request)
-                      (assoc :completed_documents (:completed_document request))
-                      (:failed_document request)
-                      (assoc :failed_documents (:failed_document request)))
-        update-doc (cond-> {:$set set-fields}
+        push-fields (batch-progress-pushes request)
+        update-doc (cond-> {:$set (batch-status-fields request status (js/Date.))}
                      (seq push-fields) (assoc :$push push-fields))
         {:keys [batches]} (common/collections (await (common/db!)))
         result (await (.updateOne batches
