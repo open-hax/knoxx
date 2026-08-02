@@ -426,9 +426,13 @@
 ;; Route handlers
 ;; ──────────────────────────────────────────────────────────────
 
-;; Classic-mode routes (no guards needed — public metadata endpoints)
+;; Public metadata endpoints. The empty guard vector is load-bearing: without
+;; it these are classic-mode defroutes, which expand to a four-argument call on
+;; a `with-request-context!` this module's deps map never supplies, and both
+;; documents answered 500 in production. Guards would be wrong here anyway — a
+;; client reads these precisely because it has no token yet.
 
-(defroute mcp-discovery-metadata! [base] "GET" "/.well-known/oauth-authorization-server"
+(defroute mcp-discovery-metadata! [base] "GET" "/.well-known/oauth-authorization-server" []
   (let [issuer (js/URL. (.toString base))]
     (json-send! reply 200
                 {:issuer                              (-> (.toString issuer) (.replace (js/RegExp. "/$") ""))
@@ -440,7 +444,7 @@
                  :code_challenge_methods_supported    ["S256"]
                  :token_endpoint_auth_methods_supported ["none"]})))
 
-(defroute mcp-protected-resource-metadata! [base] "GET" "/.well-known/oauth-protected-resource"
+(defroute mcp-protected-resource-metadata! [base] "GET" "/.well-known/oauth-protected-resource" []
   (let [issuer (-> (.toString (js/URL. (.toString base))) (.replace (js/RegExp. "/$") ""))]
     (json-send! reply 200
                 {:resource                (.toString (js/URL. "/mcp" base))

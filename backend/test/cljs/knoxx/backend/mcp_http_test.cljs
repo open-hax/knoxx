@@ -1,6 +1,7 @@
 (ns knoxx.backend.mcp-http-test
   (:require [cljs.test :refer [deftest is testing]]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [knoxx.backend.infra.routes.mcp :as mcp]))
 
 ;; ─────────────────────────────────────────────────────────
 ;; mcp-handle-post! contract tests
@@ -127,3 +128,118 @@
         (is (= raw-res (:res (first calls))) "raw res passed")
         (let [rs (raw-res-state raw-res)]
           (is (nil? (:status rs)) "Fastify reply never wrote headers"))))))
+
+;; ── OAuth discovery documents ────────────────────────────
+;;
+;; Unlike the tests above, these drive the real route functions through the
+;; real deps map that register-mcp-http-routes! builds. That matters: the two
+;; discovery routes were once classic-mode defroutes, which expand to a
+;; four-argument call on a `with-request-context!` this module never puts in
+;; deps. Both documents answered
+;;   500 Cannot read properties of null (reading 'cljs$core$IFn$_invoke$arity$4')
+;; in production, which leaves an MCP client unable to discover the
+;; authorization server and so unable to start the GitHub OAuth flow at all.
+;; Re-implementing the handler in the test would not have caught that, so these
+;; register against a recording Fastify stub instead.
+
+(def ^:private test-base "https://knoxx.example.test")
+
+(defn- recording-app
+  "A Fastify stub that records the merged options object of every .route call."
+  []
+  (let [routes (atom [])]
+    (doto #js {:route (fn [opts] (swap! routes conj opts) nil)}
+      (aset "routes" routes))))
+
+(defn- registered-route
+  [app method url]
+  (->> @(aget app "routes")
+       (filter #(and (= method (aget % "method")) (= url (aget % "url"))))
+       first))
+
+(defn- fake-reply
+  "Records .code/.send. Both return the reply so the (-> reply .code .send)
+   chain in json-send! works the way Fastify's does."
+  []
+  (let [state (atom {:status nil :payload nil :headers {}})
+        reply (js-obj)]
+    (doto reply
+      (aset "state" state)
+      (aset "code"   (fn [status] (swap! state assoc :status status) reply))
+      (aset "send"   (fn [payload] (swap! state assoc :payload payload) reply))
+      (aset "header" (fn [k v] (swap! state update :headers assoc k v) reply)))))
+
+(defn- with-public-base-url
+  "Run f with KNOXX_PUBLIC_BASE_URL pinned, then put the environment back.
+   The whole suite shares one process and auth.cljs and session.cljs both read
+   this variable, so leaking it here would change what a later test sees."
+  [value f]
+  (let [had?     (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL")
+        original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")]
+    (aset js/process.env "KNOXX_PUBLIC_BASE_URL" value)
+    (try
+      (f)
+      (finally
+        (if had?
+          (aset js/process.env "KNOXX_PUBLIC_BASE_URL" original)
+          (js-delete js/process.env "KNOXX_PUBLIC_BASE_URL"))))))
+
+(defn- serve
+  "Register every MCP route, then drive one of them end to end."
+  [method url]
+  ;; public-base-url prefers the environment over config, and the deployed
+  ;; process always has this set. Pin it so the test asserts the same source
+  ;; production reads rather than the config fallback.
+  (with-public-base-url test-base
+    (fn []
+      (let [app (recording-app)]
+        (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})
+        (let [route (registered-route app method url)]
+          (is (some? route) (str "route " method " " url " is registered"))
+          (let [reply (fake-reply)]
+            ;; Guards run first and must not answer for a public document.
+            (when-let [pre (aget route "preHandler")]
+              (let [done? (atom false)]
+                (pre #js {} reply (fn [] (reset! done? true)))
+                (is @done? (str method " " url " ran no blocking guard"))))
+            ((aget route "handler") #js {} reply)
+            @(aget reply "state")))))))
+
+(deftest mcp-authorization-server-metadata-is-served
+  (testing "/.well-known/oauth-authorization-server answers 200 with the endpoint set"
+    (let [{:keys [status payload]} (serve "GET" "/.well-known/oauth-authorization-server")]
+      (is (= 200 status) "status is 200, not a 500 from a nil dep")
+      (is (= test-base (aget payload "issuer")) "issuer has no trailing slash")
+      (is (= (str test-base "/api/mcp/oauth/authorize")
+             (aget payload "authorization_endpoint")))
+      (is (= (str test-base "/api/mcp/oauth/token")
+             (aget payload "token_endpoint")))
+      (is (= (str test-base "/api/mcp/oauth/register")
+             (aget payload "registration_endpoint")))
+      (is (= ["S256"] (js->clj (aget payload "code_challenge_methods_supported")))))))
+
+(deftest mcp-protected-resource-metadata-is-served
+  (testing "/.well-known/oauth-protected-resource answers 200 and points at /mcp"
+    (let [{:keys [status payload]} (serve "GET" "/.well-known/oauth-protected-resource")]
+      (is (= 200 status) "status is 200, not a 500 from a nil dep")
+      (is (= (str test-base "/mcp") (aget payload "resource"))
+          "names the resource the 401 challenge protects")
+      (is (= [test-base] (js->clj (aget payload "authorization_servers"))))
+      (is (= ["header"] (js->clj (aget payload "bearer_methods_supported")))))))
+
+(deftest mcp-discovery-tests-leave-the-environment-alone
+  (testing "the pinned KNOXX_PUBLIC_BASE_URL does not leak into later tests"
+    (let [had?     (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL")
+          original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")]
+      (with-public-base-url "https://leaked.example.test" (fn [] nil))
+      (is (= had? (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL"))
+          "presence of the variable is restored")
+      (is (= original (aget js/process.env "KNOXX_PUBLIC_BASE_URL"))
+          "value of the variable is restored"))
+    (testing "even when the body throws"
+      (let [original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")]
+        (try
+          (with-public-base-url "https://leaked.example.test"
+            (fn [] (throw (js/Error. "boom"))))
+          (catch :default _ nil))
+        (is (= original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")))))))
