@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   kanban-sync:
-    uses: open-hax/eta-mu/.github/workflows/kanban-sync.yml@main
+    uses: open-hax/eta-mu/.github/workflows/kanban-sync.yml@0823119585244bc5dfeea3c2b4cd64b0b0aa7cef # eta-mu main, 2026-08-02
     with:
       tasks-dir: kanban
       dry-run: ${{ github.event.inputs.dry_run == 'true' }}
