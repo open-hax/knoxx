@@ -30,11 +30,18 @@
   [:maybe NonBlankString])
 
 (def TranslationScopeAuthContext
+  "Authorization context accepted by translation scope resolution.
+
+  `request-context-map` nests the organization at `[:org :id]` and sets no
+  top-level alias, so the nested shape is typed here too — otherwise the path
+  the resolver actually reads would cross this boundary unvalidated."
   [:maybe
    [:map {:closed false}
     [:orgId {:optional true} ScopeOrgId]
     [:org-id {:optional true} ScopeOrgId]
-    [:org_id {:optional true} ScopeOrgId]]])
+    [:org_id {:optional true} ScopeOrgId]
+    [:org {:optional true} [:maybe [:map {:closed false}
+                                    [:id {:optional true} ScopeOrgId]]]]]])
 
 (def TranslationScopeResourcePolicies
   [:maybe

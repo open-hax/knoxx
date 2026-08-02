@@ -87,6 +87,26 @@
          js/Error
          #"organization is required"
          (translation-scope/translation-org-id! {} {}))))
+  (testing "the organization is read from the nested request-context shape"
+    ;; request-context-map nests the org at [:org :id] with no top-level alias
+    (is (= "org-1"
+           (translation-scope/translation-org-id!
+            {:org {:id "org-1"} :role-slugs ["org_admin"]}
+            {:org_id "org-1"})))
+    (is (= "org-2"
+           (translation-scope/translation-org-id!
+            {:org {:id "org-2"} :role-slugs ["org_admin"]}
+            {})))
+    (is (thrown-with-msg?
+         js/Error
+         #"cannot target another organization"
+         (translation-scope/translation-org-id!
+          {:org {:id "org-1"} :role-slugs ["org_admin"]}
+          {:org_id "org-2"})))
+    (is (thrown-with-msg?
+         js/Error
+         #"contract violation"
+         (translation-scope/translation-org-id! {:org {:id 7}} {}))))
   (testing "non-string authorization values never become tenant identifiers"
     (is (thrown-with-msg?
          js/Error

@@ -1,15 +1,25 @@
 (ns knoxx.backend.infra.openplanner.translation-scope
   "Authorization helpers for translation-agent target organization scope."
   (:require [clojure.string :as str]
-            [knoxx.backend.infra.auth.authz :refer [system-admin?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-org-id system-admin?]]
             [knoxx.backend.law.openplanner-translation :as contract]))
 
 (defn- scope-org-id
-  "Return the trimmed organization identifier carried by a validated scope map."
+  "Return the trimmed organization identifier carried by a validated policy map."
   [scope]
   (some-> (or (:orgId scope) (:org-id scope) (:org_id scope))
           str/trim
           not-empty))
+
+(defn- context-org-id
+  "Return the trimmed organization identifier carried by a validated auth context.
+
+  Delegates to `ctx-org-id` rather than repeating its alias list, so this
+  boundary cannot drift from the shape request authentication actually builds:
+  `request-context-map` nests the organization at `[:org :id]` and sets no
+  top-level alias, which a local alias list silently read as nil."
+  [auth]
+  (some-> (ctx-org-id auth) str/trim not-empty))
 
 (defn- resolve-org
   [auth context-value policy-value]
@@ -50,4 +60,4 @@
         policies (contract/assert-valid! :translation-scope/resource-policies
                                          contract/TranslationScopeResourcePolicies
                                          resource-policies)]
-    (resolve-org auth (scope-org-id auth) (scope-org-id policies))))
+    (resolve-org auth (context-org-id auth) (scope-org-id policies))))
