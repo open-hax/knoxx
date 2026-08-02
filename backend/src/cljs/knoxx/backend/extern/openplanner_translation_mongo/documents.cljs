@@ -2,6 +2,7 @@
   "Tenant-scoped translation manifests, documents, and document reviews."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.openplanner-translation-mongo.common :as common]
+            [knoxx.backend.extern.openplanner-translation-mongo.graph-memory :as graph-memory]
             [knoxx.backend.law.openplanner-translation :as contract]
             [openplanner.translations.core :as translation]))
 
@@ -228,7 +229,7 @@
     (when (zero? (or (common/jget update-result "matchedCount") 0))
       (throw (js/Error. "Segment disappeared during document review")))
     (let [graph-result (if (= next-status "approved")
-                         (await (common/upsert-graph-memory!
+                         (await (graph-memory/upsert-graph-memory!
                                  collection-map segment (:corrected_text label)))
                          {:success true})]
       {:success true
