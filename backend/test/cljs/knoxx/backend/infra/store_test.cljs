@@ -73,7 +73,7 @@
   #js {:insertOne (fn [doc]
                     (swap! inserted* conj (js->clj doc :keywordize-keys true))
                     (js/Promise.resolve #js {:acknowledged true}))
-       :find (fn [query]
+       :find (fn [_query]
                (let [limited* (atom nil)]
                  #js {:limit (fn [n] (reset! limited* n)
                                #js {:toArray (fn [] (js/Promise.resolve (clj->js (take @limited* find-result))))})

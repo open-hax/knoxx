@@ -36,6 +36,7 @@ jobs:
           repository: open-hax/openplanner
           ref: ${{ env.OPENPLANNER_REF }}
           path: _deps/openplanner
+          persist-credentials: false
 
       - name: Setup Java (required by shadow-cljs / Closure Compiler)
         uses: actions/setup-java@v4

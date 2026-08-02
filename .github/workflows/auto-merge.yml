@@ -13,8 +13,10 @@ permissions:
 jobs:
   auto-merge:
     if: ${{ github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository }}
-    uses: open-hax/eta-mu/.github/workflows/auto-merge.yml@main
+    uses: open-hax/eta-mu/.github/workflows/auto-merge.yml@0823119585244bc5dfeea3c2b4cd64b0b0aa7cef # eta-mu main, 2026-08-02
     with:
       pr: ${{ github.event.pull_request.number }}
       merge-method: SQUASH
-    secrets: inherit
+    secrets:
+      ETA_MU_APP_ID: ${{ secrets.ETA_MU_APP_ID }}
+      ETA_MU_APP_PRIVATE_KEY: ${{ secrets.ETA_MU_APP_PRIVATE_KEY }}

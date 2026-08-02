@@ -14,8 +14,10 @@ permissions:
 
 jobs:
   review-gate:
-    uses: open-hax/eta-mu/.github/workflows/review-resolution-gate.yml@main
+    uses: open-hax/eta-mu/.github/workflows/review-resolution-gate.yml@0823119585244bc5dfeea3c2b4cd64b0b0aa7cef # eta-mu main, 2026-08-02
     with:
       pr: ${{ github.event.pull_request.number }}
       strict: true
-    secrets: inherit
+    secrets:
+      ETA_MU_APP_ID: ${{ secrets.ETA_MU_APP_ID }}
+      ETA_MU_APP_PRIVATE_KEY: ${{ secrets.ETA_MU_APP_PRIVATE_KEY }}
