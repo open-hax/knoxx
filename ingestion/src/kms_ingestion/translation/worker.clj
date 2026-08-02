@@ -48,14 +48,25 @@
       (assoc "Authorization" (str "Bearer " api-key)))))
 
 (defn- knoxx-headers
-  ([] (knoxx-headers nil))
-  ([membership-id]
+  "Build Knoxx request headers for the worker identity.
+
+  `org-id` matters for the system-admin fallback, where `membership-id` is nil:
+  request authentication then resolves the worker's default membership, and
+  read routes derive their tenant from that membership alone. Without the
+  explicit organization, a legacy batch targeting another org would have its
+  segments written there by `save_translation` but read back from the worker's
+  default org, so polling would never see them and the batch would be failed."
+  ([] (knoxx-headers nil nil))
+  ([membership-id] (knoxx-headers membership-id nil))
+  ([membership-id org-id]
    (let [api-key (config/knoxx-api-key)
          user-email (config/knoxx-user-email)]
      (cond-> {"Content-Type" "application/json"
               "x-knoxx-user-email" user-email}
        (not (str/blank? (str membership-id)))
        (assoc "x-knoxx-membership-id" (str membership-id))
+       (not (str/blank? (str org-id)))
+       (assoc "x-knoxx-org-id" (str org-id))
        (not (str/blank? api-key))
        (assoc "X-API-Key" api-key)))))
 
@@ -185,22 +196,22 @@
     (:document result)))
 
 (defn- fetch-knoxx-segments
-  [membership-id project document-id source-lang target-lang]
+  [membership-id org-id project document-id source-lang target-lang]
   (fetch-json (str (knoxx-url "/api/translations/segments")
                    "?project=" (url-encode project)
                    "&document_id=" (url-encode document-id)
                    "&source_lang=" (url-encode source-lang)
                    "&target_lang=" (url-encode target-lang)
                    "&limit=100")
-              (knoxx-headers membership-id)))
+              (knoxx-headers membership-id org-id)))
 
 (defn- wait-for-new-segments
   "Wait until segment count increases past initial-total, or timeout."
-  [membership-id project document-id source-lang target-lang initial-total timeout-ms]
+  [membership-id org-id project document-id source-lang target-lang initial-total timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
       (let [result (try
-                     (fetch-knoxx-segments membership-id project document-id
+                     (fetch-knoxx-segments membership-id org-id project document-id
                                            source-lang target-lang)
                      (catch Exception _ {:total initial-total}))
             total (long (or (:total result) 0))]
@@ -393,7 +404,7 @@
                 _ (println "[translation-worker] Calling Knoxx agent with"
                            (count valid-docs) "documents...")
                 result (post-json (knoxx-url "/api/knoxx/direct/start")
-                                  (knoxx-headers membership-id)
+                                  (knoxx-headers membership-id org-id)
                                   agent-request)
                 _ (println "[translation-worker] Agent started:"
                            (:conversation_id result) "run:" (:run_id result))]
@@ -411,13 +422,13 @@
                         initial-total
                         (long
                          (or (:total
-                              (fetch-knoxx-segments membership-id project doc-id
+                              (fetch-knoxx-segments membership-id org-id project doc-id
                                                     source-lang target-lang))
                              0))
                         _ (println "[translation-worker] Waiting for segments:"
                                    doc-id "initial:" initial-total)
                         final-total
-                        (wait-for-new-segments membership-id project doc-id
+                        (wait-for-new-segments membership-id org-id project doc-id
                                                source-lang target-lang
                                                initial-total
                                                (* 180000 (count valid-docs)))]
@@ -574,7 +585,7 @@
             initial-total
             (long
              (or (:total
-                  (fetch-knoxx-segments nil project document-id
+                  (fetch-knoxx-segments nil nil project document-id
                                         source-lang target-lang))
                  0))
             system-prompt
@@ -617,7 +628,7 @@
                               agent-request)
             _ (println "[translation-worker] Agent started:"
                        (:conversation_id result) "run:" (:run_id result))
-            final-total (wait-for-new-segments nil project document-id
+            final-total (wait-for-new-segments nil nil project document-id
                                                source-lang target-lang
                                                initial-total 120000)]
         (println "[translation-worker] New segment total:" final-total)

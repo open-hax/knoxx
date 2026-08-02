@@ -235,19 +235,24 @@
              :membership_id (membership-id! ctx)}))))
 
 (defn- next-batch-op
-  "Claim the next queued batch.
+  "Claim the next queued batch. Worker-only.
 
-  `org.translations.manage` is held by org admins as well as system admins, so
-  the owning `membership_id` is projected only for a system-admin caller. Any
-  other principal would otherwise be able to claim a batch created by a
-  higher-privileged member and replay that membership as
-  `x-knoxx-membership-id`."
+  This is a mutation: it moves the oldest batch from `queued` to `processing`,
+  and no status transition back to `queued` exists. `org.translations.manage` is
+  held by org admins as well as system admins, so leaving the route open to the
+  permission alone let any org admin permanently remove a batch from worker
+  pickup — hiding the membership from the response addressed disclosure but not
+  the queue mutation. Require a system-admin principal, which is also the only
+  principal the owning `membership_id` is projected for."
   [config]
   (fn [_request ctx {:keys [ctx-org-id]}]
+    (when-not (authz/system-admin? ctx)
+      (throw (http-error 403
+                         "worker_principal_required"
+                         "Claiming a translation batch requires a system-admin worker principal")))
     (openplanner-client/next-translation-batch!
      (op-client config)
-     (assoc (org-scope ctx ctx-org-id)
-            :include_membership (authz/system-admin? ctx)))))
+     (assoc (org-scope ctx ctx-org-id) :include_membership true))))
 
 (defn- batch-op
   [config]
