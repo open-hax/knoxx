@@ -50,23 +50,21 @@
 (defn- knoxx-headers
   "Build Knoxx request headers for the worker identity.
 
-  `org-id` matters for the system-admin fallback, where `membership-id` is nil:
-  request authentication then resolves the worker's default membership, and
-  read routes derive their tenant from that membership alone. Without the
-  explicit organization, a legacy batch targeting another org would have its
-  segments written there by `save_translation` but read back from the worker's
-  default org, so polling would never see them and the batch would be failed."
-  ([] (knoxx-headers nil nil))
-  ([membership-id] (knoxx-headers membership-id nil))
-  ([membership-id org-id]
+  Deliberately carries no organization header. `x-knoxx-org-id` does not rescope
+  an already-resolved context: request resolution feeds it to
+  `find-membership-row-by-email-and-org!`, which filters the user's memberships
+  to that organization, so a system admin with no membership in a legacy batch's
+  org would fail authentication outright. The batch organization travels as an
+  authorized scope instead — agent resource policy for the run, and an explicit
+  `org_id` on the segment reads."
+  ([] (knoxx-headers nil))
+  ([membership-id]
    (let [api-key (config/knoxx-api-key)
          user-email (config/knoxx-user-email)]
      (cond-> {"Content-Type" "application/json"
               "x-knoxx-user-email" user-email}
        (not (str/blank? (str membership-id)))
        (assoc "x-knoxx-membership-id" (str membership-id))
-       (not (str/blank? (str org-id)))
-       (assoc "x-knoxx-org-id" (str org-id))
        (not (str/blank? api-key))
        (assoc "X-API-Key" api-key)))))
 
@@ -199,11 +197,13 @@
   [membership-id org-id project document-id source-lang target-lang]
   (fetch-json (str (knoxx-url "/api/translations/segments")
                    "?project=" (url-encode project)
+                   (when-not (str/blank? (str org-id))
+                     (str "&org_id=" (url-encode org-id)))
                    "&document_id=" (url-encode document-id)
                    "&source_lang=" (url-encode source-lang)
                    "&target_lang=" (url-encode target-lang)
                    "&limit=100")
-              (knoxx-headers membership-id org-id)))
+              (knoxx-headers membership-id)))
 
 (defn- wait-for-new-segments
   "Wait until segment count increases past initial-total, or timeout."
@@ -270,7 +270,10 @@
           membership-id (some-> (context-membership-id context) str)]
       (cond
         (system-admin-context? context)
-        {:membership-id nil :mode :system-admin}
+        ;; Authenticate as the system admin's own membership. Dropping it forced
+        ;; email-only resolution, which picks the default membership and gives
+        ;; the reads a tenant unrelated to the batch.
+        {:membership-id (not-empty membership-id) :mode :system-admin}
 
         (and (= (str org-id) context-org)
              (not (str/blank? membership-id)))
@@ -404,7 +407,7 @@
                 _ (println "[translation-worker] Calling Knoxx agent with"
                            (count valid-docs) "documents...")
                 result (post-json (knoxx-url "/api/knoxx/direct/start")
-                                  (knoxx-headers membership-id org-id)
+                                  (knoxx-headers membership-id)
                                   agent-request)
                 _ (println "[translation-worker] Agent started:"
                            (:conversation_id result) "run:" (:run_id result))]

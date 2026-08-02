@@ -105,6 +105,20 @@
          (fn [ctx]
            (execute-ndjson-route! request reply ctx handlers permission operation)))))))
 
+(defn- read-org-id!
+  "Organization a read is scoped to.
+
+  A system admin may name an explicit organization, which is what
+  `save_translation` already allows through agent resource policy. Without the
+  same latitude on reads, a system-admin worker running a legacy batch in
+  another tenant writes segments there and reads them back from its own
+  membership's tenant. Every other principal stays pinned to its membership."
+  [request ctx ctx-org-id]
+  (let [requested (some-> (aget (query request) "org_id") str str/trim not-empty)]
+    (if (and requested (authz/system-admin? ctx))
+      requested
+      (org-id! ctx ctx-org-id))))
+
 (defn- translation-segments-op
   [config]
   (fn [request ctx {:keys [ctx-org-id]}]
@@ -112,7 +126,7 @@
       (openplanner-client/translation-segments!
        (op-client config)
        {:project (or (aget q "project") (:session-project-name config))
-        :org_id (org-id! ctx ctx-org-id)
+        :org_id (read-org-id! request ctx ctx-org-id)
         :limit (or (aget q "limit") "50")
         :offset (or (aget q "offset") "0")
         :status (aget q "status")
