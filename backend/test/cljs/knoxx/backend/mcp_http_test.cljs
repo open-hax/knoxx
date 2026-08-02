@@ -169,25 +169,41 @@
       (aset "send"   (fn [payload] (swap! state assoc :payload payload) reply))
       (aset "header" (fn [k v] (swap! state update :headers assoc k v) reply)))))
 
+(defn- with-public-base-url
+  "Run f with KNOXX_PUBLIC_BASE_URL pinned, then put the environment back.
+   The whole suite shares one process and auth.cljs and session.cljs both read
+   this variable, so leaking it here would change what a later test sees."
+  [value f]
+  (let [had?     (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL")
+        original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")]
+    (aset js/process.env "KNOXX_PUBLIC_BASE_URL" value)
+    (try
+      (f)
+      (finally
+        (if had?
+          (aset js/process.env "KNOXX_PUBLIC_BASE_URL" original)
+          (js-delete js/process.env "KNOXX_PUBLIC_BASE_URL"))))))
+
 (defn- serve
   "Register every MCP route, then drive one of them end to end."
   [method url]
-  (let [app (recording-app)]
-    ;; public-base-url prefers the environment over config, and the deployed
-    ;; process always has this set. Pin it so the test asserts the same source
-    ;; production reads rather than the config fallback.
-    (aset js/process.env "KNOXX_PUBLIC_BASE_URL" test-base)
-    (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})
-    (let [route (registered-route app method url)]
-      (is (some? route) (str "route " method " " url " is registered"))
-      (let [reply (fake-reply)]
-        ;; Guards run first and must not answer for a public document.
-        (when-let [pre (aget route "preHandler")]
-          (let [done? (atom false)]
-            (pre #js {} reply (fn [] (reset! done? true)))
-            (is @done? (str method " " url " ran no blocking guard"))))
-        ((aget route "handler") #js {} reply)
-        @(aget reply "state")))))
+  ;; public-base-url prefers the environment over config, and the deployed
+  ;; process always has this set. Pin it so the test asserts the same source
+  ;; production reads rather than the config fallback.
+  (with-public-base-url test-base
+    (fn []
+      (let [app (recording-app)]
+        (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})
+        (let [route (registered-route app method url)]
+          (is (some? route) (str "route " method " " url " is registered"))
+          (let [reply (fake-reply)]
+            ;; Guards run first and must not answer for a public document.
+            (when-let [pre (aget route "preHandler")]
+              (let [done? (atom false)]
+                (pre #js {} reply (fn [] (reset! done? true)))
+                (is @done? (str method " " url " ran no blocking guard"))))
+            ((aget route "handler") #js {} reply)
+            @(aget reply "state")))))))
 
 (deftest mcp-authorization-server-metadata-is-served
   (testing "/.well-known/oauth-authorization-server answers 200 with the endpoint set"
@@ -210,3 +226,20 @@
           "names the resource the 401 challenge protects")
       (is (= [test-base] (js->clj (aget payload "authorization_servers"))))
       (is (= ["header"] (js->clj (aget payload "bearer_methods_supported")))))))
+
+(deftest mcp-discovery-tests-leave-the-environment-alone
+  (testing "the pinned KNOXX_PUBLIC_BASE_URL does not leak into later tests"
+    (let [had?     (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL")
+          original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")]
+      (with-public-base-url "https://leaked.example.test" (fn [] nil))
+      (is (= had? (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL"))
+          "presence of the variable is restored")
+      (is (= original (aget js/process.env "KNOXX_PUBLIC_BASE_URL"))
+          "value of the variable is restored"))
+    (testing "even when the body throws"
+      (let [original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")]
+        (try
+          (with-public-base-url "https://leaked.example.test"
+            (fn [] (throw (js/Error. "boom"))))
+          (catch :default _ nil))
+        (is (= original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")))))))
