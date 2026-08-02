@@ -195,6 +195,43 @@
                   :results results}
            (seq errors) (assoc :errors_detail errors)))))))
 
+(defn- segment-label
+  "Build the label document written for one reviewed segment."
+  [segment-id org-id segment request {:keys [version corrected-text now]}]
+  {:segment_id (str segment-id)
+   :org_id org-id
+   :project (common/jget segment "project")
+   :labeler_id (or (common/nonblank (:labeler_id request)) "unknown")
+   :labeler_email (or (common/nonblank (:labeler_email request)) "unknown")
+   :label_version version
+   :adequacy (:adequacy request)
+   :fluency (:fluency request)
+   :terminology (:terminology request)
+   :risk (:risk request)
+   :overall (:overall request)
+   :corrected_text corrected-text
+   :editor_notes (common/nonblank (:editor_notes request))
+   :created_at now})
+
+(defn- labelled-status
+  "Wire status a segment moves to once this label is applied."
+  [segment request corrected-text]
+  (translation/status-wire
+   (translation/next-segment-status
+    {:current-status (common/jget segment "status")
+     :overall (:overall request)
+     :corrected-text corrected-text})))
+
+(defn- ^:async apply-label-status!
+  "Persist the labelled status, carrying any correction into the translation."
+  [collection-map selector new-status corrected-text now]
+  (await (.updateOne (:segments collection-map)
+                     selector
+                     #js {"$set"
+                          (clj->js
+                           (cond-> {:status new-status :updated_at now}
+                             corrected-text (assoc :translated_text corrected-text)))})))
+
 (defn ^:async label-segment!
   "Label one tenant-scoped segment; returns a top-level label_id and new status."
   [segment-id payload]
@@ -216,43 +253,24 @@
                           segment-id))
           now (js/Date.)
           corrected-text (common/nonblank (:corrected_text request))
-          label {:segment_id (str segment-id)
-                 :org_id org-id
-                 :project (common/jget segment "project")
-                 :labeler_id (or (common/nonblank (:labeler_id request)) "unknown")
-                 :labeler_email (or (common/nonblank (:labeler_email request)) "unknown")
-                 :label_version version
-                 :adequacy (:adequacy request)
-                 :fluency (:fluency request)
-                 :terminology (:terminology request)
-                 :risk (:risk request)
-                 :overall (:overall request)
-                 :corrected_text corrected-text
-                 :editor_notes (common/nonblank (:editor_notes request))
-                 :created_at now}
+          label (segment-label segment-id org-id segment request
+                               {:version version
+                                :corrected-text corrected-text
+                                :now now})
           inserted (await (.insertOne (:labels collection-map) (clj->js label)))
           label-id (some-> inserted (common/jget "insertedId") .toString)
-          new-status (translation/status-wire
-                      (translation/next-segment-status
-                       {:current-status (common/jget segment "status")
-                        :overall (:overall request)
-                        :corrected-text corrected-text}))]
-      (await (.updateOne (:segments collection-map)
-                         selector
-                         #js {"$set"
-                              (clj->js
-                               (cond-> {:status new-status :updated_at now}
-                                 corrected-text (assoc :translated_text corrected-text)))}))
-      (let [graph-memory (when (= new-status "approved")
-                           (await (common/upsert-graph-memory!
-                                   collection-map segment corrected-text)))
-            response {:ok true
+          new-status (labelled-status segment request corrected-text)]
+      (await (apply-label-status! collection-map selector new-status
+                                  corrected-text now))
+      (let [response {:ok true
                       :label_id label-id
                       :label (assoc (dissoc label :created_at)
                                     :id label-id
                                     :ts (common/iso now))
                       :new_status new-status
-                      :graph_memory graph-memory}]
+                      :graph_memory (when (= new-status "approved")
+                                      (await (common/upsert-graph-memory!
+                                              collection-map segment corrected-text)))}]
         (common/assert-response! :label-translation-segment/response
                                  contract/LabelTranslationSegmentResponse
                                  response)))))
