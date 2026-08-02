@@ -27,4 +27,6 @@ jobs:
       dry-run: ${{ github.event.inputs.dry_run == 'true' }}
       max-writes: 50
       write-delay-ms: 1000
-    secrets: inherit
+    secrets:
+      ETA_MU_APP_ID: ${{ secrets.ETA_MU_APP_ID }}
+      ETA_MU_APP_PRIVATE_KEY: ${{ secrets.ETA_MU_APP_PRIVATE_KEY }}

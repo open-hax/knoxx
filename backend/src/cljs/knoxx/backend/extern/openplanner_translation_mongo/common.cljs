@@ -158,10 +158,33 @@
                                           :whenMatched "merge"
                                           :whenNotMatched "discard"}}])))))
 
+(def graph-id-index-name "graph_id_unique_idx")
+
+(defn- ^:async ensure-graph-id-index!
+  "Ensure a unique index on `id` for a graph collection.
+
+  Mongo only makes `upsert` duplicate-safe when the query field is uniquely
+  indexed, and `upsert-graph-memory!`'s rollback assumes at most one document
+  per `id`. If a pre-existing collection already holds duplicates the unique
+  build is rejected; fall back to a plain index so lookups stay indexed and
+  say so loudly rather than failing every translation call."
+  [collection label]
+  (try
+    (await (.createIndex collection #js {"id" 1}
+                         #js {"unique" true "name" graph-id-index-name}))
+    (catch :default err
+      (js/console.error "[translation]" label
+                        "could not take a unique id index; duplicate ids exist and"
+                        "graph memory cannot guarantee one document per id:"
+                        (or (.-message err) (str err)))
+      (await (.createIndex collection #js {"id" 1})))))
+
 (defn- ^:async create-indexes!
   [db]
-  (let [{:keys [segments labels batches]} (collections db)]
+  (let [{:keys [segments labels batches graph-nodes graph-edges]} (collections db)]
     (await (ensure-segment-org-index! segments))
+    (await (ensure-graph-id-index! graph-nodes "graph_nodes"))
+    (await (ensure-graph-id-index! graph-edges "graph_edges"))
     (await (.createIndex labels #js {"segment_id" 1 "created_at" -1}))
     (await (.createIndex labels #js {"org_id" 1 "project" 1}))
     (await (backfill-label-scope! labels))

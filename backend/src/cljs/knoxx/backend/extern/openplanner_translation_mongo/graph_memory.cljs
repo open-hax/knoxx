@@ -9,6 +9,7 @@
             [openplanner.translations.core :as translation]))
 
 (defn- graph-memory-plan-for
+  "Map a raw Mongo segment and its correction into the shared graph-memory plan input."
   [segment corrected-text]
   (translation/graph-memory-plan
    {:segment-id (common/string-id segment)
@@ -21,12 +22,12 @@
     :domain (common/jget segment "domain")
     :content-type (common/jget segment "content_type")}))
 
-(defn- ^:async upsert-graph-element!
-  "Upsert one planned graph node or edge; returns the document as it was before.
+(defn- duplicate-key-error?
+  [err]
+  (or (= 11000 (.-code err))
+      (boolean (some-> (.-message err) (.includes "E11000")))))
 
-  A nil prior document means this call inserted it, which is what the rollback
-  path needs in order to distinguish a delete from a restore. `write-token`
-  stamps the document so a rollback can recognize its own write."
+(defn- ^:async upsert-element-once!
   [collection element now write-token]
   (let [result (await
                 (.findOneAndUpdate collection
@@ -40,32 +41,49 @@
                                         "includeResultMetadata" true}))]
     (common/jget result "value")))
 
+(defn- ^:async upsert-graph-element!
+  "Upsert one planned graph node or edge; returns the document as it was before.
+
+  A nil prior document means this call inserted it, which is what the rollback
+  path needs in order to distinguish a delete from a restore. `write-token`
+  stamps the document so a rollback can recognize its own write.
+
+  Two upserts racing on an absent `id` both try to insert, and the unique index
+  rejects the loser with a duplicate key error. Retrying once resolves it: the
+  document now exists, so the retry takes the update branch."
+  [collection element now write-token]
+  (try
+    (await (upsert-element-once! collection element now write-token))
+    (catch :default err
+      (if (duplicate-key-error? err)
+        (await (upsert-element-once! collection element now write-token))
+        (throw err)))))
+
 (defn- ^:async restore-graph-element!
   "Undo one upsert, but only while the document still holds this write.
 
   Two approvals of the same segment can overlap: A upserts the node, B
   overwrites it and lands its edge, then A's edge fails. An unconditional
   rollback would erase B's newer node and strand B's edge, so both the restore
-  and the delete are guarded on `write-token`. If the guard does not match,
-  a later writer owns the document and this rollback is a no-op."
+  and the delete are guarded on `write-token`. Returns true when this write was
+  still the current one and the rollback applied."
   [collection element-id prior write-token]
   (let [selector #js {"id" element-id "graph_write_token" write-token}]
     (if prior
       (let [replacement (js/Object.assign #js {} prior)]
         (js-delete replacement "_id")
-        (await (.replaceOne collection selector replacement)))
-      (await (.deleteOne collection selector)))))
+        (let [result (await (.replaceOne collection selector replacement))]
+          (pos? (or (common/jget result "matchedCount") 0))))
+      (let [result (await (.deleteOne collection selector))]
+        (pos? (or (common/jget result "deletedCount") 0))))))
 
 (defn- ^:async rollback-graph-node!
   "Best-effort rollback of the node write; never masks the originating error."
   [collection node-id prior write-token]
   (try
-    (let [result (await (restore-graph-element! collection node-id prior write-token))]
-      (when (zero? (or (common/jget result "modifiedCount")
-                       (common/jget result "deletedCount")
-                       0))
-        (js/console.warn "[translation] graph node" node-id
-                         "was rewritten concurrently; leaving the newer write in place")))
+    (when-not (await (restore-graph-element! collection node-id prior write-token))
+      (js/console.warn "[translation] graph node" node-id
+                       "was rewritten concurrently; leaving the newer write in place"))
     (catch :default err
       (js/console.error "[translation] graph node rollback failed for" node-id
                         (or (.-message err) (str err))))))

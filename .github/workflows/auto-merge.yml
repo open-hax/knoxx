@@ -17,4 +17,6 @@ jobs:
     with:
       pr: ${{ github.event.pull_request.number }}
       merge-method: SQUASH
-    secrets: inherit
+    secrets:
+      ETA_MU_APP_ID: ${{ secrets.ETA_MU_APP_ID }}
+      ETA_MU_APP_PRIVATE_KEY: ${{ secrets.ETA_MU_APP_PRIVATE_KEY }}
