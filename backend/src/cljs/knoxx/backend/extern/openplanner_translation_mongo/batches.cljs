@@ -65,11 +65,15 @@
                              response)))
 
 (defn ^:async next-batch!
-  "Claim the next tenant-scoped queued batch; returns {:batch batch-or-nil}."
+  "Claim the next tenant-scoped queued batch; returns {:batch batch-or-nil}.
+
+  The owning `membership_id` is projected only when the caller asked for it via
+  `:include_membership`, which the route sets for system-admin principals only.
+  Every other caller receives the tenant-facing projection."
   [opts]
   (await (common/ensure-indexes!))
   (let [scope (contract/assert-valid! :next-translation-batch/scope
-                                      contract/TenantScopeRequest
+                                      contract/NextTranslationBatchScope
                                       (or opts {}))
         org-id (common/required-org-id! (:org_id scope))
         now (js/Date.)
@@ -83,7 +87,10 @@
                          "$inc" #js {"attempts" 1}}
                     #js {"sort" #js {"created_at" 1}
                          "returnDocument" "after"}))
-        response {:batch (common/worker-batch-view row)}]
+        view (if (true? (:include_membership scope))
+               common/worker-batch-view
+               common/batch-view)
+        response {:batch (view row)}]
     (common/assert-response! :next-translation-batch/response
                              contract/NextTranslationBatchResponse
                              response)))

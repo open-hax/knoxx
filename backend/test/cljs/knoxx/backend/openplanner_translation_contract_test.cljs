@@ -112,3 +112,12 @@
     (testing "a missing row yields no view on either path"
       (is (nil? (common/batch-view nil)))
       (is (nil? (common/worker-batch-view nil))))))
+
+(deftest batch-claim-scope-gates-the-membership-projection
+  (testing "the claim scope carries an explicit membership projection flag"
+    (is (true? (m/validate contract/NextTranslationBatchScope
+                           {:org_id "org-1" :include_membership true})))
+    (is (true? (m/validate contract/NextTranslationBatchScope {:org_id "org-1"})))
+    (is (false? (m/validate contract/NextTranslationBatchScope {})))
+    (is (false? (m/validate contract/NextTranslationBatchScope
+                            {:org_id "org-1" :include_membership "yes"})))))

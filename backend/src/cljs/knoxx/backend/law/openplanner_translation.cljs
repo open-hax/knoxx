@@ -258,6 +258,16 @@
   [:map {:closed false}
    [:batches [:vector [:map {:closed false}]]]])
 
+(def NextTranslationBatchScope
+  "Scope for claiming a batch.
+
+  `:include_membership` projects the batch owner's `membership_id` and must be
+  set only for a system-admin caller; `org.translations.manage` alone is not
+  sufficient, since org admins hold it too."
+  [:map {:closed false}
+   [:org_id NonBlankString]
+   [:include_membership {:optional true} boolean?]])
+
 (def NextTranslationBatchResponse
   [:map {:closed false}
    [:batch [:maybe [:map {:closed false}]]]])

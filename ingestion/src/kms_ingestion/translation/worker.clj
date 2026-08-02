@@ -132,16 +132,31 @@
 
 ;; ─── Fetch helpers ────────────────────────────────────────────────────
 
-(defn- fetch-next-batch
-  "Poll for the next queued translation batch."
+(defn- fetch-oldest-queued-batch
+  "Fetch the single oldest queued batch, whatever its state."
   []
   (try
-    (let [result (fetch-json (openplanner-url "/translations/batches/next")
-                             (openplanner-headers))]
-      (:batch result))
+    (:batch (fetch-json (openplanner-url "/translations/batches/next")
+                        (openplanner-headers)))
     (catch Exception e
       (println "[translation-worker] Failed to fetch next batch:" (.getMessage e))
       nil)))
+
+(defn- fetch-queued-batches
+  "List queued batches, oldest first.
+
+  `/translations/batches/next` only ever returns the oldest queued batch and
+  does not claim it, so a batch the worker cannot run would otherwise block
+  every batch behind it. This list is the fallback used to look past it."
+  []
+  (try
+    (->> (:batches (fetch-json (openplanner-url "/translations/batches?status=queued")
+                               (openplanner-headers)))
+         (sort-by #(str (:created_at %)))
+         vec)
+    (catch Exception e
+      (println "[translation-worker] Failed to list queued batches:" (.getMessage e))
+      [])))
 
 (defn- mark-batch-status
   [batch-id status & {:keys [error agent-session-id agent-conversation-id
@@ -230,7 +245,12 @@
 
   System admins may safely carry the explicit batch org in agent resource
   policy. Non-system principals are accepted only when their current
-  membership already belongs to that same org."
+  membership already belongs to that same org.
+
+  Returns a principal map, `:unresolved` when the identity is known but unsafe
+  for this batch, or `:transient` when the identity could not be read at all.
+  The two failures are distinct: only `:unresolved` earns a cooldown, so a brief
+  `/api/auth/context` outage does not stall the batch for the full window."
   [org-id]
   (try
     (let [context (fetch-json (knoxx-url "/api/auth/context")
@@ -246,13 +266,14 @@
         {:membership-id membership-id :mode :same-org-membership}
 
         :else
-        nil))
+        :unresolved))
     (catch Exception e
-      (println "[translation-worker] Could not resolve legacy batch identity:"
+      (println "[translation-worker] Could not read Knoxx identity:"
                (.getMessage e))
-      nil)))
+      :transient)))
 
 (defn- batch-principal
+  "Principal map for a batch, or `:unresolved` / `:transient` per `legacy-batch-principal`."
   [batch]
   (let [membership-id (some-> (:membership_id batch) str str/trim not-empty)]
     (if membership-id
@@ -455,26 +476,56 @@
                      entries)))
       (contains? batch-id)))
 
+(defn- fetch-next-batch
+  "Return the oldest queued batch the worker is not currently cooling down on.
+
+  `/translations/batches/next` returns the oldest queued batch without claiming
+  it, so an unrunnable batch would sit at the head of the queue forever. When
+  the head is cooling down, look past it through the queued list instead of
+  stalling every batch behind it."
+  []
+  (let [now (System/currentTimeMillis)
+        head (fetch-oldest-queued-batch)]
+    (cond
+      (nil? head) nil
+
+      (not (batch-cooling-down? (batch-identity head) now)) head
+
+      :else
+      (let [eligible (remove #(batch-cooling-down? (batch-identity %) now)
+                             (fetch-queued-batches))]
+        (when-let [batch (first eligible)]
+          (println "[translation-worker] Head batch" (batch-identity head)
+                   "is cooling down; taking queued batch" (batch-identity batch)
+                   "instead")
+          batch)))))
+
 (defn- process-batch
   "Process a batch, or cool a legacy batch down when no safe principal exists.
 
   A batch with no resolvable principal keeps its queue position rather than
-  being failed, but it is skipped for `unresolved-principal-cooldown-ms` so a
-  re-served batch cannot spin the poll loop on identity resolution."
+  being failed, but it is skipped for `unresolved-principal-cooldown-ms` so it
+  neither spins the poll loop on identity resolution nor blocks the batches
+  behind it. A transient identity-service failure is not cooled down, so it
+  retries on the next poll."
   [batch]
   (let [batch-id (batch-identity batch)
-        now (System/currentTimeMillis)]
-    (if (batch-cooling-down? batch-id now)
-      (println "[translation-worker] Skipping batch" batch-id
-               "- unresolved principal, still cooling down")
-      (if-let [principal (batch-principal batch)]
-        (do (swap! unresolved-principals* dissoc batch-id)
-            (process-batch-with-principal batch principal))
-        (do (swap! unresolved-principals* assoc batch-id now)
-            (println "[translation-worker] Leaving legacy batch queued; configured Knoxx identity"
-                     "is neither system admin nor a member of org" (:org_id batch)
-                     "batch" batch-id
-                     "- retrying in" (quot unresolved-principal-cooldown-ms 1000) "s"))))))
+        now (System/currentTimeMillis)
+        principal (batch-principal batch)]
+    (case principal
+      :transient
+      (println "[translation-worker] Deferring batch" batch-id
+               "- Knoxx identity unavailable; retrying next poll")
+
+      :unresolved
+      (do (swap! unresolved-principals* assoc batch-id now)
+          (println "[translation-worker] Leaving legacy batch queued; configured Knoxx identity"
+                   "is neither system admin nor a member of org" (:org_id batch)
+                   "batch" batch-id
+                   "- retrying in" (quot unresolved-principal-cooldown-ms 1000) "s"))
+
+      (do (swap! unresolved-principals* dissoc batch-id)
+          (process-batch-with-principal batch principal)))))
 
 ;; ─── Legacy single-job support (backward compat) ─────────────────────
 

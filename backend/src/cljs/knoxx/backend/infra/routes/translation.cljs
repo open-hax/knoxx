@@ -12,6 +12,7 @@
   ;; See backend/README.md "Cannot read properties of undefined" section for full diagnosis.
   (:require [clojure.string :as str]
             [knoxx.backend.shape.app-shapes :refer [route!]]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.http :refer [http-error]]))
 
@@ -234,11 +235,19 @@
              :membership_id (membership-id! ctx)}))))
 
 (defn- next-batch-op
+  "Claim the next queued batch.
+
+  `org.translations.manage` is held by org admins as well as system admins, so
+  the owning `membership_id` is projected only for a system-admin caller. Any
+  other principal would otherwise be able to claim a batch created by a
+  higher-privileged member and replay that membership as
+  `x-knoxx-membership-id`."
   [config]
   (fn [_request ctx {:keys [ctx-org-id]}]
     (openplanner-client/next-translation-batch!
      (op-client config)
-     (org-scope ctx ctx-org-id))))
+     (assoc (org-scope ctx ctx-org-id)
+            :include_membership (authz/system-admin? ctx)))))
 
 (defn- batch-op
   [config]
