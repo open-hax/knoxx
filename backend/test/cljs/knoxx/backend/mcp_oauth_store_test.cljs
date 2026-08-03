@@ -1,7 +1,8 @@
 (ns knoxx.backend.mcp-oauth-store-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.mongo :as extern-mongo]
-            [knoxx.backend.infra.stores.mongo-mcp-oauth :as store]))
+            [knoxx.backend.infra.stores.mongo-mcp-oauth :as store]
+            [knoxx.backend.law.mcp-oauth :as law]))
 
 ;; ─────────────────────────────────────────────────────────
 ;; set-client! / get-client! round trip
@@ -143,6 +144,29 @@
       (is (false? (await (store/delete-token-for-membership! db "" "m-mine"))))
       (is (false? (await (store/delete-token-for-membership! db "tok-mine" nil))))
       (is (false? @issued?) "no delete reached the collection"))))
+
+(deftest revocation-contracts-state-the-boundary-obligations
+  (testing "the request contract rejects anything that would widen the delete"
+    (is (law/valid-revocation-request? {:access-token "t" :membership-id "m"}))
+    (is (not (law/valid-revocation-request? {:access-token "t" :membership-id ""})))
+    (is (not (law/valid-revocation-request? {:access-token "t" :membership-id "   "}))
+        "whitespace is not an identity")
+    (is (not (law/valid-revocation-request? {:access-token "t"}))
+        "a missing membership is not an absent filter"))
+  (testing "the result contract requires a count"
+    (is (law/valid-revocation-result? {:deleted-count 0}))
+    (is (not (law/valid-revocation-result? {})))
+    (is (not (law/valid-revocation-result? {:deleted-count -1})))))
+
+(deftest ^:async an-undecodable-delete-result-throws
+  (testing "a result that lost its count is not read as 'nothing deleted'"
+    (let [db #js {:collection (fn [_] #js {:deleteOne (fn [_] (js/Promise.resolve #js {:acknowledged true}))})}]
+      ;; extern.mongo defaults a missing count to 0, so reaching the contract
+      ;; failure takes a result it cannot decode at all.
+      (with-redefs [extern-mongo/delete-one! (fn [_ _] (js/Promise.resolve {:wrong :shape}))]
+        (let [outcome (try (await (store/delete-token-for-membership! db "t" "m")) :ok
+                           (catch :default e e))]
+          (is (not= :ok outcome) "an undecodable result must raise, not return false"))))))
 
 ;; ── extern.mongo conversion ──────────────────────────────
 ;; AGENTS.md asks for a regression test on the conversion whenever an extern

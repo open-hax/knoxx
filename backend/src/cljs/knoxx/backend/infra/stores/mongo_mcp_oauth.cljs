@@ -1,10 +1,10 @@
 (ns knoxx.backend.infra.stores.mongo-mcp-oauth
   "Mongo twin for MCP OAuth state (replaces Redis knoxx:mcp:* keys).
    Handles clients, auth codes, and access tokens."
-  (:require [malli.core :as m]
-            [knoxx.backend.extern.mongo :as extern-mongo]
+  (:require [knoxx.backend.extern.mongo :as extern-mongo]
             [knoxx.backend.infra.mongo-client :as mongo-client]
-            [knoxx.backend.infra.system-instance :as system-instance]))
+            [knoxx.backend.infra.system-instance :as system-instance]
+            [knoxx.backend.law.mcp-oauth :as law]))
 
 (def CLIENTS_COLLECTION "knoxx_mcp_clients")
 (def CODES_COLLECTION "knoxx_mcp_codes")
@@ -178,18 +178,6 @@
        (await (.deleteOne c #js {"access_token" (str access-token)}))
        true))))
 
-;; Contracts for the token-revocation boundary. Both obligations are named
-;; here rather than left to whichever route happens to call in: an identity
-;; that is present but blank must not be able to widen the delete, and a
-;; decoded result that is missing its count must not read as "nothing deleted".
-(def RevocationRequest
-  [:map
-   [:access-token  [:string {:min 1}]]
-   [:membership-id [:string {:min 1}]]])
-
-(def RevocationResult
-  [:map [:deleted-count [:int {:min 0}]]])
-
 (defn ^:async delete-token-for-membership!
   "Delete an access token only when it belongs to this membership.
 
@@ -205,13 +193,13 @@
   ([db access-token membership-id]
    (let [request {:access-token  (str (or access-token ""))
                   :membership-id (str (or membership-id ""))}]
-     (if-not (and db (m/validate RevocationRequest request))
+     (if-not (and db (law/valid-revocation-request? request))
        false
        (let [result (await (extern-mongo/delete-one!
                             (tokens-coll db)
                             {:access_token  (:access-token request)
                              :membership_id (:membership-id request)}))]
-         (when-not (m/validate RevocationResult result)
+         (when-not (law/valid-revocation-result? result)
            (throw (ex-info "mongo delete-one! returned an undecodable result"
                            {:result result})))
          (pos? (:deleted-count result)))))))
