@@ -1,5 +1,6 @@
 (ns knoxx.backend.mcp-oauth-store-test
   (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.extern.mongo :as extern-mongo]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as store]))
 
 ;; ─────────────────────────────────────────────────────────
@@ -127,3 +128,38 @@
   (testing "an unknown token id is not reported as revoked"
     (let [db (fake-token-db two-tokens)]
       (is (false? (await (store/delete-token-for-membership! db "tok-nonexistent" "m-mine")))))))
+
+(deftest ^:async blank-identity-never-issues-a-delete
+  (testing "a blank membership or token is refused instead of widening the query"
+    ;; Without the contract these fall through to a query with an empty-string
+    ;; field, which matches nothing today but is one schema change away from
+    ;; matching everything. Refuse before the delete is issued at all.
+    (let [db      (fake-token-db two-tokens)
+          issued? (atom false)]
+      (aset db "collection"
+            (fn [_] #js {:deleteOne (fn [_] (reset! issued? true)
+                                      (js/Promise.resolve #js {:deletedCount 1}))}))
+      (is (false? (await (store/delete-token-for-membership! db "tok-mine" ""))))
+      (is (false? (await (store/delete-token-for-membership! db "" "m-mine"))))
+      (is (false? (await (store/delete-token-for-membership! db "tok-mine" nil))))
+      (is (false? @issued?) "no delete reached the collection"))))
+
+;; ── extern.mongo conversion ──────────────────────────────
+;; AGENTS.md asks for a regression test on the conversion whenever an extern
+;; adapter grows a new boundary. delete-one! owns decoding the driver's native
+;; DeleteResult; the point is that the SDK shape stops here.
+
+(deftest ^:async delete-one-decodes-the-native-delete-result
+  (testing "the driver's DeleteResult is decoded to CLJS and never escapes"
+    (let [captured (atom nil)
+          handle   #js {:deleteOne (fn [q] (reset! captured q)
+                                     (js/Promise.resolve #js {:deletedCount 1}))}
+          result   (await (extern-mongo/delete-one! handle {:access_token "t" :membership_id "m"}))]
+      (is (= {:deleted-count 1} result) "returns CLJS data, not the native result")
+      (is (= "t" (aget @captured "access_token")) "the CLJS query is encoded for the driver")
+      (is (= "m" (aget @captured "membership_id"))))))
+
+(deftest ^:async delete-one-treats-a-missing-count-as-zero
+  (testing "a driver result without deletedCount decodes to zero, not nil"
+    (let [handle #js {:deleteOne (fn [_] (js/Promise.resolve #js {}))}]
+      (is (= {:deleted-count 0} (await (extern-mongo/delete-one! handle {:x "y"})))))))

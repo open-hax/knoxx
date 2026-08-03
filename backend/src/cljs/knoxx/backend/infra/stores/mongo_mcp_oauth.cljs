@@ -1,7 +1,9 @@
 (ns knoxx.backend.infra.stores.mongo-mcp-oauth
   "Mongo twin for MCP OAuth state (replaces Redis knoxx:mcp:* keys).
    Handles clients, auth codes, and access tokens."
-  (:require [knoxx.backend.infra.mongo-client :as mongo-client]
+  (:require [malli.core :as m]
+            [knoxx.backend.extern.mongo :as extern-mongo]
+            [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.system-instance :as system-instance]))
 
 (def CLIENTS_COLLECTION "knoxx_mcp_clients")
@@ -176,21 +178,43 @@
        (await (.deleteOne c #js {"access_token" (str access-token)}))
        true))))
 
+;; Contracts for the token-revocation boundary. Both obligations are named
+;; here rather than left to whichever route happens to call in: an identity
+;; that is present but blank must not be able to widen the delete, and a
+;; decoded result that is missing its count must not read as "nothing deleted".
+(def RevocationRequest
+  [:map
+   [:access-token  [:string {:min 1}]]
+   [:membership-id [:string {:min 1}]]])
+
+(def RevocationResult
+  [:map [:deleted-count [:int {:min 0}]]])
+
 (defn ^:async delete-token-for-membership!
   "Delete an access token only when it belongs to this membership.
 
    Returns true when a token was deleted and false when nothing matched, so a
    caller can tell 'revoked' from 'not yours, or not there'. Deleting by token
    value alone lets any authenticated caller revoke another membership's token
-   if they learn its value."
+   if they learn its value.
+
+   Blank or missing identity yields false rather than a widened query — the
+   delete is never issued at all."
   ([access-token membership-id]
    (delete-token-for-membership! (mongo-client/get-db) access-token membership-id))
   ([db access-token membership-id]
-   (when (and db access-token membership-id)
-     (let [c (tokens-coll db)
-           result (await (.deleteOne c #js {"access_token"  (str access-token)
-                                            "membership_id" (str membership-id)}))]
-       (pos? (or (aget result "deletedCount") 0))))))
+   (let [request {:access-token  (str (or access-token ""))
+                  :membership-id (str (or membership-id ""))}]
+     (if-not (and db (m/validate RevocationRequest request))
+       false
+       (let [result (await (extern-mongo/delete-one!
+                            (tokens-coll db)
+                            {:access_token  (:access-token request)
+                             :membership_id (:membership-id request)}))]
+         (when-not (m/validate RevocationResult result)
+           (throw (ex-info "mongo delete-one! returned an undecodable result"
+                           {:result result})))
+         (pos? (:deleted-count result)))))))
 
 (defn ^:async list-tokens-for-membership!
   "List all tokens for a membership."
