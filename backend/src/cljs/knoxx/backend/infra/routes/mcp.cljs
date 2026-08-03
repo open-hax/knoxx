@@ -149,9 +149,18 @@
         (aset raw "rawHeaders" (clj->js (conj filtered "accept" accept-value)))))
     req))
 
+;; Fastify's default error handler reads `statusCode` off the thrown object and
+;; falls back to 500 when it is absent. A bare ex-info keeps its status in
+;; ex-data, which Fastify cannot see, so every client error these routes raise
+;; was reported as 500 Internal Server Error with the real message attached —
+;; a rejected redirect_uri, an unregistered client and a bad PKCE verifier all
+;; looked like the server had fallen over. Stamp the status where Fastify looks.
 (defn- http-error
-  ([status error detail]      (ex-info detail {:status status :error error :detail detail}))
-  ([status error detail data] (ex-info detail (merge {:status status :error error :detail detail} data))))
+  ([status error detail]      (http-error status error detail nil))
+  ([status error detail data]
+   (let [e (ex-info detail (merge {:status status :error error :detail detail} data))]
+     (aset e "statusCode" status)
+     e)))
 
 (defn- validation-detail [schema value]
   (some-> (m/explain schema value) me/humanize pr-str))
