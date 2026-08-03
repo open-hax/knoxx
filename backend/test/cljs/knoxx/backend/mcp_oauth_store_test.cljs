@@ -2,7 +2,8 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.mongo :as extern-mongo]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as store]
-            [knoxx.backend.law.mcp-oauth :as law]))
+            [knoxx.backend.law.mcp-oauth :as law]
+            [knoxx.backend.law.mongo :as law-mongo]))
 
 ;; ─────────────────────────────────────────────────────────
 ;; set-client! / get-client! round trip
@@ -263,6 +264,18 @@
     (is (nil? (extern-mongo/instant-ms (- (- 8.64e15) 1))))
     (is (= 8.64e15 (extern-mongo/instant-ms 8.64e15))
         "the boundary itself is a representable instant")))
+
+(deftest the-epoch-millis-contract-states-what-an-instant-is
+  (testing "law.mongo/EpochMillis is the named admissible shape"
+    (is (law-mongo/valid-epoch-ms? 0))
+    (is (law-mongo/valid-epoch-ms? 1700000000000))
+    (is (law-mongo/valid-epoch-ms? law-mongo/max-time-value) "the boundary is admissible")
+    (is (not (law-mongo/valid-epoch-ms? js/Infinity)))
+    (is (not (law-mongo/valid-epoch-ms? (- js/Infinity))))
+    (is (not (law-mongo/valid-epoch-ms? js/NaN)))
+    (is (not (law-mongo/valid-epoch-ms? (+ law-mongo/max-time-value 1))))
+    (is (not (law-mongo/valid-epoch-ms? "1700000000000")) "a string is not a decoded instant")
+    (is (not (law-mongo/valid-epoch-ms? nil)))))
 
 (deftest ^:async an-infinite-expiry-does-not-keep-a-token-alive
   (testing "a token stamped with Infinity is refused rather than living for good"

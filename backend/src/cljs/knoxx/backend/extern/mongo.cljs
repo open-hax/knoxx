@@ -4,7 +4,8 @@
    Knoxx does not ship a MongoDB driver; callers inject a native collection
    handle (any object exposing insertOne/find with a toArray cursor). All raw
    interop with that handle is born and dies here — store records upstream
-   speak CLJS maps only.")
+   speak CLJS maps only."
+  (:require [knoxx.backend.law.mongo :as law-mongo]))
 
 (defn ^:async insert-one!
   "Insert one CLJS document into a native collection handle. Returns the doc."
@@ -12,21 +13,14 @@
   (await (.insertOne collection-handle (clj->js doc)))
   doc)
 
-;; ECMAScript's maximum time value: ±100,000,000 days from the epoch. A number
-;; outside this cannot be an instant, and js/Date rejects it too.
-(def ^:private max-time-value 8.64e15)
+(defn- decoded-instant
+  "A time value only when it satisfies law.mongo/EpochMillis.
 
-(defn- finite-instant
-  "A time value only when it is a real, representable instant.
-
-   Infinity is the dangerous one: it is a number, it compares greater than
-   every clock reading, and unguarded it would leave a credential live for
-   good. NaN and out-of-range values are rejected for the same reason —
-   nothing that cannot name a moment may be treated as one."
+   The admissible shape is named by the contract rather than re-derived here,
+   so this boundary and every caller that consumes the decoded value cannot
+   drift apart on what counts as an instant."
   [ms]
-  (when (and (js/Number.isFinite ms)
-             (<= (- max-time-value) ms max-time-value))
-    ms))
+  (when (law-mongo/valid-epoch-ms? ms) ms))
 
 (defn instant-ms
   "Decode a stored BSON instant to epoch milliseconds, or nil if unreadable.
@@ -36,15 +30,15 @@
    accepted and an ISO string is parsed so hand-written and migrated documents
    still read.
 
-   Every path goes through finite-instant, so anything that cannot name a real
-   moment — an invalid Date, an unparseable string, Infinity, NaN, a value past
-   the representable range — decodes to nil, and the caller decides what an
-   unreadable instant means."
+   Every path is checked against law.mongo/EpochMillis, so anything that cannot
+   name a real moment — an invalid Date, an unparseable string, Infinity, NaN,
+   a value past the representable range — decodes to nil, and the caller
+   decides what an unreadable instant means."
   [value]
   (cond
-    (number? value)           (finite-instant value)
-    (instance? js/Date value) (finite-instant (.getTime value))
-    (string? value)           (finite-instant (.parse js/Date value))
+    (number? value)           (decoded-instant value)
+    (instance? js/Date value) (decoded-instant (.getTime value))
+    (string? value)           (decoded-instant (.parse js/Date value))
     :else                     nil))
 
 (defn ^:async delete-one!
