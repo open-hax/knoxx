@@ -47,8 +47,13 @@
    shape; this only decides what the decoded value means. An unreadable or
    missing expiry counts as expired, so the check fails closed."
   [doc]
+  ;; instant-ms yields a finite number or nil, but that guarantee does not
+  ;; cross the namespace boundary for the compiler's inference, so both sides
+  ;; of the comparison are hinted rather than left to warn.
   (if-let [ms (extern-mongo/instant-ms (:expiresAt doc))]
-    (> ms (.now js/Date))
+    (let [^number expiry ms
+          ^number now    (.now js/Date)]
+      (> expiry now))
     false))
 
 ;; ─── Clients ────────────────────────────────────────────────────────────────

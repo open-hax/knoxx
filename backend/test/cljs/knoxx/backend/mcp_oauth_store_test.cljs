@@ -250,7 +250,26 @@
     (is (nil? (extern-mongo/instant-ms "not a date")))
     (is (nil? (extern-mongo/instant-ms (js/Date. "nonsense")))
         "an invalid date is unreadable, not epoch zero")
-    (is (nil? (extern-mongo/instant-ms #js {})))))
+    (is (nil? (extern-mongo/instant-ms #js {}))))
+
+  (testing "a number that cannot name a moment is not an instant"
+    ;; Infinity is the dangerous one: it is a number and it compares greater
+    ;; than every clock reading, so unguarded it would leave a code or token
+    ;; live for good.
+    (is (nil? (extern-mongo/instant-ms js/Infinity)) "Infinity must not read as live")
+    (is (nil? (extern-mongo/instant-ms (- js/Infinity))))
+    (is (nil? (extern-mongo/instant-ms js/NaN)))
+    (is (nil? (extern-mongo/instant-ms (+ 8.64e15 1))) "past the representable range")
+    (is (nil? (extern-mongo/instant-ms (- (- 8.64e15) 1))))
+    (is (= 8.64e15 (extern-mongo/instant-ms 8.64e15))
+        "the boundary itself is a representable instant")))
+
+(deftest ^:async an-infinite-expiry-does-not-keep-a-token-alive
+  (testing "a token stamped with Infinity is refused rather than living for good"
+    (let [db (fake-ttl-db "access_token")]
+      (swap! (aget db "docs") assoc "tok-inf"
+             {:access_token "tok-inf" :token_data {:membershipId "m"} :expiresAt js/Infinity})
+      (is (nil? (await (store/get-token! db "tok-inf")))))))
 
 ;; ── extern.mongo conversion ──────────────────────────────
 ;; AGENTS.md asks for a regression test on the conversion whenever an extern
