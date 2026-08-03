@@ -562,7 +562,15 @@
       (throw (http-error 400 "invalid_request" "Missing required token exchange parameters")))
     (let [client (await (get-registered-client client-id))]
       (ensure-redirect-uri-allowed! client redirect-uri "invalid_grant")
-      (let [raw (await (mongo-mcp/get-code! code))]
+      ;; Claimed, not read: an authorization code is single use, and the delete
+      ;; has to happen in the same operation as the read. Reading first and
+      ;; deleting after issuing left a window in which two concurrent exchanges
+      ;; both saw a live code and both minted a token from it.
+      ;;
+      ;; The claim precedes every check below, so a code that fails PKCE or the
+      ;; client match is spent rather than left for another attempt. That is the
+      ;; intent: it denies an attacker repeated guesses at the verifier.
+      (let [raw (await (mongo-mcp/consume-code! code))]
         (when-not raw (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
         (let [record   (js/JSON.parse raw)
               expected (str (or (aget record "codeChallenge") ""))
@@ -572,7 +580,6 @@
             (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
           (when (or (str/blank? expected) (not= expected actual))
             (throw (http-error 400 "invalid_grant" "PKCE verification failed")))
-          (await (mongo-mcp/delete-code! code))
           (let [token-response (await (persist-access-token! crypto token-ttl client-id record))]
             (json-send! reply 200 token-response)))))))
 

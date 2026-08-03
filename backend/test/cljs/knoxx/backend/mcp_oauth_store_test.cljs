@@ -265,6 +265,78 @@
     (is (= 8.64e15 (extern-mongo/instant-ms 8.64e15))
         "the boundary itself is a representable instant")))
 
+;; ── an authorization code is single use ──────────────────
+;;
+;; Reading a code and deleting it afterwards leaves a window: two exchanges can
+;; both pass the read before either deletes, and both mint a token from one
+;; code. consume-code! claims it in a single operation so exactly one wins.
+;; Raised by Codex on #215.
+
+(defn- claim-one!
+  "Atomically remove and return one document — one winner however calls interleave."
+  [docs id]
+  (let [won (atom nil)]
+    (swap! docs (fn [m]
+                  (when-let [d (get m id)] (reset! won d))
+                  (dissoc m id)))
+    (js/Promise.resolve (some-> @won clj->js))))
+
+(defn- fake-codes-db
+  "Codes collection double.
+
+   findOne and deleteOne are provided alongside findOneAndDelete and are
+   deliberately not atomic together, so swapping the store back to a
+   read-then-delete sequence reproduces the race rather than erroring."
+  [initial]
+  (let [docs  (atom initial)
+        calls (atom 0)
+        coll  #js {:findOneAndDelete (fn [q] (swap! calls inc) (claim-one! docs (aget q "code")))
+                   :findOne          (fn [q] (swap! calls inc)
+                                       (js/Promise.resolve
+                                        (some-> (get @docs (aget q "code")) clj->js)))
+                   :deleteOne        (fn [q] (swap! docs dissoc (aget q "code"))
+                                       (js/Promise.resolve #js {:deletedCount 1}))}
+        db    #js {:collection (fn [_name] coll)}]
+    (doto db (aset "docs" docs) (aset "calls" calls))))
+
+(def ^:private live-code
+  {"code-1" {:code "code-1"
+             :code_data {:clientId "c" :codeChallenge "ch"}
+             :expiresAt (js/Date. (+ (.now js/Date) 300000))}})
+
+(deftest ^:async a-code-can-be-consumed-once
+  (testing "the first claim gets the data"
+    (let [db  (fake-codes-db live-code)
+          raw (await (store/consume-code! db "code-1"))]
+      (is (some? raw))
+      (is (= "c" (aget (js/JSON.parse raw) "clientId"))))))
+
+(deftest ^:async a-consumed-code-cannot-be-claimed-again
+  (testing "a second exchange with the same code gets nothing"
+    (let [db (fake-codes-db live-code)]
+      (is (some? (await (store/consume-code! db "code-1"))))
+      (is (nil? (await (store/consume-code! db "code-1")))
+          "the code is spent — a replay must not mint a second token"))))
+
+(deftest ^:async concurrent-exchanges-yield-exactly-one-token
+  (testing "two exchanges racing on one code produce a single winner"
+    (let [db (fake-codes-db live-code)
+          results (await (js/Promise.all
+                          #js [(store/consume-code! db "code-1")
+                               (store/consume-code! db "code-1")
+                               (store/consume-code! db "code-1")]))
+          winners (filter some? (array-seq results))]
+      (is (= 3 @(aget db "calls")) "all three attempts reached the store")
+      (is (= 1 (count winners)) "exactly one exchange may claim the code"))))
+
+(deftest ^:async an-expired-code-is-still-consumed
+  (testing "an expired code is spent rather than left readable for a retry"
+    (let [db (fake-codes-db {"code-old" {:code "code-old"
+                                         :code_data {:clientId "c"}
+                                         :expiresAt (js/Date. (- (.now js/Date) 1000))}})]
+      (is (nil? (await (store/consume-code! db "code-old"))) "expired yields nothing")
+      (is (empty? @(aget db "docs")) "and the document is gone, not left behind"))))
+
 (deftest the-epoch-millis-contract-states-what-an-instant-is
   (testing "law.mongo/EpochMillis is the named admissible shape"
     (is (law-mongo/valid-epoch-ms? 0))

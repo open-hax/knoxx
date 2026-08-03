@@ -104,7 +104,11 @@
 ;; ─── Codes ──────────────────────────────────────────────────────────────────
 
 (defn ^:async get-code!
-  "Read OAuth auth code."
+  "Read an OAuth auth code without consuming it.
+
+   Does not make the code single use. A token exchange wants consume-code!;
+   reading here and deleting afterwards lets two concurrent exchanges both pass
+   the read before either deletes, and both then mint a token from one code."
   ([code] (get-code! (mongo-client/get-db) code))
   ([db code]
    (when (and db code)
@@ -114,6 +118,26 @@
          (let [doc (keywordize result)]
            (when (live? doc)
              (js/JSON.stringify (clj->js (:code_data doc))))))))))
+
+(defn ^:async consume-code!
+  "Atomically claim an OAuth auth code, returning its data exactly once.
+
+   An authorization code is single use: RFC 6749 requires that presenting one
+   twice does not yield two credentials. The delete and the read are one
+   operation so that exactly one of any number of concurrent exchanges can
+   claim it — a read followed by a separate delete leaves a window in which
+   both callers see a live code and both mint a token.
+
+   The claim happens before the code's own validity is judged, so a code that
+   turns out to be expired is still consumed. That is deliberate: an expired
+   code is spent either way, and leaving it readable would invite retries."
+  ([code] (consume-code! (mongo-client/get-db) code))
+  ([db code]
+   (when (and db code)
+     (let [doc (await (extern-mongo/find-one-and-delete!
+                       (codes-coll db) {:code (str code)}))]
+       (when (and doc (live? doc))
+         (js/JSON.stringify (clj->js (:code_data doc))))))))
 
 (defn ^:async set-code!
   "Store OAuth auth code with TTL."

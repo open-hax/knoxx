@@ -41,6 +41,24 @@
     (string? value)           (decoded-instant (.parse js/Date value))
     :else                     nil))
 
+(defn ^:async find-one-and-delete!
+  "Atomically remove one document matching a CLJS field-equality query and
+   return it as CLJS data, or nil when nothing matched.
+
+   The atomicity is the point: exactly one concurrent caller can receive the
+   document, so a caller can use this to make a single-use credential single
+   use. A read followed by a separate delete cannot promise that.
+
+   Driver v6 returns the document itself; earlier versions wrapped it as
+   {value: doc}. Both are unwrapped here so the caller never has to know."
+  [collection-handle query]
+  (let [result (await (.findOneAndDelete collection-handle (clj->js query)))]
+    (when result
+      (let [doc (if (and (object? result) (.hasOwnProperty result "value"))
+                  (aget result "value")
+                  result)]
+        (when doc (js->clj doc :keywordize-keys true))))))
+
 (defn ^:async delete-one!
   "Delete at most one document matching a CLJS field-equality query.
 
