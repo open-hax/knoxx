@@ -227,6 +227,27 @@
       (is (= [test-base] (js->clj (aget payload "authorization_servers"))))
       (is (= ["header"] (js->clj (aget payload "bearer_methods_supported")))))))
 
+(deftest ^:async client-errors-carry-their-http-status
+  (testing "a rejected registration surfaces as 400, not 500"
+    ;; Fastify's default error handler reads statusCode off the thrown object
+    ;; and falls back to 500. A bare ex-info keeps its status in ex-data, where
+    ;; Fastify cannot see it, so every client error in these routes was
+    ;; reported as 500 Internal Server Error with the real message attached —
+    ;; which is how a rejected redirect_uri came to look like a server crash.
+    (let [app (recording-app)]
+      (with-public-base-url test-base
+        (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
+      (let [route (registered-route app "POST" "/api/mcp/oauth/register")]
+        (is (some? route) "the registration route is registered")
+        (let [outcome (try
+                        (await ((aget route "handler") #js {:body #js {}} (fake-reply)))
+                        :resolved
+                        (catch :default e e))]
+          (is (not= :resolved outcome) "a body with no redirect_uris must be rejected")
+          (when (not= :resolved outcome)
+            (is (= 400 (aget outcome "statusCode"))
+                "the status Fastify actually reads must be the intended one")))))))
+
 (deftest mcp-discovery-tests-leave-the-environment-alone
   (testing "the pinned KNOXX_PUBLIC_BASE_URL does not leak into later tests"
     (let [had?     (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL")

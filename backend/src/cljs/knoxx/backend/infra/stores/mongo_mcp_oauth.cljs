@@ -35,28 +35,39 @@
 ;; ─── Clients ────────────────────────────────────────────────────────────────
 
 (defn ^:async get-client!
-  "Read registered OAuth client by client_id."
+  "Read a registered OAuth client by client_id.
+
+   Returns the client record itself, not the storage envelope. set-client!
+   nests the registration under :client_data alongside bookkeeping fields, and
+   callers want the registration — every caller reads redirect_uris off the top
+   level of what this returns. Handing back the envelope made those lookups
+   undefined, so every registered client's redirect_uri was rejected and no MCP
+   OAuth flow could be completed.
+
+   Records written before the envelope existed are stored flat; fall back to
+   the whole document for those."
   ([client-id] (get-client! (mongo-client/get-db) client-id))
   ([db client-id]
    (when (and db client-id)
      (let [c (clients-coll db)
            result (await (.findOne c #js {"client_id" (str client-id)}))]
        (when result
-         (js/JSON.stringify (clj->js (keywordize result))))))))
+         (let [doc    (keywordize result)
+               record (or (:client_data doc) doc)]
+           (js/JSON.stringify (clj->js record))))))))
 
 (defn ^:async set-client!
-  "Store registered OAuth client."
+  "Store a registered OAuth client.
+
+   The registration is nested under :client_data, beside this store's own
+   bookkeeping. get-client! unwraps it again; keep the two in step. Clients
+   carry no TTL, unlike codes and tokens."
   ([client-id client-json] (set-client! (mongo-client/get-db) client-id client-json))
   ([db client-id client-json]
    (when (and db client-id)
      (let [c (clients-coll db)
            now (js/Date.)
-           parsed (js/JSON.parse client-json)
-           doc {:client_id (str client-id)
-                :client_data parsed
-                :created_at now
-                :system_instance_id (system-instance/current-id)
-                :expiresAt nil}] ;; No TTL for clients
+           parsed (js/JSON.parse client-json)]
        (await (.updateOne
                c
                #js {"client_id" (str client-id)}
