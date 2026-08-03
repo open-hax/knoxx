@@ -159,14 +159,17 @@
     (is (not (law/valid-revocation-result? {:deleted-count -1})))))
 
 (deftest ^:async an-undecodable-delete-result-throws
-  (testing "a result that lost its count is not read as 'nothing deleted'"
-    (let [db #js {:collection (fn [_] #js {:deleteOne (fn [_] (js/Promise.resolve #js {:acknowledged true}))})}]
-      ;; extern.mongo defaults a missing count to 0, so reaching the contract
-      ;; failure takes a result it cannot decode at all.
-      (with-redefs [extern-mongo/delete-one! (fn [_ _] (js/Promise.resolve {:wrong :shape}))]
-        (let [outcome (try (await (store/delete-token-for-membership! db "t" "m")) :ok
-                           (catch :default e e))]
-          (is (not= :ok outcome) "an undecodable result must raise, not return false"))))))
+  (testing "a driver result with no count raises instead of reading as 'nothing deleted'"
+    ;; End to end through the real adapter: a handle that acknowledges without
+    ;; reporting a count must reach the contract and fail it. If delete-one!
+    ;; substituted zero here, RevocationResult would accept the fabrication and
+    ;; the route would answer a confident 404 for a persistence layer it could
+    ;; not actually read.
+    (let [db #js {:collection
+                  (fn [_] #js {:deleteOne (fn [_] (js/Promise.resolve #js {:acknowledged true}))})}
+          outcome (try (await (store/delete-token-for-membership! db "t" "m")) :ok
+                       (catch :default e e))]
+      (is (not= :ok outcome) "an undecodable result must raise, not return false"))))
 
 ;; ── extern.mongo conversion ──────────────────────────────
 ;; AGENTS.md asks for a regression test on the conversion whenever an extern
@@ -183,7 +186,18 @@
       (is (= "t" (aget @captured "access_token")) "the CLJS query is encoded for the driver")
       (is (= "m" (aget @captured "membership_id"))))))
 
-(deftest ^:async delete-one-treats-a-missing-count-as-zero
-  (testing "a driver result without deletedCount decodes to zero, not nil"
+(deftest ^:async delete-one-does-not-fabricate-a-missing-count
+  (testing "a driver result without deletedCount decodes to nil, never to zero"
+    ;; Zero would assert the driver said nothing was deleted, when it said
+    ;; nothing at all — and a caller requiring a count would accept it.
     (let [handle #js {:deleteOne (fn [_] (js/Promise.resolve #js {}))}]
-      (is (= {:deleted-count 0} (await (extern-mongo/delete-one! handle {:x "y"})))))))
+      (is (= {:deleted-count nil} (await (extern-mongo/delete-one! handle {:x "y"}))))))
+
+  (testing "a non-numeric count is not coerced"
+    (let [handle #js {:deleteOne (fn [_] (js/Promise.resolve #js {:deletedCount "1"}))}]
+      (is (= {:deleted-count nil} (await (extern-mongo/delete-one! handle {:x "y"}))))))
+
+  (testing "a genuine zero is preserved and still decodes as a count"
+    (let [handle #js {:deleteOne (fn [_] (js/Promise.resolve #js {:deletedCount 0}))}]
+      (is (= {:deleted-count 0} (await (extern-mongo/delete-one! handle {:x "y"})))
+          "'nothing matched' must stay distinguishable from 'no count reported'"))))
