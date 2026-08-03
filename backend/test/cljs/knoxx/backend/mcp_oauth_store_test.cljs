@@ -337,6 +337,20 @@
       (is (nil? (await (store/consume-code! db "code-old"))) "expired yields nothing")
       (is (empty? @(aget db "docs")) "and the document is gone, not left behind"))))
 
+(deftest credential-liveness-is-one-pure-rule
+  (testing "an expiry after the given instant is live, before it is not"
+    (is (law/credential-live? 2000 1000))
+    (is (not (law/credential-live? 1000 2000)))
+    (is (not (law/credential-live? 1000 1000)) "expiring exactly now is not live"))
+  (testing "an unreadable instant on either side is not live"
+    ;; Fails closed: a credential whose expiry cannot be named must not be
+    ;; honoured, and Infinity must not outlive every clock reading.
+    (is (not (law/credential-live? nil 1000)))
+    (is (not (law/credential-live? js/Infinity 1000)))
+    (is (not (law/credential-live? js/NaN 1000)))
+    (is (not (law/credential-live? 2000 nil)))
+    (is (not (law/credential-live? 2000 js/NaN)))))
+
 (deftest the-query-contract-refuses-a-collection-wide-delete
   (testing "an empty or non-scalar query is not a field-equality query"
     (is (law-mongo/valid-query? {:code "c"}))

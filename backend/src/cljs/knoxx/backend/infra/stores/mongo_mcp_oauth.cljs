@@ -43,18 +43,13 @@
    exchange answered 'Unknown or expired code' for codes it had just minted,
    and no access token could ever be presented successfully.
 
-   Decoding the stored instant belongs to extern.mongo, which owns the driver's
-   shape; this only decides what the decoded value means. An unreadable or
-   missing expiry counts as expired, so the check fails closed."
+   Each layer does its own part: extern.mongo decodes the driver's instant,
+   law.mcp-oauth decides what a decoded instant means, and this reads the
+   clock. An unreadable or missing expiry is not live, so the check fails
+   closed."
   [doc]
-  ;; instant-ms yields a finite number or nil, but that guarantee does not
-  ;; cross the namespace boundary for the compiler's inference, so both sides
-  ;; of the comparison are hinted rather than left to warn.
-  (if-let [ms (extern-mongo/instant-ms (:expiresAt doc))]
-    (let [^number expiry ms
-          ^number now    (.now js/Date)]
-      (> expiry now))
-    false))
+  (law/credential-live? (extern-mongo/instant-ms (:expiresAt doc))
+                        (.now js/Date)))
 
 ;; ─── Clients ────────────────────────────────────────────────────────────────
 

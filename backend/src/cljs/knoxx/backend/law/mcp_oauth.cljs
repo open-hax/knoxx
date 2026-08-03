@@ -5,7 +5,24 @@
    define them, so the obligations of a boundary can be read without reading
    the code that performs it."
   (:require [clojure.string :as str]
-            [malli.core :as m]))
+            [malli.core :as m]
+            [knoxx.backend.law.mongo :as law-mongo]))
+
+(defn credential-live?
+  "True when a credential with this expiry is still admissible at this instant.
+
+   Pure, and takes the clock reading as an argument: the effectful layer reads
+   the time, this decides what it means. That keeps one rule for every reader —
+   get-code!, consume-code!, get-token! and the token listing all admit exactly
+   the same credentials — and lets the rule be tested without a clock.
+
+   Both arguments must be readable instants. An unreadable expiry is not live:
+   a credential whose expiry cannot be named must not be honoured, so this
+   fails closed rather than treating the unknown as far future."
+  [expiry-ms now-ms]
+  (boolean (and (law-mongo/valid-epoch-ms? expiry-ms)
+                (law-mongo/valid-epoch-ms? now-ms)
+                (> expiry-ms now-ms))))
 
 (def NonBlankString
   [:and string? [:fn {:error/message "must not be blank"} #(not (str/blank? %))]])
