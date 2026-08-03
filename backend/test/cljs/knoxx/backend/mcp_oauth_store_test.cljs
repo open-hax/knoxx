@@ -239,6 +239,19 @@
       (is (nil? (await (store/get-code! db "code-3")))
           "a missing expiry must not read as a live code"))))
 
+(deftest instant-ms-decodes-what-mongo-actually-returns
+  (testing "the adapter owns the driver's date shape"
+    (let [d (js/Date. 1700000000000)]
+      (is (= 1700000000000 (extern-mongo/instant-ms d)) "a BSON date arrives as js/Date")
+      (is (= 1700000000000 (extern-mongo/instant-ms 1700000000000)) "a number passes through")
+      (is (= 1700000000000 (extern-mongo/instant-ms "2023-11-14T22:13:20.000Z"))
+          "an ISO string still reads, for migrated documents"))
+    (is (nil? (extern-mongo/instant-ms nil)))
+    (is (nil? (extern-mongo/instant-ms "not a date")))
+    (is (nil? (extern-mongo/instant-ms (js/Date. "nonsense")))
+        "an invalid date is unreadable, not epoch zero")
+    (is (nil? (extern-mongo/instant-ms #js {})))))
+
 ;; ── extern.mongo conversion ──────────────────────────────
 ;; AGENTS.md asks for a regression test on the conversion whenever an extern
 ;; adapter grows a new boundary. delete-one! owns decoding the driver's native

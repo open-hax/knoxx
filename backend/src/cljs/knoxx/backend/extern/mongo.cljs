@@ -12,6 +12,21 @@
   (await (.insertOne collection-handle (clj->js doc)))
   doc)
 
+(defn instant-ms
+  "Decode a stored BSON instant to epoch milliseconds, or nil if unreadable.
+
+   Mongo hands a date back as a native js/Date, and inspecting that anywhere
+   but here would put the driver's shape in an ordinary namespace. A number is
+   passed through and an ISO string is parsed so hand-written and migrated
+   documents still read; anything else — including a date that parses to NaN —
+   is nil, leaving the caller to decide what an unreadable instant means."
+  [value]
+  (cond
+    (number? value)           value
+    (instance? js/Date value) (let [ms (.getTime value)] (when-not (js/isNaN ms) ms))
+    (string? value)           (let [ms (.parse js/Date value)] (when-not (js/isNaN ms) ms))
+    :else                     nil))
+
 (defn ^:async delete-one!
   "Delete at most one document matching a CLJS field-equality query.
 

@@ -34,20 +34,6 @@
 (defn- keywordize [doc]
   (when doc (js->clj doc :keywordize-keys true)))
 
-(defn- expiry-ms
-  "Milliseconds since epoch for a stored document's expiry, or nil if unreadable.
-
-   The writers store :expiresAt as a BSON date, which the driver hands back as a
-   js/Date; a number or an ISO string are accepted too so a hand-written or
-   migrated document still reads. Anything else yields nil."
-  [doc]
-  (let [v (:expiresAt doc)]
-    (cond
-      (number? v)             v
-      (instance? js/Date v)   (.getTime v)
-      (string? v)             (let [t (.parse js/Date v)] (when-not (js/isNaN t) t))
-      :else                   nil)))
-
 (defn- live?
   "True when a document has a readable expiry that is still in the future.
 
@@ -55,10 +41,13 @@
    asked for :expires-at, which no document has ever carried, so the default of
    0 made every code and every token read as already expired: the token
    exchange answered 'Unknown or expired code' for codes it had just minted,
-   and no access token could ever be presented successfully. An unreadable or
-   missing expiry counts as expired, so this fails closed."
+   and no access token could ever be presented successfully.
+
+   Decoding the stored instant belongs to extern.mongo, which owns the driver's
+   shape; this only decides what the decoded value means. An unreadable or
+   missing expiry counts as expired, so the check fails closed."
   [doc]
-  (if-let [ms (expiry-ms doc)]
+  (if-let [ms (extern-mongo/instant-ms (:expiresAt doc))]
     (> ms (.now js/Date))
     false))
 
