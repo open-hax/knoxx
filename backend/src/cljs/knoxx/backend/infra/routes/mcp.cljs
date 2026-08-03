@@ -4,6 +4,7 @@
             [malli.core :as m]
             [malli.error :as me]
             [knoxx.backend.shape.app-shapes :refer [route!]]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
@@ -336,9 +337,14 @@
 
 (defn- authorization-consent-html
   [{:keys [base auth-context client-id redirect-uri state code-challenge requested-scope tools selected]}]
+  ;; The auth context is a CLJS map, so it must be read with the shared
+  ;; accessors rather than aget. Reaching in with (aget ctx "user" "email")
+  ;; both missed the value and threw outright — aget compiles to
+  ;; ctx["user"]["email"], and the intermediate is undefined, so the `or`
+  ;; fallback never got the chance to run and the consent page 500'd.
   (let [confirm-url (js/URL. "/api/mcp/oauth/authorize/confirm" base)
-        user-email  (str (or (aget auth-context "user" "email") (aget auth-context "userEmail") ""))
-        org-slug    (str (or (aget auth-context "org" "slug") (aget auth-context "orgSlug") ""))]
+        user-email  (str (or (authz/ctx-user-email auth-context) ""))
+        org-slug    (str (or (authz/ctx-org-slug auth-context) ""))]
     (.set (.-searchParams confirm-url) "client_id" client-id)
     (.set (.-searchParams confirm-url) "redirect_uri" redirect-uri)
     (when state (.set (.-searchParams confirm-url) "state" state))
@@ -505,9 +511,23 @@
       (let [requested (requested-tools runtime config auth-context selected-tools)]
         (when (empty? requested)
           (throw (http-error 400 "invalid_scope" "No valid tools selected")))
-        (let [membership-id (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))
-              user-email    (str (or (aget auth-context "user" "email") (aget auth-context "userEmail") ""))
-              org-slug      (str (or (aget auth-context "org" "slug") (aget auth-context "orgSlug") ""))
+        ;; Same CLJS-map accessors as the consent page; see the note there.
+        (let [membership-id (str (or (authz/ctx-membership-id auth-context) ""))
+              user-email    (str (or (authz/ctx-user-email auth-context) ""))
+              org-slug      (str (or (authz/ctx-org-slug auth-context) ""))
+              _ (when (or (str/blank? membership-id) (str/blank? user-email))
+                  ;; The empty-string fallbacks above exist so a partly-resolved
+                  ;; context cannot crash the render, but they must not be
+                  ;; minted into a credential: the code is copied verbatim into
+                  ;; the access token by persist-access-token!, and a token with
+                  ;; a blank membership carries no authorization identity while
+                  ;; still being a valid bearer token. Refuse instead.
+                  ;;
+                  ;; org-slug is deliberately not required — it is descriptive
+                  ;; rather than an authorization key, and a membership without
+                  ;; one is legitimate.
+                  (throw (http-error 400 "missing_identity"
+                                     "Session has no membership or user identity to authorize with")))
               code          (.randomUUID crypto)
               payload       {:code code :clientId client-id :redirectUri redirect-uri
                              :codeChallenge code-challenge :codeChallengeMethod "S256"
@@ -558,7 +578,7 @@
 
 (defroute mcp-list-user-tokens! [browser-auth-guard] "GET" "/api/mcp/tokens" [browser-auth-guard]
   (let [auth-context  (aget request "authContext")
-        membership-id (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))]
+        membership-id (str (or (authz/ctx-membership-id auth-context) ""))]
     (when (str/blank? membership-id)
       (throw (http-error 400 "missing_membership" "No membership available for this session")))
     (let [records (await (mongo-mcp/list-tokens-for-membership! membership-id))]
@@ -567,11 +587,20 @@
 (defroute mcp-revoke-user-token! [browser-auth-guard] "DELETE" "/api/mcp/tokens/:tokenId" [browser-auth-guard]
   (let [auth-context  (aget request "authContext")
         {:keys [token-id]}    (parse-revoke-token-params request)
-        membership-id         (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))]
+        membership-id         (str (or (authz/ctx-membership-id auth-context) ""))]
     (when (or (str/blank? membership-id) (str/blank? token-id))
       (throw (http-error 400 "invalid_request" "membership and tokenId are required")))
-    (await (mongo-mcp/delete-token! token-id))
-    (json-send! reply 200 {:ok true})))
+    ;; Scoped to the caller's membership. Deleting by token value alone let any
+    ;; authenticated caller revoke someone else's token if they learned its
+    ;; value — the listing route is per-membership, but nothing stopped a
+    ;; hand-made DELETE. A miss is reported as 404 rather than 200 so a caller
+    ;; is not told their revocation succeeded when it did nothing; because the
+    ;; query is membership-scoped, that 404 reveals nothing about whether the
+    ;; token exists for anyone else.
+    (let [revoked (await (mongo-mcp/delete-token-for-membership! token-id membership-id))]
+      (when-not revoked
+        (throw (http-error 404 "not_found" "No such token for this membership")))
+      (json-send! reply 200 {:ok true}))))
 
 (defroute mcp-handle-session! [base bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")

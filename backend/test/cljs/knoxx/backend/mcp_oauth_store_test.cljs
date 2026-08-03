@@ -1,6 +1,8 @@
 (ns knoxx.backend.mcp-oauth-store-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.infra.stores.mongo-mcp-oauth :as store]))
+            [knoxx.backend.extern.mongo :as extern-mongo]
+            [knoxx.backend.infra.stores.mongo-mcp-oauth :as store]
+            [knoxx.backend.law.mcp-oauth :as law]))
 
 ;; ─────────────────────────────────────────────────────────
 ;; set-client! / get-client! round trip
@@ -79,3 +81,123 @@
   (testing "an unregistered client_id yields nil rather than an empty record"
     (let [db (fake-db)]
       (is (nil? (await (store/get-client! db "never-registered")))))))
+
+;; ─────────────────────────────────────────────────────────
+;; Token revocation is scoped to the owning membership
+;;
+;; delete-token! matches on access_token alone, so the revoke route let any
+;; authenticated caller destroy another membership's token if they learned its
+;; value — the listing route is per-membership, but nothing stopped a hand-made
+;; DELETE. Raised by CodeRabbit on #214.
+;; ─────────────────────────────────────────────────────────
+
+(defn- fake-token-db
+  "Mongo double for the tokens collection, keyed by access_token."
+  [initial]
+  (let [docs (atom initial)
+        coll #js {:deleteOne
+                  (fn [query]
+                    (let [tok (aget query "access_token")
+                          mid (aget query "membership_id")
+                          doc (get @docs tok)
+                          hit (and doc (or (nil? mid) (= mid (:membership_id doc))))]
+                      (when hit (swap! docs dissoc tok))
+                      (js/Promise.resolve #js {:deletedCount (if hit 1 0)})))}
+        db   #js {:collection (fn [_name] coll)}]
+    (aset db "docs" docs)
+    db))
+
+(def ^:private two-tokens
+  {"tok-mine"     {:access_token "tok-mine"     :membership_id "m-mine"}
+   "tok-somebody" {:access_token "tok-somebody" :membership_id "m-other"}})
+
+(deftest ^:async revoking-your-own-token-succeeds
+  (testing "a token belonging to the membership is deleted"
+    (let [db (fake-token-db two-tokens)]
+      (is (true? (await (store/delete-token-for-membership! db "tok-mine" "m-mine"))))
+      (is (nil? (get @(aget db "docs") "tok-mine")) "the token is gone"))))
+
+(deftest ^:async revoking-someone-elses-token-does-nothing
+  (testing "a token belonging to another membership is neither deleted nor reported deleted"
+    (let [db (fake-token-db two-tokens)]
+      (is (false? (await (store/delete-token-for-membership! db "tok-somebody" "m-mine")))
+          "returns false so the route can answer 404 instead of a false success")
+      (is (some? (get @(aget db "docs") "tok-somebody"))
+          "the other membership's token survives"))))
+
+(deftest ^:async revoking-an-unknown-token-reports-no-deletion
+  (testing "an unknown token id is not reported as revoked"
+    (let [db (fake-token-db two-tokens)]
+      (is (false? (await (store/delete-token-for-membership! db "tok-nonexistent" "m-mine")))))))
+
+(deftest ^:async blank-identity-never-issues-a-delete
+  (testing "a blank membership or token is refused instead of widening the query"
+    ;; Without the contract these fall through to a query with an empty-string
+    ;; field, which matches nothing today but is one schema change away from
+    ;; matching everything. Refuse before the delete is issued at all.
+    (let [db      (fake-token-db two-tokens)
+          issued? (atom false)]
+      (aset db "collection"
+            (fn [_] #js {:deleteOne (fn [_] (reset! issued? true)
+                                      (js/Promise.resolve #js {:deletedCount 1}))}))
+      (is (false? (await (store/delete-token-for-membership! db "tok-mine" ""))))
+      (is (false? (await (store/delete-token-for-membership! db "" "m-mine"))))
+      (is (false? (await (store/delete-token-for-membership! db "tok-mine" nil))))
+      (is (false? @issued?) "no delete reached the collection"))))
+
+(deftest revocation-contracts-state-the-boundary-obligations
+  (testing "the request contract rejects anything that would widen the delete"
+    (is (law/valid-revocation-request? {:access-token "t" :membership-id "m"}))
+    (is (not (law/valid-revocation-request? {:access-token "t" :membership-id ""})))
+    (is (not (law/valid-revocation-request? {:access-token "t" :membership-id "   "}))
+        "whitespace is not an identity")
+    (is (not (law/valid-revocation-request? {:access-token "t"}))
+        "a missing membership is not an absent filter"))
+  (testing "the result contract requires a count"
+    (is (law/valid-revocation-result? {:deleted-count 0}))
+    (is (not (law/valid-revocation-result? {})))
+    (is (not (law/valid-revocation-result? {:deleted-count -1})))))
+
+(deftest ^:async an-undecodable-delete-result-throws
+  (testing "a driver result with no count raises instead of reading as 'nothing deleted'"
+    ;; End to end through the real adapter: a handle that acknowledges without
+    ;; reporting a count must reach the contract and fail it. If delete-one!
+    ;; substituted zero here, RevocationResult would accept the fabrication and
+    ;; the route would answer a confident 404 for a persistence layer it could
+    ;; not actually read.
+    (let [db #js {:collection
+                  (fn [_] #js {:deleteOne (fn [_] (js/Promise.resolve #js {:acknowledged true}))})}
+          outcome (try (await (store/delete-token-for-membership! db "t" "m")) :ok
+                       (catch :default e e))]
+      (is (not= :ok outcome) "an undecodable result must raise, not return false"))))
+
+;; ── extern.mongo conversion ──────────────────────────────
+;; AGENTS.md asks for a regression test on the conversion whenever an extern
+;; adapter grows a new boundary. delete-one! owns decoding the driver's native
+;; DeleteResult; the point is that the SDK shape stops here.
+
+(deftest ^:async delete-one-decodes-the-native-delete-result
+  (testing "the driver's DeleteResult is decoded to CLJS and never escapes"
+    (let [captured (atom nil)
+          handle   #js {:deleteOne (fn [q] (reset! captured q)
+                                     (js/Promise.resolve #js {:deletedCount 1}))}
+          result   (await (extern-mongo/delete-one! handle {:access_token "t" :membership_id "m"}))]
+      (is (= {:deleted-count 1} result) "returns CLJS data, not the native result")
+      (is (= "t" (aget @captured "access_token")) "the CLJS query is encoded for the driver")
+      (is (= "m" (aget @captured "membership_id"))))))
+
+(deftest ^:async delete-one-does-not-fabricate-a-missing-count
+  (testing "a driver result without deletedCount decodes to nil, never to zero"
+    ;; Zero would assert the driver said nothing was deleted, when it said
+    ;; nothing at all — and a caller requiring a count would accept it.
+    (let [handle #js {:deleteOne (fn [_] (js/Promise.resolve #js {}))}]
+      (is (= {:deleted-count nil} (await (extern-mongo/delete-one! handle {:x "y"}))))))
+
+  (testing "a non-numeric count is not coerced"
+    (let [handle #js {:deleteOne (fn [_] (js/Promise.resolve #js {:deletedCount "1"}))}]
+      (is (= {:deleted-count nil} (await (extern-mongo/delete-one! handle {:x "y"}))))))
+
+  (testing "a genuine zero is preserved and still decodes as a count"
+    (let [handle #js {:deleteOne (fn [_] (js/Promise.resolve #js {:deletedCount 0}))}]
+      (is (= {:deleted-count 0} (await (extern-mongo/delete-one! handle {:x "y"})))
+          "'nothing matched' must stay distinguishable from 'no count reported'"))))

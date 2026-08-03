@@ -227,6 +227,88 @@
       (is (= [test-base] (js->clj (aget payload "authorization_servers"))))
       (is (= ["header"] (js->clj (aget payload "bearer_methods_supported")))))))
 
+;; ── the consent page reads a CLJS auth context ───────────
+;;
+;; resolve-auth-context returns a ClojureScript map (policy-db/resolve-context!
+;; builds it with keyword keys). The consent page reached into it with
+;; (aget ctx "user" "email"), which compiles to ctx["user"]["email"] — nil on a
+;; CLJS map, so the nested read threw before the `or` fallback could run:
+;;
+;;   500 Cannot read properties of undefined (reading 'email')
+;;
+;; This is the first authenticated step of the flow, so it could only be hit
+;; with a real session — which is exactly why the unauthenticated probes on
+;; #212 and #213 sailed past it. Drive the real route with the real context
+;; shape instead.
+
+(def ^:private cljs-auth-context
+  {:membership {:id "m-1" :actor-id "a-1"}
+   :user       {:id "u-1" :email "someone@example.test"}
+   :org        {:id "o-1" :slug "acme"}
+   :role-slugs ["knowledge_worker"]})
+
+(deftest ^:async consent-page-renders-from-a-cljs-auth-context
+  (testing "GET /api/mcp/oauth/authorize renders rather than 500ing"
+    (let [app (recording-app)]
+      (with-public-base-url test-base
+        (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
+      (let [route (registered-route app "GET" "/api/mcp/oauth/authorize")
+            reply (fake-reply)
+            req   #js {:authContext cljs-auth-context
+                       :query #js {"client_id"             "client-1"
+                                   "redirect_uri"          "https://chatgpt.com/connector/oauth/abc"
+                                   "code_challenge"        "challenge"
+                                   "code_challenge_method" "S256"
+                                   "state"                 "st"}}]
+        (is (some? route) "the authorize route is registered")
+        ;; Caught rather than awaited bare: the regression throws, and an
+        ;; unhandled rejection here takes the whole runner down mid-suite
+        ;; instead of reporting one failed test.
+        (let [outcome (try (await ((aget route "handler") req reply)) :ok
+                           (catch :default e e))]
+          (is (= :ok outcome)
+              (str "the authorize handler must not throw: " outcome))
+          (when (= :ok outcome)
+            (let [html (str (:payload @(aget reply "state")))]
+              (is (str/includes? html "Authorize MCP Client")
+                  "the consent page rendered")
+              (is (str/includes? html "someone@example.test")
+                  "the signed-in user's email is read off the CLJS map, not aget-ed off a JS object")
+              (is (str/includes? html "acme")
+                  "the org slug is read the same way"))))))))
+
+(deftest ^:async token-routes-read-membership-from-a-cljs-auth-context
+  (testing "GET /api/mcp/tokens resolves the membership instead of throwing or 400ing"
+    ;; These two routes carried the same (aget ctx "membership" "id") expression
+    ;; as the consent page. Nobody had reached them yet, so the breakage was
+    ;; latent rather than reported — cover them alongside.
+    (let [app (recording-app)]
+      (with-public-base-url test-base
+        (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
+      (let [route (registered-route app "GET" "/api/mcp/tokens")
+            reply (fake-reply)
+            outcome (try (await ((aget route "handler")
+                                 #js {:authContext cljs-auth-context} reply))
+                         :ok
+                         (catch :default e e))]
+        (is (= :ok outcome)
+            (str "a resolvable membership must not raise: " outcome))
+        (is (= 200 (:status @(aget reply "state")))))))
+
+  (testing "a context with no membership is refused rather than treated as empty"
+    (let [app (recording-app)]
+      (with-public-base-url test-base
+        (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
+      (let [route (registered-route app "GET" "/api/mcp/tokens")
+            outcome (try (await ((aget route "handler")
+                                 #js {:authContext {:user {:email "x@example.test"}}}
+                                 (fake-reply)))
+                         :ok
+                         (catch :default e e))]
+        (is (not= :ok outcome) "a blank membership must be rejected")
+        (when (not= :ok outcome)
+          (is (= 400 (aget outcome "statusCode"))))))))
+
 (deftest ^:async client-errors-carry-their-http-status
   (testing "a rejected registration surfaces as 400, not 500"
     ;; Fastify's default error handler reads statusCode off the thrown object
