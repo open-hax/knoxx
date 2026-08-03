@@ -34,6 +34,34 @@
 (defn- keywordize [doc]
   (when doc (js->clj doc :keywordize-keys true)))
 
+(defn- expiry-ms
+  "Milliseconds since epoch for a stored document's expiry, or nil if unreadable.
+
+   The writers store :expiresAt as a BSON date, which the driver hands back as a
+   js/Date; a number or an ISO string are accepted too so a hand-written or
+   migrated document still reads. Anything else yields nil."
+  [doc]
+  (let [v (:expiresAt doc)]
+    (cond
+      (number? v)             v
+      (instance? js/Date v)   (.getTime v)
+      (string? v)             (let [t (.parse js/Date v)] (when-not (js/isNaN t) t))
+      :else                   nil)))
+
+(defn- live?
+  "True when a document has a readable expiry that is still in the future.
+
+   Reads :expiresAt — the key the writers actually use. The readers previously
+   asked for :expires-at, which no document has ever carried, so the default of
+   0 made every code and every token read as already expired: the token
+   exchange answered 'Unknown or expired code' for codes it had just minted,
+   and no access token could ever be presented successfully. An unreadable or
+   missing expiry counts as expired, so this fails closed."
+  [doc]
+  (if-let [ms (expiry-ms doc)]
+    (> ms (.now js/Date))
+    false))
+
 ;; ─── Clients ────────────────────────────────────────────────────────────────
 
 (defn ^:async get-client!
@@ -90,7 +118,7 @@
            result (await (.findOne c #js {"code" (str code)}))]
        (when result
          (let [doc (keywordize result)]
-           (when (> (:expires-at doc 0) (.now js/Date))
+           (when (live? doc)
              (js/JSON.stringify (clj->js (:code_data doc))))))))))
 
 (defn ^:async set-code!
@@ -136,7 +164,7 @@
            result (await (.findOne c #js {"access_token" (str access-token)}))]
        (when result
          (let [doc (keywordize result)]
-           (when (> (:expires-at doc 0) (.now js/Date))
+           (when (live? doc)
              (js/JSON.stringify (clj->js (:token_data doc))))))))))
 
 (defn ^:async set-token!
@@ -214,5 +242,5 @@
            results (await (.toArray cursor))]
        (vec (for [doc results
                   :let [d (keywordize doc)]
-                  :when (> (:expires-at d 0) (.now js/Date))]
+                  :when (live? d)]
               (js/JSON.stringify (clj->js (:token_data d)))))))))

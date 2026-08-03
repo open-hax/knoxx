@@ -171,6 +171,74 @@
                        (catch :default e e))]
       (is (not= :ok outcome) "an undecodable result must raise, not return false"))))
 
+;; ─────────────────────────────────────────────────────────
+;; Codes and tokens survive their own round trip
+;;
+;; The writers store :expiresAt; the readers asked for :expires-at, a key no
+;; document has ever carried, so the (… 0) default made everything read as
+;; already expired. The token exchange answered "Unknown or expired code" for
+;; a code it had minted seconds earlier, and no access token could ever be
+;; presented successfully — ChatGPT reached the consent page and then failed.
+;; Same shape as the get-client! envelope bug: a writer and a reader that were
+;; only ever exercised together against a live Mongo.
+;; ─────────────────────────────────────────────────────────
+
+(defn- fake-ttl-db
+  "Mongo double for a TTL collection, keyed by the given id field."
+  [id-field]
+  (let [docs (atom {})
+        coll #js {:updateOne
+                  (fn [query update-doc _opts]
+                    (let [id      (aget query id-field)
+                          set-doc (js->clj (aget update-doc "$set") :keywordize-keys true)
+                          on-ins  (js->clj (aget update-doc "$setOnInsert") :keywordize-keys true)]
+                      (swap! docs (fn [m]
+                                    (let [base (or (get m id) (merge {(keyword id-field) id} on-ins))]
+                                      (assoc m id (merge base set-doc)))))
+                      (js/Promise.resolve #js {})))
+                  :findOne
+                  (fn [query]
+                    (js/Promise.resolve
+                     (some-> (get @docs (aget query id-field)) clj->js)))}
+        db   #js {:collection (fn [_name] coll)}]
+    (aset db "docs" docs)
+    db))
+
+(deftest ^:async a-freshly-written-code-reads-back
+  (testing "a code minted seconds ago is not reported as expired"
+    (let [db (fake-ttl-db "code")]
+      (await (store/set-code! db "code-1" (js/JSON.stringify #js {:clientId "c" :tools #js ["t"]}) 300))
+      (let [raw (await (store/get-code! db "code-1"))]
+        (is (some? raw) "the code the exchange just minted must be readable")
+        (is (= "c" (aget (js/JSON.parse raw) "clientId")))))))
+
+(deftest ^:async an-expired-code-does-not-read-back
+  (testing "a code past its TTL is still refused"
+    (let [db (fake-ttl-db "code")]
+      (await (store/set-code! db "code-2" (js/JSON.stringify #js {:clientId "c"}) -1))
+      (is (nil? (await (store/get-code! db "code-2")))))))
+
+(deftest ^:async a-freshly-written-token-reads-back
+  (testing "an access token can actually be presented after it is issued"
+    (let [db (fake-ttl-db "access_token")]
+      (await (store/set-token! db "tok-1" (js/JSON.stringify #js {:membershipId "m" :tools #js ["t"]}) 3600 "m"))
+      (let [raw (await (store/get-token! db "tok-1"))]
+        (is (some? raw) "a live token must verify, or every authenticated /mcp call 401s")
+        (is (= "m" (aget (js/JSON.parse raw) "membershipId")))))))
+
+(deftest ^:async an-expired-token-does-not-read-back
+  (testing "a token past its TTL is refused"
+    (let [db (fake-ttl-db "access_token")]
+      (await (store/set-token! db "tok-2" (js/JSON.stringify #js {:membershipId "m"}) -1 "m"))
+      (is (nil? (await (store/get-token! db "tok-2")))))))
+
+(deftest ^:async an-unreadable-expiry-fails-closed
+  (testing "a document whose expiry cannot be read is treated as expired"
+    (let [db (fake-ttl-db "code")]
+      (swap! (aget db "docs") assoc "code-3" {:code "code-3" :code_data {:clientId "c"}})
+      (is (nil? (await (store/get-code! db "code-3")))
+          "a missing expiry must not read as a live code"))))
+
 ;; ── extern.mongo conversion ──────────────────────────────
 ;; AGENTS.md asks for a regression test on the conversion whenever an extern
 ;; adapter grows a new boundary. delete-one! owns decoding the driver's native
