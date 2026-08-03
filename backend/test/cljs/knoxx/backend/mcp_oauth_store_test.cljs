@@ -337,6 +337,27 @@
       (is (nil? (await (store/consume-code! db "code-old"))) "expired yields nothing")
       (is (empty? @(aget db "docs")) "and the document is gone, not left behind"))))
 
+(deftest the-query-contract-refuses-a-collection-wide-delete
+  (testing "an empty or non-scalar query is not a field-equality query"
+    (is (law-mongo/valid-query? {:code "c"}))
+    (is (law-mongo/valid-query? {:access_token "t" :membership_id "m"}))
+    (is (not (law-mongo/valid-query? {}))
+        "an empty query matches every document — on a delete that is the collection")
+    (is (not (law-mongo/valid-query? {:code {:$ne nil}}))
+        "an operator map is a different contract")
+    (is (not (law-mongo/valid-query? nil)))))
+
+(deftest ^:async an-empty-query-never-reaches-a-delete
+  (testing "both delete paths refuse before issuing anything"
+    (let [issued? (atom false)
+          handle  #js {:findOneAndDelete (fn [_] (reset! issued? true) (js/Promise.resolve nil))
+                       :deleteOne        (fn [_] (reset! issued? true)
+                                           (js/Promise.resolve #js {:deletedCount 99}))}]
+      (doseq [op [extern-mongo/find-one-and-delete! extern-mongo/delete-one!]]
+        (let [outcome (try (await (op handle {})) :ok (catch :default e e))]
+          (is (not= :ok outcome) "an empty query must raise")))
+      (is (false? @issued?) "and nothing reached the collection"))))
+
 (deftest the-epoch-millis-contract-states-what-an-instant-is
   (testing "law.mongo/EpochMillis is the named admissible shape"
     (is (law-mongo/valid-epoch-ms? 0))

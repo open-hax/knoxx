@@ -22,6 +22,16 @@
   [ms]
   (when (law-mongo/valid-epoch-ms? ms) ms))
 
+(defn- assert-query!
+  "Refuse a query that does not satisfy law.mongo/FieldEqualityQuery.
+
+   Shared by both delete paths: an empty query matches every document, so on
+   either of them it is the difference between removing one record and
+   removing the collection."
+  [query]
+  (when-not (law-mongo/valid-query? query)
+    (throw (ex-info "refusing an unsafe field-equality query" {:query query}))))
+
 (defn instant-ms
   "Decode a stored BSON instant to epoch milliseconds, or nil if unreadable.
 
@@ -50,14 +60,27 @@
    use. A read followed by a separate delete cannot promise that.
 
    Driver v6 returns the document itself; earlier versions wrapped it as
-   {value: doc}. Both are unwrapped here so the caller never has to know."
+   {value: doc}. Both are unwrapped here so the caller never has to know.
+
+   The query is checked against law.mongo/FieldEqualityQuery before it is
+   issued and the decoded document against DecodedDocument before it is
+   returned. The input check matters most on this operation: an empty query
+   matches every document, which on a delete would take the whole collection
+   rather than the one code being claimed. The output check keeps an
+   unexpected driver shape from reaching a caller that has already destroyed
+   the record it is about to misread."
   [collection-handle query]
-  (let [result (await (.findOneAndDelete collection-handle (clj->js query)))]
-    (when result
-      (let [doc (if (and (object? result) (.hasOwnProperty result "value"))
-                  (aget result "value")
-                  result)]
-        (when doc (js->clj doc :keywordize-keys true))))))
+  (assert-query! query)
+  (let [result (await (.findOneAndDelete collection-handle (clj->js query)))
+        raw    (when result
+                 (if (and (object? result) (.hasOwnProperty result "value"))
+                   (aget result "value")
+                   result))
+        doc    (when raw (js->clj raw :keywordize-keys true))]
+    (when-not (law-mongo/valid-document? doc)
+      (throw (ex-info "mongo findOneAndDelete returned an undecodable document"
+                      {:decoded doc})))
+    doc))
 
 (defn ^:async delete-one!
   "Delete at most one document matching a CLJS field-equality query.
@@ -73,6 +96,7 @@
    all, and callers validating a required count would accept the fabrication
    and carry on — the boundary must fail closed, not invent an answer."
   [collection-handle query]
+  (assert-query! query)
   (let [result (await (.deleteOne collection-handle (clj->js query)))
         count  (aget result "deletedCount")]
     {:deleted-count (when (number? count) count)}))

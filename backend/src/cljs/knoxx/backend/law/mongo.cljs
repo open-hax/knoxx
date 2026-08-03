@@ -24,3 +24,28 @@
 (defn valid-epoch-ms?
   [ms]
   (m/validate EpochMillis ms))
+
+(def FieldEqualityQuery
+  "A field-equality query handed to the Mongo adapter.
+
+   Non-empty is the load-bearing part. An empty query matches every document
+   in the collection, so on a delete path it is the difference between
+   removing one authorization code and removing all of them. Values are
+   scalars because this shape is equality matching only — an operator map is
+   a different contract and does not belong on these call sites."
+  [:and
+   [:map-of keyword? [:or string? number? boolean?]]
+   [:fn {:error/message "must name at least one field"} seq]])
+
+(def DecodedDocument
+  "A document decoded out of the driver: CLJS data with keyword keys, or
+   nothing at all when the query matched none."
+  [:maybe [:map-of keyword? any?]])
+
+(defn valid-query?
+  [query]
+  (m/validate FieldEqualityQuery query))
+
+(defn valid-document?
+  [doc]
+  (m/validate DecodedDocument doc))
