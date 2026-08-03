@@ -277,6 +277,38 @@
               (is (str/includes? html "acme")
                   "the org slug is read the same way"))))))))
 
+(deftest ^:async token-routes-read-membership-from-a-cljs-auth-context
+  (testing "GET /api/mcp/tokens resolves the membership instead of throwing or 400ing"
+    ;; These two routes carried the same (aget ctx "membership" "id") expression
+    ;; as the consent page. Nobody had reached them yet, so the breakage was
+    ;; latent rather than reported — cover them alongside.
+    (let [app (recording-app)]
+      (with-public-base-url test-base
+        (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
+      (let [route (registered-route app "GET" "/api/mcp/tokens")
+            reply (fake-reply)
+            outcome (try (await ((aget route "handler")
+                                 #js {:authContext cljs-auth-context} reply))
+                         :ok
+                         (catch :default e e))]
+        (is (= :ok outcome)
+            (str "a resolvable membership must not raise: " outcome))
+        (is (= 200 (:status @(aget reply "state")))))))
+
+  (testing "a context with no membership is refused rather than treated as empty"
+    (let [app (recording-app)]
+      (with-public-base-url test-base
+        (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
+      (let [route (registered-route app "GET" "/api/mcp/tokens")
+            outcome (try (await ((aget route "handler")
+                                 #js {:authContext {:user {:email "x@example.test"}}}
+                                 (fake-reply)))
+                         :ok
+                         (catch :default e e))]
+        (is (not= :ok outcome) "a blank membership must be rejected")
+        (when (not= :ok outcome)
+          (is (= 400 (aget outcome "statusCode"))))))))
+
 (deftest ^:async client-errors-carry-their-http-status
   (testing "a rejected registration surfaces as 400, not 500"
     ;; Fastify's default error handler reads statusCode off the thrown object

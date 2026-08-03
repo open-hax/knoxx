@@ -79,3 +79,51 @@
   (testing "an unregistered client_id yields nil rather than an empty record"
     (let [db (fake-db)]
       (is (nil? (await (store/get-client! db "never-registered")))))))
+
+;; ─────────────────────────────────────────────────────────
+;; Token revocation is scoped to the owning membership
+;;
+;; delete-token! matches on access_token alone, so the revoke route let any
+;; authenticated caller destroy another membership's token if they learned its
+;; value — the listing route is per-membership, but nothing stopped a hand-made
+;; DELETE. Raised by CodeRabbit on #214.
+;; ─────────────────────────────────────────────────────────
+
+(defn- fake-token-db
+  "Mongo double for the tokens collection, keyed by access_token."
+  [initial]
+  (let [docs (atom initial)
+        coll #js {:deleteOne
+                  (fn [query]
+                    (let [tok (aget query "access_token")
+                          mid (aget query "membership_id")
+                          doc (get @docs tok)
+                          hit (and doc (or (nil? mid) (= mid (:membership_id doc))))]
+                      (when hit (swap! docs dissoc tok))
+                      (js/Promise.resolve #js {:deletedCount (if hit 1 0)})))}
+        db   #js {:collection (fn [_name] coll)}]
+    (aset db "docs" docs)
+    db))
+
+(def ^:private two-tokens
+  {"tok-mine"     {:access_token "tok-mine"     :membership_id "m-mine"}
+   "tok-somebody" {:access_token "tok-somebody" :membership_id "m-other"}})
+
+(deftest ^:async revoking-your-own-token-succeeds
+  (testing "a token belonging to the membership is deleted"
+    (let [db (fake-token-db two-tokens)]
+      (is (true? (await (store/delete-token-for-membership! db "tok-mine" "m-mine"))))
+      (is (nil? (get @(aget db "docs") "tok-mine")) "the token is gone"))))
+
+(deftest ^:async revoking-someone-elses-token-does-nothing
+  (testing "a token belonging to another membership is neither deleted nor reported deleted"
+    (let [db (fake-token-db two-tokens)]
+      (is (false? (await (store/delete-token-for-membership! db "tok-somebody" "m-mine")))
+          "returns false so the route can answer 404 instead of a false success")
+      (is (some? (get @(aget db "docs") "tok-somebody"))
+          "the other membership's token survives"))))
+
+(deftest ^:async revoking-an-unknown-token-reports-no-deletion
+  (testing "an unknown token id is not reported as revoked"
+    (let [db (fake-token-db two-tokens)]
+      (is (false? (await (store/delete-token-for-membership! db "tok-nonexistent" "m-mine")))))))

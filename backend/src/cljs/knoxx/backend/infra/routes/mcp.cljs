@@ -515,6 +515,19 @@
         (let [membership-id (str (or (authz/ctx-membership-id auth-context) ""))
               user-email    (str (or (authz/ctx-user-email auth-context) ""))
               org-slug      (str (or (authz/ctx-org-slug auth-context) ""))
+              _ (when (or (str/blank? membership-id) (str/blank? user-email))
+                  ;; The empty-string fallbacks above exist so a partly-resolved
+                  ;; context cannot crash the render, but they must not be
+                  ;; minted into a credential: the code is copied verbatim into
+                  ;; the access token by persist-access-token!, and a token with
+                  ;; a blank membership carries no authorization identity while
+                  ;; still being a valid bearer token. Refuse instead.
+                  ;;
+                  ;; org-slug is deliberately not required — it is descriptive
+                  ;; rather than an authorization key, and a membership without
+                  ;; one is legitimate.
+                  (throw (http-error 400 "missing_identity"
+                                     "Session has no membership or user identity to authorize with")))
               code          (.randomUUID crypto)
               payload       {:code code :clientId client-id :redirectUri redirect-uri
                              :codeChallenge code-challenge :codeChallengeMethod "S256"
@@ -577,8 +590,17 @@
         membership-id         (str (or (authz/ctx-membership-id auth-context) ""))]
     (when (or (str/blank? membership-id) (str/blank? token-id))
       (throw (http-error 400 "invalid_request" "membership and tokenId are required")))
-    (await (mongo-mcp/delete-token! token-id))
-    (json-send! reply 200 {:ok true})))
+    ;; Scoped to the caller's membership. Deleting by token value alone let any
+    ;; authenticated caller revoke someone else's token if they learned its
+    ;; value — the listing route is per-membership, but nothing stopped a
+    ;; hand-made DELETE. A miss is reported as 404 rather than 200 so a caller
+    ;; is not told their revocation succeeded when it did nothing; because the
+    ;; query is membership-scoped, that 404 reveals nothing about whether the
+    ;; token exists for anyone else.
+    (let [revoked (await (mongo-mcp/delete-token-for-membership! token-id membership-id))]
+      (when-not revoked
+        (throw (http-error 404 "not_found" "No such token for this membership")))
+      (json-send! reply 200 {:ok true}))))
 
 (defroute mcp-handle-session! [base bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
