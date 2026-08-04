@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+> **Roadmap:** [`ROADMAP.md`](ROADMAP.md) — this repo's slice. The hub, with the
+> seam, ownership table and sequencing rule, is [eta-mu/ROADMAP.md](https://github.com/open-hax/eta-mu/blob/main/ROADMAP.md).
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > Also read **AGENTS.md** — it contains mandatory coding style rules, namespace conventions, verification requirements, modern CLJS patterns, and licensing doctrine that apply to all work in this repo.

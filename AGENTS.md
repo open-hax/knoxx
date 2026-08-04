@@ -1,5 +1,8 @@
 # Knoxx Agent Style Guide
 
+> **Roadmap:** [`ROADMAP.md`](ROADMAP.md) — this repo's slice. The hub, with the
+> seam, ownership table and sequencing rule, is [eta-mu/ROADMAP.md](https://github.com/open-hax/eta-mu/blob/main/ROADMAP.md).
+
 # Language and Repository Ownership
 - Knoxx backend, domain, persistence, and service features are ClojureScript-first. Do not add or expand TypeScript for Knoxx backend work unless the user explicitly authorizes it.
 - Do not create coordinated implementation changes in OpenPlanner to deliver a Knoxx feature unless the user explicitly requests a cross-repository change.
