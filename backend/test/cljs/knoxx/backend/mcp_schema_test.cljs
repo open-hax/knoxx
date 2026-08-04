@@ -13,6 +13,7 @@
    defect was that the value lacked zod's own methods."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.routes.mcp :as mcp]
+            [knoxx.backend.domain.tools :as dtools]
             [knoxx.backend.law.mcp-tool-annotations :as ann]
             ["zod" :refer [z]]))
 
@@ -138,3 +139,24 @@
     (is (nil? (ann/for-tool "some_tool_nobody_has_reviewed")))
     (is (nil? (ann/for-tool "")))
     (is (nil? (ann/for-tool nil)))))
+
+(deftest sanitized-tool-names-still-resolve-annotations
+  (testing "a dotted tool id is renamed before registration, so lookup needs both"
+    ;; sanitize-custom-tool-name rewrites [^A-Za-z0-9_-] to _, so web.read is
+    ;; registered as web_read while the table is keyed on the canonical id. The
+    ;; route therefore consults originalName as well as the registered name;
+    ;; without that, web.read silently got no annotations at all.
+    (let [tool #js {:name "web.read" :description "Read a URL."}]
+      (dtools/sanitize-custom-tool-name tool)
+      (is (= "web_read" (aget tool "name")) "registered under the sanitized name")
+      (is (= "web.read" (aget tool "originalName")) "canonical id is preserved")
+      (is (nil? (ann/for-tool (aget tool "name")))
+          "the sanitized name is not a table key")
+      (is (some? (ann/for-tool (aget tool "originalName")))
+          "so the canonical id is what resolves")))
+
+  (testing "an undotted name needs no fallback"
+    (let [tool #js {:name "graph_query" :description "d"}]
+      (dtools/sanitize-custom-tool-name tool)
+      (is (= "graph_query" (aget tool "name")))
+      (is (some? (ann/for-tool (aget tool "name")))))))

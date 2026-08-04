@@ -149,10 +149,8 @@
    The key must be ABSENT, not undefined. (clj->js {:sessionIdGenerator
    js/undefined}) emits {sessionIdGenerator: null}, and the SDK selects
    stateless only on === undefined — so null selected *stateful* mode, where
-   everything after initialize is rejected with
-   \"Bad Request: Server not initialized\". A client saw that as connected but
-   advertising no tools. Verified against SDK 1.18, 1.24, 1.29 and 1.30: all
-   four read null as stateful, so this is ours, not a protocol change."
+   everything after initialize is rejected with \"Server not initialized\" and a
+   client sees no tools. SDK 1.18/1.24/1.29/1.30 all read null as stateful."
   []
   #js {})
 
@@ -741,7 +739,10 @@
                         ;; See law.mcp-tool-annotations for why absence is bad.
                         (if-let [annotations (aget tool "annotations")]
                           (aset tool-config "annotations" annotations)
-                          (when-let [declared (tool-annotations/for-tool n)]
+                          ;; n may be sanitized (web.read -> web_read).
+                          (when-let [declared (or (tool-annotations/for-tool n)
+                                                  (tool-annotations/for-tool
+                                                   (aget tool "originalName")))]
                             (aset tool-config "annotations" (clj->js declared))))
                         (when-let [meta (aget tool "_meta")]
                           (aset tool-config "_meta" meta))
