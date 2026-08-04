@@ -34,6 +34,23 @@
 (defn- keywordize [doc]
   (when doc (js->clj doc :keywordize-keys true)))
 
+(defn- live?
+  "True when a document has a readable expiry that is still in the future.
+
+   Reads :expiresAt — the key the writers actually use. The readers previously
+   asked for :expires-at, which no document has ever carried, so the default of
+   0 made every code and every token read as already expired: the token
+   exchange answered 'Unknown or expired code' for codes it had just minted,
+   and no access token could ever be presented successfully.
+
+   Each layer does its own part: extern.mongo decodes the driver's instant,
+   law.mcp-oauth decides what a decoded instant means, and this reads the
+   clock. An unreadable or missing expiry is not live, so the check fails
+   closed."
+  [doc]
+  (law/credential-live? (extern-mongo/instant-ms (:expiresAt doc))
+                        (.now js/Date)))
+
 ;; ─── Clients ────────────────────────────────────────────────────────────────
 
 (defn ^:async get-client!
@@ -81,17 +98,44 @@
 
 ;; ─── Codes ──────────────────────────────────────────────────────────────────
 
-(defn ^:async get-code!
-  "Read OAuth auth code."
-  ([code] (get-code! (mongo-client/get-db) code))
+(defn ^:async peek-code!
+  "Read a live OAuth auth code without spending it, as CLJS data or nil.
+
+   Deliberately non-destructive, and paired with consume-code!: an exchange
+   reads the code here to check the client, redirect and PKCE bindings, and
+   only claims it once those hold. Spending it first would let anyone who
+   merely observed the code on the front channel destroy it with a wrong
+   verifier and break the legitimate client's exchange."
+  ([code] (peek-code! (mongo-client/get-db) code))
   ([db code]
    (when (and db code)
      (let [c (codes-coll db)
            result (await (.findOne c #js {"code" (str code)}))]
        (when result
          (let [doc (keywordize result)]
-           (when (> (:expires-at doc 0) (.now js/Date))
-             (js/JSON.stringify (clj->js (:code_data doc))))))))))
+           (when (live? doc)
+             (:code_data doc))))))))
+
+(defn ^:async consume-code!
+  "Atomically claim an OAuth auth code, returning its data exactly once.
+
+   An authorization code is single use: RFC 6749 requires that presenting one
+   twice does not yield two credentials. The delete and the read are one
+   operation so that exactly one of any number of concurrent exchanges can
+   claim it — a read followed by a separate delete leaves a window in which
+   both callers see a live code and both mint a token.
+
+   Call this only once an exchange has been found admissible. The claim is what
+   settles a race between two otherwise-valid exchanges; it is not the place to
+   discover that a request was invalid, because a rejected request must not
+   spend the code."
+  ([code] (consume-code! (mongo-client/get-db) code))
+  ([db code]
+   (when (and db code)
+     (let [doc (await (extern-mongo/find-one-and-delete!
+                       (codes-coll db) {:code (str code)}))]
+       (when (and doc (live? doc))
+         (:code_data doc))))))
 
 (defn ^:async set-code!
   "Store OAuth auth code with TTL."
@@ -136,7 +180,7 @@
            result (await (.findOne c #js {"access_token" (str access-token)}))]
        (when result
          (let [doc (keywordize result)]
-           (when (> (:expires-at doc 0) (.now js/Date))
+           (when (live? doc)
              (js/JSON.stringify (clj->js (:token_data doc))))))))))
 
 (defn ^:async set-token!
@@ -214,5 +258,5 @@
            results (await (.toArray cursor))]
        (vec (for [doc results
                   :let [d (keywordize doc)]
-                  :when (> (:expires-at d 0) (.now js/Date))]
+                  :when (live? d)]
               (js/JSON.stringify (clj->js (:token_data d)))))))))
