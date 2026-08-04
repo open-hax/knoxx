@@ -13,6 +13,8 @@
    defect was that the value lacked zod's own methods."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.routes.mcp :as mcp]
+            [knoxx.backend.domain.tools :as dtools]
+            [knoxx.backend.law.mcp-tool-annotations :as ann]
             ["zod" :refer [z]]))
 
 (def ^:private nested-schema
@@ -87,3 +89,74 @@
           "clj->js keeps the key")
       (is (nil? (aget via-clj->js "sessionIdGenerator"))
           "and its value is null — the SDK reads that as stateful"))))
+
+;; ── declared tool annotations ────────────────────────────
+;;
+;; MCP's ToolAnnotations defaults are pessimistic when absent: destructiveHint
+;; and openWorldHint default to true, readOnlyHint to false. So an unannotated
+;; read is presented as a destructive open-world write — which is how a client
+;; described graph_query.
+
+(deftest reads-are-declared-read-only
+  (testing "graph_query is a read of our own graph"
+    (let [a (ann/for-tool "graph_query")]
+      (is (true? (:readOnlyHint a)))
+      (is (false? (:openWorldHint a)) "it queries our graph, not the internet")))
+  (testing "the other corpus reads match"
+    (doseq [t ["semantic_query" "memory_search" "memory_session"]]
+      (is (true? (:readOnlyHint (ann/for-tool t))) t)
+      (is (false? (:openWorldHint (ann/for-tool t))) t))))
+
+(deftest web-reads-stay-open-world
+  (testing "reading the internet is still read-only, but not closed-world"
+    (doseq [t ["websearch" "web.read"]]
+      (is (true? (:readOnlyHint (ann/for-tool t))) t)
+      (is (true? (:openWorldHint (ann/for-tool t))) t))))
+
+(deftest overwriting-writes-are-declared-destructive
+  (testing "a write that can replace existing state must say so"
+    ;; save_translation upserts with $set on a tenant-scoped key, and
+    ;; create_new_file calls fs.writeFile with no existence check — both
+    ;; replace what is already there. Advertising them as non-destructive would
+    ;; suppress a client's warning while state is overwritten.
+    (doseq [t ["save_translation" "create_new_file"]]
+      (let [a (ann/for-tool t)]
+        (is (false? (:readOnlyHint a)) t)
+        (is (true? (:destructiveHint a)) (str t " can replace existing state"))
+        (is (true? (:idempotentHint a)) (str t " converges on one end state"))))))
+
+(deftest genuinely-append-only-writes-say-so
+  (testing "push_claim mints a fresh id per call, so it adds and never replaces"
+    (let [a (ann/for-tool "push_claim")]
+      (is (false? (:readOnlyHint a)))
+      (is (false? (:destructiveHint a)) "it only appends")
+      (is (false? (:idempotentHint a)) "repeating adds another claim"))))
+
+(deftest an-undeclared-tool-gets-no-annotations
+  (testing "nil leaves the client on its conservative defaults"
+    ;; Deliberate: asserting readOnly for a tool nobody has checked would be
+    ;; worse than the warning it removes.
+    (is (nil? (ann/for-tool "some_tool_nobody_has_reviewed")))
+    (is (nil? (ann/for-tool "")))
+    (is (nil? (ann/for-tool nil)))))
+
+(deftest sanitized-tool-names-still-resolve-annotations
+  (testing "a dotted tool id is renamed before registration, so lookup needs both"
+    ;; sanitize-custom-tool-name rewrites [^A-Za-z0-9_-] to _, so web.read is
+    ;; registered as web_read while the table is keyed on the canonical id. The
+    ;; route therefore consults originalName as well as the registered name;
+    ;; without that, web.read silently got no annotations at all.
+    (let [tool #js {:name "web.read" :description "Read a URL."}]
+      (dtools/sanitize-custom-tool-name tool)
+      (is (= "web_read" (aget tool "name")) "registered under the sanitized name")
+      (is (= "web.read" (aget tool "originalName")) "canonical id is preserved")
+      (is (nil? (ann/for-tool (aget tool "name")))
+          "the sanitized name is not a table key")
+      (is (some? (ann/for-tool (aget tool "originalName")))
+          "so the canonical id is what resolves")))
+
+  (testing "an undotted name needs no fallback"
+    (let [tool #js {:name "graph_query" :description "d"}]
+      (dtools/sanitize-custom-tool-name tool)
+      (is (= "graph_query" (aget tool "name")))
+      (is (some? (ann/for-tool (aget tool "name")))))))

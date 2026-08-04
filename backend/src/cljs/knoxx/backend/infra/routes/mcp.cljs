@@ -10,6 +10,7 @@
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
             [knoxx.backend.law.mcp-oauth :as law]
+            [knoxx.backend.law.mcp-tool-annotations :as tool-annotations]
             [knoxx.backend.runtime.state :as runtime-state]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
             ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
@@ -148,10 +149,8 @@
    The key must be ABSENT, not undefined. (clj->js {:sessionIdGenerator
    js/undefined}) emits {sessionIdGenerator: null}, and the SDK selects
    stateless only on === undefined — so null selected *stateful* mode, where
-   everything after initialize is rejected with
-   \"Bad Request: Server not initialized\". A client saw that as connected but
-   advertising no tools. Verified against SDK 1.18, 1.24, 1.29 and 1.30: all
-   four read null as stateful, so this is ours, not a protocol change."
+   everything after initialize is rejected with \"Server not initialized\" and a
+   client sees no tools. SDK 1.18/1.24/1.29/1.30 all read null as stateful."
   []
   #js {})
 
@@ -183,11 +182,9 @@
     req))
 
 ;; Fastify's default error handler reads `statusCode` off the thrown object and
-;; falls back to 500 when it is absent. A bare ex-info keeps its status in
-;; ex-data, which Fastify cannot see, so every client error these routes raise
-;; was reported as 500 Internal Server Error with the real message attached —
-;; a rejected redirect_uri, an unregistered client and a bad PKCE verifier all
-;; looked like the server had fallen over. Stamp the status where Fastify looks.
+;; falls back to 500. A bare ex-info keeps its status in ex-data, where Fastify
+;; cannot see it, so every client error here reported as 500. Stamp it where
+;; Fastify looks.
 (defn- http-error
   ([status error detail]      (http-error status error detail nil))
   ([status error detail data]
@@ -738,8 +735,15 @@
                                                   :inputSchema s})]
                         (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
                           (aset tool-config "title" title))
-                        (when-let [annotations (aget tool "annotations")]
-                          (aset tool-config "annotations" annotations))
+                        ;; A tool's own annotations win, else the declared table.
+                        ;; See law.mcp-tool-annotations for why absence is bad.
+                        (if-let [annotations (aget tool "annotations")]
+                          (aset tool-config "annotations" annotations)
+                          ;; n may be sanitized (web.read -> web_read).
+                          (when-let [declared (or (tool-annotations/for-tool n)
+                                                  (tool-annotations/for-tool
+                                                   (aget tool "originalName")))]
+                            (aset tool-config "annotations" (clj->js declared))))
                         (when-let [meta (aget tool "_meta")]
                           (aset tool-config "_meta" meta))
                         (.registerTool server n
