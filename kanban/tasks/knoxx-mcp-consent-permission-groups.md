@@ -51,3 +51,10 @@ page a poor description of what is being granted.
   Hardcoded Tool Authorization with Policy-DB Check*. Grouping should read the
   same policy source that card establishes, not a second list. Land or at least
   settle that one first, or the groups will be hardcoded twice.
+- **`capability-schema-reconciliation`** in *eta-mu* (status: **ready**) —
+  reconciles muse's capability shape with katamorph's `CapabilityContract`; its
+  blueprint holds that *"a capability is the primitive."* Tool groups **are**
+  capabilities, so grouping before that decision lands would define a third
+  competing capability shape — exactly the drift the upstream P0 cutover exists
+  to stop. **Blocked on it.**
+
