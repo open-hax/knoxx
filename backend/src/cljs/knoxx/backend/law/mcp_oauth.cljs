@@ -52,6 +52,24 @@
          (not (str/blank? actual))
          (= expected actual))))
 
+(def ProtectedResourceMetadata
+  "RFC 9728 protected resource metadata, as served to an unauthenticated client.
+
+   Every field is required and non-blank because a client cannot recover from a
+   partial answer: this document is how it learns which authorization server to
+   use, and a blank resource or an empty server list sends it nowhere. The
+   payload is derived from the public base URL, so validating it here catches a
+   misconfigured base before a client is handed an unusable document."
+  [:map
+   [:resource                 NonBlankString]
+   [:authorization_servers    [:and [:vector NonBlankString] [:fn {:error/message "must name a server"} seq]]]
+   [:scopes_supported         [:vector NonBlankString]]
+   [:bearer_methods_supported [:and [:vector NonBlankString] [:fn {:error/message "must name a method"} seq]]]])
+
+(defn valid-protected-resource-metadata?
+  [metadata]
+  (m/validate ProtectedResourceMetadata metadata))
+
 (def RevocationRequest
   "Identity required to revoke an access token.
 

@@ -17,7 +17,7 @@
             ["zod" :refer [z]])
   (:require-macros [knoxx.backend.macros :refer [defroute]]))
 
-(declare typebox->zod-shape reply-header!)
+(declare typebox->zod-shape reply-header! http-error)
 
 (defonce ^:private mcp-sessions* (atom {}))
 
@@ -118,13 +118,21 @@
 
 (defn- protected-resource-metadata
   "RFC 9728 metadata for the MCP resource. One document, served at every
-   well-known location a client may look in."
+   well-known location a client may look in.
+
+   Checked against law.mcp-oauth/ProtectedResourceMetadata before it leaves: the
+   payload is derived from the public base URL, and a client handed a blank
+   resource or an empty server list has nowhere to go and no way to say so."
   [base]
-  (let [issuer (-> (.toString (js/URL. (.toString base))) (.replace (js/RegExp. "/$") ""))]
-    {:resource                 (.toString (js/URL. "/mcp" base))
-     :authorization_servers    [issuer]
-     :scopes_supported         ["mcp:tools"]
-     :bearer_methods_supported ["header"]}))
+  (let [issuer  (-> (.toString (js/URL. (.toString base))) (.replace (js/RegExp. "/$") ""))
+        payload {:resource                 (.toString (js/URL. "/mcp" base))
+                 :authorization_servers    [issuer]
+                 :scopes_supported         ["mcp:tools"]
+                 :bearer_methods_supported ["header"]}]
+    (when-not (law/valid-protected-resource-metadata? payload)
+      (throw (http-error 500 "metadata_unavailable"
+                         "protected resource metadata failed its contract")))
+    payload))
 
 (defn- www-authenticate-challenge [base]
   (str "Bearer realm=\"mcp\", resource_metadata=\""

@@ -35,7 +35,9 @@
           (is (true? (aget (.safeParse field #js {:inner "x"}) "success"))
               "it accepts a matching object")
           (is (false? (aget (.safeParse field #js {:inner 1}) "success"))
-              "and still enforces the nested field's type"))))))
+              "and still enforces the nested field's type")
+          (is (false? (aget (.safeParse field #js {}) "success"))
+              "and the nested :required list still applies inside it"))))))
 
 (deftest optionality-follows-the-required-list
   (testing "a required field is not optional and an unlisted one is"
