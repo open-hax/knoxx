@@ -8,7 +8,7 @@ created_at: "2026-08-04T00:00:00Z"
 points: 3
 category: tasks
 ---
-# Provision a production actor owning the local instance's credentials
+# Provision the `open-hax` production actor owning the local instance's credentials
 
 > Parent epic: `knoxx-decouple-into-katamorph-contracts`
 > Blocks: `knoxx-mcp-actor-ascription` is useless in production without this
@@ -18,6 +18,19 @@ category: tasks
 The deployed Knoxx has no actor holding Discord/Bluesky credentials, so even
 once MCP ascribes an actor there is nothing for it to resolve. The local PM2
 instance does have them.
+
+## The actor
+
+**`open-hax`** — the DigitalOcean deployment gets an actor with that id, owning
+the same credentials as the local PM2 deployment of knoxx.
+
+Its shape is already declared upstream: `katamorph.schema/ActorContract` carries
+`:actor/id`, `:actor/kind` (`:agent`), and — directly relevant here —
+`:actor/accounts` with `:discord {:username :user-id}` and
+`:bluesky {:handle :did}`. Model the production actor on that rather than on a
+knoxx-local shape, even though knoxx cannot require katamorph yet (its
+`contract-runtime` fork lacks `schema.cljs`). Matching the declared shape now
+means the later cutover is a rename, not a redesign.
 
 ## Scope
 

@@ -8,7 +8,7 @@ created_at: "2026-08-04T00:00:00Z"
 points: 3
 category: tasks
 ---
-# Group tool permissions on the MCP consent page
+# Hierarchical tool grants on the MCP consent page
 
 > Parent epic: `knoxx-decouple-into-katamorph-contracts`
 
@@ -19,14 +19,36 @@ checkboxes in one flat list (observed in the authorize/confirm query on
 2026-08-04), which makes granting or revoking a capability tedious and makes the
 page a poor description of what is being granted.
 
+## The model: a hierarchy, like GitHub permissions
+
+Tick one top-level box for `discord` and every discord tool is granted. Not a
+flat list with a select-all convenience — an actual hierarchy, where the parent
+is the thing granted and the children are its expansion.
+
+The shape for this already exists upstream and should be adopted rather than
+invented. `katamorph.schema/CapabilityContract`:
+
+```clojure
+{:cap/id keyword? :cap/tools [any] :cap/user-surfaces [UserSurface]}
+```
+
+`:cap/id` is a **keyword**, so namespacing gives the hierarchy for free:
+`:cap/id :discord` expands to `:discord/send`, `:discord/read`, … and an actor
+holds `:actor/capabilities [:discord :bluesky]`. Granting a parent means
+granting the namespace.
+
+That also means the grant page stops being a tool list and becomes a projection
+of capabilities — which is what makes it data rather than markup.
+
 ## Scope
 
-- Group tools into capability sets: Discord, Bluesky, translations, sandbox,
-  memory/graph, voice, web, files.
-- Group-level select/deselect, with per-tool override retained.
-- Derive the grouping from **data**, not a hand-maintained list in the HTML —
-  a Katamorph-style capability declaration is the target shape, so this card is
-  a natural first contract.
+- Namespace the tool ids under capability parents: discord, bluesky,
+  translations, sandbox, memory/graph, voice, web, files.
+- Grant at any level; a parent grant expands to its children at token-mint time,
+  not at render time, so a tool added later is covered by an existing grant.
+- Store the grant as the capability set, not the expanded tool list. Storing the
+  expansion is what makes a grant go stale.
+- Derive the grouping from **data**, not a hand-maintained list in the HTML.
 - Show each group's risk honestly using the annotations from
   `law.mcp-tool-annotations` (read-only vs destructive vs open-world) rather
   than presenting all tools as equivalent.

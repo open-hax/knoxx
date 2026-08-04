@@ -87,6 +87,27 @@ tool set can be walked up that order without a flag day.
 - `knoxx-tool-vocabulary-rename`
 - `knoxx-cms-contract-validation`
 
+## The strategy: work, test, isolate, freeze
+
+Order matters, and it is not the order an agent naturally reaches for.
+
+1. **Get it working exactly as needed.** Not approximately. A feature that half
+   works cannot be frozen, and cannot be tested against a definition.
+2. **Aggressively test.** The recurring defect class here is a writer and a
+   reader that only ever ran together against live infrastructure. Tests at each
+   boundary, with a double, are what catch that — five of the eight MCP defects
+   would have been caught by one.
+3. **Isolate.** Remove all effectual code from all logical code. This is the
+   `law → shape → extern → domain → infra` walk, per tool set.
+4. **Freeze the feature.** Once isolated and tested, stop changing it. A frozen,
+   lawful feature is what makes extraction mechanical later — and what stops the
+   next agent from re-entangling it.
+
+**Start with the tools exposed by MCP and their actor contracts.** They are the
+smallest complete slice that exercises every layer: a law (who may act as whom),
+a shape (the tool/capability projection), an extern (the MCP SDK), a domain
+decision (is this grant admissible), and infra (the route).
+
 ## Explicit non-goals
 
 - Moving code into eta-mu or katamorph. Knoxx cuts over **last**, upstream first.
