@@ -27,6 +27,31 @@
 (def NonBlankString
   [:and string? [:fn {:error/message "must not be blank"} #(not (str/blank? %))]])
 
+(defn code-bound-to?
+  "True when a claimed code was issued to this client and redirect URI.
+
+   Pure. An authorization code is bound to the client that requested it and the
+   redirect it was issued for; honouring it for a different pair would let a
+   client redeem someone else's code."
+  [record client-id redirect-uri]
+  (and (some? record)
+       (= (:clientId record) client-id)
+       (= (:redirectUri record) redirect-uri)))
+
+(defn pkce-verified?
+  "True when a computed PKCE challenge matches the one the code carries.
+
+   Pure: the caller computes the challenge from the verifier — that is crypto,
+   and it stays in the effectful layer — while this decides whether the result
+   admits the exchange. A code carrying no challenge is never verified, so a
+   record written without one cannot be redeemed by omitting the verifier."
+  [record computed-challenge]
+  (let [expected (str (or (:codeChallenge record) ""))
+        actual   (str (or computed-challenge ""))]
+    (and (not (str/blank? expected))
+         (not (str/blank? actual))
+         (= expected actual))))
+
 (def RevocationRequest
   "Identity required to revoke an access token.
 

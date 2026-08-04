@@ -9,6 +9,7 @@
             [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
+            [knoxx.backend.law.mcp-oauth :as law]
             [knoxx.backend.runtime.state :as runtime-state]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
             ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
@@ -549,13 +550,13 @@
    otherwise destroy it with any wrong verifier, and it would buy nothing, since
    a verifier carries far too much entropy to guess."
   [crypto record client-id redirect-uri code-verifier]
-  (when (or (not= (:clientId record) client-id)
-            (not= (:redirectUri record) redirect-uri))
+  ;; Parsing and the challenge computation stay here — the crypto is effectful.
+  ;; Whether the result admits the exchange is law's decision, so both rules
+  ;; live in one pure place that every future caller shares.
+  (when-not (law/code-bound-to? record client-id redirect-uri)
     (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
-  (let [expected (str (or (:codeChallenge record) ""))
-        actual   (pkce-challenge crypto code-verifier)]
-    (when (or (str/blank? expected) (not= expected actual))
-      (throw (http-error 400 "invalid_grant" "PKCE verification failed")))))
+  (when-not (law/pkce-verified? record (pkce-challenge crypto code-verifier))
+    (throw (http-error 400 "invalid_grant" "PKCE verification failed"))))
 
 (defn- ^:async persist-access-token!
   "Mint and store an access token from a claimed code record (a CLJS map)."

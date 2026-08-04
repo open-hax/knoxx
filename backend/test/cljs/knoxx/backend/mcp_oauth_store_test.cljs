@@ -378,6 +378,25 @@
     (is (not (law/credential-live? 2000 nil)))
     (is (not (law/credential-live? 2000 js/NaN)))))
 
+(def ^:private issued
+  {:clientId "c" :redirectUri "https://app/cb" :codeChallenge "ch"})
+
+(deftest exchange-admission-is-one-pure-rule
+  (testing "a code is bound to the client and redirect it was issued for"
+    (is (law/code-bound-to? issued "c" "https://app/cb"))
+    (is (not (law/code-bound-to? issued "other" "https://app/cb")))
+    (is (not (law/code-bound-to? issued "c" "https://evil/cb")))
+    (is (not (law/code-bound-to? nil "c" "https://app/cb"))))
+  (testing "PKCE admits only a matching computed challenge"
+    (is (law/pkce-verified? issued "ch"))
+    (is (not (law/pkce-verified? issued "wrong")))
+    (is (not (law/pkce-verified? issued nil)))
+    (is (not (law/pkce-verified? issued "")))
+    (is (not (law/pkce-verified? {:clientId "c"} "ch"))
+        "a code carrying no challenge is never verified — omitting the verifier must not admit")
+    (is (not (law/pkce-verified? {:codeChallenge ""} ""))
+        "blank does not match blank")))
+
 (deftest the-query-contract-refuses-a-collection-wide-delete
   (testing "an empty or non-scalar query is not a field-equality query"
     (is (law-mongo/valid-query? {:code "c"}))
