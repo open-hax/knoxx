@@ -10,6 +10,7 @@
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
             [knoxx.backend.law.mcp-oauth :as law]
+            [knoxx.backend.law.mcp-tool-annotations :as tool-annotations]
             [knoxx.backend.runtime.state :as runtime-state]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
             ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
@@ -183,11 +184,9 @@
     req))
 
 ;; Fastify's default error handler reads `statusCode` off the thrown object and
-;; falls back to 500 when it is absent. A bare ex-info keeps its status in
-;; ex-data, which Fastify cannot see, so every client error these routes raise
-;; was reported as 500 Internal Server Error with the real message attached —
-;; a rejected redirect_uri, an unregistered client and a bad PKCE verifier all
-;; looked like the server had fallen over. Stamp the status where Fastify looks.
+;; falls back to 500. A bare ex-info keeps its status in ex-data, where Fastify
+;; cannot see it, so every client error here reported as 500. Stamp it where
+;; Fastify looks.
 (defn- http-error
   ([status error detail]      (http-error status error detail nil))
   ([status error detail data]
@@ -738,8 +737,12 @@
                                                   :inputSchema s})]
                         (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
                           (aset tool-config "title" title))
-                        (when-let [annotations (aget tool "annotations")]
-                          (aset tool-config "annotations" annotations))
+                        ;; A tool's own annotations win, else the declared table.
+                        ;; See law.mcp-tool-annotations for why absence is bad.
+                        (if-let [annotations (aget tool "annotations")]
+                          (aset tool-config "annotations" annotations)
+                          (when-let [declared (tool-annotations/for-tool n)]
+                            (aset tool-config "annotations" (clj->js declared))))
                         (when-let [meta (aget tool "_meta")]
                           (aset tool-config "_meta" meta))
                         (.registerTool server n

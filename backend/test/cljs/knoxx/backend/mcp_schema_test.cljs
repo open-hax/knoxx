@@ -13,6 +13,7 @@
    defect was that the value lacked zod's own methods."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.routes.mcp :as mcp]
+            [knoxx.backend.law.mcp-tool-annotations :as ann]
             ["zod" :refer [z]]))
 
 (def ^:private nested-schema
@@ -87,3 +88,42 @@
           "clj->js keeps the key")
       (is (nil? (aget via-clj->js "sessionIdGenerator"))
           "and its value is null — the SDK reads that as stateful"))))
+
+;; ── declared tool annotations ────────────────────────────
+;;
+;; MCP's ToolAnnotations defaults are pessimistic when absent: destructiveHint
+;; and openWorldHint default to true, readOnlyHint to false. So an unannotated
+;; read is presented as a destructive open-world write — which is how a client
+;; described graph_query.
+
+(deftest reads-are-declared-read-only
+  (testing "graph_query is a read of our own graph"
+    (let [a (ann/for-tool "graph_query")]
+      (is (true? (:readOnlyHint a)))
+      (is (false? (:openWorldHint a)) "it queries our graph, not the internet")))
+  (testing "the other corpus reads match"
+    (doseq [t ["semantic_query" "memory_search" "memory_session"]]
+      (is (true? (:readOnlyHint (ann/for-tool t))) t)
+      (is (false? (:openWorldHint (ann/for-tool t))) t))))
+
+(deftest web-reads-stay-open-world
+  (testing "reading the internet is still read-only, but not closed-world"
+    (doseq [t ["websearch" "web.read"]]
+      (is (true? (:readOnlyHint (ann/for-tool t))) t)
+      (is (true? (:openWorldHint (ann/for-tool t))) t))))
+
+(deftest append-only-writes-are-not-destructive
+  (testing "these write but never overwrite or remove"
+    (doseq [t ["save_translation" "create_new_file" "push_claim"]]
+      (let [a (ann/for-tool t)]
+        (is (false? (:readOnlyHint a)) t)
+        (is (false? (:destructiveHint a)) (str t " adds; it does not destroy"))
+        (is (false? (:idempotentHint a)) (str t " appends again when repeated"))))))
+
+(deftest an-undeclared-tool-gets-no-annotations
+  (testing "nil leaves the client on its conservative defaults"
+    ;; Deliberate: asserting readOnly for a tool nobody has checked would be
+    ;; worse than the warning it removes.
+    (is (nil? (ann/for-tool "some_tool_nobody_has_reviewed")))
+    (is (nil? (ann/for-tool "")))
+    (is (nil? (ann/for-tool nil)))))
