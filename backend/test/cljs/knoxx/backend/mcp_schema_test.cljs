@@ -112,13 +112,24 @@
       (is (true? (:readOnlyHint (ann/for-tool t))) t)
       (is (true? (:openWorldHint (ann/for-tool t))) t))))
 
-(deftest append-only-writes-are-not-destructive
-  (testing "these write but never overwrite or remove"
-    (doseq [t ["save_translation" "create_new_file" "push_claim"]]
+(deftest overwriting-writes-are-declared-destructive
+  (testing "a write that can replace existing state must say so"
+    ;; save_translation upserts with $set on a tenant-scoped key, and
+    ;; create_new_file calls fs.writeFile with no existence check — both
+    ;; replace what is already there. Advertising them as non-destructive would
+    ;; suppress a client's warning while state is overwritten.
+    (doseq [t ["save_translation" "create_new_file"]]
       (let [a (ann/for-tool t)]
         (is (false? (:readOnlyHint a)) t)
-        (is (false? (:destructiveHint a)) (str t " adds; it does not destroy"))
-        (is (false? (:idempotentHint a)) (str t " appends again when repeated"))))))
+        (is (true? (:destructiveHint a)) (str t " can replace existing state"))
+        (is (true? (:idempotentHint a)) (str t " converges on one end state"))))))
+
+(deftest genuinely-append-only-writes-say-so
+  (testing "push_claim mints a fresh id per call, so it adds and never replaces"
+    (let [a (ann/for-tool "push_claim")]
+      (is (false? (:readOnlyHint a)))
+      (is (false? (:destructiveHint a)) "it only appends")
+      (is (false? (:idempotentHint a)) "repeating adds another claim"))))
 
 (deftest an-undeclared-tool-gets-no-annotations
   (testing "nil leaves the client on its conservative defaults"

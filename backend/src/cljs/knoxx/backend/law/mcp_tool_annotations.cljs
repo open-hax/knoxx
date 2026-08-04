@@ -33,12 +33,25 @@
    "websearch"        {:readOnlyHint true  :openWorldHint true}
    "web.read"         {:readOnlyHint true  :openWorldHint true}
 
-   ;; Writes that only ever add. Not destructive: none of these overwrite or
-   ;; remove existing state. Not idempotent: repeating them appends again.
-   "save_translation" {:readOnlyHint false :destructiveHint false
-                       :idempotentHint false :openWorldHint false}
-   "create_new_file"  {:readOnlyHint false :destructiveHint false
-                       :idempotentHint false :openWorldHint false}
+   ;; Writes that can replace existing state, so destructive. Both are
+   ;; idempotent: repeating with the same arguments converges on the same end
+   ;; state rather than accumulating.
+   ;;
+   ;; save_translation upserts on a tenant-scoped identity — segments.cljs
+   ;; upsert-segment! is a findOneAndUpdate with $set and :upsert true, so a
+   ;; segment with the same key is overwritten when its content differs.
+   ;;
+   ;; create_new_file writes with fs.writeFile and never checks for an existing
+   ;; path, so despite the name it truncates whatever is already there. Making
+   ;; it fail on an existing path instead would be a behaviour change, and a
+   ;; product decision; until then the honest hint is destructive.
+   "save_translation" {:readOnlyHint false :destructiveHint true
+                       :idempotentHint true :openWorldHint false}
+   "create_new_file"  {:readOnlyHint false :destructiveHint true
+                       :idempotentHint true :openWorldHint false}
+
+   ;; Genuinely append-only: the event id is "claim:" plus a fresh randomUUID
+   ;; per call, so each call adds a claim and repeating adds another.
    "push_claim"       {:readOnlyHint false :destructiveHint false
                        :idempotentHint false :openWorldHint false}})
 
