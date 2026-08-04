@@ -277,6 +277,21 @@
               (is (str/includes? html "acme")
                   "the org slug is read the same way"))))))))
 
+(deftest resource-metadata-is-served-at-every-well-known-location
+  (testing "RFC 9728 inserts the resource path, and some clients try a suffix"
+    ;; ChatGPT probes /.well-known/oauth-protected-resource/mcp first and got
+    ;; 404 for it and for the /mcp/.well-known variant, relying on a fallback
+    ;; to the root document. Serve all three.
+    (doseq [url ["/.well-known/oauth-protected-resource"
+                 "/.well-known/oauth-protected-resource/mcp"
+                 "/mcp/.well-known/oauth-protected-resource"]]
+      (let [{:keys [status payload]} (serve "GET" url)]
+        (is (= 200 status) (str url " must answer 200"))
+        (is (= (str test-base "/mcp") (aget payload "resource"))
+            (str url " must name the same resource"))
+        (is (= [test-base] (js->clj (aget payload "authorization_servers")))
+            (str url " must name the same authorization server"))))))
+
 (deftest ^:async token-routes-read-membership-from-a-cljs-auth-context
   (testing "GET /api/mcp/tokens resolves the membership instead of throwing or 400ing"
     ;; These two routes carried the same (aget ctx "membership" "id") expression

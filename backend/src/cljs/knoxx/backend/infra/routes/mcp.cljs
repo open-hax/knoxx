@@ -116,6 +116,16 @@
 (defn- protected-resource-metadata-url [base]
   (.toString (js/URL. "/.well-known/oauth-protected-resource" base)))
 
+(defn- protected-resource-metadata
+  "RFC 9728 metadata for the MCP resource. One document, served at every
+   well-known location a client may look in."
+  [base]
+  (let [issuer (-> (.toString (js/URL. (.toString base))) (.replace (js/RegExp. "/$") ""))]
+    {:resource                 (.toString (js/URL. "/mcp" base))
+     :authorization_servers    [issuer]
+     :scopes_supported         ["mcp:tools"]
+     :bearer_methods_supported ["header"]}))
+
 (defn- www-authenticate-challenge [base]
   (str "Bearer realm=\"mcp\", resource_metadata=\""
        (protected-resource-metadata-url base) "\""))
@@ -409,7 +419,9 @@
   (let [description (some-> (aget schema-json "description") str str/trim not-empty)]
     (if description (.describe schema-node description) schema-node)))
 
-(defn- typebox->zod-node [^js z ^js schema-json]
+(defn typebox->zod-node
+  "Convert one TypeBox schema node to a zod schema. Pure."
+  [^js z ^js schema-json]
   (let [schema-type (aget schema-json "type")
         node (case schema-type
                "string"  (.string z)
@@ -417,14 +429,24 @@
                "integer" (-> (.number z) (.int))
                "boolean" (.boolean z)
                "array"   (.array z (or (typebox->zod-node z (aget schema-json "items")) (.any z)))
-               "object"  (or (typebox->zod-shape z schema-json) (.object z (js-obj)))
+               ;; A nested object must become a zod schema, not the bare field
+               ;; shape typebox->zod-shape builds. Returning the shape gave the
+               ;; parent a plain JS object with no zod methods, so marking the
+               ;; field optional threw "fschema.optional is not a function" and
+               ;; the whole tool registration failed — every MCP POST that
+               ;; registers tools answered 400.
+               "object"  (.object z (or (typebox->zod-shape z schema-json) (js-obj)))
                (.any z))]
     (-> node
         (apply-zod-description schema-json)
         ((fn [n] (if-let [min (aget schema-json "minimum")] (.min n min) n)))
         ((fn [n] (if-let [max (aget schema-json "maximum")] (.max n max) n))))))
 
-(defn- typebox->zod-shape [^js z ^js schema-json]
+(defn typebox->zod-shape
+  "Convert a TypeBox object schema to a zod *field shape* — the map of field
+   name to zod schema that registerTool wants. Not itself a zod schema; a
+   nested object goes through typebox->zod-node, which wraps it. Pure."
+  [^js z ^js schema-json]
   (let [properties   (or (aget schema-json "properties") (js/Object.))
         required-set (into #{} (map str) (array-seq (or (aget schema-json "required") (js/Array.))))
         entries      (.entries js/Object properties)]
@@ -461,12 +483,19 @@
                  :token_endpoint_auth_methods_supported ["none"]})))
 
 (defroute mcp-protected-resource-metadata! [base] "GET" "/.well-known/oauth-protected-resource" []
-  (let [issuer (-> (.toString (js/URL. (.toString base))) (.replace (js/RegExp. "/$") ""))]
-    (json-send! reply 200
-                {:resource                (.toString (js/URL. "/mcp" base))
-                 :authorization_servers   [issuer]
-                 :scopes_supported        ["mcp:tools"]
-                 :bearer_methods_supported ["header"]})))
+  (json-send! reply 200 (protected-resource-metadata base)))
+
+;; RFC 9728 locates a resource's metadata by inserting the resource path into
+;; the well-known URI, so the document for https://host/mcp lives at
+;; /.well-known/oauth-protected-resource/mcp — not only at the root. ChatGPT
+;; probes the path-inserted form first and got 404 for both it and the
+;; /mcp/.well-known variant some clients try (run of 2026-08-04 19:01). Serve
+;; the same document at all three rather than relying on a client falling back.
+(defroute mcp-protected-resource-metadata-for-mcp! [base] "GET" "/.well-known/oauth-protected-resource/mcp" []
+  (json-send! reply 200 (protected-resource-metadata base)))
+
+(defroute mcp-protected-resource-metadata-suffixed! [base] "GET" "/mcp/.well-known/oauth-protected-resource" []
+  (json-send! reply 200 (protected-resource-metadata base)))
 
 ;; preHandler-mode routes
 
@@ -705,6 +734,23 @@
               (.end raw-res (js/JSON.stringify (clj->js {:error "mcp_post_failed"
                                                           :detail (or (.-message err) (str err))}))))))))))
 
+(def ^:private route-registrars
+  "Every MCP route, in registration order. Kept as data so adding one is a line
+   rather than an edit to the registration function."
+  [mcp-discovery-metadata!
+   mcp-protected-resource-metadata!
+   mcp-protected-resource-metadata-for-mcp!
+   mcp-protected-resource-metadata-suffixed!
+   mcp-register-client!
+   mcp-authorize-client!
+   mcp-authorize-confirm!
+   mcp-exchange-token!
+   mcp-list-user-tokens!
+   mcp-revoke-user-token!
+   mcp-handle-post!
+   mcp-handle-session!
+   mcp-handle-delete-session!])
+
 (defn register-mcp-http-routes!
   [app runtime config]
   (let [base         (public-base-url config)
@@ -724,14 +770,5 @@
               :z                             z
               :code-ttl  code-ttl
               :token-ttl token-ttl}]
-    (mcp-discovery-metadata!          app runtime config deps)
-    (mcp-protected-resource-metadata! app runtime config deps)
-    (mcp-register-client!             app runtime config deps)
-    (mcp-authorize-client!            app runtime config deps)
-    (mcp-authorize-confirm!           app runtime config deps)
-    (mcp-exchange-token!              app runtime config deps)
-    (mcp-list-user-tokens!            app runtime config deps)
-    (mcp-revoke-user-token!           app runtime config deps)
-    (mcp-handle-post!                 app runtime config deps)
-    (mcp-handle-session!              app runtime config deps)
-    (mcp-handle-delete-session!       app runtime config deps)))
+    (doseq [register! route-registrars]
+      (register! app runtime config deps))))
