@@ -98,22 +98,6 @@
 
 ;; ─── Codes ──────────────────────────────────────────────────────────────────
 
-(defn ^:async get-code!
-  "Read an OAuth auth code without consuming it.
-
-   Does not make the code single use. A token exchange wants consume-code!;
-   reading here and deleting afterwards lets two concurrent exchanges both pass
-   the read before either deletes, and both then mint a token from one code."
-  ([code] (get-code! (mongo-client/get-db) code))
-  ([db code]
-   (when (and db code)
-     (let [c (codes-coll db)
-           result (await (.findOne c #js {"code" (str code)}))]
-       (when result
-         (let [doc (keywordize result)]
-           (when (live? doc)
-             (js/JSON.stringify (clj->js (:code_data doc))))))))))
-
 (defn ^:async consume-code!
   "Atomically claim an OAuth auth code, returning its data exactly once.
 
@@ -132,7 +116,7 @@
      (let [doc (await (extern-mongo/find-one-and-delete!
                        (codes-coll db) {:code (str code)}))]
        (when (and doc (live? doc))
-         (js/JSON.stringify (clj->js (:code_data doc))))))))
+         (:code_data doc))))))
 
 (defn ^:async set-code!
   "Store OAuth auth code with TTL."

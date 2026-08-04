@@ -200,7 +200,15 @@
                   :findOne
                   (fn [query]
                     (js/Promise.resolve
-                     (some-> (get @docs (aget query id-field)) clj->js)))}
+                     (some-> (get @docs (aget query id-field)) clj->js)))
+                  :findOneAndDelete
+                  (fn [query]
+                    (let [id  (aget query id-field)
+                          won (atom nil)]
+                      (swap! docs (fn [m]
+                                    (when-let [d (get m id)] (reset! won d))
+                                    (dissoc m id)))
+                      (js/Promise.resolve (some-> @won clj->js))))}
         db   #js {:collection (fn [_name] coll)}]
     (aset db "docs" docs)
     db))
@@ -209,15 +217,15 @@
   (testing "a code minted seconds ago is not reported as expired"
     (let [db (fake-ttl-db "code")]
       (await (store/set-code! db "code-1" (js/JSON.stringify #js {:clientId "c" :tools #js ["t"]}) 300))
-      (let [raw (await (store/get-code! db "code-1"))]
-        (is (some? raw) "the code the exchange just minted must be readable")
-        (is (= "c" (aget (js/JSON.parse raw) "clientId")))))))
+      (let [record (await (store/consume-code! db "code-1"))]
+        (is (some? record) "the code the exchange just minted must be readable")
+        (is (= "c" (:clientId record)) "and arrives as CLJS data, not a JSON string")))))
 
 (deftest ^:async an-expired-code-does-not-read-back
   (testing "a code past its TTL is still refused"
     (let [db (fake-ttl-db "code")]
       (await (store/set-code! db "code-2" (js/JSON.stringify #js {:clientId "c"}) -1))
-      (is (nil? (await (store/get-code! db "code-2")))))))
+      (is (nil? (await (store/consume-code! db "code-2")))))))
 
 (deftest ^:async a-freshly-written-token-reads-back
   (testing "an access token can actually be presented after it is issued"
@@ -237,7 +245,7 @@
   (testing "a document whose expiry cannot be read is treated as expired"
     (let [db (fake-ttl-db "code")]
       (swap! (aget db "docs") assoc "code-3" {:code "code-3" :code_data {:clientId "c"}})
-      (is (nil? (await (store/get-code! db "code-3")))
+      (is (nil? (await (store/consume-code! db "code-3")))
           "a missing expiry must not read as a live code"))))
 
 (deftest instant-ms-decodes-what-mongo-actually-returns
@@ -306,10 +314,10 @@
 
 (deftest ^:async a-code-can-be-consumed-once
   (testing "the first claim gets the data"
-    (let [db  (fake-codes-db live-code)
-          raw (await (store/consume-code! db "code-1"))]
-      (is (some? raw))
-      (is (= "c" (aget (js/JSON.parse raw) "clientId"))))))
+    (let [db     (fake-codes-db live-code)
+          record (await (store/consume-code! db "code-1"))]
+      (is (some? record))
+      (is (= "c" (:clientId record))))))
 
 (deftest ^:async a-consumed-code-cannot-be-claimed-again
   (testing "a second exchange with the same code gets nothing"

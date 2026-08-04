@@ -540,18 +540,22 @@
             (when state (.set (.-searchParams redir) "state" state))
             (.redirect reply (.toString redir) 302)))))))
 
-(defn- ^:async persist-access-token! [crypto token-ttl client-id record]
-  (let [access-token (.randomUUID crypto)
-        token-value  {:accessToken access-token :clientId client-id
-                      :membershipId (aget record "membershipId")
-                      :userEmail    (aget record "userEmail")
-                      :orgSlug      (aget record "orgSlug")
-                      :tools        (aget record "tools")
-                      :createdAt    (.toISOString (js/Date.))
-                      :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
-    (await (mongo-mcp/set-token! access-token (js/JSON.stringify (clj->js token-value)) token-ttl (aget record "membershipId")))
+(defn- ^:async persist-access-token!
+  "Mint and store an access token from a claimed code record (a CLJS map)."
+  [crypto token-ttl client-id record]
+  (let [access-token  (.randomUUID crypto)
+        membership-id (:membershipId record)
+        tools         (vec (:tools record))
+        token-value   {:accessToken access-token :clientId client-id
+                       :membershipId membership-id
+                       :userEmail    (:userEmail record)
+                       :orgSlug      (:orgSlug record)
+                       :tools        tools
+                       :createdAt    (.toISOString (js/Date.))
+                       :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
+    (await (mongo-mcp/set-token! access-token (js/JSON.stringify (clj->js token-value)) token-ttl membership-id))
     {:access_token access-token :token_type "Bearer"
-     :scope        (->> (array-seq (or (aget record "tools") (js/Array.))) (str/join " "))
+     :scope        (str/join " " tools)
      :expires_in   token-ttl}))
 
 (defroute mcp-exchange-token! [crypto token-ttl] "POST" "/api/mcp/oauth/token" []
@@ -570,13 +574,12 @@
       ;; The claim precedes every check below, so a code that fails PKCE or the
       ;; client match is spent rather than left for another attempt. That is the
       ;; intent: it denies an attacker repeated guesses at the verifier.
-      (let [raw (await (mongo-mcp/consume-code! code))]
-        (when-not raw (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
-        (let [record   (js/JSON.parse raw)
-              expected (str (or (aget record "codeChallenge") ""))
+      (let [record (await (mongo-mcp/consume-code! code))]
+        (when-not record (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
+        (let [expected (str (or (:codeChallenge record) ""))
               actual   (pkce-challenge crypto code-verifier)]
-          (when (or (not= (aget record "clientId") client-id)
-                    (not= (aget record "redirectUri") redirect-uri))
+          (when (or (not= (:clientId record) client-id)
+                    (not= (:redirectUri record) redirect-uri))
             (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
           (when (or (str/blank? expected) (not= expected actual))
             (throw (http-error 400 "invalid_grant" "PKCE verification failed")))
