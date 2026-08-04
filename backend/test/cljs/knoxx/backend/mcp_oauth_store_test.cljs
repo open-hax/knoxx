@@ -467,3 +467,22 @@
     (let [handle #js {:deleteOne (fn [_] (js/Promise.resolve #js {:deletedCount 0}))}]
       (is (= {:deleted-count 0} (await (extern-mongo/delete-one! handle {:x "y"})))
           "'nothing matched' must stay distinguishable from 'no count reported'"))))
+
+(deftest protected-resource-metadata-contract-requires-a-usable-document
+  (testing "a client cannot recover from a partial answer, so every field is required"
+    (is (law/valid-protected-resource-metadata?
+         {:resource "https://k/mcp" :authorization_servers ["https://k"]
+          :scopes_supported ["mcp:tools"] :bearer_methods_supported ["header"]}))
+    (is (not (law/valid-protected-resource-metadata?
+              {:resource "" :authorization_servers ["https://k"]
+               :scopes_supported [] :bearer_methods_supported ["header"]}))
+        "a blank resource names nothing")
+    (is (not (law/valid-protected-resource-metadata?
+              {:resource "https://k/mcp" :authorization_servers []
+               :scopes_supported [] :bearer_methods_supported ["header"]}))
+        "an empty server list sends the client nowhere")
+    (is (not (law/valid-protected-resource-metadata?
+              {:resource "https://k/mcp" :authorization_servers ["https://k"]
+               :scopes_supported [] :bearer_methods_supported []}))
+        "no bearer method leaves the client unable to present a token")
+    (is (not (law/valid-protected-resource-metadata? {})))))
