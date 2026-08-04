@@ -98,6 +98,24 @@
 
 ;; ─── Codes ──────────────────────────────────────────────────────────────────
 
+(defn ^:async peek-code!
+  "Read a live OAuth auth code without spending it, as CLJS data or nil.
+
+   Deliberately non-destructive, and paired with consume-code!: an exchange
+   reads the code here to check the client, redirect and PKCE bindings, and
+   only claims it once those hold. Spending it first would let anyone who
+   merely observed the code on the front channel destroy it with a wrong
+   verifier and break the legitimate client's exchange."
+  ([code] (peek-code! (mongo-client/get-db) code))
+  ([db code]
+   (when (and db code)
+     (let [c (codes-coll db)
+           result (await (.findOne c #js {"code" (str code)}))]
+       (when result
+         (let [doc (keywordize result)]
+           (when (live? doc)
+             (:code_data doc))))))))
+
 (defn ^:async consume-code!
   "Atomically claim an OAuth auth code, returning its data exactly once.
 
@@ -107,9 +125,10 @@
    claim it — a read followed by a separate delete leaves a window in which
    both callers see a live code and both mint a token.
 
-   The claim happens before the code's own validity is judged, so a code that
-   turns out to be expired is still consumed. That is deliberate: an expired
-   code is spent either way, and leaving it readable would invite retries."
+   Call this only once an exchange has been found admissible. The claim is what
+   settles a race between two otherwise-valid exchanges; it is not the place to
+   discover that a request was invalid, because a rejected request must not
+   spend the code."
   ([code] (consume-code! (mongo-client/get-db) code))
   ([db code]
    (when (and db code)

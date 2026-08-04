@@ -337,6 +337,25 @@
       (is (= 3 @(aget db "calls")) "all three attempts reached the store")
       (is (= 1 (count winners)) "exactly one exchange may claim the code"))))
 
+(deftest ^:async peeking-does-not-spend-the-code
+  (testing "a read leaves the code claimable, so a rejected exchange cannot burn it"
+    ;; An attacker who observes the code on the front channel but has no
+    ;; verifier must not be able to destroy it. The exchange checks the
+    ;; bindings against a peek and only claims once they hold.
+    (let [db (fake-codes-db live-code)]
+      (is (some? (await (store/peek-code! db "code-1"))))
+      (is (some? (await (store/peek-code! db "code-1"))) "peeking twice is fine")
+      (is (seq @(aget db "docs")) "the code is still there")
+      (is (some? (await (store/consume-code! db "code-1")))
+          "and the legitimate exchange can still claim it"))))
+
+(deftest ^:async peeking-refuses-an-expired-code
+  (testing "a peek applies the same liveness rule as a claim"
+    (let [db (fake-codes-db {"stale" {:code "stale"
+                                      :code_data {:clientId "c"}
+                                      :expiresAt (js/Date. (- (.now js/Date) 1000))}})]
+      (is (nil? (await (store/peek-code! db "stale")))))))
+
 (deftest ^:async an-expired-code-is-still-consumed
   (testing "an expired code is spent rather than left readable for a retry"
     (let [db (fake-codes-db {"code-old" {:code "code-old"

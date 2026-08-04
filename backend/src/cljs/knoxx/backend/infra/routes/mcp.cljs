@@ -540,6 +540,23 @@
             (when state (.set (.-searchParams redir) "state" state))
             (.redirect reply (.toString redir) 302)))))))
 
+(defn- ensure-code-bindings!
+  "Reject an exchange whose client, redirect or PKCE verifier does not match the
+   code it presents.
+
+   Checked against a non-destructive read so a rejected request never spends the
+   code: anyone who merely observed the code on the front channel could
+   otherwise destroy it with any wrong verifier, and it would buy nothing, since
+   a verifier carries far too much entropy to guess."
+  [crypto record client-id redirect-uri code-verifier]
+  (when (or (not= (:clientId record) client-id)
+            (not= (:redirectUri record) redirect-uri))
+    (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
+  (let [expected (str (or (:codeChallenge record) ""))
+        actual   (pkce-challenge crypto code-verifier)]
+    (when (or (str/blank? expected) (not= expected actual))
+      (throw (http-error 400 "invalid_grant" "PKCE verification failed")))))
+
 (defn- ^:async persist-access-token!
   "Mint and store an access token from a claimed code record (a CLJS map)."
   [crypto token-ttl client-id record]
@@ -566,25 +583,19 @@
       (throw (http-error 400 "invalid_request" "Missing required token exchange parameters")))
     (let [client (await (get-registered-client client-id))]
       (ensure-redirect-uri-allowed! client redirect-uri "invalid_grant")
-      ;; Claimed, not read: an authorization code is single use, and the delete
-      ;; has to happen in the same operation as the read. Reading first and
-      ;; deleting after issuing left a window in which two concurrent exchanges
-      ;; both saw a live code and both minted a token from it.
-      ;;
-      ;; The claim precedes every check below, so a code that fails PKCE or the
-      ;; client match is spent rather than left for another attempt. That is the
-      ;; intent: it denies an attacker repeated guesses at the verifier.
-      (let [record (await (mongo-mcp/consume-code! code))]
-        (when-not record (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
-        (let [expected (str (or (:codeChallenge record) ""))
-              actual   (pkce-challenge crypto code-verifier)]
-          (when (or (not= (:clientId record) client-id)
-                    (not= (:redirectUri record) redirect-uri))
-            (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
-          (when (or (str/blank? expected) (not= expected actual))
-            (throw (http-error 400 "invalid_grant" "PKCE verification failed")))
-          (let [token-response (await (persist-access-token! crypto token-ttl client-id record))]
-            (json-send! reply 200 token-response)))))))
+      ;; Validate against a peek, then claim. Single use is enforced by the
+      ;; claim rather than the read: two concurrent exchanges can both pass the
+      ;; bindings, but find-one-and-delete picks one winner and the loser is
+      ;; told the code is spent. The token is minted from the claimed record,
+      ;; not the peeked one, so its contents cannot have changed in between.
+      (let [peeked (await (mongo-mcp/peek-code! code))]
+        (when-not peeked (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
+        (ensure-code-bindings! crypto peeked client-id redirect-uri code-verifier)
+        (let [record (await (mongo-mcp/consume-code! code))]
+          (when-not record
+            (throw (http-error 400 "invalid_grant" "Authorization code already used")))
+          (json-send! reply 200
+                      (await (persist-access-token! crypto token-ttl client-id record))))))))
 
 (defroute mcp-list-user-tokens! [browser-auth-guard] "GET" "/api/mcp/tokens" [browser-auth-guard]
   (let [auth-context  (aget request "authContext")
