@@ -61,3 +61,29 @@
     (is (false? (aget (.safeParse (mcp/typebox->zod-node z #js {:type "integer"}) 3.5) "success")))
     (is (true? (aget (.safeParse (mcp/typebox->zod-node z #js {:type "array" :items #js {:type "string"}})
                                  #js ["a"]) "success")))))
+
+;; ── stateless transport options ──────────────────────────
+;;
+;; The SDK selects stateless mode only when sessionIdGenerator is === undefined.
+;; (clj->js {:sessionIdGenerator js/undefined}) emits null, which selects
+;; STATEFUL mode — and with no session storage, everything after initialize is
+;; rejected with "Bad Request: Server not initialized". That is what a client
+;; saw as "connected, but advertises no tools". Verified against SDK 1.18, 1.24,
+;; 1.29 and 1.30: all four treat null as stateful, so this is ours to get right.
+
+(deftest stateless-options-omit-the-session-generator
+  (testing "the key is absent, not null"
+    (let [opts (mcp/stateless-transport-options)]
+      (is (false? (.hasOwnProperty opts "sessionIdGenerator"))
+          "present-but-null is what selected stateful mode")
+      (is (undefined? (aget opts "sessionIdGenerator")))
+      (is (not (nil? opts)) "still an options object")))
+
+  (testing "clj->js cannot express this, which is why it is built with #js"
+    ;; Documents the trap rather than trusting a comment: the obvious spelling
+    ;; produces exactly the value that broke it.
+    (let [via-clj->js (clj->js {:sessionIdGenerator js/undefined})]
+      (is (true? (.hasOwnProperty via-clj->js "sessionIdGenerator"))
+          "clj->js keeps the key")
+      (is (nil? (aget via-clj->js "sessionIdGenerator"))
+          "and its value is null — the SDK reads that as stateful"))))

@@ -142,6 +142,19 @@
   (-> (reply-header! reply "WWW-Authenticate" (www-authenticate-challenge base))
       (.code 401) (.send "Unauthorized")))
 
+(defn stateless-transport-options
+  "Options that actually select the MCP SDK's stateless mode.
+
+   The key must be ABSENT, not undefined. (clj->js {:sessionIdGenerator
+   js/undefined}) emits {sessionIdGenerator: null}, and the SDK selects
+   stateless only on === undefined — so null selected *stateful* mode, where
+   everything after initialize is rejected with
+   \"Bad Request: Server not initialized\". A client saw that as connected but
+   advertising no tools. Verified against SDK 1.18, 1.24, 1.29 and 1.30: all
+   four read null as stateful, so this is ours, not a protocol change."
+  []
+  #js {})
+
 (defn- transport-handle-request!
   ([^js t req reply]      (.handleRequest t req reply))
   ([^js t req reply body] (.handleRequest t req reply body)))
@@ -716,7 +729,7 @@
                                    into-array)
                     server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
                     transport (new StreamableHTTPServerTransport
-                                   (clj->js {:sessionIdGenerator js/undefined}))]
+                                   (stateless-transport-options))]
                 (doseq [tool (array-seq effective)]
                   (let [n (some-> (aget tool "name") str str/trim not-empty)
                         s (or (when z (typebox->zod-shape z (or (aget tool "parameters") (js/Object.)))) (js-obj))]
