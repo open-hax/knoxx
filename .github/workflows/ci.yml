@@ -76,6 +76,9 @@ jobs:
           pnpm -C backend install --frozen-lockfile
           pnpm -C frontend install --frozen-lockfile
 
+      - name: Backend lint (including shared markup)
+        run: pnpm -C backend run lint
+
       - name: Backend typecheck (shadow-cljs compile app)
         run: pnpm -C backend run typecheck
 
