@@ -615,9 +615,10 @@
            request raw-req raw-res token-record]}]
   (let [token-ctx (await (resolve-token-context! policy-db token-record))
         acting    {:actor-id (call-actor-id token-record token-ctx)
-                   ;; From the resolved context, so the credential lookup is
-                   ;; scoped to the org this token belongs to.
-                   :org-id   (authz/ctx-org-id token-ctx)}
+                   ;; From the resolved context, so a credential lookup names
+                   ;; this token's owner exactly rather than searching by actor.
+                   :org-id        (authz/ctx-org-id token-ctx)
+                   :membership-id (authz/ctx-membership-id token-ctx)}
         server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
         transport (new StreamableHTTPServerTransport (transport/stateless-transport-options))]
     (register-tools! server z (granted-tools runtime config token-ctx token-record) acting)

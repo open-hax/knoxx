@@ -1382,16 +1382,16 @@
 (defn ^:async get-actor-credential!
   "An actor's active credential for a provider.
 
-   org-id scopes the membership lookup: actor_id is not unique across orgs, so
-   without it an actor id present in two orgs resolves to an arbitrary one and
-   returns that org's secret. Callers holding a request context should pass its
-   org."
+   scope narrows the membership lookup: {:org-id, :membership-id}. actor_id is
+   unique nowhere — not even within an org — so an unnarrowed lookup refuses an
+   ambiguous actor rather than returning some member's secret. A caller holding a
+   request context should pass its membership id, which is exact."
   ([policy-context actor-id provider] (get-actor-credential! policy-context actor-id provider nil))
-  ([_policy-context actor-id provider org-id]
+  ([_policy-context actor-id provider scope]
    (when-let [db (await (ensure-mongo-policy-db!))]
      {:credential (mongo-actor-creds/credential-row->response
                    (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
-                           db actor-id provider org-id)))})))
+                           db actor-id provider scope)))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation
