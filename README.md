@@ -1,5 +1,8 @@
 # Knoxx
 
+> **Roadmap:** [`ROADMAP.md`](ROADMAP.md) — this repo's slice. The hub, with the
+> seam, ownership table and sequencing rule, is [eta-mu/ROADMAP.md](https://github.com/open-hax/eta-mu/blob/main/ROADMAP.md).
+
 Knoxx is a local-first knowledge operations and agent workbench. It combines a
 shadow-cljs/Fastify backend, a shadow-cljs + React frontend, a JVM Clojure
 ingestion worker, contract-backed policy/actor/model definitions, and adapters

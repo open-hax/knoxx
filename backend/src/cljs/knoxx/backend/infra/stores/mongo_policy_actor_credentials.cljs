@@ -31,6 +31,7 @@
     [knoxx.backend.infra.system-instance :as system-instance]))
 
 (def ACTOR_CREDENTIALS_COLLECTION "knoxx_actor_credentials")
+(def ^:private MEMBERSHIPS_COLLECTION "knoxx_memberships")
 
 (defn- credentials-coll [db] (.collection db ACTOR_CREDENTIALS_COLLECTION))
 
@@ -132,14 +133,67 @@
           (filterv #(not (str/blank? (str (:actor_id %)))))
           vec))))
 
+(defn ^:async resolve-actor-membership!
+  "The membership an actor id names, or nil.
+
+   Takes {:actor-id, :org-id, :membership-id}; the last two are optional and both
+   narrow the answer. Never chooses between candidates: an actor id that names
+   more than one membership throws, because the alternative is returning one
+   member's user_id and reading their Discord or Bluesky secret for somebody
+   else's request — silently, unrepeatably, and identically to success.
+
+   Why choosing is unsafe at every level of scoping: knoxx_memberships is unique
+   only on (user_id, org_id). actor_id carries a plain lookup index and
+   set-membership-actor-id! writes whatever it is given, so two memberships in
+   *one* org can share an actor id. Scoping to the org narrows the ambiguity
+   without removing it.
+
+   :membership-id is the exact answer and the one to prefer. It is unique, an MCP
+   token carries it, and using it turns a search into a lookup. The actor is then
+   verified against that membership rather than used to find it: a token whose
+   actor and membership disagree is refused, not reconciled."
+  [db {:keys [actor-id org-id membership-id]}]
+  (let [memberships (.collection db MEMBERSHIPS_COLLECTION)
+        actor       (some-> actor-id str str/trim not-empty)
+        org         (some-> org-id str str/trim not-empty)
+        membership  (some-> membership-id str str/trim not-empty)]
+    (when actor
+      (if membership
+        (let [doc (keywordize (await (.findOne memberships #js {"membership_id" membership})))]
+          (when doc
+            (when-not (= (str (:actor_id doc)) actor)
+              (throw (js/Error.
+                      (str "Membership " membership " acts as "
+                           (or (not-empty (str (:actor_id doc))) "no actor")
+                           ", not " actor
+                           "; refusing to resolve credentials for a mismatch."))))
+            doc))
+        (let [query   (cond-> {"actor_id" actor}
+                        org (assoc "org_id" org))
+              matches (keywordize (await (.toArray (.find memberships (clj->js query)))))]
+          (cond
+            (empty? matches)      nil
+            (= 1 (count matches)) (first matches)
+            :else
+            (throw (js/Error.
+                    (str "Actor " actor " names " (count matches) " memberships"
+                         (if org (str " in org " org) " across orgs")
+                         "; a membership id is required to resolve its"
+                         " credentials unambiguously.")))))))))
+
 (defn ^:async get-actor-credential-by-actor-and-provider!
   "Single active credential for an actor + provider, joined with memberships + orgs.
    Mirrors the PG actor-credential-select-query: ... WHERE m.actor_id = ?
-   AND ac.provider = ? AND ac.status = 'active' ... LIMIT 1."
-  ([actor-id provider] (get-actor-credential-by-actor-and-provider! (mongo-client/get-db) actor-id provider))
-  ([db actor-id provider]
-   (let [memberships (.collection db "knoxx_memberships")
-         membership (keywordize (await (.findOne memberships #js {"actor_id" (str actor-id)})))]
+   AND ac.provider = ? AND ac.status = 'active' ... LIMIT 1.
+
+   scope narrows the membership lookup: {:org-id, :membership-id}. Pass the
+   membership id whenever the caller has one — it is exact — and the org
+   otherwise. See resolve-actor-membership! for why an unnarrowed lookup refuses
+   an ambiguous actor rather than choosing."
+  ([actor-id provider] (get-actor-credential-by-actor-and-provider! (mongo-client/get-db) actor-id provider nil))
+  ([db actor-id provider scope]
+   (let [membership (await (resolve-actor-membership!
+                            db (assoc (or scope {}) :actor-id actor-id)))]
      (when membership
        (let [coll (credentials-coll db)
              cursor (.find coll #js {"user_id" (:user_id membership)

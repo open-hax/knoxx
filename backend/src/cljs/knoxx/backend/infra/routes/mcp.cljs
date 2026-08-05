@@ -4,9 +4,13 @@
             [malli.core :as m]
             [malli.error :as me]
             [knoxx.backend.shape.app-shapes :refer [route!]]
+            [knoxx.backend.infra.actor.acting :as actor-acting]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
+            [knoxx.backend.infra.routes.mcp.consent :as consent]
+            [knoxx.backend.infra.routes.mcp.params :as params]
+            [knoxx.backend.infra.routes.mcp.transport :as transport]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
             [knoxx.backend.law.mcp-oauth :as law]
@@ -18,45 +22,9 @@
             ["zod" :refer [z]])
   (:require-macros [knoxx.backend.macros :refer [defroute]]))
 
-(declare typebox->zod-shape reply-header! http-error)
+(declare typebox->zod-shape reply-header!)
 
 (defonce ^:private mcp-sessions* (atom {}))
-
-(def ^:private RegisterClientBody
-  [:map
-   [:redirect-uris [:vector string?]]
-   [:client-name {:optional true} string?]])
-
-(def ^:private AuthorizeQuery
-  [:map
-   [:client-id string?]
-   [:redirect-uri string?]
-   [:state {:optional true} [:maybe string?]]
-   [:code-challenge string?]
-   [:code-challenge-method string?]
-   [:scope {:optional true} [:maybe string?]]])
-
-(def ^:private AuthorizeConfirmQuery
-  [:map
-   [:client-id string?]
-   [:redirect-uri string?]
-   [:state {:optional true} [:maybe string?]]
-   [:code-challenge string?]
-   [:code-challenge-method string?]
-   [:scope {:optional true} [:maybe string?]]
-   [:selected-tools [:vector string?]]])
-
-(def ^:private TokenExchangeBody
-  [:map
-   [:grant-type string?]
-   [:code string?]
-   [:code-verifier string?]
-   [:client-id string?]
-   [:redirect-uri string?]])
-
-(def ^:private RevokeTokenParams
-  [:map
-   [:token-id string?]])
 
 (defn- env [k default] (or (aget js/process.env k) default))
 
@@ -76,46 +44,11 @@
   [^js crypto verifier]
   (base64url (-> (.createHash crypto "sha256") (.update (str verifier)) (.digest))))
 
-(defn- bearer-token
-  [req]
-  (let [raw (str (or (some-> req (aget "headers") (aget "authorization")) ""))
-        m (.match raw (js/RegExp. "^Bearer\\s+(.+)$" "i"))]
-    (when m (str/trim (aget m 1)))))
-
-(defn- resolve-session-id
-  [req]
-  (let [headers (or (aget req "headers") (js/Object.))
-        header-id (aget headers "mcp-session-id")
-        q (or (aget req "query") (js/Object.))
-        query-id (aget q "sessionId")]
-    (cond
-      (and (string? header-id) (not (str/blank? header-id))) header-id
-      (and (string? query-id) (not (str/blank? query-id))) query-id
-      :else nil)))
-
-(defn- safe
-  [s]
-  (-> (str (or s ""))
-      (.replaceAll "&" "&amp;")
-      (.replaceAll "<" "&lt;")
-      (.replaceAll ">" "&gt;")
-      (.replaceAll "\"" "&quot;")))
-
-(defn- normalize-tool-selection
-  [raw]
-  (cond
-    (nil? raw) []
-    (array? raw) (mapv str (array-seq raw))
-    :else [(str raw)]))
-
 (defn- json-send! [reply status payload]
   (-> (.code reply status) (.send (clj->js payload))))
 
 (defn- text-send! [reply status body]
   (-> (.code reply status) (.send body)))
-
-(defn- protected-resource-metadata-url [base]
-  (.toString (js/URL. "/.well-known/oauth-protected-resource" base)))
 
 (defn- protected-resource-metadata
   "RFC 9728 metadata for the MCP resource. One document, served at every
@@ -131,76 +64,13 @@
                  :scopes_supported         ["mcp:tools"]
                  :bearer_methods_supported ["header"]}]
     (when-not (law/valid-protected-resource-metadata? payload)
-      (throw (http-error 500 "metadata_unavailable"
+      (throw (params/http-error 500 "metadata_unavailable"
                          "protected resource metadata failed its contract")))
     payload))
-
-(defn- www-authenticate-challenge [base]
-  (str "Bearer realm=\"mcp\", resource_metadata=\""
-       (protected-resource-metadata-url base) "\""))
-
-(defn- challenge-unauthorized! [^js reply base]
-  (-> (reply-header! reply "WWW-Authenticate" (www-authenticate-challenge base))
-      (.code 401) (.send "Unauthorized")))
-
-(defn stateless-transport-options
-  "Options that actually select the MCP SDK's stateless mode.
-
-   The key must be ABSENT, not undefined. (clj->js {:sessionIdGenerator
-   js/undefined}) emits {sessionIdGenerator: null}, and the SDK selects
-   stateless only on === undefined — so null selected *stateful* mode, where
-   everything after initialize is rejected with \"Server not initialized\" and a
-   client sees no tools. SDK 1.18/1.24/1.29/1.30 all read null as stateful."
-  []
-  #js {})
-
-(defn- transport-handle-request!
-  ([^js t req reply]      (.handleRequest t req reply))
-  ([^js t req reply body] (.handleRequest t req reply body)))
 
 (defn- tool-execute! [^js tool params] (.execute tool "mcp" params nil nil nil))
 
 (defn- reply-header! [^js reply name value] (.header reply name value))
-
-(defn- ensure-streamable-accept!
-  [req]
-  (let [raw         (aget req "raw")
-        headers     (or (aget raw "headers") (js/Object.))
-        raw-headers (or (aget raw "rawHeaders") (js/Array.))
-        accept-value "application/json, text/event-stream"
-        accept      (str/lower-case (str (or (aget headers "accept") "")))
-        has-json?   (str/includes? accept "application/json")
-        has-sse?    (str/includes? accept "text/event-stream")]
-    (when (or (str/blank? accept) (not has-json?) (not has-sse?))
-      (aset headers "accept" accept-value)
-      (aset raw "headers" headers)
-      (let [filtered (->> (partition 2 (array-seq raw-headers))
-                          (remove (fn [[k _]] (= "accept" (str/lower-case (str k)))))
-                          (mapcat identity)
-                          vec)]
-        (aset raw "rawHeaders" (clj->js (conj filtered "accept" accept-value)))))
-    req))
-
-;; Fastify's default error handler reads `statusCode` off the thrown object and
-;; falls back to 500. A bare ex-info keeps its status in ex-data, where Fastify
-;; cannot see it, so every client error here reported as 500. Stamp it where
-;; Fastify looks.
-(defn- http-error
-  ([status error detail]      (http-error status error detail nil))
-  ([status error detail data]
-   (let [e (ex-info detail (merge {:status status :error error :detail detail} data))]
-     (aset e "statusCode" status)
-     e)))
-
-(defn- validation-detail [schema value]
-  (some-> (m/explain schema value) me/humanize pr-str))
-
-(defn- validate! [schema value {:keys [status error detail]}]
-  (if (m/validate schema value)
-    value
-    (throw (http-error (or status 400)
-                       (or error "invalid_request")
-                       (or detail (validation-detail schema value) "Invalid request")))))
 
 (defn- ^:async browser-auth-ctx!
   [req policy-db config]
@@ -227,66 +97,10 @@
   "Returns a Fastify preHandler hook that extracts bearer token onto request.bearerToken."
   [base]
   (fn [req reply done]
-    (let [token (bearer-token req)]
+    (let [token (transport/bearer-token req)]
       (if (str/blank? token)
-        (challenge-unauthorized! reply base)
+        (transport/challenge-unauthorized! reply base)
         (do (aset req "bearerToken" token) (done))))))
-
-;; ──────────────────────────────────────────────────────────────
-;; Parsers
-;; ──────────────────────────────────────────────────────────────
-
-(defn- parse-register-client-body [req]
-  (let [body   (or (aget req "body") (js/Object.))
-        value  {:redirect-uris (if (array? (aget body "redirect_uris"))
-                                 (mapv str (array-seq (aget body "redirect_uris")))
-                                 [])
-                :client-name (some-> (aget body "client_name") str)}
-        parsed (validate! RegisterClientBody value
-                          {:status 400 :error "invalid_client_metadata"
-                           :detail "redirect_uris is required"})]
-    (when (empty? (:redirect-uris parsed))
-      (throw (http-error 400 "invalid_client_metadata" "redirect_uris is required")))
-    parsed))
-
-(defn- parse-authorize-query [req]
-  (let [q (or (aget req "query") (js/Object.))]
-    (validate! AuthorizeQuery
-               {:client-id             (str (or (aget q "client_id") ""))
-                :redirect-uri          (str (or (aget q "redirect_uri") ""))
-                :state                 (when-let [s (aget q "state")] (str s))
-                :code-challenge        (str (or (aget q "code_challenge") ""))
-                :code-challenge-method (str (or (aget q "code_challenge_method") "S256"))
-                :scope                 (when-let [scope (aget q "scope")] (str scope))}
-               {:status 400 :error "invalid_request"})))
-
-(defn- parse-authorize-confirm-query [req]
-  (let [q (or (aget req "query") (js/Object.))]
-    (validate! AuthorizeConfirmQuery
-               {:client-id             (str (or (aget q "client_id") ""))
-                :redirect-uri          (str (or (aget q "redirect_uri") ""))
-                :state                 (when-let [s (aget q "state")] (str s))
-                :code-challenge        (str (or (aget q "code_challenge") ""))
-                :code-challenge-method (str (or (aget q "code_challenge_method") "S256"))
-                :scope                 (when-let [scope (aget q "scope")] (str scope))
-                :selected-tools        (normalize-tool-selection (aget q "tool"))}
-               {:status 400 :error "invalid_request"})))
-
-(defn- parse-token-exchange-body [req]
-  (let [body (or (aget req "body") (js/Object.))]
-    (validate! TokenExchangeBody
-               {:grant-type    (str (or (aget body "grant_type") (aget body "grantType") ""))
-                :code          (str (or (aget body "code") ""))
-                :code-verifier (str (or (aget body "code_verifier") (aget body "codeVerifier") ""))
-                :client-id     (str (or (aget body "client_id") (aget body "clientId") ""))
-                :redirect-uri  (str (or (aget body "redirect_uri") (aget body "redirectUri") ""))}
-               {:status 400 :error "invalid_request"})))
-
-(defn- parse-revoke-token-params [req]
-  (let [params (or (aget req "params") (js/Object.))]
-    (validate! RevokeTokenParams
-               {:token-id (str (or (aget params "tokenId") ""))}
-               {:status 400 :error "invalid_request"})))
 
 ;; ──────────────────────────────────────────────────────────────
 ;; Business logic helpers
@@ -295,13 +109,13 @@
 (defn- ensure-oauth-request! [{:keys [client-id redirect-uri code-challenge code-challenge-method]}]
   (when (or (str/blank? client-id) (str/blank? redirect-uri)
             (str/blank? code-challenge) (not= code-challenge-method "S256"))
-    (throw (http-error 400 "invalid_request"
+    (throw (params/http-error 400 "invalid_request"
                        "Missing required OAuth parameters (client_id, redirect_uri, code_challenge, S256)"))))
 
 (defn- ensure-oauth-confirm-request! [{:keys [client-id redirect-uri code-challenge code-challenge-method]}]
   (when (or (str/blank? client-id) (str/blank? redirect-uri)
             (str/blank? code-challenge) (not= code-challenge-method "S256"))
-    (throw (http-error 400 "invalid_request" "Missing required OAuth parameters"))))
+    (throw (params/http-error 400 "invalid_request" "Missing required OAuth parameters"))))
 
 (defn- ^:async get-registered-client [client-id]
   (if (str/blank? (str client-id))
@@ -318,7 +132,7 @@
 
 (defn- ensure-redirect-uri-allowed! [client redirect-uri error-code]
   (when (and client (not (redirect-uri-allowed? client redirect-uri)))
-    (throw (http-error 400 error-code "redirect_uri not allowed for registered client"))))
+    (throw (params/http-error 400 error-code "redirect_uri not allowed for registered client"))))
 
 (defn- available-tools [runtime config auth-context]
   (or (mcp-expose/create-knoxx-custom-tools-js runtime config auth-context) (js/Array.)))
@@ -349,71 +163,6 @@
          (filter #(contains? available %))
          vec)))
 
-(defn- tool-checkbox-html [tools selected]
-  (->> (array-seq tools)
-       (map (fn [tool]
-              (let [n       (str (or (aget tool "name") ""))
-                    label   (str (or (aget tool "label") (aget tool "name") (aget tool "description") n))
-                    desc    (str (or (aget tool "description") ""))
-                    checked (if (contains? selected n) "checked" "")]
-                (str "\n        <label style=\"display:block; margin: 6px 0;\">\n"
-                     "          <input type=\"checkbox\" name=\"tool\" value=\"" (safe n) "\" " checked " />\n"
-                     "          <span style=\"font-weight:600;\">" (safe label) "</span>\n"
-                     "          <span style=\"color:#666;\">(" (safe n) ")</span>\n"
-                     "          <div style=\"color:#444; margin-left: 22px;\">" (safe desc) "</div>\n"
-                     "        </label>\n"))))
-       (str/join "\n")))
-
-(defn- authorization-consent-html
-  [{:keys [base auth-context client-id redirect-uri state code-challenge requested-scope tools selected]}]
-  ;; The auth context is a CLJS map, so it must be read with the shared
-  ;; accessors rather than aget. Reaching in with (aget ctx "user" "email")
-  ;; both missed the value and threw outright — aget compiles to
-  ;; ctx["user"]["email"], and the intermediate is undefined, so the `or`
-  ;; fallback never got the chance to run and the consent page 500'd.
-  (let [confirm-url (js/URL. "/api/mcp/oauth/authorize/confirm" base)
-        user-email  (str (or (authz/ctx-user-email auth-context) ""))
-        org-slug    (str (or (authz/ctx-org-slug auth-context) ""))]
-    (.set (.-searchParams confirm-url) "client_id" client-id)
-    (.set (.-searchParams confirm-url) "redirect_uri" redirect-uri)
-    (when state (.set (.-searchParams confirm-url) "state" state))
-    (.set (.-searchParams confirm-url) "code_challenge" code-challenge)
-    (.set (.-searchParams confirm-url) "code_challenge_method" "S256")
-    (when-not (str/blank? (str (or requested-scope "")))
-      (.set (.-searchParams confirm-url) "scope" requested-scope))
-    (str "<!doctype html>\n<html><head><meta charset=\"utf-8\" />\n"
-         "<title>Authorize MCP Client</title>\n"
-         "<style>body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;margin:24px;}"
-         ".box{max-width:920px;} .meta{color:#555;margin-bottom:12px;}"
-         ".tools{border:1px solid #ddd;border-radius:8px;padding:12px 16px;}"
-         ".actions{margin-top:18px;display:flex;gap:12px;}"
-         "button{padding:8px 14px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;cursor:pointer;}"
-         "a{color:#0b67d0;}"
-         "</style></head><body><div class=\"box\">\n"
-         "<h1>Authorize MCP Client</h1>\n"
-         "<div class=\"meta\">\n"
-         "<div><strong>Client:</strong> "      (safe client-id)    "</div>\n"
-         "<div><strong>Redirect URI:</strong> " (safe redirect-uri) "</div>\n"
-         "<div><strong>User:</strong> "         (safe user-email)   "</div>\n"
-         "<div><strong>Org:</strong> "          (safe org-slug)     "</div>\n"
-         "</div>\n"
-         "<form method=\"GET\" action=\"" (safe (.-pathname confirm-url)) "\">\n"
-         "<input type=\"hidden\" name=\"client_id\" value=\""           (safe client-id)    "\" />\n"
-         "<input type=\"hidden\" name=\"redirect_uri\" value=\""         (safe redirect-uri) "\" />\n"
-         "<input type=\"hidden\" name=\"state\" value=\""               (safe (or state "")) "\" />\n"
-         "<input type=\"hidden\" name=\"code_challenge\" value=\""       (safe code-challenge) "\" />\n"
-         "<input type=\"hidden\" name=\"code_challenge_method\" value=\"S256\" />\n"
-         "<input type=\"hidden\" name=\"scope\" value=\""               (safe requested-scope) "\" />\n"
-         "<h2>Capabilities</h2>\n"
-         "<p>Select exactly which Knoxx tools this client can call. You can always revoke tokens later.</p>\n"
-         "<div class=\"tools\">\n"
-         (tool-checkbox-html tools selected)
-         "</div>\n"
-         "<div class=\"actions\">\n"
-         "<button type=\"submit\">Authorize</button>\n"
-         "<a href=\"/\">Cancel</a>\n"
-         "</div></form></div></body></html>")))
-
 (defn- ^:async load-token-record! [access-token]
   (if (str/blank? (str access-token))
     nil
@@ -432,6 +181,32 @@
                        (aget token-record "orgSlug")
                        (assoc "x-knoxx-org-slug" (aget token-record "orgSlug")))]
     (db-policy/resolve-context! policy-context headers-like)))
+
+(defn- call-actor-id
+  "The actor this request's tool calls run as, or nil when it has none.
+
+   A token gets an actor only if it *carries* one. A token that carries none —
+   every token minted before actors were carried — stays actor-less rather than
+   inheriting whatever its membership resolves to now: the actor decides which
+   Discord and Bluesky account a call posts from, and that token's consent
+   screen never named one. Granting it the membership's actor would hand an
+   already-issued credential a power its holder never agreed to, silently.
+
+   When the token does carry one, the value used is the membership's current
+   stored binding — not ctx-actor-id, whose role-derived default is never nil and
+   would therefore let a cleared assignment keep matching — and
+   law/token-actor-honourable? has already refused the case where the two
+   disagree. So a reassignment is a refusal rather than a quiet switch, and
+   there is no window in which a token acts as an actor its membership has
+   dropped."
+  [token-record token-ctx]
+  (let [claimed (actor-acting/normalize-actor-id (aget token-record "actorId"))
+        current (actor-acting/normalize-actor-id (authz/ctx-actor-binding token-ctx))]
+    (when-not (law/token-actor-honourable? claimed current)
+      (throw (params/http-error 403 "actor_reassigned"
+                         (str "This token was authorized to act as " claimed
+                              ", which is no longer this membership's actor."))))
+    (when claimed current)))
 
 (defn- apply-zod-description [^js schema-node ^js schema-json]
   (let [description (some-> (aget schema-json "description") str str/trim not-empty)]
@@ -518,7 +293,7 @@
 ;; preHandler-mode routes
 
 (defroute mcp-register-client! [crypto] "POST" "/api/mcp/oauth/register" []
-  (let [{:keys [redirect-uris client-name]} (parse-register-client-body request)
+  (let [{:keys [redirect-uris client-name]} (params/parse-register-client-body request)
         client-id (.randomUUID crypto)
         client    {:client_id                  client-id
                    :client_name                (or client-name "mcp-client")
@@ -531,57 +306,107 @@
       (await (mongo-mcp/set-client! client-id (js/JSON.stringify (clj->js client))))
       (json-send! reply 201 client)
       (catch :default err
-        (throw (http-error 500 "registration_failed" (or (.-message err) (str err))))))))
+        (throw (params/http-error 500 "registration_failed" (or (.-message err) (str err))))))))
 
 (defroute mcp-authorize-client! [base config runtime browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [browser-auth-guard]
   (let [auth-context (aget request "authContext")
-        {:keys [client-id redirect-uri state code-challenge scope] :as params} (parse-authorize-query request)]
+        {:keys [client-id redirect-uri state code-challenge scope] :as params} (params/parse-authorize-query request)]
     (ensure-oauth-request! params)
     (let [client (await (get-registered-client client-id))]
       (ensure-redirect-uri-allowed! client redirect-uri "invalid_request")
       (let [tools    (available-tools runtime config auth-context)
             selected (let [explicit (selected-tools-from-scope tools scope)]
                        (if (seq explicit) explicit (default-selected-tools (tool-name-set tools))))
-            html     (authorization-consent-html
+            html     (consent/page
                       {:base base :auth-context auth-context
                        :client-id client-id :redirect-uri redirect-uri
                        :state state :code-challenge code-challenge
                        :requested-scope (or scope "") :tools tools :selected selected})]
         (.send (reply-header! reply "content-type" "text/html; charset=utf-8") html)))))
 
+(defn- ensure-consent-identity!
+  "Refuse a confirmation whose session cannot carry an authorization.
+
+   The consent page tolerates a partly-resolved context so a render cannot
+   crash, but those empty-string fallbacks must never be minted: the code is
+   copied verbatim into the access token, and a token with a blank membership
+   carries no authorization identity while still being a valid bearer token.
+
+   org-slug is deliberately not required — it is descriptive rather than an
+   authorization key, and a membership without one is legitimate."
+  [membership-id user-email]
+  (when (or (str/blank? membership-id) (str/blank? user-email))
+    (throw (params/http-error 400 "missing_identity"
+                       "Session has no membership or user identity to authorize with"))))
+
+(defn- ensure-consent-actor-unchanged!
+  "Refuse when the membership's actor moved while the consent page was open.
+
+   Minting now would authorize an actor the user never saw, and every later call
+   would accept it, because it matches the membership. See
+   law/consent-actor-unchanged? for why the page's value is a witness rather
+   than identity."
+  [displayed-actor actor-id]
+  (when-not (law/consent-actor-unchanged? displayed-actor actor-id)
+    (let [named (fn [v] (or (not-empty (str/trim (str (or v "")))) "no actor"))]
+      (throw (params/http-error 400 "actor_changed"
+                         (str "This membership now acts as " (named actor-id)
+                              ", not " (named displayed-actor)
+                              " as shown. Reload the authorization page and review it."))))))
+
+(defn- authorization-code-payload
+  "The code record to persist for an approved consent.
+
+   The actor is read from the resolved context and never from the query: the
+   client is on the other side of a redirect it controls, so an actorId it
+   echoed back would be the client choosing its own identity. No grant is
+   evaluated here — a membership carries one actor — which is why
+   law/actor-grantable? is reached only through consent-actor-unchanged?, with
+   the membership's actor on one side and the displayed one on the other.
+
+   Read from ctx-actor-binding, not ctx-actor-id. The latter falls back to a
+   role-derived default and is never nil, so it would mint every token an actor:
+   a membership with none assigned would get credential scope for system_admin
+   or workspace_user that nobody granted, and clearing the stored id could not
+   revoke it, because the default takes over and still matches. Only an actor
+   somebody actually assigned may authorize credentials.
+
+   Normalized here rather than only in persist-access-token!, so the code record
+   and the token minted from it cannot hold two spellings of one actor."
+  [{:keys [code client-id redirect-uri code-challenge requested auth-context
+           displayed-actor]}]
+  (let [membership-id (str (or (authz/ctx-membership-id auth-context) ""))
+        user-email    (str (or (authz/ctx-user-email auth-context) ""))
+        org-slug      (str (or (authz/ctx-org-slug auth-context) ""))
+        actor-id      (actor-acting/normalize-actor-id
+                       (authz/ctx-actor-binding auth-context))]
+    (ensure-consent-identity! membership-id user-email)
+    (ensure-consent-actor-unchanged! displayed-actor actor-id)
+    (cond-> {:code code :clientId client-id :redirectUri redirect-uri
+             :codeChallenge code-challenge :codeChallengeMethod "S256"
+             :tools requested
+             :membershipId membership-id :userEmail user-email :orgSlug org-slug
+             :createdAt (.toISOString (js/Date.))}
+      ;; Absent rather than blank when there is no actor. A blank would
+      ;; round-trip as an actor that exists and owns nothing.
+      actor-id (assoc :actorId actor-id))))
+
 (defroute mcp-authorize-confirm! [base crypto config runtime code-ttl token-ttl browser-auth-guard] "GET" "/api/mcp/oauth/authorize/confirm" [browser-auth-guard]
   (let [auth-context (aget request "authContext")
-        {:keys [client-id redirect-uri state code-challenge selected-tools] :as params}
-        (parse-authorize-confirm-query request)]
+        {:keys [client-id redirect-uri state code-challenge selected-tools
+                displayed-actor] :as params}
+        (params/parse-authorize-confirm-query request)]
     (ensure-oauth-confirm-request! params)
     (let [client (await (get-registered-client client-id))]
       (ensure-redirect-uri-allowed! client redirect-uri "invalid_request")
       (let [requested (requested-tools runtime config auth-context selected-tools)]
         (when (empty? requested)
-          (throw (http-error 400 "invalid_scope" "No valid tools selected")))
-        ;; Same CLJS-map accessors as the consent page; see the note there.
-        (let [membership-id (str (or (authz/ctx-membership-id auth-context) ""))
-              user-email    (str (or (authz/ctx-user-email auth-context) ""))
-              org-slug      (str (or (authz/ctx-org-slug auth-context) ""))
-              _ (when (or (str/blank? membership-id) (str/blank? user-email))
-                  ;; The empty-string fallbacks above exist so a partly-resolved
-                  ;; context cannot crash the render, but they must not be
-                  ;; minted into a credential: the code is copied verbatim into
-                  ;; the access token by persist-access-token!, and a token with
-                  ;; a blank membership carries no authorization identity while
-                  ;; still being a valid bearer token. Refuse instead.
-                  ;;
-                  ;; org-slug is deliberately not required — it is descriptive
-                  ;; rather than an authorization key, and a membership without
-                  ;; one is legitimate.
-                  (throw (http-error 400 "missing_identity"
-                                     "Session has no membership or user identity to authorize with")))
-              code          (.randomUUID crypto)
-              payload       {:code code :clientId client-id :redirectUri redirect-uri
-                             :codeChallenge code-challenge :codeChallengeMethod "S256"
-                             :tools requested
-                             :membershipId membership-id :userEmail user-email :orgSlug org-slug
-                             :createdAt (.toISOString (js/Date.))}]
+          (throw (params/http-error 400 "invalid_scope" "No valid tools selected")))
+        (let [code    (.randomUUID crypto)
+              payload (authorization-code-payload
+                       {:code code :client-id client-id :redirect-uri redirect-uri
+                        :code-challenge code-challenge :requested requested
+                        :auth-context auth-context :displayed-actor displayed-actor})]
           (await (mongo-mcp/set-code! code (js/JSON.stringify (clj->js payload)) code-ttl))
           (let [redir (js/URL. redirect-uri)]
             (.set (.-searchParams redir) "code" code)
@@ -601,9 +426,9 @@
   ;; Whether the result admits the exchange is law's decision, so both rules
   ;; live in one pure place that every future caller shares.
   (when-not (law/code-bound-to? record client-id redirect-uri)
-    (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
+    (throw (params/http-error 400 "invalid_grant" "Client/redirect mismatch")))
   (when-not (law/pkce-verified? record (pkce-challenge crypto code-verifier))
-    (throw (http-error 400 "invalid_grant" "PKCE verification failed"))))
+    (throw (params/http-error 400 "invalid_grant" "PKCE verification failed"))))
 
 (defn- ^:async persist-access-token!
   "Mint and store an access token from a claimed code record (a CLJS map)."
@@ -611,24 +436,30 @@
   (let [access-token  (.randomUUID crypto)
         membership-id (:membershipId record)
         tools         (vec (:tools record))
-        token-value   {:accessToken access-token :clientId client-id
-                       :membershipId membership-id
-                       :userEmail    (:userEmail record)
-                       :orgSlug      (:orgSlug record)
-                       :tools        tools
-                       :createdAt    (.toISOString (js/Date.))
-                       :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
+        actor-id      (actor-acting/normalize-actor-id (:actorId record))
+        token-value   (cond-> {:accessToken access-token :clientId client-id
+                               :membershipId membership-id
+                               :userEmail    (:userEmail record)
+                               :orgSlug      (:orgSlug record)
+                               :tools        tools
+                               :createdAt    (.toISOString (js/Date.))
+                               :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}
+                        ;; Copied from the claimed code, so the actor a token
+                        ;; acts as is the one the user saw on the consent page.
+                        ;; Still re-checked against the membership on every
+                        ;; call — see law/token-actor-honourable?.
+                        actor-id (assoc :actorId actor-id))]
     (await (mongo-mcp/set-token! access-token (js/JSON.stringify (clj->js token-value)) token-ttl membership-id))
     {:access_token access-token :token_type "Bearer"
      :scope        (str/join " " tools)
      :expires_in   token-ttl}))
 
 (defroute mcp-exchange-token! [crypto token-ttl] "POST" "/api/mcp/oauth/token" []
-  (let [{:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
+  (let [{:keys [grant-type code code-verifier client-id redirect-uri]} (params/parse-token-exchange-body request)]
     (when (or (not= grant-type "authorization_code")
               (str/blank? code) (str/blank? code-verifier)
               (str/blank? client-id) (str/blank? redirect-uri))
-      (throw (http-error 400 "invalid_request" "Missing required token exchange parameters")))
+      (throw (params/http-error 400 "invalid_request" "Missing required token exchange parameters")))
     (let [client (await (get-registered-client client-id))]
       (ensure-redirect-uri-allowed! client redirect-uri "invalid_grant")
       ;; Validate against a peek, then claim. Single use is enforced by the
@@ -637,11 +468,11 @@
       ;; told the code is spent. The token is minted from the claimed record,
       ;; not the peeked one, so its contents cannot have changed in between.
       (let [peeked (await (mongo-mcp/peek-code! code))]
-        (when-not peeked (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
+        (when-not peeked (throw (params/http-error 400 "invalid_grant" "Unknown or expired code")))
         (ensure-code-bindings! crypto peeked client-id redirect-uri code-verifier)
         (let [record (await (mongo-mcp/consume-code! code))]
           (when-not record
-            (throw (http-error 400 "invalid_grant" "Authorization code already used")))
+            (throw (params/http-error 400 "invalid_grant" "Authorization code already used")))
           (json-send! reply 200
                       (await (persist-access-token! crypto token-ttl client-id record))))))))
 
@@ -649,16 +480,16 @@
   (let [auth-context  (aget request "authContext")
         membership-id (str (or (authz/ctx-membership-id auth-context) ""))]
     (when (str/blank? membership-id)
-      (throw (http-error 400 "missing_membership" "No membership available for this session")))
+      (throw (params/http-error 400 "missing_membership" "No membership available for this session")))
     (let [records (await (mongo-mcp/list-tokens-for-membership! membership-id))]
       (json-send! reply 200 {:ok true :tokens (->> records (remove nil?) into-array)}))))
 
 (defroute mcp-revoke-user-token! [browser-auth-guard] "DELETE" "/api/mcp/tokens/:tokenId" [browser-auth-guard]
   (let [auth-context  (aget request "authContext")
-        {:keys [token-id]}    (parse-revoke-token-params request)
+        {:keys [token-id]}    (params/parse-revoke-token-params request)
         membership-id         (str (or (authz/ctx-membership-id auth-context) ""))]
     (when (or (str/blank? membership-id) (str/blank? token-id))
-      (throw (http-error 400 "invalid_request" "membership and tokenId are required")))
+      (throw (params/http-error 400 "invalid_request" "membership and tokenId are required")))
     ;; Scoped to the caller's membership. Deleting by token value alone let any
     ;; authenticated caller revoke someone else's token if they learned its
     ;; value — the listing route is per-membership, but nothing stopped a
@@ -668,12 +499,12 @@
     ;; token exists for anyone else.
     (let [revoked (await (mongo-mcp/delete-token-for-membership! token-id membership-id))]
       (when-not revoked
-        (throw (http-error 404 "not_found" "No such token for this membership")))
+        (throw (params/http-error 404 "not_found" "No such token for this membership")))
       (json-send! reply 200 {:ok true}))))
 
 (defroute mcp-handle-session! [base bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
-        session-id (resolve-session-id request)]
+        session-id (transport/resolve-session-id request)]
     (cond
       (str/blank? (str session-id))
       (text-send! reply 400 "Missing mcp-session-id")
@@ -682,13 +513,13 @@
       (let [{:keys [transport token]} (get @mcp-sessions* session-id)]
         (cond
           (nil? transport)                   (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
-          (not= (str bearer) (str token))    (challenge-unauthorized! reply base)
-          :else (do (ensure-streamable-accept! request)
-                    (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
+          (not= (str bearer) (str token))    (transport/challenge-unauthorized! reply base)
+          :else (do (transport/ensure-streamable-accept! request)
+                    (transport/handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
 (defroute mcp-handle-delete-session! [base bearer-token-guard] "DELETE" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
-        session-id (resolve-session-id request)]
+        session-id (transport/resolve-session-id request)]
     (cond
       (str/blank? (str session-id))
       (text-send! reply 400 "Missing mcp-session-id")
@@ -697,9 +528,104 @@
       (let [{:keys [transport token]} (get @mcp-sessions* session-id)]
         (cond
           (nil? transport)                   (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
-          (not= (str bearer) (str token))    (challenge-unauthorized! reply base)
-          :else (do (ensure-streamable-accept! request)
-                    (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
+          (not= (str bearer) (str token))    (transport/challenge-unauthorized! reply base)
+          :else (do (transport/ensure-streamable-accept! request)
+                    (transport/handle-request! transport (aget request "raw") (aget reply "raw"))))))))
+
+(defn- tool-config-js
+  "The MCP registerTool config for one tool object. Pure interop assembly."
+  [z ^js tool name]
+  (let [shape  (or (when z (typebox->zod-shape z (or (aget tool "parameters") (js/Object.)))) (js-obj))
+        config (clj->js {:description (str (or (aget tool "description") (aget tool "label") name))
+                         :inputSchema shape})]
+    (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
+      (aset config "title" title))
+    ;; A tool's own annotations win, else the declared table.
+    ;; See law.mcp-tool-annotations for why absence is bad.
+    (if-let [annotations (aget tool "annotations")]
+      (aset config "annotations" annotations)
+      ;; name may be sanitized (web.read -> web_read).
+      (when-let [declared (or (tool-annotations/for-tool name)
+                              (tool-annotations/for-tool (aget tool "originalName")))]
+        (aset config "annotations" (clj->js declared))))
+    (when-let [meta (aget tool "_meta")]
+      (aset config "_meta" meta))
+    config))
+
+(defn- register-tools!
+  "Register every granted tool on a fresh MCP server, bound to one actor.
+
+   Each handler runs inside that actor's scope, so domain.actor.credentials
+   resolves the actor without the MCP surface having to impersonate an agent
+   spawn. The scope is entered per call rather than per request because the SDK
+   invokes handlers itself: wrapping the request would put the awaits that
+   matter outside it.
+
+   A nil actor-id still enters a scope — one that says there is no actor. It has
+   to: without it a credential read falls back to the process-global
+   agent-context, and an actor-less token would borrow whatever actor a
+   concurrent agent turn is running as. See actor-acting/run-as!."
+  [^js server z tools acting]
+  (doseq [^js tool (array-seq tools)]
+    (when-let [name (some-> (aget tool "name") str str/trim not-empty)]
+      (.registerTool server name
+                     (tool-config-js z tool name)
+                     (fn [params]
+                       (actor-acting/run-as! acting #(tool-execute! tool params)))))))
+
+(defn- granted-tools
+  "The tools this token was granted, out of those its context can reach.
+
+   The intersection is the whole authorization: a token carries the names ticked
+   on the consent page, and a tool absent from either side is not registered.
+   One consequence worth knowing — a token whose grant list is empty registers
+   nothing, so initialize advertises no tool capability and tools/list answers
+   \"Method not found\". That is correct, and it reads like a broken server."
+  [runtime config token-ctx ^js token-record]
+  (let [allowed (into #{} (map str) (array-seq (or (aget token-record "tools") (js/Array.))))]
+    (->> (available-tools runtime config token-ctx)
+         array-seq
+         (filter (fn [^js t] (contains? allowed (str (aget t "name")))))
+         into-array)))
+
+(defn- close-when-response-ends!
+  "Tear down a per-request MCP server once its response is finished.
+
+   Stateless mode requires a fresh server and transport per exchange, so without
+   this every POST leaves both behind for the process lifetime.
+
+   Closing the *server* is enough and closing the transport as well would be a
+   double close: in SDK 1.29 McpServer.close -> Server.close ->
+   Protocol.close -> transport.close.
+
+   Bound to the response's close event rather than run after handle-request!
+   returns, because a response may still be streaming when the handler resolves;
+   closing then would cut it off. Failures are swallowed deliberately — the
+   client already has its response, and a teardown error must not replace it."
+  [^js raw-res ^js server]
+  (.once raw-res "close"
+         (^:async fn []
+           (try
+             (await (.close server))
+             (catch :default _ nil)))))
+
+(defn- ^:async serve-mcp-post!
+  "Answer one authenticated MCP POST on a per-request server and transport."
+  [{:keys [config runtime policy-db McpServer StreamableHTTPServerTransport z
+           request raw-req raw-res token-record]}]
+  (let [token-ctx (await (resolve-token-context! policy-db token-record))
+        acting    {:actor-id (call-actor-id token-record token-ctx)
+                   ;; From the resolved context, so a credential lookup names
+                   ;; this token's owner exactly rather than searching by actor.
+                   :org-id        (authz/ctx-org-id token-ctx)
+                   :membership-id (authz/ctx-membership-id token-ctx)}
+        server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
+        transport (new StreamableHTTPServerTransport (transport/stateless-transport-options))]
+    (register-tools! server z (granted-tools runtime config token-ctx token-record) acting)
+    (await (.connect server transport))
+    (close-when-response-ends! raw-res server)
+    (transport/ensure-streamable-accept! request)
+    (transport/handle-request! transport raw-req raw-res (aget request "body"))))
 
 (defroute mcp-handle-post! [base config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z] "POST" "/mcp" []
   (let [^js request request
@@ -707,57 +633,25 @@
     (.hijack reply)
     (let [^js raw-req (aget request "raw")
           ^js raw-res (aget reply "raw")
-          bearer  (bearer-token request)]
-      (if (str/blank? bearer)
-        (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
-                                               "Content-Type" "text/plain"}))
-            (.end raw-res "Unauthorized"))
-        (try
-          (let [token-record (await (load-token-record! bearer))]
-            (if-not token-record
-              (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
-                                                     "Content-Type" "text/plain"}))
-                  (.end raw-res "Unauthorized"))
-              (let [token-ctx (await (resolve-token-context! policy-db token-record))
-                    all-tools (available-tools runtime config token-ctx)
-                    allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") (js/Array.))))
-                    effective (->> (array-seq all-tools)
-                                   (filter (fn [t] (contains? allowed (str (aget t "name")))))
-                                   into-array)
-                    server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
-                    transport (new StreamableHTTPServerTransport
-                                   (stateless-transport-options))]
-                (doseq [tool (array-seq effective)]
-                  (let [n (some-> (aget tool "name") str str/trim not-empty)
-                        s (or (when z (typebox->zod-shape z (or (aget tool "parameters") (js/Object.)))) (js-obj))]
-                    (when n
-                      (let [tool-config (clj->js {:description (str (or (aget tool "description") (aget tool "label") n))
-                                                  :inputSchema s})]
-                        (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
-                          (aset tool-config "title" title))
-                        ;; A tool's own annotations win, else the declared table.
-                        ;; See law.mcp-tool-annotations for why absence is bad.
-                        (if-let [annotations (aget tool "annotations")]
-                          (aset tool-config "annotations" annotations)
-                          ;; n may be sanitized (web.read -> web_read).
-                          (when-let [declared (or (tool-annotations/for-tool n)
-                                                  (tool-annotations/for-tool
-                                                   (aget tool "originalName")))]
-                            (aset tool-config "annotations" (clj->js declared))))
-                        (when-let [meta (aget tool "_meta")]
-                          (aset tool-config "_meta" meta))
-                        (.registerTool server n
-                                       tool-config
-                                       (fn [params] (tool-execute! tool params)))))))
-                (await (.connect server transport))
-                (ensure-streamable-accept! request)
-                (transport-handle-request! transport raw-req raw-res (aget request "body")))))
-          (catch :default err
-            (.error js/console "[knoxx-mcp] post failed" err)
-            (when-not (.-headersSent raw-res)
-              (.writeHead raw-res 500 (clj->js {"Content-Type" "application/json"}))
-              (.end raw-res (js/JSON.stringify (clj->js {:error "mcp_post_failed"
-                                                          :detail (or (.-message err) (str err))}))))))))))
+          bearer      (transport/bearer-token request)]
+      (try
+        (let [token-record (when-not (str/blank? bearer)
+                             (await (load-token-record! bearer)))]
+          (if-not token-record
+            (transport/unauthorized! base raw-res)
+            (await (serve-mcp-post!
+                    {:config config :runtime runtime :policy-db policy-db
+                     :McpServer McpServer
+                     :StreamableHTTPServerTransport StreamableHTTPServerTransport
+                     :z z :request request :raw-req raw-req :raw-res raw-res
+                     :token-record token-record}))))
+        (catch :default err
+          (.error js/console "[knoxx-mcp] post failed" err)
+          (when-not (.-headersSent raw-res)
+            (let [status (or (aget err "statusCode") 500)]
+              (.writeHead raw-res status (clj->js {"Content-Type" "application/json"}))
+              (.end raw-res (js/JSON.stringify (clj->js {:error (or (aget err "code") "mcp_post_failed")
+                                                         :detail (or (.-message err) (str err))}))))))))))
 
 (def ^:private route-registrars
   "Every MCP route, in registration order. Kept as data so adding one is a line

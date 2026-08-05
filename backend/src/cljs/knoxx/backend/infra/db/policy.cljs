@@ -493,12 +493,18 @@
 (defn- request-context-map
   [membership-row membership detailed-roles]
   (let [{:keys [permissions tool-policies role-slugs]} (request-policy-summary membership detailed-roles)
-        actor-id (or (normalize-actor-id (:actor_id membership-row))
+        ;; The membership's *stored* actor binding, or nil. Kept separate from
+        ;; actor-id below, which falls back to a role-derived default and is
+        ;; therefore never nil — so it cannot answer "was an actor assigned?".
+        ;; Anything deciding authority (which credentials a token may read) must
+        ;; use the binding; the default is a display and role convenience.
+        actor-binding (normalize-actor-id (:actor_id membership-row))
+        actor-id (or actor-binding
                      (default-membership-actor-id role-slugs))]
     {:user (request-user-map membership-row)
      :org (request-org-map membership-row)
      :membership (request-membership-map membership actor-id)
-     :actor {:id actor-id}
+     :actor {:id actor-id :binding actor-binding}
      :roles detailed-roles
      :role-slugs role-slugs
      :permissions permissions
@@ -1374,10 +1380,18 @@
                             payload))
 
 (defn ^:async get-actor-credential!
-  [_policy-context actor-id provider]
-  (when-let [db (await (ensure-mongo-policy-db!))]
-    {:credential (mongo-actor-creds/credential-row->response
-                  (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider! db actor-id provider)))}))
+  "An actor's active credential for a provider.
+
+   scope narrows the membership lookup: {:org-id, :membership-id}. actor_id is
+   unique nowhere — not even within an org — so an unnarrowed lookup refuses an
+   ambiguous actor rather than returning some member's secret. A caller holding a
+   request context should pass its membership id, which is exact."
+  ([policy-context actor-id provider] (get-actor-credential! policy-context actor-id provider nil))
+  ([_policy-context actor-id provider scope]
+   (when-let [db (await (ensure-mongo-policy-db!))]
+     {:credential (mongo-actor-creds/credential-row->response
+                   (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
+                           db actor-id provider scope)))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation

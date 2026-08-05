@@ -4,7 +4,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.domain.actor.credentials :as actor-credentials]
+            [knoxx.backend.infra.actor.credentials :as actor-credentials]
             [knoxx.backend.domain.media.remote-client :as remote-client]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
