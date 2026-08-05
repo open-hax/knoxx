@@ -149,3 +149,43 @@
                           (vec seen))
                        "each interleaved call must observe only its own actor")
                    (done)))))))
+
+;; ─────────────────────────────────────────────────────────
+;; A token gets an actor only if it carries one.
+;;
+;; token-actor-honourable? admits an actor-less token so that tokens minted
+;; before this change keep working. That admission must not become a *grant*:
+;; if an actor-less token were then scoped to whatever its membership resolves
+;; to now, every already-issued token would silently gain the power to post as
+;; that actor on Discord and Bluesky, without its consent screen ever having
+;; named one. Honourable means "not refused", not "entitled".
+;;
+;; This is the rule call-actor-id implements; pinned here because the two
+;; predicates read as if honourable implied granted.
+;; ─────────────────────────────────────────────────────────
+
+(defn- scoped-actor
+  "What call-actor-id resolves for a token/membership pair, as law decides it.
+
+   Mirrors the route: refuse a mismatch, then take the membership's actor only
+   when the token itself carries one."
+  [token-actor membership-actor]
+  (when-not (law/token-actor-honourable? token-actor membership-actor)
+    (throw (js/Error. "actor_reassigned")))
+  (when (scope/normalize-actor-id token-actor)
+    (scope/normalize-actor-id membership-actor)))
+
+(deftest a-token-carrying-an-actor-is-scoped-to-it
+  (is (= "open_hax" (scoped-actor "open_hax" "open_hax"))))
+
+(deftest a-legacy-token-is-not-upgraded-to-the-memberships-actor
+  (testing "no actorId means no actor scope, even though the membership has one"
+    (is (nil? (scoped-actor nil "open_hax")))
+    (is (nil? (scoped-actor "" "open_hax")))
+    (is (nil? (scoped-actor "   " "open_hax")))))
+
+(deftest a-reassigned-membership-refuses-rather-than-switching
+  (is (thrown? js/Error (scoped-actor "open_hax" "discord_automation"))
+      "the call must be refused, not quietly re-pointed at the new actor")
+  (is (thrown? js/Error (scoped-actor "open_hax" nil))
+      "clearing the membership's actor must refuse too"))

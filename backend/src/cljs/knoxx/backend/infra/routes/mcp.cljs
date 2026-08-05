@@ -123,6 +123,12 @@
   ([status error detail data]
    (let [e (ex-info detail (merge {:status status :error error :detail detail} data))]
      (aset e "statusCode" status)
+     ;; And the code where a hijacked route looks. /mcp writes its own response,
+     ;; so it reads the error off the object rather than through Fastify — and
+     ;; ex-data is invisible from JS, so without this every refusal reported as
+     ;; mcp_post_failed and a client could not tell actor_reassigned from a
+     ;; crash.
+     (aset e "code" error)
      e)))
 
 (defn- validation-detail [schema value]
@@ -304,12 +310,18 @@
 (defn- call-actor-id
   "The actor this request's tool calls run as, or nil when it has none.
 
-   Resolved from the context the token maps to, not from the token, so a
-   membership whose actor was reassigned or cleared takes effect immediately
-   instead of at token expiry. The token's own copy is only consulted to refuse
-   a token that names a different actor than its membership now resolves to —
-   see law/token-actor-honourable? for why that is a refusal and not a silent
-   preference for one side."
+   A token gets an actor only if it *carries* one. A token that carries none —
+   every token minted before actors were carried — stays actor-less rather than
+   inheriting whatever its membership resolves to now: the actor decides which
+   Discord and Bluesky account a call posts from, and that token's consent
+   screen never named one. Granting it the membership's actor would hand an
+   already-issued credential a power its holder never agreed to, silently.
+
+   When the token does carry one, the value used is the membership's current
+   actor, and law/token-actor-honourable? has already refused the case where the
+   two disagree. So a reassignment is a refusal rather than a quiet switch, and
+   there is no window in which a token acts as an actor its membership has
+   dropped."
   [token-record token-ctx]
   (let [claimed (actor-scope/normalize-actor-id (aget token-record "actorId"))
         current (actor-scope/normalize-actor-id (authz/ctx-actor-id token-ctx))]
@@ -317,7 +329,7 @@
       (throw (http-error 403 "actor_reassigned"
                          (str "This token was authorized to act as " claimed
                               ", which is no longer this membership's actor."))))
-    current))
+    (when claimed current)))
 
 (defn- apply-zod-description [^js schema-node ^js schema-json]
   (let [description (some-> (aget schema-json "description") str str/trim not-empty)]
@@ -462,13 +474,22 @@
                   ;; one is legitimate.
                   (throw (http-error 400 "missing_identity"
                                      "Session has no membership or user identity to authorize with")))
-              ;; The actor comes from the resolved context, never from the
-              ;; query — the client is on the other side of a redirect it
-              ;; controls, so an actorId it echoed back would be its own choice
-              ;; of identity. law/actor-grantable? then confirms the membership
-              ;; may name it, which today means it must be the membership's own.
-              actor-id      (let [claimed (str (or (authz/ctx-actor-id auth-context) ""))]
-                              (when (law/actor-grantable? claimed claimed) claimed))
+              ;; No grant is evaluated here, and calling law/actor-grantable?
+              ;; with this value on both sides would only have tested for a
+              ;; blank while reading as a check. The actor is the membership's
+              ;; own by construction: it is read from the resolved context and
+              ;; never from the query, because the client is on the other side
+              ;; of a redirect it controls and an actorId it echoed back would
+              ;; be the client choosing its own identity.
+              ;;
+              ;; When a request may name a *different* actor, that is where
+              ;; law/actor-grantable? belongs — called with the membership's
+              ;; actor and the requested one.
+              ;;
+              ;; Normalized here rather than only in persist-access-token!, so
+              ;; the code record and the token minted from it cannot hold two
+              ;; spellings of the same actor.
+              actor-id      (actor-scope/normalize-actor-id (authz/ctx-actor-id auth-context))
               code          (.randomUUID crypto)
               payload       (cond-> {:code code :clientId client-id :redirectUri redirect-uri
                                      :codeChallenge code-challenge :codeChallengeMethod "S256"
@@ -655,6 +676,27 @@
          (filter (fn [^js t] (contains? allowed (str (aget t "name")))))
          into-array)))
 
+(defn- close-when-response-ends!
+  "Tear down a per-request MCP server once its response is finished.
+
+   Stateless mode requires a fresh server and transport per exchange, so without
+   this every POST leaves both behind for the process lifetime.
+
+   Closing the *server* is enough and closing the transport as well would be a
+   double close: in SDK 1.29 McpServer.close -> Server.close ->
+   Protocol.close -> transport.close.
+
+   Bound to the response's close event rather than run after handle-request!
+   returns, because a response may still be streaming when the handler resolves;
+   closing then would cut it off. Failures are swallowed deliberately — the
+   client already has its response, and a teardown error must not replace it."
+  [^js raw-res ^js server]
+  (.once raw-res "close"
+         (fn []
+           (try
+             (some-> (.close server) (.catch (fn [_] nil)))
+             (catch :default _ nil)))))
+
 (defn- ^:async serve-mcp-post!
   "Answer one authenticated MCP POST on a per-request server and transport."
   [{:keys [config runtime policy-db McpServer StreamableHTTPServerTransport z
@@ -665,6 +707,7 @@
         transport (new StreamableHTTPServerTransport (transport/stateless-transport-options))]
     (register-tools! server z (granted-tools runtime config token-ctx token-record) actor-id)
     (await (.connect server transport))
+    (close-when-response-ends! raw-res server)
     (transport/ensure-streamable-accept! request)
     (transport/handle-request! transport raw-req raw-res (aget request "body"))))
 
