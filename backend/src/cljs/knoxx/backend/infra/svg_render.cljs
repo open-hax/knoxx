@@ -24,7 +24,7 @@
 (def ^:private prohibited-declaration-pattern #"(?is)<\s*!(?:doctype|entity)\b")
 (def ^:private processing-instruction-pattern #"(?is)<\?")
 (def ^:private prohibited-element-pattern
-  #"(?is)<\s*(?:script|foreignobject|iframe|object|embed|link|img|audio|video|source|base|meta|html|body|form|input|button|textarea|select|option)\b")
+  #"(?is)<\s*(?:script|foreignobject|iframe|object|embed|link|img|audio|video|source|base|meta|html|body|form|input|button|textarea|select|option|animate(?:motion|transform)?|set|discard)\b")
 (def ^:private event-attribute-pattern #"(?is)\son[a-z0-9:_-]*\s*=")
 (def ^:private base-attribute-pattern #"(?is)\s(?:xml:base|base)\s*=")
 (def ^:private resource-attribute-pattern
@@ -141,7 +141,7 @@
       (reject-svg! "SVG processing instructions are not allowed"
                    :svg/processing-instruction svg-string))
     (when (re-find prohibited-element-pattern candidate)
-      (reject-svg! "SVG contains an active or HTML-only element"
+      (reject-svg! "SVG contains an active, mutating, or HTML-only element"
                    :svg/prohibited-element svg-string))
     (when (re-find event-attribute-pattern candidate)
       (reject-svg! "SVG event attributes are not allowed"
