@@ -72,6 +72,7 @@
            ["HTML sibling" "<svg></svg><img src='https://evil.test/pixel'>"]
            ["event attribute" "<svg onload='alert(1)'></svg>"]
            ["base URL" "<svg xml:base='https://evil.test/'><use href='#shape'/></svg>"]
+           ["declarative mutation" "<svg><image id='target'/><set href='#target' attributeName='href' to='https://evil.test/image.png'/></svg>"]
            ["external href" "<svg><image href='https://evil.test/image.png'/></svg>"]
            ["protocol-relative href" "<svg><image href='//evil.test/image.png'/></svg>"]
            ["data SVG" "<svg><image href='data:image/svg+xml,%3Csvg/%3E'/></svg>"]
