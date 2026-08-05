@@ -5,10 +5,11 @@
    env vars here; missing credentials should be fixed in Admin → Actors."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
+            [knoxx.backend.infra.actor.scope :as actor-scope]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.db.policy :as policy-db]))
 
-(defn current-actor-id
+(defn- agent-context-actor-id
   []
   (let [ctx (or (agent-context/get-context) {})
         spec (:agent-spec ctx)]
@@ -21,6 +22,21 @@
             str
             str/trim
             not-empty)))
+
+(defn current-actor-id
+  "The actor whose credentials this call may read, or nil.
+
+   Two sources, and the order matters. An explicit actor scope wins because it
+   is per-unit-of-work and cannot be another request's: agent-context is a
+   process-global atom, so on a concurrent surface a leftover or interleaved
+   value there could otherwise be read as this call's actor. Preferring the
+   scope means the narrower claim always beats the wider one.
+
+   The agent-spawn path sets only agent-context, so it stays as the fallback and
+   keeps working unchanged."
+  []
+  (or (actor-scope/current-actor-id)
+      (agent-context-actor-id)))
 
 (defn- normalize-credential
   [payload]
