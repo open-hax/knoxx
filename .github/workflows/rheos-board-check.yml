@@ -1,0 +1,30 @@
+name: Rheos Board Check
+
+on:
+  pull_request:
+    paths:
+      - "kanban/**"
+      - ".github/workflows/rheos-board-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "kanban/**"
+      - ".github/workflows/rheos-board-check.yml"
+  schedule:
+    - cron: "17 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rheos-board-check:
+    permissions:
+      contents: read
+    uses: open-hax/eta-mu/.github/workflows/rheos-board-check.yml@1af6746673b78000b690bfff773af0db10735566
+    with:
+      eta-mu-ref: 1af6746673b78000b690bfff773af0db10735566
+      tasks-dir: kanban
+      min-tasks: 1
+      fail-on-drift: true
+      artifact-name: knoxx-rheos-board-check
