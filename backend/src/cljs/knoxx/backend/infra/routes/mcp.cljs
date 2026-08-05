@@ -549,7 +549,12 @@
    resolves the actor without the MCP surface having to impersonate an agent
    spawn. The scope is entered per call rather than per request because the SDK
    invokes handlers itself: wrapping the request would put the awaits that
-   matter outside it."
+   matter outside it.
+
+   A nil actor-id still enters a scope — one that says there is no actor. It has
+   to: without it a credential read falls back to the process-global
+   agent-context, and an actor-less token would borrow whatever actor a
+   concurrent agent turn is running as. See actor-scope/run-as!."
   [^js server z tools actor-id]
   (doseq [^js tool (array-seq tools)]
     (when-let [name (some-> (aget tool "name") str str/trim not-empty)]

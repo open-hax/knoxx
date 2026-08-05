@@ -10,7 +10,12 @@
    This is the surface-neutral answer: enter a scope for one unit of work, read
    it from anywhere inside, and it is unreachable outside. Nothing here decides
    *which* actor is permitted — that is law.mcp-oauth's job — only which one is
-   currently in effect."
+   currently in effect.
+
+   The distinction that matters: **being in a scope with no actor is not the
+   same as being outside a scope.** A caller that has established there is no
+   actor is making a claim, and that claim has to be able to win over a
+   process-global that happens to hold one."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.async-local-storage :as als]))
 
@@ -27,16 +32,32 @@
 (defn run-as!
   "Call f with no arguments with actor-id in scope for the duration.
 
-   A blank actor-id enters no scope at all rather than an empty one, so a caller
-   that could not resolve an actor cannot accidentally establish one — the
-   failure surfaces where the credential is read, with a message about the
-   missing actor, instead of as a lookup for actor \"\"."
+   A scope is entered even when actor-id is blank, and that is the whole point:
+   it records \"this work has *no* actor\" as a positive fact rather than an
+   absence. Entering no scope would leave the caller indistinguishable from code
+   that never established anything, and readers fall back to the process-global
+   agent-context in that case — so an actor-less MCP call could pick up whatever
+   actor a concurrent agent turn happened to be running as, and use its
+   credentials. That is the exact leak this namespace exists to prevent,
+   arriving through the fallback instead of through the store.
+
+   Nested scopes shadow: the innermost wins, including when the innermost has no
+   actor."
   [actor-id f]
-  (if-let [actor (normalize-actor-id actor-id)]
-    (als/run-with store {:actor-id actor} f)
-    (f)))
+  (als/run-with store {:actor-id (normalize-actor-id actor-id)} f))
+
+(defn in-scope?
+  "True when the caller is inside a scope, whether or not it names an actor.
+
+   Readers need this to tell \"no actor, definitively\" from \"nobody said\".
+   Only the second may fall back to another source."
+  []
+  (some? (als/current store)))
 
 (defn current-actor-id
-  "The actor id in scope, or nil when there is none."
+  "The actor id in scope, or nil.
+
+   nil is ambiguous on its own — no actor, or no scope — so pair it with
+   in-scope? whenever the difference decides whether to consult a fallback."
   []
   (normalize-actor-id (:actor-id (als/current store))))

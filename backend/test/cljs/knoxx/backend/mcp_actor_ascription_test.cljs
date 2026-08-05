@@ -12,6 +12,8 @@
    Two halves are tested here: the law that says which actor may be named, and
    the scope that carries it without leaking across concurrent work."
   (:require [cljs.test :refer [deftest is testing async]]
+            [knoxx.backend.domain.actor.credentials :as credentials]
+            [knoxx.backend.domain.agent.agent-context :as agent-context]
             [knoxx.backend.infra.actor.scope :as scope]
             [knoxx.backend.law.mcp-oauth :as law]))
 
@@ -84,16 +86,50 @@
 (deftest scope-does-not-outlive-a-run
   (scope/run-as! "open_hax" (fn [] nil))
   (is (nil? (scope/current-actor-id))
-      "a scope must not leak into the next unit of work"))
+      "a scope must not leak into the next unit of work")
+  (is (false? (scope/in-scope?))
+      "and the scope itself must not outlive it either"))
 
-(deftest scope-normalizes-and-refuses-blanks
+(deftest scope-normalizes-its-actor-id
   (testing "an id arrives trimmed"
     (is (= "open_hax" (scope/run-as! "  open_hax\n" #(scope/current-actor-id)))))
-  (testing "a blank enters no scope at all, so the failure surfaces at the
-            credential read rather than as a lookup for actor \"\""
+  (testing "a blank reads as no actor, never as the actor \"\""
     (is (nil? (scope/run-as! "" #(scope/current-actor-id))))
     (is (nil? (scope/run-as! "   " #(scope/current-actor-id))))
     (is (nil? (scope/run-as! nil #(scope/current-actor-id))))))
+
+;; ─────────────────────────────────────────────────────────
+;; "No actor" is a positive fact, not an absence.
+;;
+;; A reader that sees no actor in scope must be able to tell "this work has none"
+;; from "nobody said" — because only the second may consult the process-global
+;; agent-context. Collapsing them let an actor-less MCP call borrow whatever
+;; actor a concurrent agent turn was running as and spend its credentials, which
+;; is the same leak the scope exists to prevent, reached through the fallback.
+;; ─────────────────────────────────────────────────────────
+
+(deftest a-blank-actor-still-enters-a-scope
+  (testing "so a reader can tell definitive absence from nothing being said"
+    (is (true? (scope/run-as! nil #(scope/in-scope?))))
+    (is (true? (scope/run-as! "" #(scope/in-scope?))))
+    (is (true? (scope/run-as! "open_hax" #(scope/in-scope?))))))
+
+(deftest outside-every-scope-nothing-has-been-said
+  (is (false? (scope/in-scope?)))
+  (is (nil? (scope/current-actor-id))))
+
+(deftest an-actor-less-scope-shadows-an-outer-actor
+  (testing "the innermost claim wins even when it is 'no actor' — otherwise an
+            actor-less unit of work inherits an enclosing one's credentials"
+    (is (nil? (scope/run-as! "open_hax"
+                             #(scope/run-as! nil (fn [] (scope/current-actor-id))))))
+    (is (true? (scope/run-as! "open_hax"
+                              #(scope/run-as! nil (fn [] (scope/in-scope?))))))
+    (testing "and the outer actor is intact afterwards"
+      (is (= "open_hax"
+             (scope/run-as! "open_hax" (fn []
+                                         (scope/run-as! nil (fn [] nil))
+                                         (scope/current-actor-id))))))))
 
 (deftest scope-nests-innermost-first
   (is (= "inner"
@@ -236,3 +272,54 @@
     (is (law/consent-actor-unchanged? nil nil))
     (is (law/consent-actor-unchanged? "" ""))
     (is (law/consent-actor-unchanged? "   " nil))))
+
+;; ─────────────────────────────────────────────────────────
+;; The fallback must not be reachable from inside a scope.
+;;
+;; domain.actor.credentials/current-actor-id has two sources: the scope, and the
+;; process-global agent-context that the agent-spawn path sets. An actor-less MCP
+;; call is inside a scope that names no actor, and a concurrent agent turn may
+;; have left an unrelated actor in agent-context. If absence in the scope fell
+;; through to that global, the actor-less token would spend that turn's Discord
+;; and Bluesky credentials — with every visible check passing.
+;;
+;; Exercised through the real credentials fn, with agent-context genuinely set,
+;; because this is precisely the interaction between the two that no test of
+;; either alone can catch.
+;; ─────────────────────────────────────────────────────────
+
+(defn- with-agent-context
+  "Run f with agent-context holding an actor, then clear it.
+
+   set-context! only stores a context when session-id and conversation-id are
+   both present, so they are supplied."
+  [actor f]
+  (agent-context/set-context! {:session-id "s-1"
+                               :conversation-id "c-1"
+                               :agent-spec {:actor-id actor}})
+  (try (f) (finally (agent-context/clear-context!))))
+
+(deftest agent-context-supplies-the-actor-outside-any-scope
+  (testing "the agent-spawn path must keep working unchanged"
+    (with-agent-context "chat_primary"
+      (fn [] (is (= "chat_primary" (credentials/current-actor-id)))))))
+
+(deftest an-actor-less-scope-does-not-fall-back-to-agent-context
+  (with-agent-context "chat_primary"
+    (fn []
+      (is (nil? (scope/run-as! nil #(credentials/current-actor-id)))
+          "an actor-less MCP call must not borrow a concurrent agent turn's actor")
+      (is (nil? (scope/run-as! "" #(credentials/current-actor-id)))))))
+
+(deftest a-scoped-actor-outranks-agent-context
+  (with-agent-context "chat_primary"
+    (fn []
+      (is (= "open_hax" (scope/run-as! "open_hax" #(credentials/current-actor-id)))
+          "the narrower per-call claim must beat the process-global"))))
+
+(deftest agent-context-is-restored-after-a-scope
+  (with-agent-context "chat_primary"
+    (fn []
+      (scope/run-as! "open_hax" (fn [] nil))
+      (is (= "chat_primary" (credentials/current-actor-id))
+          "a scope must not disturb the agent turn it ran inside"))))

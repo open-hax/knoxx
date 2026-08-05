@@ -26,17 +26,20 @@
 (defn current-actor-id
   "The actor whose credentials this call may read, or nil.
 
-   Two sources, and the order matters. An explicit actor scope wins because it
-   is per-unit-of-work and cannot be another request's: agent-context is a
-   process-global atom, so on a concurrent surface a leftover or interleaved
-   value there could otherwise be read as this call's actor. Preferring the
-   scope means the narrower claim always beats the wider one.
+   Two sources, and an actor scope is not merely preferred — inside one it is
+   the only answer, even when it names no actor. agent-context is a
+   process-global atom, so on a concurrent surface it may hold an unrelated
+   agent turn's actor; falling back to it from inside a scope that established
+   there is no actor would let an actor-less call read that turn's credentials.
+   That is the leak the scope exists to prevent, so `or` is the wrong combinator
+   here: absence inside a scope is an answer, not a gap.
 
-   The agent-spawn path sets only agent-context, so it stays as the fallback and
-   keeps working unchanged."
+   Outside any scope nobody has said anything, so the agent-spawn path's
+   agent-context is consulted and keeps working unchanged."
   []
-  (or (actor-scope/current-actor-id)
-      (agent-context-actor-id)))
+  (if (actor-scope/in-scope?)
+    (actor-scope/current-actor-id)
+    (agent-context-actor-id)))
 
 (defn- normalize-credential
   [payload]
