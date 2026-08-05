@@ -42,16 +42,41 @@ by default. URL-bearing attributes use an allowlisted scheme policy. The HTML
 renderer remains React-free so OAuth, error, email, and static protocol pages do
 not require a browser runtime.
 
-## First fixture
+### Dynamic SVG
+
+Dynamic SVG is not considered trusted merely because it is rendered with
+JavaScript disabled. SVG can still initiate browser requests through images,
+styles, fonts, filters, base URLs, and related resource references.
+
+A server renderer may wrap SVG in `:raw-html` only after a domain-specific
+validator has accepted it. The Knoxx Puppeteer renderer permits local fragment
+references such as `url(#glow)` and `href="#symbol"`, while rejecting active
+content, event attributes, declarations/entities, base URLs, CSS imports, and
+non-fragment resource references.
+
+Validation is not the only network boundary. The Puppeteer page also enables
+request interception and aborts every request before document content is set.
+This makes raw-markup validation the reviewed capability boundary and browser
+interception the defense-in-depth runtime boundary.
+
+## First fixtures
 
 The MCP OAuth consent page is the first migrated document. It keeps its existing
 fields, actor warning, tool selections, hidden OAuth parameters, styling, and
 copy while replacing local escaping and string concatenation with AST view
 functions plus the shared HTML renderer.
 
+The Puppeteer SVG document shell is the second fixture. Its outer HTML structure
+uses the same AST and deterministic renderer, while validated SVG crosses one
+explicit raw-markup boundary inside the body.
+
 ## Consequences
 
 - Server and browser structure can be tested for normalized-DOM parity.
 - Security policy is centralized instead of repeated in templates.
 - React lifecycle, reconciliation, hooks, and context remain outside the AST.
+- Dynamic raw-markup domains must define their own validation capability before
+  constructing a trusted value.
+- Browser renderers must enforce network policy independently of string
+  validation.
 - CSS-in-JS and a general template language are explicitly not introduced.
