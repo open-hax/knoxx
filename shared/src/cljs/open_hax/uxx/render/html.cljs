@@ -25,7 +25,7 @@
   (markup/validate-attribute! entry)
   (let [name (markup/attribute-name attribute)
         value (if (= "class" name)
-                (markup/normalize-class-value value)
+                (not-empty (markup/normalize-class-value value))
                 value)]
     [name value]))
 
@@ -33,7 +33,7 @@
   [[name value]]
   (cond
     (= "key" name) ""
-    (or (nil? value) (false? value) (= "" value)) ""
+    (or (nil? value) (false? value)) ""
     (true? value) (str " " name)
     :else (str " " name "=\"" (escape-attribute value) "\"")))
 
