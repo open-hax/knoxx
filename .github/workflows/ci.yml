@@ -95,6 +95,9 @@ jobs:
       - name: Frontend typecheck (tsc)
         run: pnpm -C frontend run typecheck
 
+      - name: Frontend CLJS tests
+        run: pnpm -C frontend run test:cljs
+
       - name: Frontend tests + coverage (vitest)
         run: pnpm -C frontend run test:coverage
 
