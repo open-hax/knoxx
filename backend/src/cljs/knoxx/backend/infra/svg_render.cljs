@@ -5,6 +5,7 @@
    cold-start cost. Uses puppeteer-core so deployments can provide Chromium via
    PUPPETEER_EXECUTABLE_PATH/KNOXX_CHROMIUM_PATH or a common system path."
   (:require [clojure.string :as str]
+            [knoxx.backend.law.svg :as svg-law]
             [open-hax.uxx.markup :as markup]
             [open-hax.uxx.render.html :as html]
             ["node:fs" :as fs]
@@ -19,19 +20,6 @@
    "/usr/bin/google-chrome-stable"
    "/usr/bin/google-chrome"
    "/snap/bin/chromium"])
-
-(def ^:private svg-root-pattern #"(?is)^\s*<svg\b")
-(def ^:private prohibited-declaration-pattern #"(?is)<\s*!(?:doctype|entity)\b")
-(def ^:private processing-instruction-pattern #"(?is)<\?")
-(def ^:private prohibited-element-pattern
-  #"(?is)<\s*(?:script|foreignobject|iframe|object|embed|link|img|audio|video|source|base|meta|html|body|form|input|button|textarea|select|option|animate(?:motion|transform)?|set|discard)\b")
-(def ^:private event-attribute-pattern #"(?is)\son[a-z0-9:_-]*\s*=")
-(def ^:private base-attribute-pattern #"(?is)\s(?:xml:base|base)\s*=")
-(def ^:private resource-attribute-pattern
-  #"(?is)\s(?:href|xlink:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
-(def ^:private css-url-pattern
-  #"(?is)url\(\s*(?:\"([^\"]*)\"|'([^']*)'|([^)]*))\s*\)")
-(def ^:private css-import-pattern #"(?is)@import\b")
 
 (defn- env-value
   [k]
@@ -96,80 +84,12 @@
       (reset! browser-promise-atom launch-promise)
       (await launch-promise))))
 
-(defn- svg-preview
-  [svg-string]
-  (let [value (str (or svg-string ""))]
-    (.slice value 0 (min 160 (count value)))))
-
-(defn- reject-svg!
-  [message type svg-string]
-  (throw (ex-info message
-                  {:type type
-                   :preview (svg-preview svg-string)})))
-
-(defn- captured-reference
-  [match]
-  (str/trim (str (or (nth match 1 nil)
-                         (nth match 2 nil)
-                         (nth match 3 nil)
-                         ""))))
-
-(defn- local-fragment-reference?
-  [value]
-  (str/starts-with? value "#"))
-
-(defn validate-svg!
-  "Validate SVG before it crosses the explicit raw-markup capability boundary.
-
-   Local fragment references remain valid for gradients, filters, masks, clips,
-   symbols, and other in-document resources. Any reference that could resolve
-   outside the document is rejected; Chromium request interception is still
-   enabled as a defense-in-depth network boundary."
-  [svg-string]
-  (when-not (string? svg-string)
-    (reject-svg! "SVG content must be a string" :svg/invalid-content svg-string))
-  (let [candidate (str/trim svg-string)]
-    (when (str/blank? candidate)
-      (reject-svg! "SVG content cannot be blank" :svg/blank-content svg-string))
-    (when-not (re-find svg-root-pattern candidate)
-      (reject-svg! "SVG content must begin with an <svg> root"
-                   :svg/missing-root svg-string))
-    (when (re-find prohibited-declaration-pattern candidate)
-      (reject-svg! "SVG declarations and entities are not allowed"
-                   :svg/prohibited-declaration svg-string))
-    (when (re-find processing-instruction-pattern candidate)
-      (reject-svg! "SVG processing instructions are not allowed"
-                   :svg/processing-instruction svg-string))
-    (when (re-find prohibited-element-pattern candidate)
-      (reject-svg! "SVG contains an active, mutating, or HTML-only element"
-                   :svg/prohibited-element svg-string))
-    (when (re-find event-attribute-pattern candidate)
-      (reject-svg! "SVG event attributes are not allowed"
-                   :svg/event-attribute svg-string))
-    (when (re-find base-attribute-pattern candidate)
-      (reject-svg! "SVG base URL attributes are not allowed"
-                   :svg/base-url svg-string))
-    (when (re-find css-import-pattern candidate)
-      (reject-svg! "SVG CSS imports are not allowed"
-                   :svg/css-import svg-string))
-    (doseq [match (re-seq resource-attribute-pattern candidate)]
-      (let [reference (captured-reference match)]
-        (when-not (local-fragment-reference? reference)
-          (reject-svg! "SVG resource attributes must use local fragments"
-                       :svg/external-resource svg-string))))
-    (doseq [match (re-seq css-url-pattern candidate)]
-      (let [reference (captured-reference match)]
-        (when-not (local-fragment-reference? reference)
-          (reject-svg! "SVG CSS URLs must use local fragments"
-                       :svg/external-css-resource svg-string))))
-    candidate))
-
 (defn- trusted-svg-markup
   [svg-string]
-  (markup/trusted-html (validate-svg! svg-string)))
+  (markup/trusted-html (svg-law/validate-svg! svg-string)))
 
 (defn svg-document-node
-  "Build the browser document around validated SVG using the shared AST."
+  "Build the browser document around law-validated SVG using the shared AST."
   [svg-string]
   [:html {}
    [:head {}
