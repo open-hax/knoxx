@@ -46,6 +46,11 @@ jobs:
           # (class file version 65).
           java-version: "21"
 
+      - name: Install clj-kondo
+        uses: DeLaGuardo/setup-clojure@13
+        with:
+          clj-kondo: latest
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -76,6 +81,9 @@ jobs:
           pnpm -C backend install --frozen-lockfile
           pnpm -C frontend install --frozen-lockfile
 
+      - name: Shared markup lint
+        run: pnpm -C backend run lint:shared-markup
+
       - name: Backend typecheck (shadow-cljs compile app)
         run: pnpm -C backend run typecheck
 
@@ -94,6 +102,9 @@ jobs:
 
       - name: Frontend typecheck (tsc)
         run: pnpm -C frontend run typecheck
+
+      - name: Frontend CLJS tests
+        run: pnpm -C frontend run test:cljs
 
       - name: Frontend tests + coverage (vitest)
         run: pnpm -C frontend run test:coverage
