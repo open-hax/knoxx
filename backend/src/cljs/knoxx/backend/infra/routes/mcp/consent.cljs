@@ -106,6 +106,13 @@
          "<input type=\"hidden\" name=\"code_challenge\" value=\"" (escape code-challenge) "\" />\n"
          "<input type=\"hidden\" name=\"code_challenge_method\" value=\"S256\" />\n"
          "<input type=\"hidden\" name=\"scope\" value=\""         (escape requested-scope) "\" />\n"
+         ;; A witness of what this page showed, not identity. The confirmation
+         ;; refuses when the membership's actor moved while the page was open —
+         ;; otherwise a token is minted for an actor the user never saw, and it
+         ;; is honoured, because it matches the membership. See
+         ;; law/consent-actor-unchanged?. Blank when there is no actor, and the
+         ;; confirmation treats blank-to-named as a change too.
+         "<input type=\"hidden\" name=\"actor_id\" value=\""      (escape actor-id) "\" />\n"
          "<h2>Capabilities</h2>\n"
          "<p>Select exactly which Knoxx tools this client can call. You can always revoke tokens later.</p>\n"
          "<div class=\"tools\">\n"

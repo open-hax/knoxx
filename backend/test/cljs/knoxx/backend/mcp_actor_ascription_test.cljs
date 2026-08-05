@@ -114,41 +114,44 @@
 ;; find. These two tests fail against an atom and pass against a real scope.
 ;; ─────────────────────────────────────────────────────────
 
-(defn- tick
+(defn- ^:async tick
   "Yield to the microtask queue, the way any awaited I/O would."
   []
-  (js/Promise.resolve nil))
+  (await (js/Promise.resolve nil)))
+
+(defn- ^:async actor-after-awaits
+  "The actor still in scope after two yields — one await per hop, as a
+   credential lookup would do."
+  []
+  (await (tick))
+  (await (tick))
+  (scope/current-actor-id))
+
+(defn- observe-actor
+  "Enter a scope and report what it observes once its awaits have resolved."
+  [actor]
+  (scope/run-as! actor actor-after-awaits))
 
 (deftest scope-survives-an-await
   (async done
-    (-> (scope/run-as! "open_hax"
-                       (fn []
-                         (-> (tick)
-                             (.then (fn [_] (tick)))
-                             (.then (fn [_] (scope/current-actor-id))))))
-        (.then (fn [seen]
-                 (is (= "open_hax" seen)
-                     "the actor must still be readable after the awaits a
-                      credential lookup performs")
-                 (done))))))
+    ((^:async fn []
+       (let [seen (await (observe-actor "open_hax"))]
+         (is (= "open_hax" seen)
+             "the actor must still be readable after the awaits a credential
+              lookup performs")
+         (done))))))
 
 (deftest concurrent-scopes-do-not-observe-each-other
   (async done
-    (let [observe (fn [actor]
-                    (scope/run-as! actor
-                                   (fn []
-                                     (-> (tick)
-                                         (.then (fn [_] (tick)))
-                                         (.then (fn [_] (scope/current-actor-id)))))))]
-      ;; Started before either resolves, so their awaits interleave.
-      (-> (js/Promise.all #js [(observe "open_hax")
-                               (observe "discord_automation")
-                               (observe "chat_primary")])
-          (.then (fn [seen]
-                   (is (= ["open_hax" "discord_automation" "chat_primary"]
-                          (vec seen))
-                       "each interleaved call must observe only its own actor")
-                   (done)))))))
+    ((^:async fn []
+       ;; All started before any resolves, so their awaits interleave.
+       (let [pending #js [(observe-actor "open_hax")
+                          (observe-actor "discord_automation")
+                          (observe-actor "chat_primary")]
+             seen    (await (js/Promise.all pending))]
+         (is (= ["open_hax" "discord_automation" "chat_primary"] (vec seen))
+             "each interleaved call must observe only its own actor")
+         (done))))))
 
 ;; ─────────────────────────────────────────────────────────
 ;; A token gets an actor only if it carries one.
@@ -189,3 +192,47 @@
       "the call must be refused, not quietly re-pointed at the new actor")
   (is (thrown? js/Error (scoped-actor "open_hax" nil))
       "clearing the membership's actor must refuse too"))
+
+;; ─────────────────────────────────────────────────────────
+;; law/consent-actor-unchanged? — the window between page and click
+;;
+;; The consent page shows which actor the token will act as. An admin can
+;; reassign or clear that actor while the page sits open, and the confirmation
+;; recomputes from a fresh context — so without this rule a token is minted for
+;; an actor the page never showed, and it is then honoured on every call because
+;; it matches the membership. The user consents to posting from one account and
+;; gets another.
+;;
+;; The displayed value arrives from a form field, so it is client-controlled. It
+;; is a witness of what was shown, never identity: the minted actor is always
+;; the context's. A forged match asserts "nothing changed", which is either true
+;; or is the very mismatch it was hiding — so a client can cause a refusal and
+;; never an escalation.
+;; ─────────────────────────────────────────────────────────
+
+(deftest consent-actor-unchanged-when-it-matches
+  (is (law/consent-actor-unchanged? "open_hax" "open_hax"))
+  (testing "and tolerates whitespace from the form round-trip"
+    (is (law/consent-actor-unchanged? "  open_hax " "open_hax"))))
+
+(deftest consent-actor-changed-when-reassigned
+  (is (not (law/consent-actor-unchanged? "open_hax" "discord_automation"))
+      "the page showed one account; the membership now posts from another"))
+
+(deftest consent-actor-changed-when-cleared
+  (is (not (law/consent-actor-unchanged? "open_hax" nil)))
+  (is (not (law/consent-actor-unchanged? "open_hax" ""))))
+
+(deftest consent-actor-changed-when-one-appears
+  (testing "an actor appearing is as much a change as one being replaced: the
+            page warned that credential-backed tools would fail, and the user
+            consented to that"
+    (is (not (law/consent-actor-unchanged? "" "open_hax")))
+    (is (not (law/consent-actor-unchanged? nil "open_hax")))))
+
+(deftest no-actor-either-side-is-unchanged
+  (testing "a membership with no actor renders the no-actor warning, and
+            consenting to that is legitimate — it must not be refused"
+    (is (law/consent-actor-unchanged? nil nil))
+    (is (law/consent-actor-unchanged? "" ""))
+    (is (law/consent-actor-unchanged? "   " nil))))

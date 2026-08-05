@@ -75,6 +75,35 @@
          (not (str/blank? requested))
          (= own requested))))
 
+(defn consent-actor-unchanged?
+  "True when the actor a consent page displayed is still the membership's actor.
+
+   Guards the window between rendering the page and clicking Authorize. An admin
+   can reassign or clear a membership's actor in that window, and the
+   confirmation recomputes the actor from a fresh context — so without this a
+   token is minted for an actor the page never showed, and because later calls
+   only compare the token against the membership's *current* actor, that token is
+   then honoured for credential-backed tools. The user consented to posting as
+   one account and got another.
+
+   The displayed value reaches this from a form field, so it is client-controlled
+   and is treated as a *witness of what was shown*, never as identity. The actor
+   actually minted is always the one the context resolved. A client that forges a
+   match therefore gains nothing — a match asserts \"nothing changed\", which is
+   either true or causes the mismatch it was trying to hide. It can only cause a
+   refusal, never an escalation.
+
+   Both blank is unchanged: a membership with no actor renders the page's
+   no-actor warning, and consenting to that is legitimate. Blank on one side only
+   is a change — an actor appearing is as much a change as one being replaced,
+   because the page warned that credential-backed tools would fail."
+  [displayed-actor-id membership-actor-id]
+  (let [shown (str/trim (str (or displayed-actor-id "")))
+        now   (str/trim (str (or membership-actor-id "")))]
+    (if (and (str/blank? shown) (str/blank? now))
+      true
+      (actor-grantable? now shown))))
+
 (defn token-actor-honourable?
   "True when a presented token's actor is still the one its membership resolves to.
 
