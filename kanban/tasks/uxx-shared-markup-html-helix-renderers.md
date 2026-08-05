@@ -1,10 +1,11 @@
 ---
 uuid: "uxx-shared-markup-html-helix-renderers"
 title: "Define a shared markup AST with HTML and Helix renderers"
-status: ready
+status: done
 priority: "P1"
 labels: ["tasks", "frontend", "backend", "helix", "ssr", "uxx", "8sp"]
 created_at: "2026-08-05T14:30:00Z"
+completed_at: "2026-08-05T15:20:00Z"
 source: "epics/frontend-helix-migration-vite-retirement.md"
 points: 8
 category: "tasks"
@@ -143,10 +144,26 @@ renderer may remain CLJS-only and depend on Helix/React.
 - The design note documents the future extraction boundary into
   `@open-hax/uxx` without requiring caller rewrites.
 
+## Completion
+
+Implemented in Knoxx PR #222.
+
+- Added the canonical AST and safety contract under
+  `shared/src/cljs/open_hax/uxx/markup.cljs`.
+- Added React-free deterministic HTML rendering and a React/Helix adapter.
+- Migrated the MCP OAuth consent page to a pure `page-node` plus HTML renderer.
+- Added renderer contract, hostile-input consent, and normalized-DOM parity
+  suites.
+- Added the shared source root to both Shadow builds.
+- Added frontend CLJS tests and shared-root clj-kondo lint to the main PR gate.
+- Documented the future no-call-site-rewrite extraction into `@open-hax/uxx`.
+
+Verification on PR #222 includes backend compilation and tests, frontend
+TypeScript checks, frontend CLJS tests, Vitest coverage, and the final
+shared-root lint gate.
+
 ---
-Triage 2026-08-05: Ready P1 architecture task. The current string-rendered MCP
-consent page provides a bounded first fixture, while the AST/renderer split
-prevents the server from depending on React and gives Helix a shared document
-model. Security and parity acceptance criteria are concrete; no external blocker
-is required before implementation. Verdict: ready (P1, 8sp).
+Triage 2026-08-05: Completed by PR #222. The server and browser now consume one
+portable document model through separate runtime adapters; the MCP consent page
+is the first production fixture. Verdict: done (P1, 8sp).
 ---
