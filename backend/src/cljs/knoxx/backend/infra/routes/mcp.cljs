@@ -4,9 +4,12 @@
             [malli.core :as m]
             [malli.error :as me]
             [knoxx.backend.shape.app-shapes :refer [route!]]
+            [knoxx.backend.infra.actor.scope :as actor-scope]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
+            [knoxx.backend.infra.routes.mcp.consent :as consent]
+            [knoxx.backend.infra.routes.mcp.transport :as transport]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
             [knoxx.backend.law.mcp-oauth :as law]
@@ -76,31 +79,6 @@
   [^js crypto verifier]
   (base64url (-> (.createHash crypto "sha256") (.update (str verifier)) (.digest))))
 
-(defn- bearer-token
-  [req]
-  (let [raw (str (or (some-> req (aget "headers") (aget "authorization")) ""))
-        m (.match raw (js/RegExp. "^Bearer\\s+(.+)$" "i"))]
-    (when m (str/trim (aget m 1)))))
-
-(defn- resolve-session-id
-  [req]
-  (let [headers (or (aget req "headers") (js/Object.))
-        header-id (aget headers "mcp-session-id")
-        q (or (aget req "query") (js/Object.))
-        query-id (aget q "sessionId")]
-    (cond
-      (and (string? header-id) (not (str/blank? header-id))) header-id
-      (and (string? query-id) (not (str/blank? query-id))) query-id
-      :else nil)))
-
-(defn- safe
-  [s]
-  (-> (str (or s ""))
-      (.replaceAll "&" "&amp;")
-      (.replaceAll "<" "&lt;")
-      (.replaceAll ">" "&gt;")
-      (.replaceAll "\"" "&quot;")))
-
 (defn- normalize-tool-selection
   [raw]
   (cond
@@ -113,9 +91,6 @@
 
 (defn- text-send! [reply status body]
   (-> (.code reply status) (.send body)))
-
-(defn- protected-resource-metadata-url [base]
-  (.toString (js/URL. "/.well-known/oauth-protected-resource" base)))
 
 (defn- protected-resource-metadata
   "RFC 9728 metadata for the MCP resource. One document, served at every
@@ -135,51 +110,9 @@
                          "protected resource metadata failed its contract")))
     payload))
 
-(defn- www-authenticate-challenge [base]
-  (str "Bearer realm=\"mcp\", resource_metadata=\""
-       (protected-resource-metadata-url base) "\""))
-
-(defn- challenge-unauthorized! [^js reply base]
-  (-> (reply-header! reply "WWW-Authenticate" (www-authenticate-challenge base))
-      (.code 401) (.send "Unauthorized")))
-
-(defn stateless-transport-options
-  "Options that actually select the MCP SDK's stateless mode.
-
-   The key must be ABSENT, not undefined. (clj->js {:sessionIdGenerator
-   js/undefined}) emits {sessionIdGenerator: null}, and the SDK selects
-   stateless only on === undefined — so null selected *stateful* mode, where
-   everything after initialize is rejected with \"Server not initialized\" and a
-   client sees no tools. SDK 1.18/1.24/1.29/1.30 all read null as stateful."
-  []
-  #js {})
-
-(defn- transport-handle-request!
-  ([^js t req reply]      (.handleRequest t req reply))
-  ([^js t req reply body] (.handleRequest t req reply body)))
-
 (defn- tool-execute! [^js tool params] (.execute tool "mcp" params nil nil nil))
 
 (defn- reply-header! [^js reply name value] (.header reply name value))
-
-(defn- ensure-streamable-accept!
-  [req]
-  (let [raw         (aget req "raw")
-        headers     (or (aget raw "headers") (js/Object.))
-        raw-headers (or (aget raw "rawHeaders") (js/Array.))
-        accept-value "application/json, text/event-stream"
-        accept      (str/lower-case (str (or (aget headers "accept") "")))
-        has-json?   (str/includes? accept "application/json")
-        has-sse?    (str/includes? accept "text/event-stream")]
-    (when (or (str/blank? accept) (not has-json?) (not has-sse?))
-      (aset headers "accept" accept-value)
-      (aset raw "headers" headers)
-      (let [filtered (->> (partition 2 (array-seq raw-headers))
-                          (remove (fn [[k _]] (= "accept" (str/lower-case (str k)))))
-                          (mapcat identity)
-                          vec)]
-        (aset raw "rawHeaders" (clj->js (conj filtered "accept" accept-value)))))
-    req))
 
 ;; Fastify's default error handler reads `statusCode` off the thrown object and
 ;; falls back to 500. A bare ex-info keeps its status in ex-data, where Fastify
@@ -227,9 +160,9 @@
   "Returns a Fastify preHandler hook that extracts bearer token onto request.bearerToken."
   [base]
   (fn [req reply done]
-    (let [token (bearer-token req)]
+    (let [token (transport/bearer-token req)]
       (if (str/blank? token)
-        (challenge-unauthorized! reply base)
+        (transport/challenge-unauthorized! reply base)
         (do (aset req "bearerToken" token) (done))))))
 
 ;; ──────────────────────────────────────────────────────────────
@@ -349,71 +282,6 @@
          (filter #(contains? available %))
          vec)))
 
-(defn- tool-checkbox-html [tools selected]
-  (->> (array-seq tools)
-       (map (fn [tool]
-              (let [n       (str (or (aget tool "name") ""))
-                    label   (str (or (aget tool "label") (aget tool "name") (aget tool "description") n))
-                    desc    (str (or (aget tool "description") ""))
-                    checked (if (contains? selected n) "checked" "")]
-                (str "\n        <label style=\"display:block; margin: 6px 0;\">\n"
-                     "          <input type=\"checkbox\" name=\"tool\" value=\"" (safe n) "\" " checked " />\n"
-                     "          <span style=\"font-weight:600;\">" (safe label) "</span>\n"
-                     "          <span style=\"color:#666;\">(" (safe n) ")</span>\n"
-                     "          <div style=\"color:#444; margin-left: 22px;\">" (safe desc) "</div>\n"
-                     "        </label>\n"))))
-       (str/join "\n")))
-
-(defn- authorization-consent-html
-  [{:keys [base auth-context client-id redirect-uri state code-challenge requested-scope tools selected]}]
-  ;; The auth context is a CLJS map, so it must be read with the shared
-  ;; accessors rather than aget. Reaching in with (aget ctx "user" "email")
-  ;; both missed the value and threw outright — aget compiles to
-  ;; ctx["user"]["email"], and the intermediate is undefined, so the `or`
-  ;; fallback never got the chance to run and the consent page 500'd.
-  (let [confirm-url (js/URL. "/api/mcp/oauth/authorize/confirm" base)
-        user-email  (str (or (authz/ctx-user-email auth-context) ""))
-        org-slug    (str (or (authz/ctx-org-slug auth-context) ""))]
-    (.set (.-searchParams confirm-url) "client_id" client-id)
-    (.set (.-searchParams confirm-url) "redirect_uri" redirect-uri)
-    (when state (.set (.-searchParams confirm-url) "state" state))
-    (.set (.-searchParams confirm-url) "code_challenge" code-challenge)
-    (.set (.-searchParams confirm-url) "code_challenge_method" "S256")
-    (when-not (str/blank? (str (or requested-scope "")))
-      (.set (.-searchParams confirm-url) "scope" requested-scope))
-    (str "<!doctype html>\n<html><head><meta charset=\"utf-8\" />\n"
-         "<title>Authorize MCP Client</title>\n"
-         "<style>body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;margin:24px;}"
-         ".box{max-width:920px;} .meta{color:#555;margin-bottom:12px;}"
-         ".tools{border:1px solid #ddd;border-radius:8px;padding:12px 16px;}"
-         ".actions{margin-top:18px;display:flex;gap:12px;}"
-         "button{padding:8px 14px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;cursor:pointer;}"
-         "a{color:#0b67d0;}"
-         "</style></head><body><div class=\"box\">\n"
-         "<h1>Authorize MCP Client</h1>\n"
-         "<div class=\"meta\">\n"
-         "<div><strong>Client:</strong> "      (safe client-id)    "</div>\n"
-         "<div><strong>Redirect URI:</strong> " (safe redirect-uri) "</div>\n"
-         "<div><strong>User:</strong> "         (safe user-email)   "</div>\n"
-         "<div><strong>Org:</strong> "          (safe org-slug)     "</div>\n"
-         "</div>\n"
-         "<form method=\"GET\" action=\"" (safe (.-pathname confirm-url)) "\">\n"
-         "<input type=\"hidden\" name=\"client_id\" value=\""           (safe client-id)    "\" />\n"
-         "<input type=\"hidden\" name=\"redirect_uri\" value=\""         (safe redirect-uri) "\" />\n"
-         "<input type=\"hidden\" name=\"state\" value=\""               (safe (or state "")) "\" />\n"
-         "<input type=\"hidden\" name=\"code_challenge\" value=\""       (safe code-challenge) "\" />\n"
-         "<input type=\"hidden\" name=\"code_challenge_method\" value=\"S256\" />\n"
-         "<input type=\"hidden\" name=\"scope\" value=\""               (safe requested-scope) "\" />\n"
-         "<h2>Capabilities</h2>\n"
-         "<p>Select exactly which Knoxx tools this client can call. You can always revoke tokens later.</p>\n"
-         "<div class=\"tools\">\n"
-         (tool-checkbox-html tools selected)
-         "</div>\n"
-         "<div class=\"actions\">\n"
-         "<button type=\"submit\">Authorize</button>\n"
-         "<a href=\"/\">Cancel</a>\n"
-         "</div></form></div></body></html>")))
-
 (defn- ^:async load-token-record! [access-token]
   (if (str/blank? (str access-token))
     nil
@@ -432,6 +300,24 @@
                        (aget token-record "orgSlug")
                        (assoc "x-knoxx-org-slug" (aget token-record "orgSlug")))]
     (db-policy/resolve-context! policy-context headers-like)))
+
+(defn- call-actor-id
+  "The actor this request's tool calls run as, or nil when it has none.
+
+   Resolved from the context the token maps to, not from the token, so a
+   membership whose actor was reassigned or cleared takes effect immediately
+   instead of at token expiry. The token's own copy is only consulted to refuse
+   a token that names a different actor than its membership now resolves to —
+   see law/token-actor-honourable? for why that is a refusal and not a silent
+   preference for one side."
+  [token-record token-ctx]
+  (let [claimed (actor-scope/normalize-actor-id (aget token-record "actorId"))
+        current (actor-scope/normalize-actor-id (authz/ctx-actor-id token-ctx))]
+    (when-not (law/token-actor-honourable? claimed current)
+      (throw (http-error 403 "actor_reassigned"
+                         (str "This token was authorized to act as " claimed
+                              ", which is no longer this membership's actor."))))
+    current))
 
 (defn- apply-zod-description [^js schema-node ^js schema-json]
   (let [description (some-> (aget schema-json "description") str str/trim not-empty)]
@@ -542,7 +428,7 @@
       (let [tools    (available-tools runtime config auth-context)
             selected (let [explicit (selected-tools-from-scope tools scope)]
                        (if (seq explicit) explicit (default-selected-tools (tool-name-set tools))))
-            html     (authorization-consent-html
+            html     (consent/page
                       {:base base :auth-context auth-context
                        :client-id client-id :redirect-uri redirect-uri
                        :state state :code-challenge code-challenge
@@ -576,12 +462,23 @@
                   ;; one is legitimate.
                   (throw (http-error 400 "missing_identity"
                                      "Session has no membership or user identity to authorize with")))
+              ;; The actor comes from the resolved context, never from the
+              ;; query — the client is on the other side of a redirect it
+              ;; controls, so an actorId it echoed back would be its own choice
+              ;; of identity. law/actor-grantable? then confirms the membership
+              ;; may name it, which today means it must be the membership's own.
+              actor-id      (let [claimed (str (or (authz/ctx-actor-id auth-context) ""))]
+                              (when (law/actor-grantable? claimed claimed) claimed))
               code          (.randomUUID crypto)
-              payload       {:code code :clientId client-id :redirectUri redirect-uri
-                             :codeChallenge code-challenge :codeChallengeMethod "S256"
-                             :tools requested
-                             :membershipId membership-id :userEmail user-email :orgSlug org-slug
-                             :createdAt (.toISOString (js/Date.))}]
+              payload       (cond-> {:code code :clientId client-id :redirectUri redirect-uri
+                                     :codeChallenge code-challenge :codeChallengeMethod "S256"
+                                     :tools requested
+                                     :membershipId membership-id :userEmail user-email :orgSlug org-slug
+                                     :createdAt (.toISOString (js/Date.))}
+                              ;; Absent rather than blank when there is no
+                              ;; actor. A blank would round-trip as an actor
+                              ;; that exists and owns nothing.
+                              actor-id (assoc :actorId actor-id))]
           (await (mongo-mcp/set-code! code (js/JSON.stringify (clj->js payload)) code-ttl))
           (let [redir (js/URL. redirect-uri)]
             (.set (.-searchParams redir) "code" code)
@@ -611,13 +508,19 @@
   (let [access-token  (.randomUUID crypto)
         membership-id (:membershipId record)
         tools         (vec (:tools record))
-        token-value   {:accessToken access-token :clientId client-id
-                       :membershipId membership-id
-                       :userEmail    (:userEmail record)
-                       :orgSlug      (:orgSlug record)
-                       :tools        tools
-                       :createdAt    (.toISOString (js/Date.))
-                       :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
+        actor-id      (actor-scope/normalize-actor-id (:actorId record))
+        token-value   (cond-> {:accessToken access-token :clientId client-id
+                               :membershipId membership-id
+                               :userEmail    (:userEmail record)
+                               :orgSlug      (:orgSlug record)
+                               :tools        tools
+                               :createdAt    (.toISOString (js/Date.))
+                               :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}
+                        ;; Copied from the claimed code, so the actor a token
+                        ;; acts as is the one the user saw on the consent page.
+                        ;; Still re-checked against the membership on every
+                        ;; call — see law/token-actor-honourable?.
+                        actor-id (assoc :actorId actor-id))]
     (await (mongo-mcp/set-token! access-token (js/JSON.stringify (clj->js token-value)) token-ttl membership-id))
     {:access_token access-token :token_type "Bearer"
      :scope        (str/join " " tools)
@@ -673,7 +576,7 @@
 
 (defroute mcp-handle-session! [base bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
-        session-id (resolve-session-id request)]
+        session-id (transport/resolve-session-id request)]
     (cond
       (str/blank? (str session-id))
       (text-send! reply 400 "Missing mcp-session-id")
@@ -682,13 +585,13 @@
       (let [{:keys [transport token]} (get @mcp-sessions* session-id)]
         (cond
           (nil? transport)                   (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
-          (not= (str bearer) (str token))    (challenge-unauthorized! reply base)
-          :else (do (ensure-streamable-accept! request)
-                    (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
+          (not= (str bearer) (str token))    (transport/challenge-unauthorized! reply base)
+          :else (do (transport/ensure-streamable-accept! request)
+                    (transport/handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
 (defroute mcp-handle-delete-session! [base bearer-token-guard] "DELETE" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
-        session-id (resolve-session-id request)]
+        session-id (transport/resolve-session-id request)]
     (cond
       (str/blank? (str session-id))
       (text-send! reply 400 "Missing mcp-session-id")
@@ -697,9 +600,73 @@
       (let [{:keys [transport token]} (get @mcp-sessions* session-id)]
         (cond
           (nil? transport)                   (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
-          (not= (str bearer) (str token))    (challenge-unauthorized! reply base)
-          :else (do (ensure-streamable-accept! request)
-                    (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
+          (not= (str bearer) (str token))    (transport/challenge-unauthorized! reply base)
+          :else (do (transport/ensure-streamable-accept! request)
+                    (transport/handle-request! transport (aget request "raw") (aget reply "raw"))))))))
+
+(defn- tool-config-js
+  "The MCP registerTool config for one tool object. Pure interop assembly."
+  [z ^js tool name]
+  (let [shape  (or (when z (typebox->zod-shape z (or (aget tool "parameters") (js/Object.)))) (js-obj))
+        config (clj->js {:description (str (or (aget tool "description") (aget tool "label") name))
+                         :inputSchema shape})]
+    (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
+      (aset config "title" title))
+    ;; A tool's own annotations win, else the declared table.
+    ;; See law.mcp-tool-annotations for why absence is bad.
+    (if-let [annotations (aget tool "annotations")]
+      (aset config "annotations" annotations)
+      ;; name may be sanitized (web.read -> web_read).
+      (when-let [declared (or (tool-annotations/for-tool name)
+                              (tool-annotations/for-tool (aget tool "originalName")))]
+        (aset config "annotations" (clj->js declared))))
+    (when-let [meta (aget tool "_meta")]
+      (aset config "_meta" meta))
+    config))
+
+(defn- register-tools!
+  "Register every granted tool on a fresh MCP server, bound to one actor.
+
+   Each handler runs inside that actor's scope, so domain.actor.credentials
+   resolves the actor without the MCP surface having to impersonate an agent
+   spawn. The scope is entered per call rather than per request because the SDK
+   invokes handlers itself: wrapping the request would put the awaits that
+   matter outside it."
+  [^js server z tools actor-id]
+  (doseq [^js tool (array-seq tools)]
+    (when-let [name (some-> (aget tool "name") str str/trim not-empty)]
+      (.registerTool server name
+                     (tool-config-js z tool name)
+                     (fn [params]
+                       (actor-scope/run-as! actor-id #(tool-execute! tool params)))))))
+
+(defn- granted-tools
+  "The tools this token was granted, out of those its context can reach.
+
+   The intersection is the whole authorization: a token carries the names ticked
+   on the consent page, and a tool absent from either side is not registered.
+   One consequence worth knowing — a token whose grant list is empty registers
+   nothing, so initialize advertises no tool capability and tools/list answers
+   \"Method not found\". That is correct, and it reads like a broken server."
+  [runtime config token-ctx ^js token-record]
+  (let [allowed (into #{} (map str) (array-seq (or (aget token-record "tools") (js/Array.))))]
+    (->> (available-tools runtime config token-ctx)
+         array-seq
+         (filter (fn [^js t] (contains? allowed (str (aget t "name")))))
+         into-array)))
+
+(defn- ^:async serve-mcp-post!
+  "Answer one authenticated MCP POST on a per-request server and transport."
+  [{:keys [config runtime policy-db McpServer StreamableHTTPServerTransport z
+           request raw-req raw-res token-record]}]
+  (let [token-ctx (await (resolve-token-context! policy-db token-record))
+        actor-id  (call-actor-id token-record token-ctx)
+        server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
+        transport (new StreamableHTTPServerTransport (transport/stateless-transport-options))]
+    (register-tools! server z (granted-tools runtime config token-ctx token-record) actor-id)
+    (await (.connect server transport))
+    (transport/ensure-streamable-accept! request)
+    (transport/handle-request! transport raw-req raw-res (aget request "body"))))
 
 (defroute mcp-handle-post! [base config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z] "POST" "/mcp" []
   (let [^js request request
@@ -707,57 +674,25 @@
     (.hijack reply)
     (let [^js raw-req (aget request "raw")
           ^js raw-res (aget reply "raw")
-          bearer  (bearer-token request)]
-      (if (str/blank? bearer)
-        (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
-                                               "Content-Type" "text/plain"}))
-            (.end raw-res "Unauthorized"))
-        (try
-          (let [token-record (await (load-token-record! bearer))]
-            (if-not token-record
-              (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
-                                                     "Content-Type" "text/plain"}))
-                  (.end raw-res "Unauthorized"))
-              (let [token-ctx (await (resolve-token-context! policy-db token-record))
-                    all-tools (available-tools runtime config token-ctx)
-                    allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") (js/Array.))))
-                    effective (->> (array-seq all-tools)
-                                   (filter (fn [t] (contains? allowed (str (aget t "name")))))
-                                   into-array)
-                    server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
-                    transport (new StreamableHTTPServerTransport
-                                   (stateless-transport-options))]
-                (doseq [tool (array-seq effective)]
-                  (let [n (some-> (aget tool "name") str str/trim not-empty)
-                        s (or (when z (typebox->zod-shape z (or (aget tool "parameters") (js/Object.)))) (js-obj))]
-                    (when n
-                      (let [tool-config (clj->js {:description (str (or (aget tool "description") (aget tool "label") n))
-                                                  :inputSchema s})]
-                        (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
-                          (aset tool-config "title" title))
-                        ;; A tool's own annotations win, else the declared table.
-                        ;; See law.mcp-tool-annotations for why absence is bad.
-                        (if-let [annotations (aget tool "annotations")]
-                          (aset tool-config "annotations" annotations)
-                          ;; n may be sanitized (web.read -> web_read).
-                          (when-let [declared (or (tool-annotations/for-tool n)
-                                                  (tool-annotations/for-tool
-                                                   (aget tool "originalName")))]
-                            (aset tool-config "annotations" (clj->js declared))))
-                        (when-let [meta (aget tool "_meta")]
-                          (aset tool-config "_meta" meta))
-                        (.registerTool server n
-                                       tool-config
-                                       (fn [params] (tool-execute! tool params)))))))
-                (await (.connect server transport))
-                (ensure-streamable-accept! request)
-                (transport-handle-request! transport raw-req raw-res (aget request "body")))))
-          (catch :default err
-            (.error js/console "[knoxx-mcp] post failed" err)
-            (when-not (.-headersSent raw-res)
-              (.writeHead raw-res 500 (clj->js {"Content-Type" "application/json"}))
-              (.end raw-res (js/JSON.stringify (clj->js {:error "mcp_post_failed"
-                                                          :detail (or (.-message err) (str err))}))))))))))
+          bearer      (transport/bearer-token request)]
+      (try
+        (let [token-record (when-not (str/blank? bearer)
+                             (await (load-token-record! bearer)))]
+          (if-not token-record
+            (transport/unauthorized! base raw-res)
+            (await (serve-mcp-post!
+                    {:config config :runtime runtime :policy-db policy-db
+                     :McpServer McpServer
+                     :StreamableHTTPServerTransport StreamableHTTPServerTransport
+                     :z z :request request :raw-req raw-req :raw-res raw-res
+                     :token-record token-record}))))
+        (catch :default err
+          (.error js/console "[knoxx-mcp] post failed" err)
+          (when-not (.-headersSent raw-res)
+            (let [status (or (aget err "statusCode") 500)]
+              (.writeHead raw-res status (clj->js {"Content-Type" "application/json"}))
+              (.end raw-res (js/JSON.stringify (clj->js {:error (or (aget err "code") "mcp_post_failed")
+                                                         :detail (or (.-message err) (str err))}))))))))))
 
 (def ^:private route-registrars
   "Every MCP route, in registration order. Kept as data so adding one is a line

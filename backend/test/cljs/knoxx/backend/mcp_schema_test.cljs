@@ -13,6 +13,7 @@
    defect was that the value lacked zod's own methods."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.routes.mcp :as mcp]
+            [knoxx.backend.infra.routes.mcp.transport :as transport]
             [knoxx.backend.domain.tools :as dtools]
             [knoxx.backend.law.mcp-tool-annotations :as ann]
             ["zod" :refer [z]]))
@@ -75,7 +76,7 @@
 
 (deftest stateless-options-omit-the-session-generator
   (testing "the key is absent, not null"
-    (let [opts (mcp/stateless-transport-options)]
+    (let [opts (transport/stateless-transport-options)]
       (is (false? (.hasOwnProperty opts "sessionIdGenerator"))
           "present-but-null is what selected stateful mode")
       (is (undefined? (aget opts "sessionIdGenerator")))
