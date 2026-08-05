@@ -3,6 +3,10 @@
  :dependencies [[lilactown/helix "0.2.2"]]
  :nrepl {:port 4501}
 
+ ;; Make shadow-cljs the dev entrypoint:
+ ;; - Serves the Vite build output from ./dist
+ ;; - Proxies backend traffic (/api, /ws, /health) to the backend
+ ;; - Keeps shadow devtools endpoints local (/api/remote-*, /api/open-file)
  :dev-http
  {5173 {:roots ["." "dist"]
         :push-state/index "index.html"
@@ -12,6 +16,9 @@
  :builds
  {:app
  {:target :browser
+   ;; NOTE: output goes to dist/cljs for both dev (watch) and prod (release).
+   ;; Do not write shadow outputs into ./public because Vite treats that as a
+   ;; static "source" directory; stale artifacts there can shadow the real build.
    :output-dir "dist/cljs"
    :asset-path "/cljs"
    :modules {:app {:init-fn knoxx.frontend.core/init}}
@@ -23,8 +30,14 @@
                                             :file "dist/bridge/knoxx-app-bridge.es.js"}}}
    :devtools
    {:after-load knoxx.frontend.core/after-load
+    ;; When this bundle is served behind HTTPS (Caddy/tunnel), shadow's devtools
+    ;; client must use WSS and the public origin.
     :use-document-protocol true
     :use-document-host true
+    ;; IMPORTANT: don't force the document port. In the MVP/tunnel setup the
+    ;; browser might be on an arbitrary forwarded port (e.g. :9630) that is not
+    ;; actually serving shadow's /api/remote-relay endpoint. Pin devtools to the
+    ;; canonical public origin instead.
     :use-document-port false
     :devtools-url "https://knoxx.promethean.rest"}
    :compiler-options
@@ -39,11 +52,22 @@
    {:output-feature-set :es-next
     :source-map true}}
 
+  ;; CLJS unit tests for migrated frontend logic. Mirrors the backend :test
+  ;; build so Helix/logic ported from TypeScript keeps real (not shim-only)
+  ;; coverage as the TS→CLJS migration proceeds.
   :test
   {:target :node-test
+   ;; .cjs (not .js): frontend package.json is "type": "module", and the
+   ;; node-test harness uses __dirname (CommonJS). A .js output would be loaded
+   ;; as ESM and crash on __dirname.
    :output-to "dist/test/frontend-tests.cjs"
    :ns-regex ["knoxx.frontend.*-test$"]
    :autorun true
+   ;; jsdom globals MUST exist before react-dom's module load: React
+   ;; feature-detects event support at load time, and without a document it
+   ;; falls back to a legacy change-tracking path where dispatched change
+   ;; events never reach onChange on text inputs (selects/clicks still work,
+   ;; which makes the failure look selective).
    :prepend-js "const { JSDOM } = require('jsdom'); const __jsdom = new JSDOM('<!doctype html><html><body></body></html>'); globalThis.window = __jsdom.window; globalThis.document = __jsdom.window.document; Object.defineProperty(globalThis, 'navigator', { value: __jsdom.window.navigator, configurable: true }); globalThis.IS_REACT_ACT_ENVIRONMENT = true;"
    :compiler-options
    {:output-feature-set :es-next}}}}
