@@ -132,14 +132,44 @@
           (filterv #(not (str/blank? (str (:actor_id %)))))
           vec))))
 
+(defn ^:async resolve-actor-membership!
+  "The membership an actor id names, scoped to an org when one is given.
+
+   actor_id is NOT unique across orgs — knoxx_memberships indexes it
+   non-uniquely — so an unscoped findOne returns an arbitrary org's membership
+   and, downstream, that org's credentials. Callers that know which org the
+   request belongs to must say so.
+
+   When no org is given and the id is ambiguous this throws rather than
+   choosing. Failing closed is the only safe reading: the alternative is
+   returning one tenant's credential to another, silently and unrepeatably."
+  [db actor-id org-id]
+  (let [memberships (.collection db "knoxx_memberships")
+        org         (some-> org-id str str/trim not-empty)
+        query       (cond-> {"actor_id" (str actor-id)}
+                      org (assoc "org_id" org))
+        matches     (keywordize (await (.toArray (.find memberships (clj->js query)))))]
+    (cond
+      (empty? matches) nil
+      (= 1 (count matches)) (first matches)
+      org (first matches)
+      :else (throw (js/Error.
+                    (str "Actor " actor-id " names " (count matches)
+                         " memberships across orgs; an org must be given to"
+                         " resolve its credentials."))))))
+
 (defn ^:async get-actor-credential-by-actor-and-provider!
   "Single active credential for an actor + provider, joined with memberships + orgs.
    Mirrors the PG actor-credential-select-query: ... WHERE m.actor_id = ?
-   AND ac.provider = ? AND ac.status = 'active' ... LIMIT 1."
-  ([actor-id provider] (get-actor-credential-by-actor-and-provider! (mongo-client/get-db) actor-id provider))
-  ([db actor-id provider]
-   (let [memberships (.collection db "knoxx_memberships")
-         membership (keywordize (await (.findOne memberships #js {"actor_id" (str actor-id)})))]
+   AND ac.provider = ? AND ac.status = 'active' ... LIMIT 1.
+
+   org-id scopes the membership lookup. Pass it whenever the caller knows which
+   org the request belongs to; see resolve-actor-membership! for why omitting it
+   is only safe when the actor id is unambiguous."
+  ([actor-id provider] (get-actor-credential-by-actor-and-provider! (mongo-client/get-db) actor-id provider nil))
+  ([db actor-id provider] (get-actor-credential-by-actor-and-provider! db actor-id provider nil))
+  ([db actor-id provider org-id]
+   (let [membership (await (resolve-actor-membership! db actor-id org-id))]
      (when membership
        (let [coll (credentials-coll db)
              cursor (.find coll #js {"user_id" (:user_id membership)

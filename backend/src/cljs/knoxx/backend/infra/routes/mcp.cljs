@@ -565,13 +565,13 @@
    to: without it a credential read falls back to the process-global
    agent-context, and an actor-less token would borrow whatever actor a
    concurrent agent turn is running as. See actor-acting/run-as!."
-  [^js server z tools actor-id]
+  [^js server z tools acting]
   (doseq [^js tool (array-seq tools)]
     (when-let [name (some-> (aget tool "name") str str/trim not-empty)]
       (.registerTool server name
                      (tool-config-js z tool name)
                      (fn [params]
-                       (actor-acting/run-as! actor-id #(tool-execute! tool params)))))))
+                       (actor-acting/run-as! acting #(tool-execute! tool params)))))))
 
 (defn- granted-tools
   "The tools this token was granted, out of those its context can reach.
@@ -614,10 +614,13 @@
   [{:keys [config runtime policy-db McpServer StreamableHTTPServerTransport z
            request raw-req raw-res token-record]}]
   (let [token-ctx (await (resolve-token-context! policy-db token-record))
-        actor-id  (call-actor-id token-record token-ctx)
+        acting    {:actor-id (call-actor-id token-record token-ctx)
+                   ;; From the resolved context, so the credential lookup is
+                   ;; scoped to the org this token belongs to.
+                   :org-id   (authz/ctx-org-id token-ctx)}
         server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
         transport (new StreamableHTTPServerTransport (transport/stateless-transport-options))]
-    (register-tools! server z (granted-tools runtime config token-ctx token-record) actor-id)
+    (register-tools! server z (granted-tools runtime config token-ctx token-record) acting)
     (await (.connect server transport))
     (close-when-response-ends! raw-res server)
     (transport/ensure-streamable-accept! request)

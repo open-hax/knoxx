@@ -41,7 +41,12 @@
   (some-> value str str/trim not-empty))
 
 (defn run-as!
-  "Call f with no arguments with actor-id in scope for the duration.
+  "Call f with no arguments with this actor in scope for the duration.
+
+   Takes either an actor id or a map of {:actor-id, :org-id}. The org matters
+   because actor_id is not unique across orgs: a credential lookup that knows
+   only the actor can resolve another tenant's membership and return its secret.
+   Carrying the request's org means the lookup is scoped to it.
 
    A scope is entered even when actor-id is blank, and that is the whole point:
    it records \"this work has *no* actor\" as a positive fact rather than an
@@ -54,8 +59,14 @@
 
    Nested scopes shadow: the innermost wins, including when the innermost has no
    actor."
-  [actor-id f]
-  (als/run-with store {:actor-id (normalize-actor-id actor-id)} f))
+  [actor-or-map f]
+  (let [{:keys [actor-id org-id]} (if (map? actor-or-map)
+                                    actor-or-map
+                                    {:actor-id actor-or-map})]
+    (als/run-with store
+                  {:actor-id (normalize-actor-id actor-id)
+                   :org-id   (normalize-actor-id org-id)}
+                  f)))
 
 (defn in-scope?
   "True when the caller is inside a scope, whether or not it names an actor.
@@ -64,6 +75,11 @@
    Only the second may fall back to another source."
   []
   (some? (als/current store)))
+
+(defn current-org-id
+  "The org in scope, or nil. Scopes a credential lookup to one tenant."
+  []
+  (normalize-actor-id (:org-id (als/current store))))
 
 (defn current-actor-id
   "The actor id in scope, or nil.

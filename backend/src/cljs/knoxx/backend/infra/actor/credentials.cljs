@@ -68,7 +68,13 @@
        (js/Error. "Actor credentials require the Knoxx policy database."))
 
       :else
-      (let [result (await (policy-db/get-actor-credential! db actor-id provider))]
+      ;; The org comes from the same scope as the actor, so a credential lookup
+      ;; cannot resolve another tenant's membership that happens to share this
+      ;; actor id. nil outside a scope, which leaves the lookup as it was for the
+      ;; agent-spawn path — and that path now fails closed on an ambiguous id
+      ;; rather than choosing.
+      (let [result (await (policy-db/get-actor-credential!
+                           db actor-id provider (actor-acting/current-org-id)))]
         (if-let [credential (normalize-credential result)]
           credential
           (throw (js/Error. (str "No active " provider " credentials configured for actor " actor-id ". Configure them in Admin → Actors."))))))))

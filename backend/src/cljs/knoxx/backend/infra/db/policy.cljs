@@ -1380,10 +1380,18 @@
                             payload))
 
 (defn ^:async get-actor-credential!
-  [_policy-context actor-id provider]
-  (when-let [db (await (ensure-mongo-policy-db!))]
-    {:credential (mongo-actor-creds/credential-row->response
-                  (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider! db actor-id provider)))}))
+  "An actor's active credential for a provider.
+
+   org-id scopes the membership lookup: actor_id is not unique across orgs, so
+   without it an actor id present in two orgs resolves to an arbitrary one and
+   returns that org's secret. Callers holding a request context should pass its
+   org."
+  ([policy-context actor-id provider] (get-actor-credential! policy-context actor-id provider nil))
+  ([_policy-context actor-id provider org-id]
+   (when-let [db (await (ensure-mongo-policy-db!))]
+     {:credential (mongo-actor-creds/credential-row->response
+                   (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
+                           db actor-id provider org-id)))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation

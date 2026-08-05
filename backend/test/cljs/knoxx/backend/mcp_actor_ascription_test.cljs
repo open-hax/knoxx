@@ -362,3 +362,33 @@
     (is (not (law/token-actor-honourable? "workspace_user" nil))
         "a token carrying the synthesised default is refused once the binding is
          the thing being compared")))
+
+;; ─────────────────────────────────────────────────────────
+;; The scope carries the org, because actor_id is not unique across them.
+;;
+;; knoxx_memberships indexes actor_id non-uniquely, and the credential reader
+;; resolved the membership with findOne on {actor_id} alone — so with the same
+;; actor id in two orgs, one tenant's token could be handed the other's Discord
+;; or Bluesky secret. Scoping the lookup to the token's org closes it; failing
+;; closed on an ambiguous id with no org closes the remaining path.
+;; ─────────────────────────────────────────────────────────
+
+(deftest scope-carries-the-org-alongside-the-actor
+  (is (= ["open_hax" "org-1"]
+         (acting/run-as! {:actor-id "open_hax" :org-id "org-1"}
+                         #(vector (acting/current-actor-id) (acting/current-org-id))))))
+
+(deftest a-bare-actor-id-is-still-accepted
+  (testing "the agent-spawn shape keeps working, with no org to scope by"
+    (is (= "open_hax" (acting/run-as! "open_hax" #(acting/current-actor-id))))
+    (is (nil? (acting/run-as! "open_hax" #(acting/current-org-id))))))
+
+(deftest an-org-does-not-outlive-its-scope
+  (acting/run-as! {:actor-id "open_hax" :org-id "org-1"} (fn [] nil))
+  (is (nil? (acting/current-org-id))))
+
+(deftest an-actor-less-scope-carries-no-org-either
+  (testing "so a lookup cannot be scoped into succeeding without an actor"
+    (is (nil? (acting/run-as! {:actor-id nil :org-id "org-1"} #(acting/current-actor-id))))
+    (is (= "org-1" (acting/run-as! {:actor-id nil :org-id "org-1"} #(acting/current-org-id)))
+        "the org is still readable; it is the actor's absence that stops the read")))
