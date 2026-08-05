@@ -38,9 +38,18 @@ means the later cutover is a rename, not a redesign.
   `knoxx_actors` in Mongo, and/or the local PM2 Knoxx instance's policy DB.
 - Provision the equivalent actor on the production host through the deployment
   repo, so it is reproducible rather than hand-made.
-- Decide deliberately whether production shares the local actor's credentials or
-  gets its own. Sharing is faster; separate credentials mean a leak from the
-  public host does not burn the local one. **Recommend separate.**
+- ~~Decide deliberately whether production shares the local actor's credentials
+  or gets its own.~~ **Decided 2026-08-05: shared.** The title, purpose and
+  actor section all say "the same credentials", and that is what was asked for
+  and what shipped — the production actor holds the local `discord_automation`
+  actor's `discord_bot` and `bluesky` credentials verbatim.
+
+  The earlier "recommend separate" line contradicted the rest of this card, so
+  it is struck rather than left to be read as an open question. The risk it
+  named is real and does not go away by being decided: a leak from the public
+  host burns the local credentials too, because they are the same secret. That
+  is now a follow-up to rotate onto production-only credentials, not a choice
+  still to make — see the note below.
 
 ## Constraints
 
@@ -51,8 +60,19 @@ means the later cutover is a rename, not a redesign.
   deploy should write them to the policy DB, not export them as env vars —
   `domain.actor.credentials` deliberately refuses to read env.
 
+## Follow-up: production-only credentials
+
+Sharing was chosen for speed and is a standing risk, not a resolved one. A
+separate Discord bot token and Bluesky app-password for production would mean a
+compromise of the public host cannot be used against the local instance, and
+would make revocation independent. Rotating is cheap once the actor exists —
+both are a `PUT /api/admin/actors/:userId/credentials/:provider` away — so this
+wants its own card rather than a re-litigation of this one.
+
 ## Done when
 
 - A documented, repeatable step provisions the production actor.
 - A Discord or Bluesky tool call over MCP against production succeeds end to end.
 - The credential values exist only in Actions secrets and the policy DB.
+- The sharing decision is recorded, with the risk it carries named rather
+  than left implicit.

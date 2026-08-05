@@ -53,9 +53,18 @@ Add a gate that fails on a layer violation. Rules, in dependency order
 
 Practical shape:
 
-- Start as a **ratchet, not a cliff.** Emit the current violation count, fail
-  only on an increase. A hard gate on day one fails the build immediately and
-  gets disabled; a ratchet gets adopted.
+- Start as a **ratchet, not a cliff.** A hard gate on day one fails the build
+  immediately and gets disabled; a ratchet gets adopted.
+- **Ratchet on violation identity, not on a count.** A count-only gate passes
+  when one allowlisted violation is removed and a different one is added in the
+  same commit — a new violation lands green, which is the exact failure the gate
+  exists to prevent. So: fail on any violation absent from the allowlist, and
+  separately require the allowlist to shrink or hold. The count is then a
+  progress number for humans, never the pass condition.
+- A violation's identity has to survive edits that are not violations. Key it on
+  `[namespace, required-namespace]` rather than on a line number or a hash of
+  surrounding code, or every unrelated edit churns the allowlist and the gate
+  becomes noise people silence.
 - Allowlist existing violations explicitly, with the file and reason, so the
   backlog is legible and shrinking is visible.
 - Reuse the existing checker style (`scripts/check-*.mjs`) rather than inventing
@@ -64,9 +73,15 @@ Practical shape:
 
 ## Known violations to seed the allowlist
 
-- `infra.routes.mcp` — ~160 raw interop expressions in 799 lines, against an
-  800-line lint error ceiling; two concerns (OAuth authorization server + MCP
-  transport) in one file.
+- `infra.routes.mcp` — ~160 raw interop expressions. Partly addressed: the
+  consent page and the transport are now their own namespaces and the file is
+  734 lines, but the raw interop density is untouched. Worth knowing which
+  ceiling is real here: clj-kondo enforces file error at 800 and **function
+  error at 60**, and it was the function rule that actually bit. A separate
+  `size-lint.config.mjs` documents warn 350 / error 500, but that config was
+  deleted by a fork-tax commit (`b3348eb1`), so `lint:size` cannot run at all —
+  recovering it reports **50 errors repo-wide**, which is itself an argument for
+  the ratchet rather than a cliff.
 - `domain.actor.credentials` requires `infra.auth.authz` and `infra.db.policy` —
   a domain namespace depending on infra.
 - Contract validation flows through `open-hax.contract-runtime`, not

@@ -25,7 +25,7 @@ The Knoxx deploy health gate (`digitalocean/services/knoxx/verify.sh`) probes
 reachable**. `deploy-stack.yml` sets `KNOXX_EXPECT_OPENPLANNER_REST=false` and
 deploys no OpenPlanner, so on every production deploy the gate logs:
 
-```
+```text
 knoxx: CMS surface skipped — no host OpenPlanner API at http://host.docker.internal:7777
 ```
 

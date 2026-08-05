@@ -3,6 +3,11 @@
 > Hub: **[eta-mu/ROADMAP.md](https://github.com/open-hax/eta-mu/blob/main/ROADMAP.md)** — read that for the seam, the ownership
 > table, and the sequencing rule. This file is only knoxx's slice.
 > Board: `kanban/{epics,tasks}/`. Last surveyed: 2026-08-04.
+>
+> That link 404s until [eta-mu#167](https://github.com/open-hax/eta-mu/pull/167)
+> merges — the hub is written and on that branch, not yet on `main`. The path is
+> the one it will land at, so it is left as-is rather than pointed at a branch
+> that would rot; delete this note when the PR merges.
 
 ## What knoxx is, on this roadmap
 

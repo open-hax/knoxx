@@ -46,6 +46,24 @@ hint that should become `false` when this card lands.
   should assert against it. This is a good candidate for the first genuinely
   Katamorph-shaped store in Knoxx.
 
+- **Settle event identity and ordering before any migration.** An append-only
+  log without these is not append-only in practice, and the damage is not
+  recoverable by a later fix — the history is already wrong. Name all four:
+
+  | obligation | why, concretely |
+  |---|---|
+  | immutable event id | a retried save must be recognised as the same event, not appended twice. `save_translation` is a tool an agent can and will call again after a timeout. |
+  | segment key | which segment a event belongs to, stable across renames — it is the projection's grouping key |
+  | sequence or ordering rule | two concurrent saves to one segment must fold to a defined end state. Wall-clock `updated_at` is not an ordering rule; ties and clock skew both break it. |
+  | retry behaviour | append-at-least-once plus a dedup on event id, or append-exactly-once. Pick one and say which, because the projection's correctness depends on it. |
+
+- **Say what happens when the append succeeds and the projection fails.** That
+  is the normal failure, not the exotic one, and the answer decides whether a
+  read can be stale: either the projection is rebuildable from the log on
+  demand (so a stale read self-heals) or the write is not acknowledged until
+  both land (so it cannot). Silence here means "stale forever, discovered by a
+  user".
+
 ## Watch out
 
 - The deploy health gate requires `/api/translations/segments?limit=1` to answer

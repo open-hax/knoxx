@@ -20,7 +20,7 @@ just never carries the actor.
 
 ## Verified as of 2026-08-04
 
-```
+```text
 agent-context/set-context!    called ONLY from infra/agent/session.cljs
                               (wrap-custom-tools-with-agent-context!) — the
                               agent-spawn path
@@ -76,7 +76,7 @@ The `open_hax` actor now exists on the DigitalOcean deployment with credentials
 attached, so the diagnosis above is no longer only a reading of the source. What
 is provisioned and what still fails:
 
-```
+```text
 contract               contracts/knoxx/actors/open_hax.edn (services repo)
 membership             431df12e-…  actor_id=open_hax  user=9ae812b9-…
 roles                  open-hax, discord-user, bluesky-publisher
