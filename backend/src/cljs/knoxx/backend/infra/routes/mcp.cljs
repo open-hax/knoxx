@@ -4,7 +4,7 @@
             [malli.core :as m]
             [malli.error :as me]
             [knoxx.backend.shape.app-shapes :refer [route!]]
-            [knoxx.backend.domain.actor.acting :as actor-acting]
+            [knoxx.backend.infra.actor.acting :as actor-acting]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
@@ -193,13 +193,15 @@
    already-issued credential a power its holder never agreed to, silently.
 
    When the token does carry one, the value used is the membership's current
-   actor, and law/token-actor-honourable? has already refused the case where the
-   two disagree. So a reassignment is a refusal rather than a quiet switch, and
+   stored binding — not ctx-actor-id, whose role-derived default is never nil and
+   would therefore let a cleared assignment keep matching — and
+   law/token-actor-honourable? has already refused the case where the two
+   disagree. So a reassignment is a refusal rather than a quiet switch, and
    there is no window in which a token acts as an actor its membership has
    dropped."
   [token-record token-ctx]
   (let [claimed (actor-acting/normalize-actor-id (aget token-record "actorId"))
-        current (actor-acting/normalize-actor-id (authz/ctx-actor-id token-ctx))]
+        current (actor-acting/normalize-actor-id (authz/ctx-actor-binding token-ctx))]
     (when-not (law/token-actor-honourable? claimed current)
       (throw (params/http-error 403 "actor_reassigned"
                          (str "This token was authorized to act as " claimed
@@ -362,6 +364,13 @@
    law/actor-grantable? is reached only through consent-actor-unchanged?, with
    the membership's actor on one side and the displayed one on the other.
 
+   Read from ctx-actor-binding, not ctx-actor-id. The latter falls back to a
+   role-derived default and is never nil, so it would mint every token an actor:
+   a membership with none assigned would get credential scope for system_admin
+   or workspace_user that nobody granted, and clearing the stored id could not
+   revoke it, because the default takes over and still matches. Only an actor
+   somebody actually assigned may authorize credentials.
+
    Normalized here rather than only in persist-access-token!, so the code record
    and the token minted from it cannot hold two spellings of one actor."
   [{:keys [code client-id redirect-uri code-challenge requested auth-context
@@ -369,7 +378,8 @@
   (let [membership-id (str (or (authz/ctx-membership-id auth-context) ""))
         user-email    (str (or (authz/ctx-user-email auth-context) ""))
         org-slug      (str (or (authz/ctx-org-slug auth-context) ""))
-        actor-id      (actor-acting/normalize-actor-id (authz/ctx-actor-id auth-context))]
+        actor-id      (actor-acting/normalize-actor-id
+                       (authz/ctx-actor-binding auth-context))]
     (ensure-consent-identity! membership-id user-email)
     (ensure-consent-actor-unchanged! displayed-actor actor-id)
     (cond-> {:code code :clientId client-id :redirectUri redirect-uri

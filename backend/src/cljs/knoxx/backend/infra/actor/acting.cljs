@@ -1,4 +1,4 @@
-(ns knoxx.backend.domain.actor.acting
+(ns knoxx.backend.infra.actor.acting
   "The actor a unit of work is currently acting as.
 
    Distinct from domain.actor.scope, which matches a principal against a
@@ -21,12 +21,12 @@
    actor is making a claim, and that claim has to be able to win over a
    process-global that happens to hold one.
 
-   Lives in domain rather than infra because \"which actor is in effect\" is
-   domain vocabulary, and because domain.actor.credentials must be able to read
-   it — a domain namespace requiring infra would be a layering violation. The
-   storage mechanism is externalised to extern.async-local-storage, which is
-   where that interop is born; this namespace exchanges CLJS values only and
-   carries no transport concern."
+   Lives in infra because entering and reading ambient request-local state is an
+   effect, whatever it is wrapped in. It was briefly in domain to spare
+   infra.actor.credentials a domain-to-infra require; the honest fix was to move
+   the credential resolver here too, since it performs a database read and was
+   never domain either. The raw Node interop still lives in
+   extern.async-local-storage; this namespace exchanges CLJS values only."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.async-local-storage :as als]))
 

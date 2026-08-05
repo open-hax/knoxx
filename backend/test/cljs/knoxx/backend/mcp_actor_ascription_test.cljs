@@ -12,9 +12,10 @@
    Two halves are tested here: the law that says which actor may be named, and
    the scope that carries it without leaking across concurrent work."
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.domain.actor.acting :as acting]
-            [knoxx.backend.domain.actor.credentials :as credentials]
+            [knoxx.backend.infra.actor.acting :as acting]
+            [knoxx.backend.infra.actor.credentials :as credentials]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.law.mcp-oauth :as law]))
 
 ;; ─────────────────────────────────────────────────────────
@@ -317,3 +318,47 @@
       (acting/run-as! "open_hax" (fn [] nil))
       (is (= "chat_primary" (credentials/current-actor-id))
           "a scope must not disturb the agent turn it ran inside"))))
+
+;; ─────────────────────────────────────────────────────────
+;; A synthesised actor is not an assigned one.
+;;
+;; infra.db.policy resolves a request context's actor as
+;;   (or stored-actor_id (default-membership-actor-id role-slugs))
+;; and that default NEVER returns nil — it is "system_admin" or
+;; "workspace_user". So ctx-actor-id answers "which actor label applies", not
+;; "was an actor assigned", and building authority on it would:
+;;
+;;   - mint every token an actor, giving a membership with none assigned
+;;     credential scope for system_admin or workspace_user that nobody granted;
+;;   - make clearing the stored actor_id un-revoking, because the default takes
+;;     over and still matches the token;
+;;   - make the consent page's no-actor warning unreachable, since the page
+;;     would always have a name to print.
+;;
+;; ctx-actor-binding is the stored value, or nil. Only it may decide authority.
+;; ─────────────────────────────────────────────────────────
+
+(deftest actor-binding-is-nil-when-none-is-assigned
+  (let [ctx {:actor {:id "workspace_user" :binding nil}}]
+    (is (= "workspace_user" (authz/ctx-actor-id ctx))
+        "the label still resolves, for display and role defaulting")
+    (is (nil? (authz/ctx-actor-binding ctx))
+        "but nothing was assigned, and authority must see that")))
+
+(deftest actor-binding-is-the-stored-value-when-assigned
+  (let [ctx {:actor {:id "open_hax" :binding "open_hax"}}]
+    (is (= "open_hax" (authz/ctx-actor-id ctx)))
+    (is (= "open_hax" (authz/ctx-actor-binding ctx)))))
+
+(deftest clearing-an-assignment-refuses-a-token-that-carried-it
+  (testing "stored open_hax, token minted for it, then the assignment is cleared
+            and the context falls back to the workspace_user default"
+    (let [after-clearing (authz/ctx-actor-binding {:actor {:id "workspace_user" :binding nil}})]
+      (is (nil? after-clearing))
+      (is (not (law/token-actor-honourable? "open_hax" after-clearing))
+          "the token must be refused, not silently re-pointed at the default")))
+  (testing "and reading the label instead would have refused for the wrong
+            reason — or passed, had the default happened to match"
+    (is (not (law/token-actor-honourable? "workspace_user" nil))
+        "a token carrying the synthesised default is refused once the binding is
+         the thing being compared")))

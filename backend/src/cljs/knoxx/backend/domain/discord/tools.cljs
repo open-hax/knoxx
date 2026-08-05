@@ -9,7 +9,7 @@
             [knoxx.backend.infra.svg-render :as svg-render]
             [knoxx.backend.domain.text :refer [sanitize-svg-content tool-text-result]]
 
-            [knoxx.backend.domain.actor.credentials :as actor-credentials]
+            [knoxx.backend.infra.actor.credentials :as actor-credentials]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]))
 

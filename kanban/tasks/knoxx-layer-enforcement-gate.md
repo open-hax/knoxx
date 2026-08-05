@@ -82,8 +82,21 @@ Practical shape:
   deleted by a fork-tax commit (`b3348eb1`), so `lint:size` cannot run at all —
   recovering it reports **50 errors repo-wide**, which is itself an argument for
   the ratchet rather than a cliff.
-- `domain.actor.credentials` requires `infra.auth.authz` and `infra.db.policy` —
-  a domain namespace depending on infra.
+- **The tool implementations are effectful namespaces filed under `domain.*`.**
+  `domain.bluesky.bluesky`, `domain.discord.tools`, `domain.media` and
+  `domain.twitch` now require `infra.actor.credentials`, because the credential
+  resolver moved to `infra` where it belongs — it reads the policy database. Those
+  four `domain -> infra` edges are **newly visible, not newly created**: they
+  already called a function that performed a database read, through a namespace
+  named `domain.actor.credentials` that hid it. Seed them in the allowlist and
+  fix them by moving the tool implementations to `infra`, or by passing resolved
+  credentials in, rather than by moving the resolver back.
+
+- ~~`domain.actor.credentials` requires `infra.auth.authz` and `infra.db.policy`~~
+  — resolved 2026-08-05 by moving it to `infra.actor.credentials`. Kept here as
+  the worked example: a violation can be *hidden* by a namespace name, and the
+  gate must key on the actual require graph, not on where someone filed a file.
+
 - Contract validation flows through `open-hax.contract-runtime`, not
   `katamorph.schema`; knoxx does not reference katamorph at all. Out of scope
   here (see `knoxx-katamorph-cutover` upstream) but the gate should not pretend

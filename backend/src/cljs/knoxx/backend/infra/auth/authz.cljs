@@ -90,6 +90,18 @@
 (defn ctx-membership-id [ctx] (or (:membership-id ctx) (:membershipId ctx) (get-in ctx [:membership :id])))
 (defn ctx-actor-id [ctx] (or (:actor-id ctx) (:actorId ctx) (get-in ctx [:membership :actor-id]) (get-in ctx [:actor :id])))
 
+(defn ctx-actor-binding
+  "The membership's stored actor id, or nil when none is assigned.
+
+   Distinct from ctx-actor-id, which falls back to a role-derived default and so
+   is never nil — it answers \"which actor label applies\", not \"was an actor
+   assigned\". Only the binding may decide authority: a token minted from the
+   default would carry credential scope for system_admin or workspace_user that
+   nobody granted, and clearing the stored id would not revoke it, because the
+   default takes over and still matches."
+  [ctx]
+  (or (:actor-binding ctx) (:actorBinding ctx) (get-in ctx [:actor :binding])))
+
 (defn ctx-role-slugs
   [ctx]
   (into #{}

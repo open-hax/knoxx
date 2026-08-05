@@ -87,7 +87,10 @@
                                             code-challenge requested-scope))
         user-email (str (or (authz/ctx-user-email auth-context) ""))
         org-slug   (str (or (authz/ctx-org-slug auth-context) ""))
-        actor-id   (str (or (authz/ctx-actor-id auth-context) ""))]
+        ;; The stored binding, not ctx-actor-id: the latter substitutes a
+        ;; role-derived default, so the no-actor warning below could never
+        ;; render and the page would name an actor nobody assigned.
+        actor-id   (str (or (authz/ctx-actor-binding auth-context) ""))]
     (str "<!doctype html>\n<html><head><meta charset=\"utf-8\" />\n"
          "<title>Authorize MCP Client</title>\n"
          "<style>" styles "</style></head><body><div class=\"box\">\n"

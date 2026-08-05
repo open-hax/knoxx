@@ -1,11 +1,20 @@
-(ns knoxx.backend.domain.actor.credentials
+(ns knoxx.backend.infra.actor.credentials
   "Resolve per-actor tool credentials from the policy DB.
 
    Tool credentials are actor-owned state. Do not read API keys from process
-   env vars here; missing credentials should be fixed in Admin → Actors."
+   env vars here; missing credentials should be fixed in Admin → Actors.
+
+   In infra, not domain: this reads the policy database and consults ambient
+   request state, and it always did — it sat under domain.* while requiring
+   infra.auth.authz and infra.db.policy, which made the layering violation
+   invisible rather than absent. Its callers are the tool implementations
+   (bluesky, discord, media, twitch), which are themselves effectful namespaces
+   filed under domain.*; moving this makes those edges visible to the layer gate
+   instead of laundering them through a domain-sounding name. See
+   knoxx-layer-enforcement-gate."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.actor.acting :as actor-acting]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
+            [knoxx.backend.infra.actor.acting :as actor-acting]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.db.policy :as policy-db]))
 
