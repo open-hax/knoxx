@@ -92,10 +92,18 @@
 
 (defn parse-register-client-body [req]
   (let [body   (or (aget req "body") (js/Object.))
-        value  {:redirect-uris (if (array? (aget body "redirect_uris"))
-                                 (mapv str (array-seq (aget body "redirect_uris")))
-                                 [])
-                :client-name (some-> (aget body "client_name") str)}
+        ;; :client-name is omitted rather than set to nil when absent.
+        ;; {:optional true} governs whether the key must be present, not what a
+        ;; present value may be — so a nil under a `string?` entry fails, and a
+        ;; registration that simply did not send client_name was rejected as
+        ;; invalid_client_metadata. Omitting keeps the schema honest instead of
+        ;; widening it to [:maybe string?], which would legitimise a nil name.
+        name   (some-> (aget body "client_name") str str/trim not-empty)
+        value  (cond-> {:redirect-uris (if (array? (aget body "redirect_uris"))
+                                         (mapv str (array-seq (aget body "redirect_uris")))
+                                         [])}
+                 ;; A whitespace-only name is not a name either.
+                 name (assoc :client-name name))
         parsed (validate! RegisterClientBody value
                           {:status 400 :error "invalid_client_metadata"
                            :detail "redirect_uris is required"})]

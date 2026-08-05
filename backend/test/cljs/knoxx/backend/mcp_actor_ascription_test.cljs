@@ -11,7 +11,7 @@
 
    Two halves are tested here: the law that says which actor may be named, and
    the scope that carries it without leaking across concurrent work."
-  (:require [cljs.test :refer [deftest is testing async]]
+  (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.actor.acting :as acting]
             [knoxx.backend.domain.actor.credentials :as credentials]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
@@ -168,26 +168,20 @@
   [actor]
   (acting/run-as! actor actor-after-awaits))
 
-(deftest scope-survives-an-await
-  (async done
-    ((^:async fn []
-       (let [seen (await (observe-actor "open_hax"))]
-         (is (= "open_hax" seen)
-             "the actor must still be readable after the awaits a credential
-              lookup performs")
-         (done))))))
+(deftest ^:async scope-survives-an-await
+  (let [seen (await (observe-actor "open_hax"))]
+    (is (= "open_hax" seen)
+        "the actor must still be readable after the awaits a credential lookup
+         performs")))
 
-(deftest concurrent-scopes-do-not-observe-each-other
-  (async done
-    ((^:async fn []
-       ;; All started before any resolves, so their awaits interleave.
-       (let [pending #js [(observe-actor "open_hax")
-                          (observe-actor "discord_automation")
-                          (observe-actor "chat_primary")]
-             seen    (await (js/Promise.all pending))]
-         (is (= ["open_hax" "discord_automation" "chat_primary"] (vec seen))
-             "each interleaved call must observe only its own actor")
-         (done))))))
+(deftest ^:async concurrent-scopes-do-not-observe-each-other
+  ;; All started before any resolves, so their awaits interleave.
+  (let [pending #js [(observe-actor "open_hax")
+                     (observe-actor "discord_automation")
+                     (observe-actor "chat_primary")]
+        seen    (await (js/Promise.all pending))]
+    (is (= ["open_hax" "discord_automation" "chat_primary"] (vec seen))
+        "each interleaved call must observe only its own actor")))
 
 ;; ─────────────────────────────────────────────────────────
 ;; A token gets an actor only if it carries one.
