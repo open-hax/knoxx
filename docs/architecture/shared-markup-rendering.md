@@ -48,16 +48,19 @@ Dynamic SVG is not considered trusted merely because it is rendered with
 JavaScript disabled. SVG can still initiate browser requests through images,
 styles, fonts, filters, base URLs, and related resource references.
 
-A server renderer may wrap SVG in `:raw-html` only after a domain-specific
-validator has accepted it. The Knoxx Puppeteer renderer permits local fragment
-references such as `url(#glow)` and `href="#symbol"`, while rejecting active
-content, event attributes, declarations/entities, base URLs, CSS imports, and
-non-fragment resource references.
+Pure acceptance policy lives in `knoxx.backend.law.svg`; the
+`knoxx.backend.infra.svg-render` namespace contains only browser lifecycle and
+Puppeteer effects. The law requires exactly one balanced `<svg>` document root
+with no leading or trailing markup or text. It permits local fragment references
+such as `url(#glow)` and `href="#symbol"`, while rejecting active or mutating
+content, event attributes, declarations/entities, processing instructions,
+base URLs, CSS imports, and non-fragment resource references.
 
-Validation is not the only network boundary. The Puppeteer page also enables
-request interception and aborts every request before document content is set.
-This makes raw-markup validation the reviewed capability boundary and browser
-interception the defense-in-depth runtime boundary.
+Only after this law accepts the document may the infra adapter construct a UXX
+trusted raw-markup value. Validation is not the only network boundary: the
+Puppeteer page also enables request interception and aborts every request before
+document content is set. This makes the law the reviewed capability boundary
+and browser interception the defense-in-depth runtime boundary.
 
 ## First fixtures
 
@@ -67,16 +70,17 @@ copy while replacing local escaping and string concatenation with AST view
 functions plus the shared HTML renderer.
 
 The Puppeteer SVG document shell is the second fixture. Its outer HTML structure
-uses the same AST and deterministic renderer, while validated SVG crosses one
-explicit raw-markup boundary inside the body.
+uses the same AST and deterministic renderer, while law-validated SVG crosses
+one explicit raw-markup boundary inside the body.
 
 ## Consequences
 
 - Server and browser structure can be tested for normalized-DOM parity.
 - Security policy is centralized instead of repeated in templates.
 - React lifecycle, reconciliation, hooks, and context remain outside the AST.
-- Dynamic raw-markup domains must define their own validation capability before
+- Dynamic raw-markup domains must define pure law/guard validation before
   constructing a trusted value.
+- Effectful `infra.*` adapters invoke policy but do not own it.
 - Browser renderers must enforce network policy independently of string
   validation.
 - CSS-in-JS and a general template language are explicitly not introduced.
