@@ -46,6 +46,11 @@ jobs:
           # (class file version 65).
           java-version: "21"
 
+      - name: Install clj-kondo
+        uses: DeLaGuardo/setup-clojure@13
+        with:
+          clj-kondo: latest
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
