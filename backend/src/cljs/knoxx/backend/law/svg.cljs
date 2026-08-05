@@ -131,6 +131,7 @@
               (reject-svg! "SVG CDATA must be inside the root element"
                            :svg/outside-root-markup candidate))
             (recur (sequence-end candidate (+ index 9) "]]>")
+                                 :svg/unterminated-cdata)
                    stack seen-root? root-closed?))
 
           (starts-at? candidate index "<!")
