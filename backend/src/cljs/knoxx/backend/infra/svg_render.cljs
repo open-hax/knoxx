@@ -182,7 +182,8 @@
   [svg-string]
   (str "<!doctype html>\n" (html/render (svg-document-node svg-string))))
 
-(defn- ^:async prepare-page!
+(defn ^:async prepare-page!
+  "Configure a fresh Puppeteer page as a code-free, network-denied SVG canvas."
   [page width height]
   (await (.setViewport page #js {:width width :height height}))
   (await (.setJavaScriptEnabled page false))
