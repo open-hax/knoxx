@@ -79,6 +79,8 @@
    :devtools
    {:autoload true,
     :preloads [shadow.cljs.devtools.client.node-esm],
+    ;; This codebase has existing infer warnings; without ignore-warnings,
+    ;; shadow compiles but refuses to hot-load changed code.
     :ignore-warnings true,
     :before-load-async knoxx.backend.bootstrap/stop-http-before-load!,
     :after-load-async knoxx.backend.bootstrap/start-http-after-load!},
