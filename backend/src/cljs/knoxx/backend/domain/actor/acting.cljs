@@ -1,5 +1,9 @@
-(ns knoxx.backend.infra.actor.scope
-  "The actor a unit of work is running as, scoped to that work.
+(ns knoxx.backend.domain.actor.acting
+  "The actor a unit of work is currently acting as.
+
+   Distinct from domain.actor.scope, which matches a principal against a
+   contract's declared actors. That answers \"may this actor\"; this answers
+   \"which actor, right now\".
 
    Tool credentials are actor-owned, so something has to say which actor a tool
    call belongs to. The agent runtime answers that with agent-context, but it is
@@ -15,7 +19,14 @@
    The distinction that matters: **being in a scope with no actor is not the
    same as being outside a scope.** A caller that has established there is no
    actor is making a claim, and that claim has to be able to win over a
-   process-global that happens to hold one."
+   process-global that happens to hold one.
+
+   Lives in domain rather than infra because \"which actor is in effect\" is
+   domain vocabulary, and because domain.actor.credentials must be able to read
+   it — a domain namespace requiring infra would be a layering violation. The
+   storage mechanism is externalised to extern.async-local-storage, which is
+   where that interop is born; this namespace exchanges CLJS values only and
+   carries no transport concern."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.async-local-storage :as als]))
 

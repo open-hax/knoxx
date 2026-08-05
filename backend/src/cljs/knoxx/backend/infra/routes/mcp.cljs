@@ -4,7 +4,7 @@
             [malli.core :as m]
             [malli.error :as me]
             [knoxx.backend.shape.app-shapes :refer [route!]]
-            [knoxx.backend.infra.actor.scope :as actor-scope]
+            [knoxx.backend.domain.actor.acting :as actor-acting]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
@@ -198,8 +198,8 @@
    there is no window in which a token acts as an actor its membership has
    dropped."
   [token-record token-ctx]
-  (let [claimed (actor-scope/normalize-actor-id (aget token-record "actorId"))
-        current (actor-scope/normalize-actor-id (authz/ctx-actor-id token-ctx))]
+  (let [claimed (actor-acting/normalize-actor-id (aget token-record "actorId"))
+        current (actor-acting/normalize-actor-id (authz/ctx-actor-id token-ctx))]
     (when-not (law/token-actor-honourable? claimed current)
       (throw (params/http-error 403 "actor_reassigned"
                          (str "This token was authorized to act as " claimed
@@ -369,7 +369,7 @@
   (let [membership-id (str (or (authz/ctx-membership-id auth-context) ""))
         user-email    (str (or (authz/ctx-user-email auth-context) ""))
         org-slug      (str (or (authz/ctx-org-slug auth-context) ""))
-        actor-id      (actor-scope/normalize-actor-id (authz/ctx-actor-id auth-context))]
+        actor-id      (actor-acting/normalize-actor-id (authz/ctx-actor-id auth-context))]
     (ensure-consent-identity! membership-id user-email)
     (ensure-consent-actor-unchanged! displayed-actor actor-id)
     (cond-> {:code code :clientId client-id :redirectUri redirect-uri
@@ -426,7 +426,7 @@
   (let [access-token  (.randomUUID crypto)
         membership-id (:membershipId record)
         tools         (vec (:tools record))
-        actor-id      (actor-scope/normalize-actor-id (:actorId record))
+        actor-id      (actor-acting/normalize-actor-id (:actorId record))
         token-value   (cond-> {:accessToken access-token :clientId client-id
                                :membershipId membership-id
                                :userEmail    (:userEmail record)
@@ -554,14 +554,14 @@
    A nil actor-id still enters a scope — one that says there is no actor. It has
    to: without it a credential read falls back to the process-global
    agent-context, and an actor-less token would borrow whatever actor a
-   concurrent agent turn is running as. See actor-scope/run-as!."
+   concurrent agent turn is running as. See actor-acting/run-as!."
   [^js server z tools actor-id]
   (doseq [^js tool (array-seq tools)]
     (when-let [name (some-> (aget tool "name") str str/trim not-empty)]
       (.registerTool server name
                      (tool-config-js z tool name)
                      (fn [params]
-                       (actor-scope/run-as! actor-id #(tool-execute! tool params)))))))
+                       (actor-acting/run-as! actor-id #(tool-execute! tool params)))))))
 
 (defn- granted-tools
   "The tools this token was granted, out of those its context can reach.

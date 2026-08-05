@@ -86,12 +86,19 @@
    then honoured for credential-backed tools. The user consented to posting as
    one account and got another.
 
-   The displayed value reaches this from a form field, so it is client-controlled
-   and is treated as a *witness of what was shown*, never as identity. The actor
-   actually minted is always the one the context resolved. A client that forges a
-   match therefore gains nothing — a match asserts \"nothing changed\", which is
-   either true or causes the mismatch it was trying to hide. It can only cause a
-   refusal, never an escalation.
+   **Scope, stated precisely: this is a race guard, not a CSRF defence.** The
+   displayed value reaches this from a form field, so a hostile client can send
+   whatever it likes — including the membership's current actor, which passes.
+   What it cannot do is escalate through this rule: the actor minted is always
+   the one the context resolved, so a forged match asserts \"nothing changed\",
+   which is either true or is the mismatch it was hiding.
+
+   So this stops the benign case — an admin reassigning the actor while a page
+   sits open — and does nothing against a crafted confirm URL. That is a
+   separate and larger hole: /authorize/confirm is a GET that mints a code from
+   a session cookie with no server-side consent state, so a crafted URL can mint
+   a code for tools no page ever displayed, actor or not. It predates this rule
+   and is not fixed by it. See knoxx-mcp-consent-server-side-state.
 
    Both blank is unchanged: a membership with no actor renders the page's
    no-actor warning, and consenting to that is legitimate. Blank on one side only

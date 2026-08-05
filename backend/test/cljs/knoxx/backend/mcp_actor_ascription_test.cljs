@@ -12,9 +12,9 @@
    Two halves are tested here: the law that says which actor may be named, and
    the scope that carries it without leaking across concurrent work."
   (:require [cljs.test :refer [deftest is testing async]]
+            [knoxx.backend.domain.actor.acting :as acting]
             [knoxx.backend.domain.actor.credentials :as credentials]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
-            [knoxx.backend.infra.actor.scope :as scope]
             [knoxx.backend.law.mcp-oauth :as law]))
 
 ;; ─────────────────────────────────────────────────────────
@@ -78,25 +78,25 @@
 ;; ─────────────────────────────────────────────────────────
 
 (deftest scope-is-empty-outside-a-run
-  (is (nil? (scope/current-actor-id))))
+  (is (nil? (acting/current-actor-id))))
 
 (deftest scope-reads-inside-a-run
-  (is (= "open_hax" (scope/run-as! "open_hax" #(scope/current-actor-id)))))
+  (is (= "open_hax" (acting/run-as! "open_hax" #(acting/current-actor-id)))))
 
 (deftest scope-does-not-outlive-a-run
-  (scope/run-as! "open_hax" (fn [] nil))
-  (is (nil? (scope/current-actor-id))
+  (acting/run-as! "open_hax" (fn [] nil))
+  (is (nil? (acting/current-actor-id))
       "a scope must not leak into the next unit of work")
-  (is (false? (scope/in-scope?))
+  (is (false? (acting/in-scope?))
       "and the scope itself must not outlive it either"))
 
 (deftest scope-normalizes-its-actor-id
   (testing "an id arrives trimmed"
-    (is (= "open_hax" (scope/run-as! "  open_hax\n" #(scope/current-actor-id)))))
+    (is (= "open_hax" (acting/run-as! "  open_hax\n" #(acting/current-actor-id)))))
   (testing "a blank reads as no actor, never as the actor \"\""
-    (is (nil? (scope/run-as! "" #(scope/current-actor-id))))
-    (is (nil? (scope/run-as! "   " #(scope/current-actor-id))))
-    (is (nil? (scope/run-as! nil #(scope/current-actor-id))))))
+    (is (nil? (acting/run-as! "" #(acting/current-actor-id))))
+    (is (nil? (acting/run-as! "   " #(acting/current-actor-id))))
+    (is (nil? (acting/run-as! nil #(acting/current-actor-id))))))
 
 ;; ─────────────────────────────────────────────────────────
 ;; "No actor" is a positive fact, not an absence.
@@ -110,35 +110,35 @@
 
 (deftest a-blank-actor-still-enters-a-scope
   (testing "so a reader can tell definitive absence from nothing being said"
-    (is (true? (scope/run-as! nil #(scope/in-scope?))))
-    (is (true? (scope/run-as! "" #(scope/in-scope?))))
-    (is (true? (scope/run-as! "open_hax" #(scope/in-scope?))))))
+    (is (true? (acting/run-as! nil #(acting/in-scope?))))
+    (is (true? (acting/run-as! "" #(acting/in-scope?))))
+    (is (true? (acting/run-as! "open_hax" #(acting/in-scope?))))))
 
 (deftest outside-every-scope-nothing-has-been-said
-  (is (false? (scope/in-scope?)))
-  (is (nil? (scope/current-actor-id))))
+  (is (false? (acting/in-scope?)))
+  (is (nil? (acting/current-actor-id))))
 
 (deftest an-actor-less-scope-shadows-an-outer-actor
   (testing "the innermost claim wins even when it is 'no actor' — otherwise an
             actor-less unit of work inherits an enclosing one's credentials"
-    (is (nil? (scope/run-as! "open_hax"
-                             #(scope/run-as! nil (fn [] (scope/current-actor-id))))))
-    (is (true? (scope/run-as! "open_hax"
-                              #(scope/run-as! nil (fn [] (scope/in-scope?))))))
+    (is (nil? (acting/run-as! "open_hax"
+                             #(acting/run-as! nil (fn [] (acting/current-actor-id))))))
+    (is (true? (acting/run-as! "open_hax"
+                              #(acting/run-as! nil (fn [] (acting/in-scope?))))))
     (testing "and the outer actor is intact afterwards"
       (is (= "open_hax"
-             (scope/run-as! "open_hax" (fn []
-                                         (scope/run-as! nil (fn [] nil))
-                                         (scope/current-actor-id))))))))
+             (acting/run-as! "open_hax" (fn []
+                                         (acting/run-as! nil (fn [] nil))
+                                         (acting/current-actor-id))))))))
 
 (deftest scope-nests-innermost-first
   (is (= "inner"
-         (scope/run-as! "outer" #(scope/run-as! "inner" (fn [] (scope/current-actor-id))))))
+         (acting/run-as! "outer" #(acting/run-as! "inner" (fn [] (acting/current-actor-id))))))
   (testing "and the outer scope is intact afterwards"
     (is (= "outer"
-           (scope/run-as! "outer" (fn []
-                                    (scope/run-as! "inner" (fn [] nil))
-                                    (scope/current-actor-id)))))))
+           (acting/run-as! "outer" (fn []
+                                    (acting/run-as! "inner" (fn [] nil))
+                                    (acting/current-actor-id)))))))
 
 ;; ─────────────────────────────────────────────────────────
 ;; The reason this is AsyncLocalStorage and not an atom.
@@ -161,12 +161,12 @@
   []
   (await (tick))
   (await (tick))
-  (scope/current-actor-id))
+  (acting/current-actor-id))
 
 (defn- observe-actor
   "Enter a scope and report what it observes once its awaits have resolved."
   [actor]
-  (scope/run-as! actor actor-after-awaits))
+  (acting/run-as! actor actor-after-awaits))
 
 (deftest scope-survives-an-await
   (async done
@@ -211,8 +211,8 @@
   [token-actor membership-actor]
   (when-not (law/token-actor-honourable? token-actor membership-actor)
     (throw (js/Error. "actor_reassigned")))
-  (when (scope/normalize-actor-id token-actor)
-    (scope/normalize-actor-id membership-actor)))
+  (when (acting/normalize-actor-id token-actor)
+    (acting/normalize-actor-id membership-actor)))
 
 (deftest a-token-carrying-an-actor-is-scoped-to-it
   (is (= "open_hax" (scoped-actor "open_hax" "open_hax"))))
@@ -307,19 +307,19 @@
 (deftest an-actor-less-scope-does-not-fall-back-to-agent-context
   (with-agent-context "chat_primary"
     (fn []
-      (is (nil? (scope/run-as! nil #(credentials/current-actor-id)))
+      (is (nil? (acting/run-as! nil #(credentials/current-actor-id)))
           "an actor-less MCP call must not borrow a concurrent agent turn's actor")
-      (is (nil? (scope/run-as! "" #(credentials/current-actor-id)))))))
+      (is (nil? (acting/run-as! "" #(credentials/current-actor-id)))))))
 
 (deftest a-scoped-actor-outranks-agent-context
   (with-agent-context "chat_primary"
     (fn []
-      (is (= "open_hax" (scope/run-as! "open_hax" #(credentials/current-actor-id)))
+      (is (= "open_hax" (acting/run-as! "open_hax" #(credentials/current-actor-id)))
           "the narrower per-call claim must beat the process-global"))))
 
 (deftest agent-context-is-restored-after-a-scope
   (with-agent-context "chat_primary"
     (fn []
-      (scope/run-as! "open_hax" (fn [] nil))
+      (acting/run-as! "open_hax" (fn [] nil))
       (is (= "chat_primary" (credentials/current-actor-id))
           "a scope must not disturb the agent turn it ran inside"))))

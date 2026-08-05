@@ -4,8 +4,8 @@
    Tool credentials are actor-owned state. Do not read API keys from process
    env vars here; missing credentials should be fixed in Admin → Actors."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.actor.acting :as actor-acting]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
-            [knoxx.backend.infra.actor.scope :as actor-scope]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.db.policy :as policy-db]))
 
@@ -37,8 +37,8 @@
    Outside any scope nobody has said anything, so the agent-spawn path's
    agent-context is consulted and keeps working unchanged."
   []
-  (if (actor-scope/in-scope?)
-    (actor-scope/current-actor-id)
+  (if (actor-acting/in-scope?)
+    (actor-acting/current-actor-id)
     (agent-context-actor-id)))
 
 (defn- normalize-credential
