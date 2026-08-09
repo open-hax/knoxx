@@ -90,6 +90,16 @@ jobs:
       - name: Backend tests + coverage (cljs.test via shadow-cljs + c8)
         run: pnpm -C backend run test:coverage
 
+      # Boots a real Fastify app on an ephemeral port and drives the MCP tool
+      # surface over HTTP. Hermetic — the policy context and fetch are supplied
+      # by the harness — except the sandbox tools, which need a real docker
+      # daemon. Runners have one, so absence is a failure here rather than a
+      # silent skip: a skipped sandbox test reads exactly like a passing one.
+      - name: Backend e2e (real server, MCP tool surface)
+        env:
+          KNOXX_E2E_REQUIRE_DOCKER: "true"
+        run: pnpm -C backend run test:e2e
+
       - name: Upload backend coverage artifact
         uses: actions/upload-artifact@v4
         with:
