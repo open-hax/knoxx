@@ -6,6 +6,7 @@
             [knoxx.backend.shape.app-shapes :refer [route!]]
             [knoxx.backend.infra.actor.acting :as actor-acting]
             [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.auth.method-config :as auth-methods]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.routes.mcp.consent :as consent]
@@ -627,6 +628,26 @@
     (transport/ensure-streamable-accept! request)
     (transport/handle-request! transport raw-req raw-res (aget request "body"))))
 
+(defn- ^:async resolve-post-token-record!
+  "The token record this POST acts under, or nil to refuse it.
+
+   Which methods may answer here is the authentication contract's decision, not
+   this route's. :trusted-loopback is consulted first and only ever answers for
+   a request auth-methods already accepted under the guards the contract
+   declares; when no contract enables it, the call is a nil and the bearer
+   falls through to the OAuth store exactly as before.
+
+   A grant becomes an ordinary token record, so everything downstream — context
+   resolution, granted-tools, actor scoping, the transport — cannot tell which
+   method admitted the caller."
+  [request runtime config bearer]
+  (when-not (str/blank? bearer)
+    (if-let [grant (auth-methods/trusted-loopback-grant
+                    config auth-methods/mcp-surface request bearer)]
+      (auth-methods/grant->token-record
+       grant (tool-name-set (available-tools runtime config nil)))
+      (await (load-token-record! bearer)))))
+
 (defroute mcp-handle-post! [base config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z] "POST" "/mcp" []
   (let [^js request request
         ^js reply reply]
@@ -635,8 +656,7 @@
           ^js raw-res (aget reply "raw")
           bearer      (transport/bearer-token request)]
       (try
-        (let [token-record (when-not (str/blank? bearer)
-                             (await (load-token-record! bearer)))]
+        (let [token-record (await (resolve-post-token-record! request runtime config bearer))]
           (if-not token-record
             (transport/unauthorized! base raw-res)
             (await (serve-mcp-post!
@@ -689,5 +709,6 @@
               :z                             z
               :code-ttl  code-ttl
               :token-ttl token-ttl}]
+    (auth-methods/announce! config auth-methods/mcp-surface)
     (doseq [register! route-registrars]
       (register! app runtime config deps))))
