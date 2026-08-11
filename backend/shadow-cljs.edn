@@ -1,6 +1,7 @@
-{:source-paths ["src/cljs" "test/cljs"
-                "../shared/src/cljs"
-                "../../contract-runtime/src/cljs"],
+{:source-paths ["src/cljs" "test/cljs"],
+ ;; Merges the :katamorph alias's classpath (deps.edn) into every build below,
+ ;; making katamorph.* namespaces resolvable without a filesystem source-path.
+ :deps {:aliases [:katamorph]},
  :dependencies
  [[cider/cider-nrepl "0.50.2"]
   [refactor-nrepl "3.9.1"]

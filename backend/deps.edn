@@ -6,7 +6,16 @@
   rewrite-clj/rewrite-clj {:mvn/version "1.1.49"}}
 
  :aliases
- {:mutation
+ {;; Katamorph (open-hax/katamorph) is the successor to the openplanner
+  ;; contract-runtime package. Consumed as CLJS source via tools.deps git
+  ;; dependency — see shadow-cljs.edn's top-level :deps, which merges this
+  ;; alias's classpath into every build.
+  :katamorph
+  {:extra-deps {io.github.open-hax/katamorph
+                {:git/tag "v0.2.0"
+                 :git/sha "305a5e49d834aca27566f739e8510f6b409fda78"}}}
+
+  :mutation
   {:main-opts ["-m" "knoxx.mutation-test"]}
 
   :mutation-test
