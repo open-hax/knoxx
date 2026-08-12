@@ -3,9 +3,9 @@ uuid: "knoxx-translation-pipeline-config-resource"
 title: "Move translation pipeline configuration out of OpenPlanner"
 status: accepted
 priority: P1
-labels: ["tasks", "3sp", "has-parent", "translations", "contracts", "openplanner"]
+labels: ["tasks", "5sp", "has-parent", "translations", "contracts", "openplanner"]
 created_at: "2026-08-12T00:00:00Z"
-points: 3
+points: 5
 category: tasks
 ---
 # Move translation pipeline configuration out of OpenPlanner
