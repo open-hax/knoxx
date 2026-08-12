@@ -25,6 +25,7 @@ This migration and explicit conflict resolution land **before** the CMS resource
 - Inventory current garden rows and document `garden_publications` metadata used by CMS.
 - Convert semantic fields into `garden`, `document`, and `publication` resources.
 - Validate every legacy semantic field before constructing resources: garden status, source/target locale, path, garden identity, document identity, revision selector/value, requested publication state, and review policy. Missing, malformed, or unrecognized values become conflicts rather than defaults.
+- Reuse `knoxx.backend.law.publication/valid-publication-path?` for path validation so migrated data and directly authored resource data obey the exact same route law.
 - In particular, do **not** infer `:source/current` from a missing revision and do **not** coerce missing/truthy/falsy legacy `:published` values into publication state. Both must decode explicitly.
 - Separate operational observations (`published_at`, job/run ids, adapter timestamps) into migration receipts rather than resource data.
 - Detect ambiguous/conflicting source rows and emit a report requiring explicit resolution; do not apply "last write wins".
@@ -105,7 +106,7 @@ This migration and explicit conflict resolution land **before** the CMS resource
       invalid
       invalid
 
-      (not (valid-publication-path? (:path row)))
+      (not (publication/valid-publication-path? (:path row)))
       (conflict :invalid-publication-path :path (:path row) row)
 
       :else
@@ -175,6 +176,7 @@ Garden migration uses the same decision/receipt discipline. Document migration m
 
 - Re-running migration over unchanged legacy data produces no new semantic resources.
 - Unknown/ambiguous source locale, target locale, status, path, garden, document identity, revision, publication state, or review policy becomes a conflict receipt, not guessed contract data.
+- Migration path validation is exactly the authoritative `publication/valid-publication-path?` law used for directly authored publication resources.
 - Missing revision never means `:source/current` unless that selector was explicitly represented by the legacy source.
 - Only an actual legacy boolean may become `:published` or `:withheld`; truthiness/falsiness is not a decoder.
 - Conflict receipts have stable source-record keys; reruns do not duplicate them.
@@ -187,5 +189,6 @@ Garden migration uses the same decision/receipt discipline. Document migration m
 - Existing publish topology can be reconstructed as validated Knoxx resources before the CMS authority cutover.
 - Conflicts are enumerated explicitly with source evidence and no defaulted semantic values.
 - Fixtures prove missing/invalid revision and non-boolean/missing publish state produce conflicts rather than resources.
+- Direct-resource and migration fixtures reject the same malformed publication paths through the same shared predicate.
 - Two source rows mapping to the same publication are reconciled against the updated in-run index rather than both being blindly written.
 - The same migration run twice yields identical resource state and no duplicate publications or conflict receipts.
