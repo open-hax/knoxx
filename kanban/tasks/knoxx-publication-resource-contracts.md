@@ -179,3 +179,19 @@ loader validation hook, then re-run to green.
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Walked accepted -> breakdown -> ready via the Rheos promethean FSM.
 ---
+Implementation 2026-08-12: added `knoxx.backend.law.publication`
+(`backend/src/cljs/knoxx/backend/law/publication.cljs`) with `Locale`,
+`PublicationPath`/`valid-publication-path?`, `Document`, `Garden`,
+`PublicationIntentResource`/`PublicationIntent`, `hydrate-publication-intent`,
+`admissible-publication?`, and an `index-resources` helper, plus all ten TDD
+tests from this card's plan in
+`backend/test/cljs/knoxx/backend/law/publication_test.cljs`.
+Could not run `pnpm -C backend test:shadow` / `lint:kondo` in this session:
+the sandbox's egress policy denies `repo.clojars.org` (403), which
+shadow-cljs needs to resolve its own JVM dependency before it can compile
+anything. Status left at `ready` rather than hand-forged to `in_progress` —
+direct frontmatter edits bypass the Rheos ledger and read as drift. Next
+session with real network/CLI access should run the test suite, then drive
+`ready -> todo -> in_progress -> testing` through
+`node packages/rheos/dist/cli.cjs status-update knoxx-publication-resource-contracts --to <status>`.
+---
