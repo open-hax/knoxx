@@ -19,11 +19,13 @@ Make publication effects replaceable. The domain computes the desired materializ
 ## Scope
 
 - Define a narrow publication target protocol/interface at the effect boundary.
-- Keep planning pure: compare desired publication intent with observed receipts/projections and emit actions.
+- Keep planning pure: compare desired publication intent with resource admissibility and observed receipts/projections, then emit actions.
 - Handle non-publication states (`:withheld`, `:archived`) before translation/review blockers so removal can never be prevented by missing/stale translation evidence.
+- Apply garden admissibility before publication blockers: a publication targeting an archived garden must remove any existing materialization even if the publication intent itself still says `:published`.
 - Resolve revision selectors such as `:source/current` to a concrete revision before comparing desired and observed materialization.
-- Require adapters to return receipts describing what they actually materialized, including target, document, locale, concrete revision, adapter identity, and idempotency key.
-- Make retry/idempotency semantics explicit before the first adapter implementation.
+- Treat publication path as part of materialized topology. Path-only changes must produce drift and reconciliation rather than `:noop`.
+- Require adapters to return receipts describing what they actually materialized, including target, document, locale, concrete revision, publication path, adapter identity, and idempotency key.
+- Make retry/idempotency semantics explicit before the first adapter implementation. The stable publish operation key includes every effect-relevant materialization dimension, including path.
 - Provide an OpenPlanner adapter only as transitional compatibility if still needed; do not expose OpenPlanner ids above the adapter.
 - Permit future static-filesystem/Git/object-store publication adapters without changing document/publication laws.
 
@@ -39,30 +41,62 @@ Make publication effects replaceable. The domain computes the desired materializ
                      (:publication/document intent))
     (:publication/revision intent)))
 
-(defn non-public-plan [intent observed]
-  (if observed
-    {:op :remove :intent intent}
-    {:op :noop :intent intent}))
+(defn garden-active? [resource-index intent]
+  (= :active
+     (:garden/status
+      (get-in resource-index
+              [:gardens (:publication/garden intent)]))))
 
-(defn reconcile-plan [intent facts]
+(defn non-public-plan [intent observed reason]
+  (if observed
+    {:op :remove
+     :intent intent
+     :reason reason
+     :observed observed}
+    {:op :noop
+     :intent intent
+     :reason reason}))
+
+(defn desired-materialization [intent revision]
+  {:materialized/revision revision
+   :materialized/path (:publication/path intent)})
+
+(defn observed-materialization [observed]
+  (select-keys observed
+               [:materialized/revision
+                :materialized/path]))
+
+(defn reconcile-plan [resource-index intent facts]
   (let [state    (:publication/state intent)
         observed (facts/materialized-publication facts intent)]
-    (if (contains? #{:withheld :archived} state)
-      (non-public-plan intent observed)
+    (cond
+      (contains? #{:withheld :archived} state)
+      (non-public-plan intent observed :publication-not-public)
+
+      (not (garden-active? resource-index intent))
+      (non-public-plan intent observed :garden-not-active)
+
+      :else
       (let [revision (concrete-revision intent facts)
+            desired  (desired-materialization intent revision)
             blockers (gate/publication-blockers intent facts)]
         (cond
           (seq blockers)
-          {:op :blocked :blockers blockers :intent intent}
+          {:op :blocked
+           :blockers blockers
+           :intent intent}
 
-          (not= revision (:materialized/revision observed))
+          (not= desired (observed-materialization observed))
           {:op :publish
            :intent intent
+           :desired desired
+           :previous observed
            :concrete-revision revision}
 
           :else
           {:op :noop
            :intent intent
+           :desired desired
            :concrete-revision revision})))))
 ```
 
@@ -75,6 +109,7 @@ Stable publish operation identity:
     adapter-id
     (:publication/garden intent)
     (:publication/locale intent)
+    (:publication/path intent)
     concrete-revision]))
 ```
 
@@ -82,8 +117,8 @@ Effect boundary:
 
 ```clojure
 (defprotocol IPublicationTarget
-  (publish! [target ctx intent artifact idempotency-key])
-  (remove! [target ctx intent])
+  (publish! [target ctx intent artifact previous idempotency-key])
+  (remove! [target ctx intent observed])
   (observe! [target ctx intent]))
 
 (defn execute-plan! [adapter ctx plan artifact]
@@ -93,12 +128,20 @@ Effect boundary:
                (adapter/id adapter)
                (:intent plan)
                (:concrete-revision plan))]
-      ;; Adapter must return the prior successful receipt when this key has
-      ;; already materialized the same operation; retries do not duplicate.
-      (publish! adapter ctx (:intent plan) artifact key))
+      ;; Adapter treats publication identity as one logical materialization.
+      ;; If :publication/path moved, the prior path is removed/replaced as part
+      ;; of this convergent operation; the old route cannot remain public.
+      ;; Replaying the same key returns the existing converged receipt.
+      (publish! adapter
+                ctx
+                (:intent plan)
+                artifact
+                (:previous plan)
+                key))
 
-    :remove  (remove! adapter ctx (:intent plan))
-    :noop    {:receipt/type :publication/noop}
+    :remove  (remove! adapter ctx (:intent plan) (:observed plan))
+    :noop    {:receipt/type :publication/noop
+              :reason (:reason plan)}
     :blocked {:receipt/type :publication/blocked
               :blockers (:blockers plan)}))
 ```
@@ -113,14 +156,20 @@ Receipt shape sketch:
  :document/id :knoxx.docs/translation-pipeline
  :locale :es
  :revision "abc123"
- :target :gardens/promethean}
+ :path "/translation-pipeline"
+ :target :gardens/promethean
+ :materialized/revision "abc123"
+ :materialized/path "/translation-pipeline"}
 ```
 
 ## Contract obligations
 
 - `:withheld` and `:archived` can only remove or no-op; they can never enter the publish branch.
-- Removal is not gated by translation/review blockers. An archive request can always remove a stale public artifact.
+- A `:published` intent targeting an archived garden also can only remove or no-op until the garden is active again.
+- Removal is not gated by translation/review blockers. An archive request or garden archive can always remove a stale public artifact.
 - Revision selectors are normalized before desired/observed comparison; unchanged `:source/current` publications do not republish every tick.
+- Desired/observed convergence compares concrete revision **and publication path**. A path-only edit is drift.
+- Path participates in publish idempotency identity. Retrying the same publication/revision/path converges; changing the path creates a distinct operation that replaces/removes the prior route rather than leaving both public.
 - Repeating the same `:publish` operation with the same idempotency key returns the existing materialization receipt or equivalent converged result; it cannot create duplicate public artifacts.
 - Adapter-specific identifiers never become part of publication resource identity.
 - Adapter failure records failure/drift; it does not mutate desired state back to the old observed state.
@@ -129,8 +178,10 @@ Receipt shape sketch:
 ## Done when
 
 - Fake-adapter tests prove `:withheld` and `:archived` never publish and remove existing materializations even when translation facts are blocked/stale.
-- `:source/current` resolves once to a concrete revision and no-ops when the receipt already names that revision.
-- Retrying a publish after an ambiguous external response with the same stable idempotency key does not duplicate materialization.
+- Fake-adapter tests prove archiving a target garden removes an already-public artifact even while its publication intent remains `:published`.
+- `:source/current` resolves once to a concrete revision and no-ops when the receipt already names that revision and path.
+- Changing only `:publication/path` emits a publish/move plan, records the new path, and leaves the old path unavailable.
+- Retrying a path-aware publish after an ambiguous external response with the same stable idempotency key does not duplicate materialization.
 - A fake adapter can drive the complete reconciler tests with no OpenPlanner dependency.
 - OpenPlanner can be unplugged/replaced without changing domain publication code or resource contracts.
-- Every successful materialization produces a receipt suitable for drift calculation and deploy verification.
+- Every successful materialization produces a receipt suitable for revision/path drift calculation and deploy verification.
