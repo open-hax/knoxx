@@ -3,9 +3,9 @@ uuid: "knoxx-publication-adapter-boundary"
 title: "Define publication reconciliation and adapter boundary"
 status: accepted
 priority: P1
-labels: ["tasks", "5sp", "has-parent", "publication", "adapters", "decouple"]
+labels: ["tasks", "8sp", "has-parent", "publication", "adapters", "decouple"]
 created_at: "2026-08-12T00:00:00Z"
-points: 5
+points: 8
 category: tasks
 ---
 # Define publication reconciliation and adapter boundary
