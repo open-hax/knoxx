@@ -2,7 +2,7 @@
 uuid: "knoxx-openplanner-rest-retirement"
 title: "Retire OpenPlanner REST as a Knoxx CMS/translation dependency"
 status: accepted
-priority: P1
+priority: P2
 labels: ["tasks", "3sp", "has-parent", "cms", "translations", "openplanner", "deploy"]
 created_at: "2026-08-12T00:00:00Z"
 points: 3
