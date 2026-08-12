@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-publication-intent-resolver"
 title: "Resolve desired publication topology from the Knoxx resource graph"
-status: incoming
+status: accepted
 priority: P1
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "domain"]
 created_at: "2026-08-12T00:00:00Z"
@@ -21,65 +21,130 @@ The resolver must not call HTTP, Mongo, OpenPlanner, filesystem effects, or work
 ## Scope
 
 - Build document/garden/publication indexes from the resource registry.
-- Resolve namespace-local refs to canonical ids before comparison.
+- Canonicalize resource identities and namespace-local references before indexing, filtering, conflict checks, or key construction.
+- Reject duplicate/revision-conflicting publication intents deterministically before exposing any projection; never rely on enumeration order.
 - Expose pure queries for documents, gardens, publication intents, target locales, and intended revisions.
 - Return explicit semantic blockers for malformed/incomplete desired state; leave runtime blockers to `knoxx-translation-publication-gate`.
+- Define both document and list facade shapes before routes consume them.
 - Add a Knoxx route/facade that serializes this projection for frontends without exposing the underlying resource-loader implementation.
+- Keep raw Fastify request/reply interop inside `knoxx.backend.extern.*`; infra/domain receive and return CLJS data only.
 
 ## CLJS pseudocode
 
 ```clojure
 (ns knoxx.backend.domain.publication)
 
-(defn publication-index [resources]
-  (reduce
-   (fn [idx resource]
-     (cond-> idx
-       (:document/id resource)
-       (assoc-in [:documents (:document/id resource)] resource)
+(defn canonical-document-id [resource]
+  (resources/canonical-id (:resource/namespace resource)
+                          (:document/id resource)))
 
-       (:garden/id resource)
-       (assoc-in [:gardens (:garden/id resource)] resource)
+(defn canonical-garden-id [resource]
+  (resources/canonical-id (:resource/namespace resource)
+                          (:garden/id resource)))
 
-       (:publication/id resource)
-       (update :publications conj resource)))
-   {:documents {} :gardens {} :publications []}
-   resources))
+(defn canonicalize-intent [resource]
+  (let [ns (:resource/namespace resource)]
+    (-> resource
+        (update :publication/id #(resources/canonical-id ns %))
+        (update :publication/document #(resources/resolve-ref ns %))
+        (update :publication/garden #(resources/resolve-ref ns %)))))
 
 (defn publication-key [intent]
   [(:publication/document intent)
    (:publication/garden intent)
    (:publication/locale intent)])
 
-(defn desired-publications [idx document-id]
-  (->> (:publications idx)
-       (filter #(= document-id (:publication/document %)))
-       (sort-by publication-key)
+(defn publication-conflicts [publications]
+  (->> publications
+       (group-by publication-key)
+       (keep (fn [[k intents]]
+               (when (> (count intents) 1)
+                 {:publication/key k
+                  :intents (vec (sort-by :publication/id intents))})))
+       (sort-by :publication/key)
        vec))
 
+(defn publication-index [resources]
+  (let [idx
+        (reduce
+         (fn [idx resource]
+           (cond-> idx
+             (:document/id resource)
+             (assoc-in [:documents (canonical-document-id resource)] resource)
+
+             (:garden/id resource)
+             (assoc-in [:gardens (canonical-garden-id resource)] resource)
+
+             (:publication/id resource)
+             (update :publications conj (canonicalize-intent resource))))
+         {:documents {} :gardens {} :publications []}
+         resources)
+        conflicts (publication-conflicts (:publications idx))]
+    (when (seq conflicts)
+      (throw (ex-info "conflicting publication intents"
+                      {:conflicts conflicts})))
+    (update idx :publications #(vec (sort-by publication-key %)))))
+
+(defn desired-publications [idx document-id]
+  (let [canonical-id (resources/resolve-query-id document-id)]
+    (->> (:publications idx)
+         (filter #(= canonical-id (:publication/document %)))
+         (mapv #(law.publication/hydrate-publication-intent idx %)))))
+
 (defn document-view [idx document-id]
-  {:document (get-in idx [:documents document-id])
+  {:document (get-in idx [:documents (resources/resolve-query-id document-id)])
    :publications (desired-publications idx document-id)})
+
+(def PublicationListView
+  [:map
+   [:documents [:vector :map]]
+   [:gardens [:vector :map]]])
+
+(defn list-document-views [idx]
+  (let [view {:documents (->> (keys (:documents idx))
+                              sort
+                              (mapv #(document-view idx %)))
+              :gardens (->> (:gardens idx) vals (sort-by :garden/id) vec)}]
+    (law/assert! PublicationListView view)
+    view))
 ```
 
-Thin infra route:
+Infra handler returns CLJS data; it never touches Fastify handles:
 
 ```clojure
-(defn list-publication-documents! [req reply]
-  (let [resources (resource-store/resolved-resources (:context req))
+(ns knoxx.backend.infra.routes.publications)
+
+(defn list-publication-documents! [{:keys [context]}]
+  (let [resources (resource-store/resolved-resources context)
         idx       (publication/publication-index resources)]
-    (.send reply (publication/list-document-views idx))))
+    (publication/list-document-views idx)))
+```
+
+The owning extern adapter alone decodes/encodes Fastify:
+
+```clojure
+(ns knoxx.backend.extern.fastify.publications)
+
+(defn register-list-route! [app handler]
+  (.get app "/api/publications/documents"
+        (fn [req reply]
+          (-> (handler (decode-request req))
+              (.then #(send-json! reply %))))))
 ```
 
 ## Laws
 
 - Same resource graph -> byte-equivalent canonical projection regardless of source file enumeration order.
+- Namespace-local and already-qualified references resolve to the same canonical identity before comparison.
 - Resolver output contains no execution status such as worker state, publish timestamps, or adapter receipts.
-- Duplicate publication keys are rejected or surfaced as deterministic conflicts; never "last one wins" by loader order.
+- Duplicate publication keys or revision-conflicting intents are surfaced deterministically before projection; never "last one wins" by loader order.
 - The domain namespace remains pure and reusable by CLI/tests without Fastify or Mongo.
+- Native request/reply handles are born and die in the extern adapter.
 
 ## Done when
 
 - CMS can list documents, gardens, targets, locales, and requested publication states from this projection alone.
 - A pure test deletes every OpenPlanner dependency from the fixture and produces the same desired topology.
-- One backend facade serves the projection without `/api/openplanner/...` in its contract.
+- Namespace-local reference fixtures produce the same canonical projection as fully-qualified fixtures.
+- Duplicate/conflicting intents fail before the list/document facade returns data.
+- One backend facade serves the projection without `/api/openplanner/...` in its contract and without raw Fastify interop outside `extern.*`.
