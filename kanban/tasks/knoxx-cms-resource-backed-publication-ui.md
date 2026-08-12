@@ -30,8 +30,9 @@ This cutover happens only after `knoxx-openplanner-publication-state-migration` 
 - Define one normalized JSON wire contract for list and document responses; do not wrap `publication/document-view` under another `:document` key.
 - Treat JSON enum values as strings at the HTTP boundary and explicitly convert them to/from domain keywords. Keywordizing object keys is not sufficient.
 - Reuse the resource wire identity convention: keyword ids serialize as `namespace/name` with no EDN leading colon and decode back to the same qualified keyword.
+- Give document and garden rows explicit JSON wire contracts/codecs too; never return raw resource maps and rely on `clj->js` for identity or enum serialization.
 - Map resource `:publication/state` to wire-level `"desired"` string values in the backend facade and combine it with observed receipt status there.
-- Encode keyword-valued response fields symmetrically (locale, desired/observed state, blockers, resource IDs where applicable), then explicitly decode them into CLJS UI-domain values in the frontend helper.
+- Encode keyword-valued response fields symmetrically (document/garden/publication IDs, source/target locales, garden status, desired/observed state, blockers), then explicitly decode them into CLJS UI-domain values in the frontend helper.
 - Render desired publication state separately from observed adapter state.
 - Make publish/unpublish/archive edits update only the relevant publication **state** through the existing resource-write boundary (or the narrowest new resource-write facade required).
 - Treat publication identity dimensions — document, garden, locale, revision selector — as immutable for state edits. Any re-key must be an explicit operation with duplicate/conflict validation.
@@ -42,9 +43,22 @@ This cutover happens only after `knoxx-openplanner-publication-state-migration` 
 
 ## CLJS pseudocode
 
-JSON wire contracts use JSON-safe scalar values:
+JSON wire contracts use JSON-safe scalar values throughout:
 
 ```clojure
+(def DocumentWireJson
+  [:map
+   [:id :string]
+   [:title :string]
+   [:source-locale :string]
+   [:source [:map [:path :string]]]])
+
+(def GardenWireJson
+  [:map
+   [:id :string]
+   [:title :string]
+   [:status [:enum "active" "archived"]]])
+
 (def PublicationWireJson
   [:map
    [:id :string]
@@ -59,13 +73,13 @@ JSON wire contracts use JSON-safe scalar values:
 
 (def CmsDocumentWireJson
   [:map
-   [:document :map]
+   [:document DocumentWireJson]
    [:publications [:vector PublicationWireJson]]])
 
 (def CmsListWireJson
   [:map
    [:documents [:vector CmsDocumentWireJson]]
-   [:gardens [:vector :map]]])
+   [:gardens [:vector GardenWireJson]]])
 ```
 
 Backend encoding is explicit rather than relying on incidental keyword serialization. Qualified keyword ids never include an EDN leading colon:
@@ -84,6 +98,21 @@ Backend encoding is explicit rather than relying on incidental keyword serializa
 
 (defn decode-id [x]
   (keyword x))
+
+(defn document->wire [document]
+  (law/assert!
+   DocumentWireJson
+   {:id (encode-id (:document/id document))
+    :title (:document/title document)
+    :source-locale (encode-keyword (:document/source-locale document))
+    :source (:document/source document)}))
+
+(defn garden->wire [garden]
+  (law/assert!
+   GardenWireJson
+   {:id (encode-id (:garden/id garden))
+    :title (:garden/title garden)
+    :status (encode-keyword (:garden/status garden))}))
 
 (defn publication->wire [receipts intent]
   (law/assert!
@@ -105,16 +134,20 @@ Backend encoding is explicit rather than relying on incidental keyword serializa
 (defn cms-document-view [resource-index receipts document-id]
   (let [{:keys [document publications]}
         (publication/document-view resource-index document-id)]
-    {:document document
-     :publications (mapv #(publication->wire receipts %) publications)}))
+    (law/assert!
+     CmsDocumentWireJson
+     {:document (document->wire document)
+      :publications (mapv #(publication->wire receipts %) publications)})))
 
 (defn cms-list-view [resource-index receipts]
   (let [{:keys [documents gardens]}
         (publication/list-document-views resource-index)]
-    {:documents (mapv #(cms-document-view resource-index receipts
-                                           (get-in % [:document :document/id]))
-                      documents)
-     :gardens gardens}))
+    (law/assert!
+     CmsListWireJson
+     {:documents (mapv #(cms-document-view resource-index receipts
+                                            (get-in % [:document :document/id]))
+                       documents)
+      :gardens (mapv garden->wire gardens)})))
 ```
 
 State mutation has separate JSON and domain contracts:
@@ -158,9 +191,19 @@ The Fastify/HTTP adapter decodes once and reads both body and route identity fro
     (await (put-publication-state! ctx publication-id domain))))
 ```
 
-Frontend wire decoding is symmetric:
+Frontend wire decoding is symmetric across every resource row:
 
 ```clojure
+(defn decode-document-wire [wire]
+  (-> wire
+      (update :id decode-id)
+      (update :source-locale keyword)))
+
+(defn decode-garden-wire [wire]
+  (-> wire
+      (update :id decode-id)
+      (update :status keyword)))
+
 (defn decode-publication-wire [wire]
   (-> wire
       (update :id decode-id)
@@ -172,12 +215,16 @@ Frontend wire decoding is symmetric:
       (update :blockers #(mapv keyword %))))
 
 (defn decode-cms-list-wire [wire]
-  (update wire :documents
-          #(mapv (fn [doc]
-                   (update doc :publications
-                           (fn [publications]
-                             (mapv decode-publication-wire publications))))
-                 %)))
+  (-> wire
+      (update :documents
+              #(mapv (fn [doc]
+                       (-> doc
+                           (update :document decode-document-wire)
+                           (update :publications
+                                   (fn [publications]
+                                     (mapv decode-publication-wire publications)))))
+                     %))
+      (update :gardens #(mapv decode-garden-wire %))))
 ```
 
 Frontend page flow consumes those exact keys using native async/await and serializes ids through the same colon-free resource-id convention:
@@ -210,6 +257,7 @@ UI-domain state remains keyword-oriented after explicit frontend decoding:
 ## Watch out
 
 - Do not preserve `publishedGardenIds` as a second client-side authority; derive selected/publication badges from `:desired` in the decoded publication projection.
+- Do not return raw document/garden resource maps at the JSON boundary; their IDs/locales/statuses use the same explicit wire convention as publication rows.
 - Do not rely on `(str keyword)` for resource wire ids: `:docs/probe` must serialize as `"docs/probe"`, never `":docs/probe"`.
 - Do not read route params from the raw Fastify request after decoding; native request handles stay at the adapter edge.
 - Do not rely on JSON serialization to preserve Clojure keyword values. Wire enums are strings; domain enums are keywords; adapters convert explicitly in both directions.
@@ -220,9 +268,10 @@ UI-domain state remains keyword-oriented after explicit frontend decoding:
 ## Done when
 
 - CMS can render document publication topology with OpenPlanner REST disabled.
-- List and document routes expose one consistent `{documents, gardens}` / `{document, publications}` vocabulary with JSON-safe publication `{desired, observed, blockers}` fields.
+- List and document routes expose one consistent `{documents, gardens}` / `{document, publications}` vocabulary with explicit JSON-safe document, garden, and publication contracts.
 - A state PATCH containing JSON `"published"` decodes to domain `:published` before Malli validates `PublicationStatePatch`.
 - Qualified resource ids round-trip exactly: domain `:docs/probe` -> JSON `"docs/probe"` -> domain `:docs/probe`, and PATCH URLs contain no spurious colon.
+- Document source locale and garden status round-trip through explicit string encoding/keyword decoding, never incidental `clj->js` behavior.
 - The PATCH adapter obtains `publication-id` from decoded request params, never by keyword lookup on the native Fastify object.
 - Response keyword-valued fields round-trip through explicit JSON encoding and frontend decoding without relying on implicit keyword serialization.
 - `load-cms!` uses `^:async`/`await` and contains no Promise `.then` chain.
