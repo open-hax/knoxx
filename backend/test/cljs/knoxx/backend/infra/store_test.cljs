@@ -7,7 +7,7 @@
             [knoxx.backend.infra.store.protocol :as store]
             [knoxx.backend.infra.store.registry :as store-registry]
             [knoxx.backend.domain.resources.loader :as resources]
-            [open-hax.contract-runtime.store.law :as store-law]))
+            [katamorph.store.law :as store-law]))
 
 (defn- build-test-deps
   "Build contract-runtime deps for tests."

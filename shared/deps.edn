@@ -1,0 +1,5 @@
+{;; Shared ClojureScript (open-hax.uxx.*) consumed by the backend and frontend
+ ;; builds. The backend resolves this directory as a :local/root lib from
+ ;; backend/deps.edn; the frontend still reads ../shared/src/cljs directly as a
+ ;; shadow-cljs :source-paths entry.
+ :paths ["src/cljs"]}

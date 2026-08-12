@@ -1,13 +1,13 @@
 (ns knoxx.backend.domain.registry.resource
-  "Generic registry protocol: delegates to the contract-runtime resource registry.
+  "Generic registry protocol: delegates to the katamorph resource registry.
 
    This is a thin wrapper that provides backward compatibility for existing
    Knoxx callers. The actual implementation lives in the extracted
-   contract-runtime package.
+   katamorph package.
 
    The config map must contain :contract-runtime/deps (see
    knoxx.backend.contract-runtime-deps/build-deps)."
-  (:require [open-hax.contract-runtime.registry.resource :as core-registry]))
+  (:require [katamorph.registry.resource :as core-registry]))
 
 (def registry-id core-registry/registry-id)
 (def registry-resource-kind core-registry/registry-resource-kind)

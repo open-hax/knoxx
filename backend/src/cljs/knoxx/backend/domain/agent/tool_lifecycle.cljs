@@ -1,7 +1,7 @@
 (ns knoxx.backend.domain.agent.tool-lifecycle
-  "Delegates to the contract-runtime agent tool-lifecycle module.
+  "Delegates to the katamorph agent tool-lifecycle module.
    Re-exports all public vars for backward compatibility."
-  (:require [open-hax.contract-runtime.agent.tool-lifecycle :as core]))
+  (:require [katamorph.agent.tool-lifecycle :as core]))
 
 (def empty-tool-call-id-state core/empty-tool-call-id-state)
 (def resolve-tool-call-start-id core/resolve-tool-call-start-id)

@@ -49,14 +49,17 @@ card-link stability; scope is compliance, extraction is a listed non-goal).
 
 ## Knoxx's position in the drift ledger
 
-- **References katamorph nowhere.** No dep in `deps.edn`, `package.json`, or
-  `shadow-cljs.edn`. Consumes `open-hax.contract-runtime` instead.
+- **Consumes katamorph as a pinned Git dependency.** `backend/deps.edn` pins
+  `io.github.open-hax/katamorph` at `v0.2.0`, and `backend/shadow-cljs.edn`
+  takes its classpath from that alias. The `open-hax.contract-runtime.*`
+  requires are now `katamorph.*`; the injected config key is still
+  `:contract-runtime/deps`, which katamorph reads under that name.
 - Carries `open-hax.contracts.schema` — *byte-identical lineage; katamorph was
-  extracted from it; never cut over.*
-- **Builds `contract-runtime` from the openplanner copy**, not the standalone
-  repo: `backend/shadow-cljs.edn` source path `../../contract-runtime/src/cljs`,
-  staged in CI from `openplanner/packages/`. Repointing this is a cheap, early
-  win in the openplanner teardown.
+  extracted from it; still not cut over.*
+- **No longer builds `contract-runtime` from the openplanner copy.** The
+  `../../contract-runtime/src/cljs` source path and its CI symlink from
+  `openplanner/packages/` are gone. The remaining openplanner sibling link is
+  the JS SDK (`backend/package.json`), not the contract runtime.
 
 ## Why compliance has not happened by itself
 

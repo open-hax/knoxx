@@ -6,14 +6,29 @@
   rewrite-clj/rewrite-clj {:mvn/version "1.1.49"}}
 
  :aliases
- {;; Katamorph (open-hax/katamorph) is the successor to the openplanner
-  ;; contract-runtime package. Consumed as CLJS source via tools.deps git
-  ;; dependency — see shadow-cljs.edn's top-level :deps, which merges this
-  ;; alias's classpath into every build.
-  :katamorph
-  {:extra-deps {io.github.open-hax/katamorph
-                {:git/tag "v0.2.0"
-                 :git/sha "305a5e49d834aca27566f739e8510f6b409fda78"}}}
+ {;; The ClojureScript build classpath. shadow-cljs.edn selects this alias
+  ;; through its :deps key, and in that mode tools.deps — not shadow-cljs.edn —
+  ;; owns the classpath: shadow-cljs.edn's own :source-paths and :dependencies
+  ;; are ignored. So every CLJS source root and JVM dependency the builds need
+  ;; lives here.
+  ;;
+  ;; Katamorph (open-hax/katamorph) is the successor to the openplanner
+  ;; contract-runtime package and provides the same katamorph.* namespaces the
+  ;; ../../contract-runtime sibling checkout used to supply. Pinning it by Git
+  ;; tag + sha replaces that filesystem path with a reproducible ref.
+  :cljs
+  {:extra-paths ["src/cljs" "test/cljs"]
+   :extra-deps
+   {io.github.open-hax/katamorph   {:git/tag "v0.2.0"
+                                    :git/sha "305a5e49d834aca27566f739e8510f6b409fda78"}
+    ;; ../shared/src/cljs, as a local lib rather than an external :extra-path
+    ;; (tools.deps deprecates paths that escape the project directory).
+    open-hax/knoxx-shared          {:local/root "../shared"}
+    thheller/shadow-cljs           {:mvn/version "3.4.11"}
+    metosin/malli                  {:mvn/version "0.16.4"}
+    funcool/promesa                {:mvn/version "11.0.678"}
+    cider/cider-nrepl              {:mvn/version "0.50.2"}
+    refactor-nrepl/refactor-nrepl  {:mvn/version "3.9.1"}}}
 
   :mutation
   {:main-opts ["-m" "knoxx.mutation-test"]}

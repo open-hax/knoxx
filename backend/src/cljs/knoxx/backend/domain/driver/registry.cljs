@@ -1,8 +1,8 @@
 (ns knoxx.backend.domain.driver.registry
-  "Delegates to the contract-runtime driver registry.
+  "Delegates to the katamorph driver registry.
    Re-exports all public vars for backward compatibility.
-   Protocol and record types must be used from open-hax.contract-runtime.driver.registry."
-  (:require [open-hax.contract-runtime.driver.registry :as core]))
+   Protocol and record types must be used from katamorph.driver.registry."
+  (:require [katamorph.driver.registry :as core]))
 
 ;; Protocol functions
 (def driver-id core/driver-id)
