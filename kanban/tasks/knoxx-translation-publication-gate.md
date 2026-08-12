@@ -27,6 +27,7 @@ Do **not** encode `:translating`, `:reviewing`, `:worker-failed`, or similar ope
 - Compute blockers as pure domain data.
 - Feed blockers into CMS and the publication reconciler.
 - Trigger/queue translation work from missing **or stale** publication evidence without making the queue authoritative; work is keyed to the concrete revision, not `:source/current`.
+- Require `:publication/state :published` plus the translation admissibility guard before deriving translation work. Archived and withheld intents stay in the resolver projection by design, so an evidence-only check would keep queueing obsolete content for them forever.
 - Treat approval as revision-specific: when the source revision changes, the old approval remains historical evidence but cannot satisfy the replacement translation.
 - Ensure a corrected/re-reviewed translation can satisfy the same immutable publication intent without editing that intent solely to clear a workflow state.
 
@@ -90,14 +91,26 @@ Do **not** encode `:translating`, `:reviewing`, `:worker-failed`, or similar ope
          (empty? blockers))))
 ```
 
-Queueing is derivative and uses the exact same concrete revision selected for evidence checks:
+Queueing is derivative and uses the exact same concrete revision selected for evidence checks.
+
+Queueing is also gated on the intent actually wanting publication. The resolver
+deliberately preserves `:archived` and `:withheld` intents in its projection, so an
+orchestrator reconciling that projection would otherwise keep submitting obsolete
+content to the translation worker indefinitely. Desired state and the translation
+admissibility guard are checked before any work is derived; blockers contribute only
+translation/review evidence:
 
 ```clojure
+(defn translation-work-eligible? [intent]
+  (and (= :published (:publication/state intent))
+       (translation-required? intent)))
+
 (defn reconcile-translation-work [intent facts]
   (let [{:keys [concrete-revision blockers]}
         (publication-evidence intent facts)
         blockers (set blockers)]
-    (when (and concrete-revision
+    (when (and (translation-work-eligible? intent)
+               concrete-revision
                (or (contains? blockers :translation-missing)
                    (contains? blockers :translation-stale)))
       {:action/id :actions/request-translation
@@ -127,6 +140,7 @@ A stale translation does **not** delete the old approval receipt. The old receip
 - Removing all worker/job rows must not change desired publication intent.
 - A new source revision invalidates a translation/review receipt for the old revision unless the contract explicitly pins the old revision.
 - Stale evidence queues replacement translation work; it cannot remain blocked indefinitely with no derivable action.
+- Only an intent whose desired state is `:published` can derive translation work. Archived and withheld intents remain in the projection as history and never produce queue actions.
 - Required review cannot be bypassed by an adapter directly observing a translated artifact.
 - Re-running the pure gate over the same intent + facts produces the same concrete revision and blocker set.
 
@@ -137,5 +151,6 @@ A stale translation does **not** delete the old approval receipt. The old receip
 - The reconciler consumes the same `:concrete-revision` returned by `publication-evidence` rather than independently selecting another revision.
 - The reconciler refuses to publish a locale/revision that lacks required translation/review evidence.
 - Missing and stale translations both derive translation work keyed to the concrete revision.
+- An archived intent and a withheld intent, each missing its target translation, derive no translation work, while the otherwise identical published intent does.
 - A replacement revision cannot inherit approval from an older translation, while historical approval receipts remain intact.
 - No mutable worker/review state is promoted into the declarative resource graph.

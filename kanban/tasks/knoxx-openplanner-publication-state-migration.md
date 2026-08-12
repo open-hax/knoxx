@@ -26,7 +26,10 @@ This migration and explicit conflict resolution land **before** the CMS resource
 - Convert semantic fields into `garden`, `document`, and `publication` resources.
 - Validate every legacy semantic field before constructing resources: garden status, source/target locale, path, garden identity, document identity, revision selector/value, requested publication state, and review policy. Missing, malformed, or unrecognized values become conflicts rather than defaults.
 - Reuse `knoxx.backend.law.publication/valid-publication-path?` for path validation so migrated data and directly authored resource data obey the exact same route law.
-- In particular, do **not** infer `:source/current` from a missing revision and do **not** coerce missing/truthy/falsy legacy `:published` values into publication state. Both must decode explicitly.
+- Normalize each legacy representation into a **named, validated source shape** before decoding. `CmsDocMetadata.garden_publications` entries carry only `{garden_id}` and membership in that array is the legacy published fact, so a decoder that demands an explicit `:published` boolean would turn every existing association into a conflict and leave the resource topology empty.
+- Decode per declared shape, and state for each shape which semantic fields it carries explicitly and which the shape itself defines. An undeclared shape is a conflict; it is never decoded by guessing.
+- In particular, do **not** infer `:source/current` from a merely missing revision on a shape that is supposed to carry one, and do **not** coerce truthy/falsy values into publication state. Where a shape defines the selector or the state (legacy membership defines both), that definition is documented on the shape rather than derived from absence.
+- Review policy is not represented by the membership shape at all: it must be supplied as an explicit declared migration policy for the run, and a run without one yields conflicts rather than defaulted review semantics.
 - Separate operational observations (`published_at`, job/run ids, adapter timestamps) into migration receipts rather than resource data.
 - Detect ambiguous/conflicting source rows and emit a report requiring explicit resolution; do not apply "last write wins".
 - Make migration idempotent and restart-safe both for resource writes and conflict receipts.
@@ -53,39 +56,111 @@ This migration and explicit conflict resolution land **before** the CMS resource
     (conflict :unknown-garden-status :status (:status row) row)))
 
 (defn decode-locale [field row]
-  (let [value (get row field)
-        locale (when (and (string? value) (seq value)) (keyword value))]
+  (let [value  (get row field)
+        locale (cond
+                 (keyword? value) value
+                 (and (string? value) (seq value)) (keyword value))]
     (if (and locale (law/valid? publication/Locale locale))
       {:ok locale}
       (conflict :unknown-locale field value row))))
+```
+
+Decoders are **shape-aware**. The legacy source does not have one uniform publication
+row: `CmsDocMetadata.garden_publications` entries are shaped only as `{garden_id}`
+(`frontend/src/pages/CmsPage.tsx:38-40`), and the CMS treats membership in that array as
+the published fact (lines 299-305). A decoder that demanded an explicit `:published`
+boolean would therefore classify every existing association as a conflict and the
+migration could never populate the topology cutover depends on.
+
+Normalization runs first and turns each legacy representation into a named, validated
+source shape. Membership is decoded as publication because that array *is* the legacy
+representation of publication — not because a missing field is being treated as truthy:
+
+```clojure
+(def GardenMembershipEntry
+  [:map [:garden_id publication/NonBlankString]])
+
+(defn normalize-membership-entry [document entry]
+  (if (law/valid? GardenMembershipEntry entry)
+    {:ok {:source/shape :garden-membership
+          :source/collection :cms-doc-garden-publications
+          :source/id [(:legacy/doc-id document) (:garden_id entry)]
+          :garden-id (:garden_id entry)
+          :path (:source_path document)
+          :locale (:document/source-locale document)}}
+    (conflict :unresolvable-garden-membership :garden_id (:garden_id entry) entry)))
+
+(defn normalize-publication-rows [document]
+  (mapv #(normalize-membership-entry document %)
+        (get-in document [:metadata :garden_publications] [])))
+```
+
+A source shape that is not declared is a conflict; it is never decoded by guessing.
+Each declared shape names exactly which semantic fields it carries explicitly and which
+ones the shape itself defines:
+
+```clojure
+(defn decode-source-shape [row]
+  (case (:source/shape row)
+    :garden-membership {:ok :garden-membership}
+    :explicit-publication-row {:ok :explicit-publication-row}
+    (conflict :unknown-publication-source-shape
+              :source/shape (:source/shape row) row)))
 
 (defn decode-revision [row]
-  (let [value (:revision row)]
-    (cond
-      (= :source/current value)
-      {:ok :source/current}
+  (case (:source/shape row)
+    ;; Legacy membership republished whatever the live document held; that selector is
+    ;; what the shape means, not an inference drawn from an absent field.
+    :garden-membership {:ok :source/current}
 
-      (and (string? value) (seq value))
-      {:ok value}
-
-      :else
-      (conflict :invalid-publication-revision :revision value row))))
+    :explicit-publication-row
+    (let [value (:revision row)]
+      (cond
+        (= :source/current value) {:ok :source/current}
+        (and (string? value) (seq value)) {:ok value}
+        :else (conflict :invalid-publication-revision :revision value row)))))
 
 (defn decode-publication-state [row]
-  (if (and (contains? row :published)
-           (boolean? (:published row)))
-    {:ok (if (:published row) :published :withheld)}
-    (conflict :invalid-published-state :published (:published row) row)))
+  (case (:source/shape row)
+    ;; Presence in `garden_publications` is the legacy published fact.
+    :garden-membership {:ok :published}
 
-(defn decode-review-policy [row]
-  (if (and (contains? row :review-required)
-           (boolean? (:review-required row)))
-    {:ok (if (:review-required row) :required :none)}
-    (conflict :invalid-review-policy
-              :review-required
-              (:review-required row)
-              row)))
+    :explicit-publication-row
+    (if (and (contains? row :published)
+             (boolean? (:published row)))
+      {:ok (if (:published row) :published :withheld)}
+      (conflict :invalid-published-state :published (:published row) row))))
+```
 
+Review policy is the one semantic field the membership shape genuinely does not
+represent, so it is neither guessed nor defaulted: the migration run must be given an
+explicit review policy, and a run without one produces conflicts instead of resources.
+
+```clojure
+(defn decode-review-policy [migration-policy row]
+  (case (:source/shape row)
+    :garden-membership
+    (if-let [declared (:migration/membership-review migration-policy)]
+      (if (contains? #{:required :none} declared)
+        {:ok declared}
+        (conflict :invalid-review-policy
+                  :migration/membership-review declared row))
+      (conflict :undeclared-membership-review-policy
+                :migration/membership-review nil row))
+
+    :explicit-publication-row
+    (if (and (contains? row :review-required)
+             (boolean? (:review-required row)))
+      {:ok (if (:review-required row) :required :none)}
+      (conflict :invalid-review-policy
+                :review-required
+                (:review-required row)
+                row))))
+```
+
+Garden and publication decisions consume the normalized rows:
+
+```clojure
 (defn garden->decision [row]
   (let [status (decode-garden-status row)]
     (if (:migration/status status)
@@ -95,13 +170,14 @@ This migration and explicit conflict resolution land **before** the CMS resource
                   :garden/title (:title row)
                   :garden/status (:ok status)}})))
 
-(defn publication->decision [document row]
-  (let [locale   (decode-locale :locale row)
+(defn publication->decision [migration-policy document row]
+  (let [shape    (decode-source-shape row)
+        locale   (decode-locale :locale row)
         revision (decode-revision row)
         state    (decode-publication-state row)
-        review   (decode-review-policy row)
+        review   (decode-review-policy migration-policy row)
         invalid  (some #(when (:migration/status %) %)
-                       [locale revision state review])]
+                       [shape locale revision state review])]
     (cond
       invalid
       invalid
@@ -121,9 +197,11 @@ This migration and explicit conflict resolution land **before** the CMS resource
         :publication/path (:path row)
         :translation/review (:ok review)}})))
 
-(defn migrate-record [resource-index source-record]
+(defn migrate-record [migration-policy resource-index source-record]
   (let [candidate-decision
-        (publication->decision (resolve-document source-record) source-record)]
+        (publication->decision migration-policy
+                               (resolve-document source-record)
+                               source-record)]
     (if (= :conflict (:migration/status candidate-decision))
       candidate-decision
       (let [candidate (:resource candidate-decision)]
@@ -143,7 +221,12 @@ This migration and explicit conflict resolution land **before** the CMS resource
            :resource candidate})))))
 ```
 
-Stable receipt identity and stateful migration fold:
+Stable receipt identity and stateful migration fold. The fold is effectful — the
+filesystem-backed resource writer and the receipt appender both return Promises — so it
+is an `^:async` function that awaits the legacy read, every write, and every receipt
+append before recurring. Without the awaits `written` would be a Promise rather than the
+saved resource, `index-resource` would index that Promise, and the promised in-run index
+update and restart-safe sequencing would both be lost:
 
 ```clojure
 (defn migration-receipt-key [source-record]
@@ -151,24 +234,30 @@ Stable receipt identity and stateful migration fold:
    (:source/collection source-record)
    (:source/id source-record)])
 
-(loop [idx resource-index
-       records (legacy/read-publication-records! ctx)]
-  (when-let [record (first records)]
-    (let [decision (migration/migrate-record idx record)]
-      (case (:migration/status decision)
-        :write
-        (let [written (resources/write! ctx (:resource decision))]
-          (recur (publication/index-resource idx written) (rest records)))
+(defn ^:async migrate-publication-records! [ctx migration-policy resource-index]
+  (let [records (await (legacy/read-publication-records! ctx))]
+    (loop [idx     resource-index
+           records (seq records)]
+      (if-let [record (first records)]
+        (let [decision (migration/migrate-record migration-policy idx record)]
+          (case (:migration/status decision)
+            :write
+            (let [written (await (resources/write! ctx (:resource decision)))]
+              (recur (publication/index-resource idx written) (rest records)))
 
-        :conflict
-        (do (receipts/append-once! ctx
-                                   (migration-receipt-key record)
-                                   decision)
-            (recur idx (rest records)))
+            :conflict
+            (do (await (receipts/append-once! ctx
+                                              (migration-receipt-key record)
+                                              decision))
+                (recur idx (rest records)))
 
-        :noop
-        (recur idx (rest records))))))
+            :noop
+            (recur idx (rest records))))
+        idx))))
 ```
+
+`loop`/`recur` stays lawful here because every `await` resolves before the recursion
+point; the recursion is over already-settled state, not over pending Promises.
 
 Garden migration uses the same decision/receipt discipline. Document migration must likewise refuse to invent required `:document/source-locale`; missing/ambiguous source locale is a conflict that must be resolved before CMS cutover.
 
@@ -177,8 +266,10 @@ Garden migration uses the same decision/receipt discipline. Document migration m
 - Re-running migration over unchanged legacy data produces no new semantic resources.
 - Unknown/ambiguous source locale, target locale, status, path, garden, document identity, revision, publication state, or review policy becomes a conflict receipt, not guessed contract data.
 - Migration path validation is exactly the authoritative `publication/valid-publication-path?` law used for directly authored publication resources.
-- Missing revision never means `:source/current` unless that selector was explicitly represented by the legacy source.
-- Only an actual legacy boolean may become `:published` or `:withheld`; truthiness/falsiness is not a decoder.
+- Every legacy row is normalized into a declared source shape before any semantic decoding; an unrecognized shape is a conflict.
+- A shape that is declared to carry an explicit revision or publication state must carry a valid one; absence is a conflict, and truthiness/falsiness is never a decoder.
+- Where a declared shape defines the selector or the state — legacy garden membership defines `:source/current` and `:published` — that definition is the shape's documented meaning, and it applies only to rows normalized into that shape.
+- The migration fold awaits the legacy read, every resource write, and every receipt append; an unresolved Promise never enters the in-run index.
 - Conflict receipts have stable source-record keys; reruns do not duplicate them.
 - Successful writes immediately enter the migration index before the next source record is classified.
 - Removing legacy operational timestamps from input cannot change generated desired-state resources.
@@ -188,7 +279,10 @@ Garden migration uses the same decision/receipt discipline. Document migration m
 
 - Existing publish topology can be reconstructed as validated Knoxx resources before the CMS authority cutover.
 - Conflicts are enumerated explicitly with source evidence and no defaulted semantic values.
-- Fixtures prove missing/invalid revision and non-boolean/missing publish state produce conflicts rather than resources.
+- A fixture of the real legacy shape — a document whose `metadata.garden_publications` is `[{garden_id "garden-a"}]` — migrates into a validated published publication resource, not a conflict.
+- A membership entry with a missing or blank `garden_id` is a conflict, and a run with no declared membership review policy yields conflicts rather than defaulted review semantics.
+- Fixtures prove that on shapes declared to carry them, missing/invalid revision and non-boolean/missing publish state produce conflicts rather than resources.
+- A fixture with a Promise-returning resource writer proves the fold indexes saved resources rather than Promises: a second legacy row for the same publication identity is reconciled against the first row's written state within a single run.
 - Direct-resource and migration fixtures reject the same malformed publication paths through the same shared predicate.
 - Two source rows mapping to the same publication are reconciled against the updated in-run index rather than both being blindly written.
 - The same migration run twice yields identical resource state and no duplicate publications or conflict receipts.

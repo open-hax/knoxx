@@ -29,6 +29,7 @@ This cutover happens only after `knoxx-openplanner-publication-state-migration` 
 - Load document/garden/publication views from the Knoxx publication facade.
 - Define one normalized JSON wire contract for list and document responses; do not wrap `publication/document-view` under another `:document` key.
 - Treat JSON enum values as strings at the HTTP boundary and explicitly convert them to/from domain keywords. Keywordizing object keys is not sufficient.
+- Keep JSON wire **keys** unqualified. The shared `knoxx.frontend.lib.api/request` helper serializes with `clj->js` and decodes with `js->clj :keywordize-keys true`, so keyword namespaces never survive the round trip; qualified domain keys are produced by explicit adapter mapping, never by wire validation.
 - Reuse the resource wire identity convention: keyword ids serialize as `namespace/name` with no EDN leading colon and decode back to the same qualified keyword.
 - Give document and garden rows explicit JSON wire contracts/codecs too; never return raw resource maps and rely on `clj->js` for identity or enum serialization.
 - Map resource `:publication/state` to wire-level `"desired"` string values in the backend facade and combine it with observed receipt status there.
@@ -150,19 +151,24 @@ Backend encoding is explicit rather than relying on incidental keyword serializa
       :gardens (mapv garden->wire gardens)})))
 ```
 
-State mutation has separate JSON and domain contracts:
+State mutation has separate JSON and domain contracts. The JSON wire key is
+deliberately **unqualified**: `knoxx.frontend.lib.api/request` serializes bodies with
+`clj->js`, which drops keyword namespaces (`:publication/state` leaves as JSON
+`"state"`), and decodes responses with `js->clj :keywordize-keys true`, which yields
+`:state`. A wire contract requiring `:publication/state` would therefore reject every
+publish request from the CMS before it reached the domain patch. The wire contract
+validates `:state` and the adapter maps it explicitly onto the qualified domain key:
 
 ```clojure
 (def PublicationStatePatchJson
-  [:map [:publication/state [:enum "published" "withheld" "archived"]]])
+  [:map [:state [:enum "published" "withheld" "archived"]]])
 
 (def PublicationStatePatch
   [:map [:publication/state [:enum :published :withheld :archived]]])
 
 (defn decode-publication-state-patch [wire]
   (law/assert! PublicationStatePatchJson wire)
-  (let [domain {:publication/state
-                (keyword (:publication/state wire))}]
+  (let [domain {:publication/state (keyword (:state wire))}]
     (law/assert! PublicationStatePatch domain)
     domain))
 
@@ -243,7 +249,7 @@ Frontend page flow consumes those exact keys using native async/await and serial
     (str "/api/publications/intents/"
          (js/encodeURIComponent (encode-id publication-id)))
     {:method "PATCH"
-     :body {:publication/state "published"}})))
+     :body {:state "published"}})))
 ```
 
 UI-domain state remains keyword-oriented after explicit frontend decoding:
@@ -261,6 +267,7 @@ UI-domain state remains keyword-oriented after explicit frontend decoding:
 - Do not rely on `(str keyword)` for resource wire ids: `:docs/probe` must serialize as `"docs/probe"`, never `":docs/probe"`.
 - Do not read route params from the raw Fastify request after decoding; native request handles stay at the adapter edge.
 - Do not rely on JSON serialization to preserve Clojure keyword values. Wire enums are strings; domain enums are keywords; adapters convert explicitly in both directions.
+- Do not put namespaced keys in a JSON wire contract. `clj->js` erases the namespace on the way out, so a `:publication/state` wire requirement can never be satisfied by a body sent through `api/request`; declare `:state` and map it.
 - Do not silently write runtime timestamps/job ids back into resources after publishing.
 - A failed adapter call must leave desired state unchanged and surface drift, not revert the user's requested contract state unless the user explicitly changes it.
 - State PATCHes cannot change locale, revision, document, or garden. Re-keying is explicit and conflict-checked.
@@ -269,7 +276,8 @@ UI-domain state remains keyword-oriented after explicit frontend decoding:
 
 - CMS can render document publication topology with OpenPlanner REST disabled.
 - List and document routes expose one consistent `{documents, gardens}` / `{document, publications}` vocabulary with explicit JSON-safe document, garden, and publication contracts.
-- A state PATCH containing JSON `"published"` decodes to domain `:published` before Malli validates `PublicationStatePatch`.
+- A state PATCH body sent through `api/request` as `{:state "published"}` — the exact JSON `{"state":"published"}` that `clj->js` produces — passes `PublicationStatePatchJson` and decodes to domain `{:publication/state :published}` before Malli validates `PublicationStatePatch`.
+- A test asserts the publish request built by the frontend helper is accepted by the backend wire contract, so wire key and wire validator cannot drift apart.
 - Qualified resource ids round-trip exactly: domain `:docs/probe` -> JSON `"docs/probe"` -> domain `:docs/probe`, and PATCH URLs contain no spurious colon.
 - Document source locale and garden status round-trip through explicit string encoding/keyword decoding, never incidental `clj->js` behavior.
 - The PATCH adapter obtains `publication-id` from decoded request params, never by keyword lookup on the native Fastify object.
