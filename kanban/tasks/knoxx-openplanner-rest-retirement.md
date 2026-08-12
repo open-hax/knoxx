@@ -26,7 +26,7 @@ Delete the compatibility dependency after the resource-owned publication path is
 - Keep OpenPlanner-backed adapters only behind `IPublicationTarget` or other explicit extern/infra boundaries.
 - Ensure no frontend module, backend route, ingestion worker, or other shipped service imports/calls an OpenPlanner config/publication authority path after cutover.
 - Define one shared required-surface contract and reuse it in deploy verification and `knoxx-contract-publication-e2e`, including route method and authorization expectations.
-- Replacement CLJS routes/functions use native `^:async`/`await` where asynchronous behavior is required.
+- Replacement CLJS routes/functions and smoke verifiers use native `^:async`/`await` where asynchronous behavior is required.
 
 ## CLJS pseudocode
 
@@ -80,15 +80,19 @@ One shared pure surface specification, imported by both the deploy verifier and 
 The symbolic auth expectations above map to the real Knoxx authorization guards/capabilities in the verifier. The same test data must assert both an authorized success and the intended anonymous/unauthorized denial for non-public routes.
 
 ```clojure
-(defn verify-required-surfaces! [http auth-harness]
+(defn ^:async verify-required-surfaces! [http auth-harness]
   (doseq [{:keys [method path auth]} required-publication-surfaces]
-    (let [authorized (http/request! method path
-                                    (auth-harness/headers-for auth))]
+    (let [authorized (await
+                      (http/request! method path
+                                     (auth-harness/headers-for auth)))]
       (assert (= 200 (:status authorized)))
       (when-not (= :public auth)
-        (assert (contains? #{401 403}
-                           (:status (http/request! method path {}))))))))
+        (let [unauthorized (await (http/request! method path {}))]
+          (assert (contains? #{401 403}
+                             (:status unauthorized))))))))
 ```
+
+No verifier performs keyword lookup on a Promise. Every asynchronous request is awaited before response status is inspected.
 
 Repository-wide retirement check is broader than frontend routes:
 
@@ -129,6 +133,7 @@ Do not delete the compatibility path before:
 - `ingestion/src/kms_ingestion/translation/worker.clj` resolves the same Knoxx resource-selected model reported by `/api/translations/config`.
 - Production deploy verification and the contract-publication E2E import the same complete required-surface list.
 - All five replacement surfaces are checked for method and intended authorization behavior.
+- The shared verifier is `^:async` and awaits both authorized and unauthorized HTTP requests before reading status.
 - Replacement asynchronous CLJS surfaces follow the repository's `^:async`/`await` convention.
 - Production deploy verification requires CMS/publication surfaces unconditionally.
 - `KNOXX_EXPECT_OPENPLANNER_REST` is gone.
