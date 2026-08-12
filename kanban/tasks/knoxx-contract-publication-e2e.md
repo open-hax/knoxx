@@ -2,7 +2,7 @@
 uuid: "knoxx-contract-publication-e2e"
 title: "Prove contract-owned publish -> translate -> review -> materialize with OpenPlanner REST absent"
 status: accepted
-priority: P1
+priority: P2
 labels: ["tasks", "5sp", "has-parent", "cms", "translations", "publication", "e2e", "deploy"]
 created_at: "2026-08-12T00:00:00Z"
 points: 5
