@@ -16,36 +16,15 @@ Knoxx must be able to describe **which documents exist and their intended publis
 
 OpenPlanner may remain a storage/projection integration, but it must no longer be the semantic authority for gardens, document publication state, translation policy, or translation pipeline configuration.
 
-The target invariant is:
-
 ```text
 resource graph                = desired semantic state
 runtime receipts/projections  = observed execution state
 drift                         = desired - observed
 ```
 
-A Knoxx process with no OpenPlanner REST service available must still be able to answer:
+A Knoxx process with no OpenPlanner REST service available must still answer what documents exist, which gardens/locales/revisions they target, whether publication is requested/withheld/archived, which translation/review gates apply, and what remains blocked.
 
-- what documents exist;
-- where their canonical source lives;
-- which gardens they target;
-- which locale/revision is intended for each target;
-- whether publication is requested, withheld, or archived;
-- which translation/review policy gates each publication;
-- what remains blocked before the requested publication can materialize.
-
-It must **not** infer any of those facts from `garden_publications` metadata or from `/api/openplanner/...` reads.
-
-## Why this is the last decoupling seam
-
-Translation review already uses Knoxx-owned `/api/translations/...` routes and translation persistence has moved behind Knoxx boundaries. The remaining coupling is publication semantics and a small amount of translation pipeline configuration:
-
-- CMS discovers gardens through `/api/openplanner/v1/gardens`;
-- CMS reads `metadata.garden_publications` as publication truth;
-- translation pipeline config still reads/writes `/api/openplanner/v1/translations/config`;
-- the deploy gate still has a conditional OpenPlanner REST branch for CMS.
-
-The existing `knoxx-cms-contract-validation` card already identifies CMS as the last REST-only OpenPlanner dependency in the deployed stack. This epic is the concrete architectural answer to that card.
+It must not infer those facts from `garden_publications` metadata or `/api/openplanner/...` reads.
 
 ## Ownership rule
 
@@ -54,28 +33,18 @@ Knoxx resources      own desired state
 Knoxx law/domain     own admissibility and reconciliation decisions
 Knoxx receipts       own observed execution facts
 publication adapters perform effects
-OpenPlanner          owns only its own adapter/projection implementation
+OpenPlanner          owns only its adapter/projection implementation
 ```
 
-Publication is a relation, not a boolean on a document:
+Publication is a relation:
 
 ```text
 document × garden × locale × revision -> publication intent
 ```
 
-That permits one document to be public in English, awaiting review in Spanish, absent from another garden, and archived in a fourth without inventing contradictory document-level state.
-
-## Explicit non-goals
-
-- Do not replace OpenPlanner authority with a new mutable "Knoxx garden database" authority.
-- Do not store runtime facts such as `published_at`, worker run ids, translation job ids, or last deploy status in declarative resource data.
-- Do not encode workflow observations such as `:translating` or `:reviewing` as desired publication state.
-- Do not duplicate `knoxx-translations-event-sourced`; translation history remains that card's concern.
-- Do not require the publication adapter to be OpenPlanner-specific.
-
 ## Priority waves
 
-Priority is dependency urgency for this epic, not a statement that later verification is optional.
+Priority is dependency urgency, not optionality.
 
 ```text
 P0 — foundation + authority transfer
@@ -83,10 +52,13 @@ P0 — foundation + authority transfer
   intent resolver
   legacy publication migration
 
-P1 — runtime semantics + reconciliation
-  translation config authority
-  translation/review publication gate
-  publication adapter boundary
+P1 — runtime semantics + reconciliation — 18sp
+  translation config authority ............ 5
+  translation/review publication gate ..... 5
+  publication adapter boundary ............. 8
+      reconciliation plan laws ............. 3
+      adapter effects + idempotency ......... 3
+      receipts + fake-adapter proof ......... 2
 
 P2 — cutover + retirement + proof
   CMS resource-backed publication UI
@@ -96,19 +68,22 @@ P2 — cutover + retirement + proof
 
 ## Children
 
-1. **P0 / breakdown** `knoxx-publication-resource-contracts` — first-class document, garden, and publication resource laws.
-2. **P0 / accepted** `knoxx-publication-intent-resolver` — pure resource graph -> desired publication projection.
-3. **P0 / accepted** `knoxx-openplanner-publication-state-migration` — import existing gardens/publications into resources once, with conflict receipts, **before resource intent becomes CMS authority**.
-4. **P1 / accepted** `knoxx-translation-pipeline-config-resource` — remove the remaining OpenPlanner translation config authority.
-5. **P1 / accepted** `knoxx-translation-publication-gate` — compute publication blockers from translation/review policy + receipts.
-6. **P1 / accepted** `knoxx-publication-adapter-boundary` — define effect boundary and reconciliation plan; OpenPlanner becomes optional adapter.
-7. **P2 / accepted** `knoxx-cms-resource-backed-publication-ui` — make CMS read/write resource intent after migration has converged.
-8. **P2 / accepted** `knoxx-openplanner-rest-retirement` — delete the CMS/translation REST compatibility dependency and deploy flag.
-9. **P2 / accepted** `knoxx-contract-publication-e2e` — prove the full publish/translate/review/materialize path with OpenPlanner REST absent.
+1. **P0 / breakdown / 5sp** `knoxx-publication-resource-contracts` — first-class document, garden, and publication resource laws.
+2. **P0 / accepted / 5sp** `knoxx-publication-intent-resolver` — pure resource graph -> desired publication projection.
+3. **P0 / accepted / 5sp** `knoxx-openplanner-publication-state-migration` — import existing gardens/publications into resources once, with conflict receipts, before resource intent becomes CMS authority.
+4. **P1 / accepted / 5sp** `knoxx-translation-pipeline-config-resource` — remove OpenPlanner translation config authority across UI and ingestion worker.
+5. **P1 / accepted / 5sp** `knoxx-translation-publication-gate` — compute translation/review blockers and derivative replacement work from receipts.
+6. **P1 / breakdown / 0sp roll-up** `knoxx-publication-adapter-boundary` — coordination card for the original 8sp scope:
+   - **P1 / accepted / 3sp** `knoxx-publication-reconcile-plan-laws`
+   - **P1 / accepted / 3sp** `knoxx-publication-adapter-effects-idempotency`
+   - **P1 / accepted / 2sp** `knoxx-publication-receipts-fake-adapter-proof`
+7. **P2 / accepted / 5sp** `knoxx-cms-resource-backed-publication-ui` — make CMS read/write resource intent after migration has converged.
+8. **P2 / accepted / 3sp** `knoxx-openplanner-rest-retirement` — delete CMS/translation REST compatibility authority and deploy flag.
+9. **P2 / accepted / 5sp** `knoxx-contract-publication-e2e` — prove publish/translate/review/materialize with OpenPlanner REST absent.
 
 ## Build order
 
-The authority transfer must not expose an empty resource projection while legacy OpenPlanner state still contains the real publication topology. Migrate and resolve conflicts before the CMS cutover.
+Migration must converge before the CMS authority cutover. Within the adapter boundary, pure law precedes effects, and effects precede receipt/proof closure.
 
 ```text
 resource contracts
@@ -116,20 +91,29 @@ resource contracts
       -> OpenPlanner state migration + conflict resolution
       -> translation config resource
       -> translation/review gate
-      -> publication adapter boundary
+      -> reconciliation plan laws
+      -> adapter effects + idempotency
+      -> receipts + fake-adapter proof
       -> CMS resource-authority cutover
       -> OpenPlanner REST retirement
       -> no-OpenPlanner E2E gate
 ```
 
-`knoxx-cms-contract-validation` should validate the surviving CMS contract surface against this model rather than deciding the dependency direction again.
+## Explicit non-goals
+
+- Do not replace OpenPlanner authority with another mutable garden database authority.
+- Do not store runtime timestamps, job ids, worker phases, or deploy status in declarative resources.
+- Do not promote `:translating` or `:reviewing` into desired publication state.
+- Do not duplicate `knoxx-translations-event-sourced`; translation history remains that card's concern.
+- Do not require the publication adapter to be OpenPlanner-specific.
 
 ## Done when
 
-- Reading Knoxx resources alone is sufficient to reconstruct desired document/garden/locale/revision publication topology.
-- Existing OpenPlanner publication topology has been migrated and conflicts resolved before CMS resource authority is enabled.
-- CMS publication actions mutate resource intent, not OpenPlanner metadata.
-- Translation/review state blocks or admits publication without becoming contract state itself.
-- OpenPlanner is optional at the semantic layer and can be replaced by another publication adapter without changing document/publication contracts.
+- Resources alone reconstruct desired document/garden/locale/revision topology.
+- Existing OpenPlanner topology is migrated and conflicts resolved before CMS resource authority is enabled.
+- Translation/review evidence gates publication without becoming desired state.
+- The adapter boundary is proven as pure plan -> replaceable effects -> receipts, with the 3+3+2 children complete.
+- CMS actions mutate resource intent rather than OpenPlanner metadata.
+- OpenPlanner is optional at the semantic layer.
 - Production deploy verification no longer conditionally skips CMS because OpenPlanner REST is absent.
-- An end-to-end test publishes a translated, reviewed document with the OpenPlanner REST service deliberately unavailable.
+- The E2E publishes a translated, reviewed document with OpenPlanner REST deliberately unavailable.
