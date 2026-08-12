@@ -2,7 +2,7 @@
 uuid: "knoxx-cms-resource-backed-publication-ui"
 title: "Make CMS read and write publication intent through Knoxx resources"
 status: accepted
-priority: P1
+priority: P2
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "frontend"]
 created_at: "2026-08-12T00:00:00Z"
 points: 5
@@ -27,51 +27,67 @@ This cutover happens only after `knoxx-openplanner-publication-state-migration` 
 ## Scope
 
 - Load document/garden/publication views from the Knoxx publication facade.
-- Define one normalized wire contract for list and document responses; do not wrap `publication/document-view` under another `:document` key.
-- Map resource `:publication/state` to wire-level `:desired` in the backend facade and combine it with observed receipt status there.
+- Define one normalized JSON wire contract for list and document responses; do not wrap `publication/document-view` under another `:document` key.
+- Treat JSON enum values as strings at the HTTP boundary and explicitly convert them to/from domain keywords. Keywordizing object keys is not sufficient.
+- Map resource `:publication/state` to wire-level `"desired"` string values in the backend facade and combine it with observed receipt status there.
+- Encode keyword-valued response fields symmetrically (locale, desired/observed state, blockers, resource IDs where applicable), then explicitly decode them into CLJS UI-domain values in the frontend helper.
 - Render desired publication state separately from observed adapter state.
 - Make publish/unpublish/archive edits update only the relevant publication **state** through the existing resource-write boundary (or the narrowest new resource-write facade required).
 - Treat publication identity dimensions — document, garden, locale, revision selector — as immutable for state edits. Any re-key must be an explicit operation with duplicate/conflict validation.
-- Do not make the frontend parse EDN itself; frontend consumes normalized API data.
+- Do not make the frontend parse EDN itself; frontend consumes normalized JSON API data.
 - Keep dirty/save semantics explicit: editing body content and editing publication intent are separate mutations even when exposed in one CMS surface.
+- New asynchronous frontend CLJS uses native `^:async` + `await`, not `.then` chains.
 
 ## CLJS pseudocode
 
-Normalized backend facade:
+JSON wire contracts use JSON-safe scalar values:
 
 ```clojure
-(def PublicationWire
+(def PublicationWireJson
   [:map
-   [:id qualified-keyword?]
-   [:document qualified-keyword?]
-   [:garden qualified-keyword?]
-   [:locale :keyword]
-   [:revision [:or :string :keyword]]
+   [:id :string]
+   [:document :string]
+   [:garden :string]
+   [:locale :string]
+   [:revision :string]
    [:path :string]
-   [:desired [:enum :published :withheld :archived]]
-   [:observed {:optional true} :keyword]
-   [:blockers [:vector :keyword]]])
+   [:desired [:enum "published" "withheld" "archived"]]
+   [:observed {:optional true} [:maybe :string]]
+   [:blockers [:vector :string]]])
 
-(def CmsDocumentWire
+(def CmsDocumentWireJson
   [:map
    [:document :map]
-   [:publications [:vector PublicationWire]]])
+   [:publications [:vector PublicationWireJson]]])
 
-(def CmsListWire
+(def CmsListWireJson
   [:map
-   [:documents [:vector CmsDocumentWire]]
+   [:documents [:vector CmsDocumentWireJson]]
    [:gardens [:vector :map]]])
+```
+
+Backend encoding is explicit rather than relying on incidental keyword serialization:
+
+```clojure
+(defn encode-id [x] (str x))
+(defn encode-enum [x] (when x (name x)))
 
 (defn publication->wire [receipts intent]
-  {:id (:publication/id intent)
-   :document (:publication/document intent)
-   :garden (:publication/garden intent)
-   :locale (:publication/locale intent)
-   :revision (:publication/revision intent)
-   :path (:publication/path intent)
-   :desired (:publication/state intent)
-   :observed (publication-status/observed-for receipts intent)
-   :blockers (publication-status/blockers-for receipts intent)})
+  (law/assert!
+   PublicationWireJson
+   {:id (encode-id (:publication/id intent))
+    :document (encode-id (:publication/document intent))
+    :garden (encode-id (:publication/garden intent))
+    :locale (encode-enum (:publication/locale intent))
+    :revision (if (keyword? (:publication/revision intent))
+                (name (:publication/revision intent))
+                (:publication/revision intent))
+    :path (:publication/path intent)
+    :desired (encode-enum (:publication/state intent))
+    :observed (some-> (publication-status/observed-for receipts intent)
+                      encode-enum)
+    :blockers (mapv encode-enum
+                    (publication-status/blockers-for receipts intent))}))
 
 (defn cms-document-view [resource-index receipts document-id]
   (let [{:keys [document publications]}
@@ -88,17 +104,27 @@ Normalized backend facade:
      :gardens gardens}))
 ```
 
-State-only mutation boundary:
+State mutation has separate JSON and domain contracts:
 
 ```clojure
+(def PublicationStatePatchJson
+  [:map [:publication/state [:enum "published" "withheld" "archived"]]])
+
 (def PublicationStatePatch
   [:map [:publication/state [:enum :published :withheld :archived]]])
 
-(defn put-publication-state! [ctx publication-id patch]
-  (law/assert! PublicationStatePatch patch)
+(defn decode-publication-state-patch [wire]
+  (law/assert! PublicationStatePatchJson wire)
+  (let [domain {:publication/state
+                (keyword (:publication/state wire))}]
+    (law/assert! PublicationStatePatch domain)
+    domain))
+
+(defn put-publication-state! [ctx publication-id domain-patch]
+  (law/assert! PublicationStatePatch domain-patch)
   (let [current (resources/resolve-one ctx publication-id)
         next    (assoc current :publication/state
-                               (:publication/state patch))]
+                               (:publication/state domain-patch))]
     ;; locale/revision/document/garden cannot move through this endpoint.
     (law/assert! publication/PublicationIntentResource next)
     (resources/write! ctx next)))
@@ -108,23 +134,55 @@ State-only mutation boundary:
   (resources/rekey! ctx publication-id new-identity))
 ```
 
-Frontend page flow consumes those exact keys:
+The Fastify/HTTP adapter validates and decodes the JSON value before domain validation:
 
 ```clojure
-(defn load-cms! []
-  (-> (api/request "/api/publications/documents")
-      (.then #(swap! state assoc
-                     :documents (:documents %)
-                     :gardens (:gardens %)))))
+(defn patch-publication-state-route! [ctx req]
+  (let [wire   (:body (decode-request req))
+        domain (decode-publication-state-patch wire)]
+    (put-publication-state! ctx (:publication-id req) domain)))
+```
+
+Frontend wire decoding is symmetric:
+
+```clojure
+(defn decode-publication-wire [wire]
+  (-> wire
+      (update :id keyword)
+      (update :document keyword)
+      (update :garden keyword)
+      (update :locale keyword)
+      (update :desired keyword)
+      (update :observed #(when % (keyword %)))
+      (update :blockers #(mapv keyword %))))
+
+(defn decode-cms-list-wire [wire]
+  (update wire :documents
+          #(mapv (fn [doc]
+                   (update doc :publications
+                           (fn [publications]
+                             (mapv decode-publication-wire publications))))
+                 %)))
+```
+
+Frontend page flow consumes those exact keys using native async/await:
+
+```clojure
+(defn ^:async load-cms! []
+  (let [wire     (await (api/request "/api/publications/documents"))
+        response (decode-cms-list-wire wire)]
+    (swap! state assoc
+           :documents (:documents response)
+           :gardens (:gardens response))))
 
 (defn request-publish! [{:keys [publication-id]}]
   (api/request
    (str "/api/publications/intents/" (js/encodeURIComponent publication-id))
    {:method "PATCH"
-    :body {:publication/state :published}}))
+    :body {:publication/state "published"}}))
 ```
 
-Wire state is explicit and non-authoritative on the observed side:
+UI-domain state remains keyword-oriented after explicit frontend decoding:
 
 ```clojure
 {:desired :published
@@ -134,7 +192,8 @@ Wire state is explicit and non-authoritative on the observed side:
 
 ## Watch out
 
-- Do not preserve `publishedGardenIds` as a second client-side authority; derive selected/publication badges from `:desired` in the returned publication projection.
+- Do not preserve `publishedGardenIds` as a second client-side authority; derive selected/publication badges from `:desired` in the decoded publication projection.
+- Do not rely on JSON serialization to preserve Clojure keyword values. Wire enums are strings; domain enums are keywords; adapters convert explicitly in both directions.
 - Do not silently write runtime timestamps/job ids back into resources after publishing.
 - A failed adapter call must leave desired state unchanged and surface drift, not revert the user's requested contract state unless the user explicitly changes it.
 - State PATCHes cannot change locale, revision, document, or garden. Re-keying is explicit and conflict-checked.
@@ -142,7 +201,10 @@ Wire state is explicit and non-authoritative on the observed side:
 ## Done when
 
 - CMS can render document publication topology with OpenPlanner REST disabled.
-- List and document routes expose one consistent `{documents, gardens}` / `{document, publications}` vocabulary with publication `{desired, observed, blockers}` fields.
+- List and document routes expose one consistent `{documents, gardens}` / `{document, publications}` vocabulary with JSON-safe publication `{desired, observed, blockers}` fields.
+- A state PATCH containing JSON `"published"` decodes to domain `:published` before Malli validates `PublicationStatePatch`.
+- Response keyword-valued fields round-trip through explicit JSON encoding and frontend decoding without relying on implicit keyword serialization.
+- `load-cms!` uses `^:async`/`await` and contains no Promise `.then` chain.
 - Publishing from the CMS changes only the Knoxx publication resource's desired state and the UI reflects it from the normalized response.
 - Publication identity cannot silently move through publish/unpublish/archive edits.
 - No CMS code reads `garden_publications` to determine semantic publication state.
