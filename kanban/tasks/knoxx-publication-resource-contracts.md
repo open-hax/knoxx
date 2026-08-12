@@ -1,8 +1,8 @@
 ---
 uuid: "knoxx-publication-resource-contracts"
 title: "Define document, garden, and publication resource contracts"
-status: accepted
-priority: P1
+status: breakdown
+priority: P0
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "contracts"]
 created_at: "2026-08-12T00:00:00Z"
 points: 5
