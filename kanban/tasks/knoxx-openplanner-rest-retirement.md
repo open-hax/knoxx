@@ -20,10 +20,11 @@ Delete the compatibility dependency after the resource-owned publication path is
 
 - Remove CMS reads of `/api/openplanner/v1/gardens` and any legacy CMS publication routes that remain authoritative only because OpenPlanner owns the state.
 - Remove translation config reads/writes of `/api/openplanner/v1/translations/config`.
+- Remove the ingestion worker's direct OpenPlanner `/v1/translations/config` lookup; production worker model selection must resolve through the Knoxx-owned translation-config boundary before retirement.
 - Remove or narrow proxy routes that exist only to preserve those authority paths.
 - Remove `KNOXX_EXPECT_OPENPLANNER_REST` and the conditional CMS skip from deploy verification once the replacement surface is unconditional.
 - Keep OpenPlanner-backed adapters only behind `IPublicationTarget` or other explicit extern/infra boundaries.
-- Ensure no frontend module imports an `openplanner` API wrapper for publication semantics after cutover.
+- Ensure no frontend module, backend route, ingestion worker, or other shipped service imports/calls an OpenPlanner config/publication authority path after cutover.
 - Define one shared required-surface contract and reuse it in deploy verification and `knoxx-contract-publication-e2e`, including route method and authorization expectations.
 
 ## CLJS pseudocode
@@ -89,6 +90,19 @@ The symbolic auth expectations above map to the real Knoxx authorization guards/
                            (:status (http/request! method path {}))))))))
 ```
 
+Repository-wide retirement check is broader than frontend routes:
+
+```clojure
+(def forbidden-authority-patterns
+  ["/api/openplanner/v1/gardens"
+   "/api/openplanner/v1/translations/config"
+   "/v1/translations/config"])
+
+(defn assert-no-openplanner-authority-callers! [source-index]
+  (doseq [pattern forbidden-authority-patterns]
+    (assert (empty? (source-index/shipped-callers pattern)))))
+```
+
 There should be no equivalent of:
 
 ```clojure
@@ -103,15 +117,18 @@ Do not delete the compatibility path before:
 - publication resources and resolver are live;
 - the one-time OpenPlanner publication migration has converged and conflicts are resolved;
 - translation pipeline config is resource-owned;
+- the ingestion translation worker consumes that same Knoxx-owned config and no longer reads OpenPlanner config directly;
 - translation/review gating and at least one publication adapter exist;
 - CMS reads/writes the resource projection;
+- repo-wide shipped-code search shows no remaining OpenPlanner authority callers;
 - the shared required-surface verification passes without OpenPlanner REST.
 
 ## Done when
 
-- Grepping shipped frontend/backend code for the two OpenPlanner authority routes returns no callers.
+- Grepping shipped frontend/backend/ingestion code for OpenPlanner garden and translation-config authority routes returns no callers.
+- `ingestion/src/kms_ingestion/translation/worker.clj` resolves the same Knoxx resource-selected model reported by `/api/translations/config`.
 - Production deploy verification and the contract-publication E2E import the same complete required-surface list.
 - All five replacement surfaces are checked for method and intended authorization behavior.
 - Production deploy verification requires CMS/publication surfaces unconditionally.
 - `KNOXX_EXPECT_OPENPLANNER_REST` is gone.
-- OpenPlanner may be absent without degrading Knoxx's ability to describe or edit desired publication state.
+- OpenPlanner may be absent without degrading Knoxx's ability to describe or edit desired publication state or changing the worker's selected translation model.
