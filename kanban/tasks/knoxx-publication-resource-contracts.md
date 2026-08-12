@@ -24,16 +24,29 @@ Publication is a relation over document, garden, locale, and revision. A documen
 - Keep desired state declarative: source location, source locale, title/identity, target garden, route/path, locale, revision selector, requested publication state, translation/review policy.
 - Keep runtime observations out of the resource shape.
 - Define canonical identity and reference resolution rules for cross-namespace document/garden/publication references.
+- Define one authoritative publication-path predicate in the resource law and reuse it in migration/adapters; directly authored resources cannot bypass route validation that migrated resources must satisfy.
 - Add resource-loader validation and focused law tests.
 - Hydrate the resolved publication intent with the owning document's validated source locale so translation laws never guess `:en`.
 
 ## CLJS pseudocode
 
 ```clojure
-(ns knoxx.backend.law.publication)
+(ns knoxx.backend.law.publication
+  (:require [clojure.string :as str]))
 
 (def Locale
   [:and :keyword [:fn qualified-or-language-keyword?]])
+
+(defn valid-publication-path? [path]
+  (and (string? path)
+       (seq path)
+       (str/starts-with? path "/")
+       (not (str/includes? path "?"))
+       (not (str/includes? path "#"))
+       (not (str/includes? path "\u0000"))))
+
+(def PublicationPath
+  [:and :string [:fn valid-publication-path?]])
 
 (def Document
   [:map
@@ -59,7 +72,7 @@ Publication is a relation over document, garden, locale, and revision. A documen
    [:publication/locale Locale]
    [:publication/revision [:or :string [:enum :source/current]]]
    [:publication/state [:enum :published :withheld :archived]]
-   [:publication/path :string]
+   [:publication/path PublicationPath]
    [:translation/review [:enum :none :required]]])
 
 ;; Resolved pure-domain view. Source locale is copied from the referenced
@@ -106,14 +119,16 @@ Example manifest intent:
 ## Contract obligations
 
 - Resource shape says what **should** be true, never whether a deployment side effect succeeded.
-- `document × garden × locale` must not resolve to two conflicting active publication intents for the same revision selector.
+- `document × garden × locale × revision` must not resolve to two conflicting non-archived publication intents for the same relation.
 - Unknown document/garden refs fail validation rather than becoming dangling runtime work.
 - Every document declares its source locale; translation gating receives that resolved value and never supplies a language default.
+- Publication paths are route paths: non-empty, rooted at `/`, and free of query/fragment/NUL components; the same predicate is used by migration and direct resource validation.
 - Archive semantics must be explicit: archived garden or publication intent cannot reconcile to a public materialization.
 
 ## Done when
 
-- A resource-only test fixture can describe multiple documents and mixed publication states across gardens/locales.
-- Invalid references, invalid/missing source locales, and conflicting publication intents fail before effectful reconciliation.
+- A resource-only test fixture can describe multiple documents and mixed publication states across gardens/locales/revisions.
+- Invalid references, invalid/missing source locales, malformed publication paths, and conflicting publication intents fail before effectful reconciliation.
+- Directly authored `""`, non-rooted, query-bearing, fragment-bearing, and NUL-bearing publication paths fail the same authoritative predicate used by migration.
 - The translation gate consumes the source locale resolved from the owning document.
 - No OpenPlanner type, route, collection, or identifier is required by the laws.
