@@ -26,32 +26,32 @@ Delete the compatibility dependency after the resource-owned publication path is
 - Keep OpenPlanner-backed adapters only behind `IPublicationTarget` or other explicit extern/infra boundaries.
 - Ensure no frontend module, backend route, ingestion worker, or other shipped service imports/calls an OpenPlanner config/publication authority path after cutover.
 - Define one shared required-surface contract and reuse it in deploy verification and `knoxx-contract-publication-e2e`, including route method and authorization expectations.
+- Replacement CLJS routes/functions use native `^:async`/`await` where asynchronous behavior is required.
 
 ## CLJS pseudocode
 
-Before:
+Legacy shapes being removed:
 
 ```clojure
-(defn load-gardens! []
+(defn load-gardens-legacy! []
   (api/request "/api/openplanner/v1/gardens"))
 
-(defn pipeline-config []
-  (-> (api/request "/api/openplanner/v1/translations/config")
-      (.then :config)))
+(defn pipeline-config-legacy! []
+  (api/request "/api/openplanner/v1/translations/config"))
 ```
 
-After:
+Replacement shapes:
 
 ```clojure
-(defn load-gardens! []
-  (-> (api/request "/api/publications/gardens")
-      (.then :gardens)))
+(defn ^:async load-gardens! []
+  (let [response (await (api/request "/api/publications/gardens"))]
+    (:gardens response)))
 
-(defn pipeline-config []
-  (api/request "/api/translations/config"))
+(defn ^:async pipeline-config! []
+  (await (api/request "/api/translations/config")))
 
-(defn publication-health! []
-  (api/request "/api/publications/health"))
+(defn ^:async publication-health! []
+  (await (api/request "/api/publications/health")))
 ```
 
 One shared pure surface specification, imported by both the deploy verifier and E2E test:
@@ -129,6 +129,7 @@ Do not delete the compatibility path before:
 - `ingestion/src/kms_ingestion/translation/worker.clj` resolves the same Knoxx resource-selected model reported by `/api/translations/config`.
 - Production deploy verification and the contract-publication E2E import the same complete required-surface list.
 - All five replacement surfaces are checked for method and intended authorization behavior.
+- Replacement asynchronous CLJS surfaces follow the repository's `^:async`/`await` convention.
 - Production deploy verification requires CMS/publication surfaces unconditionally.
 - `KNOXX_EXPECT_OPENPLANNER_REST` is gone.
 - OpenPlanner may be absent without degrading Knoxx's ability to describe or edit desired publication state or changing the worker's selected translation model.
