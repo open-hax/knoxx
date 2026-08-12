@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-contract-owned-publication-pipeline"
-title: "Contract-owned document publication — remove OpenPlanner as publication authority"
-status: breakdown
-priority: P1
+category: "epics"
 labels: ["epics", "cms", "publication", "translations", "decouple", "openplanner"]
+write-id: "1786565813522-0.gbpa8mxtyivpbk4qv5v"
+points: "0"
+title: "Contract-owned document publication — remove OpenPlanner as publication authority"
+priority: "P1"
+status: "breakdown"
+uuid: "knoxx-contract-owned-publication-pipeline"
 created_at: "2026-08-12T00:00:00Z"
-points: 0
-category: epics
 ---
+
 # Contract-owned document publication — remove OpenPlanner as publication authority
 
 ## Signal
@@ -117,3 +119,7 @@ resource contracts
 - OpenPlanner is optional at the semantic layer.
 - Production deploy verification no longer conditionally skips CMS because OpenPlanner REST is absent.
 - The E2E publishes a translated, reviewed document with OpenPlanner REST deliberately unavailable.
+
+---
+Breakdown 2026-08-12: epic held in breakdown as the container for the twelve task cards. All eleven implementable children are now ready; the epic closes behind them.
+---

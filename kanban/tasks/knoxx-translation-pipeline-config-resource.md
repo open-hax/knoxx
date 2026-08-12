@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-translation-pipeline-config-resource"
-title: "Move translation pipeline configuration out of OpenPlanner"
-status: accepted
-priority: P1
+category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "translations", "contracts", "openplanner"]
+write-id: "1786565793961-0.6ya5a5iommxb9nwclxv"
+points: "5"
+title: "Move translation pipeline configuration out of OpenPlanner"
+priority: "P1"
+status: "ready"
+uuid: "knoxx-translation-pipeline-config-resource"
 created_at: "2026-08-12T00:00:00Z"
-points: 5
-category: tasks
 ---
+
 # Move translation pipeline configuration out of OpenPlanner
 
 > Parent epic: `knoxx-contract-owned-publication-pipeline`
@@ -212,3 +214,7 @@ Single-authority proof last:
 - A test changes the resource-selected model and proves both the config facade and ingestion worker select the same canonical model id.
 - A PATCH body shaped exactly as `clj->js` emits it — JSON `{"model":"models/glm-5"}` — changes the authoritative `:translation/model`, and a test proves the resolved config after the PATCH reports the new model rather than the previous one.
 - The config read response is produced by the explicit `config->wire` encoder, so model, source locale, and review policy cross the boundary as strings and decode back to the same keywords.
+
+---
+Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Cross-repo touch: the ingestion worker (Clojure/JVM) must move to the same boundary, so this card spans backend CLJS and ingestion.
+---

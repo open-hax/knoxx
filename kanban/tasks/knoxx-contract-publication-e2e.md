@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-contract-publication-e2e"
-title: "Prove contract-owned publish -> translate -> review -> materialize with OpenPlanner REST absent"
-status: accepted
-priority: P2
+category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "translations", "publication", "e2e", "deploy"]
+write-id: "1786565798217-0.oapse2jjagqh553se6"
+points: "5"
+title: "Prove contract-owned publish -> translate -> review -> materialize with OpenPlanner REST absent"
+priority: "P2"
+status: "ready"
+uuid: "knoxx-contract-publication-e2e"
 created_at: "2026-08-12T00:00:00Z"
-points: 5
-category: tasks
 ---
+
 # Prove contract-owned publish -> translate -> review -> materialize with OpenPlanner REST absent
 
 > Parent epic: `knoxx-contract-owned-publication-pipeline`
@@ -187,3 +189,7 @@ The whole card is one `^:async` scenario built up as failing steps:
 - Deploy verification and E2E use the same complete required-surface contract unconditionally.
 - The shared verifier itself uses native `^:async`/`await`; no helper contains `await` inside an ordinary `defn`.
 - One receipt chain is sufficient to explain how a resource intent converged to a public translated artifact.
+
+---
+Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Shares the required-surface contract with the retirement card and the fake adapter with the receipts card.
+---

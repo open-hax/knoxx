@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-publication-receipts-fake-adapter-proof"
-title: "Define publication receipts and prove the boundary with a fake adapter"
-status: accepted
-priority: P1
+category: "tasks"
 labels: ["tasks", "2sp", "has-parent", "publication", "receipts", "tests"]
+write-id: "1786565796398-0.18ujvt6yfxde3dc8gs"
+points: "2"
+title: "Define publication receipts and prove the boundary with a fake adapter"
+priority: "P1"
+status: "ready"
+uuid: "knoxx-publication-receipts-fake-adapter-proof"
 created_at: "2026-08-12T00:00:00Z"
-points: 2
-category: tasks
 ---
+
 # Define publication receipts and prove the boundary with a fake adapter
 
 > Parent task: `knoxx-publication-adapter-boundary`
@@ -144,3 +146,7 @@ Whole-seam proof second, all `^:async` where effects are awaited:
 - Successful receipts satisfy the schema and feed the planner's observed projection directly.
 - Failure/noop/blocked evidence cannot be mistaken for a successful materialization.
 - The parent `knoxx-publication-adapter-boundary` can close without carrying implementation points of its own.
+
+---
+Ready gate 2026-08-12: sized 2sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Closes the adapter-boundary roll-up; depends on the planner and effect cards.
+---

@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-translation-publication-gate"
-title: "Gate publication on translation and review receipts without making workflow state contractual"
-status: accepted
-priority: P1
+category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "translations", "publication", "review"]
+write-id: "1786565794577-0.67qrow20j6dyyftf8ew"
+points: "5"
+title: "Gate publication on translation and review receipts without making workflow state contractual"
+priority: "P1"
+status: "ready"
+uuid: "knoxx-translation-publication-gate"
 created_at: "2026-08-12T00:00:00Z"
-points: 5
-category: tasks
 ---
+
 # Gate publication on translation and review receipts without making workflow state contractual
 
 > Parent epic: `knoxx-contract-owned-publication-pipeline`
@@ -200,3 +202,7 @@ Then implement `knoxx.backend.domain.publication-gate` until green.
 - An archived intent and a withheld intent, each missing its target translation, derive no translation work, while the otherwise identical published intent does.
 - A replacement revision cannot inherit approval from an older translation, while historical approval receipts remain intact.
 - No mutable worker/review state is promoted into the declarative resource graph.
+
+---
+Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Pure card: no adapter, worker or OpenPlanner dependency in its tests.
+---

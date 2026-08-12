@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-openplanner-publication-state-migration"
-title: "Migrate existing OpenPlanner garden/publication intent into Knoxx resources"
-status: accepted
-priority: P0
+category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "publication", "migration", "openplanner"]
+write-id: "1786565793371-0.95x6g3ahwhph3fyeud"
+points: "5"
+title: "Migrate existing OpenPlanner garden/publication intent into Knoxx resources"
+priority: "P0"
+status: "ready"
+uuid: "knoxx-openplanner-publication-state-migration"
 created_at: "2026-08-12T00:00:00Z"
-points: 5
-category: tasks
 ---
+
 # Migrate existing OpenPlanner garden/publication intent into Knoxx resources
 
 > Parent epic: `knoxx-contract-owned-publication-pipeline`
@@ -336,3 +338,7 @@ fold until green.
 - Direct-resource and migration fixtures reject the same malformed publication paths through the same shared predicate.
 - Two source rows mapping to the same publication are reconciled against the updated in-run index rather than both being blindly written.
 - The same migration run twice yields identical resource state and no duplicate publications or conflict receipts.
+
+---
+Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Risk: the run needs an explicitly declared membership review policy before it can produce resources; that is now a conflict rather than a default.
+---

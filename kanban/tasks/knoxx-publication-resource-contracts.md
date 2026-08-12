@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-publication-resource-contracts"
-title: "Define document, garden, and publication resource contracts"
-status: breakdown
-priority: P0
+category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "contracts"]
+write-id: "1786565774217-0.xvewz36ji1eoetarnvl"
+points: "5"
+title: "Define document, garden, and publication resource contracts"
+priority: "P0"
+status: "ready"
+uuid: "knoxx-publication-resource-contracts"
 created_at: "2026-08-12T00:00:00Z"
-points: 5
-category: tasks
 ---
+
 # Define document, garden, and publication resource contracts
 
 > Parent epic: `knoxx-contract-owned-publication-pipeline`
@@ -173,3 +175,7 @@ loader validation hook, then re-run to green.
 - Directly authored `""`, non-rooted, query-bearing, fragment-bearing, and NUL-bearing publication paths fail the same authoritative predicate used by migration.
 - The translation gate consumes the source locale resolved from the owning document.
 - No OpenPlanner type, route, collection, or identifier is required by the laws.
+
+---
+Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Walked accepted -> breakdown -> ready via the Rheos promethean FSM.
+---

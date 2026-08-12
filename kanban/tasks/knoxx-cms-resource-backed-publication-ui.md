@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-cms-resource-backed-publication-ui"
-title: "Make CMS read and write publication intent through Knoxx resources"
-status: accepted
-priority: P2
+category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "frontend"]
+write-id: "1786565796993-0.8vlcnc68xi8270jmll7"
+points: "5"
+title: "Make CMS read and write publication intent through Knoxx resources"
+priority: "P2"
+status: "ready"
+uuid: "knoxx-cms-resource-backed-publication-ui"
 created_at: "2026-08-12T00:00:00Z"
-points: 5
-category: tasks
 ---
+
 # Make CMS read and write publication intent through Knoxx resources
 
 > Parent epic: `knoxx-contract-owned-publication-pipeline`
@@ -341,3 +343,7 @@ Frontend last:
 - Publishing from the CMS changes only the Knoxx publication resource's desired state and the UI reflects it from the normalized response.
 - Publication identity cannot silently move through publish/unpublish/archive edits.
 - No CMS code reads `garden_publications` to determine semantic publication state.
+
+---
+Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Sequencing constraint from the card: this cutover lands only after the migration card has imported the topology and conflicts are resolved.
+---

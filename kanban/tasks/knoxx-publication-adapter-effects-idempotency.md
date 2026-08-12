@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-publication-adapter-effects-idempotency"
-title: "Implement publication adapter effects and idempotency contract"
-status: accepted
-priority: P1
+category: "tasks"
 labels: ["tasks", "3sp", "has-parent", "publication", "adapters", "idempotency"]
+write-id: "1786565795799-0.ymzn39ev3q98kogh8ms"
+points: "3"
+title: "Implement publication adapter effects and idempotency contract"
+priority: "P1"
+status: "ready"
+uuid: "knoxx-publication-adapter-effects-idempotency"
 created_at: "2026-08-12T00:00:00Z"
-points: 3
-category: tasks
 ---
+
 # Implement publication adapter effects and idempotency contract
 
 > Parent task: `knoxx-publication-adapter-boundary`
@@ -142,3 +144,7 @@ Then implement `knoxx.backend.infra.publication-effects` until green.
 - Remove works for prior materializations.
 - No OpenPlanner-specific identifier appears in the domain plan or resource contract.
 - Receipt-producing results are ready for the observation/proof child card.
+
+---
+Ready gate 2026-08-12: sized 3sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Depends on knoxx-publication-reconcile-plan-laws for the plan shape it executes.
+---

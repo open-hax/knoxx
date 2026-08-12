@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-publication-adapter-boundary"
-title: "Define publication reconciliation and adapter boundary"
-status: breakdown
-priority: P1
+category: "tasks"
 labels: ["tasks", "has-parent", "publication", "adapters", "decouple"]
+write-id: "1786565812925-0.r6lj1vcsiql3nk1d58p"
+points: "0"
+title: "Define publication reconciliation and adapter boundary"
+priority: "P1"
+status: "breakdown"
+uuid: "knoxx-publication-adapter-boundary"
 created_at: "2026-08-12T00:00:00Z"
-points: 0
-category: tasks
 ---
+
 # Define publication reconciliation and adapter boundary
 
 > Parent epic: `knoxx-contract-owned-publication-pipeline`
@@ -58,3 +60,7 @@ Desired state remains in resources, decision law remains pure, adapters perform 
 - All three child cards are complete.
 - Their points sum to the original 8sp without double-counting this coordination card.
 - The E2E publication path can consume the resulting planner, adapter, and receipt contracts with OpenPlanner REST absent.
+
+---
+Breakdown 2026-08-12: held in breakdown deliberately. This is a zero-point roll-up over three ready children (reconcile-plan-laws 3sp, adapter-effects-idempotency 3sp, receipts-fake-adapter-proof 2sp = the original 8sp). It carries no implementation slice of its own, so it has no Ready gate to clear; it closes when its children close.
+---

@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-publication-reconcile-plan-laws"
-title: "Define pure publication reconciliation plan laws"
-status: accepted
-priority: P1
+category: "tasks"
 labels: ["tasks", "3sp", "has-parent", "publication", "reconciliation", "laws"]
+write-id: "1786565795198-0.3mpx1qopeqohc3oewey"
+points: "3"
+title: "Define pure publication reconciliation plan laws"
+priority: "P1"
+status: "ready"
+uuid: "knoxx-publication-reconcile-plan-laws"
 created_at: "2026-08-12T00:00:00Z"
-points: 3
-category: tasks
 ---
+
 # Define pure publication reconciliation plan laws
 
 > Parent task: `knoxx-publication-adapter-boundary`
@@ -136,3 +138,7 @@ Then implement `knoxx.backend.domain.publication-plan` until green.
 - A `:source/current` test proves the exact concrete revision checked by the gate is the one emitted in `:desired` and `:concrete-revision` by the plan.
 - Tests require no adapter or OpenPlanner process.
 - The next child can consume the plan without reimplementing semantic decisions.
+
+---
+Ready gate 2026-08-12: sized 3sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Depends on the gate card for the shared publication-evidence result; sequence it after knoxx-translation-publication-gate.
+---

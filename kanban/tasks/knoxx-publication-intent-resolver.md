@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "domain"]
-write-id: "1786565445596-0.zoqaffalavm98274smt"
+write-id: "1786565792741-0.bmrzlxjk8ehhm2y6dn8"
 points: "5"
 title: "Resolve desired publication topology from the Knoxx resource graph"
 priority: "P0"
-status: "breakdown"
+status: "ready"
 uuid: "knoxx-publication-intent-resolver"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -260,3 +260,7 @@ Fastify adapter until green.
 - Archived historical intent can coexist with a replacement without becoming an active relation conflict.
 - One backend facade serves the projection without `/api/openplanner/...` in its contract and without raw Fastify interop outside `extern.*`.
 - The Fastify adapter test exercises the route with native `^:async`/`await` and no `.then` chain.
+
+---
+Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Note: canonical-identity-in-payload and archived-vs-active conflict identity are the two highest-risk behaviours; both have dedicated first tests.
+---
