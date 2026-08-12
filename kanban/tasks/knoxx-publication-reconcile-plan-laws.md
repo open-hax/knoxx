@@ -19,8 +19,8 @@ Extract the pure decision layer that compares desired publication intent with ad
 
 ## Scope
 
-- Resolve `:source/current` to a concrete revision before comparing desired and observed state.
-- Add `:publication-revision-unresolved` when a selector cannot resolve.
+- Consume `publication-gate/publication-evidence` so `:source/current` is resolved once and the same concrete revision drives translation/review admissibility and materialization.
+- Treat `:publication-revision-unresolved` from that shared evidence result as a hard publication blocker.
 - Handle `:withheld` and `:archived` before translation/review blockers.
 - Treat an archived garden as non-public and remove any existing materialization.
 - Compare both concrete revision and publication path for convergence.
@@ -31,14 +31,6 @@ Extract the pure decision layer that compares desired publication intent with ad
 
 ```clojure
 (ns knoxx.backend.domain.publication-plan)
-
-(defn concrete-revision [intent facts]
-  (case (:publication/revision intent)
-    :source/current
-    (facts/current-source-revision
-     facts (:publication/document intent))
-
-    (:publication/revision intent)))
 
 (defn desired-materialization [intent revision]
   {:materialized/revision revision
@@ -63,15 +55,14 @@ Extract the pure decision layer that compares desired publication intent with ad
        :observed observed}
 
       :else
-      (let [revision (concrete-revision intent facts)
-            blockers (cond-> (vec (gate/publication-blockers intent facts))
-                       (nil? revision)
-                       (conj :publication-revision-unresolved))]
+      (let [{:keys [concrete-revision blockers]}
+            (gate/publication-evidence intent facts)]
         (if (seq blockers)
           {:op :blocked
            :intent intent
-           :blockers blockers}
-          (let [desired (desired-materialization intent revision)
+           :blockers blockers
+           :concrete-revision concrete-revision}
+          (let [desired (desired-materialization intent concrete-revision)
                 current (select-keys observed
                                      [:materialized/revision
                                       :materialized/path])]
@@ -79,12 +70,12 @@ Extract the pure decision layer that compares desired publication intent with ad
               {:op :noop
                :intent intent
                :desired desired
-               :concrete-revision revision}
+               :concrete-revision concrete-revision}
               {:op :publish
                :intent intent
                :desired desired
                :previous observed
-               :concrete-revision revision})))))))
+               :concrete-revision concrete-revision})))))))
 ```
 
 ## Laws
@@ -92,6 +83,7 @@ Extract the pure decision layer that compares desired publication intent with ad
 - Non-public states can only remove or no-op.
 - Garden archive dominates publication intent and translation blockers.
 - Removal is never blocked by missing/stale translation evidence.
+- Reconciliation does not independently resolve a revision after gate evaluation; one concrete revision fact is shared across evidence and materialization.
 - No publish plan may carry a nil concrete revision.
 - Path-only changes are drift.
 - Same resources + facts always produce the same plan.
@@ -99,5 +91,6 @@ Extract the pure decision layer that compares desired publication intent with ad
 ## Done when
 
 - Pure tests cover published/noop, path-only drift, revision drift, unresolved revision, withheld removal, publication archive removal, archived-garden removal, and translation/review blocking.
+- A `:source/current` test proves the exact concrete revision checked by the gate is the one emitted in `:desired` and `:concrete-revision` by the plan.
 - Tests require no adapter or OpenPlanner process.
 - The next child can consume the plan without reimplementing semantic decisions.
