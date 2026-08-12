@@ -107,7 +107,7 @@ Do not maintain a second partial route list in this card. Import the exact surfa
 (require '[knoxx.backend.law.required-surfaces
            :refer [required-publication-surfaces]])
 
-(defn verify-contract-publication! [client auth-harness]
+(defn ^:async verify-contract-publication! [client auth-harness]
   (doseq [{:keys [method path auth]} required-publication-surfaces]
     (let [authorized (await (client/request! method path
                                              (auth-harness/headers-for auth)))]
@@ -147,4 +147,5 @@ The test should fail if:
 - Initial translation/review blockers match the gate's independent blocker semantics.
 - The final receipt asserts exact document, target, locale, and concrete revision and the public read returns the translated artifact.
 - Deploy verification and E2E use the same complete required-surface contract unconditionally.
+- The shared verifier itself uses native `^:async`/`await`; no helper contains `await` inside an ordinary `defn`.
 - One receipt chain is sufficient to explain how a resource intent converged to a public translated artifact.
