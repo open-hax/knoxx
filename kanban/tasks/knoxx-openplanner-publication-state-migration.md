@@ -24,7 +24,8 @@ This migration and explicit conflict resolution land **before** the CMS resource
 
 - Inventory current garden rows and document `garden_publications` metadata used by CMS.
 - Convert semantic fields into `garden`, `document`, and `publication` resources.
-- Validate legacy garden status, source/target locale, path, garden identity, document identity, and revision information before constructing resources; missing or unrecognized semantic values become conflicts rather than defaults.
+- Validate every legacy semantic field before constructing resources: garden status, source/target locale, path, garden identity, document identity, revision selector/value, requested publication state, and review policy. Missing, malformed, or unrecognized values become conflicts rather than defaults.
+- In particular, do **not** infer `:source/current` from a missing revision and do **not** coerce missing/truthy/falsy legacy `:published` values into publication state. Both must decode explicitly.
 - Separate operational observations (`published_at`, job/run ids, adapter timestamps) into migration receipts rather than resource data.
 - Detect ambiguous/conflicting source rows and emit a report requiring explicit resolution; do not apply "last write wins".
 - Make migration idempotent and restart-safe both for resource writes and conflict receipts.
@@ -37,45 +38,75 @@ This migration and explicit conflict resolution land **before** the CMS resource
 ```clojure
 (ns knoxx.backend.domain.publication-migration)
 
+(defn conflict [reason field value row]
+  {:migration/status :conflict
+   :reason reason
+   :field field
+   :value value
+   :source row})
+
 (defn decode-garden-status [row]
   (case (:status row)
     "active"   {:ok :active}
     "archived" {:ok :archived}
-    {:conflict :unknown-garden-status
-     :value (:status row)}))
+    (conflict :unknown-garden-status :status (:status row) row)))
 
 (defn decode-locale [field row]
   (let [value (get row field)
         locale (when (and (string? value) (seq value)) (keyword value))]
     (if (and locale (law/valid? publication/Locale locale))
       {:ok locale}
-      {:conflict :unknown-locale
-       :field field
-       :value value})))
+      (conflict :unknown-locale field value row))))
+
+(defn decode-revision [row]
+  (let [value (:revision row)]
+    (cond
+      (= :source/current value)
+      {:ok :source/current}
+
+      (and (string? value) (seq value))
+      {:ok value}
+
+      :else
+      (conflict :invalid-publication-revision :revision value row))))
+
+(defn decode-publication-state [row]
+  (if (and (contains? row :published)
+           (boolean? (:published row)))
+    {:ok (if (:published row) :published :withheld)}
+    (conflict :invalid-published-state :published (:published row) row)))
+
+(defn decode-review-policy [row]
+  (if (and (contains? row :review-required)
+           (boolean? (:review-required row)))
+    {:ok (if (:review-required row) :required :none)}
+    (conflict :invalid-review-policy
+              :review-required
+              (:review-required row)
+              row)))
 
 (defn garden->decision [row]
   (let [status (decode-garden-status row)]
-    (if-let [reason (:conflict status)]
-      {:migration/status :conflict
-       :reason reason
-       :source row}
+    (if (:migration/status status)
+      status
       {:migration/status :candidate
        :resource {:garden/id (canonical-garden-id row)
                   :garden/title (:title row)
                   :garden/status (:ok status)}})))
 
 (defn publication->decision [document row]
-  (let [locale (decode-locale :locale row)]
+  (let [locale   (decode-locale :locale row)
+        revision (decode-revision row)
+        state    (decode-publication-state row)
+        review   (decode-review-policy row)
+        invalid  (some #(when (:migration/status %) %)
+                       [locale revision state review])]
     (cond
-      (:conflict locale)
-      {:migration/status :conflict
-       :reason (:conflict locale)
-       :source row}
+      invalid
+      invalid
 
       (not (valid-publication-path? (:path row)))
-      {:migration/status :conflict
-       :reason :invalid-publication-path
-       :source row}
+      (conflict :invalid-publication-path :path (:path row) row)
 
       :else
       {:migration/status :candidate
@@ -84,11 +115,10 @@ This migration and explicit conflict resolution land **before** the CMS resource
         :publication/document (:document/id document)
         :publication/garden (canonical-garden-id row)
         :publication/locale (:ok locale)
-        :publication/revision (or (validated-revision row)
-                                  :source/current)
-        :publication/state (if (:published row) :published :withheld)
+        :publication/revision (:ok revision)
+        :publication/state (:ok state)
         :publication/path (:path row)
-        :translation/review (if (:review-required row) :required :none)}})))
+        :translation/review (:ok review)}})))
 
 (defn migrate-record [resource-index source-record]
   (let [candidate-decision
@@ -144,7 +174,9 @@ Garden migration uses the same decision/receipt discipline. Document migration m
 ## Laws
 
 - Re-running migration over unchanged legacy data produces no new semantic resources.
-- Unknown/ambiguous source locale, target locale, status, path, garden, or document identity becomes a conflict receipt, not guessed contract data.
+- Unknown/ambiguous source locale, target locale, status, path, garden, document identity, revision, publication state, or review policy becomes a conflict receipt, not guessed contract data.
+- Missing revision never means `:source/current` unless that selector was explicitly represented by the legacy source.
+- Only an actual legacy boolean may become `:published` or `:withheld`; truthiness/falsiness is not a decoder.
 - Conflict receipts have stable source-record keys; reruns do not duplicate them.
 - Successful writes immediately enter the migration index before the next source record is classified.
 - Removing legacy operational timestamps from input cannot change generated desired-state resources.
@@ -154,5 +186,6 @@ Garden migration uses the same decision/receipt discipline. Document migration m
 
 - Existing publish topology can be reconstructed as validated Knoxx resources before the CMS authority cutover.
 - Conflicts are enumerated explicitly with source evidence and no defaulted semantic values.
+- Fixtures prove missing/invalid revision and non-boolean/missing publish state produce conflicts rather than resources.
 - Two source rows mapping to the same publication are reconciled against the updated in-run index rather than both being blindly written.
 - The same migration run twice yields identical resource state and no duplicate publications or conflict receipts.
