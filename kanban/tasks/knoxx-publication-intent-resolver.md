@@ -23,7 +23,9 @@ The resolver must not call HTTP, Mongo, OpenPlanner, filesystem effects, or work
 - Build document/garden/publication indexes from the resource registry.
 - Canonicalize resource identities and namespace-local references before indexing, filtering, conflict checks, key construction, **and before storing document/garden payloads in the index**.
 - Ensure indexed document/garden payload identity fields contain the same canonical IDs used as their index keys, so downstream Malli validation never sees a namespace-local ID where a qualified identity is required.
-- Reject duplicate/revision-conflicting publication intents deterministically before exposing any projection; never rely on enumeration order.
+- Detect duplicate canonical document/garden identities before insertion. Byte-equivalent duplicates may collapse; conflicting payloads for the same canonical id fail deterministically instead of using loader enumeration order.
+- Treat publication relation identity as document × garden × locale × revision selector. Different revisions may coexist; only conflicting **non-archived** intents for the same relation key fail projection.
+- Preserve archived publication intents as historical desired-state records without letting them conflict with an active replacement merely because document/garden/locale match.
 - Expose pure queries for documents, gardens, publication intents, target locales, and intended revisions.
 - Return explicit semantic blockers for malformed/incomplete desired state; leave runtime blockers to `knoxx-translation-publication-gate`.
 - Define both document and list facade shapes before routes consume them.
@@ -60,40 +62,76 @@ The resolver must not call HTTP, Mongo, OpenPlanner, filesystem effects, or work
 (defn publication-key [intent]
   [(:publication/document intent)
    (:publication/garden intent)
-   (:publication/locale intent)])
+   (:publication/locale intent)
+   (:publication/revision intent)])
+
+(defn publication-sort-key [intent]
+  [(:publication/document intent)
+   (:publication/garden intent)
+   (:publication/locale intent)
+   (pr-str (:publication/revision intent))
+   (:publication/id intent)])
+
+(defn active-publication-intent? [intent]
+  (not= :archived (:publication/state intent)))
 
 (defn publication-conflicts [publications]
   (->> publications
+       (filter active-publication-intent?)
        (group-by publication-key)
        (keep (fn [[k intents]]
                (when (> (count intents) 1)
                  {:publication/key k
                   :intents (vec (sort-by :publication/id intents))})))
-       (sort-by :publication/key)
+       (sort-by #(mapv pr-str (:publication/key %)))
        vec))
+
+(defn index-canonical! [idx kind id resource]
+  (let [path     [kind id]
+        existing (get-in idx path)]
+    (cond
+      (nil? existing)
+      (assoc-in idx path resource)
+
+      (= existing resource)
+      idx
+
+      :else
+      (throw
+       (ex-info "conflicting canonical resource identity"
+                {:resource/kind kind
+                 :resource/id id
+                 :existing existing
+                 :incoming resource})))))
 
 (defn publication-index [resources]
   (let [idx
         (reduce
          (fn [idx resource]
-           (cond-> idx
-             (:document/id resource)
-             (assoc-in [:documents (canonical-document-id resource)]
-                       (canonicalize-document resource))
-
-             (:garden/id resource)
-             (assoc-in [:gardens (canonical-garden-id resource)]
-                       (canonicalize-garden resource))
-
-             (:publication/id resource)
-             (update :publications conj (canonicalize-intent resource))))
+           (let [idx (if (:document/id resource)
+                       (let [document (canonicalize-document resource)]
+                         (index-canonical! idx
+                                           :documents
+                                           (:document/id document)
+                                           document))
+                       idx)
+                 idx (if (:garden/id resource)
+                       (let [garden (canonicalize-garden resource)]
+                         (index-canonical! idx
+                                           :gardens
+                                           (:garden/id garden)
+                                           garden))
+                       idx)]
+             (if (:publication/id resource)
+               (update idx :publications conj (canonicalize-intent resource))
+               idx)))
          {:documents {} :gardens {} :publications []}
          resources)
         conflicts (publication-conflicts (:publications idx))]
     (when (seq conflicts)
       (throw (ex-info "conflicting publication intents"
                       {:conflicts conflicts})))
-    (update idx :publications #(vec (sort-by publication-key %)))))
+    (update idx :publications #(vec (sort-by publication-sort-key %)))))
 
 (defn desired-publications [idx document-id]
   (let [canonical-id (resources/resolve-query-id document-id)]
@@ -150,8 +188,10 @@ If the infra handler is synchronous, `await` still safely accepts its resolved v
 - Same resource graph -> byte-equivalent canonical projection regardless of source file enumeration order.
 - Namespace-local and already-qualified references resolve to the same canonical identity before comparison.
 - Every document/garden stored in the resolver index has a canonical identity in both its map key and its own `:document/id` / `:garden/id` field.
+- Two differing document or garden payloads cannot silently occupy the same canonical id; projection rejects the conflict rather than picking the last enumerated manifest.
+- Publication conflict identity includes revision selector. Different revisions may coexist, and archived historical intents do not invalidate a non-archived replacement at another/current revision.
+- Two non-archived intents for the same document/garden/locale/revision relation are surfaced deterministically before projection.
 - Resolver output contains no execution status such as worker state, publish timestamps, or adapter receipts.
-- Duplicate publication keys or revision-conflicting intents are surfaced deterministically before projection; never "last one wins" by loader order.
 - The domain namespace remains pure and reusable by CLI/tests without Fastify or Mongo.
 - Native request/reply handles are born and die in the extern adapter.
 - New async extern functions use `^:async`/`await`; Promise chaining is not part of the prescribed implementation shape.
@@ -162,6 +202,8 @@ If the infra handler is synchronous, `await` still safely accepts its resolved v
 - A pure test deletes every OpenPlanner dependency from the fixture and produces the same desired topology.
 - Namespace-local reference fixtures produce the same canonical projection as fully-qualified fixtures, including canonical IDs inside the returned document/garden payloads.
 - Hydrating a publication that references a namespace-local document validates against the qualified `Document` law shape.
-- Duplicate/conflicting intents fail before the list/document facade returns data.
+- Two manifests with the same canonical document/garden id and different payloads fail deterministically regardless of enumeration order; byte-equivalent duplicates do not change projection.
+- Different revision selectors for the same document/garden/locale are not rejected merely for sharing those first three dimensions; duplicate active intent for the exact revision relation does fail.
+- Archived historical intent can coexist with a replacement without becoming an active relation conflict.
 - One backend facade serves the projection without `/api/openplanner/...` in its contract and without raw Fastify interop outside `extern.*`.
 - The Fastify adapter test exercises the route with native `^:async`/`await` and no `.then` chain.
