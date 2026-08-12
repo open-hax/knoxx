@@ -20,11 +20,13 @@ Do **not** encode `:translating`, `:reviewing`, `:worker-failed`, or similar ope
 
 ## Scope
 
-- Define the minimum receipt/projection facts needed to admit a translated publication: translation exists for requested revision/locale, required review passed, no superseding source revision invalidated it.
+- Define the minimum receipt/projection facts needed to admit a translated publication: translation exists for the requested **concrete** revision/locale, required review passed for that same revision, and no superseding source revision invalidated it.
+- Resolve revision selectors such as `:source/current` exactly once before any translation/review evidence lookup; selector tokens are never used as receipt revision identities.
+- Return the resolved concrete revision alongside blocker data so reconciliation, queueing, and materialization all consume the same revision fact.
 - Consume the resolved document source locale from `PublicationIntent`; never default source language in the gate.
 - Compute blockers as pure domain data.
 - Feed blockers into CMS and the publication reconciler.
-- Trigger/queue translation work from missing **or stale** publication evidence without making the queue authoritative.
+- Trigger/queue translation work from missing **or stale** publication evidence without making the queue authoritative; work is keyed to the concrete revision, not `:source/current`.
 - Treat approval as revision-specific: when the source revision changes, the old approval remains historical evidence but cannot satisfy the replacement translation.
 - Ensure a corrected/re-reviewed translation can satisfy the same immutable publication intent without editing that intent solely to clear a workflow state.
 
@@ -37,43 +39,71 @@ Do **not** encode `:translating`, `:reviewing`, `:worker-failed`, or similar ope
   (not= (:publication/locale intent)
         (:document/source-locale intent)))
 
+(defn resolve-concrete-revision [intent facts]
+  (case (:publication/revision intent)
+    :source/current
+    (facts/current-source-revision
+     facts (:publication/document intent))
+
+    (:publication/revision intent)))
+
+(defn publication-evidence [intent facts]
+  (let [revision (resolve-concrete-revision intent facts)
+        blockers
+        (cond-> []
+          (nil? revision)
+          (conj :publication-revision-unresolved)
+
+          (and revision
+               (translation-required? intent)
+               (not (translation/translated-revision?
+                     facts
+                     (:publication/document intent)
+                     (:publication/locale intent)
+                     revision)))
+          (conj :translation-missing)
+
+          (and revision
+               (= :required (:translation/review intent))
+               (not (review/approved?
+                     facts
+                     (:publication/document intent)
+                     (:publication/locale intent)
+                     revision)))
+          (conj :translation-review-required)
+
+          (and revision
+               (translation/source-revision-superseded?
+                facts intent revision))
+          (conj :translation-stale))]
+    {:concrete-revision revision
+     :blockers blockers}))
+
 (defn publication-blockers [intent facts]
-  (cond-> []
-    (and (translation-required? intent)
-         (not (translation/translated-revision?
-               facts
-               (:publication/document intent)
-               (:publication/locale intent)
-               (:publication/revision intent))))
-    (conj :translation-missing)
-
-    (and (= :required (:translation/review intent))
-         (not (review/approved?
-               facts
-               (:publication/document intent)
-               (:publication/locale intent)
-               (:publication/revision intent))))
-    (conj :translation-review-required)
-
-    (translation/source-revision-superseded? facts intent)
-    (conj :translation-stale)))
+  (:blockers (publication-evidence intent facts)))
 
 (defn publication-admissible? [intent facts]
-  (and (= :published (:publication/state intent))
-       (empty? (publication-blockers intent facts))))
+  (let [{:keys [concrete-revision blockers]}
+        (publication-evidence intent facts)]
+    (and (= :published (:publication/state intent))
+         (some? concrete-revision)
+         (empty? blockers))))
 ```
 
-Queueing is derivative and handles stale evidence as replacement work:
+Queueing is derivative and uses the exact same concrete revision selected for evidence checks:
 
 ```clojure
 (defn reconcile-translation-work [intent facts]
-  (let [blockers (set (publication-blockers intent facts))]
-    (when (or (contains? blockers :translation-missing)
-              (contains? blockers :translation-stale))
+  (let [{:keys [concrete-revision blockers]}
+        (publication-evidence intent facts)
+        blockers (set blockers)]
+    (when (and concrete-revision
+               (or (contains? blockers :translation-missing)
+                   (contains? blockers :translation-stale)))
       {:action/id :actions/request-translation
        :action/with {:document (:publication/document intent)
                      :locale (:publication/locale intent)
-                     :revision (:publication/revision intent)
+                     :revision concrete-revision
                      :replace-stale? (contains? blockers :translation-stale)}})))
 ```
 
@@ -91,16 +121,21 @@ A stale translation does **not** delete the old approval receipt. The old receip
 
 ## Laws
 
+- A revision selector is resolved before translation or review evidence is queried; `:source/current` is never compared directly to a receipt revision.
+- One `publication-evidence` result supplies the concrete revision used by blockers, translation work, reconciliation, and materialization.
+- If `:source/current` cannot resolve, the gate emits `:publication-revision-unresolved`; it does not query evidence or queue revisionless translation work.
 - Removing all worker/job rows must not change desired publication intent.
 - A new source revision invalidates a translation/review receipt for the old revision unless the contract explicitly pins the old revision.
 - Stale evidence queues replacement translation work; it cannot remain blocked indefinitely with no derivable action.
 - Required review cannot be bypassed by an adapter directly observing a translated artifact.
-- Re-running the pure gate over the same intent + facts produces the same blocker set.
+- Re-running the pure gate over the same intent + facts produces the same concrete revision and blocker set.
 
 ## Done when
 
 - CMS can explain exactly why a requested publication is blocked.
+- A `:source/current` fixture resolving to `"probe-revision"` checks translation and approval receipts against `"probe-revision"`, never against `:source/current`.
+- The reconciler consumes the same `:concrete-revision` returned by `publication-evidence` rather than independently selecting another revision.
 - The reconciler refuses to publish a locale/revision that lacks required translation/review evidence.
-- Missing and stale translations both derive translation work.
+- Missing and stale translations both derive translation work keyed to the concrete revision.
 - A replacement revision cannot inherit approval from an older translation, while historical approval receipts remain intact.
 - No mutable worker/review state is promoted into the declarative resource graph.
