@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-openplanner-rest-retirement"
 title: "Retire OpenPlanner REST as a Knoxx CMS/translation dependency"
-status: incoming
+status: accepted
 priority: P1
 labels: ["tasks", "3sp", "has-parent", "cms", "translations", "openplanner", "deploy"]
 created_at: "2026-08-12T00:00:00Z"
@@ -24,6 +24,7 @@ Delete the compatibility dependency after the resource-owned publication path is
 - Remove `KNOXX_EXPECT_OPENPLANNER_REST` and the conditional CMS skip from deploy verification once the replacement surface is unconditional.
 - Keep OpenPlanner-backed adapters only behind `IPublicationTarget` or other explicit extern/infra boundaries.
 - Ensure no frontend module imports an `openplanner` API wrapper for publication semantics after cutover.
+- Define one shared required-surface contract and reuse it in deploy verification and `knoxx-contract-publication-e2e`, including route method and authorization expectations.
 
 ## CLJS pseudocode
 
@@ -52,17 +53,40 @@ After:
   (api/request "/api/publications/health"))
 ```
 
-Deploy probe intent:
+One shared pure surface specification, imported by both the deploy verifier and E2E test:
 
 ```clojure
-(def required-surfaces
-  ["/api/publications/health"
-   "/api/publications/documents?limit=1"
-   "/api/translations/documents?limit=1"])
+(ns knoxx.backend.law.required-surfaces)
 
-(defn verify-required-surfaces! [http]
-  (doseq [path required-surfaces]
-    (assert (= 200 (:status (http/get! path))))))
+(def required-publication-surfaces
+  [{:method :get
+    :path "/api/publications/health"
+    :auth :public}
+   {:method :get
+    :path "/api/publications/documents?limit=1"
+    :auth :publication-read}
+   {:method :get
+    :path "/api/publications/gardens"
+    :auth :publication-read}
+   {:method :get
+    :path "/api/translations/documents?limit=1"
+    :auth :translation-read}
+   {:method :get
+    :path "/api/translations/config"
+    :auth :translation-read}])
+```
+
+The symbolic auth expectations above map to the real Knoxx authorization guards/capabilities in the verifier. The same test data must assert both an authorized success and the intended anonymous/unauthorized denial for non-public routes.
+
+```clojure
+(defn verify-required-surfaces! [http auth-harness]
+  (doseq [{:keys [method path auth]} required-publication-surfaces]
+    (let [authorized (http/request! method path
+                                    (auth-harness/headers-for auth))]
+      (assert (= 200 (:status authorized)))
+      (when-not (= :public auth)
+        (assert (contains? #{401 403}
+                           (:status (http/request! method path {}))))))))
 ```
 
 There should be no equivalent of:
@@ -77,14 +101,17 @@ There should be no equivalent of:
 Do not delete the compatibility path before:
 
 - publication resources and resolver are live;
-- CMS reads/writes the resource projection;
+- the one-time OpenPlanner publication migration has converged and conflicts are resolved;
 - translation pipeline config is resource-owned;
-- existing publication state has been migrated or explicitly abandoned;
-- at least one publication adapter can materialize requested state.
+- translation/review gating and at least one publication adapter exist;
+- CMS reads/writes the resource projection;
+- the shared required-surface verification passes without OpenPlanner REST.
 
 ## Done when
 
 - Grepping shipped frontend/backend code for the two OpenPlanner authority routes returns no callers.
+- Production deploy verification and the contract-publication E2E import the same complete required-surface list.
+- All five replacement surfaces are checked for method and intended authorization behavior.
 - Production deploy verification requires CMS/publication surfaces unconditionally.
 - `KNOXX_EXPECT_OPENPLANNER_REST` is gone.
 - OpenPlanner may be absent without degrading Knoxx's ability to describe or edit desired publication state.
