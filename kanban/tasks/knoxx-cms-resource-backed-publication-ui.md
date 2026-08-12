@@ -29,14 +29,16 @@ This cutover happens only after `knoxx-openplanner-publication-state-migration` 
 - Load document/garden/publication views from the Knoxx publication facade.
 - Define one normalized JSON wire contract for list and document responses; do not wrap `publication/document-view` under another `:document` key.
 - Treat JSON enum values as strings at the HTTP boundary and explicitly convert them to/from domain keywords. Keywordizing object keys is not sufficient.
+- Reuse the resource wire identity convention: keyword ids serialize as `namespace/name` with no EDN leading colon and decode back to the same qualified keyword.
 - Map resource `:publication/state` to wire-level `"desired"` string values in the backend facade and combine it with observed receipt status there.
 - Encode keyword-valued response fields symmetrically (locale, desired/observed state, blockers, resource IDs where applicable), then explicitly decode them into CLJS UI-domain values in the frontend helper.
 - Render desired publication state separately from observed adapter state.
 - Make publish/unpublish/archive edits update only the relevant publication **state** through the existing resource-write boundary (or the narrowest new resource-write facade required).
 - Treat publication identity dimensions — document, garden, locale, revision selector — as immutable for state edits. Any re-key must be an explicit operation with duplicate/conflict validation.
+- Keep Fastify/native request objects inside the HTTP adapter: decode once, then read route params and body from the decoded CLJS request map.
 - Do not make the frontend parse EDN itself; frontend consumes normalized JSON API data.
 - Keep dirty/save semantics explicit: editing body content and editing publication intent are separate mutations even when exposed in one CMS surface.
-- New asynchronous frontend CLJS uses native `^:async` + `await`, not `.then` chains.
+- New asynchronous frontend/adapter CLJS uses native `^:async` + `await`, not `.then` chains.
 
 ## CLJS pseudocode
 
@@ -66,11 +68,22 @@ JSON wire contracts use JSON-safe scalar values:
    [:gardens [:vector :map]]])
 ```
 
-Backend encoding is explicit rather than relying on incidental keyword serialization:
+Backend encoding is explicit rather than relying on incidental keyword serialization. Qualified keyword ids never include an EDN leading colon:
 
 ```clojure
-(defn encode-id [x] (str x))
-(defn encode-enum [x] (when x (name x)))
+(defn encode-keyword [x]
+  (when x
+    (if-let [ns (namespace x)]
+      (str ns "/" (name x))
+      (name x))))
+
+(defn encode-id [x]
+  (if (keyword? x)
+    (encode-keyword x)
+    (str x)))
+
+(defn decode-id [x]
+  (keyword x))
 
 (defn publication->wire [receipts intent]
   (law/assert!
@@ -78,15 +91,15 @@ Backend encoding is explicit rather than relying on incidental keyword serializa
    {:id (encode-id (:publication/id intent))
     :document (encode-id (:publication/document intent))
     :garden (encode-id (:publication/garden intent))
-    :locale (encode-enum (:publication/locale intent))
+    :locale (encode-keyword (:publication/locale intent))
     :revision (if (keyword? (:publication/revision intent))
-                (name (:publication/revision intent))
+                (encode-keyword (:publication/revision intent))
                 (:publication/revision intent))
     :path (:publication/path intent)
-    :desired (encode-enum (:publication/state intent))
+    :desired (encode-keyword (:publication/state intent))
     :observed (some-> (publication-status/observed-for receipts intent)
-                      encode-enum)
-    :blockers (mapv encode-enum
+                      encode-keyword)
+    :blockers (mapv encode-keyword
                     (publication-status/blockers-for receipts intent))}))
 
 (defn cms-document-view [resource-index receipts document-id]
@@ -134,13 +147,15 @@ State mutation has separate JSON and domain contracts:
   (resources/rekey! ctx publication-id new-identity))
 ```
 
-The Fastify/HTTP adapter validates and decodes the JSON value before domain validation:
+The Fastify/HTTP adapter decodes once and reads both body and route identity from the decoded CLJS map:
 
 ```clojure
-(defn patch-publication-state-route! [ctx req]
-  (let [wire   (:body (decode-request req))
-        domain (decode-publication-state-patch wire)]
-    (put-publication-state! ctx (:publication-id req) domain)))
+(defn ^:async patch-publication-state-route! [ctx req]
+  (let [request        (decode-request req)
+        wire           (:body request)
+        publication-id (decode-id (get-in request [:params :publication-id]))
+        domain         (decode-publication-state-patch wire)]
+    (await (put-publication-state! ctx publication-id domain))))
 ```
 
 Frontend wire decoding is symmetric:
@@ -148,9 +163,9 @@ Frontend wire decoding is symmetric:
 ```clojure
 (defn decode-publication-wire [wire]
   (-> wire
-      (update :id keyword)
-      (update :document keyword)
-      (update :garden keyword)
+      (update :id decode-id)
+      (update :document decode-id)
+      (update :garden decode-id)
       (update :locale keyword)
       (update :desired keyword)
       (update :observed #(when % (keyword %)))
@@ -165,7 +180,7 @@ Frontend wire decoding is symmetric:
                  %)))
 ```
 
-Frontend page flow consumes those exact keys using native async/await:
+Frontend page flow consumes those exact keys using native async/await and serializes ids through the same colon-free resource-id convention:
 
 ```clojure
 (defn ^:async load-cms! []
@@ -175,11 +190,13 @@ Frontend page flow consumes those exact keys using native async/await:
            :documents (:documents response)
            :gardens (:gardens response))))
 
-(defn request-publish! [{:keys [publication-id]}]
-  (api/request
-   (str "/api/publications/intents/" (js/encodeURIComponent publication-id))
-   {:method "PATCH"
-    :body {:publication/state "published"}}))
+(defn ^:async request-publish! [{:keys [publication-id]}]
+  (await
+   (api/request
+    (str "/api/publications/intents/"
+         (js/encodeURIComponent (encode-id publication-id)))
+    {:method "PATCH"
+     :body {:publication/state "published"}})))
 ```
 
 UI-domain state remains keyword-oriented after explicit frontend decoding:
@@ -193,6 +210,8 @@ UI-domain state remains keyword-oriented after explicit frontend decoding:
 ## Watch out
 
 - Do not preserve `publishedGardenIds` as a second client-side authority; derive selected/publication badges from `:desired` in the decoded publication projection.
+- Do not rely on `(str keyword)` for resource wire ids: `:docs/probe` must serialize as `"docs/probe"`, never `":docs/probe"`.
+- Do not read route params from the raw Fastify request after decoding; native request handles stay at the adapter edge.
 - Do not rely on JSON serialization to preserve Clojure keyword values. Wire enums are strings; domain enums are keywords; adapters convert explicitly in both directions.
 - Do not silently write runtime timestamps/job ids back into resources after publishing.
 - A failed adapter call must leave desired state unchanged and surface drift, not revert the user's requested contract state unless the user explicitly changes it.
@@ -203,6 +222,8 @@ UI-domain state remains keyword-oriented after explicit frontend decoding:
 - CMS can render document publication topology with OpenPlanner REST disabled.
 - List and document routes expose one consistent `{documents, gardens}` / `{document, publications}` vocabulary with JSON-safe publication `{desired, observed, blockers}` fields.
 - A state PATCH containing JSON `"published"` decodes to domain `:published` before Malli validates `PublicationStatePatch`.
+- Qualified resource ids round-trip exactly: domain `:docs/probe` -> JSON `"docs/probe"` -> domain `:docs/probe`, and PATCH URLs contain no spurious colon.
+- The PATCH adapter obtains `publication-id` from decoded request params, never by keyword lookup on the native Fastify object.
 - Response keyword-valued fields round-trip through explicit JSON encoding and frontend decoding without relying on implicit keyword serialization.
 - `load-cms!` uses `^:async`/`await` and contains no Promise `.then` chain.
 - Publishing from the CMS changes only the Knoxx publication resource's desired state and the UI reflects it from the normalized response.
