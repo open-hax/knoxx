@@ -275,6 +275,56 @@ Garden migration uses the same decision/receipt discipline. Document migration m
 - Removing legacy operational timestamps from input cannot change generated desired-state resources.
 - Once cut over, migration is retired; no bidirectional sync remains.
 
+## TDD plan
+
+Test namespace: `knoxx.backend.domain.publication-migration-test`
+(`backend/test/cljs/knoxx/backend/domain/publication_migration_test.cljs`).
+
+Normalization first — these are the tests the review thread demanded:
+
+1. `membership-entry-normalizes-to-published-candidate` — a legacy document whose
+   `metadata.garden_publications` is `[{:garden_id "garden-a"}]` normalizes to a
+   `:garden-membership` row and migrates to a validated publication resource
+   with `:publication/state :published` and
+   `:publication/revision :source/current`. It must NOT be a conflict.
+2. `membership-entry-without-garden-id-conflicts` — entries with a missing,
+   blank, or non-string `garden_id` become
+   `:unresolvable-garden-membership` conflicts.
+3. `undeclared-source-shape-conflicts` — a row with no `:source/shape` yields
+   `:unknown-publication-source-shape`; nothing is guessed.
+4. `membership-review-policy-must-be-declared` — a run whose migration policy
+   omits `:migration/membership-review` yields
+   `:undeclared-membership-review-policy` conflicts; supplying `:required`
+   produces `:translation/review :required` on the resource.
+5. `explicit-row-still-requires-explicit-fields` — on
+   `:explicit-publication-row`, a missing revision, a non-boolean `:published`,
+   and a truthy-but-not-boolean `:published` each conflict.
+6. `migration-path-law-is-shared` — the same malformed path table used by
+   `knoxx.backend.law.publication-test` is rejected by migration through
+   `publication/valid-publication-path?`, asserted by calling the same predicate
+   var rather than a copy.
+7. `missing-source-locale-conflicts` — a document with no resolvable source
+   locale conflicts instead of defaulting.
+
+Fold behaviour second — the async/await regression:
+
+8. `^:async fold-awaits-promise-returning-writer` — a fake writer that returns
+   `(js/Promise.resolve resource)` and a fake receipt appender that returns a
+   Promise. Assert the index after the run contains saved resource maps, not
+   Promise objects (`(is (map? (get-in idx [...])))`).
+9. `^:async second-row-reconciles-against-in-run-index` — two legacy rows
+   mapping to the same publication identity: the second is classified against
+   the first row's written state, producing `:noop` or `:conflict`, never two
+   blind writes.
+10. `^:async rerun-is-idempotent` — running the fold twice over unchanged legacy
+    data yields identical resource state, no duplicate publications, and no
+    duplicate conflict receipts (stable receipt keys).
+11. `operational-fields-are-receipts-only` — deleting `published_at` and job ids
+    from the input does not change any generated resource.
+
+Then implement `knoxx.backend.domain.publication-migration` and the `^:async`
+fold until green.
+
 ## Done when
 
 - Existing publish topology can be reconstructed as validated Knoxx resources before the CMS authority cutover.

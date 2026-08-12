@@ -154,6 +154,54 @@ to have survived JSON.
 - The ingestion worker cannot choose a model from OpenPlanner, environment, or a hard-coded default when that differs from the authoritative Knoxx resource configuration.
 - If a fallback policy exists, it is represented in Knoxx-owned configuration/law and therefore produces the same answer for UI and worker consumers.
 
+## TDD plan
+
+Test namespaces:
+
+- `knoxx.backend.domain.translation-config-test`
+  (`backend/test/cljs/knoxx/backend/domain/translation_config_test.cljs`)
+- ingestion: `kms-ingestion.translation.worker-test`
+  (`ingestion/test/kms_ingestion/translation/worker_test.clj`)
+
+Resolution and catalog validation first:
+
+1. `global-config-resolves-from-resources` — the `:pipeline-default` policy
+   resolves with no OpenPlanner namespace loaded.
+2. `org-override-merges-before-validation` — an org override wins for the keys
+   it sets, and an override naming a model absent from the catalog fails
+   validation even though the global default is valid.
+3. `unknown-model-ref-throws` — `validate-model-ref!` throws `ex-info` carrying
+   `:translation/model` for an id missing from the model catalog.
+4. `model-ref-normalizes-once` — a namespace-local and a fully-qualified model
+   reference resolve to the same canonical id.
+
+Wire contracts second — the review thread's regression:
+
+5. `config-patch-decodes-unqualified-wire-key` — the exact JSON body
+   `clj->js` produces, `{"model" "models/glm-5"}` keywordized to
+   `{:model "models/glm-5"}`, passes `TranslationConfigPatchJson` and decodes to
+   `{:translation/model :models/glm-5}`.
+6. `config-patch-changes-authoritative-model` — after
+   `update-translation-config!` with that decoded patch, the resolved config
+   reports the new model, not the previous one. This is the test that fails
+   today's sketch.
+7. `qualified-wire-key-is-rejected` — a body carrying `:translation/model`
+   fails `TranslationConfigPatchJson`, so the two key conventions cannot drift.
+8. `config-response-round-trips` — `config->wire` emits strings for model,
+   source locale, and review policy, and the frontend decoder returns the
+   original keywords.
+
+Single-authority proof last:
+
+9. `worker-and-facade-select-same-model` — changing the resource-selected model
+   makes both `worker-config-response` and the ingestion worker's resolved
+   config report the same canonical id.
+10. `worker-lookup-failure-is-configuration-failure` — a failing config lookup
+    surfaces as configuration failure or the declared Knoxx fallback, never a
+    silent env/default model that disagrees with the resource graph.
+11. `no-openplanner-config-caller-remains` — a repo-wide grep assertion over
+    shipped source for `/v1/translations/config` returns no production caller.
+
 ## Done when
 
 - Translation review/pipeline UI no longer calls `/api/openplanner/v1/translations/config`.

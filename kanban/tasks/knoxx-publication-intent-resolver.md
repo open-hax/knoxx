@@ -1,13 +1,15 @@
 ---
-uuid: "knoxx-publication-intent-resolver"
-title: "Resolve desired publication topology from the Knoxx resource graph"
-status: accepted
-priority: P0
+category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "domain"]
+write-id: "1786565445596-0.zoqaffalavm98274smt"
+points: "5"
+title: "Resolve desired publication topology from the Knoxx resource graph"
+priority: "P0"
+status: "breakdown"
+uuid: "knoxx-publication-intent-resolver"
 created_at: "2026-08-12T00:00:00Z"
-points: 5
-category: tasks
 ---
+
 # Resolve desired publication topology from the Knoxx resource graph
 
 > Parent epic: `knoxx-contract-owned-publication-pipeline`
@@ -195,6 +197,57 @@ If the infra handler is synchronous, `await` still safely accepts its resolved v
 - The domain namespace remains pure and reusable by CLI/tests without Fastify or Mongo.
 - Native request/reply handles are born and die in the extern adapter.
 - New async extern functions use `^:async`/`await`; Promise chaining is not part of the prescribed implementation shape.
+
+## TDD plan
+
+Test namespaces:
+
+- `knoxx.backend.domain.publication-resolver-test`
+  (`backend/test/cljs/knoxx/backend/domain/publication_resolver_test.cljs`)
+- `knoxx.backend.extern.fastify-publication-test`
+  (`backend/test/cljs/knoxx/backend/extern/fastify_publication_test.cljs`)
+
+Pure resolver tests first:
+
+1. `index-canonicalizes-namespace-local-refs` — a manifest using
+   `:translation-pipeline` and a manifest using
+   `:knoxx.docs/translation-pipeline` produce byte-equal projections.
+2. `indexed-payload-identity-is-canonical` — the stored document and garden
+   payloads carry canonical `:document/id` / `:garden/id`, and each payload
+   validates against the qualified `Document` / `Garden` law shape.
+3. `hydration-of-namespace-local-reference-validates` — hydrating a publication
+   that references a namespace-local document passes `Document` validation
+   (regression for the identity-vs-key split).
+4. `projection-is-enumeration-order-independent` — the same manifests supplied
+   in reversed load order produce identical output.
+5. `byte-equivalent-duplicate-ids-collapse` — two identical document maps under
+   one canonical id yield one entry and no error.
+6. `conflicting-duplicate-ids-fail-deterministically` — two differing payloads
+   for one canonical id fail with the same error in both enumeration orders.
+7. `publication-relation-key-includes-revision` — intents identical in
+   document/garden/locale but differing in revision selector both project.
+8. `duplicate-active-relation-fails` — two non-archived intents for the exact
+   same document × garden × locale × revision are surfaced as a conflict.
+9. `archived-intent-does-not-conflict-with-replacement` — an archived intent and
+   an active replacement sharing document/garden/locale coexist, and the
+   archived one is still present as history.
+10. `projection-excludes-runtime-state` — the projection of a fixture that also
+    carries receipts contains no publish timestamp, worker state, or adapter
+    receipt key.
+11. `projection-has-no-openplanner-dependency` — resolver output for a fixture
+    with every OpenPlanner entry deleted equals the output with them present.
+
+Facade/adapter tests second:
+
+12. `document-view-and-list-view-shapes` — both facade shapes validate before any
+    route consumes them, and the list view is not double-wrapped.
+13. `^:async publication-route-returns-projection` — an `^:async` deftest awaits
+    the route handler against a decoded fake request and asserts the body; the
+    test also asserts the handler source contains no `.then` chain and that
+    native request handles never leave `extern.*`.
+
+Then implement `knoxx.backend.domain.publication-resolver` and the extern
+Fastify adapter until green.
 
 ## Done when
 

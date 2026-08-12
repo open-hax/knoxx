@@ -88,6 +88,48 @@ Extract the pure decision layer that compares desired publication intent with ad
 - Path-only changes are drift.
 - Same resources + facts always produce the same plan.
 
+## TDD plan
+
+Test namespace: `knoxx.backend.domain.publication-plan-test`
+(`backend/test/cljs/knoxx/backend/domain/publication_plan_test.cljs`).
+Pure tests only — no adapter, no OpenPlanner process.
+
+Precedence first, because ordering is the semantic risk:
+
+1. `withheld-with-observation-removes` — `:withheld` plus an existing
+   materialization yields `{:op :remove :reason :publication-not-public}`.
+2. `withheld-without-observation-noops`.
+3. `archived-with-observation-removes` — an archived publication intent removes
+   even when translation evidence is missing, stale, or unapproved. This is the
+   "archive before blockers" regression.
+4. `archived-garden-removes` — an active intent into an archived garden removes
+   any materialization and never publishes.
+5. `removal-is-never-blocked` — for every blocker combination, a non-public
+   state still yields `:remove`/`:noop`, never `:blocked`.
+
+Convergence second:
+
+6. `converged-state-noops` — desired revision and path equal to observed yields
+   `:noop`.
+7. `revision-drift-publishes` and `path-only-drift-publishes` — each yields
+   `:publish` carrying `:previous` observation so the effect layer can replace
+   the stale route.
+8. `blocked-plan-carries-blockers` — translation/review blockers yield
+   `{:op :blocked}` with the gate's blocker set.
+9. `unresolved-revision-is-hard-blocker` —
+   `:publication-revision-unresolved` from shared evidence blocks, and no
+   publish plan is emitted.
+10. `no-publish-plan-has-nil-revision` — property-style sweep over the fixture
+    matrix asserting every `:publish` plan carries a non-nil
+    `:concrete-revision`.
+11. `plan-shares-gate-concrete-revision` — with `:source/current` resolving to
+    `"probe-revision"`, both `:concrete-revision` and
+    `:desired :materialized/revision` equal the value the gate resolved; the
+    planner does not resolve a revision itself.
+12. `plan-is-deterministic` — same resources and facts, same plan.
+
+Then implement `knoxx.backend.domain.publication-plan` until green.
+
 ## Done when
 
 - Pure tests cover published/noop, path-only drift, revision drift, unresolved revision, withheld removal, publication archive removal, archived-garden removal, and translation/review blocking.

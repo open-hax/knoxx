@@ -141,6 +141,44 @@ The test should fail if:
 - desired state is rewritten to match a failed adapter observation instead of reporting drift;
 - any shared required surface has the wrong method/authorization behavior or becomes optional when OpenPlanner REST is absent.
 
+## TDD plan
+
+Test namespace: `knoxx.backend.e2e.contract-publication-test`
+(`backend/test/cljs/knoxx/backend/e2e/contract_publication_test.cljs`),
+driven with OpenPlanner REST absent and the fake `IPublicationTarget` from
+`knoxx-publication-receipts-fake-adapter-proof`.
+
+The whole card is one `^:async` scenario built up as failing steps:
+
+1. `^:async intent-starts-blocked` — a published intent for a non-source locale
+   with review required reports blockers equal to the gate's independent
+   blocker set for the same fixture. Assert against
+   `publication-gate/publication-blockers`, not a hand-written list, so the E2E
+   cannot drift from the gate.
+2. `^:async translation-work-is-derived-for-concrete-revision` — the derived
+   action carries the resolved concrete revision.
+3. `^:async translation-receipt-clears-translation-blocker` — recording the
+   translation leaves only `:translation-review-required`.
+4. `^:async approval-clears-remaining-blocker` — approval for that same concrete
+   revision makes the plan `:publish`.
+5. `^:async materialization-receipt-is-exact` — the final receipt asserts exact
+   document, target garden, locale, concrete revision, and path — equality on
+   the whole selected map, not per-key `contains?`.
+6. `^:async public-read-returns-translated-artifact` — reading the published
+   route returns the translated content.
+7. `^:async one-receipt-chain-explains-convergence` — the receipt chain from
+   intent to public artifact is walkable in one sequence with no gaps.
+8. `^:async replay-converges` — re-running reconciliation is a `:noop` and does
+   not create a second materialization.
+9. `restoring-a-legacy-authority-path-fails-the-e2e` — a negative test: with a
+   legacy OpenPlanner authority path restored, the suite fails. This must be an
+   assertion, not a comment.
+10. `e2e-and-deploy-verify-share-required-surface` — both import the same
+    complete required-surface contract unconditionally (shared with the
+    retirement card).
+11. `no-openplanner-in-e2e-graph` — assert the scenario's transitive requires
+    contain no `openplanner` segment.
+
 ## Done when
 
 - The E2E passes with OpenPlanner REST absent and fails when any legacy authority path is restored.

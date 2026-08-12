@@ -91,6 +91,50 @@ Adapter replay law sketch:
 - Remove operations remain possible regardless of translation/review blockers because the planner already resolved those semantics.
 - Adapter failures produce failure/drift evidence and do not mutate desired resource state.
 
+## TDD plan
+
+Test namespace: `knoxx.backend.infra.publication-effects-test`
+(`backend/test/cljs/knoxx/backend/infra/publication_effects_test.cljs`).
+Driven by an in-memory `IPublicationTarget` — no OpenPlanner, no network.
+
+Idempotency key first:
+
+1. `key-is-stable-across-calls` — the same intent and concrete revision produce
+   the same key twice.
+2. `key-includes-every-effect-dimension` — one test per dimension
+   (publication id, adapter id, garden, locale, path, concrete revision):
+   changing it changes the key. Changing a non-effect field
+   (`:translation/review`) does not.
+3. `key-requires-concrete-revision` — a nil concrete revision asserts rather
+   than hashing a nil.
+
+Plan execution second:
+
+4. `execute-plan!-dispatches-by-op` — `:publish` calls `publish!` with the plan's
+   `:previous`, `:remove` calls `remove!` with `:observed`, `:noop` and
+   `:blocked` produce receipts and perform no effect (assert the fake recorded
+   zero calls).
+5. `^:async replay-of-identical-publish-converges` — executing the same publish
+   plan twice returns an equal receipt and leaves exactly one materialization.
+6. `^:async ambiguous-response-replay-is-safe` — a fake whose first response is
+   recorded but reported as ambiguous returns the existing converged receipt on
+   replay instead of creating a duplicate.
+7. `^:async path-move-replaces-previous-route` — a publish whose path differs
+   from `:previous` leaves the old route unavailable and exactly one route
+   public.
+8. `^:async remove-works-for-prior-materialization` — removal succeeds for an
+   observed materialization and is idempotent on a second call.
+9. `adapter-does-not-reinterpret-desired-state` — the effect layer given a
+   `:remove` plan for a `:published` intent still removes; semantics come from
+   the plan.
+10. `adapter-failure-produces-drift-not-mutation` — a throwing fake yields
+    failure/drift evidence and the desired resource map is unchanged
+    (assert on identity of the intent map).
+11. `no-openplanner-identifier-in-plan-or-contract` — grep assertion that the
+    plan and resource contract namespaces contain no OpenPlanner id.
+
+Then implement `knoxx.backend.infra.publication-effects` until green.
+
 ## Done when
 
 - A fake effect implementation proves repeated identical publish calls converge to one materialization.

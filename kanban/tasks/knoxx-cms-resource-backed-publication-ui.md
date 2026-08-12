@@ -272,6 +272,61 @@ UI-domain state remains keyword-oriented after explicit frontend decoding:
 - A failed adapter call must leave desired state unchanged and surface drift, not revert the user's requested contract state unless the user explicitly changes it.
 - State PATCHes cannot change locale, revision, document, or garden. Re-keying is explicit and conflict-checked.
 
+## TDD plan
+
+Test namespaces:
+
+- `knoxx.backend.infra.cms-publication-facade-test`
+  (`backend/test/cljs/knoxx/backend/infra/cms_publication_facade_test.cljs`)
+- `knoxx.frontend.lib.publication-wire-test`
+  (frontend CLJS test for the decoders)
+- existing `frontend/src/pages/CmsPage.test.tsx` for the removal assertions
+
+Wire contracts first — the review thread's regression leads:
+
+1. `state-patch-accepts-clj->js-body` — the exact body the frontend produces,
+   `{:state "published"}`, passes `PublicationStatePatchJson` and decodes to
+   `{:publication/state :published}`. Assert by round-tripping through
+   `clj->js` + `js->clj :keywordize-keys true` rather than hand-writing the map,
+   so the test fails if the helper's serialization changes.
+2. `state-patch-rejects-qualified-wire-key` — a body carrying
+   `:publication/state` fails the wire contract.
+3. `frontend-publish-request-matches-backend-contract` — the body built by
+   `request-publish!` is validated by the backend's own wire schema var, so key
+   and validator cannot drift apart.
+4. `resource-id-round-trip` — `:docs/probe` encodes to `"docs/probe"` (no
+   leading colon), decodes back to `:docs/probe`, and the PATCH URL built from
+   it contains no `%3A`.
+5. `document-garden-publication-rows-encode-explicitly` — each of the three
+   wire encoders emits JSON-safe scalars; source locale, garden status, desired
+   and observed state, and blockers all cross as strings and decode back to the
+   original keywords.
+6. `list-view-is-not-double-wrapped` — the list response is
+   `{documents, gardens}` with document views not nested under an extra
+   `:document` key.
+
+Mutation semantics second:
+
+7. `state-patch-cannot-move-identity` — a patch attempting to change locale,
+   revision, document, or garden fails; only state changes.
+8. `rekey-requires-conflict-check` — `rekey-publication!` refuses an identity
+   that collides with an existing active relation.
+9. `^:async patch-route-reads-decoded-params` — the route obtains
+   `publication-id` from the decoded request map; assert the handler never
+   keyword-looks-up the native Fastify object and contains no `.then` chain.
+10. `failed-adapter-call-preserves-desired-state` — a failing publish leaves
+    `:publication/state` unchanged and surfaces drift.
+
+Frontend last:
+
+11. `^:async load-cms!-populates-from-normalized-response` — awaits the loader
+    against a stubbed response and asserts state; no `.then` chain in the
+    source.
+12. `cms-derives-badges-from-desired-state` — selected/published badges come
+    from decoded `:desired`, and `CmsPage.test.tsx` asserts no
+    `garden_publications` read and no `publishedGardenIds` client authority
+    remain.
+
 ## Done when
 
 - CMS can render document publication topology with OpenPlanner REST disabled.

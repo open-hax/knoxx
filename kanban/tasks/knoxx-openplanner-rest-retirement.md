@@ -127,6 +127,47 @@ Do not delete the compatibility path before:
 - repo-wide shipped-code search shows no remaining OpenPlanner authority callers;
 - the shared required-surface verification passes without OpenPlanner REST.
 
+## TDD plan
+
+Test namespaces:
+
+- `knoxx.backend.law.required-surface-test`
+  (`backend/test/cljs/knoxx/backend/law/required_surface_test.cljs`)
+- `knoxx.backend.infra.deploy-verify-test`
+  (`backend/test/cljs/knoxx/backend/infra/deploy_verify_test.cljs`)
+
+Shared surface contract first, since both deploy verification and the E2E must
+import the same list:
+
+1. `required-surface-list-is-complete` — the shared contract enumerates all five
+   replacement surfaces with method and intended authorization behavior, and the
+   test asserts the count so a silently shortened list fails.
+2. `deploy-verify-and-e2e-share-one-contract` — both consumers reference the
+   same var; assert identity, not equality of copies.
+3. `^:async verifier-awaits-authorized-and-unauthorized` — the shared verifier
+   is `^:async` and awaits both requests before reading status; a stub records
+   that both were awaited prior to any status inspection.
+4. `verifier-has-no-await-in-plain-defn` — source assertion that every `await`
+   sits inside an `^:async` function.
+
+Retirement assertions second — these are greps over shipped source, and each
+must fail before the cutover lands:
+
+5. `no-cms-openplanner-garden-caller` — no shipped frontend or backend module
+   references `/api/openplanner/v1/gardens`.
+6. `no-openplanner-translation-config-caller` — no shipped frontend, backend, or
+   ingestion module references the OpenPlanner translation-config route.
+7. `no-authority-only-proxy-routes` — the proxy routes that existed only to
+   preserve those authority paths are gone or narrowed.
+8. `expect-openplanner-rest-flag-is-gone` — `KNOXX_EXPECT_OPENPLANNER_REST` does
+   not appear anywhere, and deploy verification requires the CMS/publication
+   surfaces unconditionally (no conditional skip branch remains).
+9. `openplanner-adapters-live-below-the-boundary` — remaining OpenPlanner code
+   is reachable only behind `IPublicationTarget` or a named `extern.*` adapter.
+10. `worker-model-matches-facade` — the ingestion worker resolves the same
+    Knoxx resource-selected model that `/api/translations/config` reports
+    (shared with the translation-config card's proof).
+
 ## Done when
 
 - Grepping shipped frontend/backend/ingestion code for OpenPlanner garden and translation-config authority routes returns no callers.

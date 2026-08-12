@@ -95,6 +95,49 @@ Focused proof:
 - Replaying the same effect identity yields the same converged observation.
 - Removing the fake adapter's runtime projection does not change resource intent.
 
+## TDD plan
+
+Test namespaces:
+
+- `knoxx.backend.domain.publication-receipts-test`
+  (`backend/test/cljs/knoxx/backend/domain/publication_receipts_test.cljs`)
+- `knoxx.backend.domain.publication-boundary-test`
+  (`backend/test/cljs/knoxx/backend/domain/publication_boundary_test.cljs`)
+
+Receipt shapes first:
+
+1. `materialized-receipt-validates` — a complete successful receipt satisfies
+   `PublicationMaterializedReceipt`; omitting idempotency key, adapter id,
+   concrete revision, or path fails.
+2. `materialized-receipt-rejects-selector-revision` — `:source/current` as
+   `:revision` or `:materialized/revision` fails; only concrete revisions
+   appear in successful receipts.
+3. `failed-blocked-noop-receipts-are-distinct` — none of them satisfies
+   `PublicationMaterializedReceipt`, and `observed-materialization` returns nil
+   for each. A blocked receipt can never be mistaken for a materialization.
+4. `observed-materialization-feeds-planner-drift` — the map returned by
+   `observed-materialization` is exactly the key set the planner compares
+   (`:materialized/revision`, `:materialized/path`), asserted against the
+   planner's own selection.
+
+Whole-seam proof second, all `^:async` where effects are awaited:
+
+5. `publication-boundary-without-openplanner` — the card's own sketch: plan,
+   execute, replay, assert equal receipts and one materialization, and assert
+   the observed materialization equals the expected revision/path.
+6. `boundary-covers-path-move` — publish, then re-plan after a path change:
+   one public route, prior route gone.
+7. `boundary-covers-withheld-and-archive-removal` — flipping desired state to
+   `:withheld` and to `:archived` each converge to removal.
+8. `boundary-covers-archived-garden-removal`.
+9. `observation-after-convergence-matches-plan` — `observe!` after convergence
+   yields facts that make the planner emit `:noop`.
+10. `adapter-failure-leaves-intent-untouched` — failure surfaces as drift and
+    the resource intent is unchanged.
+11. `no-openplanner-in-test-graph` — assert the test namespace's transitive
+    requires contain no `openplanner` segment, so absence is proven rather than
+    assumed.
+
 ## Done when
 
 - Fake-adapter tests cover the complete planner/effect/receipt seam with zero OpenPlanner calls.

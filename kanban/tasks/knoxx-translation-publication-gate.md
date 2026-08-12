@@ -144,6 +144,52 @@ A stale translation does **not** delete the old approval receipt. The old receip
 - Required review cannot be bypassed by an adapter directly observing a translated artifact.
 - Re-running the pure gate over the same intent + facts produces the same concrete revision and blocker set.
 
+## TDD plan
+
+Test namespace: `knoxx.backend.domain.publication-gate-test`
+(`backend/test/cljs/knoxx/backend/domain/publication_gate_test.cljs`).
+All tests are pure; no adapter, no worker, no OpenPlanner.
+
+Revision resolution first:
+
+1. `source-current-resolves-once` — with `:source/current` resolving to
+   `"probe-revision"`, the translation and review fact lookups are called with
+   `"probe-revision"`. Assert on a recording fact stub that
+   `:source/current` never appears in any lookup argument.
+2. `unresolvable-source-current-blocks` — when the current source revision is
+   nil, blockers are exactly `[:publication-revision-unresolved]`, no evidence
+   lookup happens, and no translation work is derived.
+3. `evidence-returns-concrete-revision` — `publication-evidence` returns
+   `:concrete-revision` alongside `:blockers`, and `publication-blockers` is
+   derived from that one result.
+
+Blocker semantics second:
+
+4. `translation-missing-blocks` / `review-required-blocks` /
+   `stale-translation-blocks` — one test each, asserting the exact blocker
+   keyword.
+5. `source-locale-comes-from-intent` — a publication whose locale equals the
+   document source locale requires no translation; the gate never defaults a
+   language.
+6. `gate-is-deterministic` — the same intent and facts produce an identical
+   concrete revision and blocker set across repeated calls.
+
+Queue derivation last — the review thread's regression:
+
+7. `archived-intent-derives-no-translation-work` — an archived intent missing
+   its target translation yields `nil` from `reconcile-translation-work`.
+8. `withheld-intent-derives-no-translation-work` — same for `:withheld`.
+9. `published-intent-derives-translation-work` — the otherwise identical
+   published intent does derive `:actions/request-translation`. Tests 7-9 share
+   one fixture so only `:publication/state` differs.
+10. `work-is-keyed-to-concrete-revision` — the derived action carries
+    `"probe-revision"`, never `:source/current`, and sets `:replace-stale?`
+    only for stale evidence.
+11. `approval-is-revision-specific` — an approval for the old revision does not
+    satisfy the replacement revision, while the old receipt remains intact.
+
+Then implement `knoxx.backend.domain.publication-gate` until green.
+
 ## Done when
 
 - CMS can explain exactly why a requested publication is blocked.

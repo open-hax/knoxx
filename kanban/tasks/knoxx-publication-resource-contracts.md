@@ -125,6 +125,47 @@ Example manifest intent:
 - Publication paths are route paths: non-empty, rooted at `/`, and free of query/fragment/NUL components; the same predicate is used by migration and direct resource validation.
 - Archive semantics must be explicit: archived garden or publication intent cannot reconcile to a public materialization.
 
+## TDD plan
+
+Test namespace: `knoxx.backend.law.publication-test`
+(`backend/test/cljs/knoxx/backend/law/publication_test.cljs`).
+
+Write these tests first; each must fail for the absence of the law, not for a typo.
+
+1. `valid-publication-path?-accepts-rooted-route` — `"/translation-pipeline"` and
+   `"/docs/nested/route"` pass.
+2. `valid-publication-path?-rejects-malformed-routes` — table-driven over `""`,
+   `"translation-pipeline"` (unrooted), `"/docs?x=1"`, `"/docs#frag"`,
+   `"/docs\u0000"`, and non-string input. Each must be rejected by the one
+   authoritative predicate.
+3. `document-shape-requires-source-locale` — a document without
+   `:document/source-locale`, and one whose locale is a string rather than a
+   keyword, both fail `Document`.
+4. `garden-shape-enumerates-status` — `:active` / `:archived` pass, `"active"`
+   and `:deleted` fail.
+5. `publication-intent-resource-validates-relation` — the full example manifest
+   intent passes; each of a missing garden ref, a non-keyword document ref, a
+   `:publication/state` of `"published"`, and a malformed
+   `:publication/path` fails.
+6. `publication-intent-accepts-both-revision-forms` — `"abc123"` and
+   `:source/current` both satisfy `:publication/revision`; `nil` and `42` fail.
+7. `hydrate-publication-intent-copies-document-source-locale` — hydration
+   yields `:document/source-locale` taken from the referenced document and the
+   result satisfies `PublicationIntent`.
+8. `hydrate-publication-intent-rejects-dangling-document` — hydrating against a
+   resource index without the referenced document throws rather than defaulting
+   a locale.
+9. `admissible-publication?-requires-active-garden` — true for an active
+   garden; false for an archived garden and for unknown document/garden refs.
+10. `resource-fixture-describes-mixed-publication-topology` — one
+    resource-only fixture with two documents, two gardens, and mixed
+    published/withheld/archived intents across locales and revisions loads and
+    validates with no OpenPlanner namespace required (assert the fixture's
+    transitive requires contain no `openplanner` segment).
+
+Only after all ten fail do we add `knoxx.backend.law.publication`, then the
+loader validation hook, then re-run to green.
+
 ## Done when
 
 - A resource-only test fixture can describe multiple documents and mixed publication states across gardens/locales/revisions.
