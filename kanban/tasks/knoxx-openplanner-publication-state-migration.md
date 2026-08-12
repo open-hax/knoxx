@@ -2,7 +2,7 @@
 uuid: "knoxx-openplanner-publication-state-migration"
 title: "Migrate existing OpenPlanner garden/publication intent into Knoxx resources"
 status: accepted
-priority: P1
+priority: P0
 labels: ["tasks", "5sp", "has-parent", "publication", "migration", "openplanner"]
 created_at: "2026-08-12T00:00:00Z"
 points: 5
