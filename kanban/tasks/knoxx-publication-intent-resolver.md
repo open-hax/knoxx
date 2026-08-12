@@ -28,6 +28,7 @@ The resolver must not call HTTP, Mongo, OpenPlanner, filesystem effects, or work
 - Define both document and list facade shapes before routes consume them.
 - Add a Knoxx route/facade that serializes this projection for frontends without exposing the underlying resource-loader implementation.
 - Keep raw Fastify request/reply interop inside `knoxx.backend.extern.*`; infra/domain receive and return CLJS data only.
+- New asynchronous CLJS adapter code uses native `^:async` + `await`, not Promise `.then` chains.
 
 ## CLJS pseudocode
 
@@ -120,17 +121,20 @@ Infra handler returns CLJS data; it never touches Fastify handles:
     (publication/list-document-views idx)))
 ```
 
-The owning extern adapter alone decodes/encodes Fastify:
+The owning extern adapter alone decodes/encodes Fastify and uses Knoxx's native async style:
 
 ```clojure
 (ns knoxx.backend.extern.fastify.publications)
 
 (defn register-list-route! [app handler]
   (.get app "/api/publications/documents"
-        (fn [req reply]
-          (-> (handler (decode-request req))
-              (.then #(send-json! reply %))))))
+        (fn ^:async [req reply]
+          (let [request  (decode-request req)
+                response (await (handler request))]
+            (send-json! reply response)))))
 ```
+
+If the infra handler is synchronous, `await` still safely accepts its resolved value; the extern shape therefore remains compatible if the handler later becomes effectful without introducing a `.then` chain.
 
 ## Laws
 
@@ -140,6 +144,7 @@ The owning extern adapter alone decodes/encodes Fastify:
 - Duplicate publication keys or revision-conflicting intents are surfaced deterministically before projection; never "last one wins" by loader order.
 - The domain namespace remains pure and reusable by CLI/tests without Fastify or Mongo.
 - Native request/reply handles are born and die in the extern adapter.
+- New async extern functions use `^:async`/`await`; Promise chaining is not part of the prescribed implementation shape.
 
 ## Done when
 
@@ -148,3 +153,4 @@ The owning extern adapter alone decodes/encodes Fastify:
 - Namespace-local reference fixtures produce the same canonical projection as fully-qualified fixtures.
 - Duplicate/conflicting intents fail before the list/document facade returns data.
 - One backend facade serves the projection without `/api/openplanner/...` in its contract and without raw Fastify interop outside `extern.*`.
+- The Fastify adapter test exercises the route with native `^:async`/`await` and no `.then` chain.
