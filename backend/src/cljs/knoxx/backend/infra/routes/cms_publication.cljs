@@ -12,7 +12,8 @@
   (:require [knoxx.backend.domain.cms-publication :as cms]
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.resources.loader :as resources]
-            [knoxx.backend.infra.routes.publications :as publications]))
+            [knoxx.backend.infra.routes.publications :as publications]
+            [knoxx.backend.shape.resource-manifest :as manifest]))
 
 (defn ^:async resource-index!
   [config]
@@ -39,6 +40,37 @@
                             (resolver/document-view (await (resource-index! config))
                                                     document-id))))
 
+(defn ^:async write-publication-state!
+  "Set `:publication/state` on one entry of the file that declares it.
+
+   Edits the one field in place rather than writing the resource over the file.
+   A manifest routinely declares a document, its garden, and its publications
+   together; `pr-str`-ing the patched intent over that file DELETED the document
+   and garden, and the very next projection failed with unresolved references.
+   Publishing must not destroy the thing being published."
+  [file-path publication-id next-state]
+  (let [edn (await (resources/read-edn-file! file-path))]
+    (when-not (manifest/contains-entry? edn :publication/id publication-id)
+      (throw (ex-info "publication resource is not present in its own file"
+                      {:publication/id publication-id
+                       :resource/file-path file-path})))
+    (await (resources/write-edn-file!
+            file-path
+            (str (pr-str (manifest/assoc-entry-field
+                          edn :publication/id publication-id
+                          :publication/state next-state))
+                 "\n")))))
+
+(defn ^:async publication-file-path!
+  [config publication-id]
+  (let [record (->> (await (resources/load-all-resource-records! config))
+                    (filter #(= publication-id
+                                (get-in % [:resource/definition :publication/id])))
+                    first)]
+    (or (:resource/file-path record)
+        (throw (ex-info "publication resource has no file on disk"
+                        {:publication/id publication-id})))))
+
 (defn ^:async set-publication-state!
   "Apply a decoded domain patch to one publication resource.
 
@@ -52,14 +84,8 @@
     (when-not current
       (throw (ex-info "unknown publication" {:publication/id publication-id})))
     (let [next-intent (cms/apply-state-patch current domain-patch)
-          record (->> (await (resources/load-all-resource-records! config))
-                      (filter #(= publication-id
-                                  (get-in % [:resource/definition :publication/id])))
-                      first)
-          file-path (:resource/file-path record)]
-      (when-not file-path
-        (throw (ex-info "publication resource has no file on disk"
-                        {:publication/id publication-id})))
-      (await (resources/write-edn-file! file-path (str (pr-str next-intent) "\n")))
+          file-path (await (publication-file-path! config publication-id))]
+      (await (write-publication-state! file-path publication-id
+                                       (:publication/state next-intent)))
       (resources/invalidate-sync-resource-cache!)
       (cms/publication->wire {:observed nil :blockers []} next-intent))))
