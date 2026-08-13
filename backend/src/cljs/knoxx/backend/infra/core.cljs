@@ -79,6 +79,63 @@
         (catch :default err
           (app-log-error! app "MCP gateway initialization failed" err))))))
 
+(def ^:private event-runtimes-disabled-banner
+  ["╔══════════════════════════════════════════════════════════════════════╗"
+   "║  EVENT RUNTIMES ARE DISABLED — KNOXX_DISABLE_EVENT_RUNTIMES is set   ║"
+   "║                                                                      ║"
+   "║  NOT RUNNING: schedules, triggers, Discord actor gateways.           ║"
+   "║  This process will not answer Discord messages, fire scheduled       ║"
+   "║  jobs, or react to any contract event.                               ║"
+   "║                                                                      ║"
+   "║  This mode exists ONLY for local human verification. If you are      ║"
+   "║  seeing this in production, Knoxx is silently doing nothing.         ║"
+   "╚══════════════════════════════════════════════════════════════════════╝"])
+
+(def ^:private event-runtimes-nag-ms 60000)
+
+(defn- warn-event-runtimes-disabled!
+  "Say it loudly at boot, then keep saying it.
+
+   A one-line startup notice scrolls away in seconds and a process can then sit
+   for hours looking healthy while doing none of its event work. The recurring
+   nag is unref'd so it never holds the process open at shutdown."
+  []
+  (doseq [line event-runtimes-disabled-banner]
+    (js/console.warn line))
+  (let [timer (js/setInterval
+               #(js/console.warn
+                 "[event-runtimes] STILL DISABLED via KNOXX_DISABLE_EVENT_RUNTIMES —"
+                 "no schedules, no triggers, no Discord gateways")
+               event-runtimes-nag-ms)]
+    (when (fn? (some-> timer .-unref))
+      (.unref timer))
+    timer))
+
+(defn- ^:async bind-discord-actor-gateways!
+  "Connect the Discord actor gateways and route their events into the driver
+   runtime.
+
+   Extracted from `start-background-services!` so the boot sequence there reads
+   as a list of services rather than burying the two dispatch closures in the
+   middle of it."
+  [resolved-config policy-context]
+  (await (discord-source/bind-gateways!
+          {:policy-db policy-context
+           :on-message! (fn [msg]
+                          (source-runtime/dispatch-driver-event!
+                           resolved-config
+                           :driver/discord
+                           (:gatewayActorId msg)
+                           {:event/type :discord.message
+                            :event/payload msg}))
+           :on-voice-state! (fn [state]
+                              (source-runtime/dispatch-driver-event!
+                               resolved-config
+                               :driver/discord
+                               (:gatewayActorId state)
+                               {:event/type :discord.voice.state-update
+                                :event/payload state}))})))
+
 (defn- ^:async start-background-services!
   [app resolved-config]
   (driver-builtin/register-built-in-drivers!)
@@ -86,26 +143,14 @@
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. The event runtime and MCP discovery remain background work.
   (try
-    (event-runtime/start! resolved-config)
-    (resource-routes/start-resource-watcher! resolved-config)
-    (let [policy-context (:policy-context (lifecycle/context))]
-      (when policy-context
-        (await (discord-source/bind-gateways!
-                {:policy-db policy-context
-                 :on-message! (fn [msg]
-                                (source-runtime/dispatch-driver-event!
-                                 resolved-config
-                                 :driver/discord
-                                 (:gatewayActorId msg)
-                                 {:event/type :discord.message
-                                  :event/payload msg}))
-                 :on-voice-state! (fn [state]
-                                    (source-runtime/dispatch-driver-event!
-                                     resolved-config
-                                     :driver/discord
-                                     (:gatewayActorId state)
-                                     {:event/type :discord.voice.state-update
-                                      :event/payload state}))}))))
+    (let [event-runtimes? (not (:event-runtimes-disabled? resolved-config))
+          policy-context (:policy-context (lifecycle/context))]
+      (if event-runtimes?
+        (event-runtime/start! resolved-config)
+        (warn-event-runtimes-disabled!))
+      (resource-routes/start-resource-watcher! resolved-config)
+      (when (and event-runtimes? policy-context)
+        (await (bind-discord-actor-gateways! resolved-config policy-context))))
     (await (initialize-mcp-gateway! app resolved-config))
     (catch :default err
       (app-log-error! app "Background startup services failed" err))))
