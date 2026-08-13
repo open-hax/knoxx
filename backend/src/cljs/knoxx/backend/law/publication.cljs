@@ -51,6 +51,11 @@
   [value]
   (and (string? value) (seq (str/trim value))))
 
+(def NonBlankString
+  "Named so migration and other boundaries can require the same string law
+   rather than restating the predicate inline."
+  [:fn nonblank-string?])
+
 (def Document
   [:map
    [:document/id qualified-keyword?]
@@ -58,7 +63,7 @@
    [:document/source-locale Locale]
    [:document/source
     [:map
-     [:path [:fn nonblank-string?]]]]])
+     [:path NonBlankString]]]])
 
 (def Garden
   [:map
@@ -67,7 +72,7 @@
    [:garden/status [:enum :active :archived]]])
 
 (def PublicationRevision
-  [:or [:fn nonblank-string?] [:enum :source/current]])
+  [:or NonBlankString [:enum :source/current]])
 
 ;; Raw declarative relation stored in resource data.
 (def PublicationIntentResource

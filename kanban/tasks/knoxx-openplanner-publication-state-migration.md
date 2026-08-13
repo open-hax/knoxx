@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "publication", "migration", "openplanner"]
-write-id: "1786565793371-0.95x6g3ahwhph3fyeud"
+write-id: "1786604396563-0.ob523lsh3it399sjk8"
 points: "5"
 title: "Migrate existing OpenPlanner garden/publication intent into Knoxx resources"
 priority: "P0"
-status: "ready"
+status: "review"
 uuid: "knoxx-openplanner-publication-state-migration"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -341,11 +341,22 @@ fold until green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Risk: the run needs an explicitly declared membership review policy before it can produce resources; that is now a conflict rather than a default.
-
 ---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `GardenMembershipEntry`'s `normalize-membership-entry` references `publication/NonBlankString`, which `knoxx.backend.law.publication` does not declare — define/export it there or point at an existing contract before implementing. Also, `migrate-publication-records!` is sketched inside a `domain.*` namespace but performs I/O (reads legacy records, writes resources, appends receipts); keep `migrate-record` and decision logic in `domain.*` and move the effectful fold itself to `infra.*`/orchestration.
 
 Pre-implementation review 2026-08-13 (Codex, not yet actioned): `publication->decision` calls `decode-source-shape`, `decode-locale`, `decode-revision`, `decode-publication-state`, and `decode-review-policy` unconditionally before checking whether the shape itself was recognized. Each of the shape-dependent `case` decoders has no default branch, so an unrecognized `:source/shape` makes `case` throw (Clojure/ClojureScript `case` throws on no match with no default) instead of producing the promised `:unknown-publication-source-shape` conflict receipt. Add an explicit unknown-shape branch to every shape-dependent decoder, or short-circuit on `decode-source-shape`'s result before calling the others.
 
+---
+Implemented 2026-08-13. Split per the CodeRabbit finding: knoxx.backend.domain.publication-migration holds normalization, per-field decoding and the write/noop/conflict classification (pure, no I/O); knoxx.backend.infra.publication-migration owns the effectful ^:async fold. A namespace that performs I/O cannot also be the pure decision layer, so migrate-record stayed in domain and the fold moved to infra.
+
+Both pre-implementation findings actioned. CodeRabbit: law.publication now declares NonBlankString and GardenMembershipEntry consumes it; Document's :path and PublicationRevision were switched to the named var too so the string law is stated once. Codex: publication->decision short-circuits on decode-source-shape before any shape-dependent decoder runs, AND every shape-dependent decoder (decode-revision, decode-publication-state, decode-review-policy) carries an explicit unknown-shape branch. Both guards are deliberate — the short-circuit means the decision never depends on decoder call order, and the default branches mean a decoder called directly still conflicts instead of letting case throw. undeclared-source-shape-conflicts asserts both paths.
+
+Design decision worth review: MigrationPolicy requires :migration/namespace up front (structural — generated ids must be qualified deterministically) but leaves :migration/membership-review optional at the schema level, because the card requires its absence to surface as a per-row :undeclared-membership-review-policy conflict carrying source evidence, not as an upfront throw naming no legacy row. policy-namespace-is-required-up-front pins that asymmetry.
+
+Publication identity is derived from document + garden + locale, never from source path or title, so a retitled or moved document keeps its identity across reruns.
+
+One correction made during implementation: the receipt effect was initially named :append-receipt!, which left cross-run idempotence ambiguous and made rerun-is-idempotent fail with two receipt entries. Renamed to :append-receipt-once! so the contract is in the name; the in-run seen set is only an optimization. The test now models once-ness in the fake and asserts an unstable receipt key would show up as a second entry.
+
+Verification: shadow-cljs compile test 844 tests / 2575 assertions, 0 failures 0 errors; compile server 0 warnings; clj-kondo 194 warnings / 0 errors, back to the main baseline after refactoring migrate-publication-records! (a 40-line body tripped the >=30 function-length linter; extracted apply-decision!). Note: scripts/lint-file-sizes.mjs cannot run at all — size-lint.config.mjs is absent from the repo, which is pre-existing on main, not introduced here. New files are 320/81 lines, under the documented 350 warn threshold.
 ---
