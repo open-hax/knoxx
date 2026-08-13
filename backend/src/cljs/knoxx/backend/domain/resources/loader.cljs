@@ -13,11 +13,14 @@
    :agent "agents"
    :capability "capabilities"
    :cms "cms"
+   :document "documents"
+   :garden "gardens"
    :generator "generators"
    :ingest-source "ingest_sources"
    :model "models"
    :model-family "model_families"
    :policy "policies"
+   :publication "publications"
    :role "roles"
    :rule "rules"
    :runtime-feature "runtime_features"
@@ -53,12 +56,15 @@
     ("agent" "agents" "agent-spec" "agent-specs" "contract" "contracts") :agent
     ("cap" "caps" "capability" "capabilities") :capability
     ("cms" "cms-config" "cms-configs" "cms-block-registry" "cms-template-registry" "cms-templates") :cms
+    ("document" "documents") :document
+    ("garden" "gardens") :garden
     ("generator" "generators") :generator
     ("ingest-source" "ingest-sources" "ingest_source" "ingest_sources") :ingest-source
     ("model" "models") :model
     ("model-family" "model-families" "model_family" "model_families") :model-family
     ("pipeline" "pipelines") :pipeline
     ("policy" "policies") :policy
+    ("publication" "publications") :publication
     ("role" "roles") :role
     ("rule" "rules") :rule
     ("runtime-feature" "runtime-features" "runtime_feature" "runtime_features" "runtime") :runtime-feature
@@ -109,7 +115,7 @@
 (defn resource-record-sync
   [config resource-kind resource-id]
   (let [class-name (resource-class resource-kind)
-        wanted-id (some-> resource-id str str/trim not-empty)]
+        wanted-id (some-> resource-id contract-loader/qualified-keyword->str str/trim not-empty)]
     (some (fn [record]
             (when (and (= class-name (:resource/class record))
                        (= wanted-id (:resource/id record)))
@@ -154,7 +160,12 @@
   ([config resource-id]
    (resource-file-path config :agent resource-id))
   ([config resource-kind resource-id]
-   (contract-loader/contract-file-path config (resource-class resource-kind) resource-id)))
+   (or (some-> (resource-record-sync config resource-kind resource-id)
+               :resource/file-path)
+       (contract-loader/contract-file-path
+        config
+        (resource-class resource-kind)
+        resource-id))))
 
 (defn write-edn-file!
   [file-path edn-text]

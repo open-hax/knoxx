@@ -15,12 +15,17 @@
   ;; Katamorph (open-hax/katamorph) is the successor to the openplanner
   ;; contract-runtime package and provides the same katamorph.* namespaces the
   ;; ../../contract-runtime sibling checkout used to supply. Pinning it by Git
-  ;; tag + sha replaces that filesystem path with a reproducible ref.
+  ;; sha replaces that filesystem path with a reproducible ref.
+  ;;
+  ;; Pinned past open-hax/katamorph#3 (main tip as of 2026-08-13), which
+  ;; registers :document/:garden/:publication in kind-id-keys so a namespace
+  ;; manifest's document/garden/publication entries reach knoxx's loader
+  ;; instead of being silently dropped by namespace-file-definitions. No tag
+  ;; has been cut past v0.2.0 yet, hence sha-only.
   :cljs
   {:extra-paths ["src/cljs" "test/cljs"]
    :extra-deps
-   {io.github.open-hax/katamorph   {:git/tag "v0.2.0"
-                                    :git/sha "305a5e49d834aca27566f739e8510f6b409fda78"}
+   {io.github.open-hax/katamorph   {:git/sha "b00316a64310190335e4cb1a31b08d601eff8bb0"}
     ;; ../shared/src/cljs, as a local lib rather than an external :extra-path
     ;; (tools.deps deprecates paths that escape the project directory).
     open-hax/knoxx-shared          {:local/root "../shared"}
