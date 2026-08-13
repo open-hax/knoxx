@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "3sp", "has-parent", "publication", "reconciliation", "laws"]
-write-id: "1786565795198-0.3mpx1qopeqohc3oewey"
+write-id: "1786607604231-0.ktolp6c5pwq8l75xoyw"
 points: "3"
 title: "Define pure publication reconciliation plan laws"
 priority: "P1"
-status: "ready"
+status: "review"
 uuid: "knoxx-publication-reconcile-plan-laws"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -142,4 +142,15 @@ Then implement `knoxx.backend.domain.publication-plan` until green.
 ---
 Ready gate 2026-08-12: sized 3sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Depends on the gate card for the shared publication-evidence result; sequence it after knoxx-translation-publication-gate.
 
+Implemented 2026-08-13 as knoxx.backend.domain.publication-plan. Pure, no adapter/transport/store type anywhere; facts arrive as lookup functions.
+
+Both risky orderings are explicit rather than emergent. Non-public state and garden archive are decided BEFORE translation and review blockers, so removal is never blocked by missing translation evidence — an archived publication whose translation never finished still has to come down. removal-is-never-blocked sweeps all eight translation/review/staleness combinations against both non-public states and both observation states and asserts the op is always :remove or :noop, never :blocked.
+
+The concrete revision comes from one publication-evidence result and is never re-resolved. plan-shares-gate-concrete-revision uses a facts stub whose current revision changes between calls and asserts both :concrete-revision and :desired :materialized/revision are the first value, so a planner that resolved its own revision fails.
+
+no-publish-plan-has-nil-revision is a 96-case sweep over state x garden x revision x evidence x observation, and it asserts up front that the sweep actually reaches publish plans — otherwise a vacuous sweep would pass while proving nothing.
+
+Path-only drift is treated as drift: same revision, different route, still :publish, carrying :previous so the effect layer can remove the stale route rather than orphaning it. An unknown garden is treated as non-active rather than published.
+
+Verification: 920 tests / 3010 assertions, 0 failures 0 errors; compile server 0 warnings; clj-kondo 194 warnings / 0 errors (main baseline) after extracting converge to clear a function-length warning.
 ---
