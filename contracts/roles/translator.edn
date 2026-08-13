@@ -7,5 +7,6 @@
                      "datalake.read"
                      "agent.chat.use"
                      "org.translations.read"
-                     "org.translations.review"]
+                     "org.translations.review"
+                     "org.publications.read"]
 }
