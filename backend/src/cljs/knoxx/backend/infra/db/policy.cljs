@@ -13,6 +13,7 @@
    so existing callers that pass (context-pool ctx) into policy functions need
    not change. The pool first arg on policy functions is ignored."
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.auth.password :as password]
             [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy]
             [knoxx.backend.infra.stores.mongo-policy-directory :as mongo-directory]
@@ -669,6 +670,30 @@
                                                          :replace true}))
     (await (set-membership-actor-id! pool (:id membership) "system_admin"))
     {:user user :membership membership}))
+
+(defn ^:async ensure-bootstrap-local-password!
+  "Idempotently project the environment-owned bootstrap password into the
+   local credential store. Blank passwords leave local login unprovisioned."
+  ([db primary-org bootstrap opts]
+   (ensure-bootstrap-local-password!
+    db primary-org bootstrap opts
+    {:encode-password password/hash-password
+     :upsert-credential! mongo-actor-creds/upsert-actor-credential!}))
+  ([db primary-org bootstrap opts {:keys [encode-password upsert-credential!]}]
+   (let [configured-password (some-> (or (:bootstrapSystemAdminPassword opts)
+                                         (:bootstrap-system-admin-password opts))
+                                     str not-empty)]
+     (when configured-password
+       (await (upsert-credential!
+               db
+               (get-in bootstrap [:user :id])
+               (:id primary-org)
+               "local"
+               {:kind "password"
+                :account-identifier (get-in bootstrap [:user :email])
+                :secret-json (encode-password configured-password)
+                :status "active"})))
+     nil)))
 
 ;; ---------------------------------------------------------------------------
 ;; Audit
@@ -1437,6 +1462,7 @@
     (let [primary-org (await (ensure-primary-org! nil opts))]
       (await (sync-contract-role-projections! nil))
       (let [bootstrap (await (ensure-bootstrap-user! nil primary-org opts))]
+        (await (ensure-bootstrap-local-password! db primary-org bootstrap opts))
         (await (allowlist-best-effort! nil primary-org opts))
         (await (sync-actor-contracts-best-effort! nil primary-org))
         (await (cleanup-expired-sessions-best-effort! nil))

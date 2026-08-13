@@ -23,3 +23,30 @@
     (let [result (await (policy-db/list-actor-credentials! #js {} "discord_bot"))]
       (is (map? result) "result is a CLJS map")
       (is (vector? (:credentials result)) "credentials is a vector"))))
+
+(deftest ^:async bootstrap-local-password-projection-test
+  (let [captured* (atom nil)
+        bootstrap {:user {:id "user-admin" :email "admin@example.com"}}
+        org {:id "org-open-hax"}]
+    (await (policy-db/ensure-bootstrap-local-password!
+            #js {} org bootstrap {:bootstrapSystemAdminPassword "dev-password"}
+            {:encode-password (fn [value] {:encoded value})
+             :upsert-credential! (fn [_db user-id org-id provider payload]
+                                   (reset! captured* [user-id org-id provider payload])
+                                   (js/Promise.resolve nil))}))
+    (is (= ["user-admin" "org-open-hax" "local"
+            {:kind "password"
+             :account-identifier "admin@example.com"
+             :secret-json {:encoded "dev-password"}
+             :status "active"}]
+           @captured*))))
+
+(deftest ^:async blank-bootstrap-local-password-does-not-write-test
+  (let [called? (atom false)]
+    (await (policy-db/ensure-bootstrap-local-password!
+            #js {} {:id "org"} {:user {:id "user"}} {:bootstrapSystemAdminPassword ""}
+            {:encode-password identity
+             :upsert-credential! (fn [& _]
+                                   (reset! called? true)
+                                   (js/Promise.resolve nil))}))
+    (is (false? @called?))))
