@@ -47,15 +47,32 @@
 (defn- fake-request [params]
   (js-obj "params" (clj->js params) "method" "GET"))
 
-(defn- registered-routes
-  "Capture what the adapter registers without a real Fastify instance."
-  [config]
+(defn- harness
+  "Capture registered routes plus every authorization check. `ensure-permission!`
+   throws unless the permission is in `granted`."
+  [granted]
   (let [routes (atom [])
+        checks (atom [])
         app (js-obj "route" (fn [opts]
                               (swap! routes conj (js->clj opts :keywordize-keys true))
                               nil))]
-    (adapter/register-publication-routes! app config)
-    @routes))
+    {:routes routes
+     :checks checks
+     :app app
+     :handlers {:with-request-context! (fn [_runtime _request _reply f] (f {:org-id "acme"}))
+                :ensure-permission! (fn [_ctx permission]
+                                      (swap! checks conj permission)
+                                      (when-not (contains? granted permission)
+                                        (throw (ex-info "forbidden"
+                                                        {:status 403
+                                                         :permission permission}))))}}))
+
+(defn- registered-routes
+  "Capture what the adapter registers without a real Fastify instance."
+  [config]
+  (let [h (harness #{})]
+    (adapter/register-publication-routes! (:app h) {} config (:handlers h))
+    @(:routes h)))
 
 (defn- route-for [routes url]
   (some #(when (= url (:url %)) %) routes))
@@ -192,3 +209,42 @@
 (deftest facade-contract-has-no-legacy-backend
   (let [legacy-marker (str "open" "planner")]
     (is (not (str/includes? (str/lower-case facade-source) legacy-marker)))))
+
+;; ── Authorization (Codex P1 on #230) ──────────────────────────────────────
+
+(deftest ^:async unauthorized-projection-read-is-refused
+  (testing "the projection exposes document titles, garden membership and
+            publication paths off the filesystem — an anonymous caller must not
+            be able to enumerate it"
+    (let [h (harness #{})
+          _ (adapter/register-publication-routes! (:app h) {} {} (:handlers h))
+          {:keys [captured reply]} (fake-reply)
+          route (first @(:routes h))]
+      (await ((:handler route) (fake-request {}) reply))
+      (is (= ["org.publications.read"] @(:checks h)))
+      (let [body (js->clj (:body @captured) :keywordize-keys true)]
+        (is (= 403 (get-in body [:detail :status])))
+        (is (not= 200 (:status @captured)))))))
+
+(deftest ^:async authorized-read-checks-the-permission-once
+  (let [h (harness #{"org.publications.read"})
+        _ (adapter/register-publication-routes! (:app h) {} {} (:handlers h))
+        {:keys [reply]} (fake-reply)
+        route (first @(:routes h))]
+    (await ((:handler route) (fake-request {}) reply))
+    (is (= ["org.publications.read"] @(:checks h)))))
+
+(deftest read-permission-is-publication-scoped
+  (is (= "org.publications.read" adapter/read-permission))
+  (testing "not borrowed from an unrelated surface"
+    (is (not (str/includes? adapter/read-permission "translations")))))
+
+;; ── Request boundary contract ─────────────────────────────────────────────
+
+(deftest decoded-request-is-validated-against-a-named-contract
+  (testing "a well-formed request decodes"
+    (is (map? (adapter/decode-request (fake-request {:documentId "docs/probe"})))))
+  (testing "a changed parameter shape fails at the boundary, not downstream"
+    (is (thrown? js/Error
+                 (adapter/decode-request (js-obj "params" #js {"documentId" 42}
+                                                 "method" "GET"))))))

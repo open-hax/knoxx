@@ -1528,8 +1528,12 @@
                                               :with-request-context! with-request-context!
                                               :ensure-permission! ensure-permission!})
   ;; Publication projection reads desired state from resources alone. Its
-  ;; Fastify interop is owned by the extern adapter, so it takes no helpers map.
-  (publication-routes/register-publication-routes! app config)
+  ;; Fastify interop is owned by the extern adapter, which authorizes both
+  ;; routes before touching the filesystem-backed projection.
+  (publication-routes/register-publication-routes!
+   app runtime config
+   {:with-request-context! with-request-context!
+    :ensure-permission! ensure-permission!})
   ;; Knoxx-owned translation config. Deliberately not gated on legacy-backend
   ;; readiness — model selection must resolve with that backend absent.
   (translation-config-routes/register-translation-config-routes!
