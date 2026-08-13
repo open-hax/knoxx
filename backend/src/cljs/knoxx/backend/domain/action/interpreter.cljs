@@ -1,13 +1,13 @@
 (ns knoxx.backend.domain.action.interpreter
-  "Action interpreter: delegates to the contract-runtime action interpreter.
+  "Action interpreter: delegates to the katamorph action interpreter.
 
    This is a thin wrapper that provides backward compatibility for existing
    Knoxx callers. The actual implementation lives in the extracted
-   contract-runtime package.
+   katamorph package.
 
    The config map must contain :contract-runtime/deps (see
    knoxx.backend.contract-runtime-deps/build-deps)."
-  (:require [open-hax.contract-runtime.action.interpreter :as core-interpreter]))
+  (:require [katamorph.action.interpreter :as core-interpreter]))
 
 (defn resolve-scope-decl
   "Resolve an :action/scope declaration {:actions [...] :filters [...]

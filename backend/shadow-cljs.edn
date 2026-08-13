@@ -1,11 +1,8 @@
-{:source-paths ["src/cljs" "test/cljs"
-                "../shared/src/cljs"
-                "../../contract-runtime/src/cljs"],
- :dependencies
- [[cider/cider-nrepl "0.50.2"]
-  [refactor-nrepl "3.9.1"]
-  [metosin/malli "0.16.4"]
-  [funcool/promesa "11.0.678"]],
+;; deps.edn's :cljs alias is the classpath for every build below: source roots
+;; (src/cljs, test/cljs, ../shared), JVM dependencies, and katamorph pinned by
+;; Git ref. :source-paths and :dependencies are intentionally absent — in :deps
+;; mode shadow-cljs ignores both and defers to tools.deps.
+{:deps {:aliases [:cljs]},
  :nrepl {:port 4500},
  :js-options {:js-provider :import},
  :builds

@@ -42,6 +42,13 @@ if [[ "$SKIP_COMPILE" != "1" ]]; then
     exit 1
   fi
 
+  # shadow-cljs.edn runs in :deps mode, so it resolves its classpath through
+  # tools.deps and launches via the Clojure CLI rather than its own resolver.
+  if ! command -v clojure >/dev/null 2>&1; then
+    echo "clojure is required for shadow-cljs builds (:deps mode)" >&2
+    exit 1
+  fi
+
   if [[ ! -d node_modules ]]; then
     echo ">>> Installing backend dependencies from lockfile"
     pnpm install --frozen-lockfile

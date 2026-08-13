@@ -5,9 +5,9 @@
    knoxx.backend.extern.mongo) — Knoxx does not own a Mongo client; whatever
    runtime provides the handle decides connection lifecycle. Documents are
    schema-guarded before they cross the boundary."
-  (:require [knoxx.backend.extern.mongo :as mongo-extern]
-            [open-hax.contract-runtime.store.protocol :as store]
-            [open-hax.contract-runtime.store.law :as store-law]))
+  (:require [katamorph.store.law :as store-law]
+            [katamorph.store.protocol :as store]
+            [knoxx.backend.extern.mongo :as mongo-extern]))
 
 (defrecord MongoCollection [store-id guard collection-handle]
   store/IStore
