@@ -112,6 +112,13 @@
   [config]
   (mapv resource-record (await (contract-loader/load-all-contracts! config))))
 
+(defn ^:async load-all-resource-records!
+  "Every resource record without `[kind id]` dedup, for callers that must
+   detect a colliding canonical identity instead of silently inheriting
+   whichever file the filesystem enumerated first."
+  [config]
+  (mapv resource-record (await (contract-loader/load-all-contract-records! config))))
+
 (defn resource-record-sync
   [config resource-kind resource-id]
   (let [class-name (resource-class resource-kind)

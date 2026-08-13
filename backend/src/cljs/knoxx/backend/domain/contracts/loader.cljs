@@ -5,6 +5,7 @@
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.domain.resources.namespace-file :as ns-file]
             [knoxx.backend.law.contracts :as v]
+            [knoxx.backend.shape.resource-identity :as resource-identity]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
@@ -216,9 +217,16 @@
             nil)))))
 
 (defn- namespace-resource-record
-  "Validate one expanded namespace resource definition into a contract record."
+  "Validate one expanded namespace resource definition into a contract record.
+
+   Identity is canonicalized BEFORE validation. Document, garden, and
+   publication ids are qualified keywords in their Malli shapes, but a manifest
+   entry declares its namespace once and writes the local id — so validating
+   first would fail those definitions and drop them here, and the resource
+   would never reach any projection."
   [file-path edn-text {:resource/keys [kind definition]}]
   (let [klass (normalize-contract-class (name kind))
+        definition (resource-identity/canonicalize-identity kind definition)
         valid (v/validate klass definition)]
     (if (:ok valid)
       {:ok? true
@@ -334,9 +342,15 @@
 
 ;; ── Public API ─────────────────────────────────────────────────────────────
 
-(defn ^:async load-all-contracts!
-  "Discover all .edn files under all contract roots, parse+validate each,
-   deduplicate on [kind id]. Returns Promise<vector<contract-record>>."
+(defn ^:async load-all-contract-records!
+  "Every parsed+validated record, WITHOUT `[kind id]` dedup.
+
+   `dedup-contracts` is first-wins, so two files declaring the same canonical
+   id with different payloads silently collapse to whichever the filesystem
+   enumerated first. Callers that must detect that collision rather than
+   inherit it — the publication projection, whose whole contract is that a
+   conflicting identity fails deterministically — need the undeduped records.
+   Ordinary lookup callers should keep using `load-all-contracts!`."
   [config]
   (let [roots (contract-root-paths config)
         file-lists (await (js/Promise.all (clj->js (map discover-contract-files! roots))))
@@ -348,7 +362,14 @@
     (->> (js/Array.from results)
          (remove nil?)
          (mapcat identity)
-         dedup-contracts)))
+         (remove nil?)
+         vec)))
+
+(defn ^:async load-all-contracts!
+  "Discover all .edn files under all contract roots, parse+validate each,
+   deduplicate on [kind id]. Returns Promise<vector<contract-record>>."
+  [config]
+  (dedup-contracts (await (load-all-contract-records! config))))
 
 (defn ^:async list-contract-ids!
   ([config] (list-contract-ids! config "agents"))

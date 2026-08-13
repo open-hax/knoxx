@@ -168,6 +168,76 @@
 
 ;; ── 10/11 purity ───────────────────────────────────────────────────────────
 
+;; ── Reference blockers (Codex P1 on #230) ─────────────────────────────────
+
+(deftest dangling-document-reference-is-a-blocker-not-an-omission
+  (testing "an intent pointing at a missing document used to vanish silently,
+            because list-document-views iterates the documents it has"
+    (let [orphan (assoc local-intent
+                        :publication/id :orphan
+                        :publication/document :missing)
+          err (try (resolver/publication-index [local-garden orphan])
+                   nil
+                   (catch :default e e))]
+      (is (some? err))
+      (is (= [{:publication/id :knoxx.docs/orphan
+               :blocker :unresolved-document
+               :reference :knoxx.docs/missing}]
+             (:blockers (ex-data err)))))))
+
+(deftest dangling-garden-reference-is-a-blocker
+  (testing "hydration validates only the document, so a missing garden passed through"
+    (let [orphan (assoc local-intent
+                        :publication/id :orphan
+                        :publication/garden :missing)
+          err (try (resolver/publication-index [local-document orphan])
+                   nil
+                   (catch :default e e))]
+      (is (some? err))
+      (is (= [{:publication/id :knoxx.docs/orphan
+               :blocker :unresolved-garden
+               :reference :knoxx.docs/missing}]
+             (:blockers (ex-data err)))))))
+
+(deftest reference-blockers-are-order-independent
+  (let [orphan (assoc local-intent :publication/id :orphan
+                      :publication/document :missing-doc
+                      :publication/garden :missing-garden)
+        blockers (fn [ordered]
+                   (:blockers (ex-data (try (resolver/publication-index ordered)
+                                            nil
+                                            (catch :default e e)))))]
+    (is (= 2 (count (blockers [orphan]))))
+    (is (= (blockers [orphan]) (blockers (reverse [orphan]))))
+    (testing "both failure modes are named, not just the first"
+      (is (= #{:unresolved-document :unresolved-garden}
+             (set (map :blocker (blockers [orphan]))))))))
+
+;; ── 10/11 purity ───────────────────────────────────────────────────────────
+
+(deftest runtime-keys-attached-to-a-projected-payload-are-stripped
+  (testing "Malli maps are open, so a schema alone cannot keep execution facts
+            out of the projection — only selecting declared fields can"
+    (let [dirty-document (assoc local-document
+                                :receipt/published-at "2026-08-13T00:00:00Z"
+                                :worker/state :succeeded
+                                :publish_job_id "job-42")
+          dirty-garden (assoc local-garden :receipt/synced-at "2026-08-13")
+          dirty-intent (assoc local-intent :publication/published-at "2026-08-13")
+          index (resolver/publication-index [dirty-document dirty-garden dirty-intent])
+          view (resolver/list-document-views index)
+          keys-present (all-keys view)]
+      (testing "the payload still validates"
+        (is (true? (m/validate law/PublicationListView view))))
+      (doseq [leaked [:receipt/published-at :worker/state :publish_job_id
+                      :receipt/synced-at :publication/published-at]]
+        (is (not (contains? keys-present leaked))
+            (str leaked " leaked into the projection")))
+      (testing "and the declared fields all survived"
+        (is (= :knoxx.docs/translation-pipeline
+               (get-in view [:documents 0 :document :document/id])))
+        (is (= :active (get-in view [:gardens 0 :garden/status])))))))
+
 (deftest projection-excludes-runtime-state
   (let [receipt {:receipt/id :knoxx.docs/translation-pipeline-es-receipt
                  :receipt/published-at "2026-08-13T00:00:00Z"

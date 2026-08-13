@@ -82,6 +82,56 @@
         (is (= {:documents [] :gardens []} body))
         (is (true? (m/validate law/PublicationListView view)))))))
 
+(deftest ^:async qualified-identity-survives-the-json-boundary
+  (let [{:keys [captured reply]} (fake-reply)
+        view {:documents [{:document {:document/id :knoxx.docs/translation-pipeline
+                                      :document/source-locale :en}
+                           :publications [{:publication/id :knoxx.docs/tp-es
+                                           :publication/garden :gardens/promethean
+                                           :publication/state :published
+                                           :publication/revision :source/current}]}]
+              :gardens [{:garden/id :knoxx.docs/promethean :garden/status :active}]}]
+    (await (adapter/send-projection! reply (fn [] view)))
+    (let [sent (js->clj (:body @captured) :keywordize-keys true)
+          document (get-in sent [:documents 0 :document])
+          publication (get-in sent [:documents 0 :publications 0])
+          garden (get-in sent [:gardens 0])]
+      (testing "JSON keys are unqualified — clj->js renders :document/id as \"id\",
+                which is this codebase's documented wire-key convention"
+        (is (= #{:id :source-locale} (set (keys document))))
+        (is (= #{:id :garden :state :revision} (set (keys publication))))
+        (is (= #{:id :status} (set (keys garden)))))
+      (testing "but VALUES keep their namespace instead of being flattened"
+        (is (= "knoxx.docs/translation-pipeline" (:id document)))
+        (is (= "knoxx.docs/tp-es" (:id publication)))
+        (is (= "gardens/promethean" (:garden publication)))
+        (is (= "knoxx.docs/promethean" (:id garden))))
+      (testing "enum values cross as strings, and the revision selector keeps its namespace"
+        (is (= "published" (:state publication)))
+        (is (= "source/current" (:revision publication)))
+        (is (= "active" (:status garden))))
+      (testing "and no value carries an EDN leading colon"
+        (let [string-values (filter string? (tree-seq coll? seq sent))]
+          (is (seq string-values))
+          (is (empty? (filter #(str/starts-with? % ":") string-values))
+              "a value rendered with (str keyword) would begin with a colon")))
+      (testing "distinct namespaces would have collided without the encoder"
+        (is (not= (:id document) (:id garden)))))))
+
+(deftest ^:async blocked-references-are-a-409
+  (let [{:keys [captured reply]} (fake-reply)]
+    (await (adapter/send-projection!
+            reply
+            (fn [] (throw (ex-info "unresolved publication references"
+                                   {:blockers [{:publication/id :knoxx.docs/orphan
+                                                :blocker :unresolved-garden}]})))))
+    (is (= 409 (:status @captured)))
+    (testing "the blocker reaches the client with identity intact"
+      (let [sent (js->clj (:body @captured) :keywordize-keys true)
+            blocker (get-in sent [:detail :blockers 0])]
+        (is (= "knoxx.docs/orphan" (:id blocker)))
+        (is (= "unresolved-garden" (:blocker blocker)))))))
+
 (deftest ^:async publication-route-awaits-async-handlers
   (let [{:keys [captured reply]} (fake-reply)]
     (await (adapter/send-projection!
