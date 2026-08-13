@@ -1,2 +1,7 @@
 # Tour output is regenerated on every run and never reviewed as a diff.
 *.png
+
+# reference/ is the exception: a small set of captures kept deliberately as
+# evidence for a finding, named by date and what they show.
+!reference/
+!reference/*.png
