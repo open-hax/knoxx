@@ -115,9 +115,18 @@ expect_jq() {
 
 # Removing the whole fixture directory is the entire teardown: every file this
 # script writes lives inside it, including the file the PATCH step rewrites.
+#
+# It removes the directory ONLY when this run is the one that created it.
+# The trap has to be armed before the fixture exists — a run killed mid-seed
+# must still clean up — so an unguarded teardown would delete a fixture left by
+# a killed earlier run, or one a concurrent run is actively using, on any early
+# exit such as a missing tool. Losing someone else's data while reporting a
+# usage error is a worse failure than leaving a stale directory behind.
+FIXTURE_OWNED=0
+
 cleanup() {
   local code=$?
-  if [ -d "$FIXTURE_DIR" ]; then
+  if [ "$FIXTURE_OWNED" -eq 1 ] && [ -d "$FIXTURE_DIR" ]; then
     fixture_remove
     note "torn down ${FIXTURE_DIR#$REPO_ROOT/}"
   fi
@@ -150,6 +159,7 @@ note "backend is reachable"
 # The running backend must be serving this checkout's contracts, or the fixture
 # is invisible to it and every projection check below is meaningless.
 step "0. the running backend serves this checkout"
+FIXTURE_OWNED=1
 fixture_write_valid
 sleep 1
 probe="$(http GET "/api/publications/documents" auth)"

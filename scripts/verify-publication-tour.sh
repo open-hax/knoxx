@@ -72,10 +72,15 @@ shot() {
 
 step() { printf '\n%s── %s%s\n' "$C_BOLD$C_CYAN" "$1" "$C_RESET"; }
 
+# Only ever removes a fixture this run created — see the note in
+# verify-publication-epic.sh. An early exit (no agent-browser, no frontend) must
+# not delete a directory another run owns.
+FIXTURE_OWNED=0
+
 cleanup() {
   local code=$?
   ab close >/dev/null 2>&1
-  if [ -d "$FIXTURE_DIR" ]; then
+  if [ "$FIXTURE_OWNED" -eq 1 ] && [ -d "$FIXTURE_DIR" ]; then
     fixture_remove
     note "torn down ${FIXTURE_DIR#$REPO_ROOT/}"
   fi
@@ -136,6 +141,7 @@ curl -s -o /dev/null --max-time 5 "$FRONTEND_URL" 2>/dev/null \
   || die "no frontend answering at ${FRONTEND_URL}. Run: pnpm -C frontend dev"
 
 mkdir -p "$SHOT_DIR"
+FIXTURE_OWNED=1
 fixture_write_valid
 note "seeded ${FIXTURE_DIR#$REPO_ROOT/}"
 
