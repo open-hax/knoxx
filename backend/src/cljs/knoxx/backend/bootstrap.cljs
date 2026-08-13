@@ -81,6 +81,7 @@
        :primaryOrgKind (env "KNOXX_PRIMARY_ORG_KIND" "platform_owner")
        :bootstrapSystemAdminEmail (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL" "system-admin@open-hax.local")
        :bootstrapSystemAdminName (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME" "Knoxx System Admin")
+       :bootstrapSystemAdminPassword (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD" "")
        :bootstrapAllowlistEmails (env "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS" "")
        :bootstrapAllowlistRoleSlugs (env "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS" "")})
 

@@ -1,9 +1,9 @@
 (ns knoxx.backend.infra.routes.auth
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.auth.password :as password]
             [knoxx.backend.infra.auth.session :as auth-session]
-            [knoxx.backend.infra.db.policy :as policy-db]
-            ["node:crypto" :as crypto]))
+            [knoxx.backend.infra.db.policy :as policy-db]))
 
 (defn- body-map
   [req]
@@ -41,26 +41,6 @@
       (str proto "://" host)
       configured-base-url)))
 
-(defn- password-hash
-  [password]
-  (let [salt (.toString (.randomBytes crypto 16) "hex")
-        hash (.toString (.scryptSync crypto (str password) salt 64) "hex")]
-    {:algorithm "scrypt"
-     :salt salt
-     :hash hash}))
-
-(defn- verify-password?
-  [password secret-json]
-  (try
-    (let [salt (:salt secret-json)
-          expected (:hash secret-json)
-          expected-buf (.from js/Buffer (str expected) "hex")
-          actual-buf (.scryptSync crypto (str password) (str salt) (.-length expected-buf))]
-      (and (= "scrypt" (:algorithm secret-json))
-           (pos? (.-length expected-buf))
-           (.timingSafeEqual crypto expected-buf actual-buf)))
-    (catch :default _ false)))
-
 (defn- password-too-short?
   [password]
   (< (count (str password)) 8))
@@ -74,7 +54,7 @@
            :provider "local"
            :kind "password"
            :account-identifier (get-in ctx [:user :email])
-           :secret-json (password-hash password)
+           :secret-json (password/hash-password password)
            :status "active"})))
 
 (defn- register-auth-config-route!
@@ -155,7 +135,7 @@
 
         :else
         (let [auth-record (await (policy-db/local-password-auth-record-for-context! policy-context email))]
-          (if-not (verify-password? password (:secret-json auth-record))
+          (if-not (password/valid-password? password (:secret-json auth-record))
             (.send (.code reply 401) (clj->js {:error "Invalid username or password"}))
             (let [ctx (await (policy-db/resolve-context!
                               policy-context

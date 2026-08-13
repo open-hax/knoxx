@@ -291,3 +291,18 @@
                                                       "provider" (str provider)
                                                       "kind" (str kind)})))]
        (credential-doc->row doc)))))
+
+(defn ^:async deactivate-actor-credential!
+  "Deactivate an existing credential tuple without creating one when absent."
+  ([user-id org-id provider kind]
+   (deactivate-actor-credential! (mongo-client/get-db) user-id org-id provider kind))
+  ([db user-id org-id provider kind]
+   (await (.updateOne (credentials-coll db)
+                      #js {"user_id" (str user-id)
+                           "org_id" (str org-id)
+                           "provider" (str provider)
+                           "kind" (str kind)}
+                      #js {"$set" #js {"status" "inactive"
+                                       "updated_at" (js/Date.)
+                                       "system_instance_id" (system-instance/current-id)}}))
+   nil))

@@ -48,7 +48,7 @@ request() {
   local -a args=(-sS -o "$out" -w '%{http_code}' -X "$method" "$url" -H 'Accept: application/json')
 
   if [[ -n "$API_KEY" ]]; then
-    args+=(-H "X-API-Key: $API_KEY")
+    args+=(-H "X-API-Key: $API_KEY" -H "Authorization: Bearer $API_KEY")
   fi
 
   if [[ -n "$body" ]]; then
