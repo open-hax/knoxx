@@ -10,6 +10,7 @@ STRICT="${KNOXX_SMOKE_STRICT:-0}"
 CHAT="${KNOXX_SMOKE_CHAT:-0}"
 MODEL="${KNOXX_SMOKE_MODEL:-${PROXX_DEFAULT_MODEL:-glm-5}}"
 API_KEY="${KNOXX_API_KEY:-}"
+OPENAI_API_KEY="${MODEL_LAB_OPENAI_API_KEY:-}"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -48,7 +49,11 @@ request() {
   local -a args=(-sS -o "$out" -w '%{http_code}' -X "$method" "$url" -H 'Accept: application/json')
 
   if [[ -n "$API_KEY" ]]; then
-    args+=(-H "X-API-Key: $API_KEY" -H "Authorization: Bearer $API_KEY")
+    args+=(-H "X-API-Key: $API_KEY")
+  fi
+
+  if [[ -n "$OPENAI_API_KEY" ]]; then
+    args+=(-H "Authorization: Bearer $OPENAI_API_KEY")
   fi
 
   if [[ -n "$body" ]]; then

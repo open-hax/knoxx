@@ -679,21 +679,26 @@
    (ensure-bootstrap-local-password!
     db primary-org bootstrap opts
     {:deactivate-credential! mongo-actor-creds/deactivate-actor-credential!
+     :deactivate-other-bootstrap-credentials!
+     mongo-actor-creds/deactivate-other-bootstrap-local-passwords!
      :encode-password password/hash-password
      :upsert-credential! mongo-actor-creds/upsert-actor-credential!}))
   ([db primary-org bootstrap opts
-    {:keys [deactivate-credential! encode-password upsert-credential!]}]
+    {:keys [deactivate-credential! deactivate-other-bootstrap-credentials!
+            encode-password upsert-credential!]}]
    (let [configured-password (some-> (or (:bootstrapSystemAdminPassword opts)
                                          (:bootstrap-system-admin-password opts))
                                      str not-empty)
          user-id (get-in bootstrap [:user :id])
          org-id (:id primary-org)]
+     (await (deactivate-other-bootstrap-credentials! db user-id))
      (if configured-password
        (await (upsert-credential!
                db user-id org-id "local"
                {:kind "password"
                 :account-identifier (get-in bootstrap [:user :email])
-                :secret-json (encode-password configured-password)
+                :secret-json (assoc (encode-password configured-password)
+                                    :bootstrap-system-admin true)
                 :status "active"}))
        (await (deactivate-credential! db user-id org-id "local" "password")))
      nil)))
