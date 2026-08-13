@@ -160,7 +160,12 @@
   ([config resource-id]
    (resource-file-path config :agent resource-id))
   ([config resource-kind resource-id]
-   (contract-loader/contract-file-path config (resource-class resource-kind) resource-id)))
+   (or (some-> (resource-record-sync config resource-kind resource-id)
+               :resource/file-path)
+       (contract-loader/contract-file-path
+        config
+        (resource-class resource-kind)
+        resource-id))))
 
 (defn write-edn-file!
   [file-path edn-text]
