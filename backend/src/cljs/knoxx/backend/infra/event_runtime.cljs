@@ -17,17 +17,39 @@
   []
   (models/enrich-config (runtime-config/cfg)))
 
+(defn disabled?
+  "True when this process is forbidden from running event runtimes.
+
+   Read here rather than at each call site on purpose. There are five ways to
+   reach `start!` — `infra.core/start!`, the background-services boot step, the
+   `POST /api/admin/config/events/runtime/start` route, the deprecated
+   `trigger-runner` facade, and the hot-reload `after-load` hook — and a guard
+   placed at one of them is a guard the other four walk past. The promise the
+   flag makes is about the process, so it is enforced where the process state
+   actually changes."
+  ([] (disabled? (cfg)))
+  ([config] (true? (:event-runtimes-disabled? config))))
+
 (defn start!
   ([]
    (start! (cfg)))
   ([config]
-   (when-not @running?*
-     (reset! running?* true)
-     (trigger-runtime/start! config)
-     (schedule-runtime/start! config)
-     (errors/observe-promise! :event-runtime/source-start
-                              {}
-                              (source-runtime/start! config)))))
+   (cond
+     (disabled? config)
+     (do (js/console.warn
+          "[event-runtimes] refusing to start — KNOXX_DISABLE_EVENT_RUNTIMES is set")
+         :disabled)
+
+     @running?* :already-running
+
+     :else
+     (do (reset! running?* true)
+         (trigger-runtime/start! config)
+         (schedule-runtime/start! config)
+         (errors/observe-promise! :event-runtime/source-start
+                                  {}
+                                  (source-runtime/start! config))
+         :started))))
 
 (defn stop!
   []

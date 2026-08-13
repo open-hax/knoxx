@@ -414,8 +414,17 @@
   "POST" "/api/admin/config/events/runtime/start"
   [session-guard]
   (ensure-permission! ctx "org.events.control")
-  (event-runtime/start! config)
-  (json-response! reply 200 (assoc (events-control-response config) :ok true :action "started")))
+  ;; `start!` refuses when the process is flagged, so reporting ok/started
+  ;; unconditionally would tell an operator the runtime came up when nothing
+  ;; did. Answer 409 instead: the request is well-formed, the process state
+  ;; forbids it.
+  (if (= :disabled (event-runtime/start! config))
+    (json-response! reply 409
+                    (assoc (events-control-response config)
+                           :ok false
+                           :action "refused"
+                           :reason "KNOXX_DISABLE_EVENT_RUNTIMES is set on this process"))
+    (json-response! reply 200 (assoc (events-control-response config) :ok true :action "started"))))
 
 (defroute register-events-runtime-reset-route!
   []

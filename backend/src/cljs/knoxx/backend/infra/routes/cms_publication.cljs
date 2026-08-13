@@ -40,6 +40,31 @@
                             (resolver/document-view (await (resource-index! config))
                                                     document-id))))
 
+(defn- assert-unique-target!
+  "Refuse unless exactly one entry in the file claims this publication id.
+
+   Zero and many are different failures and carry different data. The many case
+   deliberately omits `:publication/id`, because the adapter's `error-status`
+   checks that key first and would report 404 for a file that plainly contains
+   the resource twice; leaving only `:conflicts` maps it to 409.
+
+   Duplicate canonical publication ids are not rejected upstream today
+   (`knoxx-publication-duplicate-identity`), so a file really can hold two
+   entries claiming this id — and a request naming one resource must not
+   rewrite two. `manifest/assoc-entry-field` refuses as well; this is the layer
+   that gives the refusal an HTTP meaning."
+  [edn file-path publication-id]
+  (let [matches (manifest/matching-entry-count edn :publication/id publication-id)]
+    (when (zero? matches)
+      (throw (ex-info "publication resource is not present in its own file"
+                      {:publication/id publication-id
+                       :resource/file-path file-path})))
+    (when (> matches 1)
+      (throw (ex-info "more than one entry in this file claims that publication id"
+                      {:resource/file-path file-path
+                       :conflicts [{:publication/id publication-id
+                                    :matches matches}]})))))
+
 (defn ^:async write-publication-state!
   "Set `:publication/state` on one entry of the file that declares it.
 
@@ -50,16 +75,19 @@
    Publishing must not destroy the thing being published."
   [file-path publication-id next-state]
   (let [edn (await (resources/read-edn-file! file-path))]
-    (when-not (manifest/contains-entry? edn :publication/id publication-id)
-      (throw (ex-info "publication resource is not present in its own file"
-                      {:publication/id publication-id
-                       :resource/file-path file-path})))
-    (await (resources/write-edn-file!
-            file-path
-            (str (pr-str (manifest/assoc-entry-field
-                          edn :publication/id publication-id
-                          :publication/state next-state))
-                 "\n")))))
+    (assert-unique-target! edn file-path publication-id)
+    (let [next-edn (manifest/assoc-entry-field edn :publication/id publication-id
+                                               :publication/state next-state)]
+      ;; Check the bytes about to be persisted, not the intent behind them. The
+      ;; transform is supposed to touch exactly one field; asserting that against
+      ;; the actual result is what keeps a future edit to it from quietly
+      ;; widening into the whole-file replacement this function exists to undo.
+      (when-not (manifest/unchanged-except? edn next-edn :publication/id
+                                            publication-id :publication/state)
+        (throw (ex-info "refusing to write: the edit changed more than publication state"
+                        {:publication/id publication-id
+                         :resource/file-path file-path})))
+      (await (resources/write-edn-file! file-path (str (pr-str next-edn) "\n"))))))
 
 (defn ^:async publication-file-path!
   [config publication-id]

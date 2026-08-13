@@ -93,23 +93,31 @@
 
 (def ^:private event-runtimes-nag-ms 60000)
 
+(defonce ^:private nag-timer* (atom nil))
+
 (defn- warn-event-runtimes-disabled!
   "Say it loudly at boot, then keep saying it.
 
    A one-line startup notice scrolls away in seconds and a process can then sit
    for hours looking healthy while doing none of its event work. The recurring
-   nag is unref'd so it never holds the process open at shutdown."
+   nag is unref'd so it never holds the process open at shutdown.
+
+   Both `start!` and `start-background-services!` announce this, because either
+   can be the boot path depending on entry point, and a hot reload can run one
+   of them again. The timer is armed once so those paths do not stack nags."
   []
   (doseq [line event-runtimes-disabled-banner]
     (js/console.warn line))
-  (let [timer (js/setInterval
-               #(js/console.warn
-                 "[event-runtimes] STILL DISABLED via KNOXX_DISABLE_EVENT_RUNTIMES —"
-                 "no schedules, no triggers, no Discord gateways")
-               event-runtimes-nag-ms)]
-    (when (fn? (some-> timer .-unref))
-      (.unref timer))
-    timer))
+  (when-not @nag-timer*
+    (let [timer (js/setInterval
+                 #(js/console.warn
+                   "[event-runtimes] STILL DISABLED via KNOXX_DISABLE_EVENT_RUNTIMES —"
+                   "no schedules, no triggers, no Discord gateways")
+                 event-runtimes-nag-ms)]
+      (when (fn? (some-> timer .-unref))
+        (.unref timer))
+      (reset! nag-timer* timer)))
+  @nag-timer*)
 
 (defn- ^:async bind-discord-actor-gateways!
   "Connect the Discord actor gateways and route their events into the driver
@@ -145,9 +153,8 @@
   (try
     (let [event-runtimes? (not (:event-runtimes-disabled? resolved-config))
           policy-context (:policy-context (lifecycle/context))]
-      (if event-runtimes?
-        (event-runtime/start! resolved-config)
-        (warn-event-runtimes-disabled!))
+      (when-not event-runtimes? (warn-event-runtimes-disabled!))
+      (event-runtime/start! resolved-config)
       (resource-routes/start-resource-watcher! resolved-config)
       (when (and event-runtimes? policy-context)
         (await (bind-discord-actor-gateways! resolved-config policy-context))))
@@ -211,7 +218,10 @@
           (resource-routes/sync-resource-index! config)
           (catch :default err
             (app-log-error! app "Failed to sync resource index" err)))
-        ;; Start the event runtime composition shell.
+        ;; Start the event runtime composition shell. `start!` self-gates on
+        ;; KNOXX_DISABLE_EVENT_RUNTIMES; this path never reaches
+        ;; start-background-services!, so it announces the mode itself.
+        (when (event-runtime/disabled? config) (warn-event-runtimes-disabled!))
         (event-runtime/start! config)
         (resource-routes/start-resource-watcher! config)
         (await (app-listen! app (:host config) (:port config)))
