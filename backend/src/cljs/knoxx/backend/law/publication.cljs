@@ -62,8 +62,12 @@
    [:garden/title string?]
    [:garden/status [:enum :active :archived]]])
 
+(defn nonblank-string?
+  [value]
+  (and (string? value) (seq (str/trim value))))
+
 (def PublicationRevision
-  [:or string? [:enum :source/current]])
+  [:or [:fn nonblank-string?] [:enum :source/current]])
 
 ;; Raw declarative relation stored in resource data.
 (def PublicationIntentResource

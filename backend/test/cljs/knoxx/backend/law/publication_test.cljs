@@ -125,6 +125,10 @@
   (is (false? (m/validate pub/PublicationRevision nil)))
   (is (false? (m/validate pub/PublicationRevision 42))))
 
+(deftest publication-revision-rejects-blank-strings
+  (is (false? (m/validate pub/PublicationRevision "")))
+  (is (false? (m/validate pub/PublicationRevision "   "))))
+
 ;; ── 7/8 hydrate-publication-intent ────────────────────────────────────────
 
 (deftest hydrate-publication-intent-copies-document-source-locale
