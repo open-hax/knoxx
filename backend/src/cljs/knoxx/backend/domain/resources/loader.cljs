@@ -13,11 +13,14 @@
    :agent "agents"
    :capability "capabilities"
    :cms "cms"
+   :document "documents"
+   :garden "gardens"
    :generator "generators"
    :ingest-source "ingest_sources"
    :model "models"
    :model-family "model_families"
    :policy "policies"
+   :publication "publications"
    :role "roles"
    :rule "rules"
    :runtime-feature "runtime_features"
@@ -53,12 +56,15 @@
     ("agent" "agents" "agent-spec" "agent-specs" "contract" "contracts") :agent
     ("cap" "caps" "capability" "capabilities") :capability
     ("cms" "cms-config" "cms-configs" "cms-block-registry" "cms-template-registry" "cms-templates") :cms
+    ("document" "documents") :document
+    ("garden" "gardens") :garden
     ("generator" "generators") :generator
     ("ingest-source" "ingest-sources" "ingest_source" "ingest_sources") :ingest-source
     ("model" "models") :model
     ("model-family" "model-families" "model_family" "model_families") :model-family
     ("pipeline" "pipelines") :pipeline
     ("policy" "policies") :policy
+    ("publication" "publications") :publication
     ("role" "roles") :role
     ("rule" "rules") :rule
     ("runtime-feature" "runtime-features" "runtime_feature" "runtime_features" "runtime") :runtime-feature

@@ -141,7 +141,8 @@
    reconcile to a public materialization."
   [resource-index intent]
   (boolean
-   (and (contains? (:documents resource-index) (:publication/document intent))
+   (and (not= :archived (:publication/state intent))
+        (contains? (:documents resource-index) (:publication/document intent))
         (contains? (:gardens resource-index) (:publication/garden intent))
         (= :active
            (:garden/status

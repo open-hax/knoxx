@@ -263,4 +263,7 @@ Fastify adapter until green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Note: canonical-identity-in-payload and archived-vs-active conflict identity are the two highest-risk behaviours; both have dedicated first tests.
----
+***
+
+Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `PublicationListView` and `document-view` use bare `:map` entries instead of a concrete `PublicationDocumentView` schema (with nested `Document`/`Garden`/`PublicationIntent`); `document-view`'s assembled result isn't validated before `list-document-views` exposes it, so data missing the `:document/id` the CMS facade reads at `[:document :document/id]` can pass through undetected. Define and validate the concrete schema before implementing.
+***

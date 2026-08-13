@@ -149,4 +149,7 @@ Whole-seam proof second, all `^:async` where effects are awaited:
 
 ---
 Ready gate 2026-08-12: sized 2sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Closes the adapter-boundary roll-up; depends on the planner and effect cards.
----
+***
+
+Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `FakePublicationTarget`/`IPublicationTarget` is sketched inside the `knoxx.backend.domain.publication-receipts` namespace; move the fake adapter to a test or `infra.*` namespace and keep only receipt schemas/projections in `domain.*`. Only `PublicationMaterializedReceipt` is defined — add schemas for the failed/blocked/noop variants too, have `execute-plan!` return values that conform to them, and validate the materialized receipt before `observed-materialization` reads `:materialized/revision`/`:materialized/path` off it. The fake adapter should also implement the same atomic replay-protection guarantee flagged on `knoxx-publication-adapter-effects-idempotency`, or its tests don't actually prove the production contract.
+***

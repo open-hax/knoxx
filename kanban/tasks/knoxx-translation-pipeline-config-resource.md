@@ -217,4 +217,7 @@ Single-authority proof last:
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Cross-repo touch: the ingestion worker (Clojure/JVM) must move to the same boundary, so this card spans backend CLJS and ingestion.
----
+***
+
+Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `TranslationConfigWireJson` and `TranslationConfigPatchJson` should be `{:closed true}` — Malli 0.16.4 leaves `[:map ...]` open by default, so an unexpected key like `:translation/model` would currently pass validation alongside (or instead of) `:model`. Also, the `patch-translation-config-route!` pseudocode has no authorization check before `update-translation-config!`; add the repository's `authz/ensure-permission!` convention with a defined write permission and a test proving unauthorized PATCH requests get 403 (or document/test the middleware contract if enforcement is delegated there).
+***

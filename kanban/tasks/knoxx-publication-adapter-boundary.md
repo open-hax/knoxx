@@ -63,4 +63,4 @@ Desired state remains in resources, decision law remains pure, adapters perform 
 
 ---
 Breakdown 2026-08-12: held in breakdown deliberately. This is a zero-point roll-up over three ready children (reconcile-plan-laws 3sp, adapter-effects-idempotency 3sp, receipts-fake-adapter-proof 2sp = the original 8sp). It carries no implementation slice of its own, so it has no Ready gate to clear; it closes when its children close.
----
+***

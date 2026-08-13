@@ -146,6 +146,14 @@
   [v]
   (if (keyword? v) (name v) (str v)))
 
+(defn- qualified-keyword->str
+  "Like keyword->str, but keeps the namespace segment. Document/garden/
+   publication ids are namespace-qualified on purpose; stringifying them with
+   plain `name` would collide distinct namespaces (:tenant-a/foo and
+   :tenant-b/foo both becoming \"foo\")."
+  [v]
+  (if (keyword? v) (subs (str v) 1) (str v)))
+
 (defn- extract-contract-identity
   [raw]
   ;; IMPORTANT: prefer structural/canonical class inference before the raw
@@ -173,17 +181,17 @@
                           (:contract/kind raw)
                           (:kind raw))
                       keyword->str str/trim not-empty)
-        id   (some-> (or (:contract/id raw) (:id raw)
-                          (:actor/id raw) (:role/id raw) (:cap/id raw)
-                          (:model/id raw) (:model-family/id raw)
-                          (:generator/id raw) (:schedule/id raw)
-                          (:source-mode/id raw)
-                          (:source/id raw)
-                          (:runtime-feature/id raw)
-                          (:document/id raw)
-                          (:garden/id raw)
-                          (:publication/id raw))
-                      keyword->str str/trim not-empty)]
+        qualified-id (some-> (or (:document/id raw) (:garden/id raw) (:publication/id raw))
+                              qualified-keyword->str str/trim not-empty)
+        id   (or qualified-id
+                 (some-> (or (:contract/id raw) (:id raw)
+                             (:actor/id raw) (:role/id raw) (:cap/id raw)
+                             (:model/id raw) (:model-family/id raw)
+                             (:generator/id raw) (:schedule/id raw)
+                             (:source-mode/id raw)
+                             (:source/id raw)
+                             (:runtime-feature/id raw))
+                         keyword->str str/trim not-empty))]
     (when (and kind id) [kind id])))
 
 (defn- validate-and-build

@@ -70,7 +70,7 @@ P2 — cutover + retirement + proof
 
 ## Children
 
-1. **P0 / breakdown / 5sp** `knoxx-publication-resource-contracts` — first-class document, garden, and publication resource laws.
+1. **P0 / ready / 5sp** `knoxx-publication-resource-contracts` — first-class document, garden, and publication resource laws.
 2. **P0 / accepted / 5sp** `knoxx-publication-intent-resolver` — pure resource graph -> desired publication projection.
 3. **P0 / accepted / 5sp** `knoxx-openplanner-publication-state-migration` — import existing gardens/publications into resources once, with conflict receipts, before resource intent becomes CMS authority.
 4. **P1 / accepted / 5sp** `knoxx-translation-pipeline-config-resource` — remove OpenPlanner translation config authority across UI and ingestion worker.
@@ -122,4 +122,4 @@ resource contracts
 
 ---
 Breakdown 2026-08-12: epic held in breakdown as the container for the twelve task cards. All eleven implementable children are now ready; the epic closes behind them.
----
+***

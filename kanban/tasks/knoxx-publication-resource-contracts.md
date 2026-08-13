@@ -178,7 +178,7 @@ loader validation hook, then re-run to green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Walked accepted -> breakdown -> ready via the Rheos promethean FSM.
----
+***
 Implementation 2026-08-12: added `knoxx.backend.law.publication`
 (`backend/src/cljs/knoxx/backend/law/publication.cljs`) with `Locale`,
 `PublicationPath`/`valid-publication-path?`, `Document`, `Garden`,
@@ -194,4 +194,4 @@ direct frontmatter edits bypass the Rheos ledger and read as drift. Next
 session with real network/CLI access should run the test suite, then drive
 `ready -> todo -> in_progress -> testing` through
 `node packages/rheos/dist/cli.cjs status-update knoxx-publication-resource-contracts --to <status>`.
----
+***

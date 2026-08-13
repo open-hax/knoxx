@@ -346,4 +346,7 @@ Frontend last:
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Sequencing constraint from the card: this cutover lands only after the migration card has imported the topology and conflicts are resolved.
----
+***
+
+Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `document->wire` passes `:document/source` straight through instead of encoding only its allowed `:path` field, which lets future resource fields leak across the JSON boundary — map it explicitly before validating against `DocumentWireJson`. `decode-publication-wire` also doesn't restore the `:source/current` revision selector (encoded as the string `"source/current"`) back to a keyword, so the UI would receive a plain string instead of the domain value — add a symmetric revision decoder. And the state-patch acceptance test calls `clj->js`/`js->clj` directly rather than routing through `knoxx.frontend.lib.api/request` or an existing codec wrapper, which is the documented boundary for that interop per this repo's coding guidelines.
+***

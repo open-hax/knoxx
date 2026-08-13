@@ -141,4 +141,4 @@ Then implement `knoxx.backend.domain.publication-plan` until green.
 
 ---
 Ready gate 2026-08-12: sized 3sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Depends on the gate card for the shared publication-evidence result; sequence it after knoxx-translation-publication-gate.
----
+***

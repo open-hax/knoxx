@@ -151,6 +151,12 @@
                  resource-index
                  (assoc example-manifest-intent :publication/garden :gardens/unknown))))))
 
+(deftest admissible-publication?-rejects-archived-intent-state-with-an-active-garden
+  (let [resource-index (pub/index-resources [translation-pipeline-document promethean-garden])]
+    (is (false? (pub/admissible-publication?
+                 resource-index
+                 (assoc example-manifest-intent :publication/state :archived))))))
+
 ;; ── 10 resource-only fixture ──────────────────────────────────────────────
 
 (defn- source-text
