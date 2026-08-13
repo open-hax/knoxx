@@ -201,12 +201,15 @@ resources from a namespace manifest (`{:namespace ... :resources [...]}`,
 the format this card's own example uses) needs two things beyond this
 card's Malli shapes:
 
-1. `kind-id-keys` in `open-hax/openplanner`'s
-   `packages/contract-runtime/src/cljs/open_hax/contract_runtime/manifest.cljs`
-   has to register `:document`/`:garden`/`:publication`, or
-   `namespace-file-definitions` silently drops every such entry before it
-   reaches Knoxx's loader. Proposed fix: open-hax/openplanner#131 (not
-   merged as of this note).
+1. `kind-id-keys` in `open-hax/katamorph`'s
+   `src/cljs/katamorph/manifest.cljs` has to register
+   `:document`/`:garden`/`:publication`, or `namespace-file-definitions`
+   silently drops every such entry before it reaches Knoxx's loader.
+   (Katamorph is the successor to `open-hax/openplanner`'s
+   `packages/contract-runtime`, pinned by Knoxx via a git dependency as of
+   PR #226 — an initial fix proposed against openplanner#131 was closed as
+   superseded.) Proposed fix with a regression test: open-hax/katamorph#3
+   (not merged as of this note).
 2. Even with that fix, a manifest entry's local id
    (`:document/id :translation-pipeline`) is projected through
    unqualified — it needs the namespace-qualified form
