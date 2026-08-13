@@ -1,0 +1,54 @@
+---
+uuid: "knoxx-file-resource-repository-provider"
+title: "Prove a file/EDN resource repository provider behind a provider-neutral contract"
+status: incoming
+priority: P2
+labels: ["tasks", "5sp", "has-parent", "cms", "resources", "repository", "contracts"]
+created_at: "2026-08-13T00:00:00Z"
+points: 5
+category: tasks
+---
+# Prove a file/EDN resource repository provider behind a provider-neutral contract
+
+> Parent epic: `knoxx-resource-repository-cms`
+
+## Purpose
+
+Make the open-source CMS workflow useful without requiring a bespoke visual editor or a
+specific remote CMS. The reference provider stores canonical resource contracts in EDN
+files while consumers depend only on a repository boundary.
+
+## Scope
+
+- Define the smallest provider-neutral operations required by current consumers: resolve
+  one, list/query, write/replace with validation, and explicit identity/version handling.
+- Reuse the existing namespace/resource EDN contract shape rather than introducing a
+  second content language.
+- Keep filesystem/Git path details inside the provider implementation.
+- Validate writes before they become repository authority.
+- Define deterministic conflict behavior for duplicate resource identity.
+- Preserve enough version/provenance information for downstream publication,
+  transduction, and evaluation consumers to bind to immutable revisions where required.
+- Prove the boundary using an in-memory/fake provider plus the real file provider.
+
+## Provider compatibility
+
+A future Optimizely provider should be able to implement the same semantic operations.
+Compatibility tests must therefore assert behavior and contract shape, not filesystem
+layout.
+
+## Non-goals
+
+- Implementing Optimizely in this card.
+- Building a visual page editor.
+- Owning publication effects, translation/transduction, evaluation, or HTML rendering.
+- Exposing raw EDN parsing requirements to browser clients.
+
+## Done when
+
+- A resource consumer can run the same contract tests against a fake and the file/EDN
+  provider.
+- Canonical resource identities and validation behavior are provider-independent.
+- File-backed resources can be edited through a narrow write operation and immediately
+  re-read through the same repository contract.
+- No consumer needs to know a resource came from disk in order to use it.
