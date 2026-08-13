@@ -59,12 +59,22 @@
   (reset! running?* false))
 
 (defn reload!
+  "Stop and restart the event runtimes, reporting what actually happened.
+
+   Refuses outright when the process is flagged. Returning a hardcoded
+   `{:ok true}` here was how the reset route came to report success while
+   `start!` had declined to arm anything — the outcome was computed correctly
+   one level down and then discarded. It also short-circuits before `stop!`,
+   because a reload that cannot start must not tear down first."
   ([]
    (reload! (cfg)))
   ([config]
-   (stop!)
-   (start! config)
-   (js/Promise.resolve {:ok true :action "reload"})))
+   (if (disabled? config)
+     (do (js/console.warn
+          "[event-runtimes] refusing to reload — KNOXX_DISABLE_EVENT_RUNTIMES is set")
+         (js/Promise.resolve {:ok false :action "reload" :status :disabled}))
+     (do (stop!)
+         (js/Promise.resolve {:ok true :action "reload" :status (start! config)})))))
 
 (defn debounced-reload!
   []
