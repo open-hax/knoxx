@@ -195,3 +195,25 @@ session with real network/CLI access should run the test suite, then drive
 `ready -> todo -> in_progress -> testing` through
 `node packages/rheos/dist/cli.cjs status-update knoxx-publication-resource-contracts --to <status>`.
 ***
+
+Cross-repo dependency 2026-08-13 (Codex review on PR #227): loading these
+resources from a namespace manifest (`{:namespace ... :resources [...]}`,
+the format this card's own example uses) needs two things beyond this
+card's Malli shapes:
+
+1. `kind-id-keys` in `open-hax/openplanner`'s
+   `packages/contract-runtime/src/cljs/open_hax/contract_runtime/manifest.cljs`
+   has to register `:document`/`:garden`/`:publication`, or
+   `namespace-file-definitions` silently drops every such entry before it
+   reaches Knoxx's loader. Proposed fix: open-hax/openplanner#131 (not
+   merged as of this note).
+2. Even with that fix, a manifest entry's local id
+   (`:document/id :translation-pipeline`) is projected through
+   unqualified — it needs the namespace-qualified form
+   (`:knoxx.docs/translation-pipeline`) before it satisfies this card's
+   `qualified-keyword?` fields. `knoxx-publication-intent-resolver`'s
+   pseudocode already sketches that canonicalization step
+   (`canonicalize-document`/`canonicalize-garden`/`canonicalize-intent`);
+   until that card lands, only pre-qualified standalone resource files
+   (not namespace manifests) will pass validation at the loader boundary.
+***
