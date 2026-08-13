@@ -6,6 +6,7 @@
   execution to shadow-cljs. It intentionally stays in Clojure so mutation
   operators work on Lisp data, not generated JavaScript."
   (:require [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [clojure.tools.reader :as reader]
@@ -225,6 +226,23 @@
   [{:keys [src-dir] :or {src-dir default-src-dir}} mutant]
   (io/file src-dir (:relative-path mutant)))
 
+(defn assert-clean-tree!
+  "with-mutated-source! restores src-dir via try/finally plus a JVM shutdown
+  hook, but neither runs on SIGKILL or power loss. Refusing to start against
+  a dirty tree means that worst case is always safely recoverable with
+  `git checkout -- <src-dir>`, since nothing uncommitted was ever at risk."
+  [{:keys [src-dir] :or {src-dir default-src-dir}}]
+  (let [result (shell/sh "git" "status" "--porcelain" "--" src-dir)]
+    (when (not= 0 (:exit result))
+      (throw (ex-info "git status failed while checking for uncommitted changes"
+                      {:src-dir src-dir :result result})))
+    (when-let [dirty (seq (remove str/blank? (str/split-lines (:out result))))]
+      (throw (ex-info (str "Refusing to run mutation tests against a dirty " src-dir
+                           ". Mutation runs temporarily overwrite real source files; "
+                           "commit or stash first so a killed run can always recover "
+                           "with `git checkout`.")
+                      {:src-dir src-dir :dirty-paths dirty})))))
+
 (defn with-mutated-source!
   "backend/shadow-cljs.edn runs shadow-cljs in :deps mode, which hands the
   entire classpath to tools.deps and ignores :source-paths outright (even via
@@ -397,6 +415,8 @@
 
 (defn run-suite!
   [opts]
+  (when (:run? opts)
+    (assert-clean-tree! opts))
   (let [mutants (discover-mutants opts)
         results (if (:run? opts)
                   (mapv #(evaluate-mutant! opts %) mutants)
