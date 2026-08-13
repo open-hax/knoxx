@@ -2,6 +2,7 @@
   (:require [cljs.test :refer [deftest is testing]]
             [malli.core :as m]
             [knoxx.backend.domain.publication-migration :as migration]
+            [knoxx.backend.domain.publication-migration-identity :as ident]
             [knoxx.backend.infra.publication-migration :as fold]
             [knoxx.backend.law.publication :as law]))
 
@@ -33,11 +34,17 @@
    :document/source {:path "docs/translation-pipeline.md"}})
 
 (defn- membership-row
-  "Normalize the fixture's single membership entry, asserting it normalized."
+  "Normalize the fixture's single membership entry, asserting it normalized.
+
+   Deliberately does NOT override :path. The first version of this helper did
+   (`(assoc (:row result) :path \"/translation-pipeline\")`) and that override
+   masked a real bug: normalization copied the repository `source_path`
+   verbatim, so every legacy membership would have conflicted on path in
+   production while the suite stayed green."
   [document]
   (let [[result] (migration/normalize-publication-rows document)]
     (is (= :normalized (:migration/status result)))
-    (assoc (:row result) :path "/translation-pipeline")))
+    (:row result)))
 
 ;; ── 1 membership is the legacy published fact ──────────────────────────────
 
@@ -198,11 +205,11 @@
    filesystem-backed implementations. The appender models the documented
    `append-once` contract — idempotent by receipt key — so an unstable key
    would show up as a second entry rather than being absorbed."
-  [records]
+  [source]
   (let [receipts (atom {})
         writes (atom [])
         append-calls (atom 0)]
-    {:ctx {:read-records! (fn [] (js/Promise.resolve records))
+    {:ctx {:read-records! (fn [] (js/Promise.resolve source))
            :write! (fn [resource]
                      (swap! writes conj resource)
                      (js/Promise.resolve resource))
@@ -218,6 +225,11 @@
      :append-calls append-calls
      :writes writes}))
 
+(defn- publications-only
+  "A LegacySource carrying only publication records."
+  [& records]
+  {:publications (vec records)})
+
 (defn- record-for
   [document row]
   {:document document :row row})
@@ -226,7 +238,7 @@
 
 (deftest ^:async fold-awaits-promise-returning-writer
   (let [row (membership-row legacy-document)
-        {:keys [ctx]} (fake-ctx [(record-for migrated-document row)])
+        {:keys [ctx]} (fake-ctx (publications-only (record-for migrated-document row)))
         result (await (fold/migrate-publication-records!
                        ctx policy migration/empty-index))
         indexed (vals (get-in result [:index :publications]))]
@@ -241,8 +253,8 @@
 
 (deftest ^:async second-row-reconciles-against-in-run-index
   (let [row (membership-row legacy-document)
-        {:keys [ctx writes]} (fake-ctx [(record-for migrated-document row)
-                                        (record-for migrated-document row)])
+        {:keys [ctx writes]} (fake-ctx (publications-only (record-for migrated-document row)
+                                                     (record-for migrated-document row)))
         result (await (fold/migrate-publication-records!
                        ctx policy migration/empty-index))]
     (testing "the identical second row is a noop, not a second blind write"
@@ -267,8 +279,8 @@
 
 (deftest ^:async rerun-is-idempotent
   (let [row (membership-row legacy-document)
-        records [(record-for migrated-document row)]
-        {:keys [ctx writes receipts]} (fake-ctx records)
+        source (publications-only (record-for migrated-document row))
+        {:keys [ctx writes receipts]} (fake-ctx source)
         first-run (await (fold/migrate-publication-records!
                           ctx policy migration/empty-index))
         second-run (await (fold/migrate-publication-records!
@@ -284,8 +296,8 @@
 
 (deftest ^:async conflict-receipts-have-stable-keys
   (let [row (membership-row legacy-document)
-        records [(record-for migrated-document row)]
-        {:keys [ctx receipts append-calls]} (fake-ctx records)
+        source (publications-only (record-for migrated-document row))
+        {:keys [ctx receipts append-calls]} (fake-ctx source)
         run! #(fold/migrate-publication-records! ctx policy-without-review
                                                  migration/empty-index)
         first-run (await (run!))
@@ -295,8 +307,11 @@
     (testing "the same source record keys the same receipt across runs"
       (is (= 1 (count @receipts))
           "an unstable receipt key would land a second entry here")
-      (is (= [:publication/migration :cms-doc-garden-publications ["doc-1" "garden-a"]]
-             (first (keys @receipts)))))
+      (testing "keyed by phase as well as source, so a document conflict and a
+                publication conflict for the same legacy id cannot collide"
+        (is (= [:publication/migration :publications
+                :cms-doc-garden-publications ["doc-1" "garden-a"]]
+               (first (keys @receipts))))))
     (testing "and the appender is called once per run, never twice within one"
       (is (= 2 @append-calls)))))
 
@@ -326,3 +341,145 @@
     (is (thrown? js/Error (migration/assert-policy! {:migration/namespace "not-a-keyword"}))))
   (testing "but a missing membership review policy does not — it is a per-row conflict"
     (is (some? (migration/assert-policy! policy-without-review)))))
+
+;; ── Review round 2: Codex findings on #232 ────────────────────────────────
+
+(deftest publication-route-is-derived-not-copied
+  (testing "legacy source_path is a repository path, not a public route —
+            copying it verbatim made every membership conflict on path"
+    (is (= "docs/translation-pipeline.md" (:source_path legacy-document)))
+    (is (false? (law/valid-publication-path? (:source_path legacy-document)))))
+  (testing "the derived route is rooted and passes the shared path law"
+    (let [row (membership-row legacy-document)]
+      (is (= "/translation-pipeline" (:path row)))
+      (is (true? (law/valid-publication-path? (:path row))))
+      (is (= :candidate (:migration/status
+                         (migration/publication->decision policy migrated-document row))))))
+  (testing "derivation strips directories and the extension"
+    (is (= "/existing" (migration/derive-publication-path "docs/existing.md")))
+    (is (= "/deep" (migration/derive-publication-path "a/b/c/deep.mdx")))
+    (is (= "/no-ext" (migration/derive-publication-path "no-ext"))))
+  (testing "a trailing slash still yields the last named segment"
+    (is (= "/docs" (migration/derive-publication-path "docs/")))
+    (is (true? (law/valid-publication-path? "/docs"))))
+  (testing "an underivable path conflicts rather than producing a bad route"
+    (doseq [[label value] [["blank" ""] ["nil" nil] ["whitespace" "   "] ["non-string" 42]]]
+      (testing label
+        (is (nil? (migration/derive-publication-path value)))
+        (let [result (migration/normalize-membership-entry
+                      (assoc legacy-document :source_path value)
+                      {:garden_id "garden-a"})]
+          (is (true? (migration/conflict? result)))
+          (is (= :undecodable-publication-path (:reason result))))))))
+
+(deftest malformed-legacy-identities-are-rejected
+  (testing "legacy-name accepts only strings and keywords"
+    (is (= "a" (ident/legacy-name "a")))
+    (is (= "a" (ident/legacy-name :a)))
+    (doseq [value [42 {} [] nil "" "   "]]
+      (is (nil? (ident/legacy-name value))
+          (str "stringifying " (pr-str value) " would invent an identity"))))
+  (testing "a malformed garden id conflicts instead of becoming an invented keyword"
+    (let [row (assoc (membership-row legacy-document) :garden-id 42)
+          decision (migration/publication->decision policy migrated-document row)]
+      (is (true? (migration/conflict? decision)))
+      (is (= :unresolvable-garden-identity (:reason decision)))))
+  (testing "a malformed document id conflicts too"
+    (doseq [bad [42 {} nil ""]]
+      (let [decision (migration/publication->decision
+                      policy (assoc migrated-document :document/id bad)
+                      (membership-row legacy-document))]
+        (is (true? (migration/conflict? decision)))
+        (is (= :unresolvable-document-identity (:reason decision))))
+      (let [decision (migration/document->decision
+                      policy (assoc legacy-document :document/id bad))]
+        (is (true? (migration/conflict? decision)))))))
+
+(deftest generated-publication-ids-are-injective
+  (testing "the old '-' join collapsed distinct relations: document a-b + garden c
+            and document a + garden b-c both produced a-b-c-en"
+    (let [id (fn [document-id garden-id]
+               (ident/canonical-publication-id
+                policy
+                {:document/id document-id}
+                {:garden-id garden-id :locale :en}
+                :source/current))]
+      (is (not= (id :a-b "c") (id :a "b-c")))
+      (is (some? (id :a-b "c")))
+      (is (some? (id :a "b-c")))))
+  (testing "a component containing the separator is rejected rather than colliding"
+    (is (nil? (ident/id-component "has~separator")))
+    (is (nil? (ident/canonical-publication-id
+               policy {:document/id :ok} {:garden-id "has~sep" :locale :en} :source/current))))
+  (testing "revision is part of the identity, because the relation key includes it"
+    (let [base {:document/id :doc}
+          row {:garden-id "g" :locale :en}
+          selector-id (ident/canonical-publication-id policy base row :source/current)
+          pinned-id (ident/canonical-publication-id policy base row "abc123")]
+      (is (not= selector-id pinned-id))
+      (testing "and a concrete revision cannot masquerade as the selector"
+        (is (not= (ident/canonical-publication-id policy base row "current")
+                  selector-id))))))
+
+(deftest ^:async two-revisions-of-one-relation-both-migrate
+  (let [base {:source/shape :explicit-publication-row
+              :source/collection :legacy-publications
+              :garden-id "garden-a"
+              :locale :en
+              :path "/translation-pipeline"
+              :published true
+              :review-required true}
+        current (assoc base :source/id "pub-current" :revision :source/current)
+        pinned (assoc base :source/id "pub-pinned" :revision "abc123")
+        {:keys [ctx]} (fake-ctx {:publications [(record-for migrated-document current)
+                                                (record-for migrated-document pinned)]})
+        result (await (fold/migrate-publication-records!
+                       ctx policy migration/empty-index))]
+    (testing "distinct revisions are distinct relations, so both are written"
+      (is (= 2 (count (:written result))))
+      (is (= 2 (count (set (map :publication/id (:written result)))))))))
+
+;; ── Fold phases ───────────────────────────────────────────────────────────
+
+(deftest ^:async fold-migrates-documents-and-gardens-too
+  (let [garden-row {:garden-id "garden-a" :title "Garden A" :status "active"}
+        row (membership-row legacy-document)
+        {:keys [ctx]} (fake-ctx {:documents [legacy-document]
+                                 :gardens [garden-row]
+                                 :publications [(record-for migrated-document row)]})
+        result (await (fold/migrate-publication-records!
+                       ctx policy migration/empty-index))
+        index (:index result)]
+    (testing "a publication-only fold would leave every intent dangling"
+      (is (= 1 (count (:documents index))))
+      (is (= 1 (count (:gardens index))))
+      (is (= 1 (count (:publications index)))))
+    (testing "documents and gardens are written before publications"
+      (is (= [:document/id :garden/id :publication/id]
+             (mapv (fn [resource]
+                     (first (filter #(contains? resource %)
+                                    [:document/id :garden/id :publication/id])))
+                   (:written result)))))
+    (testing "and the written publication's references now resolve"
+      (let [publication (last (:written result))]
+        (is (contains? (:documents index) (:publication/document publication)))
+        (is (contains? (:gardens index) (:publication/garden publication)))))))
+
+(deftest ^:async legacy-source-shape-is-validated-at-the-boundary
+  (testing "a record missing its :document/:row wrapper fails at the read boundary
+            rather than destructuring to nils and surfacing as a decode conflict"
+    (let [{:keys [ctx]} (fake-ctx {:publications [{:row {}}]})]
+      (is (thrown? js/Error
+                   (await (fold/migrate-publication-records!
+                           ctx policy migration/empty-index))))))
+  (testing "an unexpected top-level key is rejected"
+    (let [{:keys [ctx]} (fake-ctx {:publications [] :surprise true})]
+      (is (thrown? js/Error
+                   (await (fold/migrate-publication-records!
+                           ctx policy migration/empty-index))))))
+  (testing "an empty source is legal"
+    (let [{:keys [ctx]} (fake-ctx {})
+          result (await (fold/migrate-publication-records!
+                         ctx policy migration/empty-index))]
+      (is (empty? (:written result)))
+      (is (empty? (:conflicts result))))))

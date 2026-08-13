@@ -14,7 +14,9 @@
   row is first normalized into a *declared source shape*, and each shape states
   which semantic fields it carries explicitly versus which the shape itself
   defines. Truthiness is never a decoder."
-  (:require [malli.core :as m]
+  (:require [clojure.string :as str]
+            [malli.core :as m]
+            [knoxx.backend.domain.publication-migration-identity :as ident]
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.law.publication :as law]))
 
@@ -63,23 +65,41 @@
 (def declared-source-shapes
   #{:garden-membership :explicit-publication-row})
 
+(defn derive-publication-path
+  "Turn a legacy repository path into a public route.
+
+   `source_path` is a repository path — `docs/existing.md` — while
+   `valid-publication-path?` requires a rooted route with no query or fragment.
+   Copying it verbatim would make EVERY legacy membership conflict on path and
+   the migration could never populate the topology. The route is the file's
+   basename without its extension, rooted."
+  [source-path]
+  (when (m/validate law/NonBlankString source-path)
+    (let [basename (last (str/split (str/trim source-path) #"/"))
+          without-extension (str/replace (str basename) #"\.[^.]+$" "")]
+      (when (seq without-extension)
+        (str "/" without-extension)))))
+
 (defn normalize-membership-entry
   "Project one legacy membership entry onto the `:garden-membership` shape.
-   Locale and path come from the owning document, since the entry carries
+   Locale and route come from the owning document, since the entry carries
    neither."
   [document entry]
-  (if (m/validate GardenMembershipEntry entry)
+  (cond
+    (not (m/validate GardenMembershipEntry entry))
+    (conflict :unresolvable-garden-membership :garden_id (:garden_id entry) entry)
+
+    (nil? (derive-publication-path (:source_path document)))
+    (conflict :undecodable-publication-path :source_path (:source_path document) entry)
+
+    :else
     {:migration/status :normalized
      :row {:source/shape :garden-membership
            :source/collection :cms-doc-garden-publications
            :source/id [(:legacy/doc-id document) (:garden_id entry)]
            :garden-id (:garden_id entry)
-           :path (:source_path document)
-           :locale (:document/source-locale document)}}
-    (conflict :unresolvable-garden-membership
-              :garden_id
-              (:garden_id entry)
-              entry)))
+           :path (derive-publication-path (:source_path document))
+           :locale (:document/source-locale document)}}))
 
 (defn normalize-publication-rows
   [document]
@@ -173,62 +193,63 @@
 
     (unknown-shape row)))
 
-;; ── Identity ───────────────────────────────────────────────────────────────
-
-(defn- legacy-name
-  [value]
-  (cond
-    (keyword? value) (name value)
-    (nil? value) nil
-    :else (not-empty (str value))))
-
-(defn canonical-garden-id
-  [policy row]
-  (resolver/canonical-id (:migration/namespace policy)
-                         (keyword (legacy-name (:garden-id row)))))
-
-(defn canonical-publication-id
-  "Identity is derived from document, garden, and locale rather than from the
-   source path or title, so a retitled or moved document keeps its publication
-   identity across reruns."
-  [policy document row]
-  (resolver/canonical-id
-   (:migration/namespace policy)
-   (keyword (str (legacy-name (:document/id document))
-                 "-" (legacy-name (:garden-id row))
-                 "-" (legacy-name (:locale row))))))
-
 ;; ── Decisions ──────────────────────────────────────────────────────────────
 
 (defn document->decision
   "A document may not invent its source locale: publication gating reads it, so
    an unresolvable locale must be resolved before cutover."
   [policy document]
-  (let [locale (decode-locale :document/source-locale document)]
+  (let [locale (decode-locale :document/source-locale document)
+        document-name (ident/id-component (:document/id document))]
     (cond
       (conflict? locale) locale
+
+      (nil? document-name)
+      (conflict :unresolvable-document-identity :document/id (:document/id document) document)
 
       (not (m/validate law/NonBlankString (:source_path document)))
       (conflict :invalid-document-source-path :source_path (:source_path document) document)
 
       :else
       {:migration/status :candidate
-       :resource {:document/id (resolver/canonical-id
-                                (:migration/namespace policy)
-                                (keyword (legacy-name (:document/id document))))
+       :resource {:document/id (resolver/canonical-id (:migration/namespace policy)
+                                                      (keyword document-name))
                   :document/title (or (:title document) "")
                   :document/source-locale (:ok locale)
                   :document/source {:path (:source_path document)}}})))
 
 (defn garden->decision
   [policy row]
-  (let [status (decode-garden-status row)]
-    (if (conflict? status)
-      status
+  (let [status (decode-garden-status row)
+        garden-id (ident/canonical-garden-id policy row)]
+    (cond
+      (conflict? status) status
+
+      (nil? garden-id)
+      (conflict :unresolvable-garden-identity :garden-id (:garden-id row) row)
+
+      :else
       {:migration/status :candidate
-       :resource {:garden/id (canonical-garden-id policy row)
+       :resource {:garden/id garden-id
                   :garden/title (or (:title row) "")
                   :garden/status (:ok status)}})))
+
+(defn- identity-conflict
+  "First identity component that cannot be represented faithfully, or nil.
+
+   Checked before a resource is assembled, so a malformed legacy value becomes a
+   conflict carrying its source evidence rather than an invented id written as a
+   resource."
+  [document row publication-id]
+  (cond
+    (nil? (ident/id-component (:document/id document)))
+    (conflict :unresolvable-document-identity :document/id (:document/id document) row)
+
+    (nil? (ident/id-component (:garden-id row)))
+    (conflict :unresolvable-garden-identity :garden-id (:garden-id row) row)
+
+    (nil? publication-id)
+    (conflict :unrepresentable-publication-identity :publication/id nil row)))
 
 (defn publication->decision
   "Short-circuits on the shape decode before any shape-dependent decoder runs,
@@ -242,23 +263,22 @@
             revision (decode-revision row)
             state (decode-publication-state row)
             review (decode-review-policy policy row)
-            invalid (decoded [locale revision state review])]
-        (cond
-          invalid invalid
-
-          (not (law/valid-publication-path? (:path row)))
-          (conflict :invalid-publication-path :path (:path row) row)
-
-          :else
-          {:migration/status :candidate
-           :resource {:publication/id (canonical-publication-id policy document row)
-                      :publication/document (:document/id document)
-                      :publication/garden (canonical-garden-id policy row)
-                      :publication/locale (:ok locale)
-                      :publication/revision (:ok revision)
-                      :publication/state (:ok state)
-                      :publication/path (:path row)
-                      :translation/review (:ok review)}})))))
+            invalid (decoded [locale revision state review])
+            publication-id (when-not invalid
+                             (ident/canonical-publication-id policy document row (:ok revision)))]
+        (or invalid
+            (identity-conflict document row publication-id)
+            (when-not (law/valid-publication-path? (:path row))
+              (conflict :invalid-publication-path :path (:path row) row))
+            {:migration/status :candidate
+             :resource {:publication/id publication-id
+                        :publication/document (:document/id document)
+                        :publication/garden (ident/canonical-garden-id policy row)
+                        :publication/locale (:ok locale)
+                        :publication/revision (:ok revision)
+                        :publication/state (:ok state)
+                        :publication/path (:path row)
+                        :translation/review (:ok review)}})))))
 
 ;; ── In-run migration index ─────────────────────────────────────────────────
 
