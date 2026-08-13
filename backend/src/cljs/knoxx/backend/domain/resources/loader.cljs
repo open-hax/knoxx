@@ -115,7 +115,7 @@
 (defn resource-record-sync
   [config resource-kind resource-id]
   (let [class-name (resource-class resource-kind)
-        wanted-id (some-> resource-id str str/trim not-empty)]
+        wanted-id (some-> resource-id contract-loader/qualified-keyword->str str/trim not-empty)]
     (some (fn [record]
             (when (and (= class-name (:resource/class record))
                        (= wanted-id (:resource/id record)))

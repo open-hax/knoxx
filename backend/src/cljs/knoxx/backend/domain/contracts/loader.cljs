@@ -146,11 +146,13 @@
   [v]
   (if (keyword? v) (name v) (str v)))
 
-(defn- qualified-keyword->str
+(defn qualified-keyword->str
   "Like keyword->str, but keeps the namespace segment. Document/garden/
    publication ids are namespace-qualified on purpose; stringifying them with
    plain `name` would collide distinct namespaces (:tenant-a/foo and
-   :tenant-b/foo both becoming \"foo\")."
+   :tenant-b/foo both becoming \"foo\"). Public so lookup call sites (e.g.
+   knoxx.backend.domain.resources.loader) can normalize a keyword id the
+   same way it was normalized when the record was indexed."
   [v]
   (if (keyword? v) (subs (str v) 1) (str v)))
 
