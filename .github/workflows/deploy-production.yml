@@ -32,6 +32,14 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Setup Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13
+        with:
+          # backend/shadow-cljs.edn runs in :deps mode, so shadow-cljs resolves
+          # its classpath (including the katamorph Git dependency) through
+          # tools.deps and needs the clojure CLI on PATH.
+          cli: latest
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:

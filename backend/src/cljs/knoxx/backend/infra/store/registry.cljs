@@ -1,13 +1,13 @@
 (ns knoxx.backend.infra.store.registry
-  "Store registry: delegates to the contract-runtime store registry.
+  "Store registry: delegates to the katamorph store registry.
 
    This is a thin wrapper that provides backward compatibility for existing
    Knoxx callers. The actual implementation lives in the extracted
-   contract-runtime package.
+   katamorph package.
 
    The config map must contain :contract-runtime/deps (see
    knoxx.backend.contract-runtime-deps/build-deps)."
-  (:require [open-hax.contract-runtime.store.registry :as core-registry]))
+  (:require [katamorph.store.registry :as core-registry]))
 
 (defn register-store!
   "Register a store instance under its qualified id. Returns the store."

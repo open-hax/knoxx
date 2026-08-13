@@ -39,6 +39,13 @@ if ! command -v java >/dev/null 2>&1; then
   exit 1
 fi
 
+# shadow-cljs.edn runs in :deps mode, so it resolves its classpath through
+# tools.deps and launches via the Clojure CLI rather than its own resolver.
+if ! command -v clojure >/dev/null 2>&1; then
+  echo "[knoxx-backend-dev] clojure is required for shadow-cljs (:deps mode)" >&2
+  exit 1
+fi
+
 if ! command -v pnpm >/dev/null 2>&1; then
   corepack enable >/dev/null 2>&1 || true
   corepack prepare pnpm@10.14.0 --activate >/dev/null 2>&1 || true
