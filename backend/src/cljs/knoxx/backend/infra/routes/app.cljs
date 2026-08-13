@@ -15,6 +15,7 @@
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.infra.routes.resources :as resource-routes]
             [knoxx.backend.extern.fastify.publications :as publication-routes]
+            [knoxx.backend.extern.fastify.translation-config :as translation-config-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
@@ -1529,6 +1530,14 @@
   ;; Publication projection reads desired state from resources alone. Its
   ;; Fastify interop is owned by the extern adapter, so it takes no helpers map.
   (publication-routes/register-publication-routes! app config)
+  ;; Knoxx-owned translation config. Deliberately not gated on legacy-backend
+  ;; readiness — model selection must resolve with that backend absent.
+  (translation-config-routes/register-translation-config-routes!
+   app runtime config
+   {:route! route!
+    :json-response! json-response!
+    :with-request-context! with-request-context!
+    :ensure-permission! ensure-permission!})
   (model-routes/register-model-routes! app runtime config)
   (voice-routes/register-voice-routes! app runtime config
                                        {:route! route!
