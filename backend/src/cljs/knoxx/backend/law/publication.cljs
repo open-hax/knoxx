@@ -34,12 +34,13 @@
    direct resource validation so directly authored resources cannot bypass
    the route validation that migrated resources must satisfy."
   [path]
-  (and (string? path)
-       (seq path)
-       (str/starts-with? path "/")
-       (not (str/includes? path "?"))
-       (not (str/includes? path "#"))
-       (not (str/includes? path "\u0000"))))
+  (boolean
+   (and (string? path)
+        (seq path)
+        (str/starts-with? path "/")
+        (not (str/includes? path "?"))
+        (not (str/includes? path "#"))
+        (not (str/includes? path "\u0000")))))
 
 (def PublicationPath
   [:and string? [:fn valid-publication-path?]])
@@ -78,10 +79,21 @@
 
 ;; Resolved pure-domain view. Source locale is copied from the referenced
 ;; document after reference validation; it is not duplicated as resource
-;; truth, so translation gating never has to guess a default.
+;; truth, so translation gating never has to guess a default. Fields are
+;; repeated from PublicationIntentResource rather than composed via
+;; `:merge` — this project's malli setup throws :malli.core/invalid-schema
+;; for `:merge` children whose entries hold bare predicate fns.
 (def PublicationIntent
-  [:merge PublicationIntentResource
-   [:map [:document/source-locale Locale]]])
+  [:map
+   [:publication/id qualified-keyword?]
+   [:publication/document qualified-keyword?]
+   [:publication/garden qualified-keyword?]
+   [:publication/locale Locale]
+   [:publication/revision PublicationRevision]
+   [:publication/state [:enum :published :withheld :archived]]
+   [:publication/path PublicationPath]
+   [:translation/review [:enum :none :required]]
+   [:document/source-locale Locale]])
 
 ;; ── Boundary helpers ───────────────────────────────────────────────────────
 
@@ -102,17 +114,15 @@
   [resources]
   (reduce
    (fn [index resource]
-     (cond
+     (cond-> index
        (contains? resource :document/id)
-       (assoc-in index [:documents (:document/id resource)] resource)
+       (assoc-in [:documents (:document/id resource)] resource)
 
        (contains? resource :garden/id)
-       (assoc-in index [:gardens (:garden/id resource)] resource)
+       (assoc-in [:gardens (:garden/id resource)] resource)
 
        (contains? resource :publication/id)
-       (assoc-in index [:publications (:publication/id resource)] resource)
-
-       :else index))
+       (assoc-in [:publications (:publication/id resource)] resource)))
    {:documents {} :gardens {} :publications {}}
    resources))
 
@@ -133,6 +143,6 @@
   (boolean
    (and (contains? (:documents resource-index) (:publication/document intent))
         (contains? (:gardens resource-index) (:publication/garden intent))
-        (not= :archived
-              (:garden/status
-               (get-in resource-index [:gardens (:publication/garden intent)]))))))
+        (= :active
+           (:garden/status
+            (get-in resource-index [:gardens (:publication/garden intent)]))))))

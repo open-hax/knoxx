@@ -13,7 +13,7 @@
 
 (def contract-class-order
   ["agents" "actors" "roles" "capabilities" "policies"
-   "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "triggers" "stores" "sub_agents" "cms"])
+   "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "triggers" "stores" "sub_agents" "cms" "documents" "gardens" "publications"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -98,6 +98,9 @@
       ("trigger" "triggers") "triggers"
       ("store" "stores") "stores"
       ("sub-agent" "sub-agents" "sub_agent" "sub_agents") "sub_agents"
+      ("document" "documents") "documents"
+      ("garden" "gardens") "gardens"
+      ("publication" "publications") "publications"
       (throw (js/Error. (str "Unknown contract class: " value))))))
 
 ;; ── Stderr logging ─────────────────────────────────────────────────────────
@@ -164,6 +167,9 @@
                           (when (:runtime-feature/id raw) "runtime_features")
                           (when (= :runtime-feature (:contract/kind raw)) "runtime_features")
                           (when (:model-family/id raw) "model_families")
+                          (when (:document/id raw) "documents")
+                          (when (:garden/id raw) "gardens")
+                          (when (:publication/id raw) "publications")
                           (:contract/kind raw)
                           (:kind raw))
                       keyword->str str/trim not-empty)
@@ -173,7 +179,10 @@
                           (:generator/id raw) (:schedule/id raw)
                           (:source-mode/id raw)
                           (:source/id raw)
-                          (:runtime-feature/id raw))
+                          (:runtime-feature/id raw)
+                          (:document/id raw)
+                          (:garden/id raw)
+                          (:publication/id raw))
                       keyword->str str/trim not-empty)]
     (when (and kind id) [kind id])))
 
