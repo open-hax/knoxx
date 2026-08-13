@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "contracts"]
-write-id: "1786565774217-0.xvewz36ji1eoetarnvl"
+write-id: "1786602901096-0.8i7gumo66xbwsw54siq"
 points: "5"
 title: "Define document, garden, and publication resource contracts"
 priority: "P0"
-status: "ready"
+status: "review"
 uuid: "knoxx-publication-resource-contracts"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -178,8 +178,8 @@ loader validation hook, then re-run to green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Walked accepted -> breakdown -> ready via the Rheos promethean FSM.
-
 ---
+
 Implementation 2026-08-12: added `knoxx.backend.law.publication`
 (`backend/src/cljs/knoxx/backend/law/publication.cljs`) with `Locale`,
 `PublicationPath`/`valid-publication-path?`, `Document`, `Garden`,
@@ -197,7 +197,6 @@ session with real network/CLI access should run the test suite, then drive
 `node packages/rheos/dist/cli.cjs status-update knoxx-publication-resource-contracts --to <status>`.
 
 ---
-
 Cross-repo dependency 2026-08-13 (Codex review on PR #227): loading these
 resources from a namespace manifest (`{:namespace ... :resources [...]}`,
 the format this card's own example uses) needs two things beyond this
@@ -240,4 +239,5 @@ namespace-qualified ids (distinct from every other resource kind, which is
 unnamespaced) before these kinds are exposed through the admin CRUD facade
 — out of scope for this card's Malli shapes.
 
+Closeout 2026-08-13: fixed the last open review thread from PR #227 (Codex P2, law/publication.cljs:148). `admissible-publication?` guarded with `(not= :archived ...)`, which fails open — a nil, absent, or unrecognized `:publication/state` on an intent that had not been validated against PublicationIntentResource passed admissibility whenever its refs resolved and the garden was active. Replaced with an explicit allow-list, `reconcilable-publication-states` = #{:published :withheld}, so garden status and intent state now both fail closed. :withheld stays admissible on purpose: it reconciles toward removal, which is still a lawful plan. New test admissible-publication?-fails-closed-on-unrecognized-state covers both reconcilable states, plus :archived, :deleted, nil, a string state, and an absent key. Verification: shadow-cljs compile test 809 tests / 2410 assertions, 0 failures 0 errors; typecheck (compile server) 0 warnings; clj-kondo 194 warnings / 0 errors, identical to the main baseline, none in the changed files. Deferred and NOT part of this card: the admin CRUD route-addressing gap for namespace-qualified ids (parsed-resource-id / safe-resource-id! in infra/routes/resources.cljs) is now tracked as knoxx-resource-route-qualified-id-addressing; it does not block the epic because the CMS cutover card uses its own /api/publications facade rather than admin CRUD.
 ---

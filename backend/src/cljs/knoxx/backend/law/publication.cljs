@@ -139,13 +139,23 @@
     (assert-valid! (:publication/document intent) Document document)
     (assoc intent :document/source-locale (:document/source-locale document))))
 
+(def reconcilable-publication-states
+  "Desired states that may take part in reconciliation. `:published` reconciles
+   toward a materialization and `:withheld` reconciles toward its removal, so
+   both are lawful inputs to a plan. `:archived` is terminal and never
+   reconciles. Membership is an allow-list rather than a `not= :archived`
+   denial so that a missing or unrecognized state on an intent that has not
+   been validated against `PublicationIntentResource` fails closed."
+  #{:published :withheld})
+
 (defn admissible-publication?
-  "True when both the document and garden references resolve and the garden
-   is not archived. Archived gardens or dangling references can never
+  "True when the intent's desired state is reconcilable, both the document and
+   garden references resolve, and the garden is active. Archived gardens,
+   archived or unrecognized intent states, and dangling references can never
    reconcile to a public materialization."
   [resource-index intent]
   (boolean
-   (and (not= :archived (:publication/state intent))
+   (and (contains? reconcilable-publication-states (:publication/state intent))
         (contains? (:documents resource-index) (:publication/document intent))
         (contains? (:gardens resource-index) (:publication/garden intent))
         (= :active
