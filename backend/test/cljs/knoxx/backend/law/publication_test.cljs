@@ -165,6 +165,28 @@
                  resource-index
                  (assoc example-manifest-intent :publication/state :archived))))))
 
+(deftest admissible-publication?-fails-closed-on-unrecognized-state
+  (testing "only :published and :withheld reconcile"
+    (is (= #{:published :withheld} pub/reconcilable-publication-states)))
+  (let [resource-index (pub/index-resources [translation-pipeline-document promethean-garden])]
+    (doseq [state [:published :withheld]]
+      (testing (str "reconcilable state " state)
+        (is (true? (pub/admissible-publication?
+                    resource-index
+                    (assoc example-manifest-intent :publication/state state))))))
+    (doseq [[label state] [["archived" :archived]
+                           ["unrecognized keyword" :deleted]
+                           ["nil" nil]
+                           ["string" "published"]]]
+      (testing (str "non-reconcilable state: " label)
+        (is (false? (pub/admissible-publication?
+                     resource-index
+                     (assoc example-manifest-intent :publication/state state))))))
+    (testing "state key absent entirely"
+      (is (false? (pub/admissible-publication?
+                   resource-index
+                   (dissoc example-manifest-intent :publication/state)))))))
+
 ;; ── 10 resource-only fixture ──────────────────────────────────────────────
 
 (defn- source-text
