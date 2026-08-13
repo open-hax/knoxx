@@ -38,10 +38,12 @@ import styles from "./CmsPage.module.css";
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_cms_sidebar_width_px";
 
 /**
- * `garden_publications` is deliberately absent. Publication state is no longer
- * read from document metadata — it comes from the resource-backed publication
- * topology, where `desired` is contract intent and `observed` is runtime
- * evidence. Metadata is now opaque passthrough for the document upsert.
+ * Opaque passthrough for the document upsert.
+ *
+ * The legacy garden-membership metadata field is deliberately NOT declared here.
+ * Publication state is no longer read from document metadata at all — it comes
+ * from the resource-backed publication topology, where `desired` is contract
+ * intent and `observed` is runtime evidence.
  */
 type CmsDocMetadata = Record<string, unknown>;
 
