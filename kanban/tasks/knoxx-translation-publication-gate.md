@@ -205,7 +205,9 @@ Then implement `knoxx.backend.domain.publication-gate` until green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Pure card: no adapter, worker or OpenPlanner dependency in its tests.
-***
+
+---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `publication-blockers`, `publication-admissible?`, and `reconcile-translation-work` each call `publication-evidence` independently in the sketch. If `:source/current` resolves to a different concrete revision between calls, the decision that admitted publication can disagree with the revision actually queued/materialized. Compute `publication-evidence` once at the orchestration boundary and thread that single result through all three, and add a test that changes the current-revision result between calls to prove one revision is retained throughout.
-***
+
+---

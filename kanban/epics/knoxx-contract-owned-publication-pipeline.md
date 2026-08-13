@@ -122,4 +122,5 @@ resource contracts
 
 ---
 Breakdown 2026-08-12: epic held in breakdown as the container for the twelve task cards. All eleven implementable children are now ready; the epic closes behind them.
-***
+
+---

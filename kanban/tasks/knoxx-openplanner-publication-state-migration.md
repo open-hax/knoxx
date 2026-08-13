@@ -341,9 +341,11 @@ fold until green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Risk: the run needs an explicitly declared membership review policy before it can produce resources; that is now a conflict rather than a default.
-***
+
+---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `GardenMembershipEntry`'s `normalize-membership-entry` references `publication/NonBlankString`, which `knoxx.backend.law.publication` does not declare — define/export it there or point at an existing contract before implementing. Also, `migrate-publication-records!` is sketched inside a `domain.*` namespace but performs I/O (reads legacy records, writes resources, appends receipts); keep `migrate-record` and decision logic in `domain.*` and move the effectful fold itself to `infra.*`/orchestration.
 
 Pre-implementation review 2026-08-13 (Codex, not yet actioned): `publication->decision` calls `decode-source-shape`, `decode-locale`, `decode-revision`, `decode-publication-state`, and `decode-review-policy` unconditionally before checking whether the shape itself was recognized. Each of the shape-dependent `case` decoders has no default branch, so an unrecognized `:source/shape` makes `case` throw (Clojure/ClojureScript `case` throws on no match with no default) instead of producing the promised `:unknown-publication-source-shape` conflict receipt. Add an explicit unknown-shape branch to every shape-dependent decoder, or short-circuit on `decode-source-shape`'s result before calling the others.
-***
+
+---

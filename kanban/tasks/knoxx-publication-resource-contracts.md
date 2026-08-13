@@ -178,7 +178,8 @@ loader validation hook, then re-run to green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Walked accepted -> breakdown -> ready via the Rheos promethean FSM.
-***
+
+---
 Implementation 2026-08-12: added `knoxx.backend.law.publication`
 (`backend/src/cljs/knoxx/backend/law/publication.cljs`) with `Locale`,
 `PublicationPath`/`valid-publication-path?`, `Document`, `Garden`,
@@ -194,7 +195,8 @@ direct frontmatter edits bypass the Rheos ledger and read as drift. Next
 session with real network/CLI access should run the test suite, then drive
 `ready -> todo -> in_progress -> testing` through
 `node packages/rheos/dist/cli.cjs status-update knoxx-publication-resource-contracts --to <status>`.
-***
+
+---
 
 Cross-repo dependency 2026-08-13 (Codex review on PR #227): loading these
 resources from a namespace manifest (`{:namespace ... :resources [...]}`,
@@ -220,6 +222,13 @@ card's Malli shapes:
    until that card lands, only pre-qualified standalone resource files
    (not namespace manifests) will pass validation at the loader boundary.
 
+Cross-repo dependency, resolved 2026-08-13 (item 1 above): open-hax/katamorph#3
+merged (main tip `b00316a64310190335e4cb1a31b08d601eff8bb0`), registering
+`:document`/`:garden`/`:publication` in `kind-id-keys` with a regression test.
+`backend/deps.edn`'s `:cljs` alias katamorph pin is bumped past it. Item 2
+(local-id canonicalization) is unchanged and still blocked on
+`knoxx-publication-intent-resolver`.
+
 Route-addressing gap 2026-08-13 (Codex review on PR #227):
 `backend/src/cljs/knoxx/backend/infra/routes/resources.cljs`'s
 `parsed-resource-id` has no case for `"documents"`/`"gardens"`/`"publications"`,
@@ -230,4 +239,5 @@ as-is. This needs a deliberate path-safe addressing decision for
 namespace-qualified ids (distinct from every other resource kind, which is
 unnamespaced) before these kinds are exposed through the admin CRUD facade
 — out of scope for this card's Malli shapes.
-***
+
+---

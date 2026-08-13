@@ -192,7 +192,9 @@ The whole card is one `^:async` scenario built up as failing steps:
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Shares the required-surface contract with the retirement card and the fake adapter with the receipts card.
-***
+
+---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): the receipt assertion checks individual fields and omits `:path`, so a receipt with an incorrect or missing path could still pass — compare one whole expected map instead. The blocker assertion hardcodes `#{:translation-missing :translation-review-required}` rather than deriving the expected set from `publication-gate/publication-blockers` for the same fixture, so the E2E can drift from actual gate semantics undetected. And the "OpenPlanner REST absent" proof calls `openplanner-rest/call-count`, which imports the very dependency the test exists to prove is absent — use a generic fail-fast HTTP harness or fixture call recorder instead.
-***
+
+---
