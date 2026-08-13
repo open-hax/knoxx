@@ -673,26 +673,29 @@
 
 (defn ^:async ensure-bootstrap-local-password!
   "Idempotently project the environment-owned bootstrap password into the
-   local credential store. Blank passwords leave local login unprovisioned."
+   local credential store. Blank passwords revoke any previously provisioned
+   local bootstrap credential."
   ([db primary-org bootstrap opts]
    (ensure-bootstrap-local-password!
     db primary-org bootstrap opts
-    {:encode-password password/hash-password
+    {:deactivate-credential! mongo-actor-creds/deactivate-actor-credential!
+     :encode-password password/hash-password
      :upsert-credential! mongo-actor-creds/upsert-actor-credential!}))
-  ([db primary-org bootstrap opts {:keys [encode-password upsert-credential!]}]
+  ([db primary-org bootstrap opts
+    {:keys [deactivate-credential! encode-password upsert-credential!]}]
    (let [configured-password (some-> (or (:bootstrapSystemAdminPassword opts)
                                          (:bootstrap-system-admin-password opts))
-                                     str not-empty)]
-     (when configured-password
+                                     str not-empty)
+         user-id (get-in bootstrap [:user :id])
+         org-id (:id primary-org)]
+     (if configured-password
        (await (upsert-credential!
-               db
-               (get-in bootstrap [:user :id])
-               (:id primary-org)
-               "local"
+               db user-id org-id "local"
                {:kind "password"
                 :account-identifier (get-in bootstrap [:user :email])
                 :secret-json (encode-password configured-password)
-                :status "active"})))
+                :status "active"}))
+       (await (deactivate-credential! db user-id org-id "local" "password")))
      nil)))
 
 ;; ---------------------------------------------------------------------------

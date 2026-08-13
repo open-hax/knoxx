@@ -30,7 +30,9 @@
         org {:id "org-open-hax"}]
     (await (policy-db/ensure-bootstrap-local-password!
             #js {} org bootstrap {:bootstrapSystemAdminPassword "dev-password"}
-            {:encode-password (fn [value] {:encoded value})
+            {:deactivate-credential! (fn [& _]
+                                       (js/Promise.resolve nil))
+             :encode-password (fn [value] {:encoded value})
              :upsert-credential! (fn [_db user-id org-id provider payload]
                                    (reset! captured* [user-id org-id provider payload])
                                    (js/Promise.resolve nil))}))
@@ -41,12 +43,15 @@
              :status "active"}]
            @captured*))))
 
-(deftest ^:async blank-bootstrap-local-password-does-not-write-test
-  (let [called? (atom false)]
+(deftest ^:async blank-bootstrap-local-password-revokes-credential-test
+  (let [captured* (atom nil)]
     (await (policy-db/ensure-bootstrap-local-password!
             #js {} {:id "org"} {:user {:id "user"}} {:bootstrapSystemAdminPassword ""}
-            {:encode-password identity
+            {:deactivate-credential! (fn [_db user-id org-id provider kind]
+                                       (reset! captured* [user-id org-id provider kind])
+                                       (js/Promise.resolve nil))
+             :encode-password identity
              :upsert-credential! (fn [& _]
-                                   (reset! called? true)
+                                   (is false "blank password must not be upserted")
                                    (js/Promise.resolve nil))}))
-    (is (false? @called?))))
+    (is (= ["user" "org" "local" "password"] @captured*))))

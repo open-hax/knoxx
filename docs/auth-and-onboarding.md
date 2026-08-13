@@ -117,6 +117,8 @@ On every backend start Knoxx ensures this user belongs to the primary org,
 replaces its role assignment with `system-admin`, assigns the `system_admin`
 actor, and upserts a scrypt password credential. Changing the environment
 password and restarting the development backend rotates the login password.
+Removing the password setting and restarting revokes the previously provisioned
+local credential.
 Ordinary `/signup` users remain `basic-user`; this bootstrap does not weaken
 self-signup or infer admin rights from arbitrary email/password logins.
 
