@@ -14,27 +14,17 @@
   keyword before anything is indexed, filtered, compared, or keyed — including
   inside the stored payloads, since the law shapes require qualified ids."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.resources.namespace-file :as ns-file]
-            [knoxx.backend.law.publication :as law]))
+            [knoxx.backend.law.publication :as law]
+            [knoxx.backend.shape.resource-identity :as identity]))
 
 ;; ── Canonical identity ─────────────────────────────────────────────────────
 
-(defn canonical-id
-  "Canonical qualified identity for a resource id or a reference to one.
-
-   Own ids and cross-resource references share one rule so that a
-   namespace-local reference and an already-qualified reference to the same
-   resource compare equal: an id that is already namespace-qualified is
-   authoritative and passes through untouched; a bare id is qualified under
-   the owning manifest's namespace. With no namespace in scope — a standalone
-   resource file — a bare id is left alone rather than being qualified under
-   `nil`, which would strip identity instead of adding it."
-  [namespace-value id]
-  (cond
-    (nil? id) nil
-    (qualified-keyword? id) id
-    (nil? namespace-value) id
-    :else (ns-file/qualified-id namespace-value id)))
+(def canonical-id
+  "The canonical identity rule, owned by `shape.resource-identity` so the
+   contract loader and this resolver cannot drift apart. The loader applies it
+   before validation; the resolver applies it again because standalone resource
+   files never pass through manifest expansion."
+  identity/canonical-id)
 
 (defn- resource-namespace
   "The manifest namespace an expanded entry was defined under, if any.
@@ -43,13 +33,33 @@
   [resource]
   (:namespace resource))
 
+;; Only declared fields cross into the projection. Malli map schemas are open,
+;; so a resource that also carries an execution fact — a receipt timestamp, a
+;; worker phase — would otherwise validate happily and leak that fact into the
+;; desired-state view. Selecting is what actually enforces "resources declare
+;; desired state only"; the schema alone cannot.
+
+(def document-projection-keys
+  [:document/id :document/title :document/source-locale :document/source])
+
+(def garden-projection-keys
+  [:garden/id :garden/title :garden/status])
+
+(def publication-projection-keys
+  [:publication/id :publication/document :publication/garden :publication/locale
+   :publication/revision :publication/state :publication/path :translation/review])
+
 (defn canonicalize-document
   [resource]
-  (update resource :document/id #(canonical-id (resource-namespace resource) %)))
+  (-> resource
+      (update :document/id #(canonical-id (resource-namespace resource) %))
+      (select-keys document-projection-keys)))
 
 (defn canonicalize-garden
   [resource]
-  (update resource :garden/id #(canonical-id (resource-namespace resource) %)))
+  (-> resource
+      (update :garden/id #(canonical-id (resource-namespace resource) %))
+      (select-keys garden-projection-keys)))
 
 (defn canonicalize-intent
   "Canonicalize the intent's own id and both of its outbound references, so a
@@ -61,7 +71,8 @@
     (-> resource
         (update :publication/id qualify)
         (update :publication/document qualify)
-        (update :publication/garden qualify))))
+        (update :publication/garden qualify)
+        (select-keys publication-projection-keys))))
 
 ;; ── Relation identity ──────────────────────────────────────────────────────
 
@@ -140,6 +151,60 @@
                  :conflicting-payloads (vec (sort-by stable-payload-key
                                                      [existing resource]))})))))
 
+(defn reference-blockers
+  "Intents whose document or garden reference does not resolve.
+
+   Both directions were previously silent. `list-document-views` iterates the
+   *documents* it has, so an intent pointing at a missing document simply never
+   appeared; and hydration validates only the document, so a missing garden
+   passed straight through. Either way the caller received a successful but
+   incomplete desired topology, which is exactly the semantic blocker this
+   projection is supposed to surface."
+  [index]
+  (->> (:publications index)
+       (mapcat (fn [intent]
+                 (cond-> []
+                   (not (contains? (:documents index) (:publication/document intent)))
+                   (conj {:publication/id (:publication/id intent)
+                          :blocker :unresolved-document
+                          :reference (:publication/document intent)})
+
+                   (not (contains? (:gardens index) (:publication/garden intent)))
+                   (conj {:publication/id (:publication/id intent)
+                          :blocker :unresolved-garden
+                          :reference (:publication/garden intent)}))))
+       (sort-by #(mapv pr-str [(:publication/id %) (:blocker %)]))
+       vec))
+
+(defn- index-one
+  "Index whichever kinds a single resource registers. A composite manifest entry
+   may register more than one, so these are independent `if`s rather than a
+   `cond`."
+  [index resource]
+  (cond-> index
+    (:document/id resource)
+    (as-> idx (let [document (canonicalize-document resource)]
+                (index-canonical! idx :documents (:document/id document) document)))
+
+    (:garden/id resource)
+    (as-> idx (let [garden (canonicalize-garden resource)]
+                (index-canonical! idx :gardens (:garden/id garden) garden)))
+
+    (:publication/id resource)
+    (update :publications conj (canonicalize-intent resource))))
+
+(defn- assert-no-conflicts!
+  [index]
+  (let [conflicts (publication-conflicts (:publications index))]
+    (when (seq conflicts)
+      (throw (ex-info "conflicting publication intents" {:conflicts conflicts})))))
+
+(defn- assert-references-resolve!
+  [index]
+  (let [blockers (reference-blockers index)]
+    (when (seq blockers)
+      (throw (ex-info "unresolved publication references" {:blockers blockers})))))
+
 (defn publication-index
   "Build the canonical index for a resource collection.
 
@@ -148,27 +213,9 @@
    satisfies the qualified law shapes. Publications stay a sorted vector —
    many intents legitimately share a document."
   [resources]
-  (let [index
-        (reduce
-         (fn [index resource]
-           (let [index (if (:document/id resource)
-                         (let [document (canonicalize-document resource)]
-                           (index-canonical! index :documents
-                                             (:document/id document) document))
-                         index)
-                 index (if (:garden/id resource)
-                         (let [garden (canonicalize-garden resource)]
-                           (index-canonical! index :gardens
-                                             (:garden/id garden) garden))
-                         index)]
-             (if (:publication/id resource)
-               (update index :publications conj (canonicalize-intent resource))
-               index)))
-         {:documents {} :gardens {} :publications []}
-         resources)
-        conflicts (publication-conflicts (:publications index))]
-    (when (seq conflicts)
-      (throw (ex-info "conflicting publication intents" {:conflicts conflicts})))
+  (let [index (reduce index-one {:documents {} :gardens {} :publications []} resources)]
+    (assert-no-conflicts! index)
+    (assert-references-resolve! index)
     (update index :publications #(vec (sort-by publication-sort-key %)))))
 
 ;; ── Queries ────────────────────────────────────────────────────────────────

@@ -9,10 +9,16 @@
             [knoxx.backend.domain.resources.loader :as resources]))
 
 (defn ^:async resource-definitions
-  "Definitions of every resource that loaded and validated. Records that failed
-   validation are dropped by the loader, so the projection never sees them."
+  "Definitions of every resource that loaded and validated.
+
+   Deliberately the UNDEDUPED record list. `load-all-resources!` applies
+   first-wins `[kind id]` dedup, which would collapse two files declaring the
+   same canonical id with different payloads into whichever the filesystem
+   enumerated first — making the resolver's deterministic identity-conflict
+   detection unreachable, and the resulting topology dependent on directory
+   order."
   [config]
-  (->> (await (resources/load-all-resources! config))
+  (->> (await (resources/load-all-resource-records! config))
        (filter :ok?)
        (mapv :resource/definition)))
 
