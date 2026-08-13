@@ -141,15 +141,37 @@ note "seeded ${FIXTURE_DIR#$REPO_ROOT/}"
 
 # ── 1. Identity ────────────────────────────────────────────────────────────
 #
-# The frontend reads its identity out of localStorage and sends it as
-# x-knoxx-user-email, which resolve-auth-context prefers over the API key and
-# the session cookie. Seeding localStorage is therefore the whole login.
+# There are TWO gates and they do not accept the same credential.
+#
+#   * The API client (lib/api/core.ts) reads localStorage and sends
+#     x-knoxx-user-email, which resolve-auth-context prefers over everything
+#     else. Seeding localStorage satisfies this.
+#   * The app SHELL guards its routes on a session cookie. Seeding localStorage
+#     does NOT satisfy this, and the SPA renders its login screen instead of
+#     the CMS.
+#
+# So localStorage alone gets the API assertions below green while the page a
+# human would look at shows a 401 login form. Set KNOXX_DEV_EMAIL and
+# KNOXX_DEV_PASSWORD to establish a real session and see the actual CMS.
 
-step "1. open the app and seed the dev identity"
+step "1. open the app and establish an identity"
 
 ab set viewport 1600 1000 >/dev/null
 ab open "$FRONTEND_URL" >/dev/null
 ab eval "localStorage.setItem('knoxx_user_email', '${USER_EMAIL}'); localStorage.setItem('knoxx_org_slug', '${ORG_SLUG}'); 'seeded'" >/dev/null
+
+if [ -n "${KNOXX_DEV_EMAIL:-}" ] && [ -n "${KNOXX_DEV_PASSWORD:-}" ]; then
+  login="$(ab eval "(async () => (await fetch('/api/auth/local/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({email:'${KNOXX_DEV_EMAIL}', password:'${KNOXX_DEV_PASSWORD}'})})).status)()")"
+  if printf '%s' "$login" | grep -q "200"; then
+    pass "signed in as ${KNOXX_DEV_EMAIL} — the shell will render the real CMS"
+  else
+    fail "local password login failed" "$(printf '%s' "$login" | head -c 120)"
+  fi
+else
+  note "KNOXX_DEV_EMAIL / KNOXX_DEV_PASSWORD not set — API checks will still run,"
+  note "but the app shell will show its login screen rather than the CMS."
+fi
+
 ab reload >/dev/null
 ab wait 1500 >/dev/null
 shot "app-loaded"
@@ -165,6 +187,12 @@ shot "cms-page"
 page_text="$(ab get text body)"
 if printf '%s' "$page_text" | grep -qi "$FIXTURE_GARDEN_TITLE"; then
   pass "the seeded garden \"${FIXTURE_GARDEN_TITLE}\" is on the page — it came from the resource graph"
+elif printf '%s' "$page_text" | grep -qiE "Sign in with password|Knowledge operations platform|Redeem invite"; then
+  # Name the actual wall rather than reporting a vague absence. The API checks
+  # below will still pass, which is exactly the confusing part worth spelling
+  # out: the data is being served correctly, the shell just will not show it.
+  fail "the app shell rendered its LOGIN screen, not the CMS" \
+       "seeded localStorage satisfies the API client but not the route guard. Set KNOXX_DEV_EMAIL and KNOXX_DEV_PASSWORD to sign in."
 else
   fail "the seeded garden is not visible on the CMS page" \
        "the topology fetch may have failed; check: agent-browser --session ${SESSION} console"

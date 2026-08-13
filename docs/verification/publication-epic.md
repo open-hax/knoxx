@@ -102,9 +102,8 @@ scripts/verify-publication-tour.sh
 
 Screenshots land in `docs/verification/screenshots/`. The tour:
 
-1. seeds the dev identity into `localStorage` — that *is* the login, because
-   `resolve-auth-context` prefers the `x-knoxx-user-email` header over both the
-   API key and the session cookie
+1. seeds the dev identity into `localStorage`, and signs in for a session if
+   `KNOXX_DEV_EMAIL` / `KNOXX_DEV_PASSWORD` are set
 2. opens `/cms` and asserts the seeded garden is on the page, having come from
    the resource graph
 3. fetches the CMS surface **from inside the page**, so the request carries the
@@ -127,6 +126,69 @@ publication *intent* was cut over to resources, but the surrounding CMS document
 flow was not.
 
 ---
+
+### Two auth gates, and they take different credentials
+
+Worth knowing before you read a failing tour:
+
+- The **API client** (`frontend/src/lib/api/core.ts`) reads `localStorage` and
+  sends `x-knoxx-user-email`, which `resolve-auth-context` prefers over both the
+  API key and the session cookie.
+- The **app shell** guards its routes on a session cookie and does not look at
+  `localStorage` at all.
+
+So seeding `localStorage` turns every API assertion green while the page a human
+would actually look at renders the login screen. The tour detects that case
+specifically and says so, rather than reporting a vague "garden not visible".
+
+Set `KNOXX_DEV_EMAIL` and `KNOXX_DEV_PASSWORD` to a user with a local-password
+record to see the real CMS. Local password auth is on whenever `NODE_ENV` is not
+`production`.
+
+## Running a backend locally without side effects
+
+Starting a Knoxx backend also arms every schedule, registers every trigger, and
+connects live Discord actor gateways from the shared policy DB. Set
+`KNOXX_DISABLE_EVENT_RUNTIMES=true` and none of that happens; the process prints
+a banner at boot and warns every 60s so it cannot silently sit in that mode.
+
+```bash
+KNOXX_DISABLE_EVENT_RUNTIMES=true PORT=8000 node backend/dist/server.js
+```
+
+That flag is a stopgap. The real decoupling is carded as
+`knoxx-event-runtime-boot-coupling`.
+
+Two other things that will bite on a fresh checkout:
+
+- `pnpm -C backend build` (`shadow-cljs release server`) **fails** — the
+  `:server` build sets `:optimizations :none`. Use
+  `pnpm -C backend exec shadow-cljs compile server`.
+- `@open-hax/openplanner-sdk` is a `link:` to a sibling checkout. If that
+  checkout has never been built, the server will not boot. Build it with
+  `pnpm --filter "@open-hax/openplanner-sdk..." run build` from
+  `spaces/openplanner`.
+
+## What the first live run found
+
+The scripts were written before any of this could be run against a real
+backend. The first real run found three defects that the 980-test suite passed
+over, all of them at the boundary the tests fake:
+
+1. **Every publication route returned 500.** Fastify builds `request.params`
+   with `Object.create(null)`; `js->clj` does not convert a null-prototype
+   object and returned it raw, which the closed Malli shape rejected. Fixed in
+   #243. Tests missed it because `fake-request` builds params with `clj->js`,
+   which has a normal prototype.
+2. **Publishing deleted the document being published.** `set-publication-state!`
+   wrote the patched intent over the whole manifest file, destroying the
+   document and garden declared beside it. Fixed in #243.
+3. **Duplicate publication ids are never detected.** `publication-conflicts`
+   keys on the relation, not on `:publication/id`, so two files claiming the
+   same id with different revisions both land in the index and every lookup
+   takes whichever came first. **Not fixed** — carded as
+   `knoxx-publication-duplicate-identity`. §6 of the API script is red until it
+   is.
 
 ## Known gap, surfaced deliberately
 

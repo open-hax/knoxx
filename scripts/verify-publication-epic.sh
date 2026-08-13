@@ -299,6 +299,14 @@ expect_jq "and the conflict is reported, not resolved by directory order" \
 
 note "first-wins dedup would have kept whichever file readdir returned first,"
 note "making the topology depend on filesystem enumeration order."
+note ""
+note "KNOWN TO FAIL. publication-conflicts keys on the RELATION"
+note "(document x garden x locale x revision), not on :publication/id. Documents"
+note "and gardens get index-canonical!'s same-id/different-payload check;"
+note "publications get no identity check at all. Two files declaring the same"
+note "publication id with different revisions both land in the index, and every"
+note "lookup by id — including set-publication-state! — takes whichever came"
+note "first. Tracked in knoxx-publication-duplicate-identity."
 
 rm -f "${FIXTURE_DIR}/collision.edn"
 sleep 1
