@@ -47,6 +47,10 @@
 
 ;; ── Resource shapes ────────────────────────────────────────────────────────
 
+(defn nonblank-string?
+  [value]
+  (and (string? value) (seq (str/trim value))))
+
 (def Document
   [:map
    [:document/id qualified-keyword?]
@@ -54,17 +58,13 @@
    [:document/source-locale Locale]
    [:document/source
     [:map
-     [:path string?]]]])
+     [:path [:fn nonblank-string?]]]]])
 
 (def Garden
   [:map
    [:garden/id qualified-keyword?]
    [:garden/title string?]
    [:garden/status [:enum :active :archived]]])
-
-(defn nonblank-string?
-  [value]
-  (and (string? value) (seq (str/trim value))))
 
 (def PublicationRevision
   [:or [:fn nonblank-string?] [:enum :source/current]])

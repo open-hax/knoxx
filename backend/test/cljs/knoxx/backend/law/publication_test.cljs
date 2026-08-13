@@ -92,6 +92,10 @@
   (is (false? (m/validate pub/Document (dissoc translation-pipeline-document :document/source-locale))))
   (is (false? (m/validate pub/Document (assoc translation-pipeline-document :document/source-locale "en")))))
 
+(deftest document-source-path-rejects-blank-strings
+  (is (false? (m/validate pub/Document (assoc-in translation-pipeline-document [:document/source :path] ""))))
+  (is (false? (m/validate pub/Document (assoc-in translation-pipeline-document [:document/source :path] "   ")))))
+
 ;; ── 4 Garden ──────────────────────────────────────────────────────────────
 
 (deftest garden-shape-enumerates-status
