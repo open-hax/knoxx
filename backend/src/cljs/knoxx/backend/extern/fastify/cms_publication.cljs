@@ -1,0 +1,91 @@
+(ns knoxx.backend.extern.fastify.cms-publication
+  "Fastify boundary for the CMS publication surface.
+
+  Native request and reply handles are born and die here; the facade sees only
+  decoded CLJS data. Reads and writes carry distinct permissions — seeing the
+  publication topology must not imply authority to change what is public."
+  (:require [knoxx.backend.domain.cms-publication :as cms]
+            [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.infra.routes.cms-publication :as facade]
+            [knoxx.backend.law.publication :as law]
+            [knoxx.backend.shape.resource-identity :as resource-identity]))
+
+(def read-permission "org.publications.read")
+(def write-permission "org.publications.manage")
+
+(def DecodedRequest
+  [:map {:closed true}
+   [:params [:map-of :keyword [:maybe :string]]]
+   [:body [:maybe :map]]
+   [:method :string]])
+
+(defn decode-request
+  "Decode once, and validate. Route identity and body are read from this map,
+   never from the raw handle."
+  [request]
+  (law/assert-valid!
+   :cms/request
+   DecodedRequest
+   {:params (fastify/request-params request)
+    :body (let [body (fastify/request-body request)]
+            (when (map? body) body))
+    :method (fastify/request-method request)}))
+
+(defn- error-status
+  [err]
+  (let [data (ex-data err)]
+    (cond
+      (contains? data :publication/id) 404
+      (contains? data :document/id) 404
+      (or (contains? data :conflicts) (contains? data :blockers)) 409
+      (contains? data :errors) 422
+      :else 500)))
+
+(defn ^:async respond!
+  [handlers reply operation]
+  (let [{:keys [json-response!]} handlers]
+    (try
+      (json-response! reply 200
+                      (resource-identity/encode-wire-values (await (operation))))
+      (catch :default err
+        (json-response! reply (error-status err)
+                        (resource-identity/encode-wire-values
+                         (cond-> {:detail (ex-message err)}
+                           (some? (ex-data err)) (assoc :error (ex-data err)))))))))
+
+(defn- ^:async guarded!
+  [handlers ctx permission operation]
+  (when ctx ((:ensure-permission! handlers) ctx permission))
+  (await (operation)))
+
+(defn- route-handler
+  [runtime handlers permission operation]
+  (fn [request reply]
+    (let [decoded (decode-request request)]
+      ((:with-request-context! handlers) runtime request reply
+       (^:async fn [ctx]
+         (await
+          (respond! handlers reply
+                    #(guarded! handlers ctx permission
+                               (fn [] (operation decoded))))))))))
+
+(defn register-cms-publication-routes!
+  [app runtime config handlers]
+  (let [{:keys [route!]} handlers]
+    (route! app "GET" "/api/cms/publications/documents"
+            (route-handler runtime handlers read-permission
+                           (fn [_decoded] (facade/list-documents! config))))
+    (route! app "GET" "/api/cms/publications/documents/:documentId"
+            (route-handler runtime handlers read-permission
+                           (fn [decoded]
+                             (facade/document-view!
+                              config (get-in decoded [:params :documentId])))))
+    (route! app "PATCH" "/api/cms/publications/intents/:publicationId"
+            (route-handler runtime handlers write-permission
+                           (fn [decoded]
+                             (facade/set-publication-state!
+                              config
+                              (resource-identity/decode-keyword
+                               (get-in decoded [:params :publicationId]))
+                              (cms/decode-publication-state-patch (:body decoded))))))
+    nil))

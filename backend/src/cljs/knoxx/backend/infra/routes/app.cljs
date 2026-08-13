@@ -16,6 +16,7 @@
             [knoxx.backend.infra.routes.resources :as resource-routes]
             [knoxx.backend.extern.fastify.publications :as publication-routes]
             [knoxx.backend.extern.fastify.translation-config :as translation-config-routes]
+            [knoxx.backend.extern.fastify.cms-publication :as cms-publication-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
@@ -1519,6 +1520,25 @@
                                           :ensure-permission! ensure-permission!
                                           :session-guard session-guard})))
 
+(defn- register-publication-surface-routes!
+  "The contract-owned publication surface: the resource projection, the CMS
+   editor's view of it, and translation configuration. None of these is gated on
+   a hosted publishing backend being reachable — resolving desired state with
+   that backend absent is the whole point."
+  [app runtime config]
+  (let [helpers {:route! route!
+                 :json-response! json-response!
+                 :with-request-context! with-request-context!
+                 :ensure-permission! ensure-permission!}]
+    ;; Fastify interop is owned by each extern adapter, which authorizes before
+    ;; touching the filesystem-backed projection.
+    (publication-routes/register-publication-routes!
+     app runtime config (select-keys helpers [:with-request-context!
+                                              :ensure-permission!]))
+    (cms-publication-routes/register-cms-publication-routes! app runtime config helpers)
+    (translation-config-routes/register-translation-config-routes!
+     app runtime config helpers)))
+
 (defn- register-resource-and-media-routes!
   [app runtime config]
   (resource-routes/register-resource-routes! app runtime config
@@ -1527,21 +1547,7 @@
                                               :error-response! error-response!
                                               :with-request-context! with-request-context!
                                               :ensure-permission! ensure-permission!})
-  ;; Publication projection reads desired state from resources alone. Its
-  ;; Fastify interop is owned by the extern adapter, which authorizes both
-  ;; routes before touching the filesystem-backed projection.
-  (publication-routes/register-publication-routes!
-   app runtime config
-   {:with-request-context! with-request-context!
-    :ensure-permission! ensure-permission!})
-  ;; Knoxx-owned translation config. Deliberately not gated on legacy-backend
-  ;; readiness — model selection must resolve with that backend absent.
-  (translation-config-routes/register-translation-config-routes!
-   app runtime config
-   {:route! route!
-    :json-response! json-response!
-    :with-request-context! with-request-context!
-    :ensure-permission! ensure-permission!})
+  (register-publication-surface-routes! app runtime config)
   (model-routes/register-model-routes! app runtime config)
   (voice-routes/register-voice-routes! app runtime config
                                        {:route! route!

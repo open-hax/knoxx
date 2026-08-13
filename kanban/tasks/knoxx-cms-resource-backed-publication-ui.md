@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "frontend"]
-write-id: "1786565796993-0.8vlcnc68xi8270jmll7"
+write-id: "1786609303933-0.zntrkso2p7rnohvl94"
 points: "5"
 title: "Make CMS read and write publication intent through Knoxx resources"
 priority: "P2"
-status: "ready"
+status: "review"
 uuid: "knoxx-cms-resource-backed-publication-ui"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -346,11 +346,8 @@ Frontend last:
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Sequencing constraint from the card: this cutover lands only after the migration card has imported the topology and conflicts are resolved.
-
 ---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `document->wire` passes `:document/source` straight through instead of encoding only its allowed `:path` field, which lets future resource fields leak across the JSON boundary — map it explicitly before validating against `DocumentWireJson`. `decode-publication-wire` also doesn't restore the `:source/current` revision selector (encoded as the string `"source/current"`) back to a keyword, so the UI would receive a plain string instead of the domain value — add a symmetric revision decoder. And the state-patch acceptance test calls `clj->js`/`js->clj` directly rather than routing through `knoxx.frontend.lib.api/request` or an existing codec wrapper, which is the documented boundary for that interop per this repo's coding guidelines.
 
 Pre-implementation review 2026-08-13, cont'd (CodeRabbit): the same state-patch acceptance test (around line 351) should stub `js/fetch`, drive the assertion through the actual frontend publish helper and `knoxx.frontend.lib.api/request`, and decode the captured PATCH body with `PublicationStatePatchJson`/`decode-publication-state-patch` — asserting `{:publication/state :published}` — rather than constructing the round-trip by hand. Same underlying "keep interop inside `api/request`" concern as the note above; folding both into one fix when this card starts.
-
----
