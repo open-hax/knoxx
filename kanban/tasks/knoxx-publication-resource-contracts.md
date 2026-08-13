@@ -216,4 +216,15 @@ card's Malli shapes:
    (`canonicalize-document`/`canonicalize-garden`/`canonicalize-intent`);
    until that card lands, only pre-qualified standalone resource files
    (not namespace manifests) will pass validation at the loader boundary.
+
+Route-addressing gap 2026-08-13 (Codex review on PR #227):
+`backend/src/cljs/knoxx/backend/infra/routes/resources.cljs`'s
+`parsed-resource-id` has no case for `"documents"`/`"gardens"`/`"publications"`,
+so the admin CRUD route's record-id-vs-route-id guard silently no-ops for
+these kinds. Worse, `safe-resource-id!` rejects any `/`, so a qualified id
+like `:tenant/bar` cannot even be used as the route's resource-id segment
+as-is. This needs a deliberate path-safe addressing decision for
+namespace-qualified ids (distinct from every other resource kind, which is
+unnamespaced) before these kinds are exposed through the admin CRUD facade
+— out of scope for this card's Malli shapes.
 ***
