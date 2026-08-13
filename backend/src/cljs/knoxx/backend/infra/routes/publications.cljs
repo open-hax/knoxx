@@ -8,23 +8,68 @@
   (:require [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.resources.loader :as resources]))
 
-(defn ^:async resource-definitions
-  "Definitions of every resource that loaded and validated.
+(def ^:private kind-id-key
+  {:document :document/id
+   :garden :garden/id
+   :publication :publication/id})
 
-   Deliberately the UNDEDUPED record list. `load-all-resources!` applies
-   first-wins `[kind id]` dedup, which would collapse two files declaring the
-   same canonical id with different payloads into whichever the filesystem
+(defn single-kind-definition
+  "Project an expanded record onto only the facet its own `:resource/kind`
+   registers.
+
+   A composite manifest entry expands to one record per registered kind, and
+   every expanded definition retains ALL the composite keys. Without this
+   projection, one entry registering both a document and a publication would be
+   indexed twice: the document collapses harmlessly as a byte-equal duplicate,
+   but the publication is appended twice and the projection then reports a false
+   duplicate-relation conflict — breaking the whole topology.
+
+   A record of any other kind loses all three identity keys and is ignored."
+  [record]
+  (apply dissoc
+         (:resource/definition record)
+         (vals (dissoc kind-id-key (:resource/kind record)))))
+
+(defn invalid-resource-blockers
+  "Resources the loader rejected, as explicit blockers.
+
+   A schema-invalid publication — a path missing its leading slash, say — is
+   logged and dropped by the loader, so the projection would otherwise return a
+   successful topology with that intent simply absent. Silent omission is the
+   failure mode this projection exists to prevent, so a rejected record is
+   surfaced rather than swallowed."
+  [records]
+  (->> records
+       (remove :ok?)
+       (mapv (fn [record]
+               {:blocker :invalid-resource
+                :resource/kind (:resource/kind record)
+                :resource/file-path (:resource/file-path record)}))))
+
+(defn ^:async resource-records!
+  "Every parsed record, valid or not.
+
+   Deliberately the UNDEDUPED list. `load-all-resources!` applies first-wins
+   `[kind id]` dedup, which would collapse two files declaring the same
+   canonical id with different payloads into whichever the filesystem
    enumerated first — making the resolver's deterministic identity-conflict
-   detection unreachable, and the resulting topology dependent on directory
-   order."
+   detection unreachable and the topology dependent on directory order."
   [config]
-  (->> (await (resources/load-all-resource-records! config))
+  (await (resources/load-all-resource-records! config)))
+
+(defn ^:async resource-definitions
+  [config]
+  (->> (await (resource-records! config))
        (filter :ok?)
-       (mapv :resource/definition)))
+       (mapv single-kind-definition)))
 
 (defn ^:async publication-index!
   [config]
-  (resolver/publication-index (await (resource-definitions config))))
+  (let [records (await (resource-records! config))
+        blockers (invalid-resource-blockers records)]
+    (when (seq blockers)
+      (throw (ex-info "invalid publication resources" {:blockers blockers})))
+    (resolver/publication-index (mapv single-kind-definition (filter :ok? records)))))
 
 (defn ^:async list-publication-documents!
   "The whole desired topology: `{:documents [...] :gardens [...]}`."

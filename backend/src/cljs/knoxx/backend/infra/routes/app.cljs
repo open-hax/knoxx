@@ -1528,7 +1528,13 @@
                                               :ensure-permission! ensure-permission!})
   ;; Publication projection reads desired state from resources alone. Its
   ;; Fastify interop is owned by the extern adapter, so it takes no helpers map.
-  (publication-routes/register-publication-routes! app config)
+  ;; Publication projection reads desired state from resources alone. Its
+  ;; Fastify interop is owned by the extern adapter, which authorizes both
+  ;; routes before touching the filesystem-backed projection.
+  (publication-routes/register-publication-routes!
+   app runtime config
+   {:with-request-context! with-request-context!
+    :ensure-permission! ensure-permission!})
   (model-routes/register-model-routes! app runtime config)
   (voice-routes/register-voice-routes! app runtime config
                                        {:route! route!

@@ -214,7 +214,15 @@
          :edn-text     (str edn-text)}
         (do (stderr! "[contracts] validation failed: " file-path
                      " — " (pr-str (:errors valid)))
-            nil)))))
+            ;; A rejected record is reported rather than dropped, so callers that
+            ;; must not silently omit a resource can surface it as a blocker.
+            ;; `load-all-contracts!` filters these out, so every existing lookup
+            ;; caller sees exactly what it saw before.
+            {:ok? false
+             :id id
+             :contractClass kind
+             :file-path file-path
+             :errors (:errors valid)})))))
 
 (defn- namespace-resource-record
   "Validate one expanded namespace resource definition into a contract record.
@@ -238,7 +246,11 @@
       (do (stderr! "[contracts] namespace resource validation failed: " file-path
                    " " (pr-str (:resource/qualified-id definition))
                    " — " (pr-str (:errors valid)))
-          nil))))
+          {:ok? false
+           :id (:contract/id definition)
+           :contractClass klass
+           :file-path file-path
+           :errors (:errors valid)}))))
 
 (defn parse-contract-file-records!
   "Parse + validate a single .edn file into a vector of contract records.
@@ -302,6 +314,8 @@
                   (parse-contract-file-records!
                    file-path
                    (.readFileSync node-fs file-path "utf8"))))
+        ;; Same as the async path: rejected records never reach a lookup caller.
+        (filterv :ok?)
         dedup-contracts))
 
 (defn load-all-contracts-sync
@@ -367,9 +381,14 @@
 
 (defn ^:async load-all-contracts!
   "Discover all .edn files under all contract roots, parse+validate each,
-   deduplicate on [kind id]. Returns Promise<vector<contract-record>>."
+   deduplicate on [kind id]. Returns Promise<vector<contract-record>>.
+
+   Rejected records are filtered out here, so this function's contract is
+   unchanged for every lookup caller. Only `load-all-contract-records!` exposes
+   them, for callers that must surface an invalid resource as a blocker instead
+   of silently omitting it."
   [config]
-  (dedup-contracts (await (load-all-contract-records! config))))
+  (dedup-contracts (filterv :ok? (await (load-all-contract-records! config)))))
 
 (defn ^:async list-contract-ids!
   ([config] (list-contract-ids! config "agents"))
