@@ -15,7 +15,8 @@
   2. The concrete revision comes from one `publication-evidence` result and is
      never re-resolved. The revision the gate checked evidence against is the
      revision the plan materializes."
-  (:require [knoxx.backend.domain.publication-gate :as gate]))
+  (:require [knoxx.backend.domain.publication-gate :as gate]
+            [knoxx.backend.domain.publication-receipts :as receipts]))
 
 (def non-public-states
   "States that can only remove or no-op. `:withheld` means \"deliberately not
@@ -28,8 +29,11 @@
    :materialized/path (:publication/path intent)})
 
 (defn- observed-materialization
+  "Compared against `desired-materialization` using the key set named by
+   `receipts/drift-keys`, so the planner and the receipt projection cannot
+   diverge on what convergence means."
   [observed]
-  (select-keys observed [:materialized/revision :materialized/path]))
+  (select-keys observed receipts/drift-keys))
 
 (defn- takedown
   "Removal when something is materialized, otherwise nothing to do. Never
