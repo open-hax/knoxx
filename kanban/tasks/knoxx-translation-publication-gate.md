@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "translations", "publication", "review"]
-write-id: "1786565794577-0.67qrow20j6dyyftf8ew"
+write-id: "1786607382300-0.eebuaxz4b9hed7k9ryh"
 points: "5"
 title: "Gate publication on translation and review receipts without making workflow state contractual"
 priority: "P1"
-status: "ready"
+status: "review"
 uuid: "knoxx-translation-publication-gate"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -205,9 +205,18 @@ Then implement `knoxx.backend.domain.publication-gate` until green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Pure card: no adapter, worker or OpenPlanner dependency in its tests.
-
 ---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `publication-blockers`, `publication-admissible?`, and `reconcile-translation-work` each call `publication-evidence` independently in the sketch. If `:source/current` resolves to a different concrete revision between calls, the decision that admitted publication can disagree with the revision actually queued/materialized. Compute `publication-evidence` once at the orchestration boundary and thread that single result through all three, and add a test that changes the current-revision result between calls to prove one revision is retained throughout.
 
+---
+Implemented 2026-08-13 as knoxx.backend.domain.publication-gate. Pure: facts arrive as a map of lookup functions, so the namespace has no receipt store, worker or HTTP dependency.
+
+CodeRabbit finding actioned structurally rather than by discipline. The card's sketch had publication-blockers, publication-admissible? and reconcile-translation-work each calling publication-evidence independently, so :source/current could resolve differently between calls and the decision that admitted publication could disagree with the revision actually queued or materialized. publication-evidence is now the single boundary and every consumer — blockers, admissible?, translation-work — takes an already-computed evidence map as an argument. It is not possible to call them without evidence in hand. gate/gate computes evidence once and returns admissibility and derived work alongside it, so the compute-once rule is the easy path rather than a convention.
+
+The regression test the finding asked for: one-evidence-result-supplies-every-consumer builds a facts stub whose :current-source-revision returns first-revision, then second-revision, then third-revision on successive calls, and asserts the queued work carries first-revision. A recomputing implementation would emit second-revision.
+
+Also asserted: the selector token never reaches a receipt lookup (recording stub captures every argument and no call contains :source/current); an unresolvable selector short-circuits with exactly [:publication-revision-unresolved] and performs no evidence lookup at all; only :published intents derive work while :archived and :withheld stay in the projection as history; approval is revision-specific and a stale translation leaves the old approval receipt intact; and gate output contains no operational state (:translating, :reviewing, :worker-failed, published-at, job-id).
+
+Verification: 905 tests / 2862 assertions, 0 failures 0 errors; compile server 0 warnings; clj-kondo 194 warnings / 0 errors (main baseline).
 ---
