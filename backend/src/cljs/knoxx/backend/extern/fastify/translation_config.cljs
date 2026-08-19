@@ -68,10 +68,18 @@
     (try
       (json-response! reply 200 (resource-identity/encode-wire-values (await (operation))))
       (catch :default err
-        (json-response! reply
-                        (error-status err)
-                        (resource-identity/encode-wire-values
-                         (error-body/error-body err)))))))
+        (let [status (error-status err)]
+          ;; See the note on the same catch in extern/fastify/publications.cljs:
+          ;; the caller gets an opaque body for an unclassified failure, so the
+          ;; detail has to be logged here or it is lost entirely.
+          (when-not (error-body/classified? status)
+            (js/console.error "[translations] unclassified failure:"
+                              (or (ex-message err) (str err))
+                              (pr-str (ex-data err))))
+          (json-response! reply
+                          status
+                          (resource-identity/encode-wire-values
+                           (error-body/error-body err status))))))))
 
 (defn- ^:async guarded!
   "Authorize, then run. `ensure-permission!` throws, and the surrounding
