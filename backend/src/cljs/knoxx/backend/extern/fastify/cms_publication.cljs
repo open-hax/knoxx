@@ -32,15 +32,33 @@
             (when (map? body) body))
     :method (fastify/request-method request)}))
 
+(defn- http-error-status
+  "The status a recognized HTTP error already carries, or nil.
+
+   `ensure-permission!` throws `http/http-error`, which records its status both
+   in ex-data (`:status`) and on the JS error object (`statusCode`). Both are
+   read, because a fake permission check in a test throws plain `ex-info` while
+   the real one carries the JS property."
+  [err]
+  (or (:status (ex-data err))
+      (fastify/error-status err nil)))
+
 (defn- error-status
+  "A carried status wins over every guess below it.
+
+   `guarded!` runs inside `respond!`'s operation, so a permission denial is
+   caught here rather than escaping the adapter — and without this the 403 fell
+   through to 500, telling the caller to retry a request that will never
+   succeed. Third instance of this in the epic, after #230 and #233."
   [err]
   (let [data (ex-data err)]
-    (cond
-      (contains? data :publication/id) 404
-      (contains? data :document/id) 404
-      (or (contains? data :conflicts) (contains? data :blockers)) 409
-      (contains? data :errors) 422
-      :else 500)))
+    (or (http-error-status err)
+        (cond
+          (contains? data :publication/id) 404
+          (contains? data :document/id) 404
+          (or (contains? data :conflicts) (contains? data :blockers)) 409
+          (contains? data :errors) 422
+          :else 500))))
 
 (defn ^:async respond!
   [handlers reply operation]
@@ -49,9 +67,17 @@
       (json-response! reply 200
                       (resource-identity/encode-wire-values (await (operation))))
       (catch :default err
-        (json-response! reply (error-status err)
-                        (resource-identity/encode-wire-values
-                         (error-body/error-body err)))))))
+        (let [status (error-status err)]
+          ;; See the note on the same catch in extern/fastify/publications.cljs:
+          ;; the caller gets an opaque body for an unclassified failure, so the
+          ;; detail has to be logged here or it is lost entirely.
+          (when-not (error-body/classified? status)
+            (js/console.error "[cms-publications] unclassified failure:"
+                              (or (ex-message err) (str err))
+                              (pr-str (ex-data err))))
+          (json-response! reply status
+                          (resource-identity/encode-wire-values
+                           (error-body/error-body err status))))))))
 
 (defn- ^:async guarded!
   "Authorize, then run.
