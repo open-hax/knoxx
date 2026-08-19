@@ -148,15 +148,27 @@ record to see the real CMS. Local password auth is on whenever `NODE_ENV` is not
 ## Running a backend locally without side effects
 
 Starting a Knoxx backend also arms every schedule, registers every trigger, and
-connects live Discord actor gateways from the shared policy DB. Set
-`KNOXX_DISABLE_EVENT_RUNTIMES=true` and none of that happens; the process prints
-a banner at boot and warns every 60s so it cannot silently sit in that mode.
+connects live Discord actor gateways from the shared policy DB.
+
+**`KNOXX_DISABLE_EVENT_RUNTIMES` ships in #243, not in this branch.** On a
+checkout without it the variable has no consumer and setting it changes nothing:
+`infra/core.cljs` starts the event runtime unconditionally and `bootstrap.cljs`
+still builds the Discord gateway manager. Anyone who reads the command below as
+"no side effects" on this branch will arm schedules and connect shared gateways
+while believing they have not — so run a local backend from a branch that
+carries #243, or accept the side effects knowingly.
+
+With #243 in the tree the flag is honoured at three points — config reads it,
+`event-runtime/start!` refuses outright so the `shadow-cljs` `start` export
+cannot bypass the gate, and the tool routes report it as the reason they
+declined — and the process prints a banner at boot plus a warning every 60s so
+it cannot silently sit in that mode.
 
 ```bash
 KNOXX_DISABLE_EVENT_RUNTIMES=true PORT=8000 node backend/dist/server.js
 ```
 
-That flag is a stopgap. The real decoupling is carded as
+That flag is a stopgap either way. The real decoupling is carded as
 `knoxx-event-runtime-boot-coupling`.
 
 Two other things that will bite on a fresh checkout:
