@@ -199,8 +199,8 @@
     (testing "only the target publication moved"
       (let [by-id (fn [m k] (some #(when (= k (:publication/id %)) %) (:resources m)))]
         (is (= :withheld (:publication/state (by-id updated :probe-es))))
-        (is (= :published (:publication/state (by-id updated :probe-fr))
-               "a sibling publication in the same manifest is untouched"))))
+        (is (= :published (:publication/state (by-id updated :probe-fr)))
+            "a sibling publication in the same manifest is untouched")))
     (testing "the document and garden facets are byte-identical"
       (is (= (first (:resources authored-manifest)) (first (:resources updated))))
       (is (= (second (:resources authored-manifest)) (second (:resources updated)))))
