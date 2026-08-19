@@ -7,6 +7,7 @@
   (:require [knoxx.backend.domain.cms-publication :as cms]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.routes.cms-publication :as facade]
+            [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
 
@@ -50,12 +51,18 @@
       (catch :default err
         (json-response! reply (error-status err)
                         (resource-identity/encode-wire-values
-                         (cond-> {:detail (ex-message err)}
-                           (some? (ex-data err)) (assoc :error (ex-data err)))))))))
+                         (error-body/error-body err)))))))
 
 (defn- ^:async guarded!
+  "Authorize, then run.
+
+   The check is unconditional. `with-request-context!` hands down a nil context
+   when the policy database is disabled, and skipping it there would let an
+   anonymous caller read the publication topology and flip publication state —
+   the third instance of this same hole in the epic, after the publication routes
+   in #230 and the translation config routes in #233."
   [handlers ctx permission operation]
-  (when ctx ((:ensure-permission! handlers) ctx permission))
+  ((:ensure-permission! handlers) ctx permission)
   (await (operation)))
 
 (defn- route-handler

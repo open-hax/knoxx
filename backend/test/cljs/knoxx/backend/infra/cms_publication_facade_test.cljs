@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [malli.core :as m]
             [knoxx.backend.domain.cms-publication :as cms]
+            [knoxx.backend.infra.routes.cms-publication :as facade]
             [knoxx.backend.law.cms-publication :as law]
             [open-hax.publication-wire :as wire]))
 
@@ -156,3 +157,85 @@
     (is (= "abc123" (cms/encode-revision "abc123")))
     (is (= "abc123" (cms/decode-revision "abc123")))
     (is (string? (cms/decode-revision "abc123")))))
+
+;; ── a state edit must not destroy the file it edits (Codex P1 on #239) ─────
+
+(def ^:private authored-manifest
+  "What a human actually writes: one namespace, several resources, and an entry
+   that declares a document and a publication together."
+  {:namespace :knoxx.docs
+   :resources [{:document/id :probe
+                :document/title "Probe"
+                :document/source-locale :en
+                :document/source {:path "docs/probe.md"}}
+               {:garden/id :promethean
+                :garden/title "Promethean"
+                :garden/status :active}
+               {:publication/id :probe-es
+                :publication/document :probe
+                :publication/garden :promethean
+                :publication/locale :es
+                :publication/revision :source/current
+                :publication/state :published
+                :publication/path "/probe"
+                :translation/review :required}
+               {:publication/id :probe-fr
+                :publication/document :probe
+                :publication/garden :promethean
+                :publication/locale :fr
+                :publication/revision :source/current
+                :publication/state :published
+                :publication/path "/probe-fr"
+                :translation/review :required}]})
+
+(deftest a-state-edit-preserves-the-whole-authored-manifest
+  (let [updated (facade/authored-with-state authored-manifest
+                                            :knoxx.docs/probe-es
+                                            :withheld)]
+    (testing "the wrapper survives — serializing the projected intent over the
+              file used to delete :namespace, :resources and every sibling"
+      (is (= :knoxx.docs (:namespace updated)))
+      (is (= 4 (count (:resources updated)))))
+    (testing "only the target publication moved"
+      (let [by-id (fn [m k] (some #(when (= k (:publication/id %)) %) (:resources m)))]
+        (is (= :withheld (:publication/state (by-id updated :probe-es))))
+        (is (= :published (:publication/state (by-id updated :probe-fr))
+               "a sibling publication in the same manifest is untouched"))))
+    (testing "the document and garden facets are byte-identical"
+      (is (= (first (:resources authored-manifest)) (first (:resources updated))))
+      (is (= (second (:resources authored-manifest)) (second (:resources updated)))))
+    (testing "and nothing but the one state key differs anywhere in the file"
+      (is (= (assoc-in authored-manifest [:resources 2 :publication/state] :withheld)
+             updated)))))
+
+(deftest a-standalone-publication-file-keeps-its-authored-keys
+  (testing "the projection runs select-keys, so writing it back dropped
+            :namespace and anything else the author wrote"
+    (let [authored {:namespace :knoxx.docs
+                    :publication/id :probe-es
+                    :publication/document :knoxx.docs/probe
+                    :publication/garden :knoxx.docs/promethean
+                    :publication/locale :es
+                    :publication/revision :source/current
+                    :publication/state :published
+                    :publication/path "/probe"
+                    :translation/review :required}
+          updated (facade/authored-with-state authored :knoxx.docs/probe-es :archived)]
+      (is (= :archived (:publication/state updated)))
+      (is (= :knoxx.docs (:namespace updated)))
+      (is (= (assoc authored :publication/state :archived) updated)))))
+
+(deftest an-edit-to-a-file-that-does-not-declare-it-is-refused
+  (testing "a manifest without the publication"
+    (is (thrown? js/Error
+                 (facade/authored-with-state
+                  (update authored-manifest :resources #(vec (remove :publication/id %)))
+                  :knoxx.docs/probe-es
+                  :withheld))))
+  (testing "and a standalone file for a different publication"
+    (is (thrown? js/Error
+                 (facade/authored-with-state
+                  {:namespace :knoxx.docs :publication/id :other :publication/state :published}
+                  :knoxx.docs/probe-es
+                  :withheld)))))
+
