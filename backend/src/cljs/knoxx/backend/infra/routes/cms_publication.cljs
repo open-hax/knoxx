@@ -13,6 +13,7 @@
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.infra.routes.publications :as publications]
+            [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-manifest :as manifest]))
 
 (defn ^:async resource-index!
@@ -74,6 +75,18 @@
    and garden, and the very next projection failed with unresolved references.
    Publishing must not destroy the thing being published."
   [file-path publication-id next-state]
+  ;; Validated before the file is even read. This is a public function reachable
+  ;; with any value, and the read/patch/write below is the last boundary before
+  ;; the filesystem — persisting `:banana` as a publication state would leave the
+  ;; projection failing closed on a file nobody remembers editing.
+  ;;
+  ;; A state assertion is the whole of what this write needs. `unchanged-except?`
+  ;; below proves nothing else about the file moved, so a file that validated
+  ;; before the edit still validates after it exactly when the new state is
+  ;; lawful. Re-validating the whole manifest here would mean restating the
+  ;; loader's canonicalization — entries are written with namespace-local ids —
+  ;; and would prove nothing further.
+  (law/assert-valid! :publication/state law/PublicationState next-state)
   (let [edn (await (resources/read-edn-file! file-path))]
     (assert-unique-target! edn file-path publication-id)
     (let [next-edn (manifest/assoc-entry-field edn :publication/id publication-id

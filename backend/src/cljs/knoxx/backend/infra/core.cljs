@@ -95,6 +95,20 @@
 
 (defonce ^:private nag-timer* (atom nil))
 
+(defn- clear-event-runtimes-nag!
+  "Stop the nag, so the timer's lifetime tracks the state it reports.
+
+   Called on the enabled boot path rather than only on shutdown. A process that
+   armed the nag and then started its runtimes for real — a hot reload with the
+   flag no longer set, or a caller passing an explicit config — would otherwise
+   keep warning every minute that nothing is running while everything is. A
+   warning that outlives its condition is worse than no warning: it teaches the
+   reader to disbelieve the next one."
+  []
+  (when-let [timer @nag-timer*]
+    (js/clearInterval timer)
+    (reset! nag-timer* nil)))
+
 (defn- warn-event-runtimes-disabled!
   "Say it loudly at boot, then keep saying it.
 
@@ -153,7 +167,9 @@
   (try
     (let [event-runtimes? (not (:event-runtimes-disabled? resolved-config))
           policy-context (:policy-context (lifecycle/context))]
-      (when-not event-runtimes? (warn-event-runtimes-disabled!))
+      (if event-runtimes?
+        (clear-event-runtimes-nag!)
+        (warn-event-runtimes-disabled!))
       (event-runtime/start! resolved-config)
       (resource-routes/start-resource-watcher! resolved-config)
       (when (and event-runtimes? policy-context)
@@ -221,7 +237,9 @@
         ;; Start the event runtime composition shell. `start!` self-gates on
         ;; KNOXX_DISABLE_EVENT_RUNTIMES; this path never reaches
         ;; start-background-services!, so it announces the mode itself.
-        (when (event-runtime/disabled? config) (warn-event-runtimes-disabled!))
+        (if (event-runtime/disabled? config)
+          (warn-event-runtimes-disabled!)
+          (clear-event-runtimes-nag!))
         (event-runtime/start! config)
         (resource-routes/start-resource-watcher! config)
         (await (app-listen! app (:host config) (:port config)))

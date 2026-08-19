@@ -7,6 +7,7 @@
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.infra.routes.cms-publication :as facade]
             [knoxx.backend.law.cms-publication :as law]
+            [knoxx.backend.law.publication :as law-publication]
             [open-hax.publication-wire :as wire]))
 
 ;; ── Fixtures ───────────────────────────────────────────────────────────────
@@ -223,6 +224,36 @@
                  persisted)))
         (testing "the file ends with a newline, as a text file must"
           (is (str/ends-with? @written "\n")))))))
+
+(deftest ^:async an-unlawful-state-never-reaches-the-filesystem
+  (let [written (atom authored-manifest)
+        before @written
+        {:keys [read write]} (writing-to written)]
+    (with-redefs [resources/read-edn-file! read
+                  resources/write-edn-file! write]
+      (let [outcome (try (await (facade/write-publication-state!
+                                 "/tmp/probe.edn" :knoxx.docs/probe-es :banana))
+                         :wrote
+                         (catch :default e e))]
+        (testing "this is a public function reachable with any value, and it is
+                  the last boundary before the filesystem — persisting :banana
+                  would leave the projection failing closed on a file nobody
+                  remembers editing"
+          (is (not= :wrote outcome))
+          (is (= before @written) "and the file was not even read-modify-written"))
+        (testing "it fails as a contract violation, which the adapter reads as 422
+                  — the request was well-formed and the value was not"
+          (is (some? (:errors (ex-data outcome)))))))))
+
+(deftest every-lawful-state-is-accepted-by-the-contract
+  (testing "the enum the writer validates against is the one the resource shape
+            declares, so the two cannot drift apart"
+    (doseq [state [:published :withheld :archived]]
+      (is (m/validate law-publication/PublicationState state)
+          (str state " must be a lawful publication state"))))
+  (testing "and nothing else is"
+    (is (not (m/validate law-publication/PublicationState :banana)))
+    (is (not (m/validate law-publication/PublicationState "published")))))
 
 (deftest ^:async a-file-that-does-not-declare-the-publication-is-refused
   (let [written (atom (update authored-manifest :resources
