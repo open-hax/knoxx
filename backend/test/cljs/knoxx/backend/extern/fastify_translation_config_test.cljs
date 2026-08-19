@@ -59,18 +59,26 @@
 
 (deftest read-and-write-use-distinct-permissions
   (is (= "org.translations.read" adapter/read-permission))
-  (is (= "org.translations.manage" adapter/write-permission))
   (is (not= adapter/read-permission adapter/write-permission)
-      "reading the pipeline config must not imply authority to change it"))
+      "reading the pipeline config must not imply authority to change it")
+  (testing "the write is platform-scoped, because the resource it rewrites is the
+            global default — an org-scoped permission would have let one tenant's
+            administrator change the default for every other tenant"
+    (is (= "platform.translations.manage" adapter/write-permission))
+    (is (str/starts-with? adapter/write-permission "platform."))
+    (is (not (str/starts-with? adapter/write-permission "org."))))
+  (testing "while the read stays org-scoped — the resolved config is the org's own"
+    (is (str/starts-with? adapter/read-permission "org."))))
 
 (deftest ^:async unauthorized-patch-is-refused-before-any-work
-  (let [h (harness #{"org.translations.read"})
+  (let [h (harness #{"org.translations.read" "org.translations.manage"})
         routes (register! h)
         patch (route-for routes "PATCH")]
     (await ((:handler patch) (js-obj "body" (clj->js {:model "glm-5"}) "method" "PATCH")
                              (js-obj)))
-    (testing "the write permission was checked"
-      (is (= ["org.translations.manage"] @(:checks h))))
+    (testing "the write permission was checked — and org.translations.manage is
+              deliberately NOT enough for it"
+      (is (= ["platform.translations.manage"] @(:checks h))))
     (testing "and the request was refused rather than served"
       (let [{:keys [status body]} (first @(:responses h))]
         (is (= 403 (get-in body [:error :status])))
@@ -127,7 +135,7 @@
   (testing "a body missing model, or carrying a blank or non-string one, is the
             caller's mistake — 500 would blame the server for it"
     (doseq [body [{} {:model ""} {:model 42} {:model "glm-5" :surprise true}]]
-      (let [h (harness #{"org.translations.manage"})
+      (let [h (harness #{"platform.translations.manage"})
             routes (register! h)]
         (await ((:handler (route-for routes "PATCH"))
                 (js-obj "body" (clj->js body) "method" "PATCH")
@@ -157,6 +165,6 @@
                 (js-obj "body" (clj->js {:model "glm-5"}) "method" "PATCH")
                 (js-obj))))
       (testing "the check ran despite the absent context"
-        (is (= [[nil "org.translations.manage"]] @checks)))
+        (is (= [[nil "platform.translations.manage"]] @checks)))
       (is (= 403 (:status (first @responses)))))))
 

@@ -12,10 +12,22 @@
   manage-level act."
   (:require [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.routes.translation-config :as translation-config]
+            [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
 
 (def read-permission "org.translations.read")
-(def write-permission "org.translations.manage")
+
+(def write-permission
+  "Deliberately a `platform.*` permission, not `org.translations.manage`.
+
+   The resource this route writes is the *global* pipeline default, set by
+   contract files and otherwise changed only by redeployment. An org-scoped
+   permission would have let any tenant's administrator rewrite the default for
+   every other tenant — and `platform.*` is already this repository's vocabulary
+   for acts that are not scoped to one organization, held only by system_admin.
+
+   Reading stays org-scoped: reviewers need the resolved config, which is theirs."
+  "platform.translations.manage")
 
 (defn decode-request
   [request]
@@ -59,8 +71,7 @@
         (json-response! reply
                         (error-status err)
                         (resource-identity/encode-wire-values
-                         (cond-> {:detail (ex-message err)}
-                           (some? (ex-data err)) (assoc :error (ex-data err)))))))))
+                         (error-body/error-body err)))))))
 
 (defn- ^:async guarded!
   "Authorize, then run. `ensure-permission!` throws, and the surrounding
@@ -96,6 +107,5 @@
                                  (fn []
                                    (let [wire (:body (decode-request request))
                                          patch (translation-config/decode-patch wire)]
-                                     (translation-config/patch-config!
-                                      config {:org-id (:org-id ctx)} patch)))))))))
+                                     (translation-config/patch-config! config patch)))))))))
     nil))

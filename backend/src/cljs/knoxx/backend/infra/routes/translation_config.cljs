@@ -51,13 +51,14 @@
    The write is a whole-file rewrite of the owning manifest, so the resource
    stays the single authority rather than accumulating a shadow override.
 
-   Refused before the write when the caller's own org override would shadow the
-   result, so a patch never reports a change the caller cannot observe."
-  [config context domain-patch]
+   Scoped to the global default, not to the caller. The patch is computed against
+   the global resource alone and the response describes what was written, so a
+   caller whose org holds an override is never told their effective config moved
+   when it did not."
+  [config domain-patch]
   (let [records (await (config-records! config))
         index (translation-config/index-resources (mapv :resource/definition records))
-        patched (translation-config/apply-patch index context domain-patch)
-        _ (translation-config/assert-patch-target-is-effective! index context)
+        patched (translation-config/apply-global-patch index domain-patch)
         record (global-config-record records)
         file-path (:resource/file-path record)]
     (when-not file-path

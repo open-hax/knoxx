@@ -199,36 +199,29 @@
       (testing "the model catalog itself loaded"
         (is (pos? (count (:models index))))))))
 
-;; ── a patch must be observable by the caller who made it (Codex P1 on #233) ─
+;; ── a patch targets the global default, not the caller's view (#233) ────────
 
 (def ^:private acme-override
   {:namespace :orgs.acme
    :policy/id :translation-pipeline
    :translation/model "gpt-5.5"})
 
-(deftest a-patch-its-own-org-override-would-shadow-is-refused
-  (testing "the write targets the global manifest while the override wins on
-            read, so this patch would report a change the caller cannot observe"
-    (is (thrown-with-msg?
-         js/Error #"would not take effect"
-         (config/assert-patch-target-is-effective!
-          (index-of (conj base-resources acme-override))
-          {:org-id "acme"}))))
-  (testing "an org with no override of its own is unaffected"
-    (is (some? (config/assert-patch-target-is-effective!
-                (index-of (conj base-resources acme-override))
-                {:org-id "other-org"}))))
-  (testing "and neither is a caller with no org scope at all"
-    (is (some? (config/assert-patch-target-is-effective!
-                (index-of (conj base-resources acme-override))
-                {}))))
-  (testing "the refusal names the resource that would have won"
-    (try
-      (config/assert-patch-target-is-effective!
-       (index-of (conj base-resources acme-override))
-       {:org-id "acme"})
-      (is false "expected a refusal")
-      (catch :default err
-        (is (= (config/org-config-id "acme") (:expected (ex-data err))))
-        (is (= :org-override (:translation/scope (ex-data err))))))))
-
+(deftest a-patch-targets-the-global-default-not-the-callers-resolved-view
+  (let [index (index-of (conj base-resources acme-override))]
+    (testing "the org override is real on the read path"
+      (is (= "gpt-5.5" (:translation/model (config/resolve-config index {:org-id "acme"})))))
+    (testing "but a patch is computed against the global default alone"
+      (let [patched (config/apply-global-patch index {:translation/model "gemma4:31b"})]
+        (is (= "gemma4:31b" (:translation/model patched)))
+        (testing "and carries the GLOBAL other fields, not the override's"
+          (is (= (:translation/source-locale (config/resolve-config index {}))
+                 (:translation/source-locale patched))))))
+    (testing "merging onto a caller's resolved view would promote one tenant's
+              override into everybody's default — this is what that would have
+              produced, and it is why the patch is context-free"
+      (is (= "gpt-5.5"
+             (:translation/model (config/resolve-config index {:org-id "acme"})))
+          "the override still wins on read, untouched by the global patch"))
+    (testing "the same patch from any org produces the same global result"
+      (is (= (config/apply-global-patch index {:translation/model "gemma4:31b"})
+             (config/apply-global-patch index {:translation/model "gemma4:31b"}))))))
