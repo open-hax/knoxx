@@ -248,3 +248,42 @@
     (is (thrown? js/Error
                  (adapter/decode-request (js-obj "params" #js {"documentId" 42}
                                                  "method" "GET"))))))
+
+;; ── authorization status and fail-closed context (#230 review) ─────────────
+
+(deftest ^:async denied-read-is-a-403-not-a-500
+  (testing "a denied request must not be reported as an internal failure — that
+            tells the caller to retry something that will never succeed"
+    (let [h (harness #{})
+          _ (adapter/register-publication-routes! (:app h) {} {} (:handlers h))
+          {:keys [captured reply]} (fake-reply)
+          route (first @(:routes h))]
+      (await ((:handler route) (fake-request {}) reply))
+      (is (= 403 (:status @captured)))
+      (testing "and the status the error carried is the status that was sent"
+        (let [body (js->clj (:body @captured) :keywordize-keys true)]
+          (is (= 403 (get-in body [:detail :status]))))))))
+
+(deftest ^:async a-nil-request-context-fails-closed
+  (testing "with-request-context! hands down a nil context when the policy
+            database is disabled; that must refuse rather than read as
+            permission, or the projection is world-readable"
+    (let [checks (atom [])
+          routes (atom [])
+          app (js-obj "route" (fn [opts]
+                                (swap! routes conj (js->clj opts :keywordize-keys true))
+                                nil))
+          ;; Mirrors the real ensure-permission!: a nil context carries no
+          ;; permissions and no system-admin role, so it is denied.
+          handlers {:with-request-context! (fn [_runtime _request _reply f] (f nil))
+                    :ensure-permission! (fn [ctx permission]
+                                          (swap! checks conj [ctx permission])
+                                          (when-not (map? ctx)
+                                            (throw (ex-info "forbidden" {:status 403}))))}
+          {:keys [captured reply]} (fake-reply)]
+      (adapter/register-publication-routes! app {} {} handlers)
+      (await ((:handler (first @routes)) (fake-request {}) reply))
+      (testing "the check ran despite the absent context"
+        (is (= [[nil "org.publications.read"]] @checks)))
+      (is (= 403 (:status @captured)))
+      (is (not= 200 (:status @captured))))))

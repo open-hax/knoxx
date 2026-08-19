@@ -277,4 +277,4 @@ Both pre-implementation review findings actioned. CodeRabbit: the view shapes ar
 Key implementation finding: katamorph's entry-definition stamps :namespace, :resource/qualified-id and :contract/id on an expanded manifest entry but leaves the entry's own :document/id namespace-LOCAL. Since law Document requires qualified-keyword?, manifest-sourced documents could not validate. That is exactly the 'local-id canonicalization' item knoxx-publication-resource-contracts recorded as blocked on this card; canonical-id now resolves it and is deliberately one rule for own ids and references alike, so a local ref and a qualified ref compare equal. An already-qualified id keeps its own namespace over the manifest's, and with no namespace in scope a bare id is left alone rather than qualified under nil (which would strip identity rather than add it).
 
 Verification: shadow-cljs compile test 831 tests / 2476 assertions, 0 failures 0 errors (+22 tests, +66 assertions over card 1); compile server 0 warnings; clj-kondo 194 warnings / 0 errors, identical to the main baseline, none in the new files.
----
+***

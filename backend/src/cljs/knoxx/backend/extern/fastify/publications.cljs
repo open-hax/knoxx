@@ -36,18 +36,34 @@
    {:params (fastify/request-params request)
     :method (fastify/request-method request)}))
 
+(defn- http-error-status
+  "The status a recognized HTTP error already carries, or nil.
+
+   `ensure-permission!` throws `http/http-error`, which records its status both
+   in ex-data (`:status`) and on the JS error object (`statusCode`). Both are
+   read, because a fake permission check in a test throws plain `ex-info` while
+   the real one carries the JS property."
+  [err]
+  (or (:status (ex-data err))
+      (fastify/error-status err nil)))
+
 (defn- error-status
   "A projection failure caused by resource data is a 409 — the desired state is
    genuinely contradictory and a retry will not help. An unknown document is a
-   404. Anything else is a 500."
+   404. Anything else is a 500.
+
+   A status the error already carries wins over all of them: a denied request
+   is a 403, and classifying it as an internal failure would tell the caller to
+   retry something that will never succeed."
   [err]
   (let [data (ex-data err)]
-    (cond
-      (contains? data :document/id) 404
-      (or (contains? data :conflicts)
-          (contains? data :conflicting-payloads)
-          (contains? data :blockers)) 409
-      :else 500)))
+    (or (http-error-status err)
+        (cond
+          (contains? data :document/id) 404
+          (or (contains? data :conflicts)
+              (contains? data :conflicting-payloads)
+              (contains? data :blockers)) 409
+          :else 500))))
 
 (defn- error-body
   [err]
@@ -81,9 +97,16 @@
 (defn- ^:async guarded!
   "Authorize, then run. `ensure-permission!` throws, and `send-projection!`
    turns that into an error response — so an unauthorized caller never reaches
-   the filesystem-backed projection."
+   the filesystem-backed projection.
+
+   The check is unconditional. `with-request-context!` hands down a nil context
+   when the policy database is disabled, and treating that as a reason to skip
+   the check would serve document titles, garden membership and publication
+   paths to an anonymous caller — the exact enumeration this adapter's
+   docstring promises to refuse. A nil context therefore fails closed, as it
+   already does on the admin routes, rather than being read as permission."
   [handlers ctx operation]
-  (when ctx ((:ensure-permission! handlers) ctx read-permission))
+  ((:ensure-permission! handlers) ctx read-permission)
   (await (operation)))
 
 (defn- authorized-route

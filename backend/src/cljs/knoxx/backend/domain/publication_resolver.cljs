@@ -193,6 +193,44 @@
     (:publication/id resource)
     (update :publications conj (canonicalize-intent resource))))
 
+(defn publication-identity-conflicts
+  "Intents that share one canonical `:publication/id` while disagreeing on what
+   it stands for.
+
+   `publication-conflicts` keys on the *relation* — document × garden × locale ×
+   revision — so two intents claiming one id for two different relations slip
+   past it. Publications are also accumulated into a vector rather than indexed
+   through `index-canonical!`, so nothing else catches the collision either. The
+   result would be a single canonical id standing for two different payloads in
+   the very view the CMS reads identity from.
+
+   Byte-equal duplicates collapse, exactly as they do for documents and gardens
+   — only genuinely unequal payloads are a conflict. The pair is sorted by the
+   same order-independent rendering `index-canonical!` uses, so the same graph
+   reports the same conflict whatever order the loader enumerated it in."
+  [publications]
+  (->> publications
+       (group-by :publication/id)
+       (keep (fn [[id intents]]
+               (let [payloads (distinct intents)]
+                 (when (> (count payloads) 1)
+                   {:resource/kind :publications
+                    :resource/id id
+                    :conflicting-payloads (vec (sort-by stable-payload-key payloads))}))))
+       (sort-by #(pr-str (:resource/id %)))
+       vec))
+
+(defn- assert-no-identity-conflicts!
+  [index]
+  (let [conflicts (publication-identity-conflicts (:publications index))]
+    (when (seq conflicts)
+      (throw (ex-info "conflicting canonical resource identity"
+                      {:resource/kind :publications
+                       :conflicting-identities conflicts
+                       :conflicting-payloads (into []
+                                                   (mapcat :conflicting-payloads)
+                                                   conflicts)})))))
+
 (defn- assert-no-conflicts!
   [index]
   (let [conflicts (publication-conflicts (:publications index))]
@@ -215,6 +253,7 @@
   [resources]
   (let [index (reduce index-one {:documents {} :gardens {} :publications []} resources)]
     (assert-no-conflicts! index)
+    (assert-no-identity-conflicts! index)
     (assert-references-resolve! index)
     (update index :publications #(vec (sort-by publication-sort-key %)))))
 
