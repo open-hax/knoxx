@@ -27,9 +27,30 @@
 
 ;; ── No-network harness ─────────────────────────────────────────────────────
 
+(defn- ^:async with-no-network!
+  "Like `with-no-network`, but AWAITS the body before restoring `js/fetch`.
+
+   The synchronous version restores fetch the moment the body returns, so for an
+   async body every step after the first await ran with the real fetch — the
+   guard covered the setup and not the journey it claims to prove. Anything that
+   materializes a publication has to run inside this one."
+  [body]
+  (let [original js/fetch
+        attempts (atom [])]
+    (set! js/fetch (fn [url & _]
+                     (swap! attempts conj (str url))
+                     (throw (ex-info "network access is disabled in this scenario"
+                                     {:url (str url)}))))
+    (try
+      (let [result (await (body))]
+        {:result result :attempts @attempts})
+      (finally
+        (set! js/fetch original)))))
+
 (defn- with-no-network
-  "Run `body` with `js/fetch` replaced by a recorder that throws. Any HTTP call —
-   to any host — fails the scenario."
+  "Run a SYNCHRONOUS `body` with `js/fetch` replaced by a recorder that throws.
+   Any HTTP call — to any host — fails the scenario. Use `with-no-network!` for
+   anything async."
   [body]
   (let [original js/fetch
         attempts (atom [])]
@@ -184,21 +205,35 @@
 
 ;; ── 5 the materialization receipt is exact ────────────────────────────────
 
+(def translated-artifact
+  "Distinctive content, so \"the public route serves the translated artifact\" is
+   an assertion about what is served rather than about receipt metadata."
+  {:artifact/locale target-locale
+   :artifact/revision concrete-revision
+   :artifact/body "Sonda — contenido traducido"})
+
 (defn- ^:async converge!
   "Drive the fixture to convergence and return the receipt."
-  [system]
-  (let [current-plan (plan-now system)]
-    (await (effects/execute-plan! (:store system)
-                                  (:target (:target-bundle system))
-                                  {}
-                                  current-plan
-                                  nil))))
+  ([system] (converge! system translated-artifact))
+  ([system artifact]
+   (let [current-plan (plan-now system)]
+     (await (effects/execute-plan! (:store system)
+                                   (:target (:target-bundle system))
+                                   {}
+                                   current-plan
+                                   artifact)))))
 
 (deftest ^:async materialization-receipt-is-exact
-  (let [system (fixture)
-        _ (record-translation! system target-locale concrete-revision)
-        _ (record-approval! system target-locale concrete-revision)
-        receipt (await (converge! system))]
+  (let [{:keys [result attempts]}
+        (await (with-no-network!
+                 (^:async fn []
+                   (let [system (fixture)]
+                     (record-translation! system target-locale concrete-revision)
+                     (record-approval! system target-locale concrete-revision)
+                     (await (converge! system))))))
+        receipt result]
+    (is (empty? attempts)
+        "the materialization itself must run with no network available")
     (testing "one whole expected map, not per-key spot checks — an omitted key
               is how a wrong or missing path slips through"
       (is (= {:receipt/type :publication/materialized
@@ -219,18 +254,33 @@
 ;; ── 6 the public route serves the translated artifact ─────────────────────
 
 (deftest ^:async public-read-returns-the-materialized-translation
-  (let [system (fixture)
-        _ (record-translation! system target-locale concrete-revision)
-        _ (record-approval! system target-locale concrete-revision)
-        _ (await (converge! system))
+  (let [{:keys [result attempts]}
+        (await (with-no-network!
+                 (^:async fn []
+                   (let [system (fixture)]
+                     (record-translation! system target-locale concrete-revision)
+                     (record-approval! system target-locale concrete-revision)
+                     (await (converge! system))
+                     system))))
+        system result
         routes (memory/public-routes (:target-bundle system))
         served (get routes publication-path)]
+    (is (empty? attempts))
     (is (= 1 (count routes)) "exactly one public route")
     (is (some? served))
     (testing "serving the requested locale and concrete revision, not the source"
       (is (= target-locale (:locale served)))
       (is (not= source-locale (:locale served)))
-      (is (= concrete-revision (:revision served))))))
+      (is (= concrete-revision (:revision served))))
+    (testing "and serving the translated CONTENT, not just metadata about it —
+              the artifact used to be discarded, so a dropped or corrupted body
+              left every assertion here green"
+      (is (= translated-artifact
+             (memory/served-artifact (:target-bundle system) publication-path)))
+      (is (str/includes? (:artifact/body
+                          (memory/served-artifact (:target-bundle system)
+                                                  publication-path))
+                         "traducido")))))
 
 ;; ── 7 one walkable receipt chain ──────────────────────────────────────────
 
@@ -312,32 +362,93 @@
 
 ;; ── 11 no hosted backend anywhere in the scenario's graph ─────────────────
 
+(def ^:private entry-source
+  "test/cljs/knoxx/backend/e2e/contract_publication_test.cljs")
+
+(def ^:private contract-source-path
+  "src/cljs/knoxx/backend/law/publication_surface.cljs")
+
+(defn- read-source
+  [relative-path]
+  (str/lower-case
+   (.readFileSync node-fs (.join path (.cwd js/process) relative-path) "utf8")))
+
+(defn- candidate-paths
+  "Where a project namespace's file could live, from the backend test cwd."
+  [ns-name]
+  (let [munged (-> ns-name (str/replace "." "/") (str/replace "-" "_"))]
+    [(str "src/cljs/" munged ".cljs")
+     (str "src/cljs/" munged ".cljc")
+     (str "test/cljs/" munged ".cljs")
+     (str "../shared/src/cljs/" munged ".cljs")]))
+
+(defn- source-for
+  [ns-name]
+  (first (filter #(.existsSync node-fs (.join path (.cwd js/process) %))
+                 (candidate-paths ns-name))))
+
+(defn- required-project-namespaces
+  "Project namespaces a source file references. Reads the file rather than the
+   require form specifically, which can only over-collect — and over-collecting
+   makes this guard stricter, never blinder."
+  [source]
+  (->> (re-seq #"(knoxx\.[a-z0-9.*+!?<>=_-]+|open-hax\.[a-z0-9.*+!?<>=_-]+)" source)
+       (map first)
+       (map #(str/replace % #"[^a-z0-9.*+!?<>=_-]+$" ""))
+       set))
+
+(defn- dependency-closure
+  "Every project source transitively reachable from the E2E.
+
+   Derived rather than listed. The previous version grepped twelve paths somebody
+   maintained by hand, so a hosted-authority import could move into any omitted
+   dependency — `shape.resource-identity` and `open-hax.publication-wire` were
+   both reachable and both unchecked — and this test would still pass."
+  []
+  (loop [pending [entry-source]
+         seen #{}]
+    (if-let [current (first pending)]
+      (if (contains? seen current)
+        (recur (rest pending) seen)
+        (let [source (read-source current)
+              next-paths (->> (required-project-namespaces source)
+                              (keep source-for))]
+          (recur (into (vec (rest pending)) next-paths)
+                 (conj seen current))))
+      seen)))
+
 (deftest no-hosted-backend-in-the-e2e-graph
   (let [legacy-marker (str "open" "planner")
-        read-source (fn [relative-path]
-                      (str/lower-case
-                       (.readFileSync node-fs
-                                      (.join path (.cwd js/process) relative-path)
-                                      "utf8")))]
-    (doseq [relative-path ["test/cljs/knoxx/backend/e2e/contract_publication_test.cljs"
-                           "src/cljs/knoxx/backend/domain/publication_resolver.cljs"
-                           "src/cljs/knoxx/backend/domain/publication_gate.cljs"
-                           "src/cljs/knoxx/backend/domain/publication_plan.cljs"
-                           "src/cljs/knoxx/backend/domain/publication_receipts.cljs"
-                           "src/cljs/knoxx/backend/domain/cms_publication.cljs"
-                           "src/cljs/knoxx/backend/infra/publication_effects.cljs"
-                           "src/cljs/knoxx/backend/infra/publication_target_memory.cljs"
-                           "src/cljs/knoxx/backend/infra/publication_surface_verify.cljs"
-                           "src/cljs/knoxx/backend/law/publication.cljs"
-                           "src/cljs/knoxx/backend/law/publication_receipts.cljs"
-                           "src/cljs/knoxx/backend/law/cms_publication.cljs"]]
+        closure (dependency-closure)]
+    (testing "the closure is derived and actually reaches transitively"
+      (is (<= 12 (count closure))
+          (str "only " (count closure) " sources derived: " (pr-str (sort closure))))
+      (doseq [reachable ["src/cljs/knoxx/backend/domain/publication_resolver.cljs"
+                         "src/cljs/knoxx/backend/domain/publication_gate.cljs"
+                         "src/cljs/knoxx/backend/domain/publication_plan.cljs"
+                         "src/cljs/knoxx/backend/domain/publication_receipts.cljs"
+                         "src/cljs/knoxx/backend/domain/cms_publication.cljs"
+                         "src/cljs/knoxx/backend/infra/publication_effects.cljs"
+                         "src/cljs/knoxx/backend/infra/publication_target_memory.cljs"
+                         "src/cljs/knoxx/backend/infra/publication_surface_verify.cljs"
+                         "src/cljs/knoxx/backend/law/publication.cljs"
+                         "src/cljs/knoxx/backend/law/publication_receipts.cljs"
+                         "src/cljs/knoxx/backend/law/cms_publication.cljs"
+                         ;; The two the hand-maintained list missed, named
+                         ;; explicitly so the derivation cannot quietly stop
+                         ;; reaching them.
+                         "src/cljs/knoxx/backend/shape/resource_identity.cljs"
+                         "../shared/src/cljs/open_hax/publication_wire.cljs"]]
+        (is (contains? closure reachable)
+            (str reachable " is reachable from the E2E but was not derived"))))
+    (doseq [relative-path (sort (disj closure contract-source-path))]
       (testing relative-path
         (is (not (str/includes? (read-source relative-path) legacy-marker)))))
     (testing "law.publication-surface is the ONE deliberate exception"
       ;; It must name the retired paths literally, because it is the list every
       ;; other file is grepped against. Asserted positively so the exception
       ;; cannot silently become a place where a real dependency hides.
-      (let [contract-source (read-source "src/cljs/knoxx/backend/law/publication_surface.cljs")]
+      (let [contract-source (read-source contract-source-path)]
         (is (str/includes? contract-source legacy-marker))
         (is (every? #(str/includes? contract-source (str/lower-case %))
                     surface/retired-authority-paths))
