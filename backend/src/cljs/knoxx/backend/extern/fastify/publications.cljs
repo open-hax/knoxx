@@ -12,6 +12,7 @@
   caller must not be able to enumerate it."
   (:require [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.routes.publications :as publications]
+            [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
 
@@ -65,11 +66,6 @@
               (contains? data :blockers)) 409
           :else 500))))
 
-(defn- error-body
-  [err]
-  (cond-> {:error (ex-message err)}
-    (some? (ex-data err)) (assoc :detail (ex-data err))))
-
 (defn encode-body
   "Encode keyword values so identity survives JSON.
 
@@ -92,7 +88,7 @@
   (try
     (fastify/send-json! reply 200 (encode-body (await (operation))))
     (catch :default err
-      (fastify/send-json! reply (error-status err) (encode-body (error-body err))))))
+      (fastify/send-json! reply (error-status err) (encode-body (error-body/error-body err))))))
 
 (defn- ^:async guarded!
   "Authorize, then run. `ensure-permission!` throws, and `send-projection!`
