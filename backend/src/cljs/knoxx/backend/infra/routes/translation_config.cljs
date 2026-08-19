@@ -49,11 +49,15 @@
   "Apply a decoded domain patch and persist it.
 
    The write is a whole-file rewrite of the owning manifest, so the resource
-   stays the single authority rather than accumulating a shadow override."
+   stays the single authority rather than accumulating a shadow override.
+
+   Refused before the write when the caller's own org override would shadow the
+   result, so a patch never reports a change the caller cannot observe."
   [config context domain-patch]
   (let [records (await (config-records! config))
         index (translation-config/index-resources (mapv :resource/definition records))
         patched (translation-config/apply-patch index context domain-patch)
+        _ (translation-config/assert-patch-target-is-effective! index context)
         record (global-config-record records)
         file-path (:resource/file-path record)]
     (when-not file-path

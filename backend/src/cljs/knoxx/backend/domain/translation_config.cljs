@@ -92,6 +92,26 @@
        (validate-model-ref! index)
        (publication/assert-valid! global-config-id law/TranslationPipelineConfig)))
 
+(defn assert-patch-target-is-effective!
+  "Refuse a patch whose caller would not see its own change.
+
+   The write target is always the manifest owning `global-config-id`, while
+   `resolve-config` lets an org override win over it. So for a caller whose org
+   *has* an override, rewriting the global default changes nothing they can
+   observe: the response would report the new model while their effective
+   configuration kept the old one — a success for a change that did not happen.
+
+   Refusing is the conservative half of this. It does not decide who may edit the
+   global default in the first place; that is a tenancy question recorded on the
+   review thread, not something to settle inside a validator."
+  [index {:keys [org-id]}]
+  (when-let [override-id (org-config-id org-id)]
+    (when (get-in index [:configs override-id])
+      (throw (ex-info "translation config patch would not take effect"
+                      {:expected override-id
+                       :translation/scope :org-override}))))
+  index)
+
 ;; ── Wire codecs ────────────────────────────────────────────────────────────
 
 (defn config->wire

@@ -198,3 +198,37 @@
             (is (contains? (:models index) (:translation/model resolved))))))
       (testing "the model catalog itself loaded"
         (is (pos? (count (:models index))))))))
+
+;; ── a patch must be observable by the caller who made it (Codex P1 on #233) ─
+
+(def ^:private acme-override
+  {:namespace :orgs.acme
+   :policy/id :translation-pipeline
+   :translation/model "gpt-5.5"})
+
+(deftest a-patch-its-own-org-override-would-shadow-is-refused
+  (testing "the write targets the global manifest while the override wins on
+            read, so this patch would report a change the caller cannot observe"
+    (is (thrown-with-msg?
+         js/Error #"would not take effect"
+         (config/assert-patch-target-is-effective!
+          (index-of (conj base-resources acme-override))
+          {:org-id "acme"}))))
+  (testing "an org with no override of its own is unaffected"
+    (is (some? (config/assert-patch-target-is-effective!
+                (index-of (conj base-resources acme-override))
+                {:org-id "other-org"}))))
+  (testing "and neither is a caller with no org scope at all"
+    (is (some? (config/assert-patch-target-is-effective!
+                (index-of (conj base-resources acme-override))
+                {}))))
+  (testing "the refusal names the resource that would have won"
+    (try
+      (config/assert-patch-target-is-effective!
+       (index-of (conj base-resources acme-override))
+       {:org-id "acme"})
+      (is false "expected a refusal")
+      (catch :default err
+        (is (= (config/org-config-id "acme") (:expected (ex-data err))))
+        (is (= :org-override (:translation/scope (ex-data err))))))))
+

@@ -22,13 +22,28 @@
   {:body (fastify/request-body request)
    :method (fastify/request-method request)})
 
+(def ^:private patch-contract-ids
+  "The two contracts a request body is decoded through. A violation of either is
+   caused entirely by the caller, so it must not be reported as a server fault."
+  #{:translation/patch-wire :translation/patch})
+
 (defn- error-status
+  "A status the error already carries wins over everything else: a denied request
+   is a 403, and calling it a 500 tells the caller to retry something that can
+   never succeed, while hiding access denial from monitoring.
+
+   Otherwise: a malformed body is a 400, an unknown model is a 422 — the shape
+   was fine, the value is not — a missing authoritative resource is a 409, and
+   only a genuine resolution or write failure is a 500."
   [err]
   (let [data (ex-data err)]
-    (cond
-      (contains? data :translation/model) 422
-      (contains? data :expected) 409
-      :else 500)))
+    (or (:status data)
+        (fastify/error-status err nil)
+        (cond
+          (contains? patch-contract-ids (:contract data)) 400
+          (contains? data :translation/model) 422
+          (contains? data :expected) 409
+          :else 500))))
 
 (defn ^:async respond!
   "Await an operation and send its CLJS result as JSON.
@@ -50,9 +65,15 @@
 (defn- ^:async guarded!
   "Authorize, then run. `ensure-permission!` throws, and the surrounding
    `respond!` turns that into the repository's standard error response — so an
-   unauthorized request never reaches resource resolution or a write."
+   unauthorized request never reaches resource resolution or a write.
+
+   The check is unconditional. `with-request-context!` hands down a nil context
+   when the policy database is disabled, and skipping the check for that case
+   would let an anonymous caller read the pipeline config and rewrite the
+   authoritative model — the same hole that was closed on the publication routes
+   in #230. A nil context fails closed instead of reading as permission."
   [handlers ctx permission operation]
-  (when ctx ((:ensure-permission! handlers) ctx permission))
+  ((:ensure-permission! handlers) ctx permission)
   (await (operation)))
 
 (defn register-translation-config-routes!
