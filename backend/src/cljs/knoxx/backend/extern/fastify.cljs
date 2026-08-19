@@ -176,3 +176,30 @@
 (defn error-code
   [err]
   (aget err "code"))
+
+(defn log-unclassified-failure!
+  "Record a failure the boundary could not classify, without printing its values.
+
+   The caller gets an opaque body — see `law.error-body/classified?` — so this is
+   the only record that anything happened, and an unclassified failure is the one
+   most worth reading. Stated once here rather than at each adapter's catch, so
+   the three of them cannot drift into disagreeing about what a log may contain.
+
+   The ex-data KEYS are printed, not the map. At this point the map is by
+   definition unknown, and in this codebase it can hold a resolved filesystem
+   path or a connection string with a password in it. The keys are what tell an
+   operator which failure this was and what context was attached; the values stay
+   in the process.
+
+   The message is printed. It is the primary diagnostic, it is what every other
+   error path in this backend already logs, and withholding it would leave an
+   operator with a surface name and nothing else. Narrowing that further — an
+   allow-list of non-secret fields plus a correlation id for restricted detail —
+   is a real gap, but a repo-wide one: twenty-seven other call sites log a raw
+   error, and three adapters quietly disagreeing with them is worse than the
+   exposure. Carded rather than done here."
+  [surface err]
+  (js/console.error (str "[" surface "] unclassified failure:")
+                    (error-message err)
+                    (str "ex-data keys: "
+                         (pr-str (some-> (ex-data err) keys vec)))))
