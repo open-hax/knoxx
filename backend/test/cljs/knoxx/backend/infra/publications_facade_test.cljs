@@ -83,3 +83,33 @@
              blockers))))
   (testing "a fully valid record set yields no blockers"
     (is (empty? (facade/invalid-resource-blockers (expanded-records))))))
+
+;; ── blockers stay publication-scoped (Codex P2 on #230) ───────────────────
+
+(deftest unrelated-invalid-resources-are-not-publication-blockers
+  (testing "the loader walks the entire contracts tree, so one rejected agent or
+            role must not 409 every publication read"
+    (is (empty? (facade/invalid-resource-blockers
+                 [{:ok? false
+                   :resource/kind :agent
+                   :resource/file-path "/contracts/agents/broken.edn"}
+                  {:ok? false
+                   :resource/kind :role
+                   :resource/file-path "/contracts/roles/broken.edn"}]))))
+  (testing "while a rejected resource of a publication kind still blocks"
+    (doseq [kind [:document :garden :publication]]
+      (is (= 1 (count (facade/invalid-resource-blockers
+                       [{:ok? false
+                         :resource/kind kind
+                         :resource/file-path "/contracts/broken.edn"}])))
+          (str kind " must block")))))
+
+(deftest a-file-level-failure-blocks-because-its-kind-is-unknowable
+  (testing "an unreadable or unparseable file cannot be attributed to a kind, so
+            it cannot be ruled out as a publication either"
+    (is (= [{:blocker :invalid-resource
+             :resource/kind nil
+             :resource/file-path "/contracts/publications/malformed.edn"}]
+           (facade/invalid-resource-blockers
+            [{:ok? false
+              :resource/file-path "/contracts/publications/malformed.edn"}])))))
