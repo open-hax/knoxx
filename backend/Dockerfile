@@ -27,9 +27,16 @@ RUN apt-get update \
 COPY dist ./dist
 COPY docker ./docker
 
-# Compose/deployment should normally mount or copy real contract files and
-# workspace roots. Create writable/default directories so the process can still
-# boot far enough to report configuration errors instead of failing on mkdir.
+# Compose/deployment MUST mount the real contracts tree at /app/contracts. It
+# cannot be COPYed here: the build context is ./backend, so the repository-level
+# contracts/ directory is outside it. Since the translation worker resolves its
+# model solely through the config resource in that tree — the TRANSLATION_MODEL
+# fallback was removed — an empty mount point means every translation batch
+# fails. docker-compose.yml mounts it read-only; any other deployment path must
+# do the equivalent.
+#
+# The directories below are still created so the process boots far enough to
+# report a configuration error instead of failing on mkdir.
 RUN useradd --uid 1000 --create-home --shell /bin/bash agent || true \
  && mkdir -p /runs/knoxx-agent /tmp/knoxx-agent /app/contracts /app/workspace \
  && chown -R 1000:1000 /runs /tmp/knoxx-agent /app

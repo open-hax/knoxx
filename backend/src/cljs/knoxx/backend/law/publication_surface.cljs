@@ -62,7 +62,11 @@
 
    {:method "PATCH"
     :path "/api/translations/config"
-    :permission "org.translations.manage"
+    ;; Platform-scoped, not org-scoped: this route rewrites the *global* pipeline
+    ;; default, which is a deploy-time default set by contract files. An
+    ;; org-scoped permission let one tenant's administrator change it for every
+    ;; other tenant (#233).
+    :permission "platform.translations.manage"
     :access :write
     :why "the authoritative translation model selection"}])
 
@@ -72,11 +76,39 @@
   6)
 
 (def retired-authority-paths
-  "Paths that must have NO shipped caller. Each was authoritative only because a
-   hosted backend owned the state."
-  ["/api/openplanner/v1/gardens"
-   "/api/openplanner/v1/translations/config"
+  "Paths this epic actually retired: they must have NO caller anywhere in the
+   shipped source trees, and the guard scans those trees rather than an
+   allow-list of files somebody remembered to add.
+
+   `/api/openplanner/v1/gardens` is deliberately NOT here. It still has callers,
+   so listing it made this claim false while the guard passed — it walked a fixed
+   file list that happened to exclude them. Known-remaining legacy paths are
+   named below instead, with their callers, so the exception is visible and
+   cannot quietly grow."
+  ["/api/openplanner/v1/translations/config"
    "/v1/translations/config"])
+
+(def legacy-paths-with-known-callers
+  "Legacy paths that still have shipped callers, mapped to the production files
+   that call them. Outside this epic's CMS/translation scope — the Gardens page
+   was never in it, and the CMS publish call is retired by the frontend cutover,
+   not here.
+
+   Asserted positively rather than skipped: the guard checks that these are
+   *exactly* the callers, so a new one fails the build and a removed one shows up
+   as progress rather than as a silently weakened test."
+  {"/api/openplanner/v1/gardens"
+   ["frontend/src/cljs/knoxx/frontend/pages/gardens/api.cljs"
+    "frontend/src/cljs/knoxx/frontend/pages/gardens/logic.cljs"]
+
+   "/api/openplanner/v1/cms/publish"
+   ["frontend/src/pages/CmsPage.tsx"]})
+
+(def scanned-source-roots
+  "Shipped source trees the retirement guard walks, relative to the repository
+   root. Test and fixture files are excluded by the guard itself: a test naming a
+   legacy path to assert something *about* it is not a caller."
+  ["backend/src" "frontend/src" "ingestion/src" "shared/src"])
 
 (def retired-deploy-flags
   "Flags that let a deploy conditionally skip the CMS/publication surfaces. The
