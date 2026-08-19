@@ -69,13 +69,11 @@
       (json-response! reply 200 (resource-identity/encode-wire-values (await (operation))))
       (catch :default err
         (let [status (error-status err)]
-          ;; See the note on the same catch in extern/fastify/publications.cljs:
-          ;; the caller gets an opaque body for an unclassified failure, so the
-          ;; detail has to be logged here or it is lost entirely.
+          ;; The caller gets an opaque body for an unclassified failure, so this
+          ;; log is the only record of it. What the log may contain is decided
+          ;; once, in `log-unclassified-failure!`.
           (when-not (error-body/classified? status)
-            (js/console.error "[translations] unclassified failure:"
-                              (or (ex-message err) (str err))
-                              (pr-str (ex-data err))))
+            (fastify/log-unclassified-failure! "translations" err))
           (json-response! reply
                           status
                           (resource-identity/encode-wire-values
