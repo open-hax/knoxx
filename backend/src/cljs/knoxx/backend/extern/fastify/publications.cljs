@@ -90,12 +90,9 @@
     (catch :default err
       (let [status (error-status err)]
         ;; Withholding the detail from the caller must not withhold it from us.
-        ;; An unclassified failure is the one we most need to read, so it is
-        ;; logged here in full before the opaque body goes out.
+        ;; What the log may contain is decided once, in `log-unclassified-failure!`.
         (when-not (error-body/classified? status)
-          (js/console.error "[publications] unclassified failure:"
-                            (or (ex-message err) (str err))
-                            (pr-str (ex-data err))))
+          (fastify/log-unclassified-failure! "publications" err))
         (fastify/send-json! reply status
                             (encode-body (error-body/error-body err status)))))))
 
