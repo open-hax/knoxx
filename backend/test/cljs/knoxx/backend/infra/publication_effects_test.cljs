@@ -2,6 +2,7 @@
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
             [knoxx.backend.infra.publication-effects :as effects]
+            [knoxx.backend.law.publication-receipts :as law]
             ["node:fs" :as node-fs]
             ["node:path" :as path]))
 
@@ -188,12 +189,16 @@
           failed (await (effects/execute-plan! store target {} publish-plan nil))]
       (is (= :publication/failed (:receipt/type failed)))
       (is (= 1 (count @routes)) "the artifact WAS created despite the failure")
-      ;; The claim was released on failure, so replay reserves afresh and the
-      ;; adapter's own idempotence (same path) keeps a single route.
-      (let [recovering-target (:target (fake-target {}))
-            _ (reset! calls [])
-            replay (await (effects/execute-plan! store recovering-target {} publish-plan nil))]
-        (is (= :publication/materialized (:receipt/type replay)))))))
+      (testing "the claim is retained, so the replay OBSERVES rather than
+                republishing — convergence must not depend on the adapter
+                deduplicating on our behalf"
+        (reset! calls [])
+        (let [replay (await (effects/execute-plan! store target {} publish-plan nil))]
+          (is (= :publication/materialized (:receipt/type replay)))
+          (is (= 1 (count @routes)) "no second artifact")
+          (is (not-any? #(= :publish! (first %)) @calls)
+              "a target that does not deduplicate would have gained a second route")
+          (is (some #(= :observe! (first %)) @calls)))))))
 
 (deftest ^:async in-flight-claim-reconciles-by-observation
   (testing "a claimed-but-never-completed key means the prior outcome is unknown;
@@ -274,7 +279,8 @@
     (testing "desired state is untouched — identical map, not merely equal"
       (is (identical? before (:intent publish-plan)))
       (is (= :published (:publication/state (:intent publish-plan)))))
-    (testing "and the claim was released so a retry can proceed"
+    (testing "and a retry still proceeds: the retained claim is reconciled by
+              observation, which finds nothing and then republishes"
       (let [{:keys [target routes]} (fake-target {})
             retry (await (effects/execute-plan! store target {} publish-plan nil))]
         (is (= :publication/materialized (:receipt/type retry)))
@@ -295,3 +301,57 @@
                            "src/cljs/knoxx/backend/infra/publication_effects.cljs"]]
       (testing relative-path
         (is (not (str/includes? (read-source relative-path) legacy-marker)))))))
+
+;; ── the boundary refuses what it cannot key or verify (Codex on #236) ──────
+
+(deftest the-idempotency-key-refuses-a-revision-selector
+  (testing "the nil check alone let :source/current through, so a key meaning
+            \"whatever is current\" got a stable-looking name for a moving target —
+            and replaying it would report done while publishing other content"
+    (doseq [bad [nil :source/current "" "   "]]
+      (is (thrown? js/Error (effects/publish-idempotency-key :fake/target intent bad))
+          (str (pr-str bad) " must not produce a key"))))
+  (testing "the plan contract refuses it too, so it cannot reach the boundary"
+    (is (thrown? js/Error
+                 (law/assert-plan! (assoc publish-plan :concrete-revision :source/current)))))
+  (testing "while a concrete revision keys normally"
+    (is (string? (effects/publish-idempotency-key :fake/target intent "probe-revision")))))
+
+(deftest a-remove-plan-must-carry-what-remove-needs
+  (testing "remove! takes both intent and observed; leaving them optional let a
+            plan validate and then call the adapter with two nils"
+    (doseq [plan [{:op :remove}
+                  {:op :remove :intent intent}
+                  {:op :remove :observed {:materialized/path "/probe"}}]]
+      (is (thrown? js/Error (law/assert-plan! plan))
+          (str (pr-str plan) " must not validate"))))
+  (testing "a complete remove plan still validates"
+    (is (map? (law/assert-plan! {:op :remove
+                                 :intent intent
+                                 :observed {:materialized/path "/probe"}})))))
+
+(deftest ^:async a-receipt-that-does-not-describe-the-request-is-refused
+  (testing "a structurally valid receipt naming the wrong artifact was recorded
+            as :done, after which every replay reported convergence for something
+            that may never have been materialized"
+    (doseq [[label wrong] [["wrong path" {:materialized/path "/somewhere-else"}]
+                           ["wrong revision" {:materialized/revision "other-revision"}]
+                           ["wrong key" {:idempotency/key "not-the-requested-key"}]]]
+      (let [{:keys [store state]} (fake-store)
+            target (reify effects/IPublicationTarget
+                     (target-id [_] :fake/target)
+                     (publish! [_ _ctx op]
+                       (js/Promise.resolve
+                        (merge {:receipt/type :publication/materialized
+                                :materialized/revision (:concrete-revision op)
+                                :materialized/path (get-in op [:intent :publication/path])
+                                :idempotency/key (:idempotency/key op)}
+                               wrong)))
+                     (remove! [_ _ctx _intent _observed] (js/Promise.resolve nil))
+                     (observe! [_ _ctx _intent] (js/Promise.resolve nil)))
+            receipt (await (effects/execute-plan! store target {} publish-plan nil))]
+        (testing label
+          (is (= :publication/failed (:receipt/type receipt)))
+          (is (not-any? :receipt (vals @state))
+              "nothing may be recorded as done for a materialization we cannot confirm"))))))
+
