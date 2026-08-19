@@ -212,8 +212,7 @@
 
       :else
       {:migration/status :candidate
-       :resource {:document/id (resolver/canonical-id (:migration/namespace policy)
-                                                      (keyword document-name))
+       :resource {:document/id (ident/canonical-document-id policy document)
                   :document/title (or (:title document) "")
                   :document/source-locale (:ok locale)
                   :document/source {:path (:source_path document)}}})))
@@ -272,7 +271,12 @@
               (conflict :invalid-publication-path :path (:path row) row))
             {:migration/status :candidate
              :resource {:publication/id publication-id
-                        :publication/document (:document/id document)
+                        ;; The same rule the document phase writes under. Copying
+                        ;; the raw legacy value here left the reference
+                        ;; unqualified while the document itself was written
+                        ;; qualified, so PublicationIntentResource rejected it
+                        ;; and the batch aborted instead of migrating.
+                        :publication/document (ident/canonical-document-id policy document)
                         :publication/garden (ident/canonical-garden-id policy row)
                         :publication/locale (:ok locale)
                         :publication/revision (:ok revision)
