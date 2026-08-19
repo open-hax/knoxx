@@ -14,12 +14,24 @@
      still has to come down.
   2. The concrete revision comes from one `publication-evidence` result and is
      never re-resolved. The revision the gate checked evidence against is the
-     revision the plan materializes."
-  (:require [knoxx.backend.domain.publication-gate :as gate]))
+     revision the plan materializes.
+
+  3. Convergence requires an *affirmative* request to publish, asked of
+     `law.publication/publishes?`. Deciding it by elimination — anything not
+     explicitly non-public converges — is the fail-open shape #229 removed from
+     `admissible-publication?`, and it would let a `nil`, misspelt, or
+     still-string-encoded state become a public effect."
+  (:require [knoxx.backend.domain.publication-gate :as gate]
+            [knoxx.backend.law.publication :as law]))
 
 (def non-public-states
   "States that can only remove or no-op. `:withheld` means \"deliberately not
-   public\"; `:archived` means \"terminal\". Neither can publish."
+   public\"; `:archived` means \"terminal\". Neither can publish.
+
+   A *recognized* non-public state. An unrecognized one is a third case and is
+   deliberately not folded in here: taking a live route down on the strength of
+   a state nobody can read would be destroying content on the basis of a value
+   we have already decided not to trust."
   #{:withheld :archived})
 
 (defn desired-materialization
@@ -75,6 +87,15 @@
 
       (not= :active (:garden/status garden))
       (takedown intent observed :garden-not-active)
+
+      ;; Neither a request to publish nor a recognized takedown: refuse both
+      ;; effects. No evidence is gathered, because there is no trustworthy
+      ;; intent to gather it about.
+      (not (law/publishes? intent))
+      {:op :blocked
+       :intent intent
+       :blockers [:publication-state-unrecognized]
+       :concrete-revision nil}
 
       :else
       (converge intent observed (gate/publication-evidence intent facts)))))
