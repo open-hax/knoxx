@@ -7,7 +7,9 @@
   inside it, so an authorization denial is caught here rather than escaping to
   Fastify."
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.extern.fastify.cms-publication :as adapter]))
+            [clojure.string :as str]
+            [knoxx.backend.extern.fastify.cms-publication :as adapter]
+            [knoxx.backend.law.error-body :as error-body]))
 
 (defn- capturing
   "Handlers whose `json-response!` records what the adapter decided."
@@ -86,6 +88,26 @@
           body (:body sent)]
       (is (= "conflicting entries" (:detail body)))
       (is (some? (:error body))))))
+
+(deftest ^:async an-unclassified-failure-sends-an-opaque-body
+  (testing "the redaction has to hold on THIS adapter too, not only in the law —
+            a 500 is the boundary saying it does not know what it is holding, and
+            here it routinely holds a resource file path"
+    (let [sent (await (status-for
+                       (ex-info "ENOENT: /srv/knoxx/contracts/secret.edn"
+                                {:resource/file-path "/srv/knoxx/contracts/secret.edn"})))]
+      (is (= 500 (:status sent)))
+      (is (= {:detail error-body/opaque-detail} (:body sent)))
+      (is (not (str/includes? (pr-str (:body sent)) "secret.edn"))))))
+
+(deftest ^:async a-classified-failure-still-carries-its-evidence
+  (testing "the evidence is the whole point of a 409 here, so redaction must not
+            reach it"
+    (let [sent (await (status-for (ex-info "conflicting entries"
+                                           {:conflicts [{:matches 2}]})))]
+      (is (= 409 (:status sent)))
+      (is (= "conflicting entries" (:detail (:body sent))))
+      (is (some? (:error (:body sent)))))))
 
 (deftest ^:async a-successful-operation-is-a-200
   (let [sent (atom nil)]
