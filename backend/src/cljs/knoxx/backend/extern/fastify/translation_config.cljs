@@ -12,23 +12,50 @@
   manage-level act."
   (:require [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.routes.translation-config :as translation-config]
+            [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
 
 (def read-permission "org.translations.read")
-(def write-permission "org.translations.manage")
+
+(def write-permission
+  "Deliberately a `platform.*` permission, not `org.translations.manage`.
+
+   The resource this route writes is the *global* pipeline default, set by
+   contract files and otherwise changed only by redeployment. An org-scoped
+   permission would have let any tenant's administrator rewrite the default for
+   every other tenant — and `platform.*` is already this repository's vocabulary
+   for acts that are not scoped to one organization, held only by system_admin.
+
+   Reading stays org-scoped: reviewers need the resolved config, which is theirs."
+  "platform.translations.manage")
 
 (defn decode-request
   [request]
   {:body (fastify/request-body request)
    :method (fastify/request-method request)})
 
+(def ^:private patch-contract-ids
+  "The two contracts a request body is decoded through. A violation of either is
+   caused entirely by the caller, so it must not be reported as a server fault."
+  #{:translation/patch-wire :translation/patch})
+
 (defn- error-status
+  "A status the error already carries wins over everything else: a denied request
+   is a 403, and calling it a 500 tells the caller to retry something that can
+   never succeed, while hiding access denial from monitoring.
+
+   Otherwise: a malformed body is a 400, an unknown model is a 422 — the shape
+   was fine, the value is not — a missing authoritative resource is a 409, and
+   only a genuine resolution or write failure is a 500."
   [err]
   (let [data (ex-data err)]
-    (cond
-      (contains? data :translation/model) 422
-      (contains? data :expected) 409
-      :else 500)))
+    (or (:status data)
+        (fastify/error-status err nil)
+        (cond
+          (contains? patch-contract-ids (:contract data)) 400
+          (contains? data :translation/model) 422
+          (contains? data :expected) 409
+          :else 500))))
 
 (defn ^:async respond!
   "Await an operation and send its CLJS result as JSON.
@@ -44,15 +71,20 @@
         (json-response! reply
                         (error-status err)
                         (resource-identity/encode-wire-values
-                         (cond-> {:detail (ex-message err)}
-                           (some? (ex-data err)) (assoc :error (ex-data err)))))))))
+                         (error-body/error-body err)))))))
 
 (defn- ^:async guarded!
   "Authorize, then run. `ensure-permission!` throws, and the surrounding
    `respond!` turns that into the repository's standard error response — so an
-   unauthorized request never reaches resource resolution or a write."
+   unauthorized request never reaches resource resolution or a write.
+
+   The check is unconditional. `with-request-context!` hands down a nil context
+   when the policy database is disabled, and skipping the check for that case
+   would let an anonymous caller read the pipeline config and rewrite the
+   authoritative model — the same hole that was closed on the publication routes
+   in #230. A nil context fails closed instead of reading as permission."
   [handlers ctx permission operation]
-  (when ctx ((:ensure-permission! handlers) ctx permission))
+  ((:ensure-permission! handlers) ctx permission)
   (await (operation)))
 
 (defn register-translation-config-routes!
@@ -75,6 +107,5 @@
                                  (fn []
                                    (let [wire (:body (decode-request request))
                                          patch (translation-config/decode-patch wire)]
-                                     (translation-config/patch-config!
-                                      config {:org-id (:org-id ctx)} patch)))))))))
+                                     (translation-config/patch-config! config patch)))))))))
     nil))

@@ -16,6 +16,13 @@ services:
       DEFAULT_CTX: 4096
       DEFAULT_GPU_LAYERS: 99
     volumes:
+      # The contracts tree is the authority for translation pipeline config, and
+      # the worker's fetch is now the only source of the model — the env-var
+      # fallback is gone. backend/Dockerfile can only create an EMPTY
+      # /app/contracts because its build context is ./backend, so nothing above
+      # it can be COPYed in; without this mount the config lookup fails and
+      # every translation batch is marked failed.
+      - ./contracts:/app/contracts:ro
       - ./models:/workspace/models
       - ./runs:/workspace/runs
       - ./llama.cpp:/workspace/llama.cpp
