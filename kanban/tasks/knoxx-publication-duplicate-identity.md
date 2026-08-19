@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-publication-duplicate-identity"
 title: "Duplicate publication ids are never detected; lookups resolve by file enumeration order"
-status: incoming
+status: review
 priority: P1
 labels: ["tasks", "3sp", "has-parent", "publication", "resources", "correctness"]
 created_at: "2026-08-13T00:00:00Z"
@@ -61,8 +61,39 @@ while the CMS may be displaying the other.
 
 `scripts/verify-publication-epic.sh` §6, run against a live backend on
 2026-08-13. That section seeds two files claiming `knoxx.verify/probe-es` with
-different revisions and expects `409`. It gets `200`. **The check is currently
-red on purpose** and should go green with this card.
+different revisions and expects `409`. It got `200`.
+
+## Fixed in #230
+
+`publication-identity-conflicts` and `assert-no-identity-conflicts!` in
+`backend/src/cljs/knoxx/backend/domain/publication_resolver.cljs`. Against the
+scope and acceptance criteria below:
+
+- **Detection** — a shared `:publication/id` with unequal payloads raises
+  `conflicting canonical resource identity`, carrying `:resource/id` (the id
+  that collided), `:resource/kind` and both payloads.
+- **Status** — the ex-data's `:conflicting-payloads` key is already classified
+  `409` by `extern/fastify/publications.cljs`, so no adapter change was needed.
+- **Identical payloads** — not reported as an *identity* conflict, matching
+  `index-canonical!`. They are not thereby allowed: two identical active intents
+  still claim one relation and `assert-no-conflicts!` refuses them, which
+  `composite-entry-does-not-produce-a-false-relation-conflict` pins.
+- **Stable order** — the reported pair is sorted by `stable-payload-key`, the
+  same order-independent rendering `index-canonical!` uses, and a test asserts
+  the result is equal under both input orders.
+- **Relation conflicts** — `publication-conflicts` is untouched and still runs
+  as a separate invariant.
+- **Docstring** — `resource-records!` claimed the undeduped list keeps "the
+  resolver's deterministic identity-conflict detection" reachable. That claim
+  was false for publications and is now true, so it stands as written.
+
+Covered by `one-publication-id-cannot-stand-for-two-relations` in
+`backend/test/cljs/knoxx/backend/domain/publication_resolver_test.cljs`:
+unequal payloads conflict, byte-equal ones do not, the conflict names the id,
+and the ordering is input-independent.
+
+Still open: §6 has not been re-run against a live backend since the fix. The
+status above is derived from reading the code, not observed.
 
 ## Outcome
 

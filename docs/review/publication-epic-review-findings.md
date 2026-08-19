@@ -73,8 +73,11 @@ which is stronger evidence than either the reviews or the test suite had:
    the document and garden declared in the same manifest. **Fixed in #243.**
 2. **#230 (coderabbit) — conflicting canonical `:publication/id` is not
    rejected.** `publication-conflicts` keys on the relation, not the id.
-   Reproduced live; §6 of the verification script is red on it.
-   **Not fixed** — carded as `knoxx-publication-duplicate-identity`.
+   Reproduced live; §6 of the verification script was red on it.
+   **Fixed in #230** — `publication-identity-conflicts` reports a shared id with
+   unequal payloads, byte-equal duplicates still fail the relation check, and
+   the reported pair is ordered independently of file enumeration. Carded as
+   `knoxx-publication-duplicate-identity`, now in review rather than incoming.
 3. **#242 — the fixture trap can delete data it did not create.** The `EXIT`
    trap is installed before the "fixture already exists" preflight, so dying on
    an existing fixture deletes someone else's. **Fixed** in this branch.

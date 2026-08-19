@@ -79,14 +79,20 @@ FIXTURE_OWNED=0
 
 cleanup() {
   local code=$?
+  local signalled="${1:-}"
+  # See the note on the same function in verify-publication-epic.sh: $? is only
+  # the run's real status on EXIT, so the signal handlers name theirs.
+  if [ -n "$signalled" ]; then code="$signalled"; fi
   ab close >/dev/null 2>&1
   if [ "$FIXTURE_OWNED" -eq 1 ] && [ -d "$FIXTURE_DIR" ]; then
     fixture_remove
     note "torn down ${FIXTURE_DIR#$REPO_ROOT/}"
   fi
-  exit $code
+  exit "$code"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'trap - EXIT; cleanup 130' INT
+trap 'trap - EXIT; cleanup 143' TERM
 
 # ── Preflight ──────────────────────────────────────────────────────────────
 
@@ -162,12 +168,22 @@ note "seeded ${FIXTURE_DIR#$REPO_ROOT/}"
 
 step "1. open the app and establish an identity"
 
+# Every value below reaches the browser as a jq-produced JSON literal, never as
+# a bare single-quoted JS literal. All four are environment-supplied, and one
+# apostrophe or backslash in any of them would close the literal early and run
+# whatever followed as code — with a password, in an expression whose output is
+# printed on failure.
+identity_js="$(jq -rn --arg email "$USER_EMAIL" --arg org "$ORG_SLUG" \
+  '"localStorage.setItem(\"knoxx_user_email\", \($email|tojson)); localStorage.setItem(\"knoxx_org_slug\", \($org|tojson)); \"seeded\""')"
+
 ab set viewport 1600 1000 >/dev/null
 ab open "$FRONTEND_URL" >/dev/null
-ab eval "localStorage.setItem('knoxx_user_email', '${USER_EMAIL}'); localStorage.setItem('knoxx_org_slug', '${ORG_SLUG}'); 'seeded'" >/dev/null
+ab eval "$identity_js" >/dev/null
 
 if [ -n "${KNOXX_DEV_EMAIL:-}" ] && [ -n "${KNOXX_DEV_PASSWORD:-}" ]; then
-  login="$(ab eval "(async () => (await fetch('/api/auth/local/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({email:'${KNOXX_DEV_EMAIL}', password:'${KNOXX_DEV_PASSWORD}'})})).status)()")"
+  login_body="$(jq -cn --arg email "$KNOXX_DEV_EMAIL" --arg password "$KNOXX_DEV_PASSWORD" \
+    '{email: $email, password: $password}')"
+  login="$(ab eval '(async () => (await fetch("/api/auth/local/login", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify('"$login_body"')})).status)()')"
   if printf '%s' "$login" | grep -q "200"; then
     pass "signed in as ${KNOXX_DEV_EMAIL} — the shell will render the real CMS"
   else
@@ -176,6 +192,20 @@ if [ -n "${KNOXX_DEV_EMAIL:-}" ] && [ -n "${KNOXX_DEV_PASSWORD:-}" ]; then
 else
   note "KNOXX_DEV_EMAIL / KNOXX_DEV_PASSWORD not set — API checks will still run,"
   note "but the app shell will show its login screen rather than the CMS."
+fi
+
+# The frontend proxies /api to *a* backend, and nothing up to here says which
+# one. If it serves a different checkout's contracts the fixture is invisible to
+# it and every assertion below is about someone else's topology — a green tour
+# that proves nothing. verify-publication-epic.sh makes the same check as its
+# step 0; this is the browser-side equivalent, through the proxy the page uses.
+probe="$(ab eval '(async () => { const h = {"x-knoxx-user-email": localStorage.getItem("knoxx_user_email") || "", "x-knoxx-org-slug": localStorage.getItem("knoxx_org_slug") || ""}; const r = await fetch("/api/publications/documents", {headers: h}); return r.status + " " + (await r.text()); })()')"
+if printf '%s' "$probe" | grep -qF "$FIXTURE_DOC_ID"; then
+  pass "the backend behind ${FRONTEND_URL}/api serves this checkout — the fixture is visible"
+else
+  note "response was: $(printf '%s' "$probe" | head -c 300)"
+  note "it is probably serving a different checkout. Check: pm2 describe knoxx-backend | grep cwd"
+  die "the backend behind ${FRONTEND_URL}/api cannot see ${FIXTURE_DIR#$REPO_ROOT/}"
 fi
 
 ab reload >/dev/null
@@ -286,7 +316,12 @@ step "5. the same surface refuses an unauthenticated caller"
 # Strip the identity and re-issue the request from the same page. A route that
 # answers 200 here is an enumeration leak: the projection exposes document
 # titles, garden membership, and publication paths.
-anon="$(ab eval "(async () => (await fetch('/api/cms/publications/documents', {headers:{'x-knoxx-user-email':'', 'x-knoxx-org-slug':''}})).status)()")"
+#
+# credentials:"omit" matters as much as the blank headers. Step 1 may have
+# established a real session cookie, and the browser attaches it to a same-origin
+# fetch by default — so without this the request is not anonymous, the route
+# correctly answers 200, and the tour reports a leak that does not exist.
+anon="$(ab eval '(async () => (await fetch("/api/cms/publications/documents", {credentials:"omit", headers:{"x-knoxx-user-email":"", "x-knoxx-org-slug":""}})).status)()')"
 if printf '%s' "$anon" | grep -qE "401|403"; then
   pass "an anonymous request is refused (401/403)"
 else

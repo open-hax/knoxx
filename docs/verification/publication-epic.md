@@ -186,9 +186,13 @@ over, all of them at the boundary the tests fake:
 3. **Duplicate publication ids are never detected.** `publication-conflicts`
    keys on the relation, not on `:publication/id`, so two files claiming the
    same id with different revisions both land in the index and every lookup
-   takes whichever came first. **Not fixed** — carded as
-   `knoxx-publication-duplicate-identity`. §6 of the API script is red until it
-   is.
+   takes whichever came first. **Fixed in #230** —
+   `publication-identity-conflicts` refuses a shared id with unequal payloads
+   and `assert-no-identity-conflicts!` raises `conflicting canonical resource
+   identity`, whose `:conflicting-payloads` key the adapter already classifies
+   as `409`. §6 asserts that status and message and should now be green; it has
+   not been re-run against a live backend since the fix, so treat it as derived
+   from the code rather than observed.
 
 ## Known gap, surfaced deliberately
 

@@ -126,13 +126,23 @@ FIXTURE_OWNED=0
 
 cleanup() {
   local code=$?
+  local signalled="${1:-}"
+  # On EXIT, $? is the script's real status. On a signal it is not: it is
+  # whatever the last command happened to return, so a run killed mid-check
+  # would tear down and then report success. The signal handlers pass their
+  # conventional 128+n status explicitly.
+  if [ -n "$signalled" ]; then code="$signalled"; fi
   if [ "$FIXTURE_OWNED" -eq 1 ] && [ -d "$FIXTURE_DIR" ]; then
     fixture_remove
     note "torn down ${FIXTURE_DIR#$REPO_ROOT/}"
   fi
-  exit $code
+  exit "$code"
 }
-trap cleanup EXIT INT TERM
+# Each signal handler disarms EXIT first, so teardown runs once and the status
+# it names is the one that leaves the process.
+trap cleanup EXIT
+trap 'trap - EXIT; cleanup 130' INT
+trap 'trap - EXIT; cleanup 143' TERM
 
 # ── Preflight ──────────────────────────────────────────────────────────────
 
@@ -260,11 +270,27 @@ resp="$(http PATCH "/api/cms/publications/intents/${NS}%2Fprobe-es" auth \
   '{"state":"withheld","path":"/verify/moved","locale":"de","revision":"rev-hijack","garden":"knoxx.verify/other"}')"
 expect_status "PATCH carrying identity fields is accepted for state only" "200 422" "$resp"
 
-if grep -q '"/verify/probe-es"' "${FIXTURE_DIR}/probe.edn" 2>/dev/null \
-   && grep -q ':publication/locale :es' "${FIXTURE_DIR}/probe.edn" 2>/dev/null; then
-  pass "identity did not move — path, locale and garden are unchanged on disk"
+# Checked field by field, and every field the PATCH above tried to move is
+# checked — asserting only path and locale would have let a garden or revision
+# hijack through while still reporting "identity did not move". Flattened first
+# because the writer is free to line-break between a key and its value.
+# shellcheck disable=SC2002  # `< missing` makes the shell itself write to stderr
+on_disk_flat="$(cat "${FIXTURE_DIR}/probe.edn" 2>/dev/null | tr '\n' ' ')"
+identity_moved=""
+for expected in \
+  ':publication/path[[:space:]]+"/verify/probe-es"' \
+  ':publication/locale[[:space:]]+:es' \
+  ':publication/garden[[:space:]]+:probe-garden' \
+  ':publication/revision[[:space:]]+"rev-verify-1"'
+do
+  printf '%s' "$on_disk_flat" | grep -qE -- "$expected" \
+    || identity_moved="${identity_moved}${identity_moved:+, }${expected}"
+done
+
+if [ -z "$identity_moved" ]; then
+  pass "identity did not move — path, locale, garden and revision are unchanged on disk"
 else
-  fail "identity moved through the state-patch surface" "$(grep -E ':publication/(path|locale|garden|revision)' "${FIXTURE_DIR}/probe.edn" 2>/dev/null)"
+  fail "identity moved through the state-patch surface" "no longer on disk: ${identity_moved}"
 fi
 
 expect_status "PATCH on an unknown publication is a 404" "404" \
@@ -299,24 +325,22 @@ fixture_write_collision
 sleep 1
 resp="$(http GET "/api/publications/documents" auth)"
 expect_status "two files claiming ${PUB_ID} conflict" "409" "$resp"
-# Matched against the whole body as text on purpose. The two adapters on this
-# path disagree about which key holds the message and which holds the data —
-# publications.cljs sends {:error <message> :detail <data>}, cms_publication.cljs
-# sends {:detail <message> :error <data>} — so a key-specific filter would pass
-# on one route and fail on the other.
+# Keyed on :detail, because every adapter on this surface now builds its body
+# through knoxx.backend.law.error-body — the message in :detail, the ex-data in
+# :error. Before that the two adapters disagreed about which key held which,
+# and this had to match the whole body as text to pass on both routes.
 expect_jq "and the conflict is reported, not resolved by directory order" \
-  'tostring | test("conflict")' "$resp"
+  '.detail | tostring | test("conflict")' "$resp"
 
 note "first-wins dedup would have kept whichever file readdir returned first,"
 note "making the topology depend on filesystem enumeration order."
 note ""
-note "KNOWN TO FAIL. publication-conflicts keys on the RELATION"
-note "(document x garden x locale x revision), not on :publication/id. Documents"
-note "and gardens get index-canonical!'s same-id/different-payload check;"
-note "publications get no identity check at all. Two files declaring the same"
-note "publication id with different revisions both land in the index, and every"
-note "lookup by id — including set-publication-state! — takes whichever came"
-note "first. Tracked in knoxx-publication-duplicate-identity."
+note "Enforced by publication-identity-conflicts in domain/publication_resolver.cljs."
+note "publication-conflicts alone was not enough: it keys on the RELATION"
+note "(document x garden x locale x revision), so two files declaring the same"
+note ":publication/id with different revisions both landed in the index and every"
+note "lookup by id — including set-publication-state! — took whichever came first."
+note "The identity check now rejects the pair outright."
 
 rm -f "${FIXTURE_DIR}/collision.edn"
 sleep 1
