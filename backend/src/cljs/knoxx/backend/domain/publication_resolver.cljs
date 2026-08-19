@@ -204,10 +204,18 @@
    result would be a single canonical id standing for two different payloads in
    the very view the CMS reads identity from.
 
-   Byte-equal duplicates collapse, exactly as they do for documents and gardens
-   — only genuinely unequal payloads are a conflict. The pair is sorted by the
-   same order-independent rendering `index-canonical!` uses, so the same graph
-   reports the same conflict whatever order the loader enumerated it in."
+   Only genuinely unequal payloads are reported here. Byte-equal duplicates are
+   *not* collapsed into the index: two identical active intents still claim one
+   relation, and `assert-no-conflicts!` refuses them by relation — which is
+   deliberate and asserted by
+   `composite-entry-does-not-produce-a-false-relation-conflict`, the proof that a
+   composite manifest entry must be projected onto one facet before indexing.
+   Skipping equal payloads here therefore means \"this is not an *identity*
+   conflict\", not \"this is allowed\".
+
+   The pair is sorted by the same order-independent rendering `index-canonical!`
+   uses, so the same graph reports the same conflict whatever order the loader
+   enumerated it in."
   [publications]
   (->> publications
        (group-by :publication/id)
