@@ -78,10 +78,11 @@
          (swap! calls conj [:publish! (:idempotency/key op)])
          (when fail? (throw (ex-info "adapter exploded" {})))
          (materialize! routes op swallow-response?))
-       (remove! [_ _ctx _intent observed]
+       (remove! [_ _ctx intent observed]
          (swap! calls conj [:remove! (:materialized/path observed)])
          (swap! routes dissoc (:materialized/path observed))
          (js/Promise.resolve {:receipt/type :publication/removed
+                              :publication/id (:publication/id intent)
                               :removed/path (:materialized/path observed)}))
        (observe! [_ _ctx observed-intent]
          (swap! calls conj [:observe! (:publication/id observed-intent)])
