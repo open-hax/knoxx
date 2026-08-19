@@ -2,6 +2,7 @@
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
             [malli.core :as m]
+            [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.fastify.publications :as adapter]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
@@ -373,6 +374,45 @@
       (let [body (error-body/error-body err 409)]
         (is (str/includes? (:detail body) "secret.edn"))
         (is (map? (:error body)))))))
+
+(deftest an-unclassified-failure-is-logged-without-its-values
+  ;; Three fixed arguments, because that is exactly what the helper passes. A
+  ;; variadic stub would also work but would stop asserting the call shape.
+  (let [logged (atom [])
+        original js/console.error]
+    (set! js/console.error (fn [a b c] (swap! logged conj (str a " " b " " c))))
+    (try
+      (fastify/log-unclassified-failure!
+       "publications"
+       (ex-info "boom" {:mongo-uri "mongodb://user:pw@host"
+                        :resource/file-path "/srv/knoxx/contracts/secret.edn"}))
+      (finally (set! js/console.error original)))
+    (let [line (str/join "\n" @logged)]
+      (testing "the keys are printed — they are what say which failure this was
+                and what context was attached to it"
+        (is (str/includes? line ":mongo-uri"))
+        (is (str/includes? line ":resource/file-path")))
+      (testing "and not one of the values, which is where a password or a
+                resolved path actually lives"
+        (is (not (str/includes? line "mongodb://")))
+        (is (not (str/includes? line "user:pw")))
+        (is (not (str/includes? line "secret.edn"))))
+      (testing "while the message still is: it is the primary diagnostic, and an
+                operator left with only a surface name has nothing to act on"
+        (is (str/includes? line "boom")))
+      (testing "the surface is named so the line is greppable"
+        (is (str/includes? line "[publications]"))))))
+
+(deftest logging-an-error-with-no-data-says-so-rather-than-breaking
+  (let [logged (atom [])
+        original js/console.error]
+    (set! js/console.error (fn [a b c] (swap! logged conj (str a " " b " " c))))
+    (try
+      (fastify/log-unclassified-failure! "publications" (js/Error. "plain"))
+      (finally (set! js/console.error original)))
+    (is (str/includes? (first @logged) "plain"))
+    (is (str/includes? (first @logged) "nil")
+        "no ex-data prints as nil keys, not as an exception inside the logger")))
 
 (deftest ^:async an-unexpected-throw-reaches-the-caller-as-an-opaque-500
   (testing "send-projection! is the path an unrecognized error actually takes;
