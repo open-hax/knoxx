@@ -1,8 +1,11 @@
 (ns knoxx.backend.infra.cms-publication-facade-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.reader :as reader]
+            [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
             [malli.core :as m]
             [knoxx.backend.domain.cms-publication :as cms]
+            [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.infra.routes.cms-publication :as facade]
             [knoxx.backend.law.cms-publication :as law]
             [open-hax.publication-wire :as wire]))
 
@@ -156,3 +159,106 @@
     (is (= "abc123" (cms/encode-revision "abc123")))
     (is (= "abc123" (cms/decode-revision "abc123")))
     (is (string? (cms/decode-revision "abc123")))))
+
+;; ── a state edit must not destroy the file it edits (Codex P1 on #239) ─────
+;;
+;; The structural half of this — one field on one entry, siblings and :namespace
+;; intact, a namespace-local id matched against a canonical one — is pinned at
+;; its own layer in knoxx.backend.shape.resource-manifest-test. What is only
+;; reachable here is the WRITE path: that the bytes handed to the filesystem are
+;; the whole manifest, and that the two refusals carry ex-data the adapter
+;; classifies correctly.
+
+(def ^:private authored-manifest
+  "What a human actually writes: one namespace, several resources, and a
+   publication declared beside the document and garden it relates."
+  {:namespace :knoxx.docs
+   :resources [{:document/id :probe
+                :document/title "Probe"
+                :document/source-locale :en
+                :document/source {:path "docs/probe.md"}}
+               {:garden/id :promethean
+                :garden/title "Promethean"
+                :garden/status :active}
+               {:publication/id :probe-es
+                :publication/document :probe
+                :publication/garden :promethean
+                :publication/locale :es
+                :publication/revision :source/current
+                :publication/state :published
+                :publication/path "/probe"
+                :translation/review :required}
+               {:publication/id :probe-fr
+                :publication/document :probe
+                :publication/garden :promethean
+                :publication/locale :fr
+                :publication/revision :source/current
+                :publication/state :published
+                :publication/path "/probe-fr"
+                :translation/review :required}]})
+
+(defn- writing-to
+  "Stub the file IO and hand back the atom the written string lands in."
+  [written]
+  {:read (fn [_] (js/Promise.resolve @written))
+   :write (fn [_ contents] (reset! written contents) (js/Promise.resolve nil))})
+
+(deftest ^:async a-state-edit-persists-the-whole-manifest
+  (let [written (atom authored-manifest)
+        {:keys [read write]} (writing-to written)]
+    (with-redefs [resources/read-edn-file! read
+                  resources/write-edn-file! write]
+      (await (facade/write-publication-state! "/tmp/probe.edn"
+                                              :knoxx.docs/probe-es
+                                              :withheld))
+      (let [persisted (reader/read-string @written)]
+        (testing "what reached the filesystem is the manifest, not the resource.
+                  pr-str-ing the patched intent over the file deleted :namespace,
+                  :resources and every sibling, and the next projection failed
+                  with unresolved references"
+          (is (= :knoxx.docs (:namespace persisted)))
+          (is (= 4 (count (:resources persisted)))))
+        (testing "and exactly one state key differs from what was authored"
+          (is (= (assoc-in authored-manifest [:resources 2 :publication/state] :withheld)
+                 persisted)))
+        (testing "the file ends with a newline, as a text file must"
+          (is (str/ends-with? @written "\n")))))))
+
+(deftest ^:async a-file-that-does-not-declare-the-publication-is-refused
+  (let [written (atom (update authored-manifest :resources
+                               #(vec (remove :publication/id %))))
+        before @written
+        {:keys [read write]} (writing-to written)]
+    (with-redefs [resources/read-edn-file! read
+                  resources/write-edn-file! write]
+      (let [outcome (try (await (facade/write-publication-state!
+                                 "/tmp/probe.edn" :knoxx.docs/probe-es :withheld))
+                         :wrote
+                         (catch :default e e))]
+        (testing "it refuses rather than writing something plausible"
+          (is (not= :wrote outcome))
+          (is (= before @written) "nothing was persisted"))
+        (testing "and carries :publication/id, which the adapter's error-status
+                  reads as 404 — the resource genuinely is not there"
+          (is (= :knoxx.docs/probe-es (:publication/id (ex-data outcome)))))))))
+
+(deftest ^:async two-entries-claiming-the-id-is-a-conflict-not-a-not-found
+  (let [written (atom (update authored-manifest :resources
+                               #(conj % (assoc (nth % 2) :publication/path "/dupe"))))
+        before @written
+        {:keys [read write]} (writing-to written)]
+    (with-redefs [resources/read-edn-file! read
+                  resources/write-edn-file! write]
+      (let [outcome (try (await (facade/write-publication-state!
+                                 "/tmp/probe.edn" :knoxx.docs/probe-es :withheld))
+                         :wrote
+                         (catch :default e e))]
+        (testing "a request naming one resource must not rewrite two"
+          (is (not= :wrote outcome))
+          (is (= before @written) "nothing was persisted"))
+        (testing "it reports :conflicts, so error-status maps it to 409"
+          (is (seq (:conflicts (ex-data outcome)))))
+        (testing "and it deliberately OMITS :publication/id. error-status checks
+                  that key FIRST, so including it would report 404 — file not
+                  found — for a file that plainly contains the resource twice"
+          (is (not (contains? (ex-data outcome) :publication/id))))))))

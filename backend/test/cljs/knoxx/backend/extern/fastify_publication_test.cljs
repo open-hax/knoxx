@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [malli.core :as m]
             [knoxx.backend.extern.fastify.publications :as adapter]
+            [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
             ["node:fs" :as node-fs]
             ["node:path" :as path]))
@@ -167,7 +168,7 @@
     (is (= 409 (:status @captured)))
     (testing "the blocker reaches the client with identity intact"
       (let [sent (js->clj (:body @captured) :keywordize-keys true)
-            blocker (get-in sent [:detail :blockers 0])]
+            blocker (get-in sent [:error :blockers 0])]
         (is (= "knoxx.docs/orphan" (:id blocker)))
         (is (= "unresolved-garden" (:blocker blocker)))))))
 
@@ -245,7 +246,7 @@
       (await ((:handler route) (fake-request {}) reply))
       (is (= ["org.publications.read"] @(:checks h)))
       (let [body (js->clj (:body @captured) :keywordize-keys true)]
-        (is (= 403 (get-in body [:detail :status])))
+        (is (= 403 (get-in body [:error :status])))
         (is (not= 200 (:status @captured)))))))
 
 (deftest ^:async authorized-read-checks-the-permission-once
@@ -270,3 +271,75 @@
     (is (thrown? js/Error
                  (adapter/decode-request (js-obj "params" #js {"documentId" 42}
                                                  "method" "GET"))))))
+
+;; ── authorization status and fail-closed context (#230 review) ─────────────
+
+(deftest ^:async denied-read-is-a-403-not-a-500
+  (testing "a denied request must not be reported as an internal failure — that
+            tells the caller to retry something that will never succeed"
+    (let [h (harness #{})
+          _ (adapter/register-publication-routes! (:app h) {} {} (:handlers h))
+          {:keys [captured reply]} (fake-reply)
+          route (first @(:routes h))]
+      (await ((:handler route) (fake-request {}) reply))
+      (is (= 403 (:status @captured)))
+      (testing "and the status the error carried is the status that was sent"
+        (let [body (js->clj (:body @captured) :keywordize-keys true)]
+          (is (= 403 (get-in body [:error :status]))))))))
+
+(deftest ^:async a-nil-request-context-fails-closed
+  (testing "with-request-context! hands down a nil context when the policy
+            database is disabled; that must refuse rather than read as
+            permission, or the projection is world-readable"
+    (let [checks (atom [])
+          routes (atom [])
+          app (js-obj "route" (fn [opts]
+                                (swap! routes conj (js->clj opts :keywordize-keys true))
+                                nil))
+          ;; Mirrors the real ensure-permission!: a nil context carries no
+          ;; permissions and no system-admin role, so it is denied.
+          handlers {:with-request-context! (fn [_runtime _request _reply f] (f nil))
+                    :ensure-permission! (fn [ctx permission]
+                                          (swap! checks conj [ctx permission])
+                                          (when-not (map? ctx)
+                                            (throw (ex-info "forbidden" {:status 403}))))}
+          {:keys [captured reply]} (fake-reply)]
+      (adapter/register-publication-routes! app {} {} handlers)
+      (await ((:handler (first @routes)) (fake-request {}) reply))
+      (testing "the check ran despite the absent context"
+        (is (= [[nil "org.publications.read"]] @checks)))
+      (is (= 403 (:status @captured)))
+      (is (not= 200 (:status @captured))))))
+
+;; ── one error body for the whole surface (author decision on #230) ─────────
+
+(deftest ^:async the-error-body-is-the-shared-law-shape
+  (testing "three adapters hand-rolled this map and two disagreed on which key
+            held which value; it is now built through one law"
+    (let [{:keys [captured reply]} (fake-reply)]
+      (await (adapter/send-projection!
+              reply
+              (fn [] (throw (ex-info "unresolved publication references"
+                                     {:blockers [{:blocker :unresolved-garden}]})))))
+      (let [body (js->clj (:body @captured) :keywordize-keys true)]
+        (testing ":detail is the message and :error is the evidence"
+          (is (string? (:detail body)))
+          (is (str/includes? (:detail body) "unresolved publication references"))
+          (is (map? (:error body))))
+        (testing "and nothing else is sent"
+          (is (= #{:detail :error} (set (keys body)))))))))
+
+(deftest the-error-body-law-refuses-a-hand-rolled-shape
+  (testing "a swapped or extra key fails its own contract rather than shipping"
+    (doseq [bad [{:error "boom" :detail {:a 1}}
+                 {:detail "boom" :error {:a 1} :extra true}
+                 {:error {:a 1}}]]
+      (is (false? (m/validate error-body/ErrorBody bad))
+          (str (pr-str bad) " must not validate"))))
+  (testing "while the built body does"
+    (is (true? (m/validate error-body/ErrorBody
+                           (error-body/error-body (ex-info "boom" {:a 1})))))
+    (testing "including an error carrying no data at all"
+      (is (true? (m/validate error-body/ErrorBody
+                             (error-body/error-body (js/Error. "plain"))))))))
+

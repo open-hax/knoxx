@@ -7,6 +7,7 @@
   (:require [knoxx.backend.domain.cms-publication :as cms]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.routes.cms-publication :as facade]
+            [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
 
@@ -31,15 +32,33 @@
             (when (map? body) body))
     :method (fastify/request-method request)}))
 
+(defn- http-error-status
+  "The status a recognized HTTP error already carries, or nil.
+
+   `ensure-permission!` throws `http/http-error`, which records its status both
+   in ex-data (`:status`) and on the JS error object (`statusCode`). Both are
+   read, because a fake permission check in a test throws plain `ex-info` while
+   the real one carries the JS property."
+  [err]
+  (or (:status (ex-data err))
+      (fastify/error-status err nil)))
+
 (defn- error-status
+  "A carried status wins over every guess below it.
+
+   `guarded!` runs inside `respond!`'s operation, so a permission denial is
+   caught here rather than escaping the adapter — and without this the 403 fell
+   through to 500, telling the caller to retry a request that will never
+   succeed. Third instance of this in the epic, after #230 and #233."
   [err]
   (let [data (ex-data err)]
-    (cond
-      (contains? data :publication/id) 404
-      (contains? data :document/id) 404
-      (or (contains? data :conflicts) (contains? data :blockers)) 409
-      (contains? data :errors) 422
-      :else 500)))
+    (or (http-error-status err)
+        (cond
+          (contains? data :publication/id) 404
+          (contains? data :document/id) 404
+          (or (contains? data :conflicts) (contains? data :blockers)) 409
+          (contains? data :errors) 422
+          :else 500))))
 
 (defn ^:async respond!
   [handlers reply operation]
@@ -50,12 +69,18 @@
       (catch :default err
         (json-response! reply (error-status err)
                         (resource-identity/encode-wire-values
-                         (cond-> {:detail (ex-message err)}
-                           (some? (ex-data err)) (assoc :error (ex-data err)))))))))
+                         (error-body/error-body err)))))))
 
 (defn- ^:async guarded!
+  "Authorize, then run.
+
+   The check is unconditional. `with-request-context!` hands down a nil context
+   when the policy database is disabled, and skipping it there would let an
+   anonymous caller read the publication topology and flip publication state —
+   the third instance of this same hole in the epic, after the publication routes
+   in #230 and the translation config routes in #233."
   [handlers ctx permission operation]
-  (when ctx ((:ensure-permission! handlers) ctx permission))
+  ((:ensure-permission! handlers) ctx permission)
   (await (operation)))
 
 (defn- route-handler

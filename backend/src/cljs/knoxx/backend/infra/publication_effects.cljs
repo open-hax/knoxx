@@ -12,6 +12,7 @@
   the adapter's return value is checked before a caller reads fields off it — an
   adapter is replaceable, so its output is untrusted input."
   (:require [clojure.string :as str]
+            [malli.core :as m]
             [knoxx.backend.law.publication-receipts :as law]))
 
 ;; ── Protocols ──────────────────────────────────────────────────────────────
@@ -61,9 +62,13 @@
    processes and versions, and it is inspectable when a replay has to be
    explained to a human."
   [adapter-id intent concrete-revision]
-  (when (nil? concrete-revision)
+  (when-not (m/validate law/ConcreteRevision concrete-revision)
+    ;; Refusing `:source/current` here is the whole basis of replay safety, and
+    ;; a nil check alone did not do it: the selector is a keyword, so it passed
+    ;; and produced a stable-looking key for a moving target.
     (throw (ex-info "publish idempotency key requires a concrete revision"
-                    {:publication/id (:publication/id intent)})))
+                    {:publication/id (:publication/id intent)
+                     :concrete-revision concrete-revision})))
   (->> (conj (mapv #(pr-str (get intent %)) key-dimensions)
              (pr-str adapter-id)
              (pr-str concrete-revision))
@@ -92,6 +97,24 @@
       (do (release! store idempotency-key)
           nil))))
 
+(defn- assert-receipt-matches-op!
+  "The adapter's receipt must describe the materialization that was *requested*.
+
+   `assert-receipt!` checks only the shape, so a structurally valid receipt
+   naming the wrong path, revision, or key passed and was recorded as `:done`
+   under the requested key — after which every replay reported convergence for an
+   artifact that may never have been materialized. An adapter is replaceable, so
+   its agreement with the request is checked rather than assumed."
+  [op receipt]
+  (let [expected {:idempotency/key (:idempotency/key op)
+                  :materialized/revision (:concrete-revision op)
+                  :materialized/path (get-in op [:intent :publication/path])}
+        actual (select-keys receipt (keys expected))]
+    (when-not (= expected actual)
+      (throw (ex-info "adapter receipt does not describe the requested materialization"
+                      {:expected expected :actual actual})))
+    receipt))
+
 (defn ^:async publish-once!
   "Publish under an atomic key reservation. Replaying an identical key can never
    create a second public artifact."
@@ -99,7 +122,7 @@
   (let [idempotency-key (:idempotency/key op)
         reservation (reserve! store idempotency-key)]
     (case (:reservation/status reservation)
-      :done (law/assert-receipt! (:receipt reservation))
+      :done (assert-receipt-matches-op! op (law/assert-receipt! (:receipt reservation)))
 
       :in-flight
       (or (await (reconcile-in-flight! store target ctx op))
@@ -107,11 +130,19 @@
 
       :reserved
       (try
-        (let [receipt (law/assert-receipt! (await (publish! target ctx op)))]
+        (let [receipt (assert-receipt-matches-op!
+                       op
+                       (law/assert-receipt! (await (publish! target ctx op))))]
           (complete! store idempotency-key receipt)
           receipt)
         (catch :default err
-          (release! store idempotency-key)
+          ;; The claim is deliberately NOT released. A failed publish is an
+          ;; *ambiguous* outcome: the artifact may already exist and only the
+          ;; response was lost. Releasing here reported the retry as a fresh
+          ;; reservation, which skipped observation and published again — safe
+          ;; only for a target that independently deduplicates. Leaving the claim
+          ;; in flight routes the retry through `reconcile-in-flight!`, which
+          ;; observes first and republishes only if nothing is there.
           (throw err))))))
 
 ;; ── Plan execution ─────────────────────────────────────────────────────────

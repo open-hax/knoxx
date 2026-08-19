@@ -270,13 +270,33 @@
       (stderr! "[contracts] parse error: " file-path " — " (.-message err))
       [])))
 
+(defn- file-level-rejection
+  "A rejected record standing for a file that produced no record at all.
+
+   `parse-contract-file-records!` answers `[]` for a file it cannot read as EDN,
+   and every lookup caller depends on that contract — so the evidence is
+   reconstructed here, in the only path that exposes rejected records. Without
+   it a malformed publication file leaves no trace and the projection answers
+   200 with that intent silently absent. It carries no kind: an unparsed file
+   has no readable identity to take one from."
+  [file-path reason message]
+  {:ok? false
+   :file-path file-path
+   :errors [(cond-> {:file reason}
+              message (assoc :message message))]})
+
 (defn- ^:async read-contract-file!
   [file-path]
   (try
-    (parse-contract-file-records! file-path (await (.readFile fs file-path "utf8")))
+    (let [records (parse-contract-file-records!
+                   file-path
+                   (await (.readFile fs file-path "utf8")))]
+      (if (seq records)
+        records
+        [(file-level-rejection file-path :unparseable nil)]))
     (catch :default err
       (stderr! "[contracts] read error: " file-path " — " (.-message err))
-      nil)))
+      [(file-level-rejection file-path :unreadable (.-message err))])))
 
 ;; ── Deduplication ──────────────────────────────────────────────────────────
 

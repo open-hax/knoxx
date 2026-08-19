@@ -30,6 +30,26 @@
          (:resource/definition record)
          (vals (dissoc kind-id-key (:resource/kind record)))))
 
+(def ^:private publication-kinds
+  "The kinds this projection is the authority on."
+  (set (keys kind-id-key)))
+
+(defn- publication-relevant-rejection?
+  "Whether a rejected record can bear on the publication topology.
+
+   The loader walks the entire contracts tree, so a rejected agent, role or
+   policy would otherwise make one unrelated invalid contract 409 every
+   publication read. Those are somebody else's blocker.
+
+   A file-level failure carries no kind at all — an unreadable or unparseable
+   file cannot be attributed to a kind, and therefore cannot be ruled out as a
+   publication either. The desired topology is genuinely unknown in that case,
+   so it counts."
+  [record]
+  (let [kind (:resource/kind record)]
+    (or (nil? kind)
+        (contains? publication-kinds kind))))
+
 (defn invalid-resource-blockers
   "Resources the loader rejected, as explicit blockers.
 
@@ -41,6 +61,7 @@
   [records]
   (->> records
        (remove :ok?)
+       (filter publication-relevant-rejection?)
        (mapv (fn [record]
                {:blocker :invalid-resource
                 :resource/kind (:resource/kind record)

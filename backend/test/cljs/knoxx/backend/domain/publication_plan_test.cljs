@@ -219,3 +219,30 @@
                   (str/lower-case
                    (pr-str (plan-for {} (assoc evidence :observed converged-observation))))
                   legacy-marker)))))))
+
+;; ── malformed desired state is never a public effect (Codex P2 on #235) ────
+
+(deftest an-unrecognized-state-never-converges
+  (testing "convergence was decided by elimination, so any state that simply
+            was not :withheld or :archived reached converge and published on
+            clean evidence — the fail-open shape #229 removed from the law"
+    (doseq [state [nil :deleted :Published "published" :publish]]
+      (let [result (plan-for {:publication/state state} {})]
+        (is (= :blocked (:op result))
+            (str (pr-str state) " must not converge"))
+        (is (= [:publication-state-unrecognized] (:blockers result)))
+        (is (nil? (:concrete-revision result))
+            "no evidence is gathered about an intent that cannot be trusted"))))
+  (testing "and it is refused even with a route already materialized: an
+            unreadable state is not a reason to take live content down"
+    (let [result (plan-for {:publication/state :deleted}
+                          {:observed converged-observation})]
+      (is (= :blocked (:op result)))
+      (is (not= :remove (:op result)))))
+  (testing "while every recognized state keeps the outcome it had"
+    (is (= :publish (:op (plan-for {} {}))))
+    (is (= :remove (:op (plan-for {:publication/state :withheld}
+                                  {:observed converged-observation}))))
+    (is (= :noop (:op (plan-for {:publication/state :withheld} {}))))
+    (is (= :noop (:op (plan-for {:publication/state :archived} {}))))))
+

@@ -44,13 +44,31 @@
   [receipt]
   (= :publication/materialized (:receipt/type receipt)))
 
+(def Observation
+  "Exactly what the planner compares, and nothing else. Closed, because an
+   observation carrying extra fields would compare unequal to a desired
+   materialization that is otherwise identical."
+  [:map {:closed true}
+   [:materialized/revision ConcreteRevision]
+   [:materialized/path publication/PublicationPath]])
+
 (defn observed-materialization
   "The observation the planner compares, or nil for any receipt that is not a
    successful materialization. A blocked or failed receipt must never be
-   mistaken for something being public."
+   mistaken for something being public.
+
+   A receipt that *claims* to be a materialization is held to it. Checking only
+   the discriminator meant `{:receipt/type :publication/materialized}` projected
+   to `{}` — a truthy observation asserting something is public while naming
+   neither revision nor path, which the planner then compared unequal to every
+   desired state. A receipt that cannot say what it materialized is corrupt, and
+   corruption is surfaced rather than read as absence: returning nil here would
+   quietly claim nothing is public and republish over whatever is."
   [receipt]
   (when (materialized? receipt)
-    (select-keys receipt drift-keys)))
+    (publication/assert-valid! :publication/observation
+                               Observation
+                               (select-keys receipt drift-keys))))
 
 (defn observed-for
   "Observation for one publication id, from a collection of receipts. Later
