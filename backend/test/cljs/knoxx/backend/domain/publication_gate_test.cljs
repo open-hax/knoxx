@@ -1,7 +1,8 @@
 (ns knoxx.backend.domain.publication-gate-test
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
-            [knoxx.backend.domain.publication-gate :as gate]))
+            [knoxx.backend.domain.publication-gate :as gate]
+            [knoxx.backend.law.publication :as law]))
 
 ;; ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -215,3 +216,27 @@
                          "published-at" "job-id"]]
       (is (not (str/includes? rendered operational))
           (str operational " must never appear in gate output")))))
+
+;; ── the two admissibility layers share one vocabulary (Codex P1 on #234) ───
+
+(deftest the-gate-and-the-contract-layer-cannot-drift-on-what-publish-means
+  (testing "which state means publish is owned by the law, not restated here"
+    (is (true? (law/publishes? {:publication/state :published})))
+    (doseq [state [:withheld :archived nil :publish "published"]]
+      (is (false? (law/publishes? {:publication/state state}))
+          (str (pr-str state) " must not read as a request to publish"))))
+  (testing "publishing states are a strict subset of the reconcilable ones —
+            :withheld reconciles toward removal, which is lawful but is not a
+            request to publish"
+    (is (every? law/reconcilable-publication-states law/publishing-publication-states))
+    (is (not (every? law/publishing-publication-states
+                     law/reconcilable-publication-states))))
+  (testing "and the gate's evidential admissibility agrees with it: no amount of
+            clean evidence admits a state the law says does not publish"
+    (doseq [state [:withheld :archived nil]]
+      (is (false? (gate/admissible? {:publication/state state}
+                                    {:concrete-revision "rev-1" :blockers []}))
+          (str (pr-str state) " must never be admissible")))
+    (is (true? (gate/admissible? {:publication/state :published}
+                                 {:concrete-revision "rev-1" :blockers []})))))
+

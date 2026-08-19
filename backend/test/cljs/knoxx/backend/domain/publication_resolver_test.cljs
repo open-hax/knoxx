@@ -295,3 +295,34 @@
                                            local-intent pinned])]
     (is (= [:es :fr] (resolver/target-locales index)))
     (is (= ["abc123" :source/current] (resolver/intended-revisions index)))))
+
+;; ── canonical publication identity (CodeRabbit on #230) ────────────────────
+
+(def duplicate-id-intent
+  "The same canonical publication id claiming a *different* relation. Only the
+   locale differs, so the relation key differs too and the duplicate-relation
+   check cannot see the collision."
+  (assoc qualified-intent :publication/locale :fr))
+
+(deftest one-publication-id-cannot-stand-for-two-relations
+  (testing "the relation check keys on document x garden x locale x revision, so
+            two intents sharing one id across different relations slip past it"
+    (is (empty? (resolver/publication-conflicts [qualified-intent duplicate-id-intent]))))
+  (testing "the identity check is what refuses them"
+    (is (thrown-with-msg?
+         js/Error #"conflicting canonical resource identity"
+         (resolver/publication-index
+          [qualified-document qualified-garden qualified-intent duplicate-id-intent]))))
+  (testing "a byte-equal duplicate collapses rather than conflicting, exactly as
+            it does for documents and gardens"
+    (is (empty? (resolver/publication-identity-conflicts
+                 [qualified-intent qualified-intent]))))
+  (testing "the conflict names the id and carries both payloads"
+    (let [[conflict] (resolver/publication-identity-conflicts
+                      [qualified-intent duplicate-id-intent])]
+      (is (= :knoxx.docs/translation-pipeline-es (:resource/id conflict)))
+      (is (= :publications (:resource/kind conflict)))
+      (is (= 2 (count (:conflicting-payloads conflict))))))
+  (testing "and the pair is ordered independently of the order it arrived in"
+    (is (= (resolver/publication-identity-conflicts [qualified-intent duplicate-id-intent])
+           (resolver/publication-identity-conflicts [duplicate-id-intent qualified-intent])))))

@@ -184,11 +184,35 @@
    been validated against `PublicationIntentResource` fails closed."
   #{:published :withheld})
 
+(def publishing-publication-states
+  "The desired states that ask for a public materialization.
+
+   A strict subset of `reconcilable-publication-states`: `:withheld` reconciles
+   toward *removal*, which is a lawful plan but not a request to publish. Stated
+   here, next to the set it refines, so the contract layer and the evidence gate
+   in `domain.publication-gate` cannot end up disagreeing about which state means
+   \"publish\" — they read one vocabulary rather than each restating it."
+  #{:published})
+
+(defn publishes?
+  "True when the intent asks for a public materialization at all.
+
+   This answers only \"what does the resource want\". Whether that want may be
+   satisfied *now* is two further questions, deliberately kept apart:
+   `admissible-publication?` below decides structural admissibility from the
+   resource graph, and `domain.publication-gate/admissible?` decides evidential
+   admissibility from receipts. Receipts never enter this layer."
+  [intent]
+  (contains? publishing-publication-states (:publication/state intent)))
+
 (defn admissible-publication?
   "True when the intent's desired state is reconcilable, both the document and
    garden references resolve, and the garden is active. Archived gardens,
    archived or unrecognized intent states, and dangling references can never
-   reconcile to a public materialization."
+   reconcile to a public materialization.
+
+   Structural admissibility only — it reads the resource graph and no receipt.
+   The evidential half lives in `domain.publication-gate`."
   [resource-index intent]
   (boolean
    (and (contains? reconcilable-publication-states (:publication/state intent))

@@ -50,6 +50,18 @@
     (keyword? revision) (some->> (id-component revision) (str "sel-"))
     :else (some->> (id-component revision) (str "rev-"))))
 
+(defn canonical-document-id
+  "Canonical id for a migrated document.
+
+   Stated once, because two callers need it and disagreed: the document phase
+   canonicalized its own `:document/id` while the publication phase copied the
+   raw legacy value into `:publication/document`, so a bare or string legacy id
+   was written as a document but referenced unqualified — failing
+   `qualified-keyword?` and aborting the whole batch at validation."
+  [policy document]
+  (when-let [document-name (id-component (:document/id document))]
+    (identity/canonical-id (:migration/namespace policy) (keyword document-name))))
+
 (defn canonical-garden-id
   [policy row]
   (when-let [garden (id-component (:garden-id row))]

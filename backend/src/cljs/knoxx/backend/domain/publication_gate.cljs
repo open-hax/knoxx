@@ -20,7 +20,18 @@
     :current-source-revision      [document] -> revision or nil
     :translated-revision?         [document locale revision] -> boolean
     :approved?                    [document locale revision] -> boolean
-    :source-revision-superseded?  [intent revision] -> boolean")
+    :source-revision-superseded?  [intent revision] -> boolean
+
+  Admissibility is deliberately split across two layers rather than duplicated.
+  `law.publication/admissible-publication?` decides the *structural* question
+  from the resource graph — is this state reconcilable, do the references
+  resolve, is the garden active. `admissible?` here decides the *evidential*
+  question from receipts. Neither subsumes the other, and this namespace assumes
+  the structural half holds upstream.
+
+  What is NOT restated is the state vocabulary: which state means \"publish\" is
+  owned by `law.publication/publishes?`, so the two layers cannot drift on it."
+  (:require [knoxx.backend.law.publication :as law]))
 
 (defn translation-required?
   "Translation is required exactly when the target locale differs from the
@@ -79,9 +90,13 @@
   (:blockers evidence))
 
 (defn admissible?
-  "True when the intent wants publication and nothing blocks it."
+  "True when the intent wants publication and no evidence blocks it.
+
+   The evidential half of admissibility. \"Wants publication\" is asked of
+   `law.publication/publishes?` rather than compared against a literal here, so
+   this decision and the contract layer's structural one read one vocabulary."
   [intent evidence]
-  (and (= :published (:publication/state intent))
+  (and (law/publishes? intent)
        (some? (:concrete-revision evidence))
        (empty? (:blockers evidence))
        true))
@@ -91,7 +106,7 @@
    deliberately keeps `:archived` and `:withheld` intents in its projection as
    history, so an evidence-only check would queue obsolete content forever."
   [intent]
-  (and (= :published (:publication/state intent))
+  (and (law/publishes? intent)
        (translation-required? intent)))
 
 (defn translation-work
