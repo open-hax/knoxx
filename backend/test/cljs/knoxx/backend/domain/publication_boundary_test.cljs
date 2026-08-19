@@ -7,6 +7,7 @@
             [knoxx.backend.domain.publication-receipts :as receipts]
             [knoxx.backend.infra.publication-effects :as effects]
             [knoxx.backend.infra.publication-target-memory :as memory]
+            [knoxx.backend.law.publication-receipts :as law]
             ["node:fs" :as node-fs]
             ["node:path" :as path]))
 
@@ -179,3 +180,34 @@
       (testing relative-path
         (is (not (str/includes? (read-source relative-path) legacy-marker))
             "the whole seam must be expressible with no hosted backend named")))))
+
+;; ── a removal must be attributable to its publication (Codex P1 on #237) ───
+
+(deftest ^:async removal-receipts-are-attributable-to-their-publication
+  (testing "observed-for filters receipts by :publication/id, so a removal
+            without one is invisible to the projection: the retracted
+            materialization stays observed, and a later republish of the same
+            revision reads as :noop while nothing is public"
+    (let [{:keys [store]} (memory/memory-store)
+          target-bundle (memory/memory-target)
+          published (await (converge! store target-bundle intent))
+          removed (await (converge! store target-bundle
+                                    (assoc intent :publication/state :withheld)))
+          publish-receipt (:receipt published)
+          removal-receipt (:receipt removed)]
+      (is (= :publication/materialized (:receipt/type publish-receipt)))
+      (is (= :publication/removed (:receipt/type removal-receipt)))
+      (testing "the adapter's own removal carries the id — not just a hand-built one"
+        (is (= (:publication/id intent) (:publication/id removal-receipt))))
+      (testing "so the projection sees the retraction"
+        (is (nil? (receipts/observed-for [publish-receipt removal-receipt]
+                                         (:publication/id intent)))))
+      (testing "and without the id the projection would still report the old route"
+        (is (some? (receipts/observed-for
+                    [publish-receipt (dissoc removal-receipt :publication/id)]
+                    (:publication/id intent)))
+            "which is precisely the bug: the removal is filtered out"))
+      (testing "the contract refuses an unattributable removal outright"
+        (is (thrown? js/Error
+                     (law/assert-receipt! (dissoc removal-receipt :publication/id))))))))
+

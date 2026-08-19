@@ -10,6 +10,12 @@
   desired state never carries them."
   (:require [knoxx.backend.law.publication :as publication]))
 
+(def ConcreteRevision
+  "Re-exported so the effect boundary depends on one law namespace. Anything the
+   effect layer keys by a revision needs this rather than the selector-admitting
+   `PublicationRevision`."
+  publication/ConcreteRevision)
+
 ;; ── Plans entering the effect layer ────────────────────────────────────────
 
 (def PlanOp
@@ -27,25 +33,41 @@
     [:observed {:optional true} [:maybe :map]]
     [:reason {:optional true} :keyword]
     [:blockers {:optional true} [:vector :keyword]]
-    [:concrete-revision {:optional true} [:maybe publication/PublicationRevision]]]
+    [:concrete-revision {:optional true} [:maybe publication/ConcreteRevision]]]
    [:fn {:error/message "a :publish plan requires a concrete revision and an intent"}
     (fn [plan]
       (or (not= :publish (:op plan))
           (and (some? (:concrete-revision plan))
-               (map? (:intent plan)))))]])
+               (map? (:intent plan)))))]
+   [:fn {:error/message "a :remove plan requires an intent and the observed materialization"}
+    ;; `remove!` takes both. Left optional, a `{:op :remove}` plan validated and
+    ;; then called the adapter with two nils — malformed boundary input reaching
+    ;; an effect, which is the one thing this contract exists to stop.
+    (fn [plan]
+      (or (not= :remove (:op plan))
+          (and (map? (:intent plan))
+               (map? (:observed plan)))))]])
 
 ;; ── Receipts leaving the effect layer ──────────────────────────────────────
 
 (def MaterializedReceipt
+  "A revision that was actually materialized is necessarily concrete: the
+   selector was resolved before any effect ran, so a receipt carrying
+   `:source/current` would be recording a moving target as an accomplished fact."
   [:map
    [:receipt/type [:= :publication/materialized]]
-   [:materialized/revision publication/PublicationRevision]
+   [:materialized/revision publication/ConcreteRevision]
    [:materialized/path publication/PublicationPath]
    [:idempotency/key publication/NonBlankString]])
 
 (def RemovedReceipt
+  "`:publication/id` is required, not incidental: the observation projection
+   filters receipts by it, so a removal without one is silently dropped and the
+   materialization it was supposed to retract stays observed. Requiring it here
+   means an adapter cannot forget."
   [:map
    [:receipt/type [:= :publication/removed]]
+   [:publication/id :qualified-keyword]
    [:removed/path {:optional true} [:maybe :string]]])
 
 (def NoopReceipt

@@ -86,3 +86,24 @@
       (is (nil? (receipts/observed-for [materialized removal] :knoxx.docs/probe-es))))
     (testing "another publication's receipts are ignored"
       (is (nil? (receipts/observed-for [materialized] :knoxx.docs/other))))))
+
+;; ── a receipt that claims materialization must say what it materialized ────
+
+(deftest a-partial-materialization-is-refused-not-projected
+  (testing "checking only the discriminator projected {} — a truthy observation
+            naming neither revision nor path, which then compared unequal to
+            every desired state while asserting something was public"
+    (doseq [partial-receipt [{:receipt/type :publication/materialized}
+                             {:receipt/type :publication/materialized
+                              :materialized/path "/docs/demo"}
+                             {:receipt/type :publication/materialized
+                              :materialized/revision "abc123"}
+                             {:receipt/type :publication/materialized
+                              :materialized/revision "abc123"
+                              :materialized/path ""}]]
+      (is (thrown? js/Error (receipts/observed-materialization partial-receipt))
+          (str (pr-str partial-receipt) " must not project"))))
+  (testing "while a complete one still projects exactly the planner's key set"
+    (is (= (set receipts/drift-keys)
+           (set (keys (receipts/observed-materialization materialized)))))))
+

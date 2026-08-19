@@ -92,6 +92,23 @@
        (validate-model-ref! index)
        (publication/assert-valid! global-config-id law/TranslationPipelineConfig)))
 
+(defn apply-global-patch
+  "Merge a patch onto the global default itself, never onto a caller's resolved
+   view.
+
+   The write target is the manifest owning `global-config-id`, so the patch must
+   be computed against that resource alone. Merging onto `(resolve-config index
+   context)` instead would fold the caller's org override into the value written
+   to the global default — promoting one tenant's override into everybody's
+   default — and would report a resolved config the write did not produce.
+
+   The global default is a deploy-time default set by contract files; editing it
+   is a platform act, which is why the route gates on a `platform.*` permission
+   rather than an org-scoped one. That also makes the caller's org irrelevant
+   here, hence no context argument at all rather than one that is ignored."
+  [index domain-patch]
+  (apply-patch index {} domain-patch))
+
 ;; ── Wire codecs ────────────────────────────────────────────────────────────
 
 (defn config->wire

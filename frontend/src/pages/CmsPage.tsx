@@ -1055,9 +1055,14 @@ function CmsPage() {
               aria-label="Garden"
             >
               <option value="">Select garden…</option>
-              {(publicationTopology?.gardens ?? []).map((garden) => (
+              {/* Active only. The publish handler still calls the legacy endpoint
+                  directly, so an archived garden offered here could be published
+                  through it and bypass the planner's archived-garden block. */}
+              {(publicationTopology?.gardens ?? [])
+                .filter((garden) => garden.status === "active")
+                .map((garden) => (
                 <option key={garden.id} value={garden.id}>
-                  {garden.title || garden.id}{garden.status !== "active" ? ` (${garden.status})` : ""}
+                  {garden.title || garden.id}
                 </option>
               ))}
             </select>
