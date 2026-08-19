@@ -316,8 +316,52 @@
           (str (pr-str bad) " must not validate"))))
   (testing "while the built body does"
     (is (true? (m/validate error-body/ErrorBody
-                           (error-body/error-body (ex-info "boom" {:a 1})))))
+                           (error-body/error-body (ex-info "boom" {:a 1}) 409))))
     (testing "including an error carrying no data at all"
       (is (true? (m/validate error-body/ErrorBody
-                             (error-body/error-body (js/Error. "plain"))))))))
+                             (error-body/error-body (js/Error. "plain") 404)))))
+    (testing "and the opaque body it builds for an unclassified status"
+      (is (true? (m/validate error-body/ErrorBody
+                             (error-body/error-body (ex-info "boom" {:a 1}) 500)))))))
+
+(deftest the-status-decides-whether-a-body-may-describe-itself
+  (testing "4xx is the boundary saying it understood the failure, so the
+            evidence is the point and travels"
+    (doseq [status [400 403 404 409 422 499]]
+      (is (true? (error-body/classified? status)) (str status " must be describable"))))
+  (testing "anything else fails to the safe side — 500, a nil status from an
+            adapter that could not classify at all, and a 5xx a future adapter
+            invents"
+    (doseq [status [500 502 503 nil "409" :409 399]]
+      (is (false? (error-body/classified? status))
+          (str (pr-str status) " must not be describable")))))
+
+(deftest an-unclassified-failure-publishes-neither-half
+  (let [err (ex-info "ENOENT: /srv/knoxx/contracts/secret.edn"
+                     {:path "/srv/knoxx/contracts/secret.edn"
+                      :mongo-uri "mongodb://user:pw@host"})]
+    (testing "the ex-data is withheld — at a 500 the boundary does not know what
+              it is holding, and it routinely holds a path or a connection string"
+      (is (nil? (:error (error-body/error-body err 500)))))
+    (testing "and so is the message, which names the same path the data did"
+      (let [detail (:detail (error-body/error-body err 500))]
+        (is (= error-body/opaque-detail detail))
+        (is (not (str/includes? detail "secret.edn")))))
+    (testing "the same error at a status the boundary chose deliberately keeps both"
+      (let [body (error-body/error-body err 409)]
+        (is (str/includes? (:detail body) "secret.edn"))
+        (is (map? (:error body)))))))
+
+(deftest ^:async an-unexpected-throw-reaches-the-caller-as-an-opaque-500
+  (testing "send-projection! is the path an unrecognized error actually takes;
+            the redaction has to hold there, not only in the law"
+    (let [{:keys [captured reply]} (fake-reply)]
+      (await (adapter/send-projection!
+              reply
+              (fn [] (throw (ex-info "ENOENT: /srv/knoxx/contracts/secret.edn"
+                                     {:path "/srv/knoxx/contracts/secret.edn"})))))
+      (is (= 500 (:status @captured)))
+      (let [body (js->clj (:body @captured) :keywordize-keys true)]
+        (is (= {:detail error-body/opaque-detail} body))
+        (is (not (str/includes? (pr-str body) "secret.edn")))))))
 
