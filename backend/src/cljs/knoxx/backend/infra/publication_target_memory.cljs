@@ -85,9 +85,15 @@
             (throw (ex-info "memory target publish failed" {})))
           (swap! publish-count inc)
           (js/Promise.resolve (record-route! routes id op)))
-        (remove! [_ _ctx _intent observed]
+        (remove! [_ _ctx intent observed]
           (swap! routes dissoc (:materialized/path observed))
+          ;; `:publication/id` is what `observed-for` filters on. Without it the
+          ;; removal is invisible to the projection, so a publish-then-remove
+          ;; history still reports the old route as materialized — and a later
+          ;; republish of the same revision reads as `:noop`, leaving nothing
+          ;; public while the system believes it converged.
           (js/Promise.resolve {:receipt/type :publication/removed
+                               :publication/id (:publication/id intent)
                                :removed/path (:materialized/path observed)}))
         (observe! [_ _ctx intent]
           (js/Promise.resolve (route-for routes intent))))})))

@@ -59,18 +59,26 @@
 
 (deftest read-and-write-use-distinct-permissions
   (is (= "org.translations.read" adapter/read-permission))
-  (is (= "org.translations.manage" adapter/write-permission))
   (is (not= adapter/read-permission adapter/write-permission)
-      "reading the pipeline config must not imply authority to change it"))
+      "reading the pipeline config must not imply authority to change it")
+  (testing "the write is platform-scoped, because the resource it rewrites is the
+            global default — an org-scoped permission would have let one tenant's
+            administrator change the default for every other tenant"
+    (is (= "platform.translations.manage" adapter/write-permission))
+    (is (str/starts-with? adapter/write-permission "platform."))
+    (is (not (str/starts-with? adapter/write-permission "org."))))
+  (testing "while the read stays org-scoped — the resolved config is the org's own"
+    (is (str/starts-with? adapter/read-permission "org."))))
 
 (deftest ^:async unauthorized-patch-is-refused-before-any-work
-  (let [h (harness #{"org.translations.read"})
+  (let [h (harness #{"org.translations.read" "org.translations.manage"})
         routes (register! h)
         patch (route-for routes "PATCH")]
     (await ((:handler patch) (js-obj "body" (clj->js {:model "glm-5"}) "method" "PATCH")
                              (js-obj)))
-    (testing "the write permission was checked"
-      (is (= ["org.translations.manage"] @(:checks h))))
+    (testing "the write permission was checked — and org.translations.manage is
+              deliberately NOT enough for it"
+      (is (= ["platform.translations.manage"] @(:checks h))))
     (testing "and the request was refused rather than served"
       (let [{:keys [status body]} (first @(:responses h))]
         (is (= 403 (get-in body [:error :status])))
@@ -112,3 +120,51 @@
     (doseq [interop ["aget" "js->clj" "clj->js" "#js" "js-obj" "reply"]]
       (is (not (str/includes? code interop))
           (str "facade must not contain " interop)))))
+
+;; ── Status codes carry the right meaning (Codex P2s on #233) ───────────────
+
+(deftest ^:async denied-request-is-a-403-not-a-500
+  (testing "reporting access denial as a server fault tells the caller to retry
+            something that can never succeed, and hides it from monitoring"
+    (let [h (harness #{})
+          routes (register! h)]
+      (await ((:handler (route-for routes "GET")) (js-obj "method" "GET") (js-obj)))
+      (is (= 403 (:status (first @(:responses h))))))))
+
+(deftest ^:async a-malformed-patch-body-is-a-client-error
+  (testing "a body missing model, or carrying a blank or non-string one, is the
+            caller's mistake — 500 would blame the server for it"
+    (doseq [body [{} {:model ""} {:model 42} {:model "glm-5" :surprise true}]]
+      (let [h (harness #{"platform.translations.manage"})
+            routes (register! h)]
+        (await ((:handler (route-for routes "PATCH"))
+                (js-obj "body" (clj->js body) "method" "PATCH")
+                (js-obj)))
+        (is (= 400 (:status (first @(:responses h))))
+            (str "body " (pr-str body) " must be a client error"))))))
+
+(deftest ^:async a-nil-request-context-fails-closed
+  (testing "with-request-context! hands down nil when the policy database is
+            disabled; skipping the check then would let anyone rewrite the
+            authoritative translation model"
+    (let [checks (atom [])
+          routes (atom [])
+          responses (atom [])
+          handlers {:route! (fn [_app method url handler]
+                              (swap! routes conj {:method method :url url :handler handler}))
+                    :json-response! (fn [_reply status body]
+                                      (swap! responses conj {:status status :body body}))
+                    :with-request-context! (fn [_runtime _request _reply f] (f nil))
+                    :ensure-permission! (fn [ctx permission]
+                                          (swap! checks conj [ctx permission])
+                                          (when-not (map? ctx)
+                                            (throw (ex-info "forbidden" {:status 403}))))}]
+      (adapter/register-translation-config-routes! (js-obj) {} {} handlers)
+      (let [patch (some #(when (= "PATCH" (:method %)) %) @routes)]
+        (await ((:handler patch)
+                (js-obj "body" (clj->js {:model "glm-5"}) "method" "PATCH")
+                (js-obj))))
+      (testing "the check ran despite the absent context"
+        (is (= [[nil "platform.translations.manage"]] @checks)))
+      (is (= 403 (:status (first @responses)))))))
+
