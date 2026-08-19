@@ -287,4 +287,5 @@ Post-review 2026-08-13: all five Codex findings on PR #230 actioned in one follo
 The canonical identity rule moved to knoxx.backend.shape.resource-identity so the loader and resolver consume one implementation rather than restating it on either side of the load boundary.
 
 Verification after fixes: 846 tests / 2549 assertions on this branch, 0 failures 0 errors; compile server 0 warnings; clj-kondo 194 warnings / 0 errors (main baseline) after extracting index-one, assert-no-conflicts! and assert-references-resolve! to clear a function-length warning the blocker check introduced.
+
 ---
