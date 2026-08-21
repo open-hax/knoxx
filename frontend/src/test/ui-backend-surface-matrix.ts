@@ -651,7 +651,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
       "POST /api/translations/documents/:documentId/:targetLang/review",
       "GET /api/translations/batches",
       "POST /api/translations/batches",
-      "GET/PATCH /api/openplanner/v1/translations/config",
+      "GET/PATCH /api/translations/config",
       "GET /api/proxx/models",
     ],
     behavior: [
@@ -722,7 +722,7 @@ export const uiBackendSurfaceMatrix: UiBackendSurface[] = [
       "GET /api/proxx/observability/dashboard/overview",
       "GET /api/proxx/observability/analytics/provider-model",
       "GET /api/proxx/observability/request-logs",
-      "GET/PATCH /api/openplanner/v1/translations/config",
+      "GET/PATCH /api/translations/config",
       "GET /api/proxx/models",
     ],
     behavior: [

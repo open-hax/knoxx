@@ -65,7 +65,10 @@
    ;; When false, audio driver sources are forced disabled (no background audio indexing).
    :audio-indexing-enabled (env-bool "AUDIO_INDEXING_ENABLED" true)
    :translation-agent-enabled (env-bool "TRANSLATION_AGENT_ENABLED" false)
-   :translation-model (env "TRANSLATION_MODEL" "glm-5")
+   ;; TRANSLATION_MODEL is deliberately absent. Translation model selection is
+   ;; owned by Knoxx resources and read through GET /api/translations/config, so
+   ;; the worker and the review UI cannot disagree. An env override here would
+   ;; be a dormant second authority that silently wins on a config outage.
    :translation-poll-ms (env-int "TRANSLATION_POLL_MS" 5000)
    :qdrant-url (env "QDRANT_URL" "http://localhost:6333")
    :workspace-path (env "WORKSPACE_PATH" "/app/workspace")
@@ -116,7 +119,6 @@
 (defn audio-analysis-agent-max-concurrency [] (:audio-analysis-agent-max-concurrency (config)))
 (defn audio-indexing-enabled? [] (:audio-indexing-enabled (config)))
 (defn translation-agent-enabled? [] (:translation-agent-enabled (config)))
-(defn translation-model [] (:translation-model (config)))
 (defn translation-poll-ms [] (:translation-poll-ms (config)))
 (defn qdrant-url [] (:qdrant-url (config)))
 (defn workspace-path [] (:workspace-path (config)))

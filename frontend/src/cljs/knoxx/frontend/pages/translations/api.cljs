@@ -37,14 +37,17 @@
     (.set q "include_corrected" "true")
     (api/request-text (str "/api/translations/export/sft?" (.toString q)))))
 
-(defn pipeline-config []
-  (-> (api/request "/api/openplanner/v1/translations/config")
-      (.then :config)))
+;; Knoxx-owned translation configuration. The response is the wire config
+;; itself — `{:model :source-locale :default-review}` — not wrapped under
+;; `:config`, so there is nothing to unwrap. `:model` is a catalog model id, and
+;; `:model` is also the unqualified wire key the backend contract declares,
+;; because `api/request` serializes with `clj->js` and would erase a namespace.
+(defn ^:async pipeline-config []
+  (await (api/request "/api/translations/config")))
 
-(defn update-pipeline-config [model]
-  (-> (api/request "/api/openplanner/v1/translations/config"
-                   {:method "PATCH" :body {:model model}})
-      (.then :config)))
+(defn ^:async update-pipeline-config [model]
+  (await (api/request "/api/translations/config"
+                      {:method "PATCH" :body {:model model}})))
 
 (defn list-proxx-models []
   (-> (api/request "/api/proxx/models")

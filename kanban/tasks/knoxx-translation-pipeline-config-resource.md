@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "translations", "contracts", "openplanner"]
-write-id: "1786565793961-0.6ya5a5iommxb9nwclxv"
+write-id: "1786606117142-0.sspt60488t8uj6yod7"
 points: "5"
 title: "Move translation pipeline configuration out of OpenPlanner"
 priority: "P1"
-status: "ready"
+status: "review"
 uuid: "knoxx-translation-pipeline-config-resource"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -217,9 +217,20 @@ Single-authority proof last:
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Cross-repo touch: the ingestion worker (Clojure/JVM) must move to the same boundary, so this card spans backend CLJS and ingestion.
-
 ---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `TranslationConfigWireJson` and `TranslationConfigPatchJson` should be `{:closed true}` — Malli 0.16.4 leaves `[:map ...]` open by default, so an unexpected key like `:translation/model` would currently pass validation alongside (or instead of) `:model`. Also, the `patch-translation-config-route!` pseudocode has no authorization check before `update-translation-config!`; add the repository's `authz/ensure-permission!` convention with a defined write permission and a test proving unauthorized PATCH requests get 403 (or document/test the middleware contract if enforcement is delegated there).
 
+---
+Implemented 2026-08-13. Spans backend CLJS, frontend, and the JVM ingestion worker.
+
+DEVIATION FROM THE CARD, needs review: the card's pseudocode models :translation/model as a keyword (:models/glm-5) and decodes with (keyword (:model wire)). The real catalog contradicts that — contracts/models/*.edn ids are strings that are not keyword-safe: "xiaomi/mimo-v2-pro", "gemma4:31b", "gpt-5.5". Round-tripping those through keyword would mangle identity, and the catalog is the authority on how a model is named. Implemented with the model as a string matching :model/id exactly; source locale and review policy stay keywords and are encoded explicitly. This changes one acceptance criterion's wording ('model ... cross the boundary as strings and decode back to the same keywords') — for the model there is no keyword to decode back to. catalog-model-ids-are-not-keywordized pins all three awkward id shapes through the full wire round trip.
+
+Both CodeRabbit findings actioned. Every wire map is {:closed true}, so a body carrying the qualified :translation/model is rejected rather than silently accepted alongside the unqualified :model — qualified-wire-key-is-rejected asserts that plus extra-key rejection on both the patch and the response contract. Authorization added on both routes using the repository's ensure-permission! convention and the existing org.translations.* vocabulary: read is org.translations.read, write is org.translations.manage, deliberately distinct because reading the pipeline config must not imply authority to change the authoritative model. unauthorized-patch-is-refused-before-any-work asserts 403 and that the refusal happens before resource resolution or any write.
+
+Three authorities removed, not one. Beyond the documented worker fetch: (1) the worker's OpenPlanner /v1/translations/config read is gone and its env/default fallback chain with it — a lookup failure is now a typed ::translation-config-unavailable failure rather than silently translating with a model the resource graph never selected, and failed lookups are not cached so an outage cannot pin a stale answer; (2) TRANSLATION_MODEL is removed from ingestion config entirely; (3) kms-ingestion.contracts.resolve/translation-model was a per-source contract override falling back to that env var — no production caller, but a dormant second authority that would have silently won the moment anything used it. Removed, with its test assertions updated.
+
+Resource authoring: contracts/policies/translation_pipeline.edn as a namespace manifest, reusing the existing policy resource kind rather than inventing a config store. This only works because PR-B made the loader canonicalize manifest ids before validation; before that the entry would have been dropped. ships-a-loadable-global-config-resource loads through the real loader and resolves against the real model catalog, so a wrong manifest shape fails loudly instead of silently yielding an empty index.
+
+Verification: backend 878 tests / 2724 assertions, 0 failures 0 errors; compile server 0 warnings; clj-kondo 194 warnings / 0 errors (main baseline); ingestion clj -M:test 83 tests / 324 assertions, 0 failures 0 errors; frontend tsc --noEmit clean (required a pnpm install — frontend node_modules was absent locally; the install did not dirty any tracked file). Repo-wide grep confirms no production caller of v1/translations/config remains.
 ---

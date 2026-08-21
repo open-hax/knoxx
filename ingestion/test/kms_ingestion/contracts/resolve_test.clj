@@ -80,7 +80,6 @@
     (is (= 0.7               (cr/semantic-min-similarity full-contract)))
 
     (is (= true              (cr/translation-enabled? full-contract)))
-    (is (= "some-model"      (cr/translation-model full-contract)))
 
     (is (= :fixed            (cr/domain-strategy full-contract)))
     (is (= "fr"              (cr/projection-language full-contract)))
@@ -98,5 +97,4 @@
     (is (some? (cr/passive-watch-enabled? nil)))
     (is (some? (cr/scheduler-poll-ms nil)))
     (is (some? (cr/sink-type nil)))
-    (is (some? (cr/semantic-k nil)))
-    (is (some? (cr/translation-model nil)))))
+    (is (some? (cr/semantic-k nil)))))
