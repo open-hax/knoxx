@@ -17,51 +17,72 @@ labels:
 
 ## Purpose
 
-Nine open PRs carrying the whole contract-owned publication pipeline are stacked
-behind a pull request that is closed and unmerged. Nothing in this epic — or in
-`knoxx-publication-runtime-follow-up` — can land until the chain is relinked.
+Nine open PRs carrying the whole contract-owned publication pipeline sit above a
+pull request that is closed, unmerged, and — this is the part that matters —
+**cannot be reopened**. Nothing in this epic or in
+`knoxx-publication-runtime-follow-up` lands until the bottom of the ladder does.
 
 ## The state, precisely
 
-`#230` (`feat/publication-intent-resolver`) merged to `main`, and its branch was
-deleted. GitHub closes any open PR whose base branch is deleted, so `#232`
-(`feat/publication-state-migration` → `feat/publication-intent-resolver`) was
-auto-closed at 2026-08-21T17:38:55Z, seconds after that merge. It is closed,
-unmerged, and `mergeable_state: dirty`.
+`#230` (`feat/publication-intent-resolver`) merged to `main` and its branch was
+deleted. `#232` (`feat/publication-state-migration` → `feat/publication-intent-resolver`)
+is closed, unmerged, `mergeable_state: dirty`, `closed_at` 2026-08-21T17:38:55Z.
 
-`#233` is based on `feat/publication-state-migration`. So the chain
+Both repair operations are refused by the API:
 
 ```text
-#233 -> #234 -> #235 -> #236 -> #237 -> #239 -> #240 -> #241 -> #242, #243
+PullRequest.base (invalid): Cannot change the base branch of a closed pull request.
+PullRequest.state (custom): state cannot be changed.
+                            The feat/publication-intent-resolver branch has been deleted.
 ```
 
-now stands on a branch whose own PR no longer exists. Each of those PRs still
-reports `mergeable_state: clean` against its immediate base, which is why this is
-invisible from any single PR's page: every link is green and the bottom of the
-ladder is gone.
+**Do not generalize this into "GitHub closes PRs when their base is deleted."**
+It does not. When a pull request merges and its head branch is deleted, GitHub
+retargets open PRs that used it as a base onto the merged PR's own base — which
+is exactly what should have happened here and demonstrably did not. Everything
+above `#232` kept its base and stayed open; the fourteen other open PRs are fine.
+What is established is the observed state and the two refusals above, not a rule
+about the platform.
 
-`#232` is 1341 additions across 9 files and is the last P0 of the parent epic —
-the migration the CMS cutover waits on. It is not abandoned work.
+The rest of the ladder is intact at the branch level. `#233`'s base,
+`feat/publication-state-migration`, still exists with all nine commits, which is
+why this is a base problem and not lost work.
 
 ## Work
 
-- Reopen `#232` and retarget its base to `main`, or open a replacement PR from
-  `feat/publication-state-migration` to `main` if the closed PR cannot be
-  reopened.
-- Resolve the `dirty` state against current `main` by merging `main` into the
-  branch. Do not rebase or force-push: several branches above it are stacked on
-  this exact history and a rewrite invalidates every one.
-- Verify each subsequent PR's base still names an existing branch, walking
-  upward, and retarget any other link the deletion broke.
-- Re-run the stack's own gates on the relinked bottom before merging upward.
-- Land in order. Every PR in the chain documents that its diff only reads
-  correctly after its base.
-- Delete branches only after the PR stacked on them has been retargeted.
+- **Done: `#247`** opens `feat/publication-state-migration` → `main`, same head
+  commit, nothing rewritten. It carries `#232`'s review history by reference; that
+  history is where the four fold-level findings and the answered-not-fixed entry
+  point question live, and it should be read before merging.
+- Verify the ladder still applies. Merged in PR order into current `main`, all
+  eleven branches apply with **no conflicts** — re-run this rather than trusting
+  it, since `main` moves:
+
+  ```text
+  publication-state-migration → translation-config-resource →
+  translation-publication-gate → publication-reconcile-plan →
+  publication-adapter-effects → publication-receipts-proof →
+  cms-resource-backed-publication → openplanner-rest-retirement →
+  contract-publication-e2e → publication-verification-artifact →
+  fastify-null-prototype-params
+  ```
+
+- Merge in order, letting each merge retarget the next PR onto `main`. Confirm
+  the retarget happened rather than assuming it; `#232` is the evidence that it
+  can fail to.
+- Expect CodeRabbit to review each PR for the first time as it retargets.
+  `.coderabbit.yaml` disables auto review on non-default base branches, so the
+  entire stack has run without it — findings will arrive late and in bulk.
+- Do not rebase or force-push anything in the ladder. Branches are stacked on
+  exact history and a rewrite invalidates every one above it.
+- Delete a base branch only after the PR stacked on it has been retargeted and
+  confirmed.
 
 ## Definition of Done
 
-- `#232`'s content has an open PR against a branch that exists, or is merged.
-- Every open PR in the chain has a base branch that exists.
-- The chain merges to `main` in order with each PR's own verification re-run.
-- A note in the repo's process docs records that deleting a base branch
-  auto-closes stacked PRs, so the next stack does not lose its bottom silently.
+- `#232`'s content is merged to `main` via `#247`.
+- Every remaining PR in the ladder has a base that exists, verified after each
+  merge rather than assumed.
+- The ladder is merged in order with each PR's own verification re-run.
+- A process note records the observed failure and the two API refusals, without
+  overstating them as platform behavior.

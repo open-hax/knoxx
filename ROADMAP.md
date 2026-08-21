@@ -67,12 +67,20 @@ worker.clj` contains no reference to publication.
 against one real target — `open-hax/website`, chosen because it is the smallest
 honest target and nothing depends on it.
 
-**Blocking everything: the stack is stranded.** `#230` merged and its branch was
-deleted, which auto-closed `#232` (`feat/publication-state-migration`), the base
-of `#233`. The nine PRs from `#233` upward each report `mergeable_state: clean`
-against their immediate base, so this is invisible from any single PR page — the
-whole ladder is green and its bottom rung is gone. `knoxx-publication-stack-relink`
-is P0 for that reason.
+**Blocking everything: the bottom of the stack cannot be reopened.** `#230`
+merged and its branch was deleted; `#232` (`feat/publication-state-migration`),
+which targeted it, is closed and unmerged. GitHub refuses both repairs —
+`Cannot change the base branch of a closed pull request` and `state cannot be
+changed. The feat/publication-intent-resolver branch has been deleted`. This is
+not the platform's documented behaviour, which retargets dependent PRs onto the
+merged PR's base; the fourteen other open PRs kept their bases and are fine. It
+is what happened here.
+
+The nine PRs from `#233` upward each report `mergeable_state: clean` against
+their immediate base, so nothing is visible from any single PR page — the ladder
+is green and its bottom rung is a closed PR. `#247` reopens that branch against
+`main` with the same head commit; the whole ladder then merges in order with no
+conflicts. `knoxx-publication-stack-relink` is P0 for that reason.
 
 The deployment side is `open-hax/services`:
 [`docs/deployment-model.md`](https://github.com/open-hax/services/blob/main/docs/deployment-model.md)
