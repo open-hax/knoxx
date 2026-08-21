@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "3sp", "has-parent", "cms", "translations", "openplanner", "deploy"]
-write-id: "1786565797610-0.1m3uz9r2qzjhs0bfgbub"
+write-id: "1786609596677-0.i7e8v37mph9te1zok0b"
 points: "3"
 title: "Retire OpenPlanner REST as a Knoxx CMS/translation dependency"
 priority: "P2"
-status: "ready"
+status: "review"
 uuid: "knoxx-openplanner-rest-retirement"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -184,5 +184,4 @@ must fail before the cutover lands:
 
 ---
 Ready gate 2026-08-12: sized 3sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Retirement is last: it depends on the CMS cutover and the translation-config boundary including the ingestion worker.
-
 ---
