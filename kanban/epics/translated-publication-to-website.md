@@ -3,7 +3,7 @@ uuid: knoxx-translated-publication-to-website
 title: Translated publication to open-hax/website — the first real publication target
 status: breakdown
 priority: P1
-points: 55
+points: 78
 labels:
   - epics
   - publication
@@ -94,7 +94,7 @@ W0 — unblock          the stack is stranded and nothing else can land ....  2
 W1 — the missing edge  registry, artifact contract, site adapter, runner .. 19
 W2 — the translation half  dispatch, approval surface, locale catalog .... 10
 W3 — the website       content source, locale routing, contract tests ..... 11
-W4 — deployment        content root, gated service, lane retirement, live . 13
+W4 — deployment        content root, gated service, lane retirement, live . 36
 ```
 
 ## Children
@@ -138,8 +138,16 @@ W4 — deployment        content root, gated service, lane retirement, live . 13
     root on the DigitalOcean host, its single writer, and the read-only mount.
 12. **P1 / ready / 5sp** `services-website-as-gated-service` — website becomes a
     gated DigitalOcean service shipped as an image, replacing `services#19`.
-13. **P1 / ready / 8sp** `services-promethean-lane-retirement` — one lane, so
-    the next service does not face this choice again.
+13. **P1 / breakdown / 0sp roll-up** `services-promethean-lane-retirement` — one
+    lane, so the next service does not face this choice again. Eleven children,
+    31sp: two dispositions (`services-openplanner-lane-disposition`,
+    `services-caddy-hostname-scale-decision`), seven per-service
+    (`services-axxium-digitalocean-migration`, `services-staging-slot-pattern`,
+    `services-knoxx-staging-migration`, `services-proxx-staging-migration`,
+    `services-promethean-ingress-decommission`,
+    `services-local-proxx-bridge-decommission`,
+    `services-stale-promethean-definitions-removal`), and two closing
+    (`services-promethean-dns-cutover`, `services-promethean-lane-deletion`).
 14. **P2 / ready / 2sp** `knoxx-website-publication-live-verification` — one
     live run: intent → translate → approve → materialize → fetch over HTTPS.
 
@@ -161,7 +169,10 @@ publication-stack-relink
 publication-locale-catalog joins any time after the artifact contract.
 ```
 
-`services-promethean-lane-retirement` runs alongside; nothing here waits on it.
+`services-promethean-lane-retirement` and its eleven children run alongside;
+nothing here waits on them. Its own order is on that roll-up card — dispositions
+first, then per-service, then DNS, then deletion, with DNS moving one hostname at
+a time as each service becomes ready rather than as a flag day.
 
 The dependency that was easy to get wrong is now closed. Everything deploys to
 DigitalOcean, so Knoxx and the website are compose projects on one host and

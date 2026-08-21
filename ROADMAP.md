@@ -63,7 +63,7 @@ means drift is permanently the whole of desired state. The translation half
 matches: the gate derives work, and `ingestion/src/kms_ingestion/translation/
 worker.clj` contains no reference to publication.
 
-`knoxx-translated-publication-to-website` (breakdown, 14 cards) closes that
+`knoxx-translated-publication-to-website` (breakdown, 25 cards) closes that
 against one real target — `open-hax/website`, chosen because it is the smallest
 honest target and nothing depends on it.
 
