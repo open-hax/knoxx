@@ -3,6 +3,14 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Button, Badge } from "@open-hax/uxx";
 import ReactMarkdown from "react-markdown";
 import { CollapsedPanelTab } from "../components/CollapsedPanelTab";
+import {
+  findDocumentBySourcePath,
+  listPublicationTopology,
+  publicationForGarden,
+  publishedGardenIdsFor,
+  setPublicationState,
+  type CmsListWire,
+} from "../lib/api/publications";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
@@ -29,15 +37,13 @@ import styles from "./CmsPage.module.css";
 
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_cms_sidebar_width_px";
 
-type GardenSummary = {
-  garden_id: string;
-  title: string;
-  status: string;
-};
-
-type CmsDocMetadata = Record<string, unknown> & {
-  garden_publications?: Array<{ garden_id?: string }>;
-};
+/**
+ * `garden_publications` is deliberately absent. Publication state is no longer
+ * read from document metadata — it comes from the resource-backed publication
+ * topology, where `desired` is contract intent and `observed` is runtime
+ * evidence. Metadata is now opaque passthrough for the document upsert.
+ */
+type CmsDocMetadata = Record<string, unknown>;
 
 type CmsDocSummary = {
   doc_id: string;
@@ -89,13 +95,12 @@ function CmsPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaveMessage, setLastSaveMessage] = useState<string | null>(null);
-  const [gardens, setGardens] = useState<GardenSummary[]>([]);
+  const [publicationTopology, setPublicationTopology] = useState<CmsListWire | null>(null);
   const [selectedGardenId, setSelectedGardenId] = useState("");
   const [cmsDocuments, setCmsDocuments] = useState<CmsDocSummary[]>([]);
   const [loadingCmsDocuments, setLoadingCmsDocuments] = useState(false);
   const [cmsDocId, setCmsDocId] = useState<string | null>(null);
   const [cmsMetadata, setCmsMetadata] = useState<CmsDocMetadata>({});
-  const [publishedGardenIds, setPublishedGardenIds] = useState<string[]>([]);
 
   // Visual draft creation state
   const [showCreateDraftModal, setShowCreateDraftModal] = useState(false);
@@ -191,23 +196,22 @@ function CmsPage() {
     void loadRecentSessions();
   }, []);
 
-  useEffect(() => {
-    const loadGardens = async () => {
-      try {
-        const resp = await fetch("/api/openplanner/v1/gardens");
-        if (!resp.ok) return;
-        const body = (await resp.json()) as { gardens?: GardenSummary[] };
-        const publishableGardens = (body.gardens ?? []).filter((garden) => garden.status !== "archived");
-        setGardens(publishableGardens);
-        if (!selectedGardenId && publishableGardens.length > 0) {
-          setSelectedGardenId(publishableGardens[0].garden_id);
-        }
-      } catch {
-        setGardens([]);
+  const loadPublicationTopology = useCallback(async () => {
+    try {
+      const topology = await listPublicationTopology();
+      setPublicationTopology(topology);
+      const publishable = topology.gardens.filter((garden) => garden.status === "active");
+      if (!selectedGardenId && publishable.length > 0) {
+        setSelectedGardenId(publishable[0].id);
       }
-    };
-    void loadGardens();
+    } catch {
+      setPublicationTopology(null);
+    }
   }, [selectedGardenId]);
+
+  useEffect(() => {
+    void loadPublicationTopology();
+  }, [loadPublicationTopology]);
 
   useEffect(() => {
     const loadWorkspaceStatus = async () => {
@@ -268,6 +272,27 @@ function CmsPage() {
   }, []);
 
   const editorDirectory = editorPath?.includes("/") ? editorPath.slice(0, editorPath.lastIndexOf("/") + 1) : "";
+
+  /**
+   * The publication topology row for the document currently in the editor.
+   * Derived, never stored: a second client-side authority is what let the old
+   * CMS disagree with the resource graph.
+   */
+  const currentCmsDocument = useMemo(
+    () => (editorPath ? findDocumentBySourcePath(publicationTopology, editorPath) : null),
+    [publicationTopology, editorPath],
+  );
+
+  const publishedGardenIds = useMemo(
+    () => publishedGardenIdsFor(currentCmsDocument),
+    [currentCmsDocument],
+  );
+
+  const selectedPublication = useMemo(
+    () => publicationForGarden(currentCmsDocument, selectedGardenId),
+    [currentCmsDocument, selectedGardenId],
+  );
+
   const isPublishedToSelectedGarden = useMemo(
     () => Boolean(selectedGardenId && publishedGardenIds.includes(selectedGardenId)),
     [publishedGardenIds, selectedGardenId],
@@ -280,7 +305,6 @@ function CmsPage() {
     if (!resp.ok) {
       setCmsDocId(null);
       setCmsMetadata({});
-      setPublishedGardenIds([]);
       setEditorStatus("draft");
       return null;
     }
@@ -291,33 +315,25 @@ function CmsPage() {
     if (!match) {
       setCmsDocId(null);
       setCmsMetadata({});
-      setPublishedGardenIds([]);
       setEditorStatus("draft");
       return null;
     }
 
-    const gardenIds = (match.metadata?.garden_publications ?? [])
-      .map((publication) => publication.garden_id)
-      .filter((gardenId): gardenId is string => typeof gardenId === "string" && gardenId.length > 0);
+    // Publication state is NOT read from metadata. It is derived from the
+    // resource-backed topology via `publishedGardenIds`.
     setCmsDocId(match.doc_id);
     setCmsMetadata(match.metadata ?? {});
-    setPublishedGardenIds(gardenIds);
-    setEditorStatus(gardenIds.includes(selectedGardenId) ? "published" : "draft");
     return match;
-  }, [selectedGardenId]);
+  }, []);
 
   const applyCmsDocumentToEditor = useCallback((doc: CmsDocSummary, fallbackPath?: string) => {
     const path = doc.source_path ?? fallbackPath ?? `cms/${doc.doc_id}.md`;
-    const gardenIds = (doc.metadata?.garden_publications ?? [])
-      .map((publication) => publication.garden_id)
-      .filter((gardenId): gardenId is string => typeof gardenId === "string" && gardenId.length > 0);
     setEditorTitle(doc.title);
     setEditorBody(doc.content ?? "");
     setEditorPath(path);
-    setEditorStatus(gardenIds.includes(selectedGardenId) ? "published" : doc.visibility === "review" ? "review" : "draft");
+    setEditorStatus(doc.visibility === "review" ? "review" : "draft");
     setCmsDocId(doc.doc_id);
     setCmsMetadata(doc.metadata ?? {});
-    setPublishedGardenIds(gardenIds);
     setIsDirty(false);
     setLastSaveMessage("Loaded CMS draft");
     chat.pinContextItem({
@@ -787,11 +803,19 @@ function CmsPage() {
       if (savedPath) await syncCmsDocumentByPath(savedPath);
       if (publishDocId) await handleOpenCmsDocument(publishDocId);
       await loadCmsDocuments();
-      const nextGardenIds = isPublishedToSelectedGarden
-        ? publishedGardenIds.filter((gardenId) => gardenId !== selectedGardenId)
-        : [...new Set([...publishedGardenIds, selectedGardenId])];
-      setPublishedGardenIds(nextGardenIds);
-      setEditorStatus(nextGardenIds.includes(selectedGardenId) ? "published" : "draft");
+
+      // Publication intent lives in the resource graph. This PATCH changes ONLY
+      // the desired state; document, garden, locale and revision are identity and
+      // cannot move through it. The UI then re-reads the topology rather than
+      // predicting the new state locally — if the write is rejected, the badge
+      // keeps showing what the resource graph actually says.
+      if (selectedPublication) {
+        await setPublicationState(
+          selectedPublication.id,
+          nextState === "published" ? "published" : "withheld",
+        );
+      }
+      await loadPublicationTopology();
       setLastSaveMessage((current) => current ?? (nextState === "published" ? "Published" : "Unpublished"));
     } catch (err) {
       console.error("Publish toggle failed:", err);
@@ -804,13 +828,14 @@ function CmsPage() {
     editorBody,
     editorTitle,
     isPublishedToSelectedGarden,
+    loadPublicationTopology,
+    selectedPublication,
     editorPath,
     handleOpenCmsDocument,
     isDirty,
     loadCmsDocuments,
     persistCmsDocumentOnly,
     persistEditorFile,
-    publishedGardenIds,
     selectedGardenId,
     syncCmsDocumentByPath,
     upsertCmsDocument,
@@ -924,7 +949,6 @@ function CmsPage() {
             setEditorStatus("draft");
             setCmsDocId(null);
             setCmsMetadata({});
-            setPublishedGardenIds([]);
             setIsDirty(true);
             setLastSaveMessage(null);
           }}
@@ -1029,9 +1053,14 @@ function CmsPage() {
               aria-label="Garden"
             >
               <option value="">Select garden…</option>
-              {gardens.map((garden) => (
-                <option key={garden.garden_id} value={garden.garden_id}>
-                  {garden.title || garden.garden_id}{garden.status !== "active" ? ` (${garden.status})` : ""}
+              {/* Active only. The publish handler still calls the legacy endpoint
+                  directly, so an archived garden offered here could be published
+                  through it and bypass the planner's archived-garden block. */}
+              {(publicationTopology?.gardens ?? [])
+                .filter((garden) => garden.status === "active")
+                .map((garden) => (
+                <option key={garden.id} value={garden.id}>
+                  {garden.title || garden.id}
                 </option>
               ))}
             </select>
