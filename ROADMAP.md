@@ -67,7 +67,13 @@ worker.clj` contains no reference to publication.
 against one real target — `open-hax/website`, chosen because it is the smallest
 honest target and nothing depends on it.
 
-**Blocking everything: the bottom of the stack cannot be reopened.** `#230`
+**Resolved 2026-08-21 — the ladder is on `main`.** `#247` → `#233` → `#234` →
+`#235` → `#236` → `#237` → `#239` → `#240` → `#241` → `#243` → `#242`, merged in
+order with no conflicts. `#243` went before `#242` so `main` never carried the
+publication surface in the state where every route answered 500. What follows is
+the record of why it was stuck.
+
+**The bottom of the stack could not be reopened.** `#230`
 merged and its branch was deleted; `#232` (`feat/publication-state-migration`),
 which targeted it, is closed and unmerged. GitHub refuses both repairs —
 `Cannot change the base branch of a closed pull request` and `state cannot be

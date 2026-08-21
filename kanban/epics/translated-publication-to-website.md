@@ -3,7 +3,7 @@ uuid: knoxx-translated-publication-to-website
 title: Translated publication to open-hax/website — the first real publication target
 status: breakdown
 priority: P1
-points: 81
+points: 79
 labels:
   - epics
   - publication
@@ -90,7 +90,7 @@ published — which is the entire point of choosing a static target first.
 ## Waves
 
 ```text
-W0 — unblock          the stack is stranded and nothing else can land ....  2
+W0 — unblock          DONE — the ladder is on main ...................... 0
 W1 — the missing edge  registry, artifact contract, site adapter, runner .. 19
 W2 — the translation half  dispatch, approval surface, locale catalog .... 10
 W3 — the website       content source, locale routing, contract tests ..... 11
@@ -101,9 +101,10 @@ W4 — deployment        content root, gated service, lane retirement, live . 39
 
 ### W0 — unblock
 
-1. **P0 / ready / 2sp** `knoxx-publication-stack-relink` — the nine-PR chain sits
-   above a closed PR that cannot be reopened. `#247` reopens it against `main`;
-   nothing below can start until the ladder merges.
+1. **P0 / done / 2sp** `knoxx-publication-stack-relink` — **complete
+   2026-08-21.** `#247` replaced the unreopenable `#232`, and the whole ladder
+   merged to `main`: `#247` → `#233` → `#234` → `#235` → `#236` → `#237` →
+   `#239` → `#240` → `#241` → `#243` → `#242`. W1 is now unblocked.
 
 ### W1 — the missing production edge
 

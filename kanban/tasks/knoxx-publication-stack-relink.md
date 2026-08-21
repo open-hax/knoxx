@@ -1,7 +1,7 @@
 ---
 uuid: knoxx-publication-stack-relink
 title: Publication — relink the stranded PR stack onto main
-status: ready
+status: done
 priority: P0
 points: 2
 labels:
@@ -15,12 +15,18 @@ labels:
 
 > Parent epic: `knoxx-translated-publication-to-website`
 
+> **Done 2026-08-21.** The whole ladder is merged to `main`:
+> `#247` → `#233` → `#234` → `#235` → `#236` → `#237` → `#239` → `#240` →
+> `#241` → `#243` → `#242`. Kept below as the record of what was wrong and how
+> it was repaired, because the failure mode is not obvious and will recur.
+
 ## Purpose
 
-Nine open PRs carrying the whole contract-owned publication pipeline sit above a
-pull request that is closed, unmerged, and — this is the part that matters —
-**cannot be reopened**. Nothing in this epic or in
-`knoxx-publication-runtime-follow-up` lands until the bottom of the ladder does.
+Nine open PRs carrying the whole contract-owned publication pipeline sat above a
+pull request that was closed, unmerged, and — this is the part that mattered —
+**could not be reopened**. Nothing in this epic or in
+`knoxx-publication-runtime-follow-up` could land until the bottom of the ladder
+did.
 
 ## The state, precisely
 
@@ -67,9 +73,10 @@ why this is a base problem and not lost work.
   fastify-null-prototype-params
   ```
 
-- Merge in order, letting each merge retarget the next PR onto `main`. Confirm
-  the retarget happened rather than assuming it; `#232` is the evidence that it
-  can fail to.
+- Merge in order. **The automatic retarget did not happen**: each PR's base
+  branch still existed after its predecessor merged, so every one had to be
+  retargeted to `main` explicitly before it could merge. Retarget, then merge,
+  one at a time.
 - Expect CodeRabbit to review each PR for the first time as it retargets.
   `.coderabbit.yaml` disables auto review on non-default base branches, so the
   entire stack has run without it — findings will arrive late and in bulk.
@@ -78,11 +85,24 @@ why this is a base problem and not lost work.
 - Delete a base branch only after the PR stacked on it has been retargeted and
   confirmed.
 
+## What actually happened
+
+- `#247` opened `feat/publication-state-migration` → `main` and merged.
+- Each remaining PR was retargeted to `main` by hand, then merged, in order.
+  No conflicts at any step, matching the local rehearsal.
+- `#243` (the null-prototype params fix) was merged **before** `#242` (the
+  verification scripts), so `main` never carried the ladder's publication
+  surface in the state where every route answered 500.
+- Nine of the eleven pushes produced no deploy: the `knoxx-production`
+  concurrency group holds one pending run and replaces it, so intermediate runs
+  were evicted — the same queue-eviction behaviour `services/deploy-stack.yml`
+  documents and narrowed its own group to avoid.
+
 ## Definition of Done
 
-- `#232`'s content is merged to `main` via `#247`.
-- Every remaining PR in the ladder has a base that exists, verified after each
-  merge rather than assumed.
-- The ladder is merged in order with each PR's own verification re-run.
+- `#232`'s content is merged to `main` via `#247`. ✔
+- Every remaining PR in the ladder has a base that exists. ✔ — by explicit
+  retarget, not automatically.
+- The ladder is merged in order. ✔
 - A process note records the observed failure and the two API refusals, without
-  overstating them as platform behavior.
+  overstating them as platform behavior. ✔
