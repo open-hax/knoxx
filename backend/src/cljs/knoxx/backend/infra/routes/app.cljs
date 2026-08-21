@@ -14,6 +14,7 @@
             [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-role-slugs ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.infra.routes.resources :as resource-routes]
+            [knoxx.backend.extern.fastify.publications :as publication-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
@@ -1525,6 +1526,15 @@
                                               :error-response! error-response!
                                               :with-request-context! with-request-context!
                                               :ensure-permission! ensure-permission!})
+  ;; Publication projection reads desired state from resources alone. Its
+  ;; Fastify interop is owned by the extern adapter, so it takes no helpers map.
+  ;; Publication projection reads desired state from resources alone. Its
+  ;; Fastify interop is owned by the extern adapter, which authorizes both
+  ;; routes before touching the filesystem-backed projection.
+  (publication-routes/register-publication-routes!
+   app runtime config
+   {:with-request-context! with-request-context!
+    :ensure-permission! ensure-permission!})
   (model-routes/register-model-routes! app runtime config)
   (voice-routes/register-voice-routes! app runtime config
                                        {:route! route!

@@ -99,6 +99,24 @@
    [:translation/review [:enum :none :required]]
    [:document/source-locale Locale]])
 
+;; ── Projection views ───────────────────────────────────────────────────────
+
+;; Facade shapes for the resolver's desired-topology projection. Deliberately
+;; concrete rather than `[:vector :map]`: the CMS facade reads a document's
+;; identity at [:document :document/id], so a view assembled from a document
+;; that never got a canonical id must fail here rather than reaching the wire
+;; encoder. Publications are the hydrated `PublicationIntent`, not the raw
+;; resource, because a view is only assembled after reference resolution.
+(def PublicationDocumentView
+  [:map
+   [:document Document]
+   [:publications [:vector PublicationIntent]]])
+
+(def PublicationListView
+  [:map
+   [:documents [:vector PublicationDocumentView]]
+   [:gardens [:vector Garden]]])
+
 ;; ── Boundary helpers ───────────────────────────────────────────────────────
 
 (defn assert-valid!
