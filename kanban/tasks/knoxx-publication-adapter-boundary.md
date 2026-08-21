@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "has-parent", "publication", "adapters", "decouple"]
-write-id: "1786565812925-0.r6lj1vcsiql3nk1d58p"
+write-id: "1786608413643-0.y17muawz3hhdgi387q8"
 points: "0"
 title: "Define publication reconciliation and adapter boundary"
 priority: "P1"
-status: "breakdown"
+status: "review"
 uuid: "knoxx-publication-adapter-boundary"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -64,4 +64,5 @@ Desired state remains in resources, decision law remains pure, adapters perform 
 ---
 Breakdown 2026-08-12: held in breakdown deliberately. This is a zero-point roll-up over three ready children (reconcile-plan-laws 3sp, adapter-effects-idempotency 3sp, receipts-fake-adapter-proof 2sp = the original 8sp). It carries no implementation slice of its own, so it has no Ready gate to clear; it closes when its children close.
 
+Roll-up closing 2026-08-13: all three children are implemented and in review — knoxx-publication-reconcile-plan-laws (PR #235), knoxx-publication-adapter-effects-idempotency (PR #236), knoxx-publication-receipts-fake-adapter-proof (PR #237). The boundary is proven as pure plan -> replaceable effects -> receipts, with a whole-seam test that names no hosted publishing backend anywhere in its transitive source. This card carried no implementation points of its own and closes behind them.
 ---

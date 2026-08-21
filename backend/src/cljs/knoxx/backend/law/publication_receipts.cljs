@@ -61,8 +61,13 @@
    [:idempotency/key publication/NonBlankString]])
 
 (def RemovedReceipt
+  "`:publication/id` is required, not incidental: the observation projection
+   filters receipts by it, so a removal without one is silently dropped and the
+   materialization it was supposed to retract stays observed. Requiring it here
+   means an adapter cannot forget."
   [:map
    [:receipt/type [:= :publication/removed]]
+   [:publication/id :qualified-keyword]
    [:removed/path {:optional true} [:maybe :string]]])
 
 (def NoopReceipt

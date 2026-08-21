@@ -22,6 +22,7 @@
      `admissible-publication?`, and it would let a `nil`, misspelt, or
      still-string-encoded state become a public effect."
   (:require [knoxx.backend.domain.publication-gate :as gate]
+            [knoxx.backend.domain.publication-receipts :as receipts]
             [knoxx.backend.law.publication :as law]))
 
 (def non-public-states
@@ -40,8 +41,11 @@
    :materialized/path (:publication/path intent)})
 
 (defn- observed-materialization
+  "Compared against `desired-materialization` using the key set named by
+   `receipts/drift-keys`, so the planner and the receipt projection cannot
+   diverge on what convergence means."
   [observed]
-  (select-keys observed [:materialized/revision :materialized/path]))
+  (select-keys observed receipts/drift-keys))
 
 (defn- takedown
   "Removal when something is materialized, otherwise nothing to do. Never
