@@ -124,3 +124,40 @@ resource contracts
 Breakdown 2026-08-12: epic held in breakdown as the container for the twelve task cards. All eleven implementable children are now ready; the epic closes behind them.
 
 ---
+
+***
+
+## Decision 2026-08-19 — how the pipeline actually gets wired in
+
+**This is what the stack hit a wall on, recorded so the next attempt does not
+rediscover it.** The epic's pure layers are built and tested: the resolver, the
+migration decision logic, the gate, the plan laws, the effect boundary, receipts.
+What does not exist is anything that *runs* them. `migrate-publication-records!`
+has no production caller and none of its three effects — legacy reader, resource
+writer, durable append-once receipt store — has an implementation. Review
+correctly flagged it on PR #232; it is not an oversight in that card, it is a
+missing spec for the whole seam.
+
+**Direction (author, 2026-08-19):** rather than wire these namespaces into the
+main application directly, stand the pipeline up as a **separate service exposing
+the same API the old OpenPlanner system did**, and have the main application
+consume that. For now. That keeps the main app's client contract unchanged while
+the authority moves, and it gives the pure layers a single runtime home instead of
+being called from inside the backend on an undesigned path.
+
+Consequences worth naming before anyone starts:
+
+- The spec for that service does not exist yet. It is the prerequisite, not a
+  detail — the API surface it must reproduce is whatever the main application
+  currently calls on OpenPlanner, which needs enumerating first.
+- `knoxx-openplanner-publication-state-migration` (#232) stays a pure-decision
+  card. Its driver belongs to the new service, so the "no runnable entry point"
+  finding is not a defect in #232 to be fixed inside it.
+- The receipt store's cross-run idempotence is delegated by name
+  (`:append-receipt-once!`) and has no implementation. Whatever the service uses
+  for it is a durability decision, not a detail of the fold.
+- A dry-run mode becomes cheap once a real writer exists to stand in for, and is
+  worth having before the migration is pointed at production data — the identity
+  and payload conflict checks refuse rather than merge, so a real run can halt on
+  data nobody has seen.
+
