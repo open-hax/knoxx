@@ -49,6 +49,17 @@
 (defn- fake-request [params]
   (js-obj "params" (clj->js params) "method" "GET"))
 
+(defn- null-prototype-request
+  "A request whose `params` has NO prototype, exactly as Fastify's router builds
+   it. `(clj->js {...})` produces a normal Object and converts fine, which is why
+   every other test here passed against a surface that answered 500 to every
+   real request."
+  [params]
+  (let [obj (js/Object.create nil)]
+    (doseq [[k v] params]
+      (aset obj (name k) v))
+    (js-obj "params" obj "method" "GET")))
+
 (defn- harness
   "Capture registered routes plus every authorization check. `ensure-permission!`
    throws unless the permission is in `granted`."
@@ -88,6 +99,17 @@
     (testing "the decoded value is CLJS data, not a handle"
       (is (map? decoded))
       (is (map? (:params decoded))))))
+
+(deftest decode-request-handles-fastify-null-prototype-params
+  (testing "a params object with no prototype still decodes to a CLJS map"
+    (let [decoded (adapter/decode-request
+                   (null-prototype-request {:documentId "knoxx.docs/probe"}))]
+      (is (map? (:params decoded)))
+      (is (= "knoxx.docs/probe" (get-in decoded [:params :documentId])))))
+  (testing "and so does an empty one, as a collection route receives"
+    (let [decoded (adapter/decode-request (null-prototype-request {}))]
+      (is (map? (:params decoded)))
+      (is (= {} (:params decoded))))))
 
 ;; ── 13 async route behaviour ───────────────────────────────────────────────
 

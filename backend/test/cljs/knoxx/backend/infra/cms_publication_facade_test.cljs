@@ -1,10 +1,13 @@
 (ns knoxx.backend.infra.cms-publication-facade-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.reader :as reader]
+            [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
             [malli.core :as m]
             [knoxx.backend.domain.cms-publication :as cms]
+            [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.infra.routes.cms-publication :as facade]
             [knoxx.backend.law.cms-publication :as law]
+            [knoxx.backend.law.publication :as law-publication]
             [open-hax.publication-wire :as wire]))
 
 ;; ── Fixtures ───────────────────────────────────────────────────────────────
@@ -159,10 +162,17 @@
     (is (string? (cms/decode-revision "abc123")))))
 
 ;; ── a state edit must not destroy the file it edits (Codex P1 on #239) ─────
+;;
+;; The structural half of this — one field on one entry, siblings and :namespace
+;; intact, a namespace-local id matched against a canonical one — is pinned at
+;; its own layer in knoxx.backend.shape.resource-manifest-test. What is only
+;; reachable here is the WRITE path: that the bytes handed to the filesystem are
+;; the whole manifest, and that the two refusals carry ex-data the adapter
+;; classifies correctly.
 
 (def ^:private authored-manifest
-  "What a human actually writes: one namespace, several resources, and an entry
-   that declares a document and a publication together."
+  "What a human actually writes: one namespace, several resources, and a
+   publication declared beside the document and garden it relates."
   {:namespace :knoxx.docs
    :resources [{:document/id :probe
                 :document/title "Probe"
@@ -188,54 +198,98 @@
                 :publication/path "/probe-fr"
                 :translation/review :required}]})
 
-(deftest a-state-edit-preserves-the-whole-authored-manifest
-  (let [updated (facade/authored-with-state authored-manifest
-                                            :knoxx.docs/probe-es
-                                            :withheld)]
-    (testing "the wrapper survives — serializing the projected intent over the
-              file used to delete :namespace, :resources and every sibling"
-      (is (= :knoxx.docs (:namespace updated)))
-      (is (= 4 (count (:resources updated)))))
-    (testing "only the target publication moved"
-      (let [by-id (fn [m k] (some #(when (= k (:publication/id %)) %) (:resources m)))]
-        (is (= :withheld (:publication/state (by-id updated :probe-es))))
-        (is (= :published (:publication/state (by-id updated :probe-fr)))
-            "a sibling publication in the same manifest is untouched")))
-    (testing "the document and garden facets are byte-identical"
-      (is (= (first (:resources authored-manifest)) (first (:resources updated))))
-      (is (= (second (:resources authored-manifest)) (second (:resources updated)))))
-    (testing "and nothing but the one state key differs anywhere in the file"
-      (is (= (assoc-in authored-manifest [:resources 2 :publication/state] :withheld)
-             updated)))))
+(defn- writing-to
+  "Stub the file IO and hand back the atom the written string lands in."
+  [written]
+  {:read (fn [_] (js/Promise.resolve @written))
+   :write (fn [_ contents] (reset! written contents) (js/Promise.resolve nil))})
 
-(deftest a-standalone-publication-file-keeps-its-authored-keys
-  (testing "the projection runs select-keys, so writing it back dropped
-            :namespace and anything else the author wrote"
-    (let [authored {:namespace :knoxx.docs
-                    :publication/id :probe-es
-                    :publication/document :knoxx.docs/probe
-                    :publication/garden :knoxx.docs/promethean
-                    :publication/locale :es
-                    :publication/revision :source/current
-                    :publication/state :published
-                    :publication/path "/probe"
-                    :translation/review :required}
-          updated (facade/authored-with-state authored :knoxx.docs/probe-es :archived)]
-      (is (= :archived (:publication/state updated)))
-      (is (= :knoxx.docs (:namespace updated)))
-      (is (= (assoc authored :publication/state :archived) updated)))))
+(deftest ^:async a-state-edit-persists-the-whole-manifest
+  (let [written (atom authored-manifest)
+        {:keys [read write]} (writing-to written)]
+    (with-redefs [resources/read-edn-file! read
+                  resources/write-edn-file! write]
+      (await (facade/write-publication-state! "/tmp/probe.edn"
+                                              :knoxx.docs/probe-es
+                                              :withheld))
+      (let [persisted (reader/read-string @written)]
+        (testing "what reached the filesystem is the manifest, not the resource.
+                  pr-str-ing the patched intent over the file deleted :namespace,
+                  :resources and every sibling, and the next projection failed
+                  with unresolved references"
+          (is (= :knoxx.docs (:namespace persisted)))
+          (is (= 4 (count (:resources persisted)))))
+        (testing "and exactly one state key differs from what was authored"
+          (is (= (assoc-in authored-manifest [:resources 2 :publication/state] :withheld)
+                 persisted)))
+        (testing "the file ends with a newline, as a text file must"
+          (is (str/ends-with? @written "\n")))))))
 
-(deftest an-edit-to-a-file-that-does-not-declare-it-is-refused
-  (testing "a manifest without the publication"
-    (is (thrown? js/Error
-                 (facade/authored-with-state
-                  (update authored-manifest :resources #(vec (remove :publication/id %)))
-                  :knoxx.docs/probe-es
-                  :withheld))))
-  (testing "and a standalone file for a different publication"
-    (is (thrown? js/Error
-                 (facade/authored-with-state
-                  {:namespace :knoxx.docs :publication/id :other :publication/state :published}
-                  :knoxx.docs/probe-es
-                  :withheld)))))
+(deftest ^:async an-unlawful-state-never-reaches-the-filesystem
+  (let [written (atom authored-manifest)
+        before @written
+        {:keys [read write]} (writing-to written)]
+    (with-redefs [resources/read-edn-file! read
+                  resources/write-edn-file! write]
+      (let [outcome (try (await (facade/write-publication-state!
+                                 "/tmp/probe.edn" :knoxx.docs/probe-es :banana))
+                         :wrote
+                         (catch :default e e))]
+        (testing "this is a public function reachable with any value, and it is
+                  the last boundary before the filesystem — persisting :banana
+                  would leave the projection failing closed on a file nobody
+                  remembers editing"
+          (is (not= :wrote outcome))
+          (is (= before @written) "and the file was not even read-modify-written"))
+        (testing "it fails as a contract violation, which the adapter reads as 422
+                  — the request was well-formed and the value was not"
+          (is (some? (:errors (ex-data outcome)))))))))
 
+(deftest every-lawful-state-is-accepted-by-the-contract
+  (testing "the enum the writer validates against is the one the resource shape
+            declares, so the two cannot drift apart"
+    (doseq [state [:published :withheld :archived]]
+      (is (m/validate law-publication/PublicationState state)
+          (str state " must be a lawful publication state"))))
+  (testing "and nothing else is"
+    (is (not (m/validate law-publication/PublicationState :banana)))
+    (is (not (m/validate law-publication/PublicationState "published")))))
+
+(deftest ^:async a-file-that-does-not-declare-the-publication-is-refused
+  (let [written (atom (update authored-manifest :resources
+                               #(vec (remove :publication/id %))))
+        before @written
+        {:keys [read write]} (writing-to written)]
+    (with-redefs [resources/read-edn-file! read
+                  resources/write-edn-file! write]
+      (let [outcome (try (await (facade/write-publication-state!
+                                 "/tmp/probe.edn" :knoxx.docs/probe-es :withheld))
+                         :wrote
+                         (catch :default e e))]
+        (testing "it refuses rather than writing something plausible"
+          (is (not= :wrote outcome))
+          (is (= before @written) "nothing was persisted"))
+        (testing "and carries :publication/id, which the adapter's error-status
+                  reads as 404 — the resource genuinely is not there"
+          (is (= :knoxx.docs/probe-es (:publication/id (ex-data outcome)))))))))
+
+(deftest ^:async two-entries-claiming-the-id-is-a-conflict-not-a-not-found
+  (let [written (atom (update authored-manifest :resources
+                               #(conj % (assoc (nth % 2) :publication/path "/dupe"))))
+        before @written
+        {:keys [read write]} (writing-to written)]
+    (with-redefs [resources/read-edn-file! read
+                  resources/write-edn-file! write]
+      (let [outcome (try (await (facade/write-publication-state!
+                                 "/tmp/probe.edn" :knoxx.docs/probe-es :withheld))
+                         :wrote
+                         (catch :default e e))]
+        (testing "a request naming one resource must not rewrite two"
+          (is (not= :wrote outcome))
+          (is (= before @written) "nothing was persisted"))
+        (testing "it reports :conflicts, so error-status maps it to 409"
+          (is (seq (:conflicts (ex-data outcome)))))
+        (testing "and it deliberately OMITS :publication/id. error-status checks
+                  that key FIRST, so including it would report 404 — file not
+                  found — for a file that plainly contains the resource twice"
+          (is (not (contains? (ex-data outcome) :publication/id))))))))

@@ -33,6 +33,14 @@
       parsed
       default)))
 
+(defn- env-flag
+  "True only for an explicit affirmative. Anything else — unset, empty, \"false\",
+   \"0\", a typo — is false, so a flag that disables production behavior can
+   never be switched on by accident."
+  [k]
+  (contains? #{"1" "true" "yes" "on"}
+             (some-> (aget js/process.env k) str str/trim str/lower-case)))
+
 (defn- env-kv-map
   [k]
   (let [raw (some-> (aget js/process.env k) str str/trim)]
@@ -61,7 +69,13 @@
    :knoxx-default-agent-contract (env "KNOXX_DEFAULT_AGENT_CONTRACT" "knoxx_default")
    :contracts-dir (env "CONTRACTS_DIR" "contracts")
    :shutdown-grace-ms (env-int "KNOXX_SHUTDOWN_GRACE_MS" 25000)
-   :shutdown-poll-ms (env-int "KNOXX_SHUTDOWN_POLL_MS" 250)})
+   :shutdown-poll-ms (env-int "KNOXX_SHUTDOWN_POLL_MS" 250)
+   ;; Boot the HTTP surface WITHOUT schedules, triggers, or Discord actor
+   ;; gateways. Exists so a developer can run a local Knoxx for the human
+   ;; verification scripts (AGENTS.md) without a real bot joining real guilds
+   ;; and answering real messages. Never set this in production — see
+   ;; knoxx-event-runtime-boot-coupling.
+   :event-runtimes-disabled? (env-flag "KNOXX_DISABLE_EVENT_RUNTIMES")})
 
 (defn- workspace-config
   []

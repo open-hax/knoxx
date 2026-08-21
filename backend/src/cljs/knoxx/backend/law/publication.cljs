@@ -87,6 +87,16 @@
    the distinction is visible where either might be reached for."
   NonBlankString)
 
+(def PublicationState
+  "Every state a publication resource may declare.
+
+   Named rather than inlined so the two resource shapes below and any boundary
+   that validates a state edit read one vocabulary. `reconcilable-publication-states`
+   and `publishing-publication-states` further down are deliberately *narrower*
+   subsets of this — a state can be lawful to declare and still not be a lawful
+   input to reconciliation."
+  [:enum :published :withheld :archived])
+
 ;; Raw declarative relation stored in resource data.
 (def PublicationIntentResource
   [:map
@@ -95,7 +105,7 @@
    [:publication/garden qualified-keyword?]
    [:publication/locale Locale]
    [:publication/revision PublicationRevision]
-   [:publication/state [:enum :published :withheld :archived]]
+   [:publication/state PublicationState]
    [:publication/path PublicationPath]
    [:translation/review [:enum :none :required]]])
 
@@ -112,7 +122,7 @@
    [:publication/garden qualified-keyword?]
    [:publication/locale Locale]
    [:publication/revision PublicationRevision]
-   [:publication/state [:enum :published :withheld :archived]]
+   [:publication/state PublicationState]
    [:publication/path PublicationPath]
    [:translation/review [:enum :none :required]]
    [:document/source-locale Locale]])
