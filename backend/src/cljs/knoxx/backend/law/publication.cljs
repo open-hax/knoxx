@@ -72,7 +72,20 @@
    [:garden/status [:enum :active :archived]]])
 
 (def PublicationRevision
+  "A revision *selector*: either a concrete revision or the `:source/current`
+   token that resolves to one. Correct for declared desired state, which is
+   allowed to say \"whatever is current\"."
   [:or NonBlankString [:enum :source/current]])
+
+(def ConcreteRevision
+  "One immutable source state, never a selector.
+
+   Anything keyed by a revision needs this rather than `PublicationRevision`: a
+   key meaning \"whatever is current\" is not a key but a moving target, and
+   replaying it would publish different content under the same claim while
+   reporting the operation as already done. Stated next to the selector law so
+   the distinction is visible where either might be reached for."
+  NonBlankString)
 
 ;; Raw declarative relation stored in resource data.
 (def PublicationIntentResource
