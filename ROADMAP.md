@@ -63,7 +63,7 @@ means drift is permanently the whole of desired state. The translation half
 matches: the gate derives work, and `ingestion/src/kms_ingestion/translation/
 worker.clj` contains no reference to publication.
 
-`knoxx-translated-publication-to-website` (breakdown, 13 cards) closes that
+`knoxx-translated-publication-to-website` (breakdown, 14 cards) closes that
 against one real target — `open-hax/website`, chosen because it is the smallest
 honest target and nothing depends on it.
 
@@ -78,6 +78,10 @@ The deployment side is `open-hax/services`:
 [`docs/deployment-model.md`](https://github.com/open-hax/services/blob/main/docs/deployment-model.md)
 defines the service descriptor, the promotion rule, the gate contract, and the
 one-writer rule for a service that serves content another service publishes.
+Everything deploys to the DigitalOcean lane — the Promethean lane accepts no new
+services and is being retired — so Knoxx and the website end up compose projects
+on one host and the publication adapter is a filesystem adapter over a
+bind-mounted content root.
 
 ## Knoxx's position in the drift ledger
 

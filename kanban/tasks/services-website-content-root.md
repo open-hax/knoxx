@@ -1,6 +1,6 @@
 ---
 uuid: services-website-content-root
-title: Services — declare the published content root and its single writer
+title: Services — declare the published content root on the DigitalOcean host
 status: ready
 priority: P1
 points: 3
@@ -12,59 +12,65 @@ labels:
   - has-parent
 ---
 
-# Services — declare the published content root and its single writer
+# Services — declare the published content root on the DigitalOcean host
 
 > Parent epic: `knoxx-translated-publication-to-website`
 > Repository: `open-hax/services`
 
 ## Purpose
 
-Deciding where published bytes land is a deployment decision, not an application
-one, and it is the decision the static-site adapter's transport depends on. It
-must be answered before that adapter is written, not discovered while writing it.
+Deciding where published bytes land is a deployment decision, and it is the one
+the static-site adapter's transport depends on. It is now answered: everything
+deploys to DigitalOcean, so Knoxx and the website are compose projects on one
+host and the content root is a directory both mount.
 
-## The question that decides the epic
-
-Knoxx production runs on the Promethean host (`proxx.promethean.rest`).
-`services#19` proposes the website on that same host, but the deployment model
-says new services are declared for the DigitalOcean lane, which is a **different
-host**. Those give different adapters:
+## The decision, and what it buys
 
 ```text
-same host       -> a shared directory, read-only to the reader; a filesystem adapter
-different hosts -> object storage or an SSH push; a transport adapter, more work,
-                   and the artifact write is no longer atomic-by-rename
+host    open-hax-services-production (157.245.125.134)
+root    /srv/open-hax/state/website/content
+writer  knoxx     (read-write)
+reader  website   (read-only)
 ```
 
-Pick one and record why. Everything in `knoxx-publication-static-site-target`
-follows from it.
+A single filesystem means the adapter writes files and renames them into place.
+Rename within a filesystem is atomic, so the manifest swap the adapter needs is a
+primitive rather than a protocol — no object store, no transport, no credentials,
+and no partially visible manifest. This is why the adapter card can be sized as
+one adapter rather than an adapter plus a transport.
 
 ## Dependencies
 
-`services:docs/deployment-model.md` §4 and §7 — this card is where §7's first
-open question is answered.
+`services:docs/deployment-model.md` §4. Blocks
+`knoxx-publication-static-site-target`.
 
 ## Work
 
-- Answer the host question above and record the decision with its consequences.
-- Declare the content root in the service descriptor: path, owner, single writer,
-  and read-only reader mount.
-- Place it under the host contract's `stateRoot`. It is state, not build output:
-  a website redeploy that `rsync --delete`s its docroot must not be able to erase
-  published translations. This is why the model separates `build.output` from
-  `serve.docroot`.
-- State the permissions concretely — which uid writes, which mounts read-only —
-  rather than leaving it to whichever process gets there first.
+- Declare the content root in the website service descriptor: path, single
+  writer, read-only reader mount, and the uid each container uses. State the uids
+  rather than leaving ownership to whichever container creates the directory
+  first — the writer is Knoxx's backend container and the reader is nginx.
+- Place it under the host contract's `stateRoot`
+  (`/srv/open-hax/state`, per `digitalocean/hosts/production.yaml`). It is state:
+  a website release replaces an image and must not be able to replace published
+  translations. This is why the model separates `image.output` from the content
+  mount.
+- Add the read-write mount to the Knoxx compose project and the read-only mount
+  to the website's. One writer, enforced by the mount, not by convention.
+- Create the directory in host bootstrap with the right ownership, so a first
+  deploy does not race to create it.
 - Bound the disk. Say what happens when publication fills the volume, even if the
   answer is an alert and a manual sweep.
 - Back it up, or state explicitly that published content is reproducible by
-  re-running reconciliation and therefore is not backed up.
-- No secrets. This repo is public and the content root's declaration carries
-  names and paths only.
+  re-running reconciliation and is therefore deliberately not backed up.
+- No secrets. This repo is public and the declaration carries names and paths
+  only.
 
 ## Definition of Done
 
-- The host decision is recorded with its consequence for the adapter.
-- The content root is declared with one writer and a read-only reader.
-- It lives under `stateRoot` and survives a website redeploy.
+- The content root is declared with one read-write writer and read-only readers,
+  with uids stated.
+- It lives under `stateRoot` and survives replacing the website image.
+- The mounts exist in both compose projects and the reader's is `:ro`.
+- Host bootstrap creates it with correct ownership.
 - Disk bound and recovery posture are both stated.

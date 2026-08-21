@@ -1,6 +1,6 @@
 ---
 uuid: services-website-as-gated-service
-title: Services — website as a first-class gated service
+title: Services — website as a first-class gated DigitalOcean service
 status: ready
 priority: P1
 points: 5
@@ -11,7 +11,7 @@ labels:
   - has-parent
 ---
 
-# Services — website as a first-class gated service
+# Services — website as a first-class gated DigitalOcean service
 
 > Parent epic: `knoxx-translated-publication-to-website`
 > Repository: `open-hax/services`
@@ -19,15 +19,14 @@ labels:
 ## Purpose
 
 `services#19` has been open since 2026-06-04 and would deploy a site that cannot
-serve, from a runner that cannot build it. Replace its shape with a service
-declared against `docs/deployment-model.md`, keeping the parts of that branch
-that are right — the hostnames, the nginx server blocks, the `services.yaml`
-entries.
+serve, from a runner that cannot build it, into the lane that is being retired.
+Replace it with a service declared against `docs/deployment-model.md`. The
+hostname choice and the intent survive; the transport, the ingress config and the
+deploy script do not.
 
 ## Dependencies
 
-`services-website-content-root`. Blocks `website-published-content-source` only
-in that the website needs somewhere to be deployed to verify against.
+`services-website-content-root`.
 
 ## The findings to fix, from the model doc §6
 
@@ -35,48 +34,60 @@ in that the website needs somewhere to be deployed to verify against.
    but the build emits `dist/cljs/app.js` and `dist/app.css`, and `index.html` is
    at the repo root. `public/` holds only `graphics/` and `music/`. The site's
    `:dev-http` merges three roots — `["." "dist" "public"]` — which one docroot
-   cannot reproduce. The website build must emit **one** directory.
+   cannot reproduce. The build must emit **one** directory.
 2. **The runner lacks the toolchain.** `deploy-website.sh` calls `pnpm install`
    and `pnpm exec shadow-cljs release app`; `deploy-promethean.yml` adds no
    `setup-node`, `pnpm/action-setup`, `setup-java` or `setup-clojure` step.
-   Knoxx's own `deploy-production.yml` sets up all four.
+   Knoxx's own `deploy-production.yml` sets up all four. As an image, the
+   toolchain is a builder stage and the runner needs none of it.
 3. **`rsync -az --delete` ships the checkout.** Excludes omit `orgs/`; the
-   website's `.gitmodules` is 62 KB of submodules. Ship the build output.
-4. **Two authorities for compose.** The PR commits
-   `promethean/website/{docker-compose.yml,nginx.conf}` and writes both again by
-   heredoc on the host.
+   website's `.gitmodules` is 62 KB of submodules.
+4. **Two authorities for compose** — one committed, one written by heredoc on
+   the host.
 5. **No `verify.sh`.**
-6. **Wrong lane** — no gate, no host contract, dispatch-based authorization.
+6. **Wrong lane, therefore wrong ingress.** It writes nginx server blocks into
+   `promethean/nginx/promethean.conf`, which is not what serves production. On
+   DigitalOcean the ingress is Caddy.
 
 ## Work
 
+- Add a `Dockerfile` to `open-hax/website`: a builder stage carrying node, pnpm,
+  java and clojure that runs the release build, and a serving stage that is
+  `nginx:alpine` plus `COPY --from=build` of the single output directory. Split
+  the build-output change out as its own website-side commit if it is not
+  trivial — the site must emit one directory before this can copy one.
+- Add `website` to `build-images.yml`'s service list and to the deploy chain.
+  Its image is independent of proxx and knoxx, so it does not belong inside the
+  proxx → knoxx → caddy ordering; it needs its own step, not a new link in that
+  chain.
 - Add `digitalocean/services/website/` with `compose.yaml`, `env.template`,
-  `service.yaml`, and `verify.sh`. Add `website` to the host's `roles`.
-- Ship only `build.output`. Rebuild the site's build so a single directory
-  contains the shell, the compiled app, the stylesheet and the static assets.
-  This may require a change in `open-hax/website`; if so, split it out and name
-  it here.
-- Set up the toolchain in the workflow: node, pnpm, java, clojure — or build an
-  image and ship that instead. Do not call `pnpm` on a runner that has none.
-- One authority for compose: the committed file, mounted. No heredocs writing
-  config on the host.
-- Mount the content root read-only. A website deploy must never delete it.
-- `verify.sh`, per the model's gate contract: fetch `/`, assert the app shell
+  `service.yaml` and `verify.sh`; add `website` to the host's `roles`.
+- Mount the content root read-only. Replacing the website image must never touch
+  it.
+- Ingress: add a `CADDY_WEBSITE_HOST` placeholder and a site block importing
+  `common`, reverse-proxying the website container. Note in the Caddyfile that
+  this is the fourth hostname on HTTP-01, which is the count
+  `caddy/compose.yaml`'s header weighed against a wildcard.
+- **DNS cutover.** `open-hax.promethean.rest` must resolve to 157.245.125.134
+  before Caddy can issue its first certificate, and records stay DNS-only rather
+  than proxied so ACME reaches the origin. Sequence it explicitly: record first,
+  deploy second, certificate third.
+- `verify.sh`, per the model's gate contract: fetch `/` and assert the app shell
   (`id="root"`, as the knoxx gate already does for its frontend); fetch the asset
   the shell references and assert 200; assert TLS on the public hostname; assert
-  the content manifest parses when present and that its absence is a PASS, not a
-  failure. Bound every probe; enumerate acceptable statuses explicitly.
-- Carry over from `services#19`: the hostnames, the promethean nginx server
-  blocks, and the `services.yaml` entries.
-- Close `services#19` referencing this work, so the branch is not merged later by
-  someone reading only its diff.
+  the content manifest parses when present, and that its **absence is a PASS**.
+  Bound every probe; enumerate acceptable statuses explicitly.
+- Close `services#19` referencing this work, so nobody merges it later after
+  reading only its diff.
 
 ## Definition of Done
 
-- The website deploys through the gated lane and `verify.sh` is required.
+- The website deploys as a GHCR image through the DigitalOcean lane and
+  `verify.sh` is required.
 - A deploy that would serve an empty docroot fails the gate.
-- The build runs on a runner declared to have its toolchain.
-- Only the build output is shipped.
-- The content root is mounted read-only and survives redeploy.
-- One committed compose file, no host-written config.
+- Nothing is built on the runner or on the host.
+- The content root is mounted read-only and survives an image replacement.
+- The hostname resolves to the DigitalOcean host, Caddy serves it, and its
+  certificate issued.
+- One committed compose file; no host-written config.
 - `services#19` is closed with a pointer here.

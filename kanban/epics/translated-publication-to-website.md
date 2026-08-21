@@ -3,7 +3,7 @@ uuid: knoxx-translated-publication-to-website
 title: Translated publication to open-hax/website — the first real publication target
 status: breakdown
 priority: P1
-points: 47
+points: 55
 labels:
   - epics
   - publication
@@ -52,7 +52,8 @@ This epic closes that, once, against one real target: **`open-hax/website`**.
   copy is hardcoded in `src/cljs/open_hax/website/sections/*.cljs`, in one
   language, with no locale routing and no content source.
 - It is already half-declared as a deployment (`services#19`), so the deployment
-  question is answerable rather than hypothetical.
+  question is answerable rather than hypothetical — and answering it settled the
+  lane question for the whole constellation: everything deploys to DigitalOcean.
 - Nothing depends on it. A wrong artifact on the website is embarrassing; a wrong
   artifact in the CMS is a data-integrity incident.
 
@@ -93,7 +94,7 @@ W0 — unblock          the stack is stranded and nothing else can land ....  2
 W1 — the missing edge  registry, artifact contract, site adapter, runner .. 19
 W2 — the translation half  dispatch, approval surface, locale catalog .... 10
 W3 — the website       content source, locale routing, contract tests ..... 11
-W4 — deployment        content root, website as a gated service, live ...... 5
+W4 — deployment        content root, gated service, lane retirement, live . 13
 ```
 
 ## Children
@@ -134,10 +135,12 @@ W4 — deployment        content root, website as a gated service, live ...... 5
 ### W4 — deployment
 
 11. **P1 / ready / 3sp** `services-website-content-root` — declare the content
-    root, its single writer, and the read-only mount.
+    root on the DigitalOcean host, its single writer, and the read-only mount.
 12. **P1 / ready / 5sp** `services-website-as-gated-service` — website becomes a
-    first-class service with a `verify.sh`, replacing `services#19`'s shape.
-13. **P2 / ready / 2sp** `knoxx-website-publication-live-verification` — one
+    gated DigitalOcean service shipped as an image, replacing `services#19`.
+13. **P1 / ready / 8sp** `services-promethean-lane-retirement` — one lane, so
+    the next service does not face this choice again.
+14. **P2 / ready / 2sp** `knoxx-website-publication-live-verification` — one
     live run: intent → translate → approve → materialize → fetch over HTTPS.
 
 ## Build order
@@ -158,10 +161,15 @@ publication-stack-relink
 publication-locale-catalog joins any time after the artifact contract.
 ```
 
-The dependency that is easy to get wrong: **`services-website-content-root` must
-be decided before `publication-static-site-target` is written**, because the
-answer to "same host or not" decides whether the adapter writes to a filesystem
-or speaks a transport. See `services:docs/deployment-model.md` §7.
+`services-promethean-lane-retirement` runs alongside; nothing here waits on it.
+
+The dependency that was easy to get wrong is now closed. Everything deploys to
+DigitalOcean, so Knoxx and the website are compose projects on one host and
+`publication-static-site-target` is a **filesystem** adapter over a bind-mounted
+content root — rename is atomic, so the manifest swap is a primitive rather than
+a protocol. `services-website-content-root` still precedes it, for the declared
+path, mount and uids rather than for the transport choice. See
+`services:docs/deployment-model.md` §4.
 
 ## Explicit non-goals
 
@@ -175,6 +183,9 @@ or speaks a transport. See `services:docs/deployment-model.md` §7.
   something is a receipt fact.
 - Do not generalize to a second target in this epic. One real adapter is the
   proof; the second is what makes the protocol honest, and it comes after.
+- Do not migrate every Promethean service as part of this epic. The lane
+  retirement card owns the inventory and the order; publication does not wait on
+  it.
 - Do not put website source content into Knoxx resources for its own sake. Only
   what is genuinely published and translated moves.
 

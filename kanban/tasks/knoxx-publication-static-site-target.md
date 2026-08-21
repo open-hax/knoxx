@@ -25,8 +25,12 @@ is where the protocol finds out whether it was honest.
 ## Dependencies
 
 `knoxx-publication-artifact-contract`, `knoxx-publication-target-registry`, and
-**`services-website-content-root`** — the transport this adapter uses is decided
-by whether Knoxx and the website share a host. Do not start before that answer.
+`services-website-content-root` for the declared path and mount.
+
+The transport question is closed: everything deploys to DigitalOcean, so Knoxx
+and the website are compose projects on one host and this adapter writes to a
+bind-mounted directory. Rename within a filesystem is atomic, so the manifest
+swap below is a primitive rather than a protocol — one adapter, no transport.
 
 ## Work
 
