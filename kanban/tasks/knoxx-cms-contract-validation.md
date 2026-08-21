@@ -1,66 +1,79 @@
 ---
 uuid: "knoxx-cms-contract-validation"
-title: "Exercise and validate the CMS contracts"
+title: "Validate the resource repository contract independently of CMS provider"
 status: incoming
-priority: P3
-labels: ["tasks", "5sp", "has-parent", "cms", "validation"]
+priority: P2
+labels: ["tasks", "5sp", "has-parent", "cms", "resources", "repository", "validation"]
 created_at: "2026-08-04T00:00:00Z"
 points: 5
 category: tasks
 ---
-# Exercise and validate the CMS contracts
+# Validate the resource repository contract independently of CMS provider
 
-> Parent epic: `knoxx-decouple-into-katamorph-contracts`
+> Parent epic: `knoxx-resource-repository-cms`
 
 ## Purpose
 
-The CMS contracts have never been tested. The CMS surface is also the one part of
-Knoxx whose deploy check is *conditionally skipped*, so it has been shipping
-unverified by construction.
+The old card treated "CMS validation" as proving legacy OpenPlanner REST routes. That is
+now the wrong boundary. Validate the resource repository semantics that CMS-like clients
+actually depend on, then run the same compatibility suite against the file/EDN reference
+provider and any future remote provider.
 
-## Verified as of 2026-08-04
-
-The Knoxx deploy health gate (`digitalocean/services/knoxx/verify.sh`) probes
-`/api/openplanner/v1/cms/documents?limit=1` **only when a host OpenPlanner API is
-reachable**. `deploy-stack.yml` sets `KNOXX_EXPECT_OPENPLANNER_REST=false` and
-deploys no OpenPlanner, so on every production deploy the gate logs:
-
-```text
-knoxx: CMS surface skipped — no host OpenPlanner API at http://host.docker.internal:7777
-```
-
-So the CMS path is neither exercised in tests nor in the deploy gate.
+The production deploy currently conditionally skips the legacy CMS/OpenPlanner surface;
+this task should eliminate the architectural reason that a provider-neutral resource
+contract cannot be tested unconditionally.
 
 ## Scope
 
-- Establish what the CMS contracts assert, and whether the runtime honours them
-  (`contracts/` + the CMS compatibility routes).
-- Decide the CMS's actual dependency story: it currently reaches a host
-  OpenPlanner HTTP service over `host.docker.internal:7777` that production does
-  not run. Either deploy that service, port the CMS path to the in-process Mongo
-  client the rest of Knoxx already uses, or drop the surface.
-- Once it has a dependency that exists in production, make the health gate
-  require it unconditionally instead of skipping.
+Define/verify contract tests for:
 
-## Note
+- resolve one resource by canonical identity;
+- list/query resources without exposing provider storage layout;
+- validated writes and explicit rejection of malformed resources;
+- deterministic duplicate/conflict handling;
+- stable reference resolution;
+- identity/version behavior needed by downstream consumers;
+- provider failure/error semantics;
+- read-after-write behavior where the contract promises it.
 
-This is the last REST-only OpenPlanner dependency in the deployed stack; chat,
-sessions, search and translation all run in-process through the SDK. Resolving it
-removes the `KNOXX_EXPECT_OPENPLANNER_REST` flag and a whole conditional branch
-from the deploy gate.
+Run the same semantic suite against:
+
+1. an in-memory fake/reference implementation;
+2. the file/EDN provider from `knoxx-file-resource-repository-provider`.
+
+A future Optimizely/remote provider should be able to join the suite without changing the
+assertions.
+
+## Production verification
+
+Replace the old "CMS exists only when OpenPlanner REST happens to be reachable" proof
+with a provider-neutral health/contract proof for the repository implementation Knoxx is
+actually configured to use.
+
+Do not require a browser page to prove repository health.
+
+## Explicitly out of scope
+
+- publication reconciliation/effects;
+- translation/transduction provider behavior;
+- SME evaluation workflow;
+- HTML/React/static rendering;
+- Optimizely implementation itself.
 
 ## Done when
 
-- The CMS contracts have tests that fail when the runtime violates them.
-- The CMS surface has a dependency that exists in production.
-- The deploy gate asserts the CMS surface unconditionally.
+- The repository compatibility suite fails for semantic contract violations regardless of
+  provider implementation.
+- The file/EDN provider passes the same suite as the fake provider.
+- Production verification exercises the configured repository boundary unconditionally,
+  rather than skipping because OpenPlanner REST is absent.
+- No test defines "CMS correctness" as the continued existence of legacy OpenPlanner
+  HTTP routes.
 
-## Prior art on this board
+## Related board work
 
-- **`knoxx-arch-migration-cms-routes-retirement`** (status: breakdown) — *Retire
-  Legacy CMS Backend Routes*. A retirement direction already exists, so "drop the
-  surface" is not a fresh option to weigh here: check that card first and treat
-  this one as validating whatever survives it. If retirement lands, most of this
-  card evaporates and the deploy gate's conditional CMS branch goes with it.
-- **`knoxx-cms-backend-routes`** (accepted) — the CRUD/publish endpoints this
-  would be validating.
+- `knoxx-file-resource-repository-provider` provides the first real implementation.
+- `knoxx-cms-resource-backed-publication-ui` remains a publication/UI integration card,
+  not the definition of this repository contract.
+- `knoxx-folder-backed-visual-cms-design-spec` remains iceboxed; visual editing is not a
+  prerequisite for this proof.

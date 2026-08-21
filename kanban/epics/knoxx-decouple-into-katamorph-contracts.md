@@ -81,11 +81,20 @@ tool set can be walked up that order without a flag day.
 - `knoxx-deploy-actor-owning-local-credentials`
 - `knoxx-tool-namespace-boundary-audit`
 - `knoxx-mcp-consent-permission-groups` — blocked on `capability-schema-reconciliation`
-- `knoxx-translations-event-sourced`
-- `knoxx-translation-pipeline-validation`
 - `knoxx-voice-tools-remote-transport`
 - `knoxx-tool-vocabulary-rename`
-- `knoxx-cms-contract-validation`
+
+### Rehomed capability work — 2026-08-13
+
+Three children were removed from this compliance catch-all because they now have a more
+specific semantic owner:
+
+- `knoxx-translations-event-sourced` -> `knoxx-transduction-provider-pipeline`
+- `knoxx-translation-pipeline-validation` -> `knoxx-transduction-provider-pipeline`
+- `knoxx-cms-contract-validation` -> `knoxx-resource-repository-cms`
+
+This epic may still enforce layer/actor law around those implementations, but it no
+longer owns their product/domain semantics.
 
 ## The strategy: work, test, isolate, freeze
 
