@@ -16,7 +16,7 @@ labels:
 
 > Parent epic: `knoxx-translated-publication-to-website`
 > Repository: `open-hax/services`
-> Coordination card. The work is the eleven children below, totalling **31sp**.
+> Coordination card. The work is the twelve children below, totalling **34sp**.
 
 ## Purpose
 
@@ -39,10 +39,31 @@ openplanner-staging      axxium-staging      knoxx-staging    local-proxx-bridge
 ```
 
 `proxx-production` and `knoxx-production` also appear in
-`promethean/services.yaml`, but the DigitalOcean lane already deploys both. Those
-entries are stale definitions, not second deployments.
+`promethean/services.yaml`, but the DigitalOcean lane already deploys both and
+both hostnames resolve there. Those entries are stale definitions, not second
+deployments — with one live exception: Knoxx's own workflows still *call* the
+legacy module on every push, which is card 0.
+
+Resolved 2026-08-21, rather than read off `services.yaml`:
+
+```text
+knoxx.promethean.rest          157.245.125.134   done
+proxx.promethean.rest          157.245.125.134   done
+openplanner.promethean.rest    104.130.159.19
+axxium.promethean.rest         104.130.159.19
+staging-knoxx.promethean.rest  104.130.159.19
+open-hax.promethean.rest       104.130.159.19    website, unbuilt
+```
+
+Four hostnames to move, not the whole constellation.
 
 ## Child breakdown
+
+**First, because it is in the way**
+
+0. **P0 / ready / 3sp** `services-knoxx-deploy-path-unification` — every push to
+   Knoxx `main` deploys to the legacy host. The publication ladder is ten such
+   pushes.
 
 **Disposition — decide before moving anything**
 
@@ -73,6 +94,8 @@ entries are stale definitions, not second deployments.
 ## Order
 
 ```text
+knoxx-deploy-path-unification (first, blocks the publication ladder)
+
 openplanner-lane-disposition ─┐
 caddy-hostname-scale-decision ┴─> axxium-migration ──────┐
                                   staging-slot-pattern   │

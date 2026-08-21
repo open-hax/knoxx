@@ -19,11 +19,22 @@ labels:
 
 ## Purpose
 
-Every hostname still resolving to 104.130.159.19 must resolve to 157.245.125.134.
-This is the step where the migration becomes visible to users, and the one where
-ordering is not cosmetic: records are deliberately DNS-only rather than proxied
-so that ACME HTTP-01 reaches the origin directly, which means the record must
-move **before** the new host can obtain a certificate for that hostname.
+Four hostnames still resolve to 104.130.159.19 and must resolve to
+157.245.125.134:
+
+```text
+openplanner.promethean.rest    axxium.promethean.rest
+staging-knoxx.promethean.rest  open-hax.promethean.rest   (website, unbuilt)
+```
+
+`knoxx.promethean.rest` and `proxx.promethean.rest` already answer from
+DigitalOcean, so production is not part of this cutover — which makes it far
+lower risk than the card's title suggests, and means every remaining move is a
+service that is either being retired, is staging, or does not exist yet.
+
+Ordering is still not cosmetic: records are deliberately DNS-only rather than
+proxied so that ACME HTTP-01 reaches the origin directly, which means the record
+must move **before** the new host can obtain a certificate for that hostname.
 
 ## Dependencies
 
@@ -46,8 +57,10 @@ services stay running until the end.
 
 ## Work
 
-- Inventory every hostname and its current record. `promethean/nginx/promethean.conf`
-  is the authority on what the old host answers for.
+- Re-resolve every hostname before starting; the inventory above is a snapshot.
+  `promethean/nginx/promethean.conf` is the authority on what the old host is
+  configured to answer for, and DNS is the authority on what actually reaches it.
+  Where they disagree, believe DNS.
 - Lower TTLs ahead of each move so rollback is minutes rather than hours. Do this
   as a separate, earlier step — a TTL reduction only helps if it has already
   propagated when the move happens.
@@ -66,7 +79,7 @@ services stay running until the end.
 
 ## Definition of Done
 
-- No hostname resolves to 104.130.159.19.
+- No `promethean.rest` hostname resolves to 104.130.159.19.
 - Every moved hostname has a valid certificate issued on the new host.
 - Each move was verified from outside and recorded.
 - Rollback was possible at every point until the hold period elapsed.
