@@ -64,6 +64,83 @@ When modeling domains, you must strictly differentiate between the grammar of mo
 - If the full relevant suite is already red, either fix it before claiming completion or clearly state that the task is blocked by the failing tests; do not phrase a red suite as “verified” or “done.”
 - Only use a narrower test command when it directly covers the changed code and explain why the full relevant suite was not run.
 
+## Human Verification Artifact
+
+A green suite tells the reviewer that the code agrees with itself. It does not
+let them *see the feature work*. Every epic, and every PR that adds or changes a
+user-reachable surface, must therefore ship a way for a human to run it against
+a live Knoxx and watch what happens.
+
+This is not optional and it is not a nice-to-have. Reviewing eleven stacked
+diffs without ever running the thing is how a reviewer ends up approving
+assertions rather than behavior.
+
+**What to ship.** A runnable script in `scripts/`, plus a page in
+`docs/verification/` that explains it. Use
+`scripts/verify-publication-epic.sh` and `docs/verification/publication-epic.md`
+as the reference pair.
+
+The script must:
+
+- **Seed and tear down its own data.** Never require the reviewer to hand-craft
+  fixtures, and never leave anything behind. Write only inside a dedicated
+  directory and remove it from a `trap ... EXIT INT TERM`, so a killed run is
+  still clean.
+- **Verify its own preconditions first.** Especially *which checkout the running
+  process is serving* — the PM2 processes on this machine point at a different
+  working copy, and verifying against that verifies the wrong code. Fail loudly
+  and early rather than producing meaningless passes.
+- **Say what each check proves, not just that it passed.** `PASS  observed =
+  null — nothing has been materialized, and the wire says so` is a verification
+  artifact. `PASS  test_observed_null` is not.
+- **Walk the failure modes, not only the happy path.** Every surface gets an
+  unauthenticated request. Every invariant that a review finding was about gets
+  a check that would have caught it. If a bug was fixed because a resource could
+  silently vanish, seed a resource that vanishes.
+- **Exit non-zero on any failure**, and print a summary of what failed.
+
+For anything with a UI, also ship a browser tour that captures screenshots at
+each step (`scripts/verify-publication-tour.sh` is the reference). Screenshots
+go in `docs/verification/screenshots/` and are gitignored — they are regenerated
+per run, not reviewed as diffs.
+
+**Be honest about what the tour skips.** If a control cannot be driven because
+it is still coupled to something absent or retired, say so in the script header
+and in the doc, with the reason. A tour that quietly avoids the hard part is
+worse than no tour.
+
+**Known gaps are `WARN`, not silent and not `FAIL`.** If the work leaves
+something incomplete outside its own scope, print it every run so it stays
+visible, but do not fail the run for it — a permanently red verification script
+stops being read.
+
+## Author's Walkthrough on Your Own PRs
+
+Before requesting review, walk your own diff as inline PR comments. The practice
+has a name: IEEE 1028 calls an author-led review a **walkthrough**, as distinct
+from an *inspection*, where a moderator drives and the author stays quiet. Here
+the author drives.
+
+You are not summarizing the diff — the reviewer can read it. You are supplying
+what the diff cannot show:
+
+- **Point at the acceptance criterion.** Which line of which card does this
+  satisfy, and where is that satisfied in the code.
+- **Name the decision and the alternative you rejected.** "This reads the
+  undeduped record list on purpose; deduping first makes the branch below
+  unreachable."
+- **Flag the risk you are carrying.** Anything you are unsure about, anything
+  that will bite later, anything you would want to know if you were reviewing
+  it cold.
+- **Explain anything that looks wrong but isn't.** If a reviewer's first
+  reaction will be "that's a bug", get there first.
+- **Say what a card premise got wrong.** Cards are written before the code
+  exists. When a premise turns out to be stale, annotate it rather than
+  silently implementing something else.
+
+Comment on the confusing parts, not every hunk. A walkthrough with six good
+anchors beats one with forty.
+
 ## Modern CLJS Patterns
 
 Always prefer modern shadow-cljs patterns over legacy verbose forms:
