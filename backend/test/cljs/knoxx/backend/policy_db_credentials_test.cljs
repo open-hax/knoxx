@@ -32,6 +32,8 @@
             #js {} org bootstrap {:bootstrapSystemAdminPassword "dev-password"}
             {:deactivate-credential! (fn [& _]
                                        (js/Promise.resolve nil))
+             :deactivate-other-bootstrap-credentials! (fn [& _]
+                                                        (js/Promise.resolve nil))
              :encode-password (fn [value] {:encoded value})
              :upsert-credential! (fn [_db user-id org-id provider payload]
                                    (reset! captured* [user-id org-id provider payload])
@@ -39,7 +41,7 @@
     (is (= ["user-admin" "org-open-hax" "local"
             {:kind "password"
              :account-identifier "admin@example.com"
-             :secret-json {:encoded "dev-password"}
+             :secret-json {:encoded "dev-password" :bootstrap-system-admin true}
              :status "active"}]
            @captured*))))
 
@@ -50,8 +52,24 @@
             {:deactivate-credential! (fn [_db user-id org-id provider kind]
                                        (reset! captured* [user-id org-id provider kind])
                                        (js/Promise.resolve nil))
+             :deactivate-other-bootstrap-credentials! (fn [& _]
+                                                        (js/Promise.resolve nil))
              :encode-password identity
              :upsert-credential! (fn [& _]
                                    (is false "blank password must not be upserted")
                                    (js/Promise.resolve nil))}))
     (is (= ["user" "org" "local" "password"] @captured*))))
+
+(deftest ^:async bootstrap-local-password-reconciles-previous-identity-test
+  (let [captured* (atom nil)]
+    (await (policy-db/ensure-bootstrap-local-password!
+            #js {} {:id "org"} {:user {:id "current-user" :email "new@example.com"}}
+            {:bootstrapSystemAdminPassword "new-password"}
+            {:deactivate-credential! (fn [& _] (js/Promise.resolve nil))
+             :deactivate-other-bootstrap-credentials!
+             (fn [_db current-user-id]
+               (reset! captured* current-user-id)
+               (js/Promise.resolve nil))
+             :encode-password (fn [_] {:hash "encoded"})
+             :upsert-credential! (fn [& _] (js/Promise.resolve nil))}))
+    (is (= "current-user" @captured*))))

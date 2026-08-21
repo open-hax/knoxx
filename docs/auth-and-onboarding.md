@@ -118,7 +118,8 @@ replaces its role assignment with `system-admin`, assigns the `system_admin`
 actor, and upserts a scrypt password credential. Changing the environment
 password and restarting the development backend rotates the login password.
 Removing the password setting and restarting revokes the previously provisioned
-local credential.
+local credential. Changing the bootstrap email revokes bootstrap-managed local
+passwords belonging to the previous identity before provisioning the new one.
 Ordinary `/signup` users remain `basic-user`; this bootstrap does not weaken
 self-signup or infer admin rights from arbitrary email/password logins.
 

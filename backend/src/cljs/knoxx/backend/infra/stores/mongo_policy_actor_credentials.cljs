@@ -306,3 +306,21 @@
                                        "updated_at" (js/Date.)
                                        "system_instance_id" (system-instance/current-id)}}))
    nil))
+
+(defn ^:async deactivate-other-bootstrap-local-passwords!
+  "Deactivate bootstrap-managed local passwords that belong to an earlier
+   configured bootstrap identity."
+  ([current-user-id]
+   (deactivate-other-bootstrap-local-passwords! (mongo-client/get-db) current-user-id))
+  ([db current-user-id]
+   (await (.updateMany
+           (credentials-coll db)
+           #js {"provider" "local"
+                "kind" "password"
+                "status" "active"
+                "secret_json.bootstrap-system-admin" true
+                "user_id" #js {"$ne" (str current-user-id)}}
+           #js {"$set" #js {"status" "inactive"
+                             "updated_at" (js/Date.)
+                             "system_instance_id" (system-instance/current-id)}}))
+   nil))

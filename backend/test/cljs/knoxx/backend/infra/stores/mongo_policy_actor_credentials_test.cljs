@@ -118,6 +118,25 @@
       (is (nil? (await (creds/get-credential-by-user-org-provider-kind!
                         db "u1" "o1" "local" "password")))))))
 
+(deftest ^:async deactivate-other-bootstrap-local-passwords-test
+  (let [captured* (atom nil)
+        db #js {:collection
+                (fn [_]
+                  #js {:updateMany
+                       (fn [query update]
+                         (reset! captured*
+                                 {:query (js->clj query :keywordize-keys true)
+                                  :update (js->clj update :keywordize-keys true)})
+                         (js/Promise.resolve #js {}))})}]
+    (await (creds/deactivate-other-bootstrap-local-passwords! db "current-user"))
+    (is (= {:provider "local"
+            :kind "password"
+            :status "active"
+            :secret_json.bootstrap-system-admin true
+            :user_id {:$ne "current-user"}}
+           (:query @captured*)))
+    (is (= "inactive" (get-in @captured* [:update :$set :status])))))
+
 (deftest ^:async credential-doc->row-test
   (testing "credential-doc->row renames credential_id to :id and drops Mongo fields"
     (let [r (creds/credential-doc->row {:credential_id "c1" :_id "x" :user_id "u1"
