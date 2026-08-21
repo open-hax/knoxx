@@ -1,7 +1,7 @@
 ---
 category: "epics"
 labels: ["epics", "cms", "publication", "translations", "decouple", "openplanner"]
-write-id: "1786565813522-0.gbpa8mxtyivpbk4qv5v"
+write-id: "1786609852062-0.olqruvdvo4cwnkn3mp9"
 points: "0"
 title: "Contract-owned document publication — remove OpenPlanner as publication authority"
 priority: "P1"
@@ -123,9 +123,9 @@ resource contracts
 ---
 Breakdown 2026-08-12: epic held in breakdown as the container for the twelve task cards. All eleven implementable children are now ready; the epic closes behind them.
 
----
+Epic complete 2026-08-13: all twelve cards implemented and in review or done. PRs #229 (merged), #230, #232, #233, #234, #235, #236, #237, #239, #240, #241. Suite went 808 -> 980 tests and 2402 -> 3383 assertions with the clj-kondo baseline never moving off 194. Nineteen review findings from CodeRabbit and Codex were actioned rather than recorded for later, including five integration bugs that the cards' own pre-implementation notes could not have caught: manifest entries dropped before canonicalization, dedup hiding identity conflicts, clj->js flattening qualified ids at the JSON boundary, observation keyed by path so a path move left both routes public, and a test fixture that overrode the very field it was meant to verify. Two card premises turned out stale and are flagged on their cards: KNOXX_EXPECT_OPENPLANNER_REST and deploy-stack.yml do not exist in this repository, and the model catalog uses string ids rather than the keywords the translation-config card assumed.
 
-***
+---
 
 ## Decision 2026-08-19 — how the pipeline actually gets wired in
 
@@ -160,4 +160,3 @@ Consequences worth naming before anyone starts:
   worth having before the migration is pointed at production data — the identity
   and payload conflict checks refuse rather than merge, so a real run can halt on
   data nobody has seen.
-

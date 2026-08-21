@@ -57,13 +57,21 @@
 
 (defn- record-route!
   "Materialize `op`, replacing the prior route rather than leaving it public
-   alongside the new one."
+   alongside the new one.
+
+   The route stores the artifact alongside the receipt metadata, so what is
+   *served* is observable and not merely asserted. Without it the artifact was
+   dropped on the floor: a caller could corrupt or omit the published body and
+   every assertion about the materialization still passed, because they all read
+   receipt metadata. The returned receipt is unchanged — an artifact is content,
+   not evidence, and receipts carry evidence."
   [routes adapter-id op]
   (let [receipt (materialization adapter-id op)]
     (swap! routes (fn [current]
                     (-> current
                         (dissoc (get-in op [:previous :materialized/path]))
-                        (assoc (:materialized/path receipt) receipt))))
+                        (assoc (:materialized/path receipt)
+                               (assoc receipt :route/artifact (:artifact op))))))
     receipt))
 
 (defn memory-target
@@ -101,6 +109,11 @@
 (defn public-routes
   [target-bundle]
   @(:routes target-bundle))
+
+(defn served-artifact
+  "What the public route at `path` actually serves, or nil."
+  [target-bundle path]
+  (get-in @(:routes target-bundle) [path :route/artifact]))
 
 (defn materialization-count
   [target-bundle]
