@@ -47,6 +47,38 @@ card-link stability; scope is compliance, extraction is a listed non-goal).
 | `knoxx-tool-vocabulary-rename` | "semantic" names a technique, not a subject. Do after the boundaries exist. |
 | `knoxx-mcp-consent-permission-groups` | **Blocked** on `eta-mu:capability-schema-reconciliation` — tool groups *are* capabilities. |
 
+## Publication: desired state shipped, the effect edge did not
+
+The `knoxx-contract-owned-publication-pipeline` epic is built and correct, and it
+publishes nothing. Two facts, both checkable on the stack's tip branch:
+
+- `infra/publication_effects.cljs` — the effect boundary — is required by exactly
+  two files: `infra/publication_target_memory.cljs` and its tests. Nothing in the
+  running backend calls plan → effects.
+- There is one `IPublicationTarget` implementation and it is in memory.
+
+The routes are registered through `infra/routes/app.cljs` and answer, so desired
+state is genuinely readable in production. Observed state has no producer, which
+means drift is permanently the whole of desired state. The translation half
+matches: the gate derives work, and `ingestion/src/kms_ingestion/translation/
+worker.clj` contains no reference to publication.
+
+`knoxx-translated-publication-to-website` (breakdown, 13 cards) closes that
+against one real target — `open-hax/website`, chosen because it is the smallest
+honest target and nothing depends on it.
+
+**Blocking everything: the stack is stranded.** `#230` merged and its branch was
+deleted, which auto-closed `#232` (`feat/publication-state-migration`), the base
+of `#233`. The nine PRs from `#233` upward each report `mergeable_state: clean`
+against their immediate base, so this is invisible from any single PR page — the
+whole ladder is green and its bottom rung is gone. `knoxx-publication-stack-relink`
+is P0 for that reason.
+
+The deployment side is `open-hax/services`:
+[`docs/deployment-model.md`](https://github.com/open-hax/services/blob/main/docs/deployment-model.md)
+defines the service descriptor, the promotion rule, the gate contract, and the
+one-writer rule for a service that serves content another service publishes.
+
 ## Knoxx's position in the drift ledger
 
 - **Consumes katamorph as a pinned Git dependency.** `backend/deps.edn` pins
