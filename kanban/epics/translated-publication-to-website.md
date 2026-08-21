@@ -3,7 +3,7 @@ uuid: knoxx-translated-publication-to-website
 title: Translated publication to open-hax/website — the first real publication target
 status: breakdown
 priority: P1
-points: 78
+points: 81
 labels:
   - epics
   - publication
@@ -94,15 +94,16 @@ W0 — unblock          the stack is stranded and nothing else can land ....  2
 W1 — the missing edge  registry, artifact contract, site adapter, runner .. 19
 W2 — the translation half  dispatch, approval surface, locale catalog .... 10
 W3 — the website       content source, locale routing, contract tests ..... 11
-W4 — deployment        content root, gated service, lane retirement, live . 36
+W4 — deployment        content root, gated service, lane retirement, live . 39
 ```
 
 ## Children
 
 ### W0 — unblock
 
-1. **P0 / ready / 2sp** `knoxx-publication-stack-relink` — the nine-PR chain is
-   stranded behind an auto-closed base. Nothing below can start until it lands.
+1. **P0 / ready / 2sp** `knoxx-publication-stack-relink` — the nine-PR chain sits
+   above a closed PR that cannot be reopened. `#247` reopens it against `main`;
+   nothing below can start until the ladder merges.
 
 ### W1 — the missing production edge
 
@@ -139,8 +140,10 @@ W4 — deployment        content root, gated service, lane retirement, live . 36
 12. **P1 / ready / 5sp** `services-website-as-gated-service` — website becomes a
     gated DigitalOcean service shipped as an image, replacing `services#19`.
 13. **P1 / breakdown / 0sp roll-up** `services-promethean-lane-retirement` — one
-    lane, so the next service does not face this choice again. Eleven children,
-    31sp: two dispositions (`services-openplanner-lane-disposition`,
+    lane, so the next service does not face this choice again. Twelve children,
+    34sp, led by `services-knoxx-deploy-path-unification` (P0 — every push to
+    Knoxx `main` deploys to the legacy host, and this epic's first card is ten
+    such pushes): two dispositions (`services-openplanner-lane-disposition`,
     `services-caddy-hostname-scale-decision`), seven per-service
     (`services-axxium-digitalocean-migration`, `services-staging-slot-pattern`,
     `services-knoxx-staging-migration`, `services-proxx-staging-migration`,
