@@ -28,8 +28,10 @@
              [knoxx.backend.infra.stores.mongo-memory-sessions :as mongo-memory-sessions]
              [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp-oauth]
              [knoxx.backend.infra.stores.mongo-rate-limits :as mongo-rate-limits]
-             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+             [knoxx.backend.infra.stores.mongo-translation-evidence :as mongo-translation-evidence]
              [knoxx.backend.infra.stores.session-flush :as session-flush]
+             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+             [knoxx.backend.infra.stores.translation-evidence-registry :as translation-evidence-registry]
             [knoxx.backend.infra.routes.auth :as auth-routes]
             [knoxx.backend.infra.routes.mcp :as mcp-http]
             [knoxx.backend.infra.routes.tools.proxy :as proxy-routes]
@@ -127,28 +129,52 @@
   (proxy-routes/register-proxy-routes! app cfg)
   (mcp-http/register-mcp-http-routes! app runtime cfg))
 
+(defn- ^:async start-translation-evidence!
+  "Publish the durable translation evidence store, indexes first.
+
+   The unique index on `dispatch_key` IS the atomic claim that stops one revision
+   being dispatched to the worker twice, so the store is only published after
+   `setup-indexes!` has resolved. Published before the index existed, a
+   concurrent pair of dispatches could both insert and both believe they had
+   reserved the key."
+  [db]
+  (await (mongo-translation-evidence/setup-indexes! db))
+  (reset! translation-evidence-registry/store*
+          (mongo-translation-evidence/create-store db)))
+
+(defn- ^:async start-mongo-indexes!
+  "Create every collection's indexes, then publish the stores that need them.
+
+   Extracted from `start-mongo-persistence!` so that function stays about
+   lifecycle — connect, index, resume, schedule — rather than growing one line
+   per collection."
+  [db]
+  (mongo-session-store/setup-indexes! db)
+  (mongo-run-store/setup-indexes! db)
+  ;; Cache stores for session titles, temp memory, memory sessions
+  (mongo-session-titles/setup-indexes! db)
+  (mongo-temp-memory/setup-indexes! db)
+  (mongo-memory-sessions/setup-indexes! db)
+  ;; MCP OAuth store
+  (mongo-mcp-oauth/setup-indexes! db)
+  ;; Rate limits store
+  (mongo-rate-limits/setup-indexes! db)
+  ;; Translation dispatch bindings and completed-translation evidence.
+  (await (start-translation-evidence! db))
+  ;; ensure-indexes! (not setup-indexes!): it catches index
+  ;; failures so a bad index spec can never crash-loop the
+  ;; process from this fire-and-forget bootstrap path.
+  (mongo-policy-store/ensure-indexes! db)
+  (reset! store-registry/session-store*
+          (mongo-run-store/create-mongo-run-store db)))
+
 (defn- ^:async start-mongo-persistence!
   [runtime app cfg log]
   (try
     (let [db (await (mongo-client/init-mongo!))]
       (when db
         (.info log "MongoDB connected for session persistence")
-        (mongo-session-store/setup-indexes! db)
-        (mongo-run-store/setup-indexes! db)
-        ;; Cache stores for session titles, temp memory, memory sessions
-        (mongo-session-titles/setup-indexes! db)
-        (mongo-temp-memory/setup-indexes! db)
-        (mongo-memory-sessions/setup-indexes! db)
-        ;; MCP OAuth store
-        (mongo-mcp-oauth/setup-indexes! db)
-        ;; Rate limits store
-        (mongo-rate-limits/setup-indexes! db)
-        ;; ensure-indexes! (not setup-indexes!): it catches index
-        ;; failures so a bad index spec can never crash-loop the
-        ;; process from this fire-and-forget bootstrap path.
-        (mongo-policy-store/ensure-indexes! db)
-        (reset! store-registry/session-store*
-                (mongo-run-store/create-mongo-run-store db))
+        (await (start-mongo-indexes! db))
         ;; Fire-and-forget: must not block startup.
         ;; Guarded so shadow-cljs hot reload does not spawn
         ;; recovery jobs as if the Node process had restarted.
