@@ -54,8 +54,8 @@
    `translation-work` derives from the `:translation-missing` and
    `:translation-stale` blockers, never from the review blocker, so a review
    requirement does not suppress the translation that would satisfy it."
-  [evidence-store documents]
-  (let [revisions (await (source-revision/source-revisions! documents))
+  [config evidence-store documents]
+  (let [revisions (await (source-revision/source-revisions! config documents))
         receipts (await (store/completed-translations! evidence-store))
         evidence (evidence-domain/evidence {:receipts receipts})]
     (merge (source-revision/revision-facts revisions)
@@ -73,7 +73,7 @@
   (let [index (await (publications/publication-index! config))
         intents (hydrated-intents index document-id)
         documents (referenced-documents index intents)
-        facts (await (gate-facts! evidence-store documents))]
+        facts (await (gate-facts! config evidence-store documents))]
     {:considered (count intents)
      :dispatched (await (dispatch/dispatch-intents! deps intents facts scope))}))
 

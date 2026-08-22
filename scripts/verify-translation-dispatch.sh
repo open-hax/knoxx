@@ -25,6 +25,10 @@
 #     reach `complete`/`partial`, which needs the worker above. The join, the
 #     refusals, and the receipt are covered by
 #     backend/test/cljs/knoxx/backend/infra/translation_dispatch_test.cljs.
+#     Note that minting evidence also requires a SYSTEM-ADMIN worker principal:
+#     an org admin can update batch status but cannot make Knoxx believe a
+#     translation exists. That check is covered by
+#     backend/test/cljs/knoxx/backend/infra/routes/translation_worker_principal_test.cljs.
 #
 # The fixture is created and destroyed by this script. It writes ONLY inside
 # ${CONTRACTS_DIR}/_verify_translation_dispatch and removes that directory on
@@ -351,18 +355,30 @@ if [ "$dispatch_status" = "200" ]; then
   again="$(http POST "/api/publications/translations/dispatch" auth "{\"document\":\"${DOC_ID}\"}")"
   expect_status "POST /api/publications/translations/dispatch (again)" "200" "$again"
   repeat_outcome="$(body_of "$again" | jq -r '.dispatched[0].outcome // "none"' 2>/dev/null)"
-  case "$repeat_outcome" in
-    dispatch/duplicate)
-      pass "the second ask reused its dispatch identity ${C_DIM}(dispatch/duplicate)${C_RESET}"
-      ;;
+  case "$outcome" in
     dispatch/accepted)
-      fail "the second ask enqueued a SECOND batch for the same revision" "$repeat_outcome"
+      # The first attempt is still in flight, so the only correct answer is
+      # duplicate. A fresh accept here would mean a second batch translating the
+      # same revision, and the second translation cannot be withdrawn.
+      if [ "$repeat_outcome" = "dispatch/duplicate" ]; then
+        pass "the second ask reused its dispatch identity ${C_DIM}(dispatch/duplicate)${C_RESET}"
+      else
+        fail "an in-flight claim must collapse to duplicate" "$repeat_outcome"
+      fi
       ;;
-    none)
-      # A failed first attempt is re-derivable, so the gate may legitimately
-      # derive nothing or re-dispatch. Either is explainable; a fresh accept for
-      # a claim that is still in flight is not.
-      warn "the second ask derived no work (the first dispatch had already failed)"
+    dispatch/failed)
+      # A failed attempt is retriable BY DESIGN: no translation came of it, so
+      # the work still needs doing. Reporting duplicate here would strand this
+      # source revision forever — the gate would keep saying the translation is
+      # missing while every pass answered duplicate.
+      if [ "$repeat_outcome" = "dispatch/accepted" ]; then
+        pass "a failed attempt was replaced by a fresh one ${C_DIM}(retriable)${C_RESET}"
+      elif [ "$repeat_outcome" = "dispatch/duplicate" ]; then
+        fail "a failed attempt was treated as terminal — this revision can never be translated" \
+          "$repeat_outcome"
+      else
+        warn "second ask reported ${repeat_outcome} after a failed first attempt"
+      fi
       ;;
     *)
       warn "second ask reported ${repeat_outcome}"

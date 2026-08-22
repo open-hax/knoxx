@@ -198,6 +198,32 @@
   "One dispatch outcome."
   (into [:enum] (sort outcomes)))
 
+(def retriable-outcomes
+  "Outcomes a later pass may replace with a fresh attempt.
+
+   A failed or rejected dispatch is *finished*, but it is not *done*: no
+   translation came of it, so the gate still reports the translation missing and
+   the work genuinely still needs doing. Treating these as terminal — the same
+   as completed — strands that source revision permanently: reconciliation keeps
+   answering `:dispatch/duplicate`, no batch is ever enqueued again, and the only
+   way out is deleting rows by hand.
+
+   `:dispatch/completed` and `:dispatch/duplicate` are the terminal ones.
+   Completed produced a translation; duplicate never was an attempt of its own."
+  #{:dispatch/failed :dispatch/rejected})
+
+(defn retriable?
+  "Whether an existing claim with this outcome may be replaced by a new attempt."
+  [outcome]
+  (contains? retriable-outcomes outcome))
+
+(defn terminal?
+  "Whether an existing claim with this outcome is settled for good."
+  [outcome]
+  (and (contains? outcomes outcome)
+       (not (retriable? outcome))
+       (not= :dispatch/accepted outcome)))
+
 (def DispatchRecord
   "Knoxx's side of the binding the worker cannot hold.
 

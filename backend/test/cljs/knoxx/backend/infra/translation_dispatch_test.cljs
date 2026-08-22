@@ -272,3 +272,78 @@
                                      :locale :es
                                      :revision :source/current
                                      :replace-stale? false})))))
+
+(deftest ^:async a-failed-dispatch-can-be-retried
+  ;; The regression this guards: classifying every non-accepted claim as `:done`
+  ;; made a failed dispatch permanently terminal. The gate still reported the
+  ;; translation missing, but every later pass answered `:dispatch/duplicate`
+  ;; and no batch was ever enqueued again — that source revision could only be
+  ;; translated by deleting rows by hand.
+  (let [{:keys [batches deps]}
+        (fixture :answer (fn [_ n]
+                           (if (= 1 n)
+                             (throw (ex-info "worker unavailable" {}))
+                             {:batch_id (str "batch-" n)})))
+        first-result (await (dispatch/dispatch-work! deps (work) (context)))
+        retry (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the first attempt failed"
+      (is (= :dispatch/failed (:dispatch/outcome first-result))))
+
+    (testing "a later pass replaces it with a fresh attempt"
+      (is (= :dispatch/accepted (:dispatch/outcome retry)))
+      (is (= 2 (count @batches)) "the work was actually enqueued again"))
+
+    (testing "the retry is bound to the NEW batch, not the failed attempt's"
+      ;; A stale batch id would let the old batch's completion resolve this
+      ;; attempt, minting a receipt for a translation it never produced.
+      (is (= "batch-2" (:dispatch/batch-id (:dispatch/record retry)))))
+
+    (testing "a completed claim stays terminal"
+      (await (dispatch/resolve-batch-report!
+              deps {:status "complete"
+                    :batch_id "batch-2"
+                    :completed_document "knoxx.docs/probe"}))
+      (let [after-completion (await (dispatch/dispatch-work! deps (work) (context)))]
+        (is (= :dispatch/duplicate (:dispatch/outcome after-completion)))
+        (is (= 2 (count @batches))
+            "a completed translation must never be re-dispatched")))))
+
+(deftest ^:async a-failed-completion-report-can-also-be-retried
+  (let [{:keys [batches deps]} (fixture)
+        _ (await (dispatch/dispatch-work! deps (work) (context)))
+        _ (await (dispatch/fail-batch-document!
+                  deps "batch-1" "knoxx.docs/probe" "model unavailable"))
+        retry (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "a worker-reported failure is retriable, like a dispatch failure"
+      (is (= :dispatch/accepted (:dispatch/outcome retry)))
+      (is (= 2 (count @batches))))
+
+    (testing "the previous batch's completion can no longer resolve this claim"
+      (let [stale (await (dispatch/resolve-batch-report!
+                          deps {:status "complete"
+                                :batch_id "batch-1"
+                                :completed_document "knoxx.docs/probe"}))]
+        ;; `:dispatch-record-missing` rather than `:worker-batch-mismatch`, and
+        ;; that is the stronger outcome: the retry rebound the claim to batch-2,
+        ;; so the (batch-1, document) join finds no binding at all. Had the retry
+        ;; left the stale batch id in place, this lookup WOULD have found the
+        ;; claim and minted a receipt for a translation batch-2 never finished.
+        (is (= :dispatch-record-missing (:refusal/type (:translation/refusal stale))))
+        (is (empty? (await (store/completed-translations! (:evidence-store deps)))))))))
+
+(deftest retriable-and-terminal-outcomes-are-disjoint-and-complete
+  (testing "every outcome is exactly one of accepted, retriable, or terminal"
+    (doseq [outcome law/outcomes]
+      (let [accepted? (= :dispatch/accepted outcome)
+            retriable? (law/retriable? outcome)
+            terminal? (law/terminal? outcome)]
+        (is (= 1 (count (filter true? [accepted? retriable? terminal?])))
+            (str outcome " is not in exactly one class")))))
+
+  (testing "a completed translation is never retriable"
+    (is (not (law/retriable? :dispatch/completed)))
+    (is (law/terminal? :dispatch/completed)))
+
+  (testing "a failed or rejected attempt is retriable"
+    (is (law/retriable? :dispatch/failed))
+    (is (law/retriable? :dispatch/rejected))))

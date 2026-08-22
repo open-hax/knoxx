@@ -278,7 +278,39 @@
      (aget (params request) "id")
      (org-scope ctx ctx-org-id))))
 
-(defn- ^:async resolve-translation-evidence!
+(defn worker-principal?
+  "Whether `ctx` is the worker identity that may produce translation evidence.
+
+  `org.translations.manage` guards this route, and org admins hold it too — the
+  same gap `next-batch-op` already closed for batch claiming. Without this check
+  an org admin could dispatch work and immediately POST `completed_document` for
+  it, minting a completed-translation receipt for a translation that was never
+  produced, and that fabricated receipt is exactly what a publication gate is
+  waiting on. Evidence production is therefore restricted to a system-admin
+  worker principal, which is the identity the ingestion worker actually runs as.
+
+  Deliberately narrower than the route: an org admin may still update batch
+  status, because that is the worker queue's own business. They simply cannot
+  make Knoxx believe a translation exists."
+  [ctx]
+  (boolean (and ctx (authz/system-admin? ctx))))
+
+(defn- ^:async resolve-evidence-safely!
+  "Resolve the report, turning any failure into reportable evidence.
+
+  The catch is what keeps this step from failing the status update it hangs off:
+  see `resolve-translation-evidence!` for why that update must not be retried."
+  [evidence-store report]
+  (try
+    (await (translation-dispatch/resolve-batch-status!
+            {:evidence-store evidence-store
+             :clock (fn [] (.toISOString (js/Date.)))}
+            report))
+    (catch :default err
+      {:translation/error (or (not-empty (str (ex-message err)))
+                              "translation evidence resolution failed")})))
+
+(defn ^:async resolve-translation-evidence!
   "Turn the worker's status report into Knoxx-side translation evidence.
 
   This is the completion half of `knoxx-translation-work-dispatch`, and it hangs
@@ -293,17 +325,17 @@
   retry storm here could strand the batch. The outcome travels in the response
   instead, which keeps it observable rather than silent: an operator debugging a
   translation that never produced a receipt can see the refusal that stopped it."
-  [report]
-  (if-let [evidence-store (evidence-registry/current)]
-    (try
-      (await (translation-dispatch/resolve-batch-status!
-              {:evidence-store evidence-store
-               :clock (fn [] (.toISOString (js/Date.)))}
-              report))
-      (catch :default err
-        {:translation/error (or (not-empty (str (ex-message err)))
-                                "translation evidence resolution failed")}))
-    {:translation/skipped {:reason :translation-evidence-unavailable}}))
+  [ctx report]
+  (let [evidence-store (evidence-registry/current)]
+    (cond
+      (not (worker-principal? ctx))
+      {:translation/skipped {:reason :worker-principal-required}}
+
+      (nil? evidence-store)
+      {:translation/skipped {:reason :translation-evidence-unavailable}}
+
+      :else
+      (await (resolve-evidence-safely! evidence-store report)))))
 
 (defn- ^:async update-batch-status!
   "Record the batch status with its owner, then resolve Knoxx's own evidence.
@@ -320,7 +352,7 @@
         ;; The report carries the batch id from the route, not the body: the
         ;; worker does not repeat it, and the binding is keyed by it.
         evidence (await (resolve-translation-evidence!
-                         (assoc body :batch_id batch-id)))]
+                         ctx (assoc body :batch_id batch-id)))]
     (assoc response :translation evidence)))
 
 (defn- update-batch-status-op

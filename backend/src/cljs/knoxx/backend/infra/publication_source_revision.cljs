@@ -25,10 +25,27 @@
   translations are re-dispatched for nothing, and a restored backup reports an
   old revision for new content, so a stale translation satisfies the gate.
 
-  Digests are read at the runtime edge, which is why this namespace is `.cljs`
-  and takes documents rather than paths: resolving a path is the caller's
-  business, and the pure fact-shaping below is the part the gate consumes."
-  (:require [knoxx.backend.domain.node.crypto :as crypto]
+  ## Relative paths resolve against the checkout, not the process
+
+  A document's `:document/source :path` is repository-relative — `docs/foo.md`.
+  Handed straight to Node it would resolve against the process working
+  directory, and the backend does not run at the repository root: the PM2
+  configuration runs it in `backend/`, which is exactly why
+  `domain.contracts.loader` tries `../contracts` *before* `contracts`. Read from
+  there, `docs/foo.md` becomes `backend/docs/foo.md`, the read returns nil,
+  `:source/current` never resolves, and no translation work is ever derived —
+  silently, because a missing source is a legitimate state.
+
+  So the root is derived from the contract root the resources were actually
+  loaded from: if they came from `<root>/contracts`, then `<root>` is the
+  checkout. That ties the two together by construction rather than by a second
+  configuration value that could disagree with the first.
+
+  Digests are read at the runtime edge, which is why this namespace is `.cljs`.
+  The pure fact-shaping below is the part the gate consumes."
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.contracts.loader :as contract-loader]
+            [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.node.fs :as fs]
             [knoxx.backend.law.publication :as law]
             [promesa.core :as p]))
@@ -62,22 +79,45 @@
   (when (some? content)
     (str digest-prefix (subs (crypto/sha256-hex content) 0 digest-length))))
 
+(defn source-root
+  "The directory a document's relative source path resolves against.
+
+   The parent of the contract root the resources were loaded from. Nil when no
+   contract root resolves, in which case `document-path` leaves the path alone
+   and the read fails visibly rather than against a guessed root."
+  [config]
+  (some-> (contract-loader/contracts-dir-path config) fs/parent))
+
+(defn document-path
+  "Where to actually read `document`'s source from.
+
+   An absolute path is respected as written — an operator who wrote one meant
+   it. A relative path is joined to `root`. With no root, the path is returned
+   unchanged: reading it against process cwd and failing is more honest than
+   inventing a root, and it is the behavior that existed before."
+  [root document]
+  (let [path (get-in document [:document/source :path])]
+    (cond
+      (nil? path) nil
+      (str/starts-with? path "/") path
+      (nil? root) path
+      :else (fs/join root path))))
+
 (defn- ^:async document-revision!
   "Read one document's source and digest it, or nil when it cannot be read.
 
    Validated as a concrete revision before it leaves: everything downstream
    keys receipts and idempotency by this value, and `law.publication`'s own
    contract is the one that decides what is admissible there."
-  [document]
-  (let [path (get-in document [:document/source :path])
-        content (await (fs/read-file-or-nil! path))]
+  [root document]
+  (let [content (await (fs/read-file-or-nil! (document-path root document)))]
     (some->> (content-revision content)
              (law/assert-valid! :publication/concrete-revision law/ConcreteRevision))))
 
 (defn- ^:async document-revision-entry!
   "One `[document-id revision]` pair, or `[document-id nil]` when unreadable."
-  [document]
-  [(:document/id document) (await (document-revision! document))])
+  [root document]
+  [(:document/id document) (await (document-revision! root document))])
 
 (defn ^:async source-revisions!
   "Current revision per document id, for every document in `documents`.
@@ -91,13 +131,17 @@
    A document whose source cannot be read is deliberately absent from the map
    rather than present with nil, so `:current-source-revision` returns nil for
    it and the gate reports `:publication-revision-unresolved` instead of
-   proceeding on a guess."
-  [documents]
-  (reduce (fn [revisions [document-id revision]]
-            (cond-> revisions
-              (some? revision) (assoc document-id revision)))
-          {}
-          (await (p/all (mapv document-revision-entry! documents)))))
+   proceeding on a guess.
+
+   `config` supplies the checkout root — see the namespace docstring for why the
+   process working directory is the wrong answer."
+  [config documents]
+  (let [root (source-root config)]
+    (reduce (fn [revisions [document-id revision]]
+              (cond-> revisions
+                (some? revision) (assoc document-id revision)))
+            {}
+            (await (p/all (mapv #(document-revision-entry! root %) documents))))))
 
 (defn revision-facts
   "The two source-revision entries `domain.publication-gate` needs, closed over

@@ -110,19 +110,29 @@ Then the outcome:
   pass can re-dispatch. A failed dispatch left *in flight* would be the real
   defect — work that is never retried and never reported.
 
-### 4. Asking twice does not translate twice
+### 4. Asking twice does not translate twice — but a failure is retriable
 
-The second identical request must come back `dispatch/duplicate` with the same
-identity, and must not create a second batch. This is the check that would catch
-a dispatch that called the worker first and recorded afterwards: between those
-two steps, a second pass sees no claim, enqueues again, and the second
-translation cannot be withdrawn because nothing recorded that the first was
-already asked for.
+Two different correct answers, depending on how section 3 ended.
 
-If the first dispatch failed (section 3), the second ask may legitimately derive
-nothing or re-dispatch; the script reports that rather than asserting a duplicate
-it cannot expect. A fresh `dispatch/accepted` for a claim still in flight is the
-only unacceptable answer, and it fails.
+**If the first dispatch was accepted**, the second identical request must come
+back `dispatch/duplicate` and must not create a second batch. This is the check
+that catches a dispatch that called the worker first and recorded afterwards:
+between those two steps a second pass sees no claim, enqueues again, and the
+second translation cannot be withdrawn because nothing recorded that the first
+was already asked for.
+
+**If the first dispatch failed**, the second request must come back
+`dispatch/accepted` with a *new* batch. A failed attempt is finished but not
+done — no translation came of it, so the gate still reports the translation
+missing and the work genuinely still needs doing. Answering `duplicate` here
+would strand that source revision permanently: every later pass would decline to
+enqueue while the gate went on asking for a translation that could never arrive.
+The script fails on that answer specifically.
+
+The retry replaces the claim wholesale rather than editing its outcome, which is
+what clears the failed attempt's batch id. Left behind, the old batch's
+completion report would resolve the new attempt and mint a receipt for a
+translation the new attempt never produced.
 
 ### 5. Dispatch alone publishes nothing and fabricates no translation
 
@@ -140,6 +150,26 @@ would go on to translate successfully, its completion report would arrive, and
 nothing would exist to join that answer to a revision. The receipt would never
 be minted, and the gate would report that translation as never done, forever.
 A 503 an operator can see beats a translation that silently disappears.
+
+## Who may make Knoxx believe a translation exists
+
+Only a system-admin worker principal. `POST
+/api/translations/batches/:id/status` is guarded by `org.translations.manage`,
+which org admins hold too — correct for the route's original job of moving a
+batch through the worker queue, and not sufficient for the evidence step added
+beside it.
+
+Without the narrower check, an org admin could dispatch work and immediately
+report `completed_document` for it, producing a completed-translation receipt for
+a translation that never ran — and that fabricated receipt is exactly what a
+publication gate is waiting on. `next-batch-op` had already closed the same gap
+for batch claiming; this closes it for evidence.
+
+The check is deliberately narrower than the route: an org admin may still update
+batch status, because that is the worker queue's own business. They simply
+cannot mint evidence. A non-worker report comes back with
+`translation.skipped.reason = worker-principal-required` rather than being
+silently ignored, so the distinction is visible to whoever is debugging.
 
 ## Known gaps, printed every run
 

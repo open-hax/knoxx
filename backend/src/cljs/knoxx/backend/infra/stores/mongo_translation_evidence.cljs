@@ -164,24 +164,71 @@
     (when (and (number? matched-count) (pos? matched-count))
       (await (find-dispatch! db dispatch-key)))))
 
+(defn- ^:async replace-retriable!
+  "Replace a failed or rejected claim with a fresh attempt, or report nil.
+
+   Compare-and-set on the outcome we just read. The query names that exact
+   outcome, so if another pass replaced or resolved the claim in between, this
+   update matches nothing and the caller re-reads instead of overwriting a live
+   attempt.
+
+   The previous attempt's `batch_id` and `detail` are unset, not merely left. A
+   stale batch id would let the old batch's completion report resolve the new
+   attempt, minting a receipt for a translation this attempt never produced."
+  [db record observed-outcome]
+  (let [{:keys [matched-count]}
+        (await (extern-mongo/update-one!
+                (dispatches-coll db)
+                {:dispatch_key (:dispatch/key record)
+                 :outcome (get wire-by-outcome observed-outcome)}
+                {"$set" {:outcome (get wire-by-outcome :dispatch/accepted)
+                         :binding_edn (:binding_edn (encode-dispatch record))}
+                 "$unset" {:batch_id "" :detail ""}}))]
+    (when (and (number? matched-count) (pos? matched-count))
+      record)))
+
+(defn- ^:async reread-claim!
+  "Report whatever the claim is now, after losing a compare-and-set race.
+
+   Somebody else moved it between our read and our write. Re-reading rather than
+   guessing is the point: whatever they did is the truth, and assuming our own
+   intent would report a reservation we do not hold."
+  [db dispatch-key]
+  (let [current (await (find-dispatch! db dispatch-key))]
+    {:reservation/status (if (= :dispatch/accepted (:dispatch/outcome current))
+                           :in-flight
+                           :done)
+     :record current}))
+
 (defn- ^:async claim-dispatch!
   "Atomically claim `record`'s key, or report the existing claim.
 
    The insert IS the check: nothing reads the key first, so no await separates
    reading from claiming. A refusal from the unique index is the only way to
    learn the key was taken — which is why `setup-indexes!` describes that index
-   as the claim rather than as a performance choice."
+   as the claim rather than as a performance choice.
+
+   A retriable existing claim is replaced rather than reported settled. See
+   `law.translation-dispatch/retriable-outcomes`."
   [db record]
   (let [{:keys [inserted?]}
         (await (extern-mongo/insert-one-unique! (dispatches-coll db)
                                                (encode-dispatch record)))]
     (if inserted?
       {:reservation/status :reserved :record record}
-      (let [existing (await (find-dispatch! db (:dispatch/key record)))]
-        {:reservation/status (if (= :dispatch/accepted (:dispatch/outcome existing))
-                              :in-flight
-                              :done)
-         :record existing}))))
+      (let [existing (await (find-dispatch! db (:dispatch/key record)))
+            outcome (:dispatch/outcome existing)]
+        (cond
+          (= :dispatch/accepted outcome)
+          {:reservation/status :in-flight :record existing}
+
+          (dispatch-law/retriable? outcome)
+          (if-let [replaced (await (replace-retriable! db record outcome))]
+            {:reservation/status :reserved :record replaced}
+            (await (reread-claim! db (:dispatch/key record))))
+
+          :else
+          {:reservation/status :done :record existing})))))
 
 (defn- ^:async find-batch-dispatch!
   [db batch-id document-wire-id]

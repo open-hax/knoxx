@@ -31,7 +31,14 @@
 
        {:reservation/status :reserved  :record r}  freshly claimed by us
        {:reservation/status :in-flight :record r}  claimed, still running
-       {:reservation/status :done      :record r}  already reached an outcome
+       {:reservation/status :done      :record r}  settled for good
+
+     A claim whose outcome is retriable — failed or rejected — is *replaced* by
+     `record` and reported `:reserved`, because no translation came of it and the
+     work still needs doing. Only `:dispatch/completed` and
+     `:dispatch/duplicate` are `:done`. Reporting a failed attempt as done
+     strands that source revision forever: the gate keeps reporting the
+     translation missing while every later pass answers duplicate.
 
      Implementations must contain no `await` between reading the key and
      claiming it.")
@@ -90,17 +97,33 @@
   (= :dispatch/accepted (:dispatch/outcome record)))
 
 (defn- reserve-in-state
-  "Claim `record`'s key, or report the claim already there."
+  "Claim `record`'s key, or report the claim already there.
+
+   A *retriable* existing claim — failed or rejected — is replaced by `record`
+   outright rather than reported as settled. Replacing wholesale is what clears
+   the previous attempt's batch id: left behind, the old batch's completion
+   report would resolve the new attempt, minting a receipt for a translation the
+   new attempt never produced. See `law.translation-dispatch/retriable-outcomes`
+   for why a failed attempt must not be terminal at all."
   [current record]
-  (let [key (:dispatch/key record)]
-    (if-let [existing (get-in current [:dispatches key])]
-      (assoc current :answer {:reservation/status (if (in-flight? existing)
-                                                   :in-flight
-                                                   :done)
-                              :record existing})
+  (let [key (:dispatch/key record)
+        existing (get-in current [:dispatches key])]
+    (cond
+      (nil? existing)
       (-> current
           (assoc-in [:dispatches key] record)
-          (assoc :answer {:reservation/status :reserved :record record})))))
+          (assoc :answer {:reservation/status :reserved :record record}))
+
+      (in-flight? existing)
+      (assoc current :answer {:reservation/status :in-flight :record existing})
+
+      (dispatch-law/retriable? (:dispatch/outcome existing))
+      (-> current
+          (assoc-in [:dispatches key] record)
+          (assoc :answer {:reservation/status :reserved :record record}))
+
+      :else
+      (assoc current :answer {:reservation/status :done :record existing}))))
 
 (defn- update-in-flight-state
   "Apply `f` to an in-flight claim, or answer nil when there is not one.
