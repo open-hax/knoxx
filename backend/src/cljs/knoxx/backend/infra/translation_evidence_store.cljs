@@ -1,12 +1,13 @@
 (ns knoxx.backend.infra.translation-evidence-store
-  "Persistence boundary for translation dispatch bindings and completed
-  translation evidence.
+  "Persistence boundary for translation dispatch bindings, completed translation
+  evidence, and review approvals.
 
-  Two things are stored, and they are not the same kind of thing. A *dispatch
+  Three things are stored, and they are not the same kind of thing. A *dispatch
   record* is a claim: Knoxx asked for a translation at one concrete revision and
-  is waiting. A *translation receipt* is a fact: the translation exists. The
-  claim is mutable exactly once, from in-flight to a terminal outcome; the fact
-  is append-only and never edited.
+  is waiting. A *translation receipt* is a fact: the translation exists. An
+  *approval* is a different fact: someone authorized accepted one produced
+  translation. The claim is mutable exactly once, from in-flight to a terminal
+  outcome; the two facts are never edited.
 
   `reserve-dispatch!` deliberately borrows the vocabulary of
   `infra.publication-effects/IIdempotencyStore`, including its hard rule:
@@ -88,7 +89,31 @@
      a total order over `:translation/at` and the output revision, so an
      implementation is free to return rows in whatever order its query produced.
      An earlier draft of this docstring promised oldest-first while the durable
-     store read unsorted — a contradiction a consumer could have relied on."))
+     store read unsorted — a contradiction a consumer could have relied on.")
+  (record-approval! [store approval]
+    "Record immutable review evidence, at most once per approved output.
+
+     Returns a Promise of `{:approval/status :recorded :approval a}` for a first
+     approval, or `{:approval/status :existing :approval a}` when this exact
+     output was already approved.
+
+     Idempotent rather than append-only, and the difference matters: an approval
+     is immutable evidence, so a second one for the same produced output is not a
+     new fact, it is the same fact asserted twice. Appending would make
+     `approved?` depend on how many times a button was clicked and leave two
+     records free to disagree about who approved.
+
+     Implementations must claim atomically, for the same reason
+     `reserve-dispatch!` must: two reviewers clicking together would otherwise
+     both insert.")
+  (approvals! [store scope]
+    "Approvals within `scope`, which means the same thing it does for
+     `completed-translations!` and is pushed into the query for the same reason.
+     Returns a Promise.
+
+     Order is not part of the contract:
+     `domain.translation-evidence/index-approvals` retains all of them and the
+     join against the receipt decides which is current."))
 
 ;; ── Validation helpers ─────────────────────────────────────────────────────
 
@@ -174,6 +199,12 @@
   (and (= org-id (:translation/org-id receipt))
        (= project (:translation/project receipt))))
 
+(defn approval-in-scope?
+  "Whether `approval` belongs to `scope`. See `receipt-in-scope?`."
+  [approval {:keys [org-id project]}]
+  (and (= org-id (:review/org-id approval))
+       (= project (:review/project approval))))
+
 (defn- batch-document-match
   [dispatches batch-id document-wire-id]
   (->> (vals dispatches)
@@ -181,7 +212,64 @@
                      (= document-wire-id (:dispatch/document-wire-id %))))
        first))
 
+(defn approval-identity
+  "The identity at most one approval may exist for.
+
+   Includes the translation revision, not merely the gate's triple: approving a
+   re-translation of the same source revision is a genuinely new act of review
+   over different bytes, and collapsing the two would silently reuse the first
+   reviewer's decision for content they never saw.
+
+   Includes the tenant and project for the same reason the receipt does — an
+   approval attests to a translation that exists in one scope."
+  [approval]
+  [(:review/org-id approval)
+   (:review/project approval)
+   (:review/document approval)
+   (:review/garden approval)
+   (:review/locale approval)
+   (:review/revision approval)
+   (:review/translation-revision approval)])
+
+(defn- record-approval-in-state
+  "Store `approval` under `identity` unless one is already there, answering
+   which happened."
+  [current identity approval]
+  (if-let [existing (get-in current [:approvals identity])]
+    (assoc current :answer {:approval/status :existing :approval existing})
+    (-> current
+        (assoc-in [:approvals identity] approval)
+        (assoc :answer {:approval/status :recorded :approval approval}))))
+
 ;; ── In-memory implementation ───────────────────────────────────────────────
+
+(defn- resolve-outcome-in-state
+  "Set an in-flight claim's outcome, and its detail when one is given."
+  [current dispatch-key outcome detail]
+  (update-in-flight-state current dispatch-key
+                          (fn [record]
+                            (cond-> (assoc record :dispatch/outcome outcome)
+                              (some? detail) (assoc :dispatch/detail detail)))))
+
+(defn- read-dispatch
+  [state dispatch-key]
+  (some-> (get-in state [:dispatches dispatch-key]) dispatch-law/assert-record!))
+
+(defn- read-batch-dispatch
+  [state batch-id document-wire-id]
+  (some-> (batch-document-match (:dispatches state) batch-id document-wire-id)
+          dispatch-law/assert-record!))
+
+(defn- read-batch-only-dispatch
+  [state batch-id]
+  (some-> (->> (vals (:dispatches state))
+               (filter #(= batch-id (:dispatch/batch-id %)))
+               first)
+          dispatch-law/assert-record!))
+
+(defn- append-receipt-in-state
+  [current receipt]
+  (update current :receipts conj receipt))
 
 (defn memory-store
   "An `ITranslationEvidenceStore` over one atom.
@@ -190,7 +278,7 @@
    durable store: a binding lost on restart can never be joined to the worker's
    answer, so the translation would complete and no receipt would ever exist."
   []
-  (let [state (atom {:dispatches {} :receipts []})]
+  (let [state (atom {:dispatches {} :receipts [] :approvals {}})]
     (reify ITranslationEvidenceStore
       (reserve-dispatch! [_ record]
         (js/Promise.resolve
@@ -200,42 +288,42 @@
 
       (resolve-dispatch! [_ dispatch-key outcome detail]
         (js/Promise.resolve
-         (resolved-answer
-          (swap! state update-in-flight-state dispatch-key
-                 (fn [record]
-                   (cond-> (assoc record :dispatch/outcome outcome)
-                     (some? detail) (assoc :dispatch/detail detail)))))))
+         (resolved-answer (swap! state resolve-outcome-in-state
+                                 dispatch-key outcome detail))))
 
       (bind-dispatch-batch! [_ dispatch-key batch-id]
         (js/Promise.resolve
-         (resolved-answer
-          (swap! state update-in-flight-state dispatch-key
-                 #(assoc % :dispatch/batch-id batch-id)))))
+         (resolved-answer (swap! state update-in-flight-state dispatch-key
+                                 #(assoc % :dispatch/batch-id batch-id)))))
 
       (dispatch-for-key! [_ dispatch-key]
-        (js/Promise.resolve
-         (some-> (get-in @state [:dispatches dispatch-key])
-                 dispatch-law/assert-record!)))
+        (js/Promise.resolve (read-dispatch @state dispatch-key)))
 
       (dispatch-for-batch-document! [_ batch-id document-wire-id]
-        (js/Promise.resolve
-         (some-> (batch-document-match (:dispatches @state) batch-id document-wire-id)
-                 dispatch-law/assert-record!)))
+        (js/Promise.resolve (read-batch-dispatch @state batch-id document-wire-id)))
 
       (dispatch-for-batch! [_ batch-id]
-        (js/Promise.resolve
-         (some-> (->> (vals (:dispatches @state))
-                      (filter #(= batch-id (:dispatch/batch-id %)))
-                      first)
-                 dispatch-law/assert-record!)))
+        (js/Promise.resolve (read-batch-only-dispatch @state batch-id)))
 
       (record-translation! [_ receipt]
         (let [checked (evidence-law/assert-receipt! receipt)]
-          (swap! state update :receipts conj checked)
+          (swap! state append-receipt-in-state checked)
           (js/Promise.resolve checked)))
 
       (completed-translations! [_ scope]
         (js/Promise.resolve
          (into [] (comp (map evidence-law/assert-receipt!)
                         (filter #(receipt-in-scope? % scope)))
-               (:receipts @state)))))))
+               (:receipts @state))))
+
+      (record-approval! [_ approval]
+        (let [checked (evidence-law/assert-approval! approval)]
+          (js/Promise.resolve
+           (:answer (swap! state record-approval-in-state
+                           (approval-identity checked) checked)))))
+
+      (approvals! [_ scope]
+        (js/Promise.resolve
+         (into [] (comp (map evidence-law/assert-approval!)
+                        (filter #(approval-in-scope? % scope)))
+               (vals (:approvals @state))))))))
