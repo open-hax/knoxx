@@ -66,7 +66,12 @@ PUB_TRANSLATED_ID="${NS}/${DOC_LOCAL}-es"
 PUB_NATIVE_ID="${NS}/${DOC_LOCAL}-en"
 SOURCE_REL="contracts/_verify_translation_dispatch/probe-${RUN_ID}.md"
 SOURCE_FILE="${REPO_ROOT}/${SOURCE_REL}"
-PINNED_REVISION="rev-verify-dispatch-${RUN_ID}"
+# `:source/current`, not a pinned token. A pin must equal the digest Knoxx can
+# observe of the source file, and an opaque `rev-...` value never can — dispatch
+# would refuse it as `:pin-not-tied-to-observable-bytes` on every run. The gate
+# resolves `:source/current` to that digest, so the fixture exercises the real
+# path instead of a permanently refused one.
+REVISION_FORM=":source/current"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -160,10 +165,10 @@ expect_jq() {
 # for it — a dispatch that queued it would be translating a document into the
 # language it is already written in.
 #
-# The revision is PINNED rather than :source/current, so this script does not
-# depend on the source file's digest being resolvable from the backend's working
-# directory. The digest path has its own coverage in
-# backend/test/cljs/knoxx/backend/infra/publication_source_revision_test.cljs.
+# The revision is `:source/current`, which the gate resolves to a content digest
+# of the probe file. That makes this run depend on the digest being resolvable
+# from the backend's working directory — deliberately, because it is the path
+# real intents take, and because a pinned opaque token is now refused outright.
 
 FIXTURE_OWNED=0
 
@@ -187,7 +192,7 @@ fixture_write() {
    :publication/document :${DOC_LOCAL}
    :publication/garden :probe-garden
    :publication/locale :es
-   :publication/revision "${PINNED_REVISION}"
+   :publication/revision ${REVISION_FORM}
    :publication/state :published
    :publication/path "/verify-dispatch/${DOC_LOCAL}-es"
    :translation/review :required}
@@ -196,7 +201,7 @@ fixture_write() {
    :publication/document :${DOC_LOCAL}
    :publication/garden :probe-garden
    :publication/locale :en
-   :publication/revision "${PINNED_REVISION}"
+   :publication/revision ${REVISION_FORM}
    :publication/state :published
    :publication/path "/verify-dispatch/${DOC_LOCAL}-en"
    :translation/review :none}]}
@@ -327,8 +332,9 @@ elif [ "$dispatch_status" = "200" ]; then
   case "$outcome" in
     dispatch/accepted)
       pass "the worker accepted the batch ${C_DIM}(dispatch/accepted)${C_RESET}"
-      expect_jq "the accepted dispatch is bound to the pinned concrete revision" \
-        "[.. | strings] | index(\"${PINNED_REVISION}\")" "$resp"
+      expect_jq "the accepted dispatch is bound to a concrete content digest" \
+        '[.. | strings] | any(startswith("sha256-"))' "$resp"
+      note "resolved from :source/current, so the binding names real bytes"
       ;;
     dispatch/failed)
       # A correct, observable outcome — not a pass and not a silent skip.

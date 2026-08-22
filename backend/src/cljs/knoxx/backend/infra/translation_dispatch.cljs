@@ -184,6 +184,39 @@
                                "; observation also failed: "
                                (ex-message observe-error))}))))
 
+(defn- ^:async try-bind!
+  "Bind the batch id, answering nil rather than throwing."
+  [evidence-store dispatch-key batch-id]
+  (try
+    (await (store/bind-dispatch-batch! evidence-store dispatch-key batch-id))
+    (catch :default _ nil)))
+
+(defn- ^:async bind-created-batch!
+  "Record the batch id the worker returned, retrying the write once.
+
+   Separated from the create on purpose. A failure *after* the batch id is known
+   is not an ambiguous send: the batch exists and we can name it, so routing it
+   through observation would be strictly worse — observation never adopts a
+   candidate, so the claim would stay unbound, the worker would finish, and its
+   callback could never join. The receipt would be unrecoverable for a write that
+   merely blipped.
+
+   One retry, then the batch id is put in the detail rather than thrown away, so
+   an operator has the one value needed to repair the binding by hand. Bounded
+   rather than looped: a store that cannot accept two writes is not going to
+   accept a hundred."
+  [evidence-store record batch-id]
+  (let [dispatch-key (:dispatch/key record)
+        bound (or (await (try-bind! evidence-store dispatch-key batch-id))
+                  (await (try-bind! evidence-store dispatch-key batch-id)))]
+    (if bound
+      {:dispatch/outcome :dispatch/accepted :dispatch/record bound}
+      {:dispatch/outcome :dispatch/accepted
+       :dispatch/record record
+       :dispatch/detail (str "the worker accepted batch " batch-id
+                             " but the binding could not be recorded;"
+                             " bind it manually to recover the receipt")})))
+
 (defn- ^:async accept-dispatch!
   "Call the worker for a freshly reserved claim, and record what happened.
 
@@ -193,17 +226,16 @@
    translate the same revision twice. `recover-ambiguous-send!` observes before
    deciding."
   [evidence-store client work context record]
-  (try
-    (let [batch-id (await (request-batch! client work context))
-          bound (await (store/bind-dispatch-batch! evidence-store
-                                                   (:dispatch/key record)
-                                                   batch-id))]
-      {:dispatch/outcome :dispatch/accepted
-       :dispatch/record (or bound record)})
-    (catch :default err
-      (await (recover-ambiguous-send!
-              evidence-store client work context record
-              (or (not-empty (str (ex-message err))) "unknown worker failure"))))))
+  (let [created (try
+                  {:batch-id (await (request-batch! client work context))}
+                  (catch :default err
+                    {:error (or (not-empty (str (ex-message err)))
+                                "unknown worker failure")}))]
+    (if (:error created)
+      ;; The create itself failed, so whether it landed is genuinely unknown.
+      (await (recover-ambiguous-send! evidence-store client work context record
+                                      (:error created)))
+      (await (bind-created-batch! evidence-store record (:batch-id created))))))
 
 (defn- ^:async record-completion!
   "Persist the receipt, then close the claim.
@@ -352,16 +384,16 @@
                                       :dispatch/accepted)
                                     (clock))]
     (if pin-refusal
-      ;; Refused before any batch is created: a revision that cannot be tied to
-      ;; observable bytes can never be substantiated by a receipt, so asking the
-      ;; worker for it would only produce a false one. Terminal, because no retry
-      ;; can make the pin resolvable. The claim is still recorded, so an operator
-      ;; can see the intent was considered and why it was refused.
-      (do
-        (await (store/reserve-dispatch! evidence-store record))
-        {:dispatch/outcome law/unreachable-outcome
-         :dispatch/record record
-         :translation/refusal pin-refusal})
+      ;; Refused before any batch is created, and deliberately NOT persisted. A
+      ;; pin refusal is a decision about *current* state, not an observed fact:
+      ;; restore the checkout to the pinned bytes and it simply stops applying.
+      ;; Recorded as a terminal claim it would outlive its own reason — the
+      ;; reservation would keep finding it, answer duplicate, and block a pin
+      ;; that had become perfectly valid. Nothing is written, so the next pass
+      ;; re-decides from scratch.
+      {:dispatch/outcome law/unreachable-outcome
+       :dispatch/record record
+       :translation/refusal pin-refusal}
       (await (reserve-and-send! deps checked-work context record)))))
 
 ;; ── Deriving work from desired state ───────────────────────────────────────

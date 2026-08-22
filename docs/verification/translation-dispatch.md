@@ -87,10 +87,14 @@ The same-locale intent is not filler. A dispatch that queued it would be asking 
 translate an English document into English, and the only thing preventing that
 is `publication-gate/translation-required?` comparing the two locales.
 
-The revision is **pinned** rather than `:source/current`, so this run does not
-depend on the probe file's digest being resolvable from whatever working
-directory the backend was started in. The digest path — content-addressed source
-revisions — has its own coverage in
+The revision is **`:source/current`**, which the gate resolves to a content
+digest of the probe file. That makes the run depend on the digest being
+resolvable from the backend's working directory — deliberately, on two counts.
+It is the path real intents take, and a pinned opaque token is now refused
+outright: a pin must equal the digest Knoxx can observe, and `rev-something`
+never can, so a pinned fixture would exercise only the refusal.
+
+Path resolution itself is covered separately by
 `backend/test/cljs/knoxx/backend/infra/publication_source_revision_test.cljs`.
 
 ### 1. The dispatch route refuses an unauthenticated caller

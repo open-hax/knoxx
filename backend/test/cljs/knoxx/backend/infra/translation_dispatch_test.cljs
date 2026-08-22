@@ -721,11 +721,30 @@
       (is (= :dispatch/unreachable (:dispatch/outcome result)))
       (is (not (law/retriable? (:dispatch/outcome result)))))
 
-    (testing "the claim is still recorded, so the refusal is visible"
-      (let [stored (await (store/dispatch-for-key!
-                           (:evidence-store deps)
-                           (:dispatch/key (:dispatch/record result))))]
-        (is (= :dispatch/unreachable (:dispatch/outcome stored)))))))
+    (testing "nothing is persisted, so the refusal cannot outlive its reason"
+      ;; A pin refusal is a decision about *current* state, not an observed
+      ;; fact. Recorded as a terminal claim it would keep blocking a pin that had
+      ;; since become valid.
+      (is (nil? (await (store/dispatch-for-key!
+                        (:evidence-store deps)
+                        (:dispatch/key (:dispatch/record result)))))))))
+
+(deftest ^:async a-pin-becomes-dispatchable-once-its-bytes-are-current
+  ;; The consequence of not persisting the refusal: restore the checkout to the
+  ;; pinned bytes and the same intent dispatches normally, instead of being
+  ;; blocked forever by a terminal claim that outlived its own reason.
+  (let [{:keys [batches deps]} (fixture)
+        stale-context (dispatch/dispatch-context intent scope "sha256-not-yet-restored")
+        refused (await (dispatch/dispatch-work! deps (work) stale-context))
+        after-refusal (count @batches)
+        restored (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the first attempt is refused and enqueues nothing"
+      (is (= :dispatch/unreachable (:dispatch/outcome refused)))
+      (is (zero? after-refusal)))
+
+    (testing "once the bytes match the pin, the same work dispatches"
+      (is (= :dispatch/accepted (:dispatch/outcome restored)))
+      (is (= 1 (count @batches))))))
 
 (deftest ^:async a-revision-equal-to-the-observed-digest-dispatches-normally
   ;; A `:source/current` intent resolves to exactly this digest, so the two are
@@ -768,3 +787,39 @@
       (is (= :dispatch/duplicate
              (:dispatch/outcome (await (dispatch/dispatch-work!
                                         deps (work) (context)))))))))
+
+(deftest ^:async a-known-batch-id-is-not-lost-when-the-binding-write-fails
+  ;; A failure *after* the batch id is known is not an ambiguous send: the batch
+  ;; exists and can be named. Routing it through observation would be strictly
+  ;; worse, because observation never adopts a candidate — the claim would stay
+  ;; unbound, the worker would finish, and its callback could never join.
+  (let [attempts (atom 0)
+        failing-store (let [inner (store/memory-store)]
+                        (reify store/ITranslationEvidenceStore
+                          (reserve-dispatch! [_ r] (store/reserve-dispatch! inner r))
+                          (resolve-dispatch! [_ k o d] (store/resolve-dispatch! inner k o d))
+                          (bind-dispatch-batch! [_ _k _b]
+                            (swap! attempts inc)
+                            (throw (ex-info "write failed" {})))
+                          (dispatch-for-key! [_ k] (store/dispatch-for-key! inner k))
+                          (dispatch-for-batch-document! [_ b d]
+                            (store/dispatch-for-batch-document! inner b d))
+                          (dispatch-for-batch! [_ b] (store/dispatch-for-batch! inner b))
+                          (record-translation! [_ r] (store/record-translation! inner r))
+                          (completed-translations! [_ s] (store/completed-translations! inner s))))
+        batches (atom [])
+        deps {:evidence-store failing-store
+              :client (fake-client {:batches batches})
+              :clock clock
+              :observe-source-revision (constantly (js/Promise.resolve dispatched-revision))}
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the binding is retried, bounded"
+      (is (= 2 @attempts) "one attempt plus one retry, not a loop"))
+
+    (testing "the claim stays in flight and the batch id survives in the detail"
+      (is (= :dispatch/accepted (:dispatch/outcome result)))
+      (is (re-find #"batch-1" (:dispatch/detail result)))
+      (is (re-find #"bind it manually" (:dispatch/detail result))))
+
+    (testing "the worker was asked exactly once"
+      (is (= 1 (count @batches))))))
