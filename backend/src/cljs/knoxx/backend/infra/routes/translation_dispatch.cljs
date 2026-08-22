@@ -117,24 +117,31 @@
 (defn ^:async gate-facts!
   "Every fact `domain.publication-gate` needs, read once, scoped to one tenant.
 
-   `:approved?` is `(constantly false)` and that is deliberate rather than
-   provisional: no approval surface exists yet — it is
-   `knoxx-translation-approval-surface`, the sibling card — so nothing has been
-   approved, and claiming otherwise would be the one lie that lets unreviewed
-   content publish. It is also inert for dispatch specifically:
+   All four now come from real providers. `:approved?` reads recorded approvals
+   rather than the `(constantly false)` this function used while no approval
+   surface existed.
+
+   Approvals are filtered by the same tenant and project as receipts, and for the
+   same reason: review evidence attests to a translation that exists in one
+   scope. `:approved?` remains inert for dispatch specifically —
    `translation-work` derives from the `:translation-missing` and
-   `:translation-stale` blockers, never from the review blocker, so a review
-   requirement does not suppress the translation that would satisfy it."
+   `:translation-stale` blockers, never from the review blocker — but it is
+   loaded here because the same facts answer whether the resulting publication is
+   admissible, and computing them twice in two places is how the two answers
+   drift."
   [config evidence-store {:keys [org-id project]} documents]
   (let [revisions (await (source-revision/source-revisions! config documents))
         receipts (->> (await (store/completed-translations! evidence-store))
                       (tenant-receipts org-id)
                       (project-receipts project)
                       (current-source-locale-receipts documents))
-        evidence (evidence-domain/evidence {:receipts receipts})]
+        approvals (->> (await (store/approvals! evidence-store))
+                       (filterv #(and (= org-id (:review/org-id %))
+                                      (= project (:review/project %)))))
+        evidence (evidence-domain/evidence {:receipts receipts
+                                            :approvals approvals})]
     (merge (source-revision/revision-facts revisions)
-           (evidence-domain/gate-facts evidence)
-           {:approved? (constantly false)})))
+           (evidence-domain/gate-facts evidence))))
 
 (defn ^:async dispatch-translations!
   "Dispatch the derived translation work for one document, or for all of them.

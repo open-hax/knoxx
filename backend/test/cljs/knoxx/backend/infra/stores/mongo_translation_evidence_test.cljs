@@ -86,13 +86,17 @@
 (defn- fixture []
   (let [dispatches (atom [])
         receipts (atom [])
+        approvals (atom [])
         db #js {:collection
                 (fn [name]
                   (if (= name mongo-store/DISPATCHES_COLLECTION)
                     (fake-collection dispatches :dispatch_key)
-                    (fake-collection receipts nil)))}]
+                    (if (= name mongo-store/APPROVALS_COLLECTION)
+                      (fake-collection approvals :approval_key)
+                      (fake-collection receipts nil))))}]
     {:dispatches dispatches
      :receipts receipts
+     :approvals approvals
      :store (mongo-store/create-store db)}))
 
 (deftest ^:async namespaced-keywords-survive-persistence
@@ -205,3 +209,68 @@
                            :translation/revision "sha256-aaa111bbb222+es@batch-2"
                            :translation/at "2026-08-22T10:00:00.000Z")))
       (is (= 2 (count (await (store/completed-translations! store))))))))
+
+(def ^:private approval
+  {:review/state :approved
+   :review/document :knoxx.docs/probe
+   :review/locale :es
+   :review/revision "sha256-aaa111bbb222"
+   :review/translation-revision "sha256-aaa111bbb222+es@batch-1"
+   :review/org-id "org-1"
+   :review/project "knoxx-session"
+   :review/principal {:principal/user-email "reviewer@open-hax.local"}
+   :review/at at})
+
+(deftest ^:async approvals-round-trip-with-namespaced-keywords-intact
+  (let [{:keys [store approvals]} (fixture)
+        recorded (await (store/record-approval! store approval))]
+    (testing "the approval is recorded and comes back identical"
+      (is (= :recorded (:approval/status recorded)))
+      (is (= [approval] (await (store/approvals! store)))))
+
+    (testing "the principal survives persistence"
+      ;; A principal flattened by JSON would be attribution that no longer names
+      ;; anybody.
+      (is (= "reviewer@open-hax.local"
+             (:principal/user-email (:review/principal
+                                     (first (await (store/approvals! store))))))))
+
+    (testing "the queryable columns exist beside the authoritative EDN"
+      (let [row (first @approvals)]
+        (is (string? (:approval_key row)))
+        (is (= "es" (:locale row)))
+        (is (string? (:approval_edn row)))))))
+
+(deftest ^:async a-unique-index-makes-recording-an-approval-idempotent
+  (let [{:keys [store approvals]} (fixture)
+        first-result (await (store/record-approval! store approval))
+        second-result (await (store/record-approval! store approval))]
+    (testing "the second attempt is recognized rather than appended"
+      (is (= :recorded (:approval/status first-result)))
+      (is (= :existing (:approval/status second-result)))
+      (is (= approval (:approval second-result))))
+
+    (testing "only one row exists"
+      (is (= 1 (count @approvals))))))
+
+(deftest ^:async approving-a-different-output-is-a-different-approval
+  (let [{:keys [store approvals]} (fixture)
+        _ (await (store/record-approval! store approval))
+        other (await (store/record-approval!
+                      store (assoc approval :review/translation-revision
+                                   "sha256-aaa111bbb222+es@batch-2")))]
+    (testing "a re-translation is a new act of review over different bytes"
+      (is (= :recorded (:approval/status other)))
+      (is (= 2 (count @approvals))))))
+
+(deftest ^:async approvals-in-different-scopes-do-not-collide
+  (let [{:keys [store approvals]} (fixture)
+        _ (await (store/record-approval! store approval))
+        other-org (await (store/record-approval!
+                          store (assoc approval :review/org-id "org-2")))
+        other-project (await (store/record-approval!
+                              store (assoc approval :review/project "other")))]
+    (testing "the tenant and project are part of the approval identity"
+      (is (= :recorded (:approval/status other-org)))
+      (is (= :recorded (:approval/status other-project)))
+      (is (= 3 (count @approvals))))))

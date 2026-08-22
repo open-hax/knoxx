@@ -55,17 +55,104 @@
     (is (thrown? js/Error
                  (domain/evidence {:receipts [(receipt :source-revision "source/current")]})))))
 
-(deftest gate-facts-supply-only-the-half-this-card-owns
-  (let [facts (domain/gate-facts (domain/evidence {:receipts [(receipt)]}))]
-    (testing "the translation predicate is present and answers"
-      (is (fn? (:translated-revision? facts)))
-      (is ((:translated-revision? facts) :knoxx.docs/probe :es "sha256-aaa111bbb222")))
+(defn- approval
+  [& {:keys [locale revision translation-revision at]
+      :or {locale :es
+           revision "sha256-aaa111bbb222"
+           translation-revision "sha256-aaa111bbb222+es@batch-1"
+           at "2026-08-22T09:30:00.000Z"}}]
+  {:review/state :approved
+   :review/document :knoxx.docs/probe
+   :review/locale locale
+   :review/revision revision
+   :review/translation-revision translation-revision
+   :review/org-id "org-1"
+   :review/principal {:principal/user-email "reviewer@open-hax.local"}
+   :review/at at})
 
-    (testing "nothing else is fabricated"
-      ;; Defaulting :approved? or :current-source-revision here would let a
-      ;; caller forget to supply the real thing and still get a gate that
-      ;; answers — admitting a publication on evidence nobody produced.
-      (is (= [:translated-revision?] (keys facts))))))
+(deftest gate-facts-supply-both-evidential-halves-and-nothing-else
+  (let [facts (domain/gate-facts (domain/evidence {:receipts [(receipt)]
+                                                   :approvals [(approval)]}))]
+    (testing "both evidential predicates are present and answer"
+      (is (fn? (:translated-revision? facts)))
+      (is (fn? (:approved? facts)))
+      (is ((:translated-revision? facts) :knoxx.docs/probe :es "sha256-aaa111bbb222"))
+      (is ((:approved? facts) :knoxx.docs/probe :es "sha256-aaa111bbb222")))
+
+    (testing "the source-revision facts are not fabricated"
+      ;; Defaulting :current-source-revision here would let a caller forget to
+      ;; supply the real thing and still get a gate that answers — admitting a
+      ;; publication on evidence nobody produced.
+      (is (= #{:translated-revision? :approved?} (set (keys facts)))))))
+
+(deftest approval-alone-is-never-enough
+  (testing "an approval with no receipt behind it counts for nothing"
+    ;; Approval is evidence for the gate, not a blanket permission. With no
+    ;; translation recorded there is nothing it can attest to.
+    (is (not (domain/approved? (domain/evidence {:receipts [] :approvals [(approval)]})
+                               :knoxx.docs/probe :es "sha256-aaa111bbb222")))))
+
+(deftest an-approval-is-specific-to-one-document-locale-and-revision
+  (let [evidence (domain/evidence {:receipts [(receipt)] :approvals [(approval)]})]
+    (testing "the approved triple is approved"
+      (is (domain/approved? evidence :knoxx.docs/probe :es "sha256-aaa111bbb222")))
+
+    (testing "it does not satisfy another document, locale, or revision"
+      (is (not (domain/approved? evidence :knoxx.docs/other :es "sha256-aaa111bbb222")))
+      (is (not (domain/approved? evidence :knoxx.docs/probe :fr "sha256-aaa111bbb222")))
+      (is (not (domain/approved? evidence :knoxx.docs/probe :es "sha256-different"))))))
+
+(deftest a-re-translation-supersedes-its-approval
+  (let [older (receipt :revision "sha256-aaa111bbb222+es@batch-1"
+                       :at "2026-08-22T09:00:00.000Z")
+        newer (receipt :revision "sha256-aaa111bbb222+es@batch-2"
+                       :at "2026-08-22T10:00:00.000Z")
+        approved-older (approval :translation-revision "sha256-aaa111bbb222+es@batch-1")]
+    (testing "the approval satisfies the translation it was given for"
+      (is (domain/approved? (domain/evidence {:receipts [older]
+                                              :approvals [approved-older]})
+                            :knoxx.docs/probe :es "sha256-aaa111bbb222")))
+
+    (testing "it stops satisfying the gate once the translation is replaced"
+      ;; Not deleted and not an error — it simply stops being current. This is
+      ;; what keeps an approval from authorizing bytes nobody reviewed, and the
+      ;; reason the output revision is batch-specific.
+      (is (not (domain/approved? (domain/evidence {:receipts [older newer]
+                                                   :approvals [approved-older]})
+                                 :knoxx.docs/probe :es "sha256-aaa111bbb222"))))
+
+    (testing "approving the replacement restores admissibility"
+      (is (domain/approved?
+           (domain/evidence
+            {:receipts [older newer]
+             :approvals [approved-older
+                         (approval :translation-revision "sha256-aaa111bbb222+es@batch-2")]})
+           :knoxx.docs/probe :es "sha256-aaa111bbb222")))))
+
+(deftest a-store-returning-invalid-approvals-is-refused
+  (testing "an approval missing its translation revision cannot be indexed"
+    (is (thrown? js/Error
+                 (domain/evidence {:receipts [(receipt)]
+                                   :approvals [(dissoc (approval)
+                                                       :review/translation-revision)]}))))
+
+  (testing "an approval attributed to nobody is refused"
+    (is (thrown? js/Error
+                 (domain/evidence {:receipts [(receipt)]
+                                   :approvals [(assoc (approval) :review/principal {})]}))))
+
+  (testing "an approval naming no tenant is refused"
+    ;; Review evidence that named no organization would be admissible in every
+    ;; one of them.
+    (is (thrown? js/Error
+                 (domain/evidence {:receipts [(receipt)]
+                                   :approvals [(dissoc (approval) :review/org-id)]}))))
+
+  (testing "a non-approved review state cannot masquerade as an approval"
+    (is (thrown? js/Error
+                 (domain/evidence {:receipts [(receipt)]
+                                   :approvals [(assoc (approval)
+                                                      :review/state :rejected)]})))))
 
 (deftest the-gate-actually-consumes-these-facts
   ;; The integration that matters: these predicates are shaped for
@@ -79,13 +166,11 @@
                 :publication/path "/probe"
                 :translation/review :none
                 :document/source-locale :en}
-        facts-with (merge {:current-source-revision (constantly "sha256-aaa111bbb222")
-                           :approved? (constantly false)
-                           :source-revision-superseded? (constantly false)}
+        source-facts {:current-source-revision (constantly "sha256-aaa111bbb222")
+                      :source-revision-superseded? (constantly false)}
+        facts-with (merge source-facts
                           (domain/gate-facts (domain/evidence {:receipts [(receipt)]})))
-        facts-without (merge {:current-source-revision (constantly "sha256-aaa111bbb222")
-                              :approved? (constantly false)
-                              :source-revision-superseded? (constantly false)}
+        facts-without (merge source-facts
                              (domain/gate-facts (domain/evidence {:receipts []})))]
     (testing "a translated revision clears the translation blocker"
       (let [decision (gate/gate intent facts-with)]

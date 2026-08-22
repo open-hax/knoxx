@@ -49,8 +49,14 @@
   "Collection holding completed-translation receipts. Append-only."
   "knoxx_translation_receipts")
 
+(def APPROVALS_COLLECTION
+  "Collection holding review approvals. One row per approved output, enforced by
+   a unique index rather than by a read-then-write."
+  "knoxx_translation_approvals")
+
 (defn- dispatches-coll [db] (.collection db DISPATCHES_COLLECTION))
 (defn- receipts-coll [db] (.collection db RECEIPTS_COLLECTION))
+(defn- approvals-coll [db] (.collection db APPROVALS_COLLECTION))
 
 (defn ^:async setup-indexes!
   "Create required indexes. Idempotent.
@@ -62,12 +68,16 @@
    translation is dispatched twice."
   [db]
   (let [dispatches (dispatches-coll db)
-        receipts (receipts-coll db)]
+        receipts (receipts-coll db)
+        approvals (approvals-coll db)]
     (await (.createIndex dispatches #js {"dispatch_key" 1} #js {"unique" true}))
     ;; The join `dispatch-for-batch-document!` performs.
     (await (.createIndex dispatches #js {"batch_id" 1 "document_wire_id" 1}))
     (await (.createIndex receipts #js {"dispatch_key" 1}))
     (await (.createIndex receipts #js {"document" 1 "locale" 1 "source_revision" 1}))
+    ;; Unique, and for the same reason as dispatch_key: it is what makes
+    ;; recording an approval idempotent rather than append-once-per-click.
+    (await (.createIndex approvals #js {"approval_key" 1} #js {"unique" true}))
     true))
 
 ;; ── Codecs ─────────────────────────────────────────────────────────────────
@@ -246,6 +256,51 @@
                                            :document_wire_id document-wire-id
                                            :limit 1})))))
 
+(defn- approval-key
+  "The unique-index value for one approval.
+
+   Derived from `store/approval-identity` rather than restated, so durable and
+   in-memory uniqueness cannot disagree about what counts as the same approval.
+   `pr-str` keeps `:es` distinct from the string \"es\"."
+  [approval]
+  (pr-str (store/approval-identity approval)))
+
+(defn- encode-approval
+  [approval]
+  {:approval_key (approval-key approval)
+   :document (pr-str (:review/document approval))
+   :locale (name (:review/locale approval))
+   :revision (:review/revision approval)
+   :approval_edn (pr-str approval)})
+
+(defn- decode-approval
+  [doc]
+  (when doc
+    (evidence-law/assert-approval! (edn/read-string (:approval_edn doc)))))
+
+(defn- ^:async claim-approval!
+  "Record `approval` unless its exact output is already approved.
+
+   The insert IS the check, exactly as in `claim-dispatch!`. Read-then-write would
+   let two reviewers clicking together both insert, leaving two records free to
+   disagree about who approved."
+  [db approval]
+  (let [{:keys [inserted?]}
+        (await (extern-mongo/insert-one-unique! (approvals-coll db)
+                                               (encode-approval approval)))]
+    (if inserted?
+      {:approval/status :recorded :approval approval}
+      {:approval/status :existing
+       :approval (decode-approval
+                  (first (await (extern-mongo/find-docs!
+                                 (approvals-coll db)
+                                 {:approval_key (approval-key approval)
+                                  :limit 1}))))})))
+
+(defn- ^:async read-approvals!
+  [db]
+  (mapv decode-approval (await (extern-mongo/find-docs! (approvals-coll db) {}))))
+
 (defn- ^:async find-batch-only-dispatch!
   [db batch-id]
   (decode-dispatch
@@ -296,4 +351,10 @@
       (append-receipt! db (evidence-law/assert-receipt! receipt)))
 
     (completed-translations! [_]
-      (read-receipts! db))))
+      (read-receipts! db))
+
+    (record-approval! [_ approval]
+      (claim-approval! db (evidence-law/assert-approval! approval)))
+
+    (approvals! [_]
+      (read-approvals! db))))
