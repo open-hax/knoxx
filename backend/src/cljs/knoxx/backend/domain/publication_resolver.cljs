@@ -43,7 +43,7 @@
   [:document/id :document/title :document/source-locale :document/source])
 
 (def garden-projection-keys
-  [:garden/id :garden/title :garden/status])
+  [:garden/id :garden/title :garden/status :garden/locales])
 
 (def publication-projection-keys
   [:publication/id :publication/document :publication/garden :publication/locale

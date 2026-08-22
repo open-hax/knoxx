@@ -442,7 +442,22 @@
         (is (true? (law/artifact-revision-conflict? (:failure/conflict receipt)))))
       (is (empty? @calls) "nothing was published")
       (is (empty? @routes))
-      (is (empty? @state) "and nothing was claimed"))))
+       (is (empty? @state) "and nothing was claimed"))))
+
+(deftest ^:async an-artifact-locale-conflict-never-exposes-a-route
+  (let [{:keys [store state]} (fake-store)
+        {:keys [target calls routes]} (fake-target {})
+        receipt (await (effects/execute-plan!
+                        store target {} publish-plan
+                        (assoc artifact :artifact/locale :fr)))]
+    (is (= :publication/failed (:receipt/type receipt)))
+    (is (= {:conflict/type :publication/artifact-locale-conflict
+            :conflict/artifact-locale :fr
+            :conflict/publication-locale :es}
+           (:failure/conflict receipt)))
+    (is (empty? @calls) "no adapter effect may run")
+    (is (empty? @routes) "no correct-looking route may expose wrong-language bytes")
+    (is (empty? @state) "a refused locale must not reserve an idempotency key")))
 
 (deftest ^:async an-agreeing-artifact-publishes-as-bytes-or-as-a-string
   (testing "bytes and a string are both content; the difference is only whether

@@ -70,7 +70,7 @@
    adapter that admitted more than the boundary would be the one place a
    contradiction could live."
   [op]
-  (law/assert-artifact! (:artifact op) (:concrete-revision op)))
+  (law/assert-artifact! (:artifact op) (:intent op) (:concrete-revision op)))
 
 (defn- record-route!
   "Materialize `op`, replacing the prior route rather than leaving it public

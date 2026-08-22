@@ -95,11 +95,17 @@
       ;; Neither a request to publish nor a recognized takedown: refuse both
       ;; effects. No evidence is gathered, because there is no trustworthy
       ;; intent to gather it about.
-      (not (law/publishes? intent))
-      {:op :blocked
-       :intent intent
-       :blockers [:publication-state-unrecognized]
-       :concrete-revision nil}
+       (not (law/publishes? intent))
+       {:op :blocked
+        :intent intent
+        :blockers [:publication-state-unrecognized]
+        :concrete-revision nil}
 
-      :else
-      (converge intent observed (gate/publication-evidence intent facts)))))
+       (law/publication-locale-blocker resource-index intent)
+       {:op :blocked
+        :intent intent
+        :blockers [(law/publication-locale-blocker resource-index intent)]
+        :concrete-revision nil}
+
+       :else
+       (converge intent observed (gate/publication-evidence intent facts)))))

@@ -29,7 +29,8 @@
   {:namespace :knoxx.docs
    :garden/id :knoxx.docs/promethean
    :garden/title "Promethean"
-   :garden/status :active})
+   :garden/status :active
+   :garden/locales [:en :es]})
 
 (defn- expanded-records
   "What the loader actually hands the facade for a composite entry: one record

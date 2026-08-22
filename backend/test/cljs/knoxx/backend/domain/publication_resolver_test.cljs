@@ -27,7 +27,8 @@
   {:namespace :knoxx.docs
    :garden/id :promethean
    :garden/title "Promethean"
-   :garden/status :active})
+   :garden/status :active
+   :garden/locales [:en :es]})
 
 (def qualified-garden
   (assoc local-garden :garden/id :knoxx.docs/promethean))
