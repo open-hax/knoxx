@@ -112,7 +112,15 @@
     (is (identical? context @seen-context))))
 
 (deftest target-configuration-cannot-change-the-pure-plan
-  (let [resource-index {:gardens {:knoxx.docs/promethean {:garden/status :active}}}
+  (let [resource-index {:gardens {:knoxx.docs/promethean
+                                  {:garden/status :active
+                                   ;; The locale-catalog cross-check (#250)
+                                   ;; merged after this fixture: a garden
+                                   ;; without locales now blocks every
+                                   ;; publish, so the fixture must declare
+                                   ;; the intent's locale to keep testing
+                                   ;; what it names.
+                                   :garden/locales [:en :es]}}}
         facts {:current-source-revision (constantly "rev-1")
                :translated-revision? (constantly true)
                :approved? (constantly true)
