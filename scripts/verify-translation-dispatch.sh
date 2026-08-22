@@ -35,8 +35,9 @@
 #     backend/test/cljs/knoxx/backend/infra/routes/translation_worker_principal_test.cljs.
 #
 # The fixture is created and destroyed by this script. It writes ONLY inside
-# ${CONTRACTS_DIR}/_verify_translation_dispatch and removes that directory on
-# exit, including on failure or Ctrl-C, so a killed run leaves nothing behind.
+# ${CONTRACTS_DIR}/_verify_translation_dispatch — the probe source file included,
+# which is why the document's source path points in there — and removes that one
+# directory on exit, including on failure or Ctrl-C. A killed run leaves nothing.
 #
 # Usage:
 #   scripts/verify-translation-dispatch.sh
@@ -63,7 +64,7 @@ DOC_LOCAL="probe${RUN_ID}"
 DOC_ID="${NS}/${DOC_LOCAL}"
 PUB_TRANSLATED_ID="${NS}/${DOC_LOCAL}-es"
 PUB_NATIVE_ID="${NS}/${DOC_LOCAL}-en"
-SOURCE_REL="docs/verify-dispatch-probe-${RUN_ID}.md"
+SOURCE_REL="contracts/_verify_translation_dispatch/probe-${RUN_ID}.md"
 SOURCE_FILE="${REPO_ROOT}/${SOURCE_REL}"
 PINNED_REVISION="rev-verify-dispatch-${RUN_ID}"
 
@@ -165,7 +166,6 @@ expect_jq() {
 # backend/test/cljs/knoxx/backend/infra/publication_source_revision_test.cljs.
 
 FIXTURE_OWNED=0
-SOURCE_OWNED=0
 
 fixture_write() {
   mkdir -p "$FIXTURE_DIR"
@@ -214,12 +214,6 @@ cleanup() {
     rm -rf "$FIXTURE_DIR"
     note "torn down ${FIXTURE_DIR#$REPO_ROOT/}"
   fi
-  # Only remove the source file if this run created it. A checkout that already
-  # had one is not this script's to delete.
-  if [ "$SOURCE_OWNED" -eq 1 ] && [ -f "$SOURCE_FILE" ]; then
-    rm -f "$SOURCE_FILE"
-    note "torn down ${SOURCE_REL}"
-  fi
   exit "$code"
 }
 trap cleanup EXIT
@@ -254,13 +248,10 @@ note "backend is reachable"
 
 step "0. the running backend serves this checkout"
 FIXTURE_OWNED=1
-if [ ! -f "$SOURCE_FILE" ]; then
-  SOURCE_OWNED=1
-  mkdir -p "$(dirname "$SOURCE_FILE")"
-  printf '# Translation dispatch verification probe\n\nSeeded by scripts/verify-translation-dispatch.sh.\n' \
-    > "$SOURCE_FILE"
-fi
 fixture_write
+# Inside the fixture directory, so the single teardown covers it.
+printf '# Translation dispatch verification probe\n\nSeeded by scripts/verify-translation-dispatch.sh.\n' \
+  > "$SOURCE_FILE"
 sleep 1
 
 probe="$(http GET "/api/publications/documents" auth)"
