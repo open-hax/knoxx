@@ -8,9 +8,13 @@
   storage are interchangeable implementations of one protocol; no
   adapter-specific identifier crosses upward, and no adapter is named here.
 
-  Both directions are validated. The plan is checked before any effect runs, and
-  the adapter's return value is checked before a caller reads fields off it — an
-  adapter is replaceable, so its output is untrusted input."
+  Both directions are validated. The plan and the artifact are checked before any
+  effect runs, and the adapter's return value is checked before a caller reads
+  fields off it — an adapter is replaceable, so its output is untrusted input.
+
+  The artifact is produced ABOVE this boundary: `execute-plan!` receives one, and
+  no protocol method below returns or constructs one. `law.publication`'s
+  `PublicationArtifact` docstring records why, and a test pins it."
   (:require [clojure.string :as str]
             [malli.core :as m]
             [knoxx.backend.law.publication-receipts :as law]))
@@ -148,16 +152,24 @@
 ;; ── Plan execution ─────────────────────────────────────────────────────────
 
 (defn- ^:async execute-publish!
+  "Validate the artifact, then publish under a reservation.
+
+   The artifact is checked BEFORE the key is derived and before the store is
+   touched. Reserved first and validated after, a refusal leaves a claim nobody
+   will ever complete: the next attempt reads `:in-flight` and has to go observe
+   a target where nothing was written, to learn what was already decided here."
   [store target ctx plan artifact]
   (let [intent (:intent plan)
+        concrete-revision (:concrete-revision plan)
+        checked (law/assert-artifact! artifact concrete-revision)
         idempotency-key (publish-idempotency-key (target-id target)
                                                  intent
-                                                 (:concrete-revision plan))]
+                                                 concrete-revision)]
     (await (publish-once! store target ctx
                           {:intent intent
-                           :artifact artifact
+                           :artifact checked
                            :previous (:previous plan)
-                           :concrete-revision (:concrete-revision plan)
+                           :concrete-revision concrete-revision
                            :idempotency/key idempotency-key}))))
 
 (defn- ^:async dispatch-plan!
@@ -181,17 +193,27 @@
     (throw (ex-info "unrecognized publication plan op" {:op (:op plan)}))))
 
 (defn- failure-receipt
+  "Every refusal becomes a receipt, and a *typed* refusal keeps its evidence.
+
+   An artifact-revision conflict is the one failure where the reader has to know
+   which side was stale, so both revisions are copied onto the receipt rather
+   than left inside the message string — `:failure/reason` alone cannot be read
+   by anything but a human."
   [target plan err]
-  (law/assert-receipt!
-   (cond-> {:receipt/type :publication/failed
-            :failure/reason (or (not-empty (str (ex-message err))) "unknown failure")
-            :failure/drift? true}
-     (= :publish (:op plan))
-     (assoc :idempotency/key
-            (try (publish-idempotency-key (target-id target)
-                                          (:intent plan)
-                                          (:concrete-revision plan))
-                 (catch :default _ nil))))))
+  (let [evidence (ex-data err)]
+    (law/assert-receipt!
+     (cond-> {:receipt/type :publication/failed
+              :failure/reason (or (not-empty (str (ex-message err))) "unknown failure")
+              :failure/drift? true}
+       (= :publish (:op plan))
+       (assoc :idempotency/key
+              (try (publish-idempotency-key (target-id target)
+                                            (:intent plan)
+                                            (:concrete-revision plan))
+                   (catch :default _ nil)))
+
+       (law/artifact-revision-conflict? evidence)
+       (assoc :failure/conflict evidence)))))
 
 (defn ^:async execute-plan!
   "Execute a validated plan and return a validated receipt.

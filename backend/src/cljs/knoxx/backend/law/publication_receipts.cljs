@@ -16,6 +16,15 @@
    `PublicationRevision`."
   publication/ConcreteRevision)
 
+(def PublicationArtifact
+  "Re-exported for the same reason as `ConcreteRevision`: the effect boundary
+   depends on one law namespace. Declared in `law.publication` — see the note
+   above it recording that the artifact is produced ABOVE this boundary."
+  publication/PublicationArtifact)
+
+(def ArtifactRevisionConflict
+  publication/ArtifactRevisionConflict)
+
 ;; ── Plans entering the effect layer ────────────────────────────────────────
 
 (def PlanOp
@@ -82,12 +91,19 @@
 
 (def FailedReceipt
   "Adapter failure is evidence, not an exception the caller must catch. Drift is
-   reported so reconciliation can see desired and observed disagree."
+   reported so reconciliation can see desired and observed disagree.
+
+   `:failure/conflict` carries a *structured* refusal rather than only the
+   message string `:failure/reason` already holds. An artifact-revision conflict
+   is the one failure where the reader has to know which side was stale, so both
+   revisions travel on the receipt; flattened into prose they are unrecoverable
+   by anything but a human reading logs."
   [:map
    [:receipt/type [:= :publication/failed]]
    [:failure/reason publication/NonBlankString]
    [:failure/drift? [:= true]]
-   [:idempotency/key {:optional true} [:maybe :string]]])
+   [:idempotency/key {:optional true} [:maybe :string]]
+   [:failure/conflict {:optional true} [:maybe ArtifactRevisionConflict]]])
 
 (def Receipt
   [:multi {:dispatch :receipt/type}
@@ -104,3 +120,22 @@
 (defn assert-receipt!
   [receipt]
   (publication/assert-valid! :publication/receipt Receipt receipt))
+
+;; ── The artifact entering the effect layer ─────────────────────────────────
+
+(defn assert-artifact!
+  "The other half of \"both directions\": the artifact is validated on the way
+   IN, exactly as the adapter's receipt is validated on the way OUT.
+
+   Called before the idempotency key is derived and before the store is touched,
+   so a publication that cannot lawfully happen leaves no reservation behind for
+   a later attempt to reconcile."
+  [artifact concrete-revision]
+  (publication/assert-artifact! artifact concrete-revision))
+
+(defn artifact-revision-conflict?
+  "True when a thrown `ex-data` is the typed artifact-revision conflict, so the
+   boundary can put it on the failure receipt instead of losing both revisions
+   inside a message string."
+  [value]
+  (publication/artifact-revision-conflict? value))

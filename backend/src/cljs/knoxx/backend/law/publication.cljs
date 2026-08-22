@@ -231,3 +231,151 @@
         (= :active
            (:garden/status
             (get-in resource-index [:gardens (:publication/garden intent)]))))))
+
+;; ── The materialized artifact ──────────────────────────────────────────────
+
+(defn artifact-bytes?
+  "Bytes as this runtime spells them. A *predicate* over a value arriving from
+   above — not interop that decodes, encodes, or mutates anything — and the one
+   thing here with no portable spelling, so it is also why this namespace stays
+   `.cljs`. Non-empty, matching `nonblank-string?` on the string side: an
+   artifact carrying no content is not something to publish."
+  [value]
+  (and (instance? js/Uint8Array value)
+       (pos? (alength value))))
+
+(def ArtifactContent
+  "Bytes or a string. Both are content; the difference is only whether the
+   renderer already applied `:artifact/encoding` or left it to the adapter."
+  [:or NonBlankString [:fn artifact-bytes?]])
+
+(defn valid-media-type?
+  "`type/subtype`, with no parameters.
+
+   `text/html; charset=utf-8` is refused on purpose: the character encoding is
+   its own declared field, and accepting it in two places is accepting that the
+   two can disagree, after which nothing decides which one the adapter honours."
+  [value]
+  (boolean
+   (and (string? value)
+        (re-matches #"[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*"
+                    value))))
+
+(def MediaType
+  [:and string? [:fn valid-media-type?]])
+
+(defn valid-character-encoding?
+  "An IANA charset name (`utf-8`), declared rather than defaulted.
+
+   A static file server told nothing serves bytes and lets the reader guess, and
+   a guess that lands wrong corrupts exactly the accented text a translation
+   pipeline exists to deliver — only in the locales nobody proofreads."
+  [value]
+  (boolean
+   (and (string? value)
+        (re-matches #"[A-Za-z0-9][A-Za-z0-9._:+-]*" value))))
+
+(def CharacterEncoding
+  [:and string? [:fn valid-character-encoding?]])
+
+(def revision-selector-namespace
+  "The keyword namespace every revision *selector* lives in. Named as a
+   namespace rather than as the single member `:source/current`, so a sibling
+   selector cannot be introduced without inheriting the refusal below."
+  "source")
+
+(defn revision-selector?
+  [value]
+  (and (keyword? value)
+       (= revision-selector-namespace (namespace value))))
+
+(defn free-of-revision-selectors?
+  "No selector keyword anywhere in `value` — nested, and in map keys too.
+
+   Refused for the same reason `publish-idempotency-key` refuses one: a selector
+   gives a stable-looking identity to a moving target. `:artifact/revision` is
+   already `ConcreteRevision`, so this covers everything *else* an artifact may
+   carry — an extra key holding `:source/current` would otherwise reach an
+   adapter and be written beside the bytes as \"whatever is current\", forever."
+  [value]
+  (not-any? revision-selector? (tree-seq coll? seq value)))
+
+(def PublicationArtifact
+  "The bytes a publication materializes, plus everything an adapter needs to put
+   them somewhere without re-deciding anything.
+
+   Produced ABOVE the effect boundary. `infra.publication-effects/execute-plan!`
+   receives one as an argument; no `IPublicationTarget` method returns one and no
+   adapter constructs one. One renderer, adapters that only transport. The
+   rejected alternative — producing it below, each adapter rendering from the
+   intent it was handed — reads cheaper and is the shape that diverges: two
+   targets asked to publish the same intent at the same revision can then serve
+   different bytes, and nothing in the receipt chain can say which is right.
+   Pinned by `the-artifact-is-produced-above-the-effect-boundary`, not left as
+   prose.
+
+   `:artifact/revision` is the one field cross-checked against the op, by
+   `artifact-revision-conflict` below: it is the axis `publish-idempotency-key`
+   is built from, so a disagreement there is the difference between replay-safe
+   and republishing other content under a key that already reports `done`.
+   `:artifact/locale` is declared so an adapter can address bytes by locale
+   without re-deriving it from intent, and is deliberately *not* cross-checked
+   here — which locales a target accepts at all is a separate question, owned by
+   the locale-catalog resource rather than by this shape."
+  [:and
+   [:map
+    [:artifact/content ArtifactContent]
+    [:artifact/media-type MediaType]
+    [:artifact/encoding CharacterEncoding]
+    [:artifact/locale Locale]
+    [:artifact/revision ConcreteRevision]]
+   [:fn {:error/message "a publication artifact must carry no revision selector"}
+    free-of-revision-selectors?]])
+
+(def ArtifactRevisionConflict
+  "The renderer and the planner disagreeing about what is being published. Both
+   revisions are `:any` on purpose: this record exists to carry values that
+   FAILED the revision law, so typing them as `ConcreteRevision` would make the
+   evidence unrepresentable in its own contract."
+  [:map
+   [:conflict/type [:= :publication/artifact-revision-conflict]]
+   [:conflict/artifact-revision :any]
+   [:conflict/concrete-revision :any]])
+
+(defn artifact-revision-conflict
+  "nil when the artifact and the op agree about what is being published;
+   otherwise the typed conflict, carrying BOTH revisions.
+
+   A conflict rather than a warning, because there is no safe way to pick a
+   winner: the bytes were rendered from one source state and the idempotency key
+   names another, so publishing either way records a materialization that did
+   not happen."
+  [artifact concrete-revision]
+  (let [artifact-revision (:artifact/revision artifact)]
+    (when (not= artifact-revision concrete-revision)
+      {:conflict/type :publication/artifact-revision-conflict
+       :conflict/artifact-revision artifact-revision
+       :conflict/concrete-revision concrete-revision})))
+
+(defn artifact-revision-conflict?
+  "True when `value` is the record `artifact-revision-conflict` produces, so the
+   effect boundary can carry the conflict onto a receipt instead of flattening it
+   into a message string where both revisions would be lost."
+  [value]
+  (m/validate ArtifactRevisionConflict value))
+
+(defn assert-artifact!
+  "Return the artifact when it is publishable at `concrete-revision`; otherwise
+   throw.
+
+   Shape first, then agreement — a malformed artifact has no revision worth
+   comparing. Called above any effect, so nothing is reserved, written, or
+   recorded on behalf of a publication that cannot lawfully happen."
+  [artifact concrete-revision]
+  (assert-valid! :publication/artifact PublicationArtifact artifact)
+  (when-let [conflict (artifact-revision-conflict artifact concrete-revision)]
+    (throw
+     (ex-info (str "Publication artifact revision conflict: the artifact was "
+                   "rendered from a different source state than the plan publishes")
+              conflict)))
+  artifact)

@@ -207,10 +207,16 @@
 
 (def translated-artifact
   "Distinctive content, so \"the public route serves the translated artifact\" is
-   an assertion about what is served rather than about receipt metadata."
-  {:artifact/locale target-locale
-   :artifact/revision concrete-revision
-   :artifact/body "Sonda — contenido traducido"})
+   an assertion about what is served rather than about receipt metadata.
+
+   A full `law.publication/PublicationArtifact`, not a loose bag: this journey is
+   the thing that has to fail when a renderer produces something an adapter
+   cannot write, so the fixture is held to the same contract production is."
+  {:artifact/content "Sonda — contenido traducido"
+   :artifact/media-type "text/html"
+   :artifact/encoding "utf-8"
+   :artifact/locale target-locale
+   :artifact/revision concrete-revision})
 
 (defn- ^:async converge!
   "Drive the fixture to convergence and return the receipt."
@@ -277,10 +283,36 @@
               left every assertion here green"
       (is (= translated-artifact
              (memory/served-artifact (:target-bundle system) publication-path)))
-      (is (str/includes? (:artifact/body
+      (is (str/includes? (:artifact/content
                           (memory/served-artifact (:target-bundle system)
                                                   publication-path))
                          "traducido")))))
+
+;; ── 6b a malformed artifact fails the journey instead of being served ──────
+
+(deftest ^:async a-malformed-artifact-fails-the-journey-rather-than-being-stored
+  (testing "the memory target used to store `:artifact` unexamined, so a renderer
+            that dropped the media type, the declared encoding, or the content
+            itself still produced a public route — and every assertion in this
+            file, all of which read receipt metadata, stayed green"
+    (doseq [[label bad] [["no content" (dissoc translated-artifact :artifact/content)]
+                         ["no media type" (dissoc translated-artifact :artifact/media-type)]
+                         ["no declared encoding"
+                          (dissoc translated-artifact :artifact/encoding)]
+                         ["a revision selector instead of a revision"
+                          (assoc translated-artifact :artifact/revision :source/current)]
+                         ["a revision the planner is not publishing"
+                          (assoc translated-artifact :artifact/revision "rev-stale")]]]
+      (let [system (fixture)]
+        (record-translation! system target-locale concrete-revision)
+        (record-approval! system target-locale concrete-revision)
+        (let [receipt (await (converge! system bad))]
+          (testing label
+            (is (= :publication/failed (:receipt/type receipt)))
+            (is (empty? (memory/public-routes (:target-bundle system)))
+                "nothing is public")
+            (is (zero? (memory/materialization-count (:target-bundle system)))
+                "and nothing counts as materialized")))))))
 
 ;; ── 7 one walkable receipt chain ──────────────────────────────────────────
 
