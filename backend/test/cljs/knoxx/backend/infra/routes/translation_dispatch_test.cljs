@@ -22,7 +22,8 @@
    :dispatch/document-wire-id "knoxx.docs/probe"
    :dispatch/source-locale :en
    :dispatch/org-id "org-1"
-   :dispatch/membership-id "member-1"})
+   :dispatch/membership-id "member-1"
+   :dispatch/source-digest "sha256-aaa111bbb222"})
 
 (defn- ^:async seeded-store!
   "A store holding one in-flight claim bound to `batch-1`."
@@ -35,7 +36,8 @@
      :clock (constantly at)
      ;; Agrees with the dispatched revision, so completion is not refused for
      ;; source drift. The drift path has its own test.
-     :observe-source-revision (constantly (js/Promise.resolve (:revision work)))}))
+     :observe-source-revision (constantly (js/Promise.resolve
+                                          (:dispatch/source-digest context)))}))
 
 (deftest failed-document-id-reads-both-shapes-the-worker-can-send
   (testing "a bare id string"

@@ -181,3 +181,44 @@
 
     (testing "a worker-supplied selector output revision is refused"
       (is (thrown? js/Error (law/translation-receipt accepted "source/current" at))))))
+
+(deftest drift-is-decided-against-the-recorded-digest-not-the-pinned-revision
+  ;; `law.publication/PublicationRevision` admits any nonblank string, so an
+  ;; intent may pin an opaque revision the observer can never reproduce — it only
+  ;; ever produces `sha256-...` digests. Comparing the two reported drift on
+  ;; every completion of every pinned intent, forever.
+  (let [pinned (assoc (record) :dispatch/revision "rev-verify-dispatch-1"
+                      :dispatch/source-digest "sha256-aaa")]
+    (testing "an unchanged source is not drift, even under an opaque pin"
+      (is (nil? (law/source-drift-refusal pinned "sha256-aaa"))))
+
+    (testing "a changed source is drift, and both digests travel"
+      (let [refusal (law/source-drift-refusal pinned "sha256-bbb")]
+        (is (= :source-moved-since-dispatch (:refusal/type refusal)))
+        (is (= "sha256-aaa" (:refusal/expected refusal)))
+        (is (= "sha256-bbb" (:refusal/actual refusal)))))
+
+    (testing "an unreadable source is refused, distinctly from drift"
+      (is (= :source-moved-since-dispatch
+             (:refusal/type (law/source-drift-refusal pinned nil)))))
+
+    (testing "a dispatch that recorded no digest cannot be substantiated"
+      ;; Distinct refusal type: this is a dispatch that could not read its own
+      ;; source, not a source that changed.
+      (is (= :source-unverifiable
+             (:refusal/type (law/source-drift-refusal
+                             (dissoc pinned :dispatch/source-digest)
+                             "sha256-aaa")))))))
+
+(deftest the-project-is-part-of-the-dispatch-identity
+  ;; Translation output is project-scoped, so changing the session project must
+  ;; not let the new project reuse the old project's claims and receipts.
+  (let [base {:org-id "org-1" :project "knoxx-session" :document :a/b
+              :source-locale :en :locale :es :revision "r1"}]
+    (testing "a different project is a different key"
+      (is (not= (law/dispatch-key base)
+                (law/dispatch-key (assoc base :project "other")))))
+
+    (testing "no project is its own scope rather than a wildcard"
+      (is (not= (law/dispatch-key base)
+                (law/dispatch-key (dissoc base :project)))))))

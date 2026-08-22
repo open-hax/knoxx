@@ -214,6 +214,7 @@
     [:translation/revision ConcreteRevision]
     [:translation/dispatch-key NonBlankString]
     [:translation/org-id NonBlankString]
+    [:translation/project {:optional true} [:maybe NonBlankString]]
     [:translation/at Instant]]
    [:fn {:error/message "a translation receipt's target locale must differ from its source locale"}
     ;; A receipt claiming a translation from `:en` to `:en` is not evidence of

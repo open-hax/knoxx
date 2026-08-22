@@ -85,6 +85,20 @@
                   (get declared (:translation/document receipt))))
              receipts)))
 
+(defn project-receipts
+  "Only the receipts belonging to `project`.
+
+   Translation output is project-scoped — every existing segment, document and
+   export route filters by it — so output produced under one project does not
+   exist under another. With the project ignored, changing
+   `KNOXX_SESSION_PROJECT_NAME` left the durable evidence in place and the new
+   project read the old project's receipts as its own.
+
+   A nil active project matches only receipts that also name none, so an unset
+   project is its own scope rather than a wildcard over every other."
+  [project receipts]
+  (filterv #(= project (:translation/project %)) receipts))
+
 (defn tenant-receipts
   "Only the receipts belonging to `org-id`.
 
@@ -111,10 +125,11 @@
    `translation-work` derives from the `:translation-missing` and
    `:translation-stale` blockers, never from the review blocker, so a review
    requirement does not suppress the translation that would satisfy it."
-  [config evidence-store org-id documents]
+  [config evidence-store {:keys [org-id project]} documents]
   (let [revisions (await (source-revision/source-revisions! config documents))
         receipts (->> (await (store/completed-translations! evidence-store))
                       (tenant-receipts org-id)
+                      (project-receipts project)
                       (current-source-locale-receipts documents))
         evidence (evidence-domain/evidence {:receipts receipts})]
     (merge (source-revision/revision-facts revisions)
@@ -135,7 +150,7 @@
         hydrated (hydrated-intents index document-id)
         intents (admissible-intents index hydrated)
         documents (referenced-documents index intents)
-        facts (await (gate-facts! config evidence-store (:org-id scope) documents))]
+        facts (await (gate-facts! config evidence-store scope documents))]
     {:considered (count hydrated)
      :admissible (count intents)
      :dispatched (await (dispatch/dispatch-intents! deps intents facts scope))}))

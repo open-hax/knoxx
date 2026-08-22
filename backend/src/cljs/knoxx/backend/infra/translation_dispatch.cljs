@@ -39,10 +39,16 @@
   "The dispatch context for one hydrated publication intent.
 
    The garden, the document's wire id and the source locale are facts about the
-   intent; the organization and membership are facts about the acting principal.
-   Both halves are required, and neither is defaulted — a dispatch that invented
-   an organization would file a batch in a tenant nobody named."
-  [intent {:keys [org-id membership-id project]}]
+   intent; the organization, membership and project are facts about the acting
+   principal and its configuration. None is defaulted — a dispatch that invented
+   an organization would file a batch in a tenant nobody named.
+
+   `source-digest` is the content digest observed at dispatch time, and it is
+   deliberately separate from the intent's `:publication/revision`. An intent may
+   pin an opaque revision like `\"abc123\"`, which no observer can ever reproduce;
+   completion compares digest to digest, so the digest has to be recorded
+   independently of whatever the intent chose to call the revision."
+  [intent {:keys [org-id membership-id project]} source-digest]
   (law/assert-valid!
    :translation-dispatch/context
    law/DispatchContext
@@ -53,7 +59,8 @@
             :dispatch/source-locale (:document/source-locale intent)
             :dispatch/org-id org-id
             :dispatch/membership-id membership-id}
-     (some? project) (assoc :dispatch/project project))))
+     (some? project) (assoc :dispatch/project project)
+     (some? source-digest) (assoc :dispatch/source-digest source-digest))))
 
 ;; ── Dispatch ───────────────────────────────────────────────────────────────
 
@@ -69,6 +76,16 @@
     (:batch_id (law/assert-valid! :translation-dispatch/batch-created
                                   law/BatchCreated
                                   response))))
+
+(def batch-listing-cap
+  "The row limit the batch listing applies, mirrored from
+   `extern.openplanner-translation-mongo.batches`.
+
+   Named here because this namespace has to reason about *hitting* it: a full
+   page means the listing may have truncated, so a batch missing from it is not
+   proof the batch does not exist. Mirrored rather than imported because the
+   store boundary does not expose it, and a test pins the two together."
+  50)
 
 (defn- ^:async observe-batch!
   "Ask the worker whether a batch already exists for *this* dispatch.
@@ -88,12 +105,18 @@
                          {:org_id (:dispatch/org-id context)
                           :garden_id (:dispatch/garden context)
                           :target_lang (name (:locale work))}))
+        batches (vec (:batches response))
         wanted (:dispatch/document-wire-id context)]
-    (->> (:batches response)
-         (filter (fn [batch]
-                   (and (some #(= wanted (str %)) (:document_ids batch))
-                        (law/batch-created-after? batch (:dispatch/at record)))))
-         first)))
+    {:batch (->> batches
+                 (filter (fn [batch]
+                           (and (some #(= wanted (str %)) (:document_ids batch))
+                                (law/batch-created-after? batch (:dispatch/at record)))))
+                 first)
+     ;; Absence in a capped list is not absence. The direct Mongo listing sorts
+     ;; newest-first and stops at `batch-listing-cap`, so a busy garden can push
+     ;; our batch off the end — and reading that as "the send did not land" is
+     ;; exactly how a duplicate translation happens.
+     :conclusive? (< (count batches) batch-listing-cap)}))
 
 (defn- ^:async recover-ambiguous-send!
   "Decide what an ambiguous batch creation left behind.
@@ -104,19 +127,31 @@
   [evidence-store client work context record detail]
   (let [dispatch-key (:dispatch/key record)]
     (try
-      (if-let [batch (await (observe-batch! client work context record))]
-        {:dispatch/outcome :dispatch/accepted
-         :dispatch/record (or (await (store/bind-dispatch-batch!
-                                      evidence-store dispatch-key
-                                      (str (or (:batch_id batch) (:id batch)))))
-                              record)
-         :dispatch/detail detail}
-        {:dispatch/outcome :dispatch/failed
-         :dispatch/record (or (await (store/resolve-dispatch!
-                                      evidence-store dispatch-key
-                                      :dispatch/failed detail))
-                              record)
-         :dispatch/detail detail})
+      (let [{:keys [batch conclusive?]} (await (observe-batch! client work context record))]
+        (cond
+          batch
+          {:dispatch/outcome :dispatch/accepted
+           :dispatch/record (or (await (store/bind-dispatch-batch!
+                                        evidence-store dispatch-key
+                                        (str (or (:batch_id batch) (:id batch)))))
+                                record)
+           :dispatch/detail detail}
+
+          ;; Only a conclusive absence licenses a retry.
+          conclusive?
+          {:dispatch/outcome :dispatch/failed
+           :dispatch/record (or (await (store/resolve-dispatch!
+                                        evidence-store dispatch-key
+                                        :dispatch/failed detail))
+                                record)
+           :dispatch/detail detail}
+
+          :else
+          {:dispatch/outcome :dispatch/accepted
+           :dispatch/record record
+           :dispatch/detail (str detail
+                                 "; batch listing was truncated, so absence is"
+                                 " not proof the send failed")}))
       (catch :default observe-error
         {:dispatch/outcome :dispatch/accepted
          :dispatch/record record
@@ -311,9 +346,10 @@
   (let [results (atom [])]
     (doseq [intent intents]
       (when-let [work (derived-work intent facts)]
-        (let [outcome (await (dispatch-work! deps
+        (let [digest ((:current-source-revision facts) (:publication/document intent))
+              outcome (await (dispatch-work! deps
                                              (:action/with work)
-                                             (dispatch-context intent scope)))]
+                                             (dispatch-context intent scope digest)))]
           (swap! results conj (assoc outcome
                                      :publication/id (:publication/id intent))))))
     @results))

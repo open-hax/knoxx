@@ -97,7 +97,8 @@
    [:dispatch/source-locale locale/Locale]
    [:dispatch/org-id NonBlankString]
    [:dispatch/membership-id NonBlankString]
-   [:dispatch/project {:optional true} [:maybe NonBlankString]]])
+   [:dispatch/project {:optional true} [:maybe NonBlankString]]
+   [:dispatch/source-digest {:optional true} [:maybe NonBlankString]]])
 
 ;; ── Dispatch identity ──────────────────────────────────────────────────────
 
@@ -112,11 +113,18 @@
    and a key without the tenant collapsed org B's request into a duplicate of
    org A's while org B's gate went on to report the document translated.
 
-   Membership, garden and project stay out. Those really do only scope who asked
-   and where the batch was filed; folding them in would let two principals in
-   one tenant dispatch the same translation twice, which is exactly the
-   duplicate this key exists to collapse."
-  [:org-id :document :source-locale :locale :revision])
+   The project is in for the same reason as the organization. Translation output
+   is project-scoped — every existing segment, document and export route filters
+   by it — so output produced under one project does not exist under another.
+   With the project excluded, changing `KNOXX_SESSION_PROJECT_NAME` left the
+   durable evidence in place and the new project reused dispatch keys and
+   receipts belonging to the old one.
+
+   Membership and garden stay out. Those really do only scope who asked and
+   where the batch was filed; folding them in would let two principals in one
+   tenant dispatch the same translation twice, which is exactly the duplicate
+   this key exists to collapse."
+  [:org-id :project :document :source-locale :locale :revision])
 
 (defn dispatch-key
   "One stable key per logical translation request, per tenant.
@@ -131,14 +139,14 @@
    stable-looking key for a moving target. The organization is required for the
    same class of reason: a key missing its tenant is a key for the wrong
    question."
-  [{:keys [org-id document source-locale locale revision]}]
+  [{:keys [org-id project document source-locale locale revision]}]
   (when-not (m/validate ConcreteRevision revision)
     (throw (ex-info "translation dispatch key requires a concrete revision"
                     {:document document :revision revision})))
   (when-not (m/validate NonBlankString org-id)
     (throw (ex-info "translation dispatch key requires an organization"
                     {:document document :org-id org-id})))
-  (->> [org-id document source-locale locale revision]
+  (->> [org-id project document source-locale locale revision]
        (mapv pr-str)
        (str/join "|")))
 
@@ -267,12 +275,14 @@
    [:dispatch/key NonBlankString]
    [:dispatch/outcome Outcome]
    [:dispatch/org-id NonBlankString]
+   [:dispatch/project {:optional true} [:maybe NonBlankString]]
    [:dispatch/document :qualified-keyword]
    [:dispatch/document-wire-id NonBlankString]
    [:dispatch/source-locale locale/Locale]
    [:dispatch/locale locale/Locale]
    [:dispatch/revision ConcreteRevision]
    [:dispatch/at Instant]
+   [:dispatch/source-digest {:optional true} [:maybe NonBlankString]]
    [:dispatch/batch-id {:optional true} [:maybe NonBlankString]]
    [:dispatch/detail {:optional true} [:maybe :string]]])
 
@@ -287,6 +297,7 @@
   (assert-record!
    (cond-> {:dispatch/key (dispatch-key
                            {:org-id (:dispatch/org-id context)
+                            :project (:dispatch/project context)
                             :document (:document work)
                             :source-locale (:dispatch/source-locale context)
                             :locale (:locale work)
@@ -299,6 +310,12 @@
             :dispatch/locale (:locale work)
             :dispatch/revision (:revision work)
             :dispatch/at at}
+     (some? (:dispatch/project context))
+     (assoc :dispatch/project (:dispatch/project context))
+
+     (some? (:dispatch/source-digest context))
+     (assoc :dispatch/source-digest (:dispatch/source-digest context))
+
      (some? batch-id) (assoc :dispatch/batch-id batch-id)
      (some? detail) (assoc :dispatch/detail detail))))
 
@@ -362,7 +379,8 @@
     :dispatch-already-resolved
     :worker-revision-selector
     :worker-batch-mismatch
-    :source-moved-since-dispatch})
+    :source-moved-since-dispatch
+    :source-unverifiable})
 
 (def Refusal
   "A typed refusal. Both sides travel on it: told only that something
@@ -506,13 +524,31 @@
    the content is byte-identical at completion to what it was at dispatch, the
    worker necessarily fetched those bytes.
 
-   A nil `observed-revision` means the source could not be read at all, which is
+   Compared against `:dispatch/source-digest`, **not** against
+   `:dispatch/revision`. Those are different things and conflating them was a
+   defect: `law.publication/PublicationRevision` admits any nonblank string, so
+   an intent may pin an opaque revision like `\"abc123\"` while the observer can
+   only ever produce a `sha256-...` content digest. Comparing the two reported
+   drift on every completion of every pinned intent, forever. The record
+   therefore carries the digest observed at dispatch time alongside whatever
+   revision the intent named, and the comparison is digest to digest.
+
+   A nil `observed-digest` means the source could not be read at all, which is
    also not proof, and is refused for the same reason."
-  [record observed-revision]
-  (when (not= (:dispatch/revision record) observed-revision)
-    {:refusal/type :source-moved-since-dispatch
-     :refusal/expected (:dispatch/revision record)
-     :refusal/actual observed-revision}))
+  [record observed-digest]
+  (let [dispatched (:dispatch/source-digest record)]
+    (cond
+      (nil? dispatched)
+      ;; Nothing was recorded to compare against, so nothing can be
+      ;; substantiated. Distinct from drift on purpose: this is a dispatch that
+      ;; could not read its own source, not a source that changed.
+      {:refusal/type :source-unverifiable
+       :refusal/actual observed-digest}
+
+      (not= dispatched observed-digest)
+      {:refusal/type :source-moved-since-dispatch
+       :refusal/expected dispatched
+       :refusal/actual observed-digest})))
 
 (defn translation-receipt
   "Mint completed-translation evidence from a resolved binding.
@@ -535,4 +571,5 @@
     :translation/revision output-revision
     :translation/dispatch-key (:dispatch/key record)
     :translation/org-id (:dispatch/org-id record)
+    :translation/project (:dispatch/project record)
     :translation/at at}))

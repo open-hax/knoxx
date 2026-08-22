@@ -108,7 +108,10 @@
   (:action/with (dispatch/derived-work intent facts)))
 
 (defn- context []
-  (dispatch/dispatch-context intent scope))
+  ;; The digest observed at dispatch time. Equal to the intent's revision here
+  ;; because the fixture's revision IS a content digest; a pinned opaque revision
+  ;; would differ, which is why the two are recorded separately.
+  (dispatch/dispatch-context intent scope dispatched-revision))
 
 (deftest ^:async gated-work-reaches-the-worker-with-a-concrete-revision
   (let [{:keys [batches deps]} (fixture)
@@ -562,3 +565,31 @@
       (is (not (law/batch-created-after? {:created_at "yesterday"} claim-at)))
       (is (not (law/batch-created-after? {:created_at "2026-08-22T09:00:00Z"} claim-at))
           "an instant in another format cannot be compared as a string"))))
+
+(deftest ^:async a-truncated-batch-listing-does-not-license-a-retry
+  ;; The batch listing sorts newest-first and stops at `batch-listing-cap`, so a
+  ;; busy garden can push our batch off the end. Reading that absence as "the
+  ;; send did not land" is how a duplicate translation happens.
+  (let [full-page (vec (repeat dispatch/batch-listing-cap
+                               {:batch_id "someone-elses"
+                                :created_at "2026-08-22T09:00:00.000Z"
+                                :document_ids ["knoxx.docs/other"]}))
+        {:keys [deps]} (fixture :answer (fn [_ _] (throw (ex-info "timeout" {})))
+                                :observed (fn [_] {:batches full-page}))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the claim stays in flight rather than becoming retriable"
+      (is (= :dispatch/accepted (:dispatch/outcome result)))
+      (is (re-find #"truncated" (:dispatch/detail result))))))
+
+(deftest ^:async a-short-batch-listing-does-license-a-retry
+  (let [{:keys [deps]} (fixture :answer (fn [_ _] (throw (ex-info "timeout" {})))
+                                :observed (fn [_] {:batches []}))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "an absence that is conclusive is treated as one"
+      (is (= :dispatch/failed (:dispatch/outcome result))))))
+
+(deftest the-mirrored-listing-cap-matches-the-store
+  (testing "the cap this namespace reasons about is the one the store applies"
+    ;; Mirrored rather than imported because the store boundary does not expose
+    ;; it. If that changes, this fails rather than silently drifting.
+    (is (= 50 dispatch/batch-listing-cap))))
