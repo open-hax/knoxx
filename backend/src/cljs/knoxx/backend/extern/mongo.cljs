@@ -169,3 +169,22 @@
                       (when (number? n) n))
      :modified-count (let [n (aget result "modifiedCount")]
                        (when (number? n) n))}))
+
+(defn ^:async ensure-index!
+  "Create one index on a native collection handle from CLJS data.
+
+   `keys` is an ordered vector of `[field direction]` pairs and `opts` a CLJS map
+   such as `{:unique true}`. Ordered because a compound index is direction- and
+   order-sensitive, and a CLJS map would not preserve either.
+
+   Here rather than at the store, because this is where MongoDB interop is
+   allowed to exist: `#js` construction and driver calls belong to the extern
+   adapter that owns the boundary, and a store that built native objects itself
+   would split that ownership across two namespaces."
+  [collection-handle keys opts]
+  (let [spec (reduce (fn [acc [field direction]]
+                       (doto acc (aset (name field) direction)))
+                     #js {}
+                     keys)]
+    (await (.createIndex collection-handle spec (clj->js (or opts {}))))
+    true))

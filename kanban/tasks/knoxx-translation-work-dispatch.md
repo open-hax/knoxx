@@ -111,6 +111,22 @@ visible stranded claim — but it is a real operational gap. Closing it needs a
 dispatch correlation value carried on the batch, which is a contract change in
 another repository and therefore its own cross-repo card.
 
+### A pinned revision must name the bytes that are there
+
+An intent may pin any nonblank revision, and nothing can resolve a historical or
+opaque token to content — there is no version authority, only the current file.
+So a pin that was never the bytes on disk is refused before a batch is created:
+the worker would translate its current document and the drift guard would compare
+the current digest against itself, agree, and mint a receipt claiming the pinned
+revision was translated.
+
+`:source/current` intents are unaffected, since the gate resolves them to exactly
+that digest. A pin naming the current content is equally fine. Anything else is
+`:dispatch/unreachable` — terminal, because no retry makes a pin resolvable.
+
+The narrowing is deliberate: pinning a revision Knoxx cannot observe is not a
+supported publication, and the alternative was a false receipt.
+
 ### The drift check cannot see what the worker read
 
 `source-drift-refusal` compares digests of the *repository* source. The worker

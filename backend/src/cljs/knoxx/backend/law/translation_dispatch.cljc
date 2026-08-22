@@ -380,7 +380,8 @@
     :worker-revision-selector
     :worker-batch-mismatch
     :source-moved-since-dispatch
-    :source-unverifiable})
+    :source-unverifiable
+    :pin-not-tied-to-observable-bytes})
 
 (def Refusal
   "A typed refusal. Both sides travel on it: told only that something
@@ -506,6 +507,38 @@
      (and (evidence/instant? created)
           (evidence/instant? at)
           (not (neg? (compare created at)))))))
+
+(defn pin-refusal
+  "Why `work` cannot be dispatched under `context`'s observed digest, or nil.
+
+   The case this exists for is a pin that was *never* the bytes on disk. An
+   intent may pin any nonblank revision, including a historical or opaque one, and
+   nothing here can resolve such a token to content — there is no version
+   authority, only the current file. So at dispatch time the observed digest is
+   the *current* content while `:revision` names something else entirely.
+
+   Left alone, that mismatch predates dispatch and the drift guard never sees it:
+   the worker translates its current document, completion compares the current
+   digest against the current digest, they agree, and a receipt claims the pinned
+   revision was translated. A false receipt produced without anything ever
+   changing.
+
+   So a pin must equal the digest that can be observed, or it is refused before a
+   batch is created. `:source/current` intents are unaffected — the gate resolves
+   them to that same digest, so the two are equal by construction. A pin that
+   happens to name the current content is likewise fine. A pin that names anything
+   else cannot be tied to bytes, and no receipt about it could be substantiated."
+  [work context]
+  (let [digest (:dispatch/source-digest context)]
+    (cond
+      (nil? digest)
+      {:refusal/type :source-unverifiable
+       :refusal/expected (:revision work)}
+
+      (not= (:revision work) digest)
+      {:refusal/type :pin-not-tied-to-observable-bytes
+       :refusal/expected (:revision work)
+       :refusal/actual digest})))
 
 (defn batch-matches-dispatch?
   "Whether `batch` could be the batch this dispatch created.

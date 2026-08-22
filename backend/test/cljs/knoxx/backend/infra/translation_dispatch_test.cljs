@@ -696,3 +696,75 @@
                                         :document_ids ["knoxx.docs/other"])))]
       (is (= :dispatch/accepted
              (await (observed-outcome! (fn [_] {:batches full-page}))))))))
+
+(deftest ^:async a-pin-that-was-never-the-bytes-on-disk-is-refused-before-dispatch
+  ;; The mismatch this catches *predates* dispatch, so no drift guard can see it:
+  ;; the intent pins a historical or opaque revision, the observed digest is the
+  ;; current content, the worker translates that current content, and completion
+  ;; compares the current digest against the current digest. They agree, and a
+  ;; receipt claims the pinned revision was translated. False, with nothing ever
+  ;; having changed.
+  (let [{:keys [batches deps]} (fixture)
+        pinned-context (dispatch/dispatch-context intent scope "sha256-what-is-there-now")
+        result (await (dispatch/dispatch-work! deps (work) pinned-context))]
+    (testing "no batch is created for a revision that cannot be substantiated"
+      (is (empty? @batches)))
+
+    (testing "the refusal names both the pin and the observable digest"
+      (is (= :pin-not-tied-to-observable-bytes
+             (:refusal/type (:translation/refusal result))))
+      (is (= dispatched-revision (:refusal/expected (:translation/refusal result))))
+      (is (= "sha256-what-is-there-now"
+             (:refusal/actual (:translation/refusal result)))))
+
+    (testing "the outcome is terminal, because no retry makes a pin resolvable"
+      (is (= :dispatch/unreachable (:dispatch/outcome result)))
+      (is (not (law/retriable? (:dispatch/outcome result)))))
+
+    (testing "the claim is still recorded, so the refusal is visible"
+      (let [stored (await (store/dispatch-for-key!
+                           (:evidence-store deps)
+                           (:dispatch/key (:dispatch/record result))))]
+        (is (= :dispatch/unreachable (:dispatch/outcome stored)))))))
+
+(deftest ^:async a-revision-equal-to-the-observed-digest-dispatches-normally
+  ;; A `:source/current` intent resolves to exactly this digest, so the two are
+  ;; equal by construction; a pin that happens to name the current content is
+  ;; equally fine. The refusal must not catch either.
+  (let [{:keys [batches deps]} (fixture)
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (is (= :dispatch/accepted (:dispatch/outcome result)))
+    (is (= 1 (count @batches)))
+    (is (nil? (:translation/refusal result)))))
+
+(deftest ^:async recovery-mints-a-receipt-when-the-batch-completed-and-the-source-held
+  ;; The happy path of `recover-settled-batch!`: the batch reports complete, the
+  ;; source has not moved, so the receipt lost by failed bookkeeping is
+  ;; reconstructed. Without this, a regression in `complete-if-source-agrees!`
+  ;; inside the recovery context would only be caught on the drift branch.
+  (let [{:keys [deps]} (fixture :batch-status "complete")
+        first-result (await (dispatch/dispatch-work! deps (work) (context)))
+        recovered (await (dispatch/dispatch-work! deps (work) (context)))
+        receipt (:translation/receipt recovered)]
+    (testing "the first pass leaves an in-flight claim bound to a batch"
+      (is (= :dispatch/accepted (:dispatch/outcome first-result)))
+      (is (= "batch-1" (:dispatch/batch-id (:dispatch/record first-result)))))
+
+    (testing "the next pass reconstructs the receipt from the batch's own status"
+      (is (= :dispatch/completed (:dispatch/outcome recovered)))
+      (is (some? receipt))
+      (is (= dispatched-revision (:translation/source-revision receipt)))
+      (is (= :es (:translation/locale receipt))))
+
+    (testing "the receipt is durable and the claim is settled"
+      (is (= 1 (count (await (store/completed-translations!
+                              (:evidence-store deps) evidence-scope)))))
+      (is (= :dispatch/completed
+             (:dispatch/outcome (await (store/dispatch-for-key!
+                                        (:evidence-store deps)
+                                        (:dispatch/key (:dispatch/record first-result))))))))
+
+    (testing "a third pass has nothing left to do"
+      (is (= :dispatch/duplicate
+             (:dispatch/outcome (await (dispatch/dispatch-work!
+                                        deps (work) (context)))))))))

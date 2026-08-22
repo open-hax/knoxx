@@ -55,6 +55,10 @@
 (defn ^:async setup-indexes!
   "Create required indexes. Idempotent.
 
+   Every index goes through `extern.mongo/ensure-index!` rather than the driver
+   directly: `#js` construction and driver calls belong to the extern adapter
+   that owns the MongoDB boundary, and this namespace is `infra.*`.
+
    The unique index on `dispatch_key` is not an optimization — it IS the atomic
    claim. `reserve-dispatch!` relies on the insert being refused by this index
    to learn that another caller got there first. Without it, two concurrent
@@ -63,13 +67,14 @@
   [db]
   (let [dispatches (dispatches-coll db)
         receipts (receipts-coll db)]
-    (await (.createIndex dispatches #js {"dispatch_key" 1} #js {"unique" true}))
+    (await (extern-mongo/ensure-index! dispatches [[:dispatch_key 1]] {:unique true}))
     ;; The join `dispatch-for-batch-document!` performs.
-    (await (.createIndex dispatches #js {"batch_id" 1 "document_wire_id" 1}))
-    (await (.createIndex receipts #js {"dispatch_key" 1}))
-    (await (.createIndex receipts #js {"document" 1 "locale" 1 "source_revision" 1}))
+    (await (extern-mongo/ensure-index! dispatches [[:batch_id 1] [:document_wire_id 1]] {}))
+    (await (extern-mongo/ensure-index! receipts [[:dispatch_key 1]] {}))
+    (await (extern-mongo/ensure-index! receipts
+                                       [[:document 1] [:locale 1] [:source_revision 1]] {}))
     ;; The scope every evidence read narrows by.
-    (await (.createIndex receipts #js {"org_id" 1 "project" 1}))
+    (await (extern-mongo/ensure-index! receipts [[:org_id 1] [:project 1]] {}))
     true))
 
 ;; ── Codecs ─────────────────────────────────────────────────────────────────

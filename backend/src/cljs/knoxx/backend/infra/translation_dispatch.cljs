@@ -306,21 +306,10 @@
 
       {:dispatch/outcome :dispatch/duplicate :dispatch/record record})))
 
-(defn ^:async dispatch-work!
-  "Dispatch one derived translation work item, exactly once.
-
-   The claim is taken *before* the worker is called. Calling first and recording
-   after would leave a window in which a second pass sees no claim, enqueues a
-   second batch, and translates the same revision twice — and the second
-   translation cannot be withdrawn, because nothing recorded that the first was
-   already asked for.
-
-   Returns the outcome and the record it applies to. A duplicate is not an
-   error: it is the correct answer to asking twice."
-  [{:keys [evidence-store client clock] :as deps} work context]
-  (let [checked-work (law/assert-valid! :translation-dispatch/work law/DerivedWork work)
-        record (law/dispatch-record checked-work context :dispatch/accepted (clock))
-        reservation (await (store/reserve-dispatch! evidence-store record))]
+(defn- ^:async reserve-and-send!
+  "Claim the key, then send or report what the existing claim says."
+  [{:keys [evidence-store client] :as deps} checked-work context record]
+  (let [reservation (await (store/reserve-dispatch! evidence-store record))]
     (case (:reservation/status reservation)
       :reserved (await (accept-dispatch! evidence-store client checked-work context
                                          (:record reservation)))
@@ -341,6 +330,39 @@
       :done
       {:dispatch/outcome :dispatch/duplicate
        :dispatch/record (:record reservation)})))
+
+(defn ^:async dispatch-work!
+  "Dispatch one derived translation work item, exactly once.
+
+   The claim is taken *before* the worker is called. Calling first and recording
+   after would leave a window in which a second pass sees no claim, enqueues a
+   second batch, and translates the same revision twice — and the second
+   translation cannot be withdrawn, because nothing recorded that the first was
+   already asked for.
+
+   Returns the outcome and the record it applies to. A duplicate is not an
+   error: it is the correct answer to asking twice."
+  [{:keys [evidence-store client clock] :as deps} work context]
+  (let [checked-work (law/assert-valid! :translation-dispatch/work law/DerivedWork work)
+        pin-refusal (law/pin-refusal checked-work context)
+        record (law/dispatch-record checked-work
+                                    context
+                                    (if pin-refusal
+                                      law/unreachable-outcome
+                                      :dispatch/accepted)
+                                    (clock))]
+    (if pin-refusal
+      ;; Refused before any batch is created: a revision that cannot be tied to
+      ;; observable bytes can never be substantiated by a receipt, so asking the
+      ;; worker for it would only produce a false one. Terminal, because no retry
+      ;; can make the pin resolvable. The claim is still recorded, so an operator
+      ;; can see the intent was considered and why it was refused.
+      (do
+        (await (store/reserve-dispatch! evidence-store record))
+        {:dispatch/outcome law/unreachable-outcome
+         :dispatch/record record
+         :translation/refusal pin-refusal})
+      (await (reserve-and-send! deps checked-work context record)))))
 
 ;; ── Deriving work from desired state ───────────────────────────────────────
 
