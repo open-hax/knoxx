@@ -24,6 +24,16 @@
    :translation/review :required
    :document/source-locale :en})
 
+(def artifact
+  "Rendered ABOVE the boundary and handed to it, at the same revision `facts`
+   reports as current — an artifact naming a different one is a conflict, not
+   something the seam is allowed to publish."
+  {:artifact/content "<!doctype html><p>demo</p>"
+   :artifact/media-type "text/html"
+   :artifact/encoding "utf-8"
+   :artifact/locale :es
+   :artifact/revision "abc123"})
+
 (def resource-index
   {:gardens {:knoxx.docs/promethean {:garden/id :knoxx.docs/promethean
                                      :garden/status :active}
@@ -54,7 +64,7 @@
                                           (facts target-bundle))]
     {:plan current-plan
      :receipt (await (effects/execute-plan! store (:target target-bundle)
-                                            {} current-plan nil))}))
+                                            {} current-plan artifact))}))
 
 ;; ── 5 the card's own sketch ───────────────────────────────────────────────
 
@@ -81,9 +91,9 @@
           target-bundle (memory/memory-target)
           publish-plan (plan/reconcile-plan resource-index intent (facts target-bundle))
           first-receipt (await (effects/execute-plan!
-                                store (:target target-bundle) {} publish-plan nil))
+                                store (:target target-bundle) {} publish-plan artifact))
           replay-receipt (await (effects/execute-plan!
-                                 store (:target target-bundle) {} publish-plan nil))]
+                                 store (:target target-bundle) {} publish-plan artifact))]
       (is (= first-receipt replay-receipt))
       (is (= 1 (memory/materialization-count target-bundle)))
       (is (= 1 (count (memory/public-routes target-bundle)))))))

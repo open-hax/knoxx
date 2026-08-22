@@ -26,6 +26,15 @@
    :previous nil
    :concrete-revision "probe-revision"})
 
+(def artifact
+  "What the renderer hands the boundary. Produced ABOVE it — `execute-plan!`
+   takes it as an argument, which is the whole reason it can be a fixture here."
+  {:artifact/content "<!doctype html><p>Sonda</p>"
+   :artifact/media-type "text/html"
+   :artifact/encoding "utf-8"
+   :artifact/locale :es
+   :artifact/revision "probe-revision"})
+
 ;; ── In-memory adapter and store ────────────────────────────────────────────
 
 (defn- fake-store []
@@ -134,7 +143,7 @@
   (let [{:keys [store]} (fake-store)
         {:keys [target calls]} (fake-target {})
         receipt (await (effects/execute-plan!
-                        store target {} (dissoc publish-plan :concrete-revision) nil))]
+                        store target {} (dissoc publish-plan :concrete-revision) artifact))]
     (is (= :publication/failed (:receipt/type receipt)))
     (is (empty? @calls) "no effect may run for an invalid plan")))
 
@@ -147,7 +156,7 @@
           previous {:materialized/revision "old" :materialized/path "/old-route"}
           _ (swap! routes assoc "/old-route" previous)
           receipt (await (effects/execute-plan!
-                          store target {} (assoc publish-plan :previous previous) nil))]
+                          store target {} (assoc publish-plan :previous previous) artifact))]
       (is (= :publication/materialized (:receipt/type receipt)))
       (is (= ["/probe"] (keys @routes)) "the stale route is gone")))
   (testing ":remove uses the plan's :observed"
@@ -175,8 +184,8 @@
 (deftest ^:async replay-of-identical-publish-converges
   (let [{:keys [store]} (fake-store)
         {:keys [target routes calls]} (fake-target {})
-        first-receipt (await (effects/execute-plan! store target {} publish-plan nil))
-        second-receipt (await (effects/execute-plan! store target {} publish-plan nil))]
+        first-receipt (await (effects/execute-plan! store target {} publish-plan artifact))
+        second-receipt (await (effects/execute-plan! store target {} publish-plan artifact))]
     (is (= first-receipt second-receipt))
     (is (= 1 (count @routes)) "exactly one materialization")
     (is (= 1 (count (filter #(= :publish! (first %)) @calls)))
@@ -187,14 +196,14 @@
             replay must converge on the existing route, not duplicate it"
     (let [{:keys [store]} (fake-store)
           {:keys [target routes calls]} (fake-target {:swallow-response? true})
-          failed (await (effects/execute-plan! store target {} publish-plan nil))]
+          failed (await (effects/execute-plan! store target {} publish-plan artifact))]
       (is (= :publication/failed (:receipt/type failed)))
       (is (= 1 (count @routes)) "the artifact WAS created despite the failure")
       (testing "the claim is retained, so the replay OBSERVES rather than
                 republishing — convergence must not depend on the adapter
                 deduplicating on our behalf"
         (reset! calls [])
-        (let [replay (await (effects/execute-plan! store target {} publish-plan nil))]
+        (let [replay (await (effects/execute-plan! store target {} publish-plan artifact))]
           (is (= :publication/materialized (:receipt/type replay)))
           (is (= 1 (count @routes)) "no second artifact")
           (is (not-any? #(= :publish! (first %)) @calls)
@@ -212,7 +221,7 @@
       (swap! state assoc idempotency-key {:claimed? true})
       (swap! routes assoc "/probe" {:materialized/revision "probe-revision"
                                     :materialized/path "/probe"})
-      (let [receipt (await (effects/execute-plan! store target {} publish-plan nil))]
+      (let [receipt (await (effects/execute-plan! store target {} publish-plan artifact))]
         (is (= :publication/materialized (:receipt/type receipt)))
         (is (= 1 (count @routes)))
         (is (not-any? #(= :publish! (first %)) @calls)
@@ -227,7 +236,7 @@
         previous {:materialized/revision "probe-revision" :materialized/path "/old-route"}
         _ (swap! routes assoc "/old-route" previous)
         receipt (await (effects/execute-plan!
-                        store target {} (assoc publish-plan :previous previous) nil))]
+                        store target {} (assoc publish-plan :previous previous) artifact))]
     (is (= :publication/materialized (:receipt/type receipt)))
     (is (= ["/probe"] (keys @routes)))
     (is (nil? (get @routes "/old-route")) "the old route is unavailable")
@@ -273,7 +282,7 @@
   (let [{:keys [store]} (fake-store)
         {:keys [target]} (fake-target {:fail? true})
         before intent
-        receipt (await (effects/execute-plan! store target {} publish-plan nil))]
+        receipt (await (effects/execute-plan! store target {} publish-plan artifact))]
     (is (= :publication/failed (:receipt/type receipt)))
     (is (true? (:failure/drift? receipt)))
     (is (str/includes? (:failure/reason receipt) "adapter exploded"))
@@ -283,7 +292,7 @@
     (testing "and a retry still proceeds: the retained claim is reconciled by
               observation, which finds nothing and then republishes"
       (let [{:keys [target routes]} (fake-target {})
-            retry (await (effects/execute-plan! store target {} publish-plan nil))]
+            retry (await (effects/execute-plan! store target {} publish-plan artifact))]
         (is (= :publication/materialized (:receipt/type retry)))
         (is (= 1 (count @routes)))))))
 
@@ -350,9 +359,103 @@
                                wrong)))
                      (remove! [_ _ctx _intent _observed] (js/Promise.resolve nil))
                      (observe! [_ _ctx _intent] (js/Promise.resolve nil)))
-            receipt (await (effects/execute-plan! store target {} publish-plan nil))]
+            receipt (await (effects/execute-plan! store target {} publish-plan artifact))]
         (testing label
           (is (= :publication/failed (:receipt/type receipt)))
           (is (not-any? :receipt (vals @state))
               "nothing may be recorded as done for a materialization we cannot confirm"))))))
 
+
+;; ── the artifact is checked on the way IN, as the receipt is on the way OUT ──
+
+(deftest ^:async a-malformed-artifact-fails-before-any-effect
+  (testing "`:artifact` used to be an unnamed payload the boundary forwarded and
+            the target stored, so an artifact with no media type, no declared
+            encoding, or no content at all became a SERVED route while every
+            assertion about the materialization stayed green"
+    (doseq [[label bad] [["absent entirely" nil]
+                         ["not a map" "<!doctype html>"]
+                         ["no content" (dissoc artifact :artifact/content)]
+                         ["blank content" (assoc artifact :artifact/content "   ")]
+                         ["empty bytes" (assoc artifact :artifact/content
+                                               (js/Uint8Array. 0))]
+                         ["no media type" (dissoc artifact :artifact/media-type)]
+                         ["media type with a charset parameter"
+                          (assoc artifact :artifact/media-type "text/html; charset=utf-8")]
+                         ["no declared encoding" (dissoc artifact :artifact/encoding)]
+                         ["no locale" (dissoc artifact :artifact/locale)]
+                         ["a namespaced locale" (assoc artifact :artifact/locale :locale/es)]
+                         ["no revision" (dissoc artifact :artifact/revision)]]]
+      (let [{:keys [store state]} (fake-store)
+            {:keys [target calls routes]} (fake-target {})
+            receipt (await (effects/execute-plan! store target {} publish-plan bad))]
+        (testing label
+          (is (= :publication/failed (:receipt/type receipt)))
+          (is (true? (:failure/drift? receipt)))
+          (is (empty? @calls) "no effect may run for a malformed artifact")
+          (is (empty? @routes) "and nothing may be served")
+          (is (empty? @state)
+              "not even a reservation: a claim for a publication that cannot
+               happen is a claim nobody will ever complete"))))))
+
+(deftest ^:async the-artifact-refuses-a-revision-selector-anywhere
+  (testing "for the reason publish-idempotency-key refuses one — a selector gives
+            a stable-looking identity to a moving target. `:artifact/revision` is
+            typed, so the interesting cases are the ones a shape check alone
+            misses: a selector riding along on some other key."
+    (doseq [[label bad] [["as the revision itself"
+                          (assoc artifact :artifact/revision :source/current)]
+                         ["on an extra top-level key"
+                          (assoc artifact :render/from :source/current)]
+                         ["nested inside a map"
+                          (assoc artifact :render/provenance {:revision :source/current})]
+                         ["nested inside a vector"
+                          (assoc artifact :render/inputs [:source/current])]
+                         ["as a map KEY"
+                          (assoc artifact :render/by {:source/current "probe-revision"})]
+                         ["a sibling selector nobody has invented yet"
+                          (assoc artifact :render/from :source/head)]]]
+      (let [{:keys [store state]} (fake-store)
+            {:keys [target calls]} (fake-target {})
+            receipt (await (effects/execute-plan! store target {} publish-plan bad))]
+        (testing label
+          (is (= :publication/failed (:receipt/type receipt)))
+          (is (empty? @calls))
+          (is (empty? @state)))))))
+
+(deftest ^:async an-artifact-revision-conflict-is-typed-and-carries-both-revisions
+  (testing "the renderer and the planner disagreeing about what is being
+            published is a CONFLICT, not a warning: the bytes came from one
+            source state and the idempotency key names another, so publishing
+            either way records a materialization that did not happen"
+    (let [{:keys [store state]} (fake-store)
+          {:keys [target calls routes]} (fake-target {})
+          stale (assoc artifact :artifact/revision "an-older-revision")
+          receipt (await (effects/execute-plan! store target {} publish-plan stale))]
+      (is (= :publication/failed (:receipt/type receipt)))
+      (testing "and BOTH revisions survive onto the receipt — a reader has to be
+                able to tell which side was stale, which a message string cannot"
+        (is (= {:conflict/type :publication/artifact-revision-conflict
+                :conflict/artifact-revision "an-older-revision"
+                :conflict/concrete-revision "probe-revision"}
+               (:failure/conflict receipt)))
+        (is (true? (law/artifact-revision-conflict? (:failure/conflict receipt)))))
+      (is (empty? @calls) "nothing was published")
+      (is (empty? @routes))
+      (is (empty? @state) "and nothing was claimed"))))
+
+(deftest ^:async an-agreeing-artifact-publishes-as-bytes-or-as-a-string
+  (testing "bytes and a string are both content; the difference is only whether
+            the renderer already applied the declared encoding"
+    (doseq [[label content] [["a string" "<!doctype html><p>Sonda</p>"]
+                             ["bytes" (.encode (js/TextEncoder.)
+                                               "<!doctype html><p>Sonda</p>")]]]
+      (let [{:keys [store]} (fake-store)
+            {:keys [target routes]} (fake-target {})
+            receipt (await (effects/execute-plan!
+                            store target {}
+                            publish-plan
+                            (assoc artifact :artifact/content content)))]
+        (testing label
+          (is (= :publication/materialized (:receipt/type receipt)))
+          (is (= 1 (count @routes))))))))

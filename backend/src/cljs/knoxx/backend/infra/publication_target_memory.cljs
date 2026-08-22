@@ -9,7 +9,8 @@
   publication would be *observable* rather than assumed away. The store honours
   the same atomic reservation contract production must: a single swap claims the
   key, with no await between reading it and claiming it."
-  (:require [knoxx.backend.infra.publication-effects :as effects]))
+  (:require [knoxx.backend.infra.publication-effects :as effects]
+            [knoxx.backend.law.publication-receipts :as law]))
 
 (defn memory-store
   []
@@ -55,6 +56,22 @@
        (filter #(= (:publication/id %) (:publication/id intent)))
        first))
 
+(defn- assert-publishable!
+  "An adapter validates what it is handed rather than trusting its caller.
+
+   `publish!` is a protocol method, reachable without going through
+   `execute-plan!`, so the boundary's check is not this adapter's check. Storing
+   the artifact unexamined is what made a malformed one invisible: it became a
+   *served* route while every assertion about the materialization — all of which
+   read receipt metadata — stayed green. A test double that accepts anything
+   proves the seam against a payload no real adapter could write.
+
+   Deliberately the same `law` call the boundary makes, not a looser copy: an
+   adapter that admitted more than the boundary would be the one place a
+   contradiction could live."
+  [op]
+  (law/assert-artifact! (:artifact op) (:concrete-revision op)))
+
 (defn- record-route!
   "Materialize `op`, replacing the prior route rather than leaving it public
    alongside the new one.
@@ -64,14 +81,25 @@
    dropped on the floor: a caller could corrupt or omit the published body and
    every assertion about the materialization still passed, because they all read
    receipt metadata. The returned receipt is unchanged — an artifact is content,
-   not evidence, and receipts carry evidence."
-  [routes adapter-id op]
+   not evidence, and receipts carry evidence.
+
+   The artifact is stored EXACTLY as handed over. This adapter transports; it
+   does not render, re-encode, or fill anything in.
+
+   `publish-count` is bumped here rather than at the call site so both pieces of
+   evidence that a materialization happened — the route and the count — are owned
+   by the one function that can only reach them after the artifact was accepted.
+   Counted before validation, a refused artifact reads as a materialization that
+   occurred, which is the exact claim this adapter exists to make checkable."
+  [routes publish-count adapter-id op]
+  (assert-publishable! op)
   (let [receipt (materialization adapter-id op)]
     (swap! routes (fn [current]
                     (-> current
                         (dissoc (get-in op [:previous :materialized/path]))
                         (assoc (:materialized/path receipt)
                                (assoc receipt :route/artifact (:artifact op))))))
+    (swap! publish-count inc)
     receipt))
 
 (defn memory-target
@@ -91,8 +119,7 @@
         (publish! [_ _ctx op]
           (when fail?
             (throw (ex-info "memory target publish failed" {})))
-          (swap! publish-count inc)
-          (js/Promise.resolve (record-route! routes id op)))
+          (js/Promise.resolve (record-route! routes publish-count id op)))
         (remove! [_ _ctx intent observed]
           (swap! routes dissoc (:materialized/path observed))
           ;; `:publication/id` is what `observed-for` filters on. Without it the
