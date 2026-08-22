@@ -35,10 +35,12 @@
    :artifact/revision "abc123"})
 
 (def resource-index
-  {:gardens {:knoxx.docs/promethean {:garden/id :knoxx.docs/promethean
-                                     :garden/status :active}
-             :knoxx.docs/legacy {:garden/id :knoxx.docs/legacy
-                                 :garden/status :archived}}})
+   {:gardens {:knoxx.docs/promethean {:garden/id :knoxx.docs/promethean
+                                      :garden/status :active
+                                      :garden/locales [:en :es]}
+              :knoxx.docs/legacy {:garden/id :knoxx.docs/legacy
+                                  :garden/status :archived
+                                  :garden/locales [:en]}}})
 
 (defn- facts
   "Clean evidence, with observation read live from the target so the planner sees
@@ -220,4 +222,3 @@
       (testing "the contract refuses an unattributable removal outright"
         (is (thrown? js/Error
                      (law/assert-receipt! (dissoc removal-receipt :publication/id))))))))
-

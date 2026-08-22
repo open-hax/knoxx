@@ -141,7 +141,17 @@
                  (and (string? value) (seq value)) (keyword value))]
     (if (and locale (m/validate law/Locale locale))
       {:ok locale}
-      (conflict :unknown-locale field value row))))
+       (conflict :unknown-locale field value row))))
+
+(defn decode-garden-locales
+  "Decode a legacy target's explicit locale catalog without inventing a default.
+   The website owns reader-side defaults; a migration may only write locales the
+   legacy target actually declared."
+  [row]
+  (let [locales (:locales row)]
+    (if (m/validate law/LocaleCatalog locales)
+      {:ok locales}
+      (conflict :invalid-garden-locales :locales locales row))))
 
 (defn decode-revision
   [row]
@@ -220,18 +230,22 @@
 (defn garden->decision
   [policy row]
   (let [status (decode-garden-status row)
+        locales (decode-garden-locales row)
         garden-id (ident/canonical-garden-id policy row)]
     (cond
       (conflict? status) status
+
+      (conflict? locales) locales
 
       (nil? garden-id)
       (conflict :unresolvable-garden-identity :garden-id (:garden-id row) row)
 
       :else
       {:migration/status :candidate
-       :resource {:garden/id garden-id
-                  :garden/title (or (:title row) "")
-                  :garden/status (:ok status)}})))
+        :resource {:garden/id garden-id
+                   :garden/title (or (:title row) "")
+                   :garden/status (:ok status)
+                   :garden/locales (:ok locales)}})))
 
 (defn- identity-conflict
   "First identity component that cannot be represented faithfully, or nil.

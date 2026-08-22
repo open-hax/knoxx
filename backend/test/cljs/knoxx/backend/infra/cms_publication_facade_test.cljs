@@ -30,7 +30,8 @@
    :document/source-locale :en})
 
 (def garden
-  {:garden/id :knoxx.docs/promethean :garden/title "Promethean" :garden/status :active})
+  {:garden/id :knoxx.docs/promethean :garden/title "Promethean" :garden/status :active
+   :garden/locales [:en :es]})
 
 (def no-evidence {:receipts {} :blockers {}})
 

@@ -10,22 +10,19 @@
   route, collection, or identifier is required to satisfy any schema in this
   namespace."
   (:require [clojure.string :as str]
-            [malli.core :as m]
-            [malli.error :as me]))
+             [malli.core :as m]
+             [malli.error :as me]
+             [knoxx.backend.law.publication-locale :as locale]))
 
 ;; ── Locale ─────────────────────────────────────────────────────────────────
 
-(defn locale-keyword?
-  "A bare language tag (`:en`) or dashed variant (`:en-US`), as a keyword.
-   Namespaced document/garden ids are validated separately via
-   `qualified-keyword?` — locales are never namespaced."
-  [value]
-  (and (keyword? value)
-       (nil? (namespace value))
-       (boolean (re-matches #"[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*" (name value)))))
-
 (def Locale
-  [:and keyword? [:fn locale-keyword?]])
+  "Re-exported portable language tag contract."
+  locale/Locale)
+
+(def LocaleCatalog
+  "A target's explicit, non-empty, duplicate-free catalog of accepted locales."
+  locale/LocaleCatalog)
 
 ;; ── Publication path ───────────────────────────────────────────────────────
 
@@ -69,7 +66,8 @@
   [:map
    [:garden/id qualified-keyword?]
    [:garden/title string?]
-   [:garden/status [:enum :active :archived]]])
+   [:garden/status [:enum :active :archived]]
+   [:garden/locales LocaleCatalog]])
 
 (def PublicationRevision
   "A revision *selector*: either a concrete revision or the `:source/current`
@@ -229,10 +227,25 @@
   (boolean
    (and (contains? reconcilable-publication-states (:publication/state intent))
         (contains? (:documents resource-index) (:publication/document intent))
-        (contains? (:gardens resource-index) (:publication/garden intent))
-        (= :active
-           (:garden/status
-            (get-in resource-index [:gardens (:publication/garden intent)]))))))
+         (contains? (:gardens resource-index) (:publication/garden intent))
+         (= :active
+            (:garden/status
+             (get-in resource-index [:gardens (:publication/garden intent)])))
+         (contains? (set (:garden/locales
+                          (get-in resource-index [:gardens (:publication/garden intent)])))
+                    (:publication/locale intent)))))
+
+(defn publication-locale-blocker
+  "Return the explicit reconciliation blocker when `intent` asks a target for an
+   unsupported locale, otherwise nil. This names the failed relation rather than
+   returning a generic inadmissible result so reconciliation records why it
+   declined to materialize a route."
+  [resource-index intent]
+  (let [target (get-in resource-index [:gardens (:publication/garden intent)])]
+    (when (and target
+               (not (contains? (set (:garden/locales target))
+                               (:publication/locale intent))))
+      :publication-locale-unsupported)))
 
 ;; ── The materialized artifact ──────────────────────────────────────────────
 
@@ -316,14 +329,12 @@
    Pinned by `the-artifact-is-produced-above-the-effect-boundary`, not left as
    prose.
 
-   `:artifact/revision` is the one field cross-checked against the op, by
+    `:artifact/revision` is cross-checked against the op, by
    `artifact-revision-conflict` below: it is the axis `publish-idempotency-key`
    is built from, so a disagreement there is the difference between replay-safe
    and republishing other content under a key that already reports `done`.
-   `:artifact/locale` is declared so an adapter can address bytes by locale
-   without re-deriving it from intent, and is deliberately *not* cross-checked
-   here — which locales a target accepts at all is a separate question, owned by
-   the locale-catalog resource rather than by this shape."
+    `:artifact/locale` is cross-checked against intent at the effect boundary
+    before an adapter can derive an artifact path from it."
   [:and
    [:map
     [:artifact/content ArtifactContent]
@@ -343,6 +354,17 @@
    [:conflict/type [:= :publication/artifact-revision-conflict]]
    [:conflict/artifact-revision :any]
    [:conflict/concrete-revision :any]])
+
+(def artifact-locale-identity-decision
+  "The locale identity decision for publication adapters: cross-check the
+   renderer artifact against publication intent before effects. Adapters may use
+   `:artifact/locale` to address bytes only after this boundary has established
+   equality, preventing wrong-language bytes behind an intent-derived route."
+  :cross-check)
+
+(def ArtifactLocaleConflict
+  "Re-exported portable artifact-versus-intent locale conflict contract."
+  locale/ArtifactLocaleConflict)
 
 (defn artifact-revision-conflict
   "nil when the artifact and the op agree about what is being published;
@@ -366,18 +388,39 @@
   [value]
   (m/validate ArtifactRevisionConflict value))
 
+(defn artifact-locale-conflict
+  "nil when `artifact` and `intent` name the same locale; otherwise return the
+   typed conflict that preserves both values for a failed receipt."
+  [artifact intent]
+  (locale/artifact-locale-conflict artifact intent))
+
+(defn artifact-locale-conflict?
+  "True when `value` is the typed locale-identity conflict emitted at the
+   publication effect boundary."
+  [value]
+  (locale/artifact-locale-conflict? value))
+
 (defn assert-artifact!
   "Return the artifact when it is publishable at `concrete-revision`; otherwise
    throw.
 
    Shape first, then agreement — a malformed artifact has no revision worth
-   comparing. Called above any effect, so nothing is reserved, written, or
-   recorded on behalf of a publication that cannot lawfully happen."
-  [artifact concrete-revision]
-  (assert-valid! :publication/artifact PublicationArtifact artifact)
-  (when-let [conflict (artifact-revision-conflict artifact concrete-revision)]
-    (throw
-     (ex-info (str "Publication artifact revision conflict: the artifact was "
-                   "rendered from a different source state than the plan publishes")
-              conflict)))
-  artifact)
+   comparing. The three-argument form additionally cross-checks locale identity
+   before adapter effects. Called above any effect, so nothing is reserved,
+   written, or recorded on behalf of a publication that cannot lawfully happen."
+  ([artifact concrete-revision]
+   (assert-artifact! artifact nil concrete-revision))
+  ([artifact intent concrete-revision]
+   (assert-valid! :publication/artifact PublicationArtifact artifact)
+   (when-let [conflict (artifact-revision-conflict artifact concrete-revision)]
+     (throw
+      (ex-info (str "Publication artifact revision conflict: the artifact was "
+                    "rendered from a different source state than the plan publishes")
+               conflict)))
+   (when (some? intent)
+     (when-let [conflict (artifact-locale-conflict artifact intent)]
+       (throw
+        (ex-info (str "Publication artifact locale conflict: the artifact locale "
+                      "differs from the publication intent")
+                 conflict))))
+   artifact))

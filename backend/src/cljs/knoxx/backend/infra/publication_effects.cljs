@@ -161,7 +161,7 @@
   [store target ctx plan artifact]
   (let [intent (:intent plan)
         concrete-revision (:concrete-revision plan)
-        checked (law/assert-artifact! artifact concrete-revision)
+        checked (law/assert-artifact! artifact intent concrete-revision)
         idempotency-key (publish-idempotency-key (target-id target)
                                                  intent
                                                  concrete-revision)]
@@ -212,8 +212,9 @@
                                             (:concrete-revision plan))
                    (catch :default _ nil)))
 
-       (law/artifact-revision-conflict? evidence)
-       (assoc :failure/conflict evidence)))))
+        (or (law/artifact-revision-conflict? evidence)
+            (law/artifact-locale-conflict? evidence))
+        (assoc :failure/conflict evidence)))))
 
 (defn ^:async execute-plan!
   "Execute a validated plan and return a validated receipt.

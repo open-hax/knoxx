@@ -442,7 +442,8 @@
 ;; ── Fold phases ───────────────────────────────────────────────────────────
 
 (deftest ^:async fold-migrates-documents-and-gardens-too
-  (let [garden-row {:garden-id "garden-a" :title "Garden A" :status "active"}
+  (let [garden-row {:garden-id "garden-a" :title "Garden A" :status "active"
+                    :locales [:en]}
         row (membership-row legacy-document)
         {:keys [ctx]} (fake-ctx {:documents [legacy-document]
                                  :gardens [garden-row]

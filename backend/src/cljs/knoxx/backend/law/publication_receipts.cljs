@@ -25,6 +25,15 @@
 (def ArtifactRevisionConflict
   publication/ArtifactRevisionConflict)
 
+(def ArtifactLocaleConflict
+  "Re-exported locale-identity conflict so the effect boundary carries all
+   publication artifact refusal evidence through one law namespace."
+  publication/ArtifactLocaleConflict)
+
+(def PublicationArtifactConflict
+  "Any typed conflict that can prevent an artifact from being materialized."
+  [:or ArtifactRevisionConflict ArtifactLocaleConflict])
+
 ;; ── Plans entering the effect layer ────────────────────────────────────────
 
 (def PlanOp
@@ -103,7 +112,7 @@
    [:failure/reason publication/NonBlankString]
    [:failure/drift? [:= true]]
    [:idempotency/key {:optional true} [:maybe :string]]
-   [:failure/conflict {:optional true} [:maybe ArtifactRevisionConflict]]])
+    [:failure/conflict {:optional true} [:maybe PublicationArtifactConflict]]])
 
 (def Receipt
   [:multi {:dispatch :receipt/type}
@@ -130,8 +139,10 @@
    Called before the idempotency key is derived and before the store is touched,
    so a publication that cannot lawfully happen leaves no reservation behind for
    a later attempt to reconcile."
-  [artifact concrete-revision]
-  (publication/assert-artifact! artifact concrete-revision))
+  ([artifact concrete-revision]
+   (publication/assert-artifact! artifact concrete-revision))
+  ([artifact intent concrete-revision]
+   (publication/assert-artifact! artifact intent concrete-revision)))
 
 (defn artifact-revision-conflict?
   "True when a thrown `ex-data` is the typed artifact-revision conflict, so the
@@ -139,3 +150,9 @@
    inside a message string."
   [value]
   (publication/artifact-revision-conflict? value))
+
+(defn artifact-locale-conflict?
+  "True when a thrown `ex-data` is the typed artifact-locale conflict, so the
+   boundary preserves both locale values on the failed receipt."
+  [value]
+  (publication/artifact-locale-conflict? value))

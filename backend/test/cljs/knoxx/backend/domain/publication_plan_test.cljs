@@ -6,10 +6,12 @@
 ;; ── Fixtures ───────────────────────────────────────────────────────────────
 
 (def active-garden
-  {:garden/id :knoxx.docs/promethean :garden/title "Promethean" :garden/status :active})
+  {:garden/id :knoxx.docs/promethean :garden/title "Promethean" :garden/status :active
+   :garden/locales [:en :es]})
 
 (def archived-garden
-  {:garden/id :knoxx.docs/legacy :garden/title "Legacy" :garden/status :archived})
+  {:garden/id :knoxx.docs/legacy :garden/title "Legacy" :garden/status :archived
+   :garden/locales [:en]})
 
 (def resource-index
   {:gardens {:knoxx.docs/promethean active-garden
@@ -159,7 +161,14 @@
     (is (= [:publication-revision-unresolved] (:blockers result)))
     (is (nil? (:concrete-revision result)))
     (testing "no publish plan is emitted"
-      (is (not= :publish (:op result))))))
+    (is (not= :publish (:op result))))))
+
+(deftest unsupported-locale-is-blocked-before-evidence-or-materialization
+  (let [result (plan-for {:publication/locale :de} {})]
+    (is (= :blocked (:op result)))
+    (is (= [:publication-locale-unsupported] (:blockers result)))
+    (is (nil? (:concrete-revision result)))
+    (is (nil? (:desired result)))))
 
 ;; ── 10 no publish plan carries a nil revision ─────────────────────────────
 
@@ -245,4 +254,3 @@
                                   {:observed converged-observation}))))
     (is (= :noop (:op (plan-for {:publication/state :withheld} {}))))
     (is (= :noop (:op (plan-for {:publication/state :archived} {}))))))
-

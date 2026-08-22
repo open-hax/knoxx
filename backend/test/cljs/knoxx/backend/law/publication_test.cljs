@@ -35,12 +35,14 @@
 (def promethean-garden
   {:garden/id :gardens/promethean
    :garden/title "Promethean"
-   :garden/status :active})
+   :garden/status :active
+   :garden/locales [:en :es :fr]})
 
 (def legacy-garden
   {:garden/id :gardens/legacy
    :garden/title "Legacy"
-   :garden/status :archived})
+   :garden/status :archived
+   :garden/locales [:en]})
 
 (def style-guide-fr-intent
   {:publication/id :knoxx.docs/translation-pipeline-fr
@@ -104,6 +106,12 @@
   (is (false? (m/validate pub/Garden (assoc promethean-garden :garden/status "active"))))
   (is (false? (m/validate pub/Garden (assoc promethean-garden :garden/status :deleted)))))
 
+(deftest garden-locale-catalog-is-explicit-and-distinct
+  (is (true? (m/validate pub/Garden promethean-garden)))
+  (doseq [locales [nil [] [:en :en] [:locale/en]]]
+    (is (false? (m/validate pub/Garden (assoc promethean-garden :garden/locales locales)))
+        (pr-str locales))))
+
 ;; ── 5 PublicationIntentResource ──────────────────────────────────────────
 
 (deftest publication-intent-resource-validates-relation
@@ -156,8 +164,19 @@
                  resource-index
                  (assoc example-manifest-intent :publication/document :knoxx.docs/unknown))))
     (is (false? (pub/admissible-publication?
+                  resource-index
+                  (assoc example-manifest-intent :publication/garden :gardens/unknown))))))
+
+(deftest admissible-publication?-requires-a-target-accepted-locale
+  (let [resource-index (pub/index-resources [translation-pipeline-document promethean-garden])]
+    (is (true? (pub/admissible-publication? resource-index example-manifest-intent)))
+    (is (false? (pub/admissible-publication?
                  resource-index
-                 (assoc example-manifest-intent :publication/garden :gardens/unknown))))))
+                 (assoc example-manifest-intent :publication/locale :de))))
+    (is (= :publication-locale-unsupported
+           (pub/publication-locale-blocker
+            resource-index
+            (assoc example-manifest-intent :publication/locale :de))))))
 
 (deftest admissible-publication?-rejects-archived-intent-state-with-an-active-garden
   (let [resource-index (pub/index-resources [translation-pipeline-document promethean-garden])]
@@ -294,6 +313,20 @@
     (is (= {:conflict/type :publication/artifact-revision-conflict
             :conflict/artifact-revision "rev-7f3a91c"
             :conflict/concrete-revision "rev-other"}
-           (try (pub/assert-artifact! probe-artifact "rev-other")
-                nil
-                (catch :default err (ex-data err)))))))
+            (try (pub/assert-artifact! probe-artifact "rev-other")
+                 nil
+                 (catch :default err (ex-data err)))))))
+
+(deftest artifact-locale-conflict-carries-both-locales
+  (let [intent (assoc example-manifest-intent :publication/locale :es)
+        conflict (pub/artifact-locale-conflict (assoc probe-artifact :artifact/locale :fr) intent)]
+    (is (= :cross-check pub/artifact-locale-identity-decision))
+    (is (= {:conflict/type :publication/artifact-locale-conflict
+            :conflict/artifact-locale :fr
+            :conflict/publication-locale :es}
+           conflict))
+    (is (true? (pub/artifact-locale-conflict? conflict)))
+    (is (thrown-with-msg? js/Error #"locale conflict"
+                          (pub/assert-artifact! (assoc probe-artifact :artifact/locale :fr)
+                                                intent
+                                                "rev-7f3a91c")))))
