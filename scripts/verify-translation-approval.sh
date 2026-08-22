@@ -29,8 +29,10 @@
 #     surface (`knoxx-publication-reconciler-runtime`), the next card.
 #
 # The fixture is created and destroyed by this script, with a unique identity per
-# run. It writes ONLY inside ${CONTRACTS_DIR}/_verify_translation_approval and
-# removes that directory on exit, including on failure or Ctrl-C.
+# run. It writes ONLY inside ${CONTRACTS_DIR}/_verify_translation_approval — the
+# probe source file included, which is why the seeded document's source path
+# points in there — and removes that one directory on exit, including on failure
+# or Ctrl-C. Anything it seeds in Mongo it also removes.
 #
 # Usage:
 #   scripts/verify-translation-approval.sh
@@ -70,6 +72,21 @@ SOURCE_FILE="${CONTRACTS_PARENT}/${SOURCE_REL}"
 PINNED_REVISION="rev-verify-approval-${RUN_ID}"
 APPROVALS_URL="/api/publications/translations/approvals"
 
+# The receipt this run seeds so the successful approval path is reachable.
+# Approval validates against a completed translation, and the only producer of
+# one is the ingestion worker — so a live happy path needs the receipt seeded.
+# Seeded directly in Mongo rather than through a route: a route that writes
+# translation evidence is a route that can fabricate it, which is the one thing
+# this whole seam exists to prevent.
+MONGO_URL="${KNOXX_MONGO_URL:-mongodb://localhost:27017}"
+MONGO_DB="${KNOXX_MONGO_DB:-knoxx}"
+ORG_ID="${KNOXX_VERIFY_ORG_ID:-}"
+PROJECT="${KNOXX_SESSION_PROJECT_NAME:-knoxx-session}"
+SOURCE_REVISION="sha256-verifyapproval${RUN_ID}"
+TRANSLATION_REVISION="${SOURCE_REVISION}+es@verify-${RUN_ID}"
+DISPATCH_KEY="verify-approval-${RUN_ID}"
+DOC_EDN=":${DOC_ID}"
+
 PASS_COUNT=0
 FAIL_COUNT=0
 WARN_COUNT=0
@@ -101,6 +118,10 @@ http() {
   local raw; raw="$(curl "${args[@]}" "${BASE_URL}${path}" 2>/dev/null)"
   printf '%s\n%s' "${raw##*$'\n'}" "${raw%$'\n'*}"
 }
+mongo_eval() {
+  mongosh "${MONGO_URL}/${MONGO_DB}" --quiet --eval "$1"
+}
+
 status_of() { printf '%s' "${1%%$'\n'*}"; }
 body_of()   { printf '%s' "${1#*$'\n'}"; }
 
@@ -126,7 +147,7 @@ expect_jq() {
 # ── Fixture ────────────────────────────────────────────────────────────────
 
 FIXTURE_OWNED=0
-SOURCE_OWNED=0
+RECEIPT_SEEDED=0
 
 fixture_write() {
   mkdir -p "$FIXTURE_DIR"
@@ -162,8 +183,12 @@ cleanup() {
   if [ "$FIXTURE_OWNED" -eq 1 ] && [ -d "$FIXTURE_DIR" ]; then
     rm -rf "$FIXTURE_DIR"; note "torn down ${FIXTURE_DIR#$REPO_ROOT/}"
   fi
-  if [ "$SOURCE_OWNED" -eq 1 ] && [ -f "$SOURCE_FILE" ]; then
-    rm -f "$SOURCE_FILE"; note "torn down ${SOURCE_REL}"
+  if [ "$RECEIPT_SEEDED" -eq 1 ]; then
+    mongo_eval "db.knoxx_translation_receipts.deleteMany({dispatch_key: \"${DISPATCH_KEY}\"});
+                db.knoxx_translation_approvals.deleteMany({document: \"${DOC_EDN}\"});" \
+      >/dev/null 2>&1 \
+      && note "torn down the seeded receipt and any approval of it" \
+      || warn "could not remove seeded Mongo rows — see the cleanup command above"
   fi
   exit "$code"
 }
@@ -190,12 +215,10 @@ note "backend is reachable"
 
 step "0. the running backend serves this checkout"
 FIXTURE_OWNED=1
-if [ ! -f "$SOURCE_FILE" ]; then
-  SOURCE_OWNED=1
-  mkdir -p "$(dirname "$SOURCE_FILE")"
-  printf '# Approval verification probe\n\nSeeded by scripts/verify-translation-approval.sh.\n' > "$SOURCE_FILE"
-fi
 fixture_write
+# Inside the fixture directory, so the single teardown covers it.
+printf '# Approval verification probe\n\nSeeded by scripts/verify-translation-approval.sh.\n' \
+  > "$SOURCE_FILE"
 sleep 1
 
 probe="$(http GET "/api/publications/documents" auth)"
@@ -271,17 +294,99 @@ else
     "$(body_of "$resp" | head -c 300)"
 fi
 
-# ── 5. Known gaps ──────────────────────────────────────────────────────────
+# ── 5. The successful approval ─────────────────────────────────────────────
+#
+# Approval validates against a completed translation, and the only thing that
+# produces one is the ingestion worker. So to let a reviewer watch this feature
+# work, the script seeds one receipt itself — in Mongo, not through a route,
+# because a route that writes translation evidence is a route that can fabricate
+# it. It removes what it seeded on the way out.
 
-step "5. what this run cannot reach"
+step "5. a real approval, against a seeded translation"
 
-warn "the successful-approval path needs a completed translation in the store"
-note "That needs the ingestion worker to have translated something, which is"
-note "knoxx-translation-work-dispatch's surface, not this card's. The happy path,"
-note "the idempotent double-approval, tenant/project isolation, and"
-note "re-translation supersession are covered by the CLJS suites named in the"
-note "script header."
+if ! command -v mongosh >/dev/null 2>&1; then
+  warn "mongosh is not installed, so the successful path cannot be exercised"
+  note "Install mongosh, or set KNOXX_MONGO_URL to a reachable deployment, and"
+  note "re-run to see the approval actually recorded."
+elif [ -z "$ORG_ID" ]; then
+  warn "KNOXX_VERIFY_ORG_ID is not set, so the successful path is skipped"
+  note "An approval is tenant-scoped and inherits its organization from the"
+  note "receipt, so the seeded receipt has to name the org the API key resolves"
+  note "to. Find it with: GET /api/auth/session — then re-run with"
+  note "KNOXX_VERIFY_ORG_ID=<that org id>"
+elif ! mongo_eval 'db.runCommand({ping:1})' >/dev/null 2>&1; then
+  warn "cannot reach ${MONGO_URL} — the successful path is skipped"
+else
+  receipt_edn="{:receipt/type :translation/completed"
+  receipt_edn="${receipt_edn} :translation/document ${DOC_EDN}"
+  receipt_edn="${receipt_edn} :translation/source-locale :en"
+  receipt_edn="${receipt_edn} :translation/locale :es"
+  receipt_edn="${receipt_edn} :translation/source-revision \"${SOURCE_REVISION}\""
+  receipt_edn="${receipt_edn} :translation/revision \"${TRANSLATION_REVISION}\""
+  receipt_edn="${receipt_edn} :translation/dispatch-key \"${DISPATCH_KEY}\""
+  receipt_edn="${receipt_edn} :translation/org-id \"${ORG_ID}\""
+  receipt_edn="${receipt_edn} :translation/project \"${PROJECT}\""
+  receipt_edn="${receipt_edn} :translation/at \"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\"}"
+
+  if mongo_eval "db.knoxx_translation_receipts.insertOne({
+       dispatch_key: \"${DISPATCH_KEY}\",
+       document: \"${DOC_EDN}\",
+       locale: \"es\",
+       source_revision: \"${SOURCE_REVISION}\",
+       receipt_edn: '${receipt_edn}'
+     });" >/dev/null 2>&1; then
+    RECEIPT_SEEDED=1
+    pass "seeded one completed-translation receipt for this run"
+    note "org ${ORG_ID}, project ${PROJECT}, revision ${SOURCE_REVISION}"
+
+    good="{\"document\":\"${DOC_ID}\",\"locale\":\"es\",\"revision\":\"${SOURCE_REVISION}\",\"translation_revision\":\"${TRANSLATION_REVISION}\"}"
+
+    resp="$(http POST "$APPROVALS_URL" auth "$good")"
+    if expect_status "POST approvals records the approval" "201" "$resp"; then
+      expect_jq "the response says it was recorded" '.status == "recorded"' "$resp"
+      expect_jq "the approval names the reviewed output revision" \
+        "[.. | strings] | index(\"${TRANSLATION_REVISION}\")" "$resp"
+      expect_jq "the approval is attributed to a principal the caller never sent" \
+        '[.. | objects | select(has("user_email") or has("userEmail"))] | length > 0' "$resp" \
+        || expect_jq "the approval carries a principal" \
+             '[.. | strings] | any(test("@"))' "$resp"
+      expect_jq "the tenant is inherited from the receipt, not the request" \
+        "[.. | strings] | index(\"${ORG_ID}\")" "$resp"
+    fi
+
+    step "6. approving the same output twice is the same fact"
+
+    again="$(http POST "$APPROVALS_URL" auth "$good")"
+    if expect_status "the replay answers 200, not a conflict" "200" "$again"; then
+      expect_jq "it is recognized as the approval already recorded" \
+        '.status == "existing"' "$again"
+      note "an honest double-click is not something a reviewer has to resolve"
+    fi
+
+    step "7. an approval cannot be transplanted onto another output"
+
+    stale="$(printf '%s' "$good" | jq -c '.translation_revision = "sha256-someone-elses+es@b9"')"
+    resp="$(http POST "$APPROVALS_URL" auth "$stale")"
+    if expect_status "naming a different produced output is refused" "409" "$resp"; then
+      expect_jq "the refusal names both sides" \
+        "[.. | strings] | index(\"${TRANSLATION_REVISION}\")" "$resp"
+      note "so a reviewer can see whether their request or the record was stale"
+    fi
+  else
+    warn "could not seed a receipt, so the successful path is skipped"
+    note "The API key's org may differ from KNOXX_VERIFY_ORG_ID, or the Mongo"
+    note "user may lack write access to ${MONGO_DB}."
+  fi
+fi
+
+# ── 8. Known gaps ──────────────────────────────────────────────────────────
+
+step "8. what this run cannot reach"
+
 warn "whether an approval unblocks a publication is the reconciler card's surface"
+note "Approval makes a plan admissible; it must not itself publish, and a test"
+note "pins that. The trigger that acts on it is"
+note "knoxx-publication-reconciler-runtime, the next card."
 
 printf '\n%s%s%s\n' "$C_BOLD" "$(printf '═%.0s' $(seq 1 60))" "$C_RESET"
 printf '%s  %s passed%s' "$C_GREEN" "$PASS_COUNT" "$C_RESET"

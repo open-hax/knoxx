@@ -49,12 +49,27 @@ card rather than silently implemented the other way.
 ## Run it
 
 ```bash
+# refusal paths only
 KNOXX_BASE_URL=http://localhost:8000 \
 KNOXX_API_KEY=<the key the backend was started with> \
 scripts/verify-translation-approval.sh
+
+# including the successful approval — needs mongosh and the acting org id
+KNOXX_BASE_URL=http://localhost:8000 \
+KNOXX_API_KEY=<key> \
+KNOXX_VERIFY_ORG_ID=<the org the key resolves to> \
+KNOXX_MONGO_URL=mongodb://localhost:27017 \
+scripts/verify-translation-approval.sh
 ```
 
-Unique identity per run, fixture torn down on exit, failure and Ctrl-C.
+Unique identity per run. Everything it creates it removes: the fixture directory
+(probe source file included) on the exit trap, and the seeded Mongo rows on the
+way out.
+
+`KNOXX_VERIFY_ORG_ID` is needed because an approval is tenant-scoped and inherits
+its organization from the receipt — so the seeded receipt has to name the org the
+API key actually resolves to. Find it with `GET /api/auth/session`. Without it,
+sections 5–7 are skipped with a WARN rather than silently passing.
 
 ## What each section proves
 
@@ -117,19 +132,40 @@ refuse; a verification run that never reached the refusal path this section
 exists to check has proved nothing about it, and must not exit 0. Start MongoDB
 and re-run.
 
-## Known gaps, printed every run
+### 5–7. A real approval, against a seeded translation
 
-1. **The successful-approval path.** Recording one requires a completed
-   translation receipt in the durable store, which requires the ingestion worker
-   to have actually translated something — the dispatch card's surface, and not
-   reachable over HTTP from here. Covered by
-   `backend/test/cljs/knoxx/backend/infra/routes/translation_review_test.cljs`:
-   attribution from the receipt rather than the request, the idempotent
-   double-approval, tenant and project isolation, refusal with both sides named,
-   and that approval materializes nothing.
-2. **Whether an approval unblocks a publication.** That is
-   `knoxx-publication-reconciler-runtime`, the next card. Approval makes a plan
-   admissible; it must not itself publish, and a test pins that.
+An approval validates against a completed translation, and the only thing that
+produces one is the ingestion worker. An earlier version of this script therefore
+stopped at the refusals and told you the happy path was out of reach — which is
+not a verification artifact, because a reviewer could not watch the feature work.
+
+So the script seeds one receipt itself and then drives the real HTTP route:
+
+- **Section 5** records the approval. Asserts 201, `status: recorded`, that the
+  response names the reviewed *output* revision, that it carries a principal the
+  caller never sent, and that the tenant came from the receipt rather than the
+  request.
+- **Section 6** replays the identical request. Asserts **200 and
+  `status: existing`** — an honest double-click is not a conflict a reviewer has
+  to resolve.
+- **Section 7** names a different produced output. Asserts 409 with both
+  revisions in the refusal, so a reviewer can see whether their request or the
+  record was stale.
+
+**The receipt is seeded in Mongo, not through a route**, and that is deliberate:
+a route that writes translation evidence is a route that can fabricate it, which
+is the one thing this whole seam exists to prevent. Seeding is something a
+verification script does to its own throwaway data with credentials an operator
+supplied; it is not a capability the running system gains.
+
+Skipped with a WARN, never silently, when `mongosh` is absent, `KNOXX_VERIFY_ORG_ID`
+is unset, or the deployment is unreachable.
+
+## Known gap, printed every run
+
+**Whether an approval unblocks a publication.** That is
+`knoxx-publication-reconciler-runtime`, the next card. Approval makes a plan
+admissible; it must not itself publish, and a test pins that.
 
 ## No browser tour yet
 
