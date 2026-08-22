@@ -5,7 +5,7 @@ write-id: "1787011200004-0.528396"
 points: "3"
 title: "Translation — revision-specific approval surface"
 priority: "P1"
-status: "ready"
+status: "review"
 uuid: "knoxx-translation-approval-surface"
 created_at: "2026-08-22T00:00:00Z"
 ---
@@ -48,3 +48,28 @@ The existing translation receipt and publication gate contracts.
 - Tests prove an approval for one revision, locale, or document cannot satisfy
   the gate for another.
 - Tests prove approval alone invokes no publication adapter effect.
+
+## Card premise corrections
+
+1. **"records an approval against translation identity, target locale, and
+   concrete translated revision."** Taken literally this produces approvals the
+   gate can never match: `domain.publication-gate` asks `approved?` with the
+   concrete *source* revision, because that is what a publication intent's
+   revision selector resolves to. The approval is therefore keyed by the source
+   revision, with the translated output recorded alongside as
+   `:review/translation-revision`. Both matter — see
+   `law.translation-evidence/approval-current?` — and keying by the output alone
+   would have made every approval invisible to the gate.
+
+2. **"The existing translation receipt and publication gate contracts."** The
+   gate contract existed; a translation receipt contract did not. It was
+   introduced by `knoxx-translation-work-dispatch`, which is why that card was
+   done first even though both are wave-2: the consumer cannot validate against a
+   contract the producer has not declared.
+
+3. **An unstated requirement.** Approvals are tenant- and project-scoped, like
+   the receipts they attest to. The card does not mention scope at all, and the
+   dispatch card needed two review rounds to establish that translation evidence
+   without a tenant is admissible everywhere. `:review/org-id` is required and
+   `:review/project` is carried, both inherited from the receipt rather than from
+   the request so a reviewer cannot file into another scope.
