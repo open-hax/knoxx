@@ -33,6 +33,19 @@ and on Ctrl-C. It writes only inside `contracts/_verify_translation_dispatch/`
 plus one probe source file, and it deletes the probe file only if this run
 created it.
 
+**Its identity is unique per run.** The document, publication ids, source file
+and pinned revision all carry a run id. With a fixed identity, every run after
+the first reused the previous run's *durable* dispatch claim — the second run got
+`dispatch/duplicate` and verified nothing while appearing to pass.
+
+**What it cannot tear down**, printed as WARN every run: the Knoxx dispatch
+record, and the OpenPlanner batch if one was created. Neither has a delete
+surface, and adding one for a verification script would be the worse trade — a
+route that erases translation evidence is a route that can erase *real*
+evidence. Because the identity is unique per run, the residue accumulates
+harmlessly rather than colliding; the batch is claimed by the worker, attempts
+one document, and terminates on its own.
+
 ### Preconditions it checks for you
 
 - `curl` and `jq` present.
@@ -58,10 +71,15 @@ them is the whole fixture:
 
 | intent | locale | source locale | translation required? |
 | --- | --- | --- | --- |
-| `probe-es` | `:es` | `:en` | yes — work is derivable |
-| `probe-en` | `:en` | `:en` | no — nothing may ever be derived |
+| `<doc>-es` | `:es` | `:en` | yes — work is derivable |
+| `<doc>-en` | `:en` | `:en` | no — nothing may ever be derived |
 
-`probe-en` is not filler. A dispatch that queued it would be asking a worker to
+The garden declares `[:en :es]` as its accepted locales, which it must:
+structural admissibility is now checked before dispatch, and a garden that does
+not accept the target locale makes the intent inadmissible rather than merely
+untranslated.
+
+The same-locale intent is not filler. A dispatch that queued it would be asking a worker to
 translate an English document into English, and the only thing preventing that
 is `publication-gate/translation-required?` comparing the two locales.
 

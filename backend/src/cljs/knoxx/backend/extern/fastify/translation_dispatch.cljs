@@ -73,20 +73,30 @@
        (assoc :document (resource-identity/decode-keyword (:document body)))))))
 
 (defn- scope
-  "The acting principal's dispatch scope.
+  "The acting principal's dispatch scope, plus the project batches are filed in.
 
-   Both fields are required by `law.translation-dispatch/DispatchContext`, and
-   neither is defaulted here: a batch filed under an invented organization or a
-   blank membership is unattributable, and the worker's own batch contract
-   requires both to be non-blank."
-  [ctx]
+   The organization and membership are required by
+   `law.translation-dispatch/DispatchContext` and neither is defaulted: a batch
+   filed under an invented organization or a blank membership is unattributable,
+   and the worker's own batch contract requires both to be non-blank.
+
+   `:project` is the configured `:session-project-name`, and omitting it was a
+   real defect rather than a tidiness issue. With no project the OpenPlanner
+   batch store defaults to `\"devel\"`, while every existing translation surface —
+   segments, documents, export — filters by `:session-project-name`, whose
+   default is `\"knoxx-session\"`. A dispatched translation therefore succeeded and
+   then vanished from the review and export flow, because it had been written to
+   a project nothing reads."
+  [config ctx]
   (let [org-id (some-> (authz/ctx-org-id ctx) str not-empty)
         membership-id (some-> (authz/ctx-membership-id ctx) str not-empty)]
     (when-not (and org-id membership-id)
       (throw (ex-info "translation dispatch requires an organization and membership context"
                       {:status 403
                        :code "dispatch_context_required"})))
-    {:org-id org-id :membership-id membership-id}))
+    (cond-> {:org-id org-id :membership-id membership-id}
+      (some-> (:session-project-name config) str not-empty)
+      (assoc :project (str (:session-project-name config))))))
 
 (defn- ^:async dispatch!
   [config ctx decoded]
@@ -96,7 +106,7 @@
      {:evidence-store evidence-store
       :client (openplanner-client/client config)
       :clock (fn [] (.toISOString (js/Date.)))}
-     (scope ctx)
+     (scope config ctx)
      (:document decoded))
     ;; No durable store means a dispatch whose revision binding would be lost.
     ;; Refusing is the only honest answer — see the registry's docstring.

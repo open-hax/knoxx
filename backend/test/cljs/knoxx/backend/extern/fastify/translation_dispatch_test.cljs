@@ -6,7 +6,10 @@
   request into a whole-corpus sweep, which is the most expensive thing this
   route can do."
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.extern.fastify.translation-dispatch :as adapter]))
+            [knoxx.backend.extern.fastify.translation-dispatch :as adapter]
+            [knoxx.backend.law.openplanner-translation :as openplanner-law]
+            [knoxx.backend.law.translation-dispatch :as law]
+            [malli.core :as m]))
 
 (defn- request
   "A request whose body is `body`. Only `.body` is read by `decode-request`."
@@ -53,3 +56,27 @@
   (testing "a typo must not be reinterpreted as a whole-corpus sweep"
     (is (thrown? js/Error
                  (adapter/decode-request (request {:documnet "knoxx.docs/probe"}))))))
+
+(deftest dispatched-batches-are-filed-in-the-project-the-review-surfaces-read
+  ;; With no project the OpenPlanner batch store defaults to "devel", while the
+  ;; segment, document and export routes all filter by :session-project-name
+  ;; (default "knoxx-session"). A dispatched translation therefore succeeded and
+  ;; then vanished from the review flow, written to a project nothing reads.
+  (let [work {:document :knoxx.docs/probe
+              :locale :es
+              :revision "sha256-aaa111bbb222"
+              :replace-stale? false}
+        context (fn [project]
+                  (cond-> {:dispatch/garden "knoxx.docs/garden"
+                           :dispatch/document-wire-id "knoxx.docs/probe"
+                           :dispatch/source-locale :en
+                           :dispatch/org-id "org-1"
+                           :dispatch/membership-id "member-1"}
+                    project (assoc :dispatch/project project)))]
+    (testing "the configured project reaches the worker request"
+      (is (= "knoxx-session"
+             (:project (law/worker-request work (context "knoxx-session"))))))
+
+    (testing "the request is still what the worker accepts"
+      (is (m/validate openplanner-law/CreateTranslationBatchRequest
+                      (law/worker-request work (context "knoxx-session")))))))

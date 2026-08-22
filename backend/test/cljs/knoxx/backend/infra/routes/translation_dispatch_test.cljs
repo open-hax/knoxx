@@ -200,3 +200,32 @@
     (testing "a dangling garden reference is not"
       (is (empty? (facade/admissible-intents
                    {:documents {:knoxx.docs/probe {}} :gardens {}} [intent]))))))
+
+(deftest a-changed-source-locale-invalidates-existing-evidence
+  ;; The gate's key is [document target-locale revision] and cannot carry a
+  ;; source locale. So changing a document's declared source locale while its
+  ;; bytes stay identical left digest, document and target locale all unchanged —
+  ;; and the old receipt satisfied the new intent, suppressing a retranslation
+  ;; that was genuinely required.
+  (let [receipt (fn [source-locale]
+                  {:receipt/type :translation/completed
+                   :translation/document :knoxx.docs/probe
+                   :translation/source-locale source-locale
+                   :translation/locale :es
+                   :translation/source-revision "sha256-aaa111bbb222"
+                   :translation/revision "sha256-aaa111bbb222+es@batch-1"
+                   :translation/dispatch-key "key-1"
+                   :translation/org-id "org-1"
+                   :translation/at at})
+        documents [{:document/id :knoxx.docs/probe :document/source-locale :de}]]
+    (testing "a receipt from the document's current source locale still counts"
+      (is (= 1 (count (facade/current-source-locale-receipts
+                       [{:document/id :knoxx.docs/probe :document/source-locale :en}]
+                       [(receipt :en)])))))
+
+    (testing "a receipt from the previous source locale no longer counts"
+      (is (empty? (facade/current-source-locale-receipts documents [(receipt :en)]))))
+
+    (testing "a receipt for a document not in scope is dropped rather than kept"
+      ;; Nothing declares its current source locale, so nothing can vouch for it.
+      (is (empty? (facade/current-source-locale-receipts [] [(receipt :en)]))))))

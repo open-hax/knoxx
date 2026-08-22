@@ -173,7 +173,10 @@
   ;; collapse into.
   (let [{:keys [batches deps]}
         (fixture :answer (fn [_ _] (throw (ex-info "connection reset" {})))
+                 ;; Created at the claim's own instant, so it can be attributed
+                 ;; to this dispatch.
                  :observed (fn [_] {:batches [{:batch_id "batch-existing"
+                                               :created_at "2026-08-22T09:00:00.000Z"
                                                :document_ids ["knoxx.docs/probe"]}]}))
         result (await (dispatch/dispatch-work! deps (work) (context)))]
     (testing "the claim stays in flight, bound to the batch that already exists"
@@ -472,3 +475,48 @@
         (is false "a missing observer must not be silently tolerated")
         (catch :default err
           (is (re-find #"source-revision observer" (ex-message err))))))))
+
+(deftest ^:async observation-will-not-bind-a-batch-older-than-the-claim
+  ;; Matching on garden, locale and document alone is not a match on THIS
+  ;; dispatch: a tenant that translated the same document into the same locale
+  ;; before has an older batch matching all three. Binding to it would let
+  ;; `recover-settled-batch!` mint a receipt for a revision that batch never saw.
+  (let [{:keys [deps]}
+        (fixture :answer (fn [_ _] (throw (ex-info "connection reset" {})))
+                 :observed (fn [_] {:batches [{:batch_id "batch-from-last-year"
+                                               :created_at "2025-01-01T00:00:00.000Z"
+                                               :document_ids ["knoxx.docs/probe"]}]}))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the historical batch is not adopted"
+      (is (not= "batch-from-last-year" (:dispatch/batch-id (:dispatch/record result)))))
+
+    (testing "the claim is treated as a send that did not land"
+      (is (= :dispatch/failed (:dispatch/outcome result))))))
+
+(deftest ^:async observation-will-not-bind-a-batch-of-unknown-age
+  (let [{:keys [deps]}
+        (fixture :answer (fn [_ _] (throw (ex-info "connection reset" {})))
+                 :observed (fn [_] {:batches [{:batch_id "batch-undated"
+                                               :document_ids ["knoxx.docs/probe"]}]}))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "an unknown creation time is not evidence of provenance"
+      (is (not= "batch-undated" (:dispatch/batch-id (:dispatch/record result))))
+      (is (= :dispatch/failed (:dispatch/outcome result))))))
+
+(deftest batch-provenance-is-decided-by-creation-time
+  (let [claim-at "2026-08-22T09:00:00.000Z"]
+    (testing "a batch created at or after the claim can be the claim's"
+      (is (law/batch-created-after? {:created_at claim-at} claim-at))
+      (is (law/batch-created-after? {:created_at "2026-08-22T09:00:00.001Z"} claim-at))
+      (is (law/batch-created-after? {:createdAt claim-at} claim-at) "camelCase too"))
+
+    (testing "a batch created before the claim cannot be"
+      (is (not (law/batch-created-after? {:created_at "2026-08-22T08:59:59.999Z"}
+                                         claim-at))))
+
+    (testing "an absent or unparseable creation time is refused, not guessed"
+      (is (not (law/batch-created-after? {} claim-at)))
+      (is (not (law/batch-created-after? {:created_at ""} claim-at)))
+      (is (not (law/batch-created-after? {:created_at "yesterday"} claim-at)))
+      (is (not (law/batch-created-after? {:created_at "2026-08-22T09:00:00Z"} claim-at))
+          "an instant in another format cannot be compared as a string"))))

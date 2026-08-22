@@ -71,12 +71,18 @@
                                   response))))
 
 (defn- ^:async observe-batch!
-  "Ask the worker whether a batch already exists for this dispatch.
+  "Ask the worker whether a batch already exists for *this* dispatch.
 
-   Matched on garden, target locale and the document, which is everything the
-   batch actually carries. A Knoxx-created batch holds exactly one document, so
-   a match on those three is a match on this dispatch."
-  [client work context]
+   Matched on garden, target locale and the document — everything the batch
+   carries — and then on creation time, which is the part that makes it a match
+   on this dispatch rather than on any dispatch. A tenant that translated the
+   same document into the same locale before has an older batch matching all
+   three, and binding to it would mint a receipt for a revision that batch never
+   saw. See `law/batch-created-after?`.
+
+   `record` supplies the claim's own instant, so only a batch created at or after
+   the claim can be attributed to it."
+  [client work context record]
   (let [response (await (openplanner-client/translation-batches!
                          client
                          {:org_id (:dispatch/org-id context)
@@ -85,7 +91,8 @@
         wanted (:dispatch/document-wire-id context)]
     (->> (:batches response)
          (filter (fn [batch]
-                   (some #(= wanted (str %)) (:document_ids batch))))
+                   (and (some #(= wanted (str %)) (:document_ids batch))
+                        (law/batch-created-after? batch (:dispatch/at record)))))
          first)))
 
 (defn- ^:async recover-ambiguous-send!
@@ -97,7 +104,7 @@
   [evidence-store client work context record detail]
   (let [dispatch-key (:dispatch/key record)]
     (try
-      (if-let [batch (await (observe-batch! client work context))]
+      (if-let [batch (await (observe-batch! client work context record))]
         {:dispatch/outcome :dispatch/accepted
          :dispatch/record (or (await (store/bind-dispatch-batch!
                                       evidence-store dispatch-key

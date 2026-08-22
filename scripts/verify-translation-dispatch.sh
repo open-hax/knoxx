@@ -49,13 +49,19 @@ API_KEY="${KNOXX_API_KEY:-}"
 CONTRACTS_DIR="${KNOXX_CONTRACTS_DIR:-${REPO_ROOT}/contracts}"
 FIXTURE_DIR="${CONTRACTS_DIR}/_verify_translation_dispatch"
 
+# Unique per run. A fixed identity made every run after the first reuse the
+# previous run's dispatch claim: the claim is durable, so the second run got
+# `dispatch/duplicate` and verified nothing. A fresh document and revision per
+# run means each run exercises a genuinely fresh dispatch.
+RUN_ID="$(date -u +%Y%m%d%H%M%S)$$"
 NS="knoxx.verifydispatch"
-DOC_ID="${NS}/probe"
-PUB_TRANSLATED_ID="${NS}/probe-es"
-PUB_NATIVE_ID="${NS}/probe-en"
-SOURCE_REL="docs/verify-dispatch-probe.md"
+DOC_LOCAL="probe${RUN_ID}"
+DOC_ID="${NS}/${DOC_LOCAL}"
+PUB_TRANSLATED_ID="${NS}/${DOC_LOCAL}-es"
+PUB_NATIVE_ID="${NS}/${DOC_LOCAL}-en"
+SOURCE_REL="docs/verify-dispatch-probe-${RUN_ID}.md"
 SOURCE_FILE="${REPO_ROOT}/${SOURCE_REL}"
-PINNED_REVISION="rev-verify-dispatch-1"
+PINNED_REVISION="rev-verify-dispatch-${RUN_ID}"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -163,31 +169,32 @@ fixture_write() {
 ;; Throwaway fixture written by scripts/verify-translation-dispatch.sh.
 {:namespace :${NS}
  :resources
- [{:document/id :probe
+ [{:document/id :${DOC_LOCAL}
    :document/title "Translation Dispatch Verification Probe"
    :document/source-locale :en
    :document/source {:path "${SOURCE_REL}"}}
 
   {:garden/id :probe-garden
    :garden/title "Dispatch Verification Garden"
-   :garden/status :active}
+   :garden/status :active
+   :garden/locales [:en :es]}
 
-  {:publication/id :probe-es
-   :publication/document :probe
+  {:publication/id :${DOC_LOCAL}-es
+   :publication/document :${DOC_LOCAL}
    :publication/garden :probe-garden
    :publication/locale :es
    :publication/revision "${PINNED_REVISION}"
    :publication/state :published
-   :publication/path "/verify-dispatch/probe-es"
+   :publication/path "/verify-dispatch/${DOC_LOCAL}-es"
    :translation/review :required}
 
-  {:publication/id :probe-en
-   :publication/document :probe
+  {:publication/id :${DOC_LOCAL}-en
+   :publication/document :${DOC_LOCAL}
    :publication/garden :probe-garden
    :publication/locale :en
    :publication/revision "${PINNED_REVISION}"
    :publication/state :published
-   :publication/path "/verify-dispatch/probe-en"
+   :publication/path "/verify-dispatch/${DOC_LOCAL}-en"
    :translation/review :none}]}
 EDN
 }
@@ -414,6 +421,24 @@ fi
 
 warn "the worker actually translating is out of this card's scope (see header)"
 warn "the completion half needs a real batch reaching complete/partial (see header)"
+
+# ── Durable residue ────────────────────────────────────────────────────────
+#
+# What this script CANNOT tear down, stated every run rather than left for
+# somebody to discover in a collection.
+
+if [ "$dispatch_status" = "200" ]; then
+  warn "left behind: one Knoxx dispatch record in ${C_BOLD}knoxx_translation_dispatches${C_RESET}"
+  note "identity: ${DOC_ID} @ ${PINNED_REVISION}"
+  note "There is no delete surface for a dispatch claim, and inventing one for a"
+  note "verification script would be a worse trade than the residue: a route that"
+  note "erases translation evidence is a route that can erase real evidence."
+  note "The identity is unique per run, so nothing is reused and nothing collides."
+  if [ "$outcome" = "dispatch/accepted" ]; then
+    warn "left behind: one OpenPlanner translation batch on the shared worker queue"
+    note "It will be claimed, attempt one document, and terminate on its own."
+  fi
+fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
 

@@ -444,6 +444,30 @@
                         "+" (name (:dispatch/locale record))
                         "@" batch-id))))
 
+(defn batch-created-after?
+  "Whether `batch`'s creation instant is not earlier than `at`.
+
+   The correlation signal observation needs. Matching a batch on garden, target
+   locale and document alone is not enough to conclude it came from *our* send:
+   a tenant that translated the same document into the same locale before has an
+   older batch that matches every one of those, and binding to it would let
+   `recover-settled-batch!` mint a receipt for a revision that batch never saw.
+
+   A batch created before the claim existed cannot be the claim's. An
+   unparseable or absent creation time is treated as NOT matching, because an
+   unknown age is not evidence of provenance and the safe failure is to leave
+   the claim in flight rather than bind the wrong batch.
+
+   Compared as strings, which is correct only for one fixed-width UTC format —
+   the same constraint `Instant` exists to impose. A creation time in any other
+   shape is refused rather than guessed at."
+  [batch at]
+  (boolean
+   (when-let [created (some-> (or (:created_at batch) (:createdAt batch)) str not-empty)]
+     (and (evidence/instant? created)
+          (evidence/instant? at)
+          (not (neg? (compare created at)))))))
+
 (defn source-drift-refusal
   "Refusal when the source no longer hashes to the revision that was dispatched.
 

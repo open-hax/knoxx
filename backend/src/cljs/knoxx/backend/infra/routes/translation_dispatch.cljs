@@ -62,6 +62,29 @@
         (keep #(get-in index [:documents (:publication/document %)]))
         (distinct (map :publication/document intents))))
 
+(defn current-source-locale-receipts
+  "Only the receipts whose source locale is still the document's declared one.
+
+   The gate's evidential key is `[document target-locale revision]` — it cannot
+   carry a source locale, because a publication intent does not name one. But a
+   translation *from* a different source locale is a different translation, and
+   the dispatch identity says so by including `:source-locale`.
+
+   Without this filter, changing a document's declared source locale while its
+   bytes stay identical left the content digest, the document and the target
+   locale all unchanged — so the old receipt satisfied the new intent and the
+   retranslation that was genuinely required never happened.
+
+   Filtered here rather than keyed in the domain because the gate's fact
+   signature is fixed and the *current* source locale is a property of the
+   document, which this layer has and the domain does not."
+  [documents receipts]
+  (let [declared (into {} (map (juxt :document/id :document/source-locale)) documents)]
+    (filterv (fn [receipt]
+               (= (:translation/source-locale receipt)
+                  (get declared (:translation/document receipt))))
+             receipts)))
+
 (defn tenant-receipts
   "Only the receipts belonging to `org-id`.
 
@@ -90,8 +113,9 @@
    requirement does not suppress the translation that would satisfy it."
   [config evidence-store org-id documents]
   (let [revisions (await (source-revision/source-revisions! config documents))
-        receipts (tenant-receipts org-id
-                                  (await (store/completed-translations! evidence-store)))
+        receipts (->> (await (store/completed-translations! evidence-store))
+                      (tenant-receipts org-id)
+                      (current-source-locale-receipts documents))
         evidence (evidence-domain/evidence {:receipts receipts})]
     (merge (source-revision/revision-facts revisions)
            (evidence-domain/gate-facts evidence)
