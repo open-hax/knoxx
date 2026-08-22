@@ -119,14 +119,30 @@ dispatch list is ambiguous on its own — "nothing needed translating" and
 "nothing was even looked at" read identically. You should see two considered,
 one dispatched, and the dispatched one is `probe-es`.
 
-Then the outcome:
+Then the outcome. Two values, and neither means quite what its name suggests:
 
-- **`dispatch/accepted`** — the worker took the batch. The script additionally
-  asserts the pinned revision appears in the recorded binding, which is the
-  card's line *"a gated translation work item reaches the ingestion worker with
-  a concrete revision"*.
-- **`dispatch/failed`** — the worker boundary refused *and* observation
-  conclusively found no batch, so the send provably did not land. This is reported as a known
+- **`dispatch/accepted`** — the claim is **in flight**, which is not the same as
+  "the worker took the batch". It is returned both when the batch was created
+  cleanly *and* whenever the outcome could not be established: several batches
+  matched and none could be attributed to this dispatch, the batch listing came
+  back at its 50-row cap so an absence proves nothing, or the observation call
+  itself failed. In all of those the claim is deliberately left alone — a stuck
+  claim is visible and fixable, a duplicate translation is neither.
+
+  The `detail` field on the record says which case it was. When the batch really
+  was created, the script additionally asserts the pinned revision appears in the
+  recorded binding, which is the card's line *"a gated translation work item
+  reaches the ingestion worker with a concrete revision"*.
+
+- **`dispatch/failed`** — the worker boundary refused **and** observation
+  conclusively found no batch. Conclusive is the load-bearing word: only a
+  listing shorter than the cap licenses this, because it is the only state in
+  which absence is evidence. This is the one outcome that makes a claim
+  retriable, so nothing else may produce it.
+
+The asymmetry is the whole design. `accepted` is cheap to be wrong about — a
+later pass observes again. `failed` is not: it invites a retry, and the batch
+request has no idempotency key for a second call to collapse into. This is reported as a known
   gap, not as a pass and not as a silent skip. It is also a genuinely correct
   outcome: the claim was taken, the failure was recorded against it, and a later
   pass can re-dispatch. A failed dispatch left *in flight* would be the real
@@ -143,8 +159,8 @@ between those two steps a second pass sees no claim, enqueues again, and the
 second translation cannot be withdrawn because nothing recorded that the first
 was already asked for.
 
-**If the first dispatch failed**, the second request must come back
-`dispatch/accepted` with a *new* batch. A failed attempt is finished but not
+**If the first dispatch failed** — meaning conclusively, per section 3 — the
+second request must come back `dispatch/accepted` with a *new* batch. A failed attempt is finished but not
 done — no translation came of it, so the gate still reports the translation
 missing and the work genuinely still needs doing. Answering `duplicate` here
 would strand that source revision permanently: every later pass would decline to
