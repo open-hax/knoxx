@@ -11,7 +11,8 @@
   and adding a second endpoint it would have to learn to call would be a
   coordinated change to another repository for no gain. See
   `infra.routes.translation` for where that report is resolved."
-  (:require [knoxx.backend.extern.fastify :as fastify]
+  (:require [clojure.string :as str]
+            [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.routes.translation-dispatch :as facade]
@@ -26,32 +27,50 @@
    `infra.routes.translation`'s batch routes already gate on this."
   "org.translations.manage")
 
-(def DecodedRequest
-  "Contract for the data this adapter hands inward.
+(def RequestBody
+  "Contract for the raw wire body, checked BEFORE anything is reshaped.
 
-   `:document` is optional: absent means every document, which is the ordinary
-   operator action. Closed, so a body carrying an unexpected field is refused
-   rather than silently reinterpreted as a whole-corpus sweep."
+   This is the closed one, and it has to be. Validating only the map this
+   adapter *constructs* cannot refuse an unknown field, because an unknown field
+   is simply never copied into it: `{\"documnet\": \"knoxx.docs/probe\"}` produced
+   an empty decoded map, which is a valid request to translate the entire
+   corpus. The typo silently became the most expensive operation this route has.
+
+   So the body is checked first. `:document` is optional — absence is how an
+   operator asks for a whole-corpus sweep — and when present it must be a
+   non-blank string."
   [:map {:closed true}
-   [:document {:optional true} [:maybe :qualified-keyword]]])
+   [:document {:optional true} [:and :string [:fn {:error/message "a named document may not be blank"}
+                                              #(seq (str/trim %))]]]])
+
+(def DecodedRequest
+  "Contract for the data this adapter hands inward, after decoding.
+
+   `:document` is optional and, when present, must be a qualified keyword. Not
+   `[:maybe ...]`: a nil document is not a way of saying 'all documents', it is a
+   caller that meant to name one and sent nothing. Absence is the only way to ask
+   for a whole-corpus sweep."
+  [:map {:closed true}
+   [:document {:optional true} :qualified-keyword]])
 
 (defn decode-request
-  "Project the native request body onto the CLJS data the facade reads.
+  "Validate the native request body, then project it onto what the facade reads.
 
-   The document arrives as a wire string and is decoded to a qualified keyword,
-   because that is the identity the resource index is keyed by. A bare name with
-   no namespace decodes to an unqualified keyword, which the contract refuses —
-   `:probe` and `:knoxx.docs/probe` are different documents, and silently
-   accepting the former would sweep nothing while reporting success."
+   Both contracts run, and they catch different things. `RequestBody` refuses an
+   unknown or blank field on the wire; `DecodedRequest` refuses an identity that
+   decoded to something the resource index is not keyed by — a bare `probe`
+   becomes the unqualified `:probe`, which is a different document from
+   `:knoxx.docs/probe` and would sweep nothing while reporting success."
   [request]
-  (let [body (fastify/request-body request)
-        document (:document body)]
+  (let [body (publication-law/assert-valid! :translation-dispatch/body
+                                            RequestBody
+                                            (fastify/request-body request))]
     (publication-law/assert-valid!
      :translation-dispatch/request
      DecodedRequest
      (cond-> {}
-       (and (some? document) (not= "" document))
-       (assoc :document (resource-identity/decode-keyword document))))))
+       (contains? body :document)
+       (assoc :document (resource-identity/decode-keyword (:document body)))))))
 
 (defn- scope
   "The acting principal's dispatch scope.

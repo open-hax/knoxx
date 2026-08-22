@@ -63,12 +63,14 @@
   (record-translation! [store receipt]
     "Append completed translation evidence. Returns a Promise of the receipt.")
   (completed-translations! [store]
-    "Every completed translation receipt, oldest first. Returns a Promise.
+    "Every completed translation receipt. Returns a Promise.
 
-     Order is part of the contract, not an implementation detail:
-     `domain.translation-evidence/index-receipts` resolves a re-translated
-     source revision by last-write-wins, which only yields the newest
-     translation if recording order survived the read."))
+     Order is deliberately NOT part of the contract.
+     `domain.translation-evidence/index-receipts` selects the current receipt by
+     a total order over `:translation/at` and the output revision, so an
+     implementation is free to return rows in whatever order its query produced.
+     An earlier draft of this docstring promised oldest-first while the durable
+     store read unsorted — a contradiction a consumer could have relied on."))
 
 ;; ── Validation helpers ─────────────────────────────────────────────────────
 
@@ -106,12 +108,12 @@
    new attempt never produced. See `law.translation-dispatch/retriable-outcomes`
    for why a failed attempt must not be terminal at all."
   [current record]
-  (let [key (:dispatch/key record)
-        existing (get-in current [:dispatches key])]
+  (let [dispatch-key (:dispatch/key record)
+        existing (get-in current [:dispatches dispatch-key])]
     (cond
       (nil? existing)
       (-> current
-          (assoc-in [:dispatches key] record)
+          (assoc-in [:dispatches dispatch-key] record)
           (assoc :answer {:reservation/status :reserved :record record}))
 
       (in-flight? existing)
@@ -119,7 +121,7 @@
 
       (dispatch-law/retriable? (:dispatch/outcome existing))
       (-> current
-          (assoc-in [:dispatches key] record)
+          (assoc-in [:dispatches dispatch-key] record)
           (assoc :answer {:reservation/status :reserved :record record}))
 
       :else

@@ -160,11 +160,11 @@
    Returns `{:matched-count n :modified-count n}` with nil for a count the
    driver did not report, so a caller can tell 'no such document' from 'found
    it and changed nothing' — a distinction a boolean would erase."
-  [collection-handle query update]
+  [collection-handle query update-doc]
   (assert-query! query)
   (let [result (await (.updateOne collection-handle
                                   (clj->js query)
-                                  (clj->js update)))]
+                                  (clj->js update-doc)))]
     {:matched-count (let [n (aget result "matchedCount")]
                       (when (number? n) n))
      :modified-count (let [n (aget result "modifiedCount")]

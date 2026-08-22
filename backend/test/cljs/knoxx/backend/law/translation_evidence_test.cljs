@@ -55,6 +55,31 @@
     (is (not (m/validate law/Instant "2026-08-22T11:00:00.000+02:00")) "offset")
     (is (not (m/validate law/Instant "2026-08-22")) "date only"))
 
+  (testing "a well-formed but calendar-impossible timestamp is refused"
+    ;; The pattern alone admits these, and because instants are compared
+    ;; lexically to decide which translation is newest, a nonsense value would
+    ;; sort above every real one and win.
+    (is (not (m/validate law/Instant "2026-19-99T99:99:99.999Z")))
+    (is (not (m/validate law/Instant "2026-13-01T00:00:00.000Z")) "month 13")
+    (is (not (m/validate law/Instant "2026-00-01T00:00:00.000Z")) "month 0")
+    (is (not (m/validate law/Instant "2026-01-32T00:00:00.000Z")) "day 32")
+    (is (not (m/validate law/Instant "2026-01-00T00:00:00.000Z")) "day 0")
+    (is (not (m/validate law/Instant "2026-02-30T00:00:00.000Z")) "February 30")
+    (is (not (m/validate law/Instant "2026-04-31T00:00:00.000Z")) "April 31")
+    (is (not (m/validate law/Instant "2026-01-01T24:00:00.000Z")) "hour 24")
+    (is (not (m/validate law/Instant "2026-01-01T00:60:00.000Z")) "minute 60"))
+
+  (testing "leap years are calculated, not approximated"
+    (is (m/validate law/Instant "2024-02-29T00:00:00.000Z") "2024 is a leap year")
+    (is (not (m/validate law/Instant "2026-02-29T00:00:00.000Z")) "2026 is not")
+    (is (m/validate law/Instant "2000-02-29T00:00:00.000Z") "2000: divisible by 400")
+    (is (not (m/validate law/Instant "1900-02-29T00:00:00.000Z")) "1900: divisible by 100"))
+
+  (testing "a leap second is admitted"
+    ;; A real timestamp source can emit second 60, and refusing it would reject
+    ;; a moment that actually happened.
+    (is (m/validate law/Instant "2016-12-31T23:59:60.000Z")))
+
   (testing "later-instant? orders by time, with nil earliest"
     (is (law/later-instant? "2026-08-22T09:00:00.001Z" "2026-08-22T09:00:00.000Z"))
     (is (not (law/later-instant? "2026-08-22T09:00:00.000Z" "2026-08-22T09:00:00.001Z")))
@@ -91,3 +116,26 @@
                    :translation/dispatch-key :translation/at]]
       (is (thrown? js/Error (law/assert-receipt! (dissoc receipt field)))
           (str "missing " field " was accepted")))))
+
+(deftest supersedes-is-a-total-order
+  (let [older (assoc receipt :translation/at "2026-08-22T09:00:00.000Z")
+        newer (assoc receipt :translation/at "2026-08-22T10:00:00.000Z")]
+    (testing "later wins in both directions of comparison"
+      (is (law/supersedes? newer older))
+      (is (not (law/supersedes? older newer))))
+
+    (testing "anything supersedes nothing"
+      (is (law/supersedes? older nil)))
+
+    (testing "an equal timestamp is broken on the output revision, not on order"
+      ;; Strict comparison kept whichever arrived first, which is arrival-order
+      ;; dependence smuggled back in through the tie. The tiebreak is arbitrary
+      ;; but deterministic — two stores returning the same rows in different
+      ;; orders must reach the same answer.
+      (let [tie-a (assoc older :translation/revision "rev-a")
+            tie-b (assoc older :translation/revision "rev-b")]
+        (is (law/supersedes? tie-b tie-a))
+        (is (not (law/supersedes? tie-a tie-b)))))
+
+    (testing "identical receipts do not supersede each other"
+      (is (not (law/supersedes? older older))))))

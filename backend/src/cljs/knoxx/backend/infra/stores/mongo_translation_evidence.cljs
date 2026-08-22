@@ -38,8 +38,16 @@
             [knoxx.backend.law.translation-dispatch :as dispatch-law]
             [knoxx.backend.law.translation-evidence :as evidence-law]))
 
-(def DISPATCHES_COLLECTION "knoxx_translation_dispatches")
-(def RECEIPTS_COLLECTION "knoxx_translation_receipts")
+(def DISPATCHES_COLLECTION
+  "Collection holding dispatch claims — the revision bindings the worker cannot
+   carry. SCREAMING_SNAKE to match the three neighbouring Mongo stores
+   (`mongo-mcp-oauth`, `mongo-rate-limits`); consistency inside this directory
+   beats idiom applied to one file."
+  "knoxx_translation_dispatches")
+
+(def RECEIPTS_COLLECTION
+  "Collection holding completed-translation receipts. Append-only."
+  "knoxx_translation_receipts")
 
 (defn- dispatches-coll [db] (.collection db DISPATCHES_COLLECTION))
 (defn- receipts-coll [db] (.collection db RECEIPTS_COLLECTION))

@@ -59,17 +59,17 @@
    the algorithm in the token, the change is legible in the data."
   "sha256-")
 
-(def digest-length
-  "Hex characters of digest retained.
-
-   48 bits is not collision-resistant in the cryptographic sense and does not
-   need to be: the adversary here is accident, not attack. A revision only ever
-   has to distinguish successive contents of one document, and the full digest
-   makes an unreadable identifier for a human comparing two receipts."
-  12)
-
 (defn content-revision
-  "The concrete revision of `content`.
+  "The concrete revision of `content`: the full SHA-256 digest.
+
+   The whole digest, not a prefix. A truncated one reads better in a receipt,
+   and it was the wrong trade: a revision is the key for translation evidence
+   AND for the publication idempotency binding, so a collision does not merely
+   confuse a human — it makes changed source content reuse the prior
+   translation's evidence and the prior materialization's key, which admits
+   untranslated content after an edit. There is no volume of documents at which
+   that is an acceptable risk, and the only cost of avoiding it is a longer
+   string.
 
    Pure, and returns nil for absent content rather than digesting the empty
    string. An unreadable source and an empty source are different facts, and
@@ -77,7 +77,7 @@
    the gate would then happily publish translations against."
   [content]
   (when (some? content)
-    (str digest-prefix (subs (crypto/sha256-hex content) 0 digest-length))))
+    (str digest-prefix (crypto/sha256-hex content))))
 
 (defn source-root
   "The directory a document's relative source path resolves against.

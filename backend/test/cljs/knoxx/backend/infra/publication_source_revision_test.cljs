@@ -15,8 +15,8 @@
 (def ^:private temp-root "/tmp/knoxx-source-revision-test")
 
 (defn- ^:async write-source!
-  [name content]
-  (let [path (str temp-root "/" name)]
+  [filename content]
+  (let [path (str temp-root "/" filename)]
     (await (fs/write-file-ensure-dir! path content))
     path))
 

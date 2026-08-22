@@ -38,26 +38,19 @@
    returns is untrusted input — the rule `law.publication-receipts` already
    applies to an adapter's output.
 
-   The latest `:translation/at` wins, not the last one in the sequence.
-   Re-running a translation for the same source revision produces a new output
-   revision, and the newest is what actually exists; keeping the wrong one leaves
-   the gate reading a translation that has been replaced, and any approval
-   pinned to it authorizing bytes nobody reviewed.
-
-   Deciding by timestamp rather than by arrival order is deliberate. Arrival
-   order would have made correctness depend on every store preserving insertion
-   order across a query — an easy thing for one implementation to honor by
-   accident and a later one to break silently. `law.translation-evidence/Instant`
-   pins one fixed-width UTC format precisely so this comparison is total."
+   Which receipt is current is decided by `law.translation-evidence/supersedes?`,
+   a total order — never by position in the sequence. Arrival order would have
+   made correctness depend on every store preserving insertion order across a
+   query: easy for one implementation to honor by accident and for a later one to
+   break silently."
   [receipts]
   (reduce (fn [index receipt]
             (let [checked (law/assert-receipt! receipt)
-                  key (evidence-key (:translation/document checked)
-                                    (:translation/locale checked)
-                                    (:translation/source-revision checked))]
-              (if (law/later-instant? (:translation/at checked)
-                                      (:translation/at (get index key)))
-                (assoc index key checked)
+                  entry-key (evidence-key (:translation/document checked)
+                                          (:translation/locale checked)
+                                          (:translation/source-revision checked))]
+              (if (law/supersedes? checked (get index entry-key))
+                (assoc index entry-key checked)
                 index)))
           {}
           receipts))

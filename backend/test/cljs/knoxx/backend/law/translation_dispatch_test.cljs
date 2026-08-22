@@ -47,8 +47,15 @@
         (is (not= base-key (law/dispatch-key (assoc base field value)))
             (str field " did not change the key")))))
 
-  (testing "two locales cannot collide through string joining"
-    ;; pr-str rather than str: `:es` and the string "es" must not share a key.
+  (testing "a keyword and its name cannot collide"
+    ;; pr-str rather than str, so `:es` renders as ":es" and the string "es" as
+    ;; "\"es\"". Under `str` both would render as "es" and share a key.
+    (is (not= (law/dispatch-key {:document :a/b :source-locale :en :locale :es :revision "r1"})
+              (law/dispatch-key {:document :a/b :source-locale :en :locale "es" :revision "r1"}))))
+
+  (testing "the joining separator cannot be smuggled through a field"
+    ;; Fields are joined with "|", so a revision containing one must not let two
+    ;; different requests render to the same key.
     (is (not= (law/dispatch-key {:document :a/b :source-locale :en :locale :es :revision "r1"})
               (law/dispatch-key {:document :a/b :source-locale :en :locale :es :revision "r1|"}))))
 

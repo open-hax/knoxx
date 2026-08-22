@@ -91,11 +91,43 @@
    translation it replaced."
   #"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
+(defn- leap-year?
+  [year]
+  (and (zero? (mod year 4))
+       (or (not (zero? (mod year 100)))
+           (zero? (mod year 400)))))
+
+(defn- days-in-month
+  [year month]
+  (case month
+    2 (if (leap-year? year) 29 28)
+    (4 6 9 11) 30
+    31))
+
 (defn instant?
-  "True for an ISO-8601 UTC instant with millisecond precision."
+  "True for a real ISO-8601 UTC instant with millisecond precision.
+
+   The shape is checked and then so is the calendar. The pattern alone admits
+   `\"2026-19-99T99:99:99.999Z\"`, which is not a moment — and because these
+   strings are compared lexically to decide which translation is newest, a
+   nonsense value like that would sort above every real one and win. February 30
+   is refused too: a contract that accepts an impossible date is not describing
+   an instant."
   [value]
-  (and (string? value)
-       (boolean (re-matches iso-8601-utc-millis-pattern value))))
+  (boolean
+   (when (and (string? value) (re-matches iso-8601-utc-millis-pattern value))
+     (let [year (parse-long (subs value 0 4))
+           month (parse-long (subs value 5 7))
+           day (parse-long (subs value 8 10))
+           hour (parse-long (subs value 11 13))
+           minute (parse-long (subs value 14 16))
+           second (parse-long (subs value 17 19))]
+       (and (<= 1 month 12)
+            (<= 1 day (days-in-month year month))
+            (<= 0 hour 23)
+            (<= 0 minute 59)
+            ;; 60 admits a leap second, which a real timestamp source can emit.
+            (<= 0 second 60))))))
 
 (def Instant
   "A comparable instant. A string rather than a host date object, because this
@@ -113,6 +145,25 @@
     (nil? a) false
     (nil? b) true
     :else (pos? (compare a b))))
+
+(defn supersedes?
+  "Whether `candidate` should replace `incumbent` as the current translation.
+
+   A total order, which is the whole point. Later instant wins; on an exact tie
+   the greater output revision wins. The tiebreak is arbitrary but deterministic,
+   and deterministic is the property that matters: two stores returning the same
+   receipts in different orders must reach the same answer, and a strict
+   comparison would instead have kept whichever arrived first.
+
+   Nil incumbent is superseded by anything, so this doubles as the empty-index
+   case."
+  [candidate incumbent]
+  (cond
+    (nil? incumbent) true
+    (not= (:translation/at candidate) (:translation/at incumbent))
+    (later-instant? (:translation/at candidate) (:translation/at incumbent))
+    :else (pos? (compare (:translation/revision candidate)
+                         (:translation/revision incumbent)))))
 
 (defn assert-valid!
   "Return `value` when it satisfies `schema`; otherwise throw a named contract

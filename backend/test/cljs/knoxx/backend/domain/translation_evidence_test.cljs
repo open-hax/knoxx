@@ -99,3 +99,18 @@
         (is (= "sha256-aaa111bbb222"
                (get-in decision [:translation-work :action/with :revision]))
             "derived work carries the concrete revision, not a selector")))))
+
+(deftest equal-timestamp-receipts-resolve-the-same-way-in-any-order
+  ;; Two receipts recorded in the same millisecond used to leave the winner to
+  ;; arrival order, which is exactly the store-order dependence indexing by
+  ;; timestamp exists to remove.
+  (let [same-ms "2026-08-22T09:00:00.000Z"
+        a (receipt :revision "sha256-aaa111bbb222+es@batch-a" :at same-ms)
+        b (receipt :revision "sha256-aaa111bbb222+es@batch-b" :at same-ms)]
+    (testing "the same pair in either order picks the same receipt"
+      (is (= (:translation/revision
+              (domain/receipt-for (domain/evidence {:receipts [a b]})
+                                  :knoxx.docs/probe :es "sha256-aaa111bbb222"))
+             (:translation/revision
+              (domain/receipt-for (domain/evidence {:receipts [b a]})
+                                  :knoxx.docs/probe :es "sha256-aaa111bbb222")))))))
