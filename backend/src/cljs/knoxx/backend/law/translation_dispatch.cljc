@@ -569,6 +569,47 @@
                              (name (:dispatch/source-locale context)))
           (same-when-present (:target_lang batch) (name (:locale work)))))))
 
+(def BatchView
+  "The batch as `extern.openplanner-translation-mongo.common/batch-view`
+   projects it, narrowed to what recovery reads.
+
+   Open, because the projection carries more than this and the rest is not
+   recovery's business. `completed_documents` and `failed_documents` are the
+   fields that matter: the status route accumulates them with `$push`, so the
+   batch itself records which documents finished and which did not."
+  [:map
+   [:status {:optional true} [:maybe :string]]
+   [:completed_documents {:optional true} [:maybe [:vector :string]]]
+   [:failed_documents {:optional true} [:maybe [:vector :any]]]])
+
+(defn batch-document-outcome
+  "What `batch` says happened to `document-wire-id`: `:completed`, `:failed`, or
+   nil for still running or unknown.
+
+   Read from the batch's own per-document arrays rather than inferred from its
+   status. The status is batch-wide — `partial` means *some* document failed, and
+   which one it was is not in that word — so recovering from status alone only
+   worked because a Knoxx-created batch happens to carry one document. That is
+   true today and it is an assumption this does not need: the arrays name the
+   documents directly.
+
+   A named failure wins over a named completion. If a document appears in both,
+   something has retried inside the batch and the pessimistic reading is the one
+   that cannot fabricate a receipt."
+  [batch document-wire-id]
+  (let [failed-ids (into #{}
+                         (keep (fn [entry]
+                                 (cond
+                                   (string? entry) entry
+                                   (map? entry) (or (:document_id entry)
+                                                    (:document entry))
+                                   :else nil)))
+                         (:failed_documents batch))
+        completed-ids (set (:completed_documents batch))]
+    (cond
+      (contains? failed-ids document-wire-id) :failed
+      (contains? completed-ids document-wire-id) :completed)))
+
 (defn source-drift-refusal
   "Refusal when the source no longer hashes to the revision that was dispatched.
 

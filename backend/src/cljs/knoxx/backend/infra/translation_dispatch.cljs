@@ -291,33 +291,39 @@
     (await (record-completion! evidence-store clock record nil))))
 
 (defn- ^:async recover-settled-batch!
-  "Re-read the batch behind an in-flight claim, and settle the claim if it ended.
+  "Re-read the batch behind an in-flight claim, and settle the claim if this
+   document finished.
 
    The recovery for evidence that was *earned* but never recorded. The worker
    reports a completion once and does not retry after a successful POST, so if
    the bookkeeping that turns that report into a receipt failed transiently, the
    report is gone and the claim would read in flight forever.
 
-   Nothing extra has to be persisted, because the batch still knows. A
-   Knoxx-created batch holds exactly one document, so the batch's own terminal
-   status is this document's outcome. Any other status — or an unreadable batch —
-   leaves the claim alone and reports a duplicate, the honest answer for work
-   that really is still running."
+   Nothing extra has to be persisted, because the batch still knows. The status
+   route accumulates `completed_documents` and `failed_documents` on the batch
+   with `$push`, so the batch names which documents finished — read directly
+   rather than inferred from the batch-wide status. `partial` means *some*
+   document failed and does not say which; recovering from status alone only
+   worked because a Knoxx-created batch happens to carry exactly one document,
+   and that is an assumption this no longer needs.
+
+   Anything else — still running, or an unreadable batch — leaves the claim alone
+   and reports a duplicate, the honest answer for work still in progress."
   [{:keys [evidence-store client clock observe-source-revision]} record]
-  ;; Required for the same reason `resolve-batch-report!` requires it: this path
-  ;; can mint a receipt, and a caller that forgot the check must fail rather than
-  ;; get a version of recovery with the verification missing.
   (when-not (fn? observe-source-revision)
     (throw (ex-info "recovering a settled batch requires a source-revision observer"
                     {:dispatch/key (:dispatch/key record)})))
-  (let [batch-id (:dispatch/batch-id record)
-        status (try
-                 (:status (await (openplanner-client/translation-batch!
-                                  client batch-id
-                                  {:org_id (:dispatch/org-id record)})))
-                 (catch :default _ nil))]
-    (case status
-      "complete"
+  (let [batch (try
+                (await (openplanner-client/translation-batch!
+                        client
+                        (:dispatch/batch-id record)
+                        {:org_id (:dispatch/org-id record)}))
+                (catch :default _ nil))
+        outcome (when batch
+                  (law/batch-document-outcome batch
+                                              (:dispatch/document-wire-id record)))]
+    (case outcome
+      :completed
       ;; Through the same drift guard as the worker's own report. This branch
       ;; exists because evidence was lost, which is no reason to trust it more.
       (let [result (await (complete-if-source-agrees!
@@ -328,12 +334,12 @@
                                    law/unreachable-outcome)
                :dispatch/record record))
 
-      "failed"
+      :failed
       {:dispatch/outcome :dispatch/failed
        :dispatch/record (or (await (store/resolve-dispatch!
                                     evidence-store (:dispatch/key record)
                                     :dispatch/failed
-                                    "recovered from batch status"))
+                                    "the batch reports this document failed"))
                             record)}
 
       {:dispatch/outcome :dispatch/duplicate :dispatch/record record})))

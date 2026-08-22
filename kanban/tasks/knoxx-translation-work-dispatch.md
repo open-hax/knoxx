@@ -127,12 +127,21 @@ that digest. A pin naming the current content is equally fine. Anything else is
 The narrowing is deliberate: pinning a revision Knoxx cannot observe is not a
 supported publication, and the alternative was a false receipt.
 
-### The drift check cannot see what the worker read
+### The drift check cannot see what the worker read — but it could
 
 `source-drift-refusal` compares digests of the *repository* source. The worker
-fetches its input from OpenPlanner's document store, so a document already
-divergent over there is translated while both observations agree. The check still
-catches every case where the local source moved, which is a receipt that is
-definitely wrong — but it does not establish what was translated. Closing that
-needs the batch contract to return a digest of the bytes the worker read: again
-another repository, again its own card.
+fetches its input from OpenPlanner's store, so a document already divergent over
+there is translated while both observations agree. The check catches every case
+where the local source moved, which is a receipt that is definitely wrong, but it
+does not establish what was translated.
+
+Reading the predecessor (`openplanner/src/routes/v1/translations.ts`) changes what
+is possible here. Each translation *segment* stores its `source_text`, so the
+bytes the worker actually translated are readable through the existing segments
+API — no contract change needed. What is not settled is how to reconcile
+segment-level source text with a whole-file digest: segmentation is the worker's,
+and concatenation order is not guaranteed to reproduce the file.
+
+So this stays open, but it is a *design* question rather than a cross-repo
+blocker, which is what it was previously carded as. Worth its own card with that
+correction.

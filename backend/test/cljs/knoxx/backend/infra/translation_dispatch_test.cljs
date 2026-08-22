@@ -34,6 +34,25 @@
 
 (def ^:private clock (constantly "2026-08-22T09:00:00.000Z"))
 
+(defn- batch-response
+  "What `recover-settled-batch!` sees when it re-reads the batch.
+
+   An explicit `batch-view` is used as given. A bare `batch-status` is expanded
+   into the shape the real projection carries — the status route pushes a
+   completed document onto `completed_documents`, so a `complete` batch names it.
+   Neither configured means the batch is unreadable, which recovery treats as
+   still running: the honest default for a test not exercising recovery."
+  [batch-view batch-status]
+  (cond
+    batch-view (js/Promise.resolve batch-view)
+    batch-status (js/Promise.resolve
+                  {:status batch-status
+                   :completed_documents (if (= "complete" batch-status)
+                                          ["knoxx.docs/probe"]
+                                          [])
+                   :failed_documents []})
+    :else (throw (ex-info "unexpected call to translation-batch!" {}))))
+
 (defn- fake-client
   "An `IOpenPlannerClient` that records batch requests and answers as told.
 
@@ -41,7 +60,7 @@
    present because the protocol requires it, and each throws rather than
    returning nil: a dispatch reaching one of them is a boundary violation the
    test should fail on, not silently tolerate."
-  [{:keys [batches answer observed batch-status]}]
+  [{:keys [batches answer observed batch-status batch-view]}]
   (let [respond (or answer (fn [_request n] {:batch_id (str "batch-" n)}))
         list-batches (or observed (fn [_opts] {:batches []}))
         boom (fn [method] (throw (ex-info (str "unexpected call to " method) {})))]
@@ -82,26 +101,21 @@
       (translation-document! [_ _ _ _] (boom "translation-document!"))
       (review-translation-document! [_ _ _ _] (boom "review-document!"))
       (next-translation-batch! [_ _] (boom "next-batch!"))
-      ;; `recover-settled-batch!` re-reads the batch. Absent a configured status
-      ;; it throws, which the recovery treats as unreadable — the honest default
-      ;; for a test that is not exercising recovery.
-      (translation-batch! [_ _ _]
-        (if batch-status
-          (js/Promise.resolve {:status batch-status})
-          (boom "translation-batch!")))
+      (translation-batch! [_ _ _] (batch-response batch-view batch-status))
       (update-translation-batch-status! [_ _ _] (boom "update-status!"))
       (v1-json! [_ _ _ _] (boom "v1-json!")) (forward-v1! [_ _] (boom "forward-v1!")))))
 
 (defn- fixture
   "Fresh store, client and recorded batch list for one test."
-  [& {:keys [answer observed source-revision batch-status]}]
+  [& {:keys [answer observed source-revision batch-status batch-view]}]
   (let [batches (atom [])]
     {:batches batches
      :deps {:evidence-store (store/memory-store)
             :client (fake-client {:batches batches
                                   :answer answer
                                   :observed observed
-                                  :batch-status batch-status})
+                                  :batch-status batch-status
+                                  :batch-view batch-view})
             :clock clock
             ;; Defaults to agreeing with the dispatched revision, so completion
             ;; is not refused for source drift. The drift path overrides it.
@@ -823,3 +837,55 @@
 
     (testing "the worker was asked exactly once"
       (is (= 1 (count @batches))))))
+
+(deftest ^:async recovery-reads-the-batch-per-document-not-its-overall-status
+  ;; The status route accumulates `completed_documents` and `failed_documents` on
+  ;; the batch with `$push`, so the batch names which documents finished. Reading
+  ;; the batch-wide status instead only worked because a Knoxx-created batch
+  ;; happens to carry one document — an assumption this no longer needs.
+  (testing "a partial batch that completed OUR document mints a receipt"
+    ;; `partial` means *some* document failed. Under status-based recovery this
+    ;; produced a duplicate and the earned receipt stayed lost.
+    (let [{:keys [deps]} (fixture :batch-view {:status "partial"
+                                               :completed_documents ["knoxx.docs/probe"]
+                                               :failed_documents [{:document_id "other/doc"
+                                                                   :error "boom"}]})
+          _ (await (dispatch/dispatch-work! deps (work) (context)))
+          recovered (await (dispatch/dispatch-work! deps (work) (context)))]
+      (is (= :dispatch/completed (:dispatch/outcome recovered)))
+      (is (some? (:translation/receipt recovered)))))
+
+  (testing "a complete batch that did NOT name our document is still running"
+    ;; The inverse: a batch-wide `complete` must not be read as our document
+    ;; having finished when the arrays do not say so.
+    (let [{:keys [deps]} (fixture :batch-view {:status "complete"
+                                               :completed_documents ["someone/else"]
+                                               :failed_documents []})
+          _ (await (dispatch/dispatch-work! deps (work) (context)))
+          recovered (await (dispatch/dispatch-work! deps (work) (context)))]
+      (is (= :dispatch/duplicate (:dispatch/outcome recovered)))
+      (is (empty? (await (store/completed-translations!
+                          (:evidence-store deps) evidence-scope))))))
+
+  (testing "a named failure makes the claim retriable"
+    (let [{:keys [deps]} (fixture :batch-view
+                                  {:status "partial"
+                                   :completed_documents []
+                                   :failed_documents [{:document_id "knoxx.docs/probe"
+                                                       :error "model unavailable"}]})
+          _ (await (dispatch/dispatch-work! deps (work) (context)))
+          recovered (await (dispatch/dispatch-work! deps (work) (context)))]
+      (is (= :dispatch/failed (:dispatch/outcome recovered)))))
+
+  (testing "a document named both completed and failed reads as failed"
+    ;; The pessimistic reading is the one that cannot fabricate a receipt.
+    (let [{:keys [deps]} (fixture :batch-view
+                                  {:status "partial"
+                                   :completed_documents ["knoxx.docs/probe"]
+                                   :failed_documents [{:document_id "knoxx.docs/probe"
+                                                       :error "retried"}]})
+          _ (await (dispatch/dispatch-work! deps (work) (context)))
+          recovered (await (dispatch/dispatch-work! deps (work) (context)))]
+      (is (= :dispatch/failed (:dispatch/outcome recovered)))
+      (is (empty? (await (store/completed-translations!
+                          (:evidence-store deps) evidence-scope)))))))
