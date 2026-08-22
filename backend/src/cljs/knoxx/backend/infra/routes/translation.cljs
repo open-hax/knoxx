@@ -14,7 +14,9 @@
             [knoxx.backend.shape.app-shapes :refer [route!]]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.http :refer [http-error]]))
+            [knoxx.backend.infra.http :refer [http-error]]
+            [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
+            [knoxx.backend.infra.stores.translation-evidence-registry :as evidence-registry]))
 
 (defn- op-client
   [config]
@@ -276,13 +278,55 @@
      (aget (params request) "id")
      (org-scope ctx ctx-org-id))))
 
+(defn- ^:async resolve-translation-evidence!
+  "Turn the worker's status report into Knoxx-side translation evidence.
+
+  This is the completion half of `knoxx-translation-work-dispatch`, and it hangs
+  off this route deliberately rather than off a new endpoint. The worker already
+  calls here after every document; a dedicated Knoxx callback would have meant
+  teaching another repository a new call for no behavioral gain.
+
+  Never allowed to fail the status update. The batch status belongs to the
+  worker's own queue and has already been recorded by the time this runs, so
+  throwing would make the worker retry a status transition that already
+  succeeded — and `next` has no path back from `processing` to `queued`, so a
+  retry storm here could strand the batch. The outcome travels in the response
+  instead, which keeps it observable rather than silent: an operator debugging a
+  translation that never produced a receipt can see the refusal that stopped it."
+  [report]
+  (if-let [evidence-store (evidence-registry/current)]
+    (try
+      (await (translation-dispatch/resolve-batch-status!
+              {:evidence-store evidence-store
+               :clock (fn [] (.toISOString (js/Date.)))}
+              report))
+      (catch :default err
+        {:translation/error (or (not-empty (str (ex-message err)))
+                                "translation evidence resolution failed")}))
+    {:translation/skipped {:reason :translation-evidence-unavailable}}))
+
+(defn- ^:async update-batch-status!
+  "Record the batch status with its owner, then resolve Knoxx's own evidence.
+
+  Strictly in that order. The status transition belongs to the worker's queue
+  and must not be made conditional on Knoxx's bookkeeping succeeding."
+  [config request ctx ctx-org-id]
+  (let [batch-id (aget (params request) "id")
+        body (body-clj request)
+        response (await (openplanner-client/update-translation-batch-status!
+                         (op-client config)
+                         batch-id
+                         (assoc body :org_id (org-id! ctx ctx-org-id))))
+        ;; The report carries the batch id from the route, not the body: the
+        ;; worker does not repeat it, and the binding is keyed by it.
+        evidence (await (resolve-translation-evidence!
+                         (assoc body :batch_id batch-id)))]
+    (assoc response :translation evidence)))
+
 (defn- update-batch-status-op
   [config]
   (fn [request ctx {:keys [ctx-org-id]}]
-    (openplanner-client/update-translation-batch-status!
-     (op-client config)
-     (aget (params request) "id")
-     (assoc (body-clj request) :org_id (org-id! ctx ctx-org-id)))))
+    (update-batch-status! config request ctx ctx-org-id)))
 
 (defn- register-translation-batch-routes!
   [app runtime config handlers]

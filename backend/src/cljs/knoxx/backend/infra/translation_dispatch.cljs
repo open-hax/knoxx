@@ -1,0 +1,210 @@
+(ns knoxx.backend.infra.translation-dispatch
+  "Dispatching the publication gate's derived translation work, and turning the
+  worker's answer back into evidence.
+
+  Two directions, both of them narrow:
+
+    dispatch-work!        derived work -> a claim, then the worker's batch
+    resolve-batch-report! the worker's status report -> a translation receipt
+
+  Neither reimplements translation. The worker already exists — it polls
+  `/api/translations/batches/next`, translates in a shared agent session, and
+  reports progress back through `/api/translations/batches/:id/status`. This
+  namespace only asks it for work and interprets what it says, which is what the
+  card means by dispatching 'through the established worker boundary'.
+
+  The revision the worker never sees stays here, in a dispatch record. See
+  `law.translation-dispatch` for why that binding cannot live in the batch."
+  (:require [knoxx.backend.domain.publication-gate :as gate]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.translation-evidence-store :as store]
+            [knoxx.backend.law.translation-dispatch :as law]
+            [knoxx.backend.shape.resource-identity :as resource-identity]))
+
+(defn dispatch-context
+  "The dispatch context for one hydrated publication intent.
+
+   The garden, the document's wire id and the source locale are facts about the
+   intent; the organization and membership are facts about the acting principal.
+   Both halves are required, and neither is defaulted — a dispatch that invented
+   an organization would file a batch in a tenant nobody named."
+  [intent {:keys [org-id membership-id project]}]
+  (law/assert-valid!
+   :translation-dispatch/context
+   law/DispatchContext
+   (cond-> {:dispatch/garden (resource-identity/encode-keyword
+                              (:publication/garden intent))
+            :dispatch/document-wire-id (resource-identity/encode-keyword
+                                        (:publication/document intent))
+            :dispatch/source-locale (:document/source-locale intent)
+            :dispatch/org-id org-id
+            :dispatch/membership-id membership-id}
+     (some? project) (assoc :dispatch/project project))))
+
+;; ── Dispatch ───────────────────────────────────────────────────────────────
+
+(defn- ^:async request-batch!
+  "Ask the worker boundary for a batch and return its id.
+
+   The response is untrusted input: `BatchCreated` is asserted before the id is
+   read, so a client that answered `{:ok false}` cannot yield a nil batch id
+   that later makes an output revision unattributable."
+  [client work context]
+  (let [request (law/worker-request work context)
+        response (await (openplanner-client/create-translation-batch! client request))]
+    (:batch_id (law/assert-valid! :translation-dispatch/batch-created
+                                  law/BatchCreated
+                                  response))))
+
+(defn- ^:async accept-dispatch!
+  "Call the worker for a freshly reserved claim, and record what happened.
+
+   A worker failure resolves the claim as `:dispatch/failed` rather than leaving
+   it in flight. In flight means 'still running', and a claim stuck there is
+   never retried and never reported — the work would silently never happen. A
+   failed claim is visible and re-dispatchable by a later pass."
+  [evidence-store client work context record]
+  (let [dispatch-key (:dispatch/key record)]
+    (try
+      (let [batch-id (await (request-batch! client work context))
+            bound (await (store/bind-dispatch-batch! evidence-store
+                                                     dispatch-key
+                                                     batch-id))]
+        {:dispatch/outcome :dispatch/accepted
+         :dispatch/record (or bound record)})
+      (catch :default err
+        (let [detail (or (not-empty (str (ex-message err))) "unknown worker failure")
+              failed (await (store/resolve-dispatch! evidence-store
+                                                     dispatch-key
+                                                     :dispatch/failed
+                                                     detail))]
+          {:dispatch/outcome :dispatch/failed
+           :dispatch/record (or failed record)
+           :dispatch/detail detail})))))
+
+(defn ^:async dispatch-work!
+  "Dispatch one derived translation work item, exactly once.
+
+   The claim is taken *before* the worker is called. Calling first and recording
+   after would leave a window in which a second pass sees no claim, enqueues a
+   second batch, and translates the same revision twice — and the second
+   translation cannot be withdrawn, because nothing recorded that the first was
+   already asked for.
+
+   Returns the outcome and the record it applies to. A duplicate is not an
+   error: it is the correct answer to asking twice, and it carries the original
+   record so a caller can see the batch already running."
+  [{:keys [evidence-store client clock]} work context]
+  (let [checked-work (law/assert-valid! :translation-dispatch/work law/DerivedWork work)
+        record (law/dispatch-record checked-work context :dispatch/accepted (clock))
+        reservation (await (store/reserve-dispatch! evidence-store record))]
+    (case (:reservation/status reservation)
+      :reserved (await (accept-dispatch! evidence-store client checked-work context
+                                         (:record reservation)))
+
+      ;; Already asked. Neither case re-enqueues: in flight is still running,
+      ;; and done already reached an outcome a caller can read off the record.
+      (:in-flight :done)
+      {:dispatch/outcome :dispatch/duplicate
+       :dispatch/record (:record reservation)})))
+
+;; ── Deriving work from desired state ───────────────────────────────────────
+
+(defn derived-work
+  "The translation work one hydrated intent derives, or nil.
+
+   Delegates wholly to `domain.publication-gate/gate`, which computes evidence
+   once and keys the derived work to that single concrete revision. Nothing here
+   re-decides admissibility: this namespace's job is to dispatch what the gate
+   already decided, and a second opinion about it would be the drift the gate's
+   compute-once rule exists to prevent."
+  [intent facts]
+  (:translation-work (gate/gate intent facts)))
+
+(defn ^:async dispatch-intents!
+  "Dispatch the derived translation work for every intent that has any.
+
+   Sequential rather than concurrent, deliberately. The claims are atomic, so
+   concurrency would be safe for correctness — but every dispatch creates a
+   batch on a shared worker queue, and fanning out an entire garden's backlog in
+   one pass is how a reconciliation run becomes an incident. One at a time also
+   keeps the returned report in a readable order.
+
+   Returns one entry per intent that derived work. An intent with no derived
+   work is absent rather than present-and-empty: the gate's silence means
+   'nothing to do', which is not an event."
+  [deps intents facts scope]
+  (let [results (atom [])]
+    (doseq [intent intents]
+      (when-let [work (derived-work intent facts)]
+        (let [outcome (await (dispatch-work! deps
+                                             (:action/with work)
+                                             (dispatch-context intent scope)))]
+          (swap! results conj (assoc outcome
+                                     :publication/id (:publication/id intent))))))
+    @results))
+
+;; ── Resolving the worker's answer ──────────────────────────────────────────
+
+(defn- ^:async record-completion!
+  "Persist the receipt, then close the claim.
+
+   That order matters. A receipt recorded *after* a successful resolve would be
+   lost if the process died between the two, and the claim would read completed
+   with no translation to show — the gate would then report that work done
+   forever. This order can only ever duplicate a receipt for an already-resolved
+   claim, and `law/completion-refusal` refuses that on the way back in."
+  [evidence-store clock record]
+  (let [receipt (law/translation-receipt record (law/output-revision record) (clock))]
+    (await (store/record-translation! evidence-store receipt))
+    (await (store/resolve-dispatch! evidence-store
+                                    (:dispatch/key record)
+                                    :dispatch/completed
+                                    nil))
+    {:translation/receipt receipt}))
+
+(defn ^:async resolve-batch-report!
+  "Turn one worker status report into translation evidence, or refuse it.
+
+   `report` names a batch and a document; only the store knows which concrete
+   revision that pair was asked about, so the join happens first and every
+   refusal is decided against the binding rather than against the report.
+
+   A refusal is returned, not thrown. An untrusted boundary receiving a stale or
+   mismatched answer is an ordinary event, and the caller — an HTTP route the
+   worker calls — has to answer either way. The claim is left in flight on a
+   refusal: the report did not resolve it, and marking it failed would discard a
+   translation that may still be running.
+
+   Returns `{:translation/receipt r}` on success, or `{:translation/refusal f}`."
+  [{:keys [evidence-store clock]} report]
+  (let [checked (law/assert-valid! :translation-dispatch/status-report
+                                   law/BatchStatusReport
+                                   report)
+        record (await (store/dispatch-for-batch-document!
+                       evidence-store
+                       (:batch_id checked)
+                       (:completed_document checked)))]
+    (if-let [refusal (law/completion-refusal record checked)]
+      {:translation/refusal refusal}
+      (await (record-completion! evidence-store clock record)))))
+
+(defn ^:async fail-batch-document!
+  "Record that the worker could not translate one document of a batch.
+
+   Distinct from a refusal: the worker answered, and the answer was failure. The
+   claim moves to `:dispatch/failed` so a later pass can re-dispatch it, which is
+   the distinction the card asks for between missing work and an
+   attempted-but-unsuccessful run."
+  [{:keys [evidence-store]} batch-id document-wire-id detail]
+  (if-let [record (await (store/dispatch-for-batch-document! evidence-store
+                                                             batch-id
+                                                             document-wire-id))]
+    {:dispatch/record (await (store/resolve-dispatch! evidence-store
+                                                      (:dispatch/key record)
+                                                      :dispatch/failed
+                                                      detail))
+     :dispatch/outcome :dispatch/failed}
+    {:translation/refusal {:refusal/type :dispatch-record-missing
+                           :refusal/actual {:batch_id batch-id
+                                            :document document-wire-id}}}))

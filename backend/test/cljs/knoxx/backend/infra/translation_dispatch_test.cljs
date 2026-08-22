@@ -1,0 +1,274 @@
+(ns knoxx.backend.infra.translation-dispatch-test
+  (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.domain.translation-evidence :as evidence-domain]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.translation-dispatch :as dispatch]
+            [knoxx.backend.infra.translation-evidence-store :as store]
+            [knoxx.backend.law.translation-dispatch :as law]))
+
+(def ^:private intent
+  {:publication/id :knoxx.docs/probe-es
+   :publication/document :knoxx.docs/probe
+   :publication/garden :knoxx.docs/promethean
+   :publication/locale :es
+   :publication/revision "sha256-aaa111bbb222"
+   :publication/state :published
+   :publication/path "/probe"
+   :translation/review :none
+   :document/source-locale :en})
+
+(def ^:private scope {:org-id "org-1" :membership-id "member-1"})
+
+(def ^:private facts
+  {:current-source-revision (constantly "sha256-aaa111bbb222")
+   :translated-revision? (constantly false)
+   :approved? (constantly false)
+   :source-revision-superseded? (constantly false)})
+
+(def ^:private clock (constantly "2026-08-22T09:00:00.000Z"))
+
+(defn- fake-client
+  "An `IOpenPlannerClient` that records batch requests and answers as told.
+
+   Only the one method this seam touches does anything. Every other method is
+   present because the protocol requires it, and each throws rather than
+   returning nil: a dispatch reaching one of them is a boundary violation the
+   test should fail on, not silently tolerate."
+  [{:keys [batches answer]}]
+  (let [respond (or answer (fn [_request n] {:batch_id (str "batch-" n)}))
+        boom (fn [method] (throw (ex-info (str "unexpected call to " method) {})))]
+    (reify openplanner-client/IOpenPlannerClient
+      (enabled? [_] true)
+      (create-translation-batch! [_ payload]
+        (swap! batches conj payload)
+        (js/Promise.resolve (respond payload (count @batches))))
+      ;; Every remaining method is implemented only because the protocol
+      ;; declares it, and each one throws. Packed several per line to stay
+      ;; inside the file-size lint without dropping any: a partial reify would
+      ;; make a dispatch that wandered into an unrelated OpenPlanner call return
+      ;; undefined instead of failing the test.
+      (health! [_] (boom "health!")) (events! [_ _] (boom "events!"))
+      (session! [_ _ _] (boom "session!")) (sessions! [_ _] (boom "sessions!"))
+      (vector-search! [_ _] (boom "vector-search!"))
+      (graph-memory! [_ _] (boom "graph-memory!"))
+      (graph-export! [_ _] (boom "graph-export!"))
+      (upsert-document! [_ _] (boom "upsert-document!"))
+      (documents-stats! [_] (boom "documents-stats!"))
+      (graph-monitoring! [_] (boom "graph-monitoring!"))
+      (mongo-collections! [_] (boom "mongo-collections!"))
+      (mongo-query! [_ _] (boom "mongo-query!"))
+      (build-semantic-edges! [_ _] (boom "build-semantic-edges!"))
+      (record-labels! [_ _] (boom "record-labels!"))
+      (record-reaction! [_ _ _] (boom "record-reaction!"))
+      (translation-segments! [_ _] (boom "translation-segments!"))
+      (translation-segment! [_ _ _] (boom "translation-segment!"))
+      (create-translation-segment! [_ _] (boom "create-translation-segment!"))
+      (label-translation-segment! [_ _ _] (boom "label-segment!"))
+      (translation-export-manifest! [_ _] (boom "export-manifest!"))
+      (translation-export-sft! [_ _] (boom "export-sft!"))
+      (create-translation-segments-batch! [_ _] (boom "create-segments-batch!"))
+      (translation-documents! [_ _] (boom "translation-documents!"))
+      (translation-document! [_ _ _ _] (boom "translation-document!"))
+      (review-translation-document! [_ _ _ _] (boom "review-document!"))
+      (translation-batches! [_ _] (boom "translation-batches!"))
+      (next-translation-batch! [_ _] (boom "next-batch!"))
+      (translation-batch! [_ _ _] (boom "translation-batch!"))
+      (update-translation-batch-status! [_ _ _] (boom "update-status!"))
+      (v1-json! [_ _ _ _] (boom "v1-json!")) (forward-v1! [_ _] (boom "forward-v1!")))))
+
+(defn- fixture
+  "Fresh store, client and recorded batch list for one test."
+  [& {:keys [answer]}]
+  (let [batches (atom [])]
+    {:batches batches
+     :deps {:evidence-store (store/memory-store)
+            :client (fake-client {:batches batches :answer answer})
+            :clock clock}}))
+
+(defn- work []
+  (:action/with (dispatch/derived-work intent facts)))
+
+(defn- context []
+  (dispatch/dispatch-context intent scope))
+
+(deftest ^:async gated-work-reaches-the-worker-with-a-concrete-revision
+  (let [{:keys [batches deps]} (fixture)
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the worker was asked once, in its own contract's shape"
+      (is (= 1 (count @batches)))
+      (is (= {:garden_id "knoxx.docs/promethean"
+              :target_lang "es"
+              :document_ids ["knoxx.docs/probe"]
+              :source_lang "en"
+              :org_id "org-1"
+              :membership_id "member-1"}
+             (first @batches))))
+
+    (testing "the revision the worker cannot carry is bound Knoxx-side"
+      (is (= :dispatch/accepted (:dispatch/outcome result)))
+      (is (= "sha256-aaa111bbb222" (:dispatch/revision (:dispatch/record result))))
+      (is (= "batch-1" (:dispatch/batch-id (:dispatch/record result)))))
+
+    (testing "no translation fact exists yet — the worker has not answered"
+      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+
+(deftest ^:async duplicate-dispatch-does-not-enqueue-twice
+  (let [{:keys [batches deps]} (fixture)
+        first-result (await (dispatch/dispatch-work! deps (work) (context)))
+        second-result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the second ask reuses the identity instead of translating again"
+      (is (= :dispatch/accepted (:dispatch/outcome first-result)))
+      (is (= :dispatch/duplicate (:dispatch/outcome second-result)))
+      (is (= 1 (count @batches))
+          "a second batch would translate the same revision twice"))
+
+    (testing "the duplicate carries the running batch, so a caller can see it"
+      (is (= "batch-1" (:dispatch/batch-id (:dispatch/record second-result)))))))
+
+(deftest ^:async a-worker-failure-is-recorded-not-left-in-flight
+  (let [{:keys [batches deps]} (fixture :answer (fn [_ _]
+                                                  (throw (ex-info "worker refused" {}))))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the outcome is failure, with the reason kept"
+      (is (= :dispatch/failed (:dispatch/outcome result)))
+      (is (= :dispatch/failed (:dispatch/outcome (:dispatch/record result))))
+      (is (= "worker refused" (:dispatch/detail (:dispatch/record result)))))
+
+    (testing "the claim reached a terminal outcome rather than sticking in flight"
+      ;; Left in flight, the work would never be retried and never reported: it
+      ;; would silently never happen.
+      (let [stored (await (store/dispatch-for-key!
+                           (:evidence-store deps)
+                           (:dispatch/key (:dispatch/record result))))]
+        (is (= :dispatch/failed (:dispatch/outcome stored)))))
+
+    (testing "no translation fact was fabricated"
+      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))
+    (is (= 1 (count @batches)))))
+
+(deftest ^:async a-nil-batch-id-cannot-produce-an-unattributable-dispatch
+  (let [{:keys [deps]} (fixture :answer (fn [_ _] {:ok false}))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "a client answering without a batch id is a failure, not success"
+      (is (= :dispatch/failed (:dispatch/outcome result))))))
+
+(deftest ^:async a-completed-report-becomes-evidence-the-gate-recognizes
+  (let [{:keys [deps]} (fixture)
+        _ (await (dispatch/dispatch-work! deps (work) (context)))
+        resolved (await (dispatch/resolve-batch-report!
+                         deps
+                         {:status "partial"
+                          :batch_id "batch-1"
+                          :completed_document "knoxx.docs/probe"}))
+        receipt (:translation/receipt resolved)]
+    (testing "a receipt is minted against the bound revision"
+      (is (some? receipt))
+      (is (= "sha256-aaa111bbb222" (:translation/source-revision receipt)))
+      (is (= :es (:translation/locale receipt)))
+      (is (= :en (:translation/source-locale receipt))))
+
+    (testing "the gate now sees the translation"
+      ;; The DoD line this proves: 'a validated, revision-specific receipt that
+      ;; the publication gate recognizes'.
+      (let [loaded (evidence-domain/evidence
+                    {:receipts (await (store/completed-translations!
+                                       (:evidence-store deps)))})
+            gate-facts (evidence-domain/gate-facts loaded)]
+        (is ((:translated-revision? gate-facts)
+             :knoxx.docs/probe :es "sha256-aaa111bbb222"))
+        (is (not ((:translated-revision? gate-facts)
+                  :knoxx.docs/probe :fr "sha256-aaa111bbb222")))))
+
+    (testing "the same report a second time cannot mint a second receipt"
+      (let [again (await (dispatch/resolve-batch-report!
+                          deps
+                          {:status "complete"
+                           :batch_id "batch-1"
+                           :completed_document "knoxx.docs/probe"}))]
+        (is (= :dispatch-already-resolved
+               (:refusal/type (:translation/refusal again))))
+        (is (= 1 (count (await (store/completed-translations!
+                                (:evidence-store deps))))))))))
+
+(deftest ^:async stale-and-mismatched-answers-cannot-satisfy-the-gate
+  (let [{:keys [deps]} (fixture)
+        _ (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "an unknown document is refused"
+      (is (= :dispatch-record-missing
+             (:refusal/type
+              (:translation/refusal
+               (await (dispatch/resolve-batch-report!
+                       deps {:status "partial"
+                             :batch_id "batch-1"
+                             :completed_document "knoxx.docs/other"})))))))
+
+    (testing "another batch's answer is refused"
+      (is (= :dispatch-record-missing
+             (:refusal/type
+              (:translation/refusal
+               (await (dispatch/resolve-batch-report!
+                       deps {:status "partial"
+                             :batch_id "batch-99"
+                             :completed_document "knoxx.docs/probe"})))))))
+
+    (testing "no refusal left a translation fact behind"
+      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+
+(deftest ^:async a-malformed-report-is-refused-by-contract
+  (let [{:keys [deps]} (fixture)]
+    (try
+      (await (dispatch/resolve-batch-report!
+              deps {:status "invented"
+                    :batch_id "batch-1"
+                    :completed_document "knoxx.docs/probe"}))
+      (is false "an unrecognized worker status must not be interpreted")
+      (catch :default err
+        (is (= :translation-dispatch/status-report (:contract (ex-data err))))))))
+
+(deftest ^:async a-failed-document-is-distinct-from-missing-work
+  (let [{:keys [deps]} (fixture)
+        _ (await (dispatch/dispatch-work! deps (work) (context)))
+        failed (await (dispatch/fail-batch-document!
+                       deps "batch-1" "knoxx.docs/probe" "model unavailable"))]
+    (testing "the attempt is recorded as failed, with its reason"
+      (is (= :dispatch/failed (:dispatch/outcome failed)))
+      (is (= "model unavailable" (:dispatch/detail (:dispatch/record failed)))))
+
+    (testing "a failure for a document nobody dispatched is refused"
+      (is (= :dispatch-record-missing
+             (:refusal/type
+              (:translation/refusal
+               (await (dispatch/fail-batch-document!
+                       deps "batch-1" "knoxx.docs/unknown" "boom")))))))
+
+    (testing "a failed attempt is not a translation"
+      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+
+(deftest ^:async intents-with-no-derived-work-are-not-dispatched
+  (let [{:keys [batches deps]} (fixture)
+        translated (assoc facts :translated-revision? (constantly true))
+        results (await (dispatch/dispatch-intents! deps [intent] translated scope))]
+    (testing "an already-translated intent derives nothing and is absent"
+      (is (empty? results))
+      (is (empty? @batches)))))
+
+(deftest ^:async dispatch-intents-reports-one-entry-per-dispatched-intent
+  (let [{:keys [batches deps]} (fixture)
+        results (await (dispatch/dispatch-intents! deps [intent] facts scope))]
+    (testing "the report names the publication it belongs to"
+      (is (= 1 (count results)))
+      (is (= :knoxx.docs/probe-es (:publication/id (first results))))
+      (is (= :dispatch/accepted (:dispatch/outcome (first results))))
+      (is (= 1 (count @batches))))))
+
+(deftest a-selector-revision-can-never-be-dispatched
+  (testing "work whose revision is a selector is refused before the worker is called"
+    ;; Defence in depth: the gate resolves the selector, so this shape should be
+    ;; impossible — which is exactly why it is asserted rather than assumed.
+    (is (thrown? js/Error
+                 (law/assert-valid! :translation-dispatch/work
+                                    law/DerivedWork
+                                    {:document :knoxx.docs/probe
+                                     :locale :es
+                                     :revision :source/current
+                                     :replace-stale? false})))))

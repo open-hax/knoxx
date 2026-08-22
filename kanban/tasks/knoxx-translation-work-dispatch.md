@@ -5,7 +5,7 @@ write-id: "1787011200003-0.176845"
 points: "5"
 title: "Translation — dispatch gated work to ingestion"
 priority: "P1"
-status: "ready"
+status: "review"
 uuid: "knoxx-translation-work-dispatch"
 created_at: "2026-08-22T00:00:00Z"
 ---
@@ -50,3 +50,43 @@ The existing translation/publication gate and translation ingestion worker.
   translate twice.
 - Tests prove failed, stale, selector, and mismatched-revision results cannot
   satisfy the gate or cause publication.
+
+## Card premise corrections
+
+Written before the code existed, three of this card's premises turned out to be
+stale. Annotated rather than silently implemented around.
+
+1. **"Map each derived work item into the ingestion worker's input contract,
+   carrying ... concrete source revision, and a stable dispatch/idempotency
+   identity."** The worker's contract cannot carry either.
+   `law.openplanner-translation/CreateTranslationBatchRequest` is
+   `{garden_id, target_lang, document_ids, source_lang, project, org_id,
+   membership_id}` — no revision field, no idempotency field — and the batch
+   collection belongs to another repository. The binding therefore stays
+   Knoxx-side as a `DispatchRecord` keyed to the batch id the worker returns,
+   and the worker is sent only what its contract admits. Rationale and the
+   rejected alternative are in `law.translation-dispatch`.
+
+2. **"Decode and validate the worker result into a translation receipt."** The
+   worker never reports a translated revision, because it has no such concept.
+   The output revision is therefore minted by Knoxx from the source revision,
+   the target locale, and the producing batch id — which is also what makes it
+   change on re-translation, so later review evidence cannot be transplanted.
+   See `law.translation-dispatch/output-revision`.
+
+3. **An unstated precondition.** `domain.publication-gate`'s
+   `:current-source-revision` fact had no production provider — only test
+   stubs — so an intent declaring `:source/current` resolved to nil and derived
+   no work at all. Without it this card's first DoD line is unreachable, so
+   `infra.publication-source-revision` supplies it as a content digest of the
+   document's source file.
+
+## Known gap left open
+
+`:source-revision-superseded?` is implemented but unreachable in the current gate
+flow, and the `:translation-stale` blocker it feeds is therefore inert. The
+blocker is really about the revision an existing *translation* was made from,
+and the gate's fact signature `[intent revision]` does not carry that. Closing
+it needs a gate-level change and its own card; the reasoning is recorded on
+`infra.publication-source-revision/revision-facts` rather than papered over with
+a policy nobody asked for.
