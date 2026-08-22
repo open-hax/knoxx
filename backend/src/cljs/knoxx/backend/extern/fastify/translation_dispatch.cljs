@@ -105,7 +105,12 @@
      config
      {:evidence-store evidence-store
       :client (openplanner-client/client config)
-      :clock (fn [] (.toISOString (js/Date.)))}
+      :clock (fn [] (.toISOString (js/Date.)))
+      ;; A dispatch pass can recover a completion it finds already finished, and
+      ;; that recovery goes through the same source-drift check as the worker's
+      ;; own report. Without the observer here, recovery would have no way to
+      ;; verify what it was about to record.
+      :observe-source-revision (facade/source-revision-observer! config)}
      (scope config ctx)
      (:document decoded))
     ;; No durable store means a dispatch whose revision binding would be lost.

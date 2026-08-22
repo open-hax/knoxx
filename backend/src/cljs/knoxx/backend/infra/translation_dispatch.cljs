@@ -165,6 +165,39 @@
                                     detail))
     {:translation/receipt receipt}))
 
+(defn- ^:async refuse-drifted-completion!
+  "Refuse a completion whose source has moved, and settle the claim for good.
+
+   Terminal rather than retriable, which is the opposite of what an earlier
+   version did. Retrying *this* claim can never work: the worker fetches current
+   bytes, and the dispatch key contains the revision that is no longer current,
+   so every attempt would be refused on completion and re-enqueued. That is an
+   endless queue, not a recovery.
+
+   Nothing is lost. An intent tracking `:source/current` resolves to the new
+   digest next pass, which is a different key and a fresh claim. An intent that
+   pinned the old revision genuinely cannot be satisfied, and its gate staying
+   blocked is the honest outcome. See `law/unreachable-outcome`."
+  [evidence-store record drift]
+  (await (store/resolve-dispatch! evidence-store (:dispatch/key record)
+                                  law/unreachable-outcome
+                                  "source moved between dispatch and completion"))
+  {:translation/refusal drift})
+
+(defn- ^:async complete-if-source-agrees!
+  "Mint the receipt only if the source still hashes to the dispatched revision.
+
+   Shared by the worker's own completion report and by recovery from batch
+   state. Recovery used to mint directly, which meant the one path that exists
+   *because* evidence was lost was also the one path that skipped verifying it —
+   the weaker check exactly where it matters most."
+  [evidence-store clock observe-source-revision record]
+  (if-let [drift (law/source-drift-refusal
+                  record
+                  (await (observe-source-revision record)))]
+    (await (refuse-drifted-completion! evidence-store record drift))
+    (await (record-completion! evidence-store clock record nil))))
+
 (defn- ^:async recover-settled-batch!
   "Re-read the batch behind an in-flight claim, and settle the claim if it ended.
 
@@ -178,7 +211,13 @@
    status is this document's outcome. Any other status — or an unreadable batch —
    leaves the claim alone and reports a duplicate, the honest answer for work
    that really is still running."
-  [{:keys [evidence-store client clock]} record]
+  [{:keys [evidence-store client clock observe-source-revision]} record]
+  ;; Required for the same reason `resolve-batch-report!` requires it: this path
+  ;; can mint a receipt, and a caller that forgot the check must fail rather than
+  ;; get a version of recovery with the verification missing.
+  (when-not (fn? observe-source-revision)
+    (throw (ex-info "recovering a settled batch requires a source-revision observer"
+                    {:dispatch/key (:dispatch/key record)})))
   (let [batch-id (:dispatch/batch-id record)
         status (try
                  (:status (await (openplanner-client/translation-batch!
@@ -187,10 +226,15 @@
                  (catch :default _ nil))]
     (case status
       "complete"
-      (assoc (await (record-completion! evidence-store clock record
-                                        "recovered from batch status"))
-             :dispatch/outcome :dispatch/completed
-             :dispatch/record record)
+      ;; Through the same drift guard as the worker's own report. This branch
+      ;; exists because evidence was lost, which is no reason to trust it more.
+      (let [result (await (complete-if-source-agrees!
+                           evidence-store clock observe-source-revision record))]
+        (assoc result
+               :dispatch/outcome (if (:translation/receipt result)
+                                   :dispatch/completed
+                                   law/unreachable-outcome)
+               :dispatch/record record))
 
       "failed"
       {:dispatch/outcome :dispatch/failed
@@ -276,17 +320,6 @@
 
 ;; ── Resolving the worker's answer ──────────────────────────────────────────
 
-(defn- ^:async refuse-drifted-completion!
-  "Refuse a completion whose source has moved, and make the claim retriable.
-
-   Retriable rather than merely refused: the document still needs translating,
-   now at its new revision, and leaving the claim in flight would strand it."
-  [evidence-store record drift]
-  (await (store/resolve-dispatch! evidence-store (:dispatch/key record)
-                                  :dispatch/failed
-                                  "source moved between dispatch and completion"))
-  {:translation/refusal drift})
-
 (defn ^:async resolve-batch-report!
   "Turn one worker status report into translation evidence, or refuse it.
 
@@ -323,11 +356,8 @@
       ;; so the bytes it translated are only knowably the dispatched revision if
       ;; the source has not moved since. Verified rather than assumed — see
       ;; `law/source-drift-refusal`.
-      (if-let [drift (law/source-drift-refusal
-                      record
-                      (await (observe-source-revision record)))]
-        (await (refuse-drifted-completion! evidence-store record drift))
-        (await (record-completion! evidence-store clock record nil))))))
+      (await (complete-if-source-agrees! evidence-store clock
+                                         observe-source-revision record)))))
 
 (defn ^:async fail-batch-document!
   "Record that the worker could not translate one document of a batch.

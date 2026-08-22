@@ -36,7 +36,7 @@
    present because the protocol requires it, and each throws rather than
    returning nil: a dispatch reaching one of them is a boundary violation the
    test should fail on, not silently tolerate."
-  [{:keys [batches answer observed]}]
+  [{:keys [batches answer observed batch-status]}]
   (let [respond (or answer (fn [_request n] {:batch_id (str "batch-" n)}))
         list-batches (or observed (fn [_opts] {:batches []}))
         boom (fn [method] (throw (ex-info (str "unexpected call to " method) {})))]
@@ -77,19 +77,26 @@
       (translation-document! [_ _ _ _] (boom "translation-document!"))
       (review-translation-document! [_ _ _ _] (boom "review-document!"))
       (next-translation-batch! [_ _] (boom "next-batch!"))
-      (translation-batch! [_ _ _] (boom "translation-batch!"))
+      ;; `recover-settled-batch!` re-reads the batch. Absent a configured status
+      ;; it throws, which the recovery treats as unreadable — the honest default
+      ;; for a test that is not exercising recovery.
+      (translation-batch! [_ _ _]
+        (if batch-status
+          (js/Promise.resolve {:status batch-status})
+          (boom "translation-batch!")))
       (update-translation-batch-status! [_ _ _] (boom "update-status!"))
       (v1-json! [_ _ _ _] (boom "v1-json!")) (forward-v1! [_ _] (boom "forward-v1!")))))
 
 (defn- fixture
   "Fresh store, client and recorded batch list for one test."
-  [& {:keys [answer observed source-revision]}]
+  [& {:keys [answer observed source-revision batch-status]}]
   (let [batches (atom [])]
     {:batches batches
      :deps {:evidence-store (store/memory-store)
             :client (fake-client {:batches batches
                                   :answer answer
-                                  :observed observed})
+                                  :observed observed
+                                  :batch-status batch-status})
             :clock clock
             ;; Defaults to agreeing with the dispatched revision, so completion
             ;; is not refused for source drift. The drift path overrides it.
@@ -440,12 +447,47 @@
     (testing "no receipt was minted for bytes nobody can vouch for"
       (is (empty? (await (store/completed-translations! (:evidence-store deps))))))
 
-    (testing "the claim is retriable, because the new revision still needs work"
+    (testing "the claim is settled for good, not retried forever"
+      ;; Retrying THIS claim can never work: the worker fetches current bytes and
+      ;; the dispatch key names the revision that is no longer current, so every
+      ;; attempt would be refused on completion and re-enqueued. An intent
+      ;; tracking :source/current gets a different key next pass; one that pinned
+      ;; the old revision genuinely cannot be satisfied.
       (let [stored (await (store/dispatch-for-key!
                            (:evidence-store deps)
                            (:dispatch/key (law/dispatch-record
                                            (work) (context) :dispatch/accepted (clock)))))]
-        (is (= :dispatch/failed (:dispatch/outcome stored)))))))
+        (is (= :dispatch/unreachable (:dispatch/outcome stored)))
+        (is (not (law/retriable? (:dispatch/outcome stored))))))))
+
+(deftest ^:async an-unreachable-pinned-revision-is-not-endlessly-re-dispatched
+  ;; The loop this prevents: pinned revisions are deliberately never reported
+  ;; superseded, so without a terminal outcome every pass would enqueue another
+  ;; batch for a revision the worker can never fetch.
+  (let [{:keys [batches deps]} (fixture :source-revision "sha256-something-else")
+        _ (await (dispatch/dispatch-work! deps (work) (context)))
+        _ (await (dispatch/resolve-batch-report!
+                  deps {:status "processing"
+                        :batch_id "batch-1"
+                        :completed_document "knoxx.docs/probe"}))
+        retry (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "a later pass does not enqueue the unreachable revision again"
+      (is (= :dispatch/duplicate (:dispatch/outcome retry)))
+      (is (= 1 (count @batches))))))
+
+(deftest ^:async recovery-from-batch-state-also-checks-the-source
+  ;; The recovery path exists because evidence was lost, which is no reason to
+  ;; trust it more than the worker's own report. It used to mint directly.
+  (let [{:keys [deps]} (fixture :source-revision "sha256-something-else"
+                                :batch-status "complete")
+        first-result (await (dispatch/dispatch-work! deps (work) (context)))
+        recovered (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the batch says complete, but the source moved"
+      (is (= :dispatch/accepted (:dispatch/outcome first-result)))
+      (is (= :dispatch/unreachable (:dispatch/outcome recovered))))
+
+    (testing "no receipt was minted from a complete batch over changed bytes"
+      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
 
 (deftest ^:async an-unreadable-source-cannot-substantiate-a-completion
   (let [{:keys [deps]} (fixture)

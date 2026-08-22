@@ -203,11 +203,30 @@
     :dispatch/duplicate
     :dispatch/rejected
     :dispatch/failed
-    :dispatch/completed})
+    :dispatch/completed
+    :dispatch/unreachable})
 
 (def Outcome
   "One dispatch outcome."
   (into [:enum] (sort outcomes)))
+
+(def unreachable-outcome
+  "The revision this claim names can no longer be produced.
+
+   Terminal, and that is the whole point. The worker fetches a document's
+   *current* bytes, so once the source has moved, no retry of this claim can ever
+   produce the revision it was keyed on — the dispatch key contains that
+   revision. Marking such a claim retriable produced an endless sequence of
+   batches for an unreachable revision, each one refused on completion and then
+   re-enqueued.
+
+   Nothing is lost by being terminal. An intent tracking `:source/current`
+   resolves to the new digest on the next pass, which is a *different* dispatch
+   key and therefore a fresh claim this outcome does not touch. An intent that
+   pinned the old revision genuinely cannot be satisfied, and the honest result
+   is that its gate stays blocked rather than a translation queue that never
+   drains."
+  :dispatch/unreachable)
 
 (def retriable-outcomes
   "Outcomes a later pass may replace with a fresh attempt.
@@ -219,8 +238,10 @@
    answering `:dispatch/duplicate`, no batch is ever enqueued again, and the only
    way out is deleting rows by hand.
 
-   `:dispatch/completed` and `:dispatch/duplicate` are the terminal ones.
-   Completed produced a translation; duplicate never was an attempt of its own."
+   `:dispatch/completed`, `:dispatch/duplicate` and `:dispatch/unreachable` are
+   the terminal ones. Completed produced a translation; duplicate never was an
+   attempt of its own; unreachable can never succeed however many times it is
+   tried."
   #{:dispatch/failed :dispatch/rejected})
 
 (defn retriable?
