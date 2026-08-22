@@ -82,6 +82,14 @@ MONGO_URL="${KNOXX_MONGO_URL:-mongodb://localhost:27017}"
 MONGO_DB="${KNOXX_MONGO_DB:-knoxx}"
 ORG_ID="${KNOXX_VERIFY_ORG_ID:-}"
 PROJECT="${KNOXX_SESSION_PROJECT_NAME:-knoxx-session}"
+# The stored form of a nullable project, mirroring
+# `mongo-translation-evidence/scope-value`: an unset project is its own scope, so
+# it is stored as a sentinel rather than left absent, and the query matches it.
+if [ -n "$PROJECT" ]; then
+  STORED_PROJECT="$PROJECT"
+else
+  STORED_PROJECT=$'\u0000none'
+fi
 SOURCE_REVISION="sha256-verifyapproval${RUN_ID}"
 TRANSLATION_REVISION="${SOURCE_REVISION}+es@verify-${RUN_ID}"
 DISPATCH_KEY="verify-approval-${RUN_ID}"
@@ -328,16 +336,23 @@ else
   receipt_edn="${receipt_edn} :translation/project \"${PROJECT}\""
   receipt_edn="${receipt_edn} :translation/at \"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\"}"
 
+  # `org_id` and `project` are top-level columns, not just fields inside the EDN.
+  # `read-receipts!` narrows through `scope-query`, which is field equality on
+  # exactly those two — a receipt carrying them only in `receipt_edn` is
+  # invisible to the query, and the approval would be refused 409 for a receipt
+  # that is sitting right there.
   if mongo_eval "db.knoxx_translation_receipts.insertOne({
        dispatch_key: \"${DISPATCH_KEY}\",
        document: \"${DOC_EDN}\",
        locale: \"es\",
        source_revision: \"${SOURCE_REVISION}\",
+       org_id: \"${ORG_ID}\",
+       project: \"${STORED_PROJECT}\",
        receipt_edn: '${receipt_edn}'
      });" >/dev/null 2>&1; then
     RECEIPT_SEEDED=1
     pass "seeded one completed-translation receipt for this run"
-    note "org ${ORG_ID}, project ${PROJECT}, revision ${SOURCE_REVISION}"
+    note "org ${ORG_ID}, project ${PROJECT:-<none>}, revision ${SOURCE_REVISION}"
 
     good="{\"document\":\"${DOC_ID}\",\"locale\":\"es\",\"revision\":\"${SOURCE_REVISION}\",\"translation_revision\":\"${TRANSLATION_REVISION}\"}"
 
