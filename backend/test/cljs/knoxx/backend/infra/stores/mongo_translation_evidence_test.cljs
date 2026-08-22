@@ -205,3 +205,27 @@
                            :translation/revision "sha256-aaa111bbb222+es@batch-2"
                            :translation/at "2026-08-22T10:00:00.000Z")))
       (is (= 2 (count (await (store/completed-translations! store))))))))
+
+(deftest ^:async a-claim-the-index-refuses-but-cannot-be-read-is-surfaced
+  ;; The unique index said a row with this key exists. A nil read means a
+  ;; transient inconsistency, and falling through to `:done` with a nil record
+  ;; made `dispatch-work!` report a duplicate — stranding the work silently with
+  ;; no claim to observe and no outcome to read.
+  (let [dispatches (atom [])
+        db #js {:collection
+                (fn [_name]
+                  ;; Refuses every insert and returns no rows: the pathological
+                  ;; combination the branch exists for.
+                  #js {:insertOne (fn [_] (js/Promise.reject (duplicate-key-error)))
+                       :find (fn [_] #js {:limit (fn [_] (js-obj "toArray"
+                                                                 (fn [] (js/Promise.resolve #js []))))
+                                          :toArray (fn [] (js/Promise.resolve #js []))})})}
+        store (mongo-store/create-store db)]
+    (testing "the inconsistency is thrown rather than reported as a duplicate"
+      (try
+        (await (store/reserve-dispatch! store record))
+        (is false "an unreadable claim must not be reported as settled")
+        (catch :default err
+          (is (= :transient-store-inconsistency (:cause (ex-data err))))
+          (is (= (:dispatch/key record) (:dispatch/key (ex-data err)))))))
+    (is (empty? @dispatches))))

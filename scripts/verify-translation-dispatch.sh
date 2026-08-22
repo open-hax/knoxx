@@ -21,6 +21,10 @@
 #     boundary is absent the dispatch is recorded as FAILED — that is a real,
 #     correct, observable outcome and the script asserts it as one rather than
 #     pretending it is success.
+#   * Automatic teardown of durable records. The dispatch claim it creates has no
+#     delete surface, and the batch belongs to another repository. The run prints
+#     a scoped mongosh command to remove its own records, and the identity is
+#     unique per run so nothing accumulates in a way that affects later runs.
 #   * The completion half end to end. Minting a receipt requires a real batch to
 #     reach `complete`/`partial`, which needs the worker above. The join, the
 #     refusals, and the receipt are covered by
@@ -428,19 +432,26 @@ warn "the completion half needs a real batch reaching complete/partial (see head
 # somebody to discover in a collection.
 
 if [ "$dispatch_status" = "200" ]; then
-  warn "left behind: one Knoxx dispatch record in ${C_BOLD}knoxx_translation_dispatches${C_RESET}"
-  note "identity: ${DOC_ID} @ ${PINNED_REVISION}"
+  warn "left behind: one Knoxx dispatch record in knoxx_translation_dispatches"
   note "There is no delete surface for a dispatch claim, and inventing one for a"
-  note "verification script would be a worse trade than the residue: a route that"
-  note "erases translation evidence is a route that can erase real evidence."
-  note "The identity is unique per run, so nothing is reused and nothing collides."
+  note "verification script would be the worse trade: a route that erases"
+  note "translation evidence is a route that can erase real evidence. The identity"
+  note "is unique per run, so nothing is reused and nothing collides."
+  note ""
+  note "Remove this run's records, scoped to its own document id:"
+  cat <<CLEANUP
+    mongosh "\$KNOXX_MONGO_URL" --quiet --eval '
+      db.knoxx_translation_dispatches.deleteMany({document_wire_id: "${DOC_ID}"});
+      db.knoxx_translation_receipts.deleteMany({document: ":${DOC_ID}"});
+      db.knoxx_translation_approvals.deleteMany({document: ":${DOC_ID}"});
+    '
+CLEANUP
   if [ "$outcome" = "dispatch/accepted" ]; then
     warn "left behind: one OpenPlanner translation batch on the shared worker queue"
-    note "It will be claimed, attempt one document, and terminate on its own."
+    note "Owned by another repository, so this script does not delete it. It will"
+    note "be claimed, attempt one document, and terminate on its own."
   fi
 fi
-
-# ── Summary ────────────────────────────────────────────────────────────────
 
 printf '\n%s%s%s\n' "$C_BOLD" "$(printf '═%.0s' $(seq 1 62))" "$C_RESET"
 printf '%s  %s passed%s' "$C_GREEN" "$PASS_COUNT" "$C_RESET"

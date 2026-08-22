@@ -507,6 +507,35 @@
           (evidence/instant? at)
           (not (neg? (compare created at)))))))
 
+(defn batch-matches-dispatch?
+  "Whether `batch` could be the batch this dispatch created.
+
+   Every field the batch carries is compared — document, project and source
+   language, on top of the garden and target locale the query already filtered by
+   — plus a creation time not earlier than the claim.
+
+   None of that is a *unique* correlation token, and the caller must not treat a
+   single match as proof on its own: two concurrent sends for the same document
+   produce two batches that agree on every one of these fields. The batch
+   contract has nowhere to put a dispatch id, so uniqueness is enforced by the
+   caller refusing to adopt an ambiguous match rather than by this predicate.
+
+   A field absent from the batch is not compared. The batch record is another
+   repository's shape; requiring a field it may not carry would reject every
+   candidate and turn every ambiguous send into a duplicate translation."
+  [batch context work at]
+  (let [same-when-present (fn [batch-value expected]
+                            (or (nil? batch-value)
+                                (= (str batch-value) (str expected))))]
+    (boolean
+     (and (some #(= (:dispatch/document-wire-id context) (str %))
+                (:document_ids batch))
+          (batch-created-after? batch at)
+          (same-when-present (:project batch) (:dispatch/project context))
+          (same-when-present (:source_lang batch)
+                             (name (:dispatch/source-locale context)))
+          (same-when-present (:target_lang batch) (name (:locale work)))))))
+
 (defn source-drift-refusal
   "Refusal when the source no longer hashes to the revision that was dispatched.
 
@@ -517,12 +546,24 @@
    false: a pinned old revision would be reported translated on the strength of
    a translation of different bytes.
 
-   Dispatching an immutable snapshot instead would be the stronger fix and is not
-   available — the batch contract accepts document ids and belongs to another
-   repository. What *is* available is refusing to assert what can no longer be
-   substantiated. An unchanged digest is real proof rather than a heuristic: if
-   the content is byte-identical at completion to what it was at dispatch, the
-   worker necessarily fetched those bytes.
+   ## What this does and does not establish
+
+   It establishes that the **repository source** did not change between dispatch
+   and completion. It does NOT establish that the worker translated those bytes:
+   the worker fetches its input independently from OpenPlanner's document store,
+   not from this checkout, so a document already divergent over there would be
+   translated while both of these observations agree.
+
+   An earlier version of this docstring claimed the unchanged digest meant the
+   worker necessarily fetched those bytes. That was an overclaim and it is
+   withdrawn — the two stores are different, and nothing here reaches the one the
+   worker reads.
+
+   What remains worth doing: a source that moved locally is a receipt that is
+   definitely wrong, and refusing those is strictly better than refusing none.
+   Closing the rest needs the batch contract to carry a digest of what was
+   actually translated, which is a change in another repository — recorded on the
+   card rather than papered over here.
 
    Compared against `:dispatch/source-digest`, **not** against
    `:dispatch/revision`. Those are different things and conflating them was a

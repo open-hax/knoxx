@@ -593,3 +593,57 @@
     ;; Mirrored rather than imported because the store boundary does not expose
     ;; it. If that changes, this fails rather than silently drifting.
     (is (= 50 dispatch/batch-listing-cap))))
+
+(deftest ^:async an-ambiguous-set-of-candidate-batches-is-not-adopted
+  ;; Creation time bounds candidates below but is not a unique correlation
+  ;; token — the batch contract has nowhere to put one. Two concurrent sends for
+  ;; the same document produce two indistinguishable candidates, and adopting
+  ;; either would bind this claim to a batch that may have translated a
+  ;; different revision.
+  (let [candidate (fn [id] {:batch_id id
+                            :created_at "2026-08-22T09:00:00.000Z"
+                            :document_ids ["knoxx.docs/probe"]})
+        {:keys [deps]}
+        (fixture :answer (fn [_ _] (throw (ex-info "connection reset" {})))
+                 :observed (fn [_] {:batches [(candidate "batch-a") (candidate "batch-b")]}))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "neither candidate is bound"
+      (is (nil? (:dispatch/batch-id (:dispatch/record result)))))
+
+    (testing "the claim stays in flight, and says why"
+      (is (= :dispatch/accepted (:dispatch/outcome result)))
+      (is (re-find #"several batches match" (:dispatch/detail result))))))
+
+(deftest batch-matching-compares-every-field-the-batch-carries
+  (let [context* {:dispatch/garden "knoxx.docs/promethean"
+                  :dispatch/document-wire-id "knoxx.docs/probe"
+                  :dispatch/source-locale :en
+                  :dispatch/org-id "org-1"
+                  :dispatch/membership-id "member-1"
+                  :dispatch/project "knoxx-session"}
+        work* {:document :knoxx.docs/probe :locale :es
+               :revision dispatched-revision :replace-stale? false}
+        at "2026-08-22T09:00:00.000Z"
+        batch {:batch_id "b1"
+               :created_at at
+               :document_ids ["knoxx.docs/probe"]
+               :project "knoxx-session"
+               :source_lang "en"
+               :target_lang "es"}]
+    (testing "a fully agreeing batch matches"
+      (is (law/batch-matches-dispatch? batch context* work* at)))
+
+    (testing "a disagreement on any carried field is not a match"
+      (doseq [[field value] [[:project "other"] [:source_lang "de"] [:target_lang "fr"]
+                             [:document_ids ["knoxx.docs/other"]]]]
+        (is (not (law/batch-matches-dispatch? (assoc batch field value)
+                                              context* work* at))
+            (str field " was ignored"))))
+
+    (testing "a field the batch does not carry is not compared"
+      ;; The batch record is another repository's shape. Requiring a field it may
+      ;; not carry would reject every candidate and turn every ambiguous send
+      ;; into a duplicate translation.
+      (doseq [field [:project :source_lang :target_lang]]
+        (is (law/batch-matches-dispatch? (dissoc batch field) context* work* at)
+            (str "absent " field " was treated as a mismatch"))))))

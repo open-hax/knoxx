@@ -98,7 +98,12 @@
    saw. See `law/batch-created-after?`.
 
    `record` supplies the claim's own instant, so only a batch created at or after
-   the claim can be attributed to it."
+   the claim can be attributed to it — and a match is adopted only when it is the
+   *only* candidate. See `law/batch-matches-dispatch?`.
+
+   Returns `{:batch b :ambiguous? bool :conclusive? bool}`. All three matter:
+   `:batch` nil with `:conclusive?` true is the only combination that licenses
+   treating the send as failed."
   [client work context record]
   (let [response (await (openplanner-client/translation-batches!
                          client
@@ -106,12 +111,18 @@
                           :garden_id (:dispatch/garden context)
                           :target_lang (name (:locale work))}))
         batches (vec (:batches response))
-        wanted (:dispatch/document-wire-id context)]
-    {:batch (->> batches
-                 (filter (fn [batch]
-                           (and (some #(= wanted (str %)) (:document_ids batch))
-                                (law/batch-created-after? batch (:dispatch/at record)))))
-                 first)
+        candidates (filterv #(law/batch-matches-dispatch? % context work
+                                                          (:dispatch/at record))
+                            batches)]
+    ;; Exactly one candidate, or none adopted. Every field the batch carries is
+    ;; compared and the creation time bounds it below, but none of that is a
+    ;; *unique* correlation token — the batch contract has nowhere to put one. So
+    ;; two concurrent sends for the same document produce two indistinguishable
+    ;; candidates, and adopting either would bind a claim to a batch that may
+    ;; have translated a different revision. Ambiguity is refused rather than
+    ;; guessed.
+    {:batch (when (= 1 (count candidates)) (first candidates))
+     :ambiguous? (< 1 (count candidates))
      ;; Absence in a capped list is not absence. The direct Mongo listing sorts
      ;; newest-first and stops at `batch-listing-cap`, so a busy garden can push
      ;; our batch off the end — and reading that as "the send did not land" is
@@ -127,7 +138,8 @@
   [evidence-store client work context record detail]
   (let [dispatch-key (:dispatch/key record)]
     (try
-      (let [{:keys [batch conclusive?]} (await (observe-batch! client work context record))]
+      (let [{:keys [batch ambiguous? conclusive?]}
+            (await (observe-batch! client work context record))]
         (cond
           batch
           {:dispatch/outcome :dispatch/accepted
@@ -136,6 +148,16 @@
                                         (str (or (:batch_id batch) (:id batch)))))
                                 record)
            :dispatch/detail detail}
+
+          ambiguous?
+          ;; Two or more indistinguishable candidates. Binding either could
+          ;; attribute this claim to a batch that translated a different
+          ;; revision, and marking it retriable could translate twice.
+          {:dispatch/outcome :dispatch/accepted
+           :dispatch/record record
+           :dispatch/detail (str detail
+                                 "; several batches match this dispatch, so none"
+                                 " can be attributed to it")}
 
           ;; Only a conclusive absence licenses a retry.
           conclusive?

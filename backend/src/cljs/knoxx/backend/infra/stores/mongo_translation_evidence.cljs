@@ -208,6 +208,26 @@
                            :done)
      :record current}))
 
+(defn- ^:async or-retried-read!
+  "Read the claim the unique index just told us exists, once more if needed.
+
+   The index refused our insert, so a row with this key is there. A nil read
+   means a transient inconsistency — read-your-writes lag on a secondary, or the
+   row removed between the two operations — and the previous code fell through to
+   `:done` with a nil record, which `dispatch-work!` reported as a duplicate. The
+   work was then stranded silently: no claim to observe, no outcome to read, and
+   nothing saying so.
+
+   One re-read, then throw. Not a loop: a read that keeps not seeing a row the
+   index insists on is a real inconsistency, and recursing on it would spin
+   instead of surfacing it."
+  [db dispatch-key]
+  (or (await (find-dispatch! db dispatch-key))
+      (await (find-dispatch! db dispatch-key))
+      (throw (ex-info "translation dispatch claim exists but cannot be read"
+                      {:dispatch/key dispatch-key
+                       :cause :transient-store-inconsistency}))))
+
 (defn- ^:async claim-dispatch!
   "Atomically claim `record`'s key, or report the existing claim.
 
@@ -224,7 +244,7 @@
                                                (encode-dispatch record)))]
     (if inserted?
       {:reservation/status :reserved :record record}
-      (let [existing (await (find-dispatch! db (:dispatch/key record)))
+      (let [existing (await (or-retried-read! db (:dispatch/key record)))
             outcome (:dispatch/outcome existing)]
         (cond
           (= :dispatch/accepted outcome)

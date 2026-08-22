@@ -38,13 +38,17 @@ and pinned revision all carry a run id. With a fixed identity, every run after
 the first reused the previous run's *durable* dispatch claim — the second run got
 `dispatch/duplicate` and verified nothing while appearing to pass.
 
-**What it cannot tear down**, printed as WARN every run: the Knoxx dispatch
-record, and the OpenPlanner batch if one was created. Neither has a delete
-surface, and adding one for a verification script would be the worse trade — a
-route that erases translation evidence is a route that can erase *real*
-evidence. Because the identity is unique per run, the residue accumulates
-harmlessly rather than colliding; the batch is claimed by the worker, attempts
-one document, and terminates on its own.
+**What it cannot tear down automatically**, printed as WARN every run: the Knoxx
+dispatch record, and the OpenPlanner batch if one was created. Neither has a
+delete surface, and adding one for a verification script would be the worse trade
+— a route that erases translation evidence is a route that can erase *real*
+evidence.
+
+So the run **prints a scoped `mongosh` command** that removes exactly its own
+records, keyed on this run's document id. It cannot touch anything else, and it
+is a command an operator chooses to run rather than a deletion route that exists
+forever. The batch belongs to another repository; it is claimed by the worker,
+attempts one document, and terminates on its own.
 
 ### Preconditions it checks for you
 
@@ -121,8 +125,8 @@ Then the outcome:
   asserts the pinned revision appears in the recorded binding, which is the
   card's line *"a gated translation work item reaches the ingestion worker with
   a concrete revision"*.
-- **`dispatch/failed`** — the worker boundary refused, almost always because
-  OpenPlanner is not reachable from this backend. This is reported as a known
+- **`dispatch/failed`** — the worker boundary refused *and* observation
+  conclusively found no batch, so the send provably did not land. This is reported as a known
   gap, not as a pass and not as a silent skip. It is also a genuinely correct
   outcome: the claim was taken, the failure was recorded against it, and a later
   pass can re-dispatch. A failed dispatch left *in flight* would be the real
