@@ -68,6 +68,8 @@
     (await (.createIndex dispatches #js {"batch_id" 1 "document_wire_id" 1}))
     (await (.createIndex receipts #js {"dispatch_key" 1}))
     (await (.createIndex receipts #js {"document" 1 "locale" 1 "source_revision" 1}))
+    ;; The scope every evidence read narrows by.
+    (await (.createIndex receipts #js {"org_id" 1 "project" 1}))
     true))
 
 ;; ── Codecs ─────────────────────────────────────────────────────────────────
@@ -129,6 +131,30 @@
          (some? (:batch_id doc)) (assoc :dispatch/batch-id (:batch_id doc))
          (some? (:detail doc)) (assoc :dispatch/detail (:detail doc)))))))
 
+(def ^:private no-project
+  "Stand-in stored for a receipt that names no project.
+
+   A sentinel rather than an absent field, because the scope query is field
+   equality: an unset project has to be *matchable*, and `{:project nil}` would
+   not select rows where the key is simply missing. The value is deliberately not
+   a legal project name."
+  "\u0000none")
+
+(defn- scope-value
+  "The stored form of a nullable scope coordinate."
+  [value]
+  (or value no-project))
+
+(defn- scope-query
+  "The field-equality query for one evidence scope.
+
+   Both coordinates always appear, so a nil project selects exactly the rows that
+   name none rather than every row — an unset project is its own scope, as it is
+   in the dispatch key."
+  [{:keys [org-id project]}]
+  {:org_id org-id
+   :project (scope-value project)})
+
 (defn- encode-receipt
   "One translation receipt as the document to insert. Wholly immutable, so the
    EDN blob is the whole record and the columns are purely for querying."
@@ -137,6 +163,11 @@
    :document (pr-str (:translation/document receipt))
    :locale (name (:translation/locale receipt))
    :source_revision (:translation/source-revision receipt)
+   ;; Scope columns, so a read narrows in the query rather than in memory.
+   ;; `scope-value` keeps a nil project queryable — Mongo equality on a missing
+   ;; field does not match the way an absent value should.
+   :org_id (:translation/org-id receipt)
+   :project (scope-value (:translation/project receipt))
    :receipt_edn (pr-str receipt)})
 
 (defn- decode-receipt
@@ -279,11 +310,12 @@
   receipt)
 
 (defn- ^:async read-receipts!
-  "Every receipt. Order-insensitive by contract:
+  "Every receipt in `scope`. Order-insensitive by contract:
    `domain.translation-evidence` resolves a re-translated revision by comparing
    timestamps, so no sort is required of the query."
-  [db]
-  (mapv decode-receipt (await (extern-mongo/find-docs! (receipts-coll db) {}))))
+  [db scope]
+  (mapv decode-receipt
+        (await (extern-mongo/find-docs! (receipts-coll db) (scope-query scope)))))
 
 (defn create-store
   "A durable `ITranslationEvidenceStore` bound to `db`."
@@ -315,5 +347,5 @@
     (record-translation! [_ receipt]
       (append-receipt! db (evidence-law/assert-receipt! receipt)))
 
-    (completed-translations! [_]
-      (read-receipts! db))))
+    (completed-translations! [_ scope]
+      (read-receipts! db scope))))

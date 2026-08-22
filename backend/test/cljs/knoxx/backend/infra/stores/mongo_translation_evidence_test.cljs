@@ -12,6 +12,10 @@
 
 (def ^:private at "2026-08-22T09:00:00.000Z")
 
+(def ^:private evidence-scope
+  "The tenant and project every fixture record here belongs to."
+  {:org-id "org-1" :project nil})
+
 (def ^:private record
   (dispatch-law/dispatch-record
    {:document :knoxx.docs/probe
@@ -195,7 +199,7 @@
 (deftest ^:async receipts-round-trip-as-append-only-facts
   (let [{:keys [store]} (fixture)
         _ (await (store/record-translation! store receipt))
-        read-back (await (store/completed-translations! store))]
+        read-back (await (store/completed-translations! store evidence-scope))]
     (testing "the receipt comes back identical"
       (is (= [receipt] read-back)))
 
@@ -204,7 +208,7 @@
               store (assoc receipt
                            :translation/revision "sha256-aaa111bbb222+es@batch-2"
                            :translation/at "2026-08-22T10:00:00.000Z")))
-      (is (= 2 (count (await (store/completed-translations! store))))))))
+      (is (= 2 (count (await (store/completed-translations! store evidence-scope))))))))
 
 (deftest ^:async a-claim-the-index-refuses-but-cannot-be-read-is-surfaced
   ;; The unique index said a row with this key exists. A nil read means a
@@ -229,3 +233,39 @@
           (is (= :transient-store-inconsistency (:cause (ex-data err))))
           (is (= (:dispatch/key record) (:dispatch/key (ex-data err)))))))
     (is (empty? @dispatches))))
+
+(deftest ^:async receipts-are-narrowed-in-the-query-not-in-memory
+  ;; Receipts are append-only, so reading them all and filtering afterwards made
+  ;; every dispatch pass grow with the global history of every tenant — and left
+  ;; the collection's own indexes unused.
+  (let [{:keys [store receipts]} (fixture)
+        scoped (fn [org project]
+                 (cond-> (assoc receipt :translation/org-id org)
+                   project (assoc :translation/project project)
+                   (nil? project) (dissoc :translation/project)))]
+    (await (store/record-translation! store (scoped "org-1" nil)))
+    (await (store/record-translation! store (assoc (scoped "org-2" nil)
+                                                   :translation/dispatch-key "k2")))
+    (await (store/record-translation! store (assoc (scoped "org-1" "other")
+                                                   :translation/dispatch-key "k3")))
+
+    (testing "a tenant sees only its own receipts"
+      (is (= ["org-1"] (mapv :translation/org-id
+                             (await (store/completed-translations!
+                                     store {:org-id "org-1" :project nil}))))))
+
+    (testing "a project is its own scope, not a wildcard"
+      ;; The nil-project read must not pick up the row naming a project, and the
+      ;; named-project read must not pick up the row naming none.
+      (is (= 1 (count (await (store/completed-translations!
+                              store {:org-id "org-1" :project nil})))))
+      (is (= 1 (count (await (store/completed-translations!
+                              store {:org-id "org-1" :project "other"}))))))
+
+    (testing "the scope reaches the stored row as queryable columns"
+      (is (every? #(contains? % :org_id) @receipts))
+      (is (every? #(contains? % :project) @receipts)))
+
+    (testing "an unrelated tenant sees nothing"
+      (is (empty? (await (store/completed-translations!
+                          store {:org-id "org-3" :project nil})))))))

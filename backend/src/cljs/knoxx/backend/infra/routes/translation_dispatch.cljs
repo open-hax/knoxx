@@ -125,9 +125,17 @@
    `translation-work` derives from the `:translation-missing` and
    `:translation-stale` blockers, never from the review blocker, so a review
    requirement does not suppress the translation that would satisfy it."
-  [config evidence-store {:keys [org-id project]} documents]
+  [config evidence-store {:keys [org-id project] :as scope} documents]
   (let [revisions (await (source-revision/source-revisions! config documents))
-        receipts (->> (await (store/completed-translations! evidence-store))
+        ;; Scoped in the *query*. Reading every receipt ever recorded and
+        ;; narrowing afterwards made each dispatch pass grow with the global
+        ;; history of every tenant, and left the collection's own indexes unused.
+        ;; The in-memory filters below stay as a second check — a store is
+        ;; replaceable, and one that ignored the scope must not be able to widen
+        ;; what the gate sees.
+        receipts (->> (await (store/completed-translations!
+                              evidence-store
+                              (select-keys scope [:org-id :project])))
                       (tenant-receipts org-id)
                       (project-receipts project)
                       (current-source-locale-receipts documents))

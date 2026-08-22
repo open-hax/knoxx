@@ -21,6 +21,11 @@
 
 (def ^:private dispatched-revision "sha256-aaa111bbb222")
 
+(def ^:private evidence-scope
+  "The tenant and project this fixture dispatches under. Reads are scoped in the
+   query now, so a test that read unscoped would see nothing."
+  {:org-id "org-1" :project nil})
+
 (def ^:private facts
   {:current-source-revision (constantly "sha256-aaa111bbb222")
    :translated-revision? (constantly false)
@@ -132,7 +137,7 @@
       (is (= "batch-1" (:dispatch/batch-id (:dispatch/record result)))))
 
     (testing "no translation fact exists yet — the worker has not answered"
-      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+      (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))))
 
 (deftest ^:async duplicate-dispatch-does-not-enqueue-twice
   (let [{:keys [batches deps]} (fixture)
@@ -167,7 +172,7 @@
         (is (= :dispatch/failed (:dispatch/outcome stored)))))
 
     (testing "no translation fact was fabricated"
-      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))
+      (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))
     (is (= 1 (count @batches)))))
 
 (deftest ^:async a-nil-batch-id-cannot-produce-an-unattributable-dispatch
@@ -257,7 +262,7 @@
       ;; the publication gate recognizes'.
       (let [loaded (evidence-domain/evidence
                     {:receipts (await (store/completed-translations!
-                                       (:evidence-store deps)))})
+                                       (:evidence-store deps) evidence-scope))})
             gate-facts (evidence-domain/gate-facts loaded)]
         (is ((:translated-revision? gate-facts)
              :knoxx.docs/probe :es "sha256-aaa111bbb222"))
@@ -273,7 +278,7 @@
         (is (= :dispatch-already-resolved
                (:refusal/type (:translation/refusal again))))
         (is (= 1 (count (await (store/completed-translations!
-                                (:evidence-store deps))))))))))
+                                (:evidence-store deps) evidence-scope)))))))))
 
 (deftest ^:async stale-and-mismatched-answers-cannot-satisfy-the-gate
   (let [{:keys [deps]} (fixture)
@@ -297,7 +302,7 @@
                              :completed_document "knoxx.docs/probe"})))))))
 
     (testing "no refusal left a translation fact behind"
-      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+      (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))))
 
 (deftest ^:async a-malformed-report-is-refused-by-contract
   (let [{:keys [deps]} (fixture)]
@@ -327,7 +332,7 @@
                        deps "batch-1" "knoxx.docs/unknown" "boom")))))))
 
     (testing "a failed attempt is not a translation"
-      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+      (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))))
 
 (deftest ^:async intents-with-no-derived-work-are-not-dispatched
   (let [{:keys [batches deps]} (fixture)
@@ -417,7 +422,7 @@
         ;; left the stale batch id in place, this lookup WOULD have found the
         ;; claim and minted a receipt for a translation batch-2 never finished.
         (is (= :dispatch-record-missing (:refusal/type (:translation/refusal stale))))
-        (is (empty? (await (store/completed-translations! (:evidence-store deps)))))))))
+        (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope))))))))
 
 (deftest retriable-and-terminal-outcomes-are-disjoint-and-complete
   (testing "every outcome is exactly one of accepted, retriable, or terminal"
@@ -455,7 +460,7 @@
       (is (= "sha256-something-else" (:refusal/actual (:translation/refusal result)))))
 
     (testing "no receipt was minted for bytes nobody can vouch for"
-      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))
+      (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))
 
     (testing "the claim is settled for good, not retried forever"
       ;; Retrying THIS claim can never work: the worker fetches current bytes and
@@ -497,7 +502,7 @@
       (is (= :dispatch/unreachable (:dispatch/outcome recovered))))
 
     (testing "no receipt was minted from a complete batch over changed bytes"
-      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+      (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))))
 
 (deftest ^:async an-unreadable-source-cannot-substantiate-a-completion
   (let [{:keys [deps]} (fixture)

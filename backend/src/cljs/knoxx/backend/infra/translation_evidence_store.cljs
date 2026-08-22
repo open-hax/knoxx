@@ -71,8 +71,17 @@
      could never be resolved and its claim would sit in flight forever.")
   (record-translation! [store receipt]
     "Append completed translation evidence. Returns a Promise of the receipt.")
-  (completed-translations! [store]
-    "Every completed translation receipt. Returns a Promise.
+  (completed-translations! [store scope]
+    "Completed translation receipts within `scope`. Returns a Promise.
+
+     `scope` is `{:org-id o :project p}`, and it is a *query* scope rather than a
+     filter applied afterwards. Receipts are append-only, so reading them all and
+     narrowing in memory made every dispatch pass grow with the global history of
+     every tenant — and left the collection's own indexes unused. An
+     implementation is expected to push both coordinates into its query.
+
+     A nil `:project` means receipts that name no project, not every project: an
+     unset project is its own scope, exactly as it is in the dispatch key.
 
      Order is deliberately NOT part of the contract.
      `domain.translation-evidence/index-receipts` selects the current receipt by
@@ -156,6 +165,15 @@
   [state]
   (some-> (:answer state) dispatch-law/assert-record!))
 
+(defn receipt-in-scope?
+  "Whether `receipt` belongs to `scope`.
+
+   The in-memory store's equivalent of the durable store's query predicate, so
+   both narrow identically. A nil project matches only receipts naming none."
+  [receipt {:keys [org-id project]}]
+  (and (= org-id (:translation/org-id receipt))
+       (= project (:translation/project receipt))))
+
 (defn- batch-document-match
   [dispatches batch-id document-wire-id]
   (->> (vals dispatches)
@@ -216,5 +234,8 @@
           (swap! state update :receipts conj checked)
           (js/Promise.resolve checked)))
 
-      (completed-translations! [_]
-        (js/Promise.resolve (mapv evidence-law/assert-receipt! (:receipts @state)))))))
+      (completed-translations! [_ scope]
+        (js/Promise.resolve
+         (into [] (comp (map evidence-law/assert-receipt!)
+                        (filter #(receipt-in-scope? % scope)))
+               (:receipts @state)))))))

@@ -11,6 +11,10 @@
 
 (def ^:private at "2026-08-22T09:00:00.000Z")
 
+(def ^:private evidence-scope
+  "The tenant and project this fixture dispatches under."
+  {:org-id "org-1" :project nil})
+
 (def ^:private work
   {:document :knoxx.docs/probe
    :locale :es
@@ -85,7 +89,7 @@
       (is (= "model unavailable" (:dispatch/detail (:dispatch/record result)))))
 
     (testing "a failed attempt is not a translation"
-      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+      (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))))
 
 (deftest ^:async a-report-naming-no-document-is-reported-not-dropped
   (let [deps (await (seeded-store!))]
@@ -105,7 +109,7 @@
                                deps {:status "complete" :batch_id "batch-1"})))))))
 
     (testing "nothing was recorded either way"
-      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+      (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))))
 
 (deftest tenant-receipts-do-not-leak-across-organizations
   ;; Translation is tenant-scoped: the worker keys segments by organization, so a
