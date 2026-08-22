@@ -60,6 +60,15 @@
      This is the join the worker's status report is resolved through: the report
      names a batch and a document, and only this store knows which concrete
      revision that pair was asked about.")
+  (dispatch-for-batch! [store batch-id]
+    "The dispatch record bound to `batch-id`, or nil. Returns a Promise.
+
+     Distinct from `dispatch-for-batch-document!` because the worker's terminal
+     failure report names no document at all — it sends `status = \"failed\"` and
+     an error, nothing more. A Knoxx-created batch carries exactly one document
+     (`law.translation-dispatch/WorkerRequest` enforces it), so the batch id
+     alone identifies the binding. Without this lookup a batch-level failure
+     could never be resolved and its claim would sit in flight forever.")
   (record-translation! [store receipt]
     "Append completed translation evidence. Returns a Promise of the receipt.")
   (completed-translations! [store]
@@ -193,6 +202,13 @@
       (dispatch-for-batch-document! [_ batch-id document-wire-id]
         (js/Promise.resolve
          (some-> (batch-document-match (:dispatches @state) batch-id document-wire-id)
+                 dispatch-law/assert-record!)))
+
+      (dispatch-for-batch! [_ batch-id]
+        (js/Promise.resolve
+         (some-> (->> (vals (:dispatches @state))
+                      (filter #(= batch-id (:dispatch/batch-id %)))
+                      first)
                  dispatch-law/assert-record!)))
 
       (record-translation! [_ receipt]

@@ -197,7 +197,13 @@
    Keeping both is what makes downstream review evidence untransplantable:
    re-running a translation for the same source revision yields a new output
    revision, and an approval pinned only to the source revision would silently
-   keep authorizing bytes nobody reviewed."
+   keep authorizing bytes nobody reviewed.
+
+   `:translation/org-id` is required because the translation itself is
+   tenant-scoped: the worker keys segments by organization and every document
+   read requires one, so a translation produced for org A does not exist for
+   org B. An unscoped receipt would let org B's gate report a document
+   translated when the segments live only in org A's tenant."
   [:and
    [:map
     [:receipt/type [:= :translation/completed]]
@@ -207,6 +213,7 @@
     [:translation/source-revision ConcreteRevision]
     [:translation/revision ConcreteRevision]
     [:translation/dispatch-key NonBlankString]
+    [:translation/org-id NonBlankString]
     [:translation/at Instant]]
    [:fn {:error/message "a translation receipt's target locale must differ from its source locale"}
     ;; A receipt claiming a translation from `:en` to `:en` is not evidence of

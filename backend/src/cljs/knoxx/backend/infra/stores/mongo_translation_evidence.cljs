@@ -246,6 +246,13 @@
                                            :document_wire_id document-wire-id
                                            :limit 1})))))
 
+(defn- ^:async find-batch-only-dispatch!
+  [db batch-id]
+  (decode-dispatch
+   (first (await (extern-mongo/find-docs! (dispatches-coll db)
+                                          {:batch_id batch-id
+                                           :limit 1})))))
+
 (defn- ^:async append-receipt!
   [db receipt]
   (await (extern-mongo/insert-one! (receipts-coll db) (encode-receipt receipt)))
@@ -281,6 +288,9 @@
 
     (dispatch-for-batch-document! [_ batch-id document-wire-id]
       (find-batch-dispatch! db batch-id document-wire-id))
+
+    (dispatch-for-batch! [_ batch-id]
+      (find-batch-only-dispatch! db batch-id))
 
     (record-translation! [_ receipt]
       (append-receipt! db (evidence-law/assert-receipt! receipt)))

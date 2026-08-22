@@ -101,3 +101,58 @@
 
     (testing "nothing was recorded either way"
       (is (empty? (await (store/completed-translations! (:evidence-store deps))))))))
+
+(deftest tenant-receipts-do-not-leak-across-organizations
+  ;; Translation is tenant-scoped: the worker keys segments by organization, so a
+  ;; translation produced for org A does not exist for org B. Loading receipts
+  ;; unfiltered made org B's gate report a document translated when the segments
+  ;; lived only in org A's tenant.
+  (let [receipt (fn [org]
+                  {:receipt/type :translation/completed
+                   :translation/document :knoxx.docs/probe
+                   :translation/source-locale :en
+                   :translation/locale :es
+                   :translation/source-revision "sha256-aaa111bbb222"
+                   :translation/revision "sha256-aaa111bbb222+es@batch-1"
+                   :translation/dispatch-key "key-1"
+                   :translation/org-id org
+                   :translation/at at})
+        all [(receipt "org-a") (receipt "org-b")]]
+    (testing "each tenant sees only its own evidence"
+      (is (= ["org-a"] (mapv :translation/org-id (facade/tenant-receipts "org-a" all))))
+      (is (= ["org-b"] (mapv :translation/org-id (facade/tenant-receipts "org-b" all)))))
+
+    (testing "a tenant with no evidence sees none"
+      (is (empty? (facade/tenant-receipts "org-c" all))))
+
+    (testing "an unscoped receipt is not treated as global"
+      ;; Admitting it into every tenant is the failure being fixed.
+      (is (empty? (facade/tenant-receipts "org-a" [(dissoc (receipt "org-a")
+                                                           :translation/org-id)]))))))
+
+(deftest ^:async the-workers-real-report-vocabulary-is-accepted
+  ;; Read from ingestion/src/kms_ingestion/translation/worker.clj. An earlier
+  ;; version gated success on "complete"/"partial", which the worker never sends
+  ;; for a per-document success — so the whole completion path was dead code.
+  (let [deps (await (seeded-store!))
+        result (await (facade/resolve-batch-status!
+                       deps {:status "processing"
+                             :batch_id "batch-1"
+                             :completed_document "knoxx.docs/probe"}))]
+    (testing "a per-document success arrives as status \"processing\""
+      (is (some? (:translation/receipt result)))
+      (is (= "sha256-aaa111bbb222"
+             (:translation/source-revision (:translation/receipt result)))))))
+
+(deftest ^:async a-batch-level-failure-naming-no-document-is-resolved
+  ;; The worker's terminal failure report sends status "failed" and an error,
+  ;; naming no document at all. Falling through to :no-document-named left the
+  ;; claim in flight forever, so it could never be retried.
+  (let [deps (await (seeded-store!))
+        result (await (facade/resolve-batch-status!
+                       deps {:status "failed"
+                             :batch_id "batch-1"
+                             :error "All documents failed"}))]
+    (testing "the binding is resolved by batch id and marked failed"
+      (is (= :dispatch/failed (:dispatch/outcome result)))
+      (is (= "All documents failed" (:dispatch/detail (:dispatch/record result)))))))

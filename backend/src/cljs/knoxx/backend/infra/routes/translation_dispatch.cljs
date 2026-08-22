@@ -43,8 +43,23 @@
         (keep #(get-in index [:documents (:publication/document %)]))
         (distinct (map :publication/document intents))))
 
+(defn tenant-receipts
+  "Only the receipts belonging to `org-id`.
+
+   Translation is tenant-scoped: the worker keys segments by organization and
+   every document read requires one, so a translation produced for org A does not
+   exist for org B. Loading receipts unfiltered made org B's gate report a
+   document translated when the segments lived only in org A's tenant — the
+   evidence half of the same leak `law.translation-dispatch/dispatch-key` closes
+   on the identity half.
+
+   A receipt naming no organization is excluded rather than treated as global.
+   Admitting it into every tenant is exactly the failure being fixed."
+  [org-id receipts]
+  (filterv #(= org-id (:translation/org-id %)) receipts))
+
 (defn ^:async gate-facts!
-  "Every fact `domain.publication-gate` needs, read once.
+  "Every fact `domain.publication-gate` needs, read once, scoped to one tenant.
 
    `:approved?` is `(constantly false)` and that is deliberate rather than
    provisional: no approval surface exists yet — it is
@@ -54,9 +69,10 @@
    `translation-work` derives from the `:translation-missing` and
    `:translation-stale` blockers, never from the review blocker, so a review
    requirement does not suppress the translation that would satisfy it."
-  [config evidence-store documents]
+  [config evidence-store org-id documents]
   (let [revisions (await (source-revision/source-revisions! config documents))
-        receipts (await (store/completed-translations! evidence-store))
+        receipts (tenant-receipts org-id
+                                  (await (store/completed-translations! evidence-store)))
         evidence (evidence-domain/evidence {:receipts receipts})]
     (merge (source-revision/revision-facts revisions)
            (evidence-domain/gate-facts evidence)
@@ -73,36 +89,66 @@
   (let [index (await (publications/publication-index! config))
         intents (hydrated-intents index document-id)
         documents (referenced-documents index intents)
-        facts (await (gate-facts! config evidence-store documents))]
+        facts (await (gate-facts! config evidence-store (:org-id scope) documents))]
     {:considered (count intents)
      :dispatched (await (dispatch/dispatch-intents! deps intents facts scope))}))
+
+(def worker-report-vocabulary
+  "What the ingestion worker actually sends, read from
+  `ingestion/src/kms_ingestion/translation/worker.clj` rather than assumed —
+  because an earlier version of `resolve-batch-status!` assumed, and was wrong in
+  a way that made the whole completion path dead code.
+
+    per-document success   status \"processing\", :completed_document <id>
+    all documents done     status \"complete\",   no document named
+    all documents failed   status \"failed\",     :error <message>, no document
+    some failed            status \"partial\",    no document named
+
+  Two consequences. Success arrives as `\"processing\"`, so gating on
+  `complete`/`partial` rejected every real success report. And
+  `:failed_document` is never sent: the worker accumulates failures in a local
+  atom, and its terminal report names no document at all.
+
+  Kept as a var so the observed contract is citable and one edit updates it."
+  {:per-document-success {:status "processing" :names-document? true}
+   :all-done {:status "complete" :names-document? false}
+   :all-failed {:status "failed" :names-document? false}
+   :some-failed {:status "partial" :names-document? false}})
 
 (defn ^:async resolve-batch-status!
   "Turn one worker batch-status report into translation evidence.
 
-   Called after the batch status itself has been recorded by its owner. A
-   `complete` or `partial` report naming a document resolves that document's
-   binding; a named failed document records the failure against it; anything
-   else has no binding to resolve and is reported as such rather than silently
-   ignored."
+   The *document*, not the status, decides whether a per-document binding can be
+   resolved; a batch-level failure is resolved by batch id alone, which is sound
+   because a Knoxx-created batch carries exactly one document. See
+   `worker-report-vocabulary` for what the worker actually sends and why that
+   matters. `failed-document-id` is still read because the field exists in the
+   contract and a different worker may populate it."
   [deps report]
-  (let [failed-document (law/failed-document-id (:failed_document report))]
+  (let [failed-document (law/failed-document-id (:failed_document report))
+        batch-id (:batch_id report)]
     (cond
-      (and (contains? #{"complete" "partial"} (:status report))
-           (some? (:completed_document report)))
+      ;; Any status naming a completed document resolves that binding. The
+      ;; worker sends "processing" here; the others are accepted so a worker
+      ;; that reports differently still works.
+      (some? (:completed_document report))
       (dispatch/resolve-batch-report! deps report)
 
       (some? failed-document)
-      (dispatch/fail-batch-document! deps
-                                     (:batch_id report)
-                                     failed-document
+      (dispatch/fail-batch-document! deps batch-id failed-document
                                      (or (:error report) "worker reported failure"))
 
+      ;; A batch-level failure names nothing, so the batch id is the binding.
+      ;; Without this the claim would sit in flight forever and never be retried.
+      (= "failed" (:status report))
+      (dispatch/fail-batch! deps batch-id
+                            (or (:error report) "worker reported batch failure"))
+
       :else
-      ;; Reported rather than dropped. Most status updates legitimately name no
-      ;; document — a batch going `processing` names none — and an operator
-      ;; debugging a translation that never appeared needs to see the difference
-      ;; between 'nothing to resolve' and 'silently ignored'.
+      ;; Reported rather than dropped. `complete` and `partial` legitimately name
+      ;; nothing — the per-document reports already resolved each binding — and
+      ;; an operator debugging a translation that never appeared needs to see the
+      ;; difference between 'nothing to resolve' and 'silently ignored'.
       (js/Promise.resolve {:translation/skipped
                            {:reason :no-document-named
                             :status (:status report)}}))))

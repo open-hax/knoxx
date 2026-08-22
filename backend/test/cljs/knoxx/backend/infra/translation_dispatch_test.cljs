@@ -34,14 +34,18 @@
    present because the protocol requires it, and each throws rather than
    returning nil: a dispatch reaching one of them is a boundary violation the
    test should fail on, not silently tolerate."
-  [{:keys [batches answer]}]
+  [{:keys [batches answer observed]}]
   (let [respond (or answer (fn [_request n] {:batch_id (str "batch-" n)}))
+        list-batches (or observed (fn [_opts] {:batches []}))
         boom (fn [method] (throw (ex-info (str "unexpected call to " method) {})))]
     (reify openplanner-client/IOpenPlannerClient
       (enabled? [_] true)
       (create-translation-batch! [_ payload]
         (swap! batches conj payload)
         (js/Promise.resolve (respond payload (count @batches))))
+      ;; Observation: `recover-ambiguous-send!` calls this after a failed create
+      ;; to find out whether the batch landed anyway.
+      (translation-batches! [_ opts] (js/Promise.resolve (list-batches opts)))
       ;; Every remaining method is implemented only because the protocol
       ;; declares it, and each one throws. Packed several per line to stay
       ;; inside the file-size lint without dropping any: a partial reify would
@@ -70,7 +74,6 @@
       (translation-documents! [_ _] (boom "translation-documents!"))
       (translation-document! [_ _ _ _] (boom "translation-document!"))
       (review-translation-document! [_ _ _ _] (boom "review-document!"))
-      (translation-batches! [_ _] (boom "translation-batches!"))
       (next-translation-batch! [_ _] (boom "next-batch!"))
       (translation-batch! [_ _ _] (boom "translation-batch!"))
       (update-translation-batch-status! [_ _ _] (boom "update-status!"))
@@ -78,11 +81,13 @@
 
 (defn- fixture
   "Fresh store, client and recorded batch list for one test."
-  [& {:keys [answer]}]
+  [& {:keys [answer observed]}]
   (let [batches (atom [])]
     {:batches batches
      :deps {:evidence-store (store/memory-store)
-            :client (fake-client {:batches batches :answer answer})
+            :client (fake-client {:batches batches
+                                  :answer answer
+                                  :observed observed})
             :clock clock}}))
 
 (defn- work []
@@ -125,7 +130,9 @@
     (testing "the duplicate carries the running batch, so a caller can see it"
       (is (= "batch-1" (:dispatch/batch-id (:dispatch/record second-result)))))))
 
-(deftest ^:async a-worker-failure-is-recorded-not-left-in-flight
+(deftest ^:async a-definite-worker-refusal-becomes-retriable
+  ;; The create threw AND observation found no batch, so the send definitely did
+  ;; not land. Only then is the claim safe to mark retriable.
   (let [{:keys [batches deps]} (fixture :answer (fn [_ _]
                                                   (throw (ex-info "worker refused" {}))))
         result (await (dispatch/dispatch-work! deps (work) (context)))]
@@ -151,6 +158,57 @@
         result (await (dispatch/dispatch-work! deps (work) (context)))]
     (testing "a client answering without a batch id is a failure, not success"
       (is (= :dispatch/failed (:dispatch/outcome result))))))
+
+(deftest ^:async an-ambiguous-send-is-observed-before-it-is-retried
+  ;; The create threw, but the batch is there — the response was lost, not the
+  ;; request. Marking this retriable would translate the same revision twice,
+  ;; and the worker request has no idempotency key for the second call to
+  ;; collapse into.
+  (let [{:keys [batches deps]}
+        (fixture :answer (fn [_ _] (throw (ex-info "connection reset" {})))
+                 :observed (fn [_] {:batches [{:batch_id "batch-existing"
+                                               :document_ids ["knoxx.docs/probe"]}]}))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the claim stays in flight, bound to the batch that already exists"
+      (is (= :dispatch/accepted (:dispatch/outcome result)))
+      (is (= "batch-existing" (:dispatch/batch-id (:dispatch/record result)))))
+
+    (testing "a later pass sees it running rather than enqueueing again"
+      (let [retry (await (dispatch/dispatch-work! deps (work) (context)))]
+        (is (= :dispatch/duplicate (:dispatch/outcome retry)))
+        (is (= 1 (count @batches)) "only the original attempt was ever sent")))))
+
+(deftest ^:async an-unobservable-send-stays-in-flight-rather-than-duplicating
+  ;; Both the create and the observation failed, so nothing is known. A stuck
+  ;; claim is visible and fixable; a duplicate translation is neither.
+  (let [{:keys [deps]}
+        (fixture :answer (fn [_ _] (throw (ex-info "connection reset" {})))
+                 :observed (fn [_] (throw (ex-info "worker unreachable" {}))))
+        result (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the conservative end is chosen, and it says why"
+      (is (= :dispatch/accepted (:dispatch/outcome result)))
+      (is (re-find #"observation also failed" (:dispatch/detail result))))))
+
+(deftest ^:async a-batch-level-failure-resolves-by-batch-id-alone
+  ;; The worker's terminal failure report names no document at all — it sends
+  ;; status "failed" plus an error. Without resolving by batch id the claim would
+  ;; sit in flight forever and never be retried.
+  (let [{:keys [batches deps]} (fixture)
+        _ (await (dispatch/dispatch-work! deps (work) (context)))
+        failed (await (dispatch/fail-batch! deps "batch-1" "All documents failed"))]
+    (testing "the binding is found and marked failed"
+      (is (= :dispatch/failed (:dispatch/outcome failed)))
+      (is (= "All documents failed" (:dispatch/detail (:dispatch/record failed)))))
+
+    (testing "the claim is retriable, so the work can happen"
+      (let [retry (await (dispatch/dispatch-work! deps (work) (context)))]
+        (is (= :dispatch/accepted (:dispatch/outcome retry)))
+        (is (= 2 (count @batches)))))
+
+    (testing "an unknown batch is refused rather than guessed at"
+      (is (= :dispatch-record-missing
+             (:refusal/type (:translation/refusal
+                             (await (dispatch/fail-batch! deps "batch-99" "boom")))))))))
 
 (deftest ^:async a-completed-report-becomes-evidence-the-gate-recognizes
   (let [{:keys [deps]} (fixture)
@@ -283,7 +341,10 @@
         (fixture :answer (fn [_ n]
                            (if (= 1 n)
                              (throw (ex-info "worker unavailable" {}))
-                             {:batch_id (str "batch-" n)})))
+                             {:batch_id (str "batch-" n)}))
+                 ;; Observation finds nothing, so the first send definitely did
+                 ;; not land and the claim is safe to retry.
+                 :observed (fn [_] {:batches []}))
         first-result (await (dispatch/dispatch-work! deps (work) (context)))
         retry (await (dispatch/dispatch-work! deps (work) (context)))]
     (testing "the first attempt failed"

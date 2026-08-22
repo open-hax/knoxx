@@ -102,18 +102,24 @@
 ;; ── Dispatch identity ──────────────────────────────────────────────────────
 
 (def key-dimensions
-  "Everything that changes *which translation* is being asked for, and nothing
-   that does not.
+  "Everything that changes *which translation* is being asked for.
 
-   The organization, membership, garden and project are deliberately absent.
-   They scope who may ask and where the batch is filed; they do not change the
-   answer, and folding them in would let the same translation be dispatched
-   twice by two principals — which is exactly the duplicate the key exists to
-   collapse."
-  [:document :source-locale :locale :revision])
+   The organization is one of them, and an earlier version of this namespace
+   argued the opposite — that a tenant scopes who may ask rather than what the
+   answer is. That was wrong: the worker's translation data is itself
+   tenant-scoped, keying segments by `org_id` and requiring one on every
+   document read. So a translation produced for org A does not exist for org B,
+   and a key without the tenant collapsed org B's request into a duplicate of
+   org A's while org B's gate went on to report the document translated.
+
+   Membership, garden and project stay out. Those really do only scope who asked
+   and where the batch was filed; folding them in would let two principals in
+   one tenant dispatch the same translation twice, which is exactly the
+   duplicate this key exists to collapse."
+  [:org-id :document :source-locale :locale :revision])
 
 (defn dispatch-key
-  "One stable key per logical translation request.
+  "One stable key per logical translation request, per tenant.
 
    A deterministic string rather than a hash, for the reason
    `infra.publication-effects/publish-idempotency-key` gives: it is reproducible
@@ -122,12 +128,17 @@
 
    Refuses a selector revision explicitly. A nil check alone would not do it —
    `:source/current` is a keyword, so it would pass and produce a
-   stable-looking key for a moving target."
-  [{:keys [document source-locale locale revision]}]
+   stable-looking key for a moving target. The organization is required for the
+   same class of reason: a key missing its tenant is a key for the wrong
+   question."
+  [{:keys [org-id document source-locale locale revision]}]
   (when-not (m/validate ConcreteRevision revision)
     (throw (ex-info "translation dispatch key requires a concrete revision"
                     {:document document :revision revision})))
-  (->> [document source-locale locale revision]
+  (when-not (m/validate NonBlankString org-id)
+    (throw (ex-info "translation dispatch key requires an organization"
+                    {:document document :org-id org-id})))
+  (->> [org-id document source-locale locale revision]
        (mapv pr-str)
        (str/join "|")))
 
@@ -234,6 +245,7 @@
   [:map
    [:dispatch/key NonBlankString]
    [:dispatch/outcome Outcome]
+   [:dispatch/org-id NonBlankString]
    [:dispatch/document :qualified-keyword]
    [:dispatch/document-wire-id NonBlankString]
    [:dispatch/source-locale locale/Locale]
@@ -253,11 +265,13 @@
   [work context outcome at & {:keys [batch-id detail]}]
   (assert-record!
    (cond-> {:dispatch/key (dispatch-key
-                           {:document (:document work)
+                           {:org-id (:dispatch/org-id context)
+                            :document (:document work)
                             :source-locale (:dispatch/source-locale context)
                             :locale (:locale work)
                             :revision (:revision work)})
             :dispatch/outcome outcome
+            :dispatch/org-id (:dispatch/org-id context)
             :dispatch/document (:document work)
             :dispatch/document-wire-id (:dispatch/document-wire-id context)
             :dispatch/source-locale (:dispatch/source-locale context)
@@ -449,4 +463,5 @@
     :translation/source-revision (:dispatch/revision record)
     :translation/revision output-revision
     :translation/dispatch-key (:dispatch/key record)
+    :translation/org-id (:dispatch/org-id record)
     :translation/at at}))

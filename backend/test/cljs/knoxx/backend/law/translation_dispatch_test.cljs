@@ -36,13 +36,13 @@
 
 (deftest dispatch-key-collapses-duplicates-and-separates-real-differences
   (testing "the same request twice is the same key"
-    (is (= (law/dispatch-key {:document :a/b :source-locale :en :locale :es :revision "r1"})
-           (law/dispatch-key {:document :a/b :source-locale :en :locale :es :revision "r1"}))))
+    (is (= (law/dispatch-key {:org-id "org-1" :document :a/b :source-locale :en :locale :es :revision "r1"})
+           (law/dispatch-key {:org-id "org-1" :document :a/b :source-locale :en :locale :es :revision "r1"}))))
 
   (testing "every keyed dimension changes the key"
-    (let [base {:document :a/b :source-locale :en :locale :es :revision "r1"}
+    (let [base {:org-id "org-1" :document :a/b :source-locale :en :locale :es :revision "r1"}
           base-key (law/dispatch-key base)]
-      (doseq [[field value] [[:document :a/other] [:source-locale :de]
+      (doseq [[field value] [[:org-id "org-2"] [:document :a/other] [:source-locale :de]
                              [:locale :fr] [:revision "r2"]]]
         (is (not= base-key (law/dispatch-key (assoc base field value)))
             (str field " did not change the key")))))
@@ -50,20 +50,28 @@
   (testing "a keyword and its name cannot collide"
     ;; pr-str rather than str, so `:es` renders as ":es" and the string "es" as
     ;; "\"es\"". Under `str` both would render as "es" and share a key.
-    (is (not= (law/dispatch-key {:document :a/b :source-locale :en :locale :es :revision "r1"})
-              (law/dispatch-key {:document :a/b :source-locale :en :locale "es" :revision "r1"}))))
+    (is (not= (law/dispatch-key {:org-id "org-1" :document :a/b :source-locale :en :locale :es :revision "r1"})
+              (law/dispatch-key {:org-id "org-1" :document :a/b :source-locale :en :locale "es" :revision "r1"}))))
 
   (testing "the joining separator cannot be smuggled through a field"
     ;; Fields are joined with "|", so a revision containing one must not let two
     ;; different requests render to the same key.
-    (is (not= (law/dispatch-key {:document :a/b :source-locale :en :locale :es :revision "r1"})
-              (law/dispatch-key {:document :a/b :source-locale :en :locale :es :revision "r1|"}))))
+    (is (not= (law/dispatch-key {:org-id "org-1" :document :a/b :source-locale :en :locale :es :revision "r1"})
+              (law/dispatch-key {:org-id "org-1" :document :a/b :source-locale :en :locale :es :revision "r1|"}))))
 
   (testing "a selector revision cannot produce a key"
-    (is (thrown? js/Error (law/dispatch-key {:document :a/b :source-locale :en
+    (is (thrown? js/Error (law/dispatch-key {:org-id "org-1" :document :a/b :source-locale :en
                                              :locale :es :revision :source/current})))
+    (is (thrown? js/Error (law/dispatch-key {:org-id "org-1" :document :a/b :source-locale :en
+                                             :locale :es :revision nil}))))
+
+  (testing "a key without a tenant is refused"
+    ;; The translation itself is tenant-scoped, so a key missing its
+    ;; organization is a key for the wrong question.
     (is (thrown? js/Error (law/dispatch-key {:document :a/b :source-locale :en
-                                             :locale :es :revision nil})))))
+                                             :locale :es :revision "r1"})))
+    (is (thrown? js/Error (law/dispatch-key {:org-id "  " :document :a/b :source-locale :en
+                                             :locale :es :revision "r1"})))))
 
 (deftest worker-request-matches-the-workers-own-contract
   (let [request (law/worker-request work context)]
@@ -90,7 +98,7 @@
       (is (= "sha256-abc123def456" (:dispatch/revision r)))
       (is (= :en (:dispatch/source-locale r)))
       (is (= :es (:dispatch/locale r)))
-      (is (= (law/dispatch-key {:document :knoxx.docs/probe :source-locale :en
+      (is (= (law/dispatch-key {:org-id "org-1" :document :knoxx.docs/probe :source-locale :en
                                 :locale :es :revision "sha256-abc123def456"})
              (:dispatch/key r)))))
 

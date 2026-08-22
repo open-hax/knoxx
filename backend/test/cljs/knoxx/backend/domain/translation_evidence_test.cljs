@@ -16,6 +16,7 @@
    :translation/source-revision source-revision
    :translation/revision revision
    :translation/dispatch-key "key-1"
+   :translation/org-id "org-1"
    :translation/at at})
 
 (deftest translated-revision-is-keyed-by-all-three-coordinates
