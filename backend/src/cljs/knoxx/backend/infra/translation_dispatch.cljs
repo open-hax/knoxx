@@ -97,13 +97,12 @@
    three, and binding to it would mint a receipt for a revision that batch never
    saw. See `law/batch-created-after?`.
 
-   `record` supplies the claim's own instant, so only a batch created at or after
-   the claim can be attributed to it — and a match is adopted only when it is the
-   *only* candidate. See `law/batch-matches-dispatch?`.
+   `record` supplies the claim's own instant, so a batch created before the claim
+   is excluded outright. See `law/batch-matches-dispatch?` for the rest.
 
-   Returns `{:batch b :ambiguous? bool :conclusive? bool}`. All three matter:
-   `:batch` nil with `:conclusive?` true is the only combination that licenses
-   treating the send as failed."
+   Returns `{:candidates [...] :conclusive? bool}`. Empty candidates with
+   `:conclusive?` true is the only combination that licenses treating the send as
+   failed; anything else leaves the claim in flight."
   [client work context record]
   (let [response (await (openplanner-client/translation-batches!
                          client
@@ -114,15 +113,17 @@
         candidates (filterv #(law/batch-matches-dispatch? % context work
                                                           (:dispatch/at record))
                             batches)]
-    ;; Exactly one candidate, or none adopted. Every field the batch carries is
-    ;; compared and the creation time bounds it below, but none of that is a
-    ;; *unique* correlation token — the batch contract has nowhere to put one. So
-    ;; two concurrent sends for the same document produce two indistinguishable
-    ;; candidates, and adopting either would bind a claim to a batch that may
-    ;; have translated a different revision. Ambiguity is refused rather than
-    ;; guessed.
-    {:batch (when (= 1 (count candidates)) (first candidates))
-     :ambiguous? (< 1 (count candidates))
+    ;; NO candidate is ever adopted, not even a sole one. Every field the batch
+    ;; carries is compared and the creation time bounds it below, and none of
+    ;; that identifies which *request* created it — the batch contract has
+    ;; nowhere to put a dispatch id. One unrelated actor creating a matching
+    ;; batch after this claim produces exactly one candidate, and adopting it
+    ;; would let `recover-settled-batch!` mint a receipt for this claim's source
+    ;; revision from a batch that never carried it.
+    ;;
+    ;; So observation is used only in the direction it can be trusted: it can
+    ;; *refute* "the send did not land", never confirm which batch is ours.
+    {:candidates candidates
      ;; Absence in a capped list is not absence. The direct Mongo listing sorts
      ;; newest-first and stops at `batch-listing-cap`, so a busy garden can push
      ;; our batch off the end — and reading that as "the send did not land" is
@@ -132,41 +133,43 @@
 (defn- ^:async recover-ambiguous-send!
   "Decide what an ambiguous batch creation left behind.
 
-   A batch that exists is bound and the claim stays in flight; nothing found
-   means the create did not land, and only then does the claim become retriable.
-   See the namespace docstring for why observation comes first."
+   Only one conclusion is drawn: a *conclusive absence* means the create did not
+   land, and only then does the claim become retriable. Anything else — matching
+   batches found, or a truncated listing — leaves the claim in flight.
+
+   Nothing is ever bound from observation. A matching batch does not identify the
+   request that created it, so binding one could attribute this claim to a batch
+   that translated a different revision, and `recover-settled-batch!` would then
+   mint a receipt for content nobody produced. Fabricated evidence is worse than
+   a stranded claim, which is at least visible in the record's detail.
+
+   The cost is real and stated on the card: an ambiguous send whose batch *did*
+   land leaves a claim that no later pass can bind or retry, so that revision
+   needs an operator. Closing it needs a dispatch correlation value on the batch,
+   which is another repository's contract."
   [evidence-store client work context record detail]
   (let [dispatch-key (:dispatch/key record)]
     (try
-      (let [{:keys [batch ambiguous? conclusive?]}
+      (let [{:keys [candidates conclusive?]}
             (await (observe-batch! client work context record))]
         (cond
-          batch
-          {:dispatch/outcome :dispatch/accepted
-           :dispatch/record (or (await (store/bind-dispatch-batch!
-                                        evidence-store dispatch-key
-                                        (str (or (:batch_id batch) (:id batch)))))
-                                record)
-           :dispatch/detail detail}
-
-          ambiguous?
-          ;; Two or more indistinguishable candidates. Binding either could
-          ;; attribute this claim to a batch that translated a different
-          ;; revision, and marking it retriable could translate twice.
-          {:dispatch/outcome :dispatch/accepted
-           :dispatch/record record
-           :dispatch/detail (str detail
-                                 "; several batches match this dispatch, so none"
-                                 " can be attributed to it")}
-
-          ;; Only a conclusive absence licenses a retry.
-          conclusive?
+          ;; A conclusive absence — nothing matching, from a listing that was not
+          ;; truncated — is the only evidence that licenses a retry.
+          (and conclusive? (empty? candidates))
           {:dispatch/outcome :dispatch/failed
            :dispatch/record (or (await (store/resolve-dispatch!
                                         evidence-store dispatch-key
                                         :dispatch/failed detail))
                                 record)
            :dispatch/detail detail}
+
+          (seq candidates)
+          {:dispatch/outcome :dispatch/accepted
+           :dispatch/record record
+           :dispatch/detail (str detail
+                                 "; " (count candidates)
+                                 " batch(es) match this dispatch but none carries a"
+                                 " dispatch id, so none can be attributed to it")}
 
           :else
           {:dispatch/outcome :dispatch/accepted

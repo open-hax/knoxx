@@ -134,6 +134,13 @@ Then the outcome. Two values, and neither means quite what its name suggests:
   recorded binding, which is the card's line *"a gated translation work item
   reaches the ingestion worker with a concrete revision"*.
 
+  Observation never *binds* a batch, only rules out the "did not land"
+  conclusion. A matching batch does not identify the request that created it —
+  the batch record carries no dispatch id — so adopting one could attribute this
+  claim to a batch that translated a different revision. The cost is on the card:
+  an ambiguous send whose batch did land strands its claim, visibly, until an
+  operator looks.
+
 - **`dispatch/failed`** — the worker boundary refused **and** observation
   conclusively found no batch. Conclusive is the load-bearing word: only a
   listing shorter than the cap licenses this, because it is the only state in

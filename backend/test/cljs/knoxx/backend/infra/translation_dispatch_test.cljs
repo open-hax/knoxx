@@ -176,27 +176,34 @@
     (testing "a client answering without a batch id is a failure, not success"
       (is (= :dispatch/failed (:dispatch/outcome result))))))
 
-(deftest ^:async an-ambiguous-send-is-observed-before-it-is-retried
-  ;; The create threw, but the batch is there — the response was lost, not the
-  ;; request. Marking this retriable would translate the same revision twice,
-  ;; and the worker request has no idempotency key for the second call to
-  ;; collapse into.
+(deftest ^:async a-matching-batch-is-never-adopted-even-when-it-is-the-only-one
+  ;; The create threw and one matching batch exists. It is tempting to bind it —
+  ;; the response was probably just lost — but a matching batch does not identify
+  ;; the *request* that created it, and the batch contract has nowhere to put a
+  ;; dispatch id. One unrelated actor creating a matching batch after this claim
+  ;; produces exactly this situation, and binding it would let
+  ;; `recover-settled-batch!` mint a receipt for a revision that batch never
+  ;; carried.
   (let [{:keys [batches deps]}
         (fixture :answer (fn [_ _] (throw (ex-info "connection reset" {})))
-                 ;; Created at the claim's own instant, so it can be attributed
-                 ;; to this dispatch.
                  :observed (fn [_] {:batches [{:batch_id "batch-existing"
                                                :created_at "2026-08-22T09:00:00.000Z"
                                                :document_ids ["knoxx.docs/probe"]}]}))
         result (await (dispatch/dispatch-work! deps (work) (context)))]
-    (testing "the claim stays in flight, bound to the batch that already exists"
-      (is (= :dispatch/accepted (:dispatch/outcome result)))
-      (is (= "batch-existing" (:dispatch/batch-id (:dispatch/record result)))))
+    (testing "nothing is bound"
+      (is (nil? (:dispatch/batch-id (:dispatch/record result)))))
 
-    (testing "a later pass sees it running rather than enqueueing again"
+    (testing "the claim is left in flight, not marked retriable"
+      ;; Retriable would risk translating the same revision twice; bound would
+      ;; risk fabricating evidence. In flight is the only honest answer.
+      (is (= :dispatch/accepted (:dispatch/outcome result)))
+      (is (re-find #"none can be attributed" (:dispatch/detail result))))
+
+    (testing "no second batch is ever sent"
       (let [retry (await (dispatch/dispatch-work! deps (work) (context)))]
-        (is (= :dispatch/duplicate (:dispatch/outcome retry)))
-        (is (= 1 (count @batches)) "only the original attempt was ever sent")))))
+        (is (= 1 (count @batches)))
+        (is (not= :dispatch/failed (:dispatch/outcome retry))
+            "a claim that may be running must not become retriable")))))
 
 (deftest ^:async an-unobservable-send-stays-in-flight-rather-than-duplicating
   ;; Both the create and the observation failed, so nothing is known. A stuck
@@ -612,7 +619,7 @@
 
     (testing "the claim stays in flight, and says why"
       (is (= :dispatch/accepted (:dispatch/outcome result)))
-      (is (re-find #"several batches match" (:dispatch/detail result))))))
+      (is (re-find #"none can be attributed" (:dispatch/detail result))))))
 
 (deftest batch-matching-compares-every-field-the-batch-carries
   (let [context* {:dispatch/garden "knoxx.docs/promethean"
@@ -647,3 +654,40 @@
       (doseq [field [:project :source_lang :target_lang]]
         (is (law/batch-matches-dispatch? (dissoc batch field) context* work* at)
             (str "absent " field " was treated as a mismatch"))))))
+
+(defn- ^:async observed-outcome!
+  "The dispatch outcome when the create fails and observation returns `observed`."
+  [observed]
+  (let [{:keys [deps]} (fixture :answer (fn [_ _]
+                                          (throw (ex-info "connection reset" {})))
+                                :observed observed)]
+    (:dispatch/outcome (await (dispatch/dispatch-work! deps (work) (context))))))
+
+(def ^:private observed-candidate
+  {:batch_id "b"
+   :created_at "2026-08-22T09:00:00.000Z"
+   :document_ids ["knoxx.docs/probe"]})
+
+(deftest ^:async only-a-conclusive-absence-makes-a-claim-retriable
+  ;; The invariant is about the *set* of outcomes: exactly one observation result
+  ;; licenses a retry, and it is the one where absence is actually evidence.
+  ;; Every other shape leaves the claim in flight.
+  (testing "a conclusive absence is the only retriable case"
+    (is (= :dispatch/failed (await (observed-outcome! (fn [_] {:batches []}))))))
+
+  (testing "one matching batch is not — a match does not identify the request"
+    (is (= :dispatch/accepted
+           (await (observed-outcome! (fn [_] {:batches [observed-candidate]}))))))
+
+  (testing "several matching batches are not"
+    (is (= :dispatch/accepted
+           (await (observed-outcome!
+                   (fn [_] {:batches [observed-candidate
+                                      (assoc observed-candidate :batch_id "b2")]}))))))
+
+  (testing "a truncated listing is not, even with nothing matching"
+    (let [full-page (vec (repeat dispatch/batch-listing-cap
+                                 (assoc observed-candidate
+                                        :document_ids ["knoxx.docs/other"])))]
+      (is (= :dispatch/accepted
+             (await (observed-outcome! (fn [_] {:batches full-page}))))))))

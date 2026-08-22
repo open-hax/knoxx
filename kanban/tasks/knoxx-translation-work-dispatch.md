@@ -81,7 +81,7 @@ stale. Annotated rather than silently implemented around.
    `infra.publication-source-revision` supplies it as a content digest of the
    document's source file.
 
-## Known gap left open
+## Known gaps left open
 
 `:source-revision-superseded?` is implemented but unreachable in the current gate
 flow, and the `:translation-stale` blocker it feeds is therefore inert. The
@@ -90,3 +90,33 @@ and the gate's fact signature `[intent revision]` does not carry that. Closing
 it needs a gate-level change and its own card; the reasoning is recorded on
 `infra.publication-source-revision/revision-facts` rather than papered over with
 a policy nobody asked for.
+
+### An ambiguous send whose batch landed can strand its claim
+
+If `create-translation-batch!` throws *after* the worker committed the batch,
+Knoxx cannot tell which batch is its own: the batch record carries no dispatch
+identifier, and garden, target locale, document, project, source language and
+creation time together still do not identify the request that created it. One
+unrelated actor creating a matching batch after the claim produces exactly one
+candidate, and adopting it would let `recover-settled-batch!` mint a receipt for
+a source revision that batch never carried.
+
+So observation is used only to *refute* "the send did not land". It never binds.
+The consequence, stated rather than hidden: such a claim stays in flight, no
+later pass can bind or retry it, and that revision needs an operator. The record's
+detail says so.
+
+That is the deliberate side of the trade — fabricated evidence is worse than a
+visible stranded claim — but it is a real operational gap. Closing it needs a
+dispatch correlation value carried on the batch, which is a contract change in
+another repository and therefore its own cross-repo card.
+
+### The drift check cannot see what the worker read
+
+`source-drift-refusal` compares digests of the *repository* source. The worker
+fetches its input from OpenPlanner's document store, so a document already
+divergent over there is translated while both observations agree. The check still
+catches every case where the local source moved, which is a receipt that is
+definitely wrong — but it does not establish what was translated. Closing that
+needs the batch contract to return a digest of the bytes the worker read: again
+another repository, again its own card.

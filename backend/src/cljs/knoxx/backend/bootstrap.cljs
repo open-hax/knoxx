@@ -136,11 +136,25 @@
    being dispatched to the worker twice, so the store is only published after
    `setup-indexes!` has resolved. Published before the index existed, a
    concurrent pair of dispatches could both insert and both believe they had
-   reserved the key."
-  [db]
-  (await (mongo-translation-evidence/setup-indexes! db))
-  (reset! translation-evidence-registry/store*
-          (mongo-translation-evidence/create-store db)))
+   reserved the key.
+
+   Failure is contained here and never propagates. Awaited bare, a transient
+   Mongo error or an incompatible pre-existing index would reject the whole
+   index-setup step — skipping the session store, agent resume, periodic
+   recovery and session flush that follow it, so a newly added optional feature
+   would take down established persistence while the HTTP server stayed up.
+   Instead the registry is simply left nil, which the dispatch and approval
+   routes already answer 503 for, and the failure is logged. This is the same
+   reasoning `mongo-policy-store/ensure-indexes!` is called for rather than
+   `setup-indexes!` two lines down."
+  [db log]
+  (try
+    (await (mongo-translation-evidence/setup-indexes! db))
+    (reset! translation-evidence-registry/store*
+            (mongo-translation-evidence/create-store db))
+    (catch :default err
+      (.warn log "Translation evidence store unavailable; dispatch and approval routes will answer 503" err)
+      nil)))
 
 (defn- ^:async start-mongo-indexes!
   "Create every collection's indexes, then publish the stores that need them.
@@ -148,7 +162,7 @@
    Extracted from `start-mongo-persistence!` so that function stays about
    lifecycle — connect, index, resume, schedule — rather than growing one line
    per collection."
-  [db]
+  [db log]
   (mongo-session-store/setup-indexes! db)
   (mongo-run-store/setup-indexes! db)
   ;; Cache stores for session titles, temp memory, memory sessions
@@ -159,8 +173,9 @@
   (mongo-mcp-oauth/setup-indexes! db)
   ;; Rate limits store
   (mongo-rate-limits/setup-indexes! db)
-  ;; Translation dispatch bindings and completed-translation evidence.
-  (await (start-translation-evidence! db))
+  ;; Translation dispatch bindings and completed-translation evidence. Its own
+  ;; failures stay its own — see the function.
+  (await (start-translation-evidence! db log))
   ;; ensure-indexes! (not setup-indexes!): it catches index
   ;; failures so a bad index spec can never crash-loop the
   ;; process from this fire-and-forget bootstrap path.
@@ -174,7 +189,7 @@
     (let [db (await (mongo-client/init-mongo!))]
       (when db
         (.info log "MongoDB connected for session persistence")
-        (await (start-mongo-indexes! db))
+        (await (start-mongo-indexes! db log))
         ;; Fire-and-forget: must not block startup.
         ;; Guarded so shadow-cljs hot reload does not spawn
         ;; recovery jobs as if the Node process had restarted.
