@@ -19,6 +19,8 @@
 
 (def ^:private scope {:org-id "org-1" :membership-id "member-1"})
 
+(def ^:private dispatched-revision "sha256-aaa111bbb222")
+
 (def ^:private facts
   {:current-source-revision (constantly "sha256-aaa111bbb222")
    :translated-revision? (constantly false)
@@ -81,14 +83,19 @@
 
 (defn- fixture
   "Fresh store, client and recorded batch list for one test."
-  [& {:keys [answer observed]}]
+  [& {:keys [answer observed source-revision]}]
   (let [batches (atom [])]
     {:batches batches
      :deps {:evidence-store (store/memory-store)
             :client (fake-client {:batches batches
                                   :answer answer
                                   :observed observed})
-            :clock clock}}))
+            :clock clock
+            ;; Defaults to agreeing with the dispatched revision, so completion
+            ;; is not refused for source drift. The drift path overrides it.
+            :observe-source-revision
+            (constantly (js/Promise.resolve
+                         (or source-revision dispatched-revision)))}}))
 
 (defn- work []
   (:action/with (dispatch/derived-work intent facts)))
@@ -408,3 +415,60 @@
   (testing "a failed or rejected attempt is retriable"
     (is (law/retriable? :dispatch/failed))
     (is (law/retriable? :dispatch/rejected))))
+
+(deftest ^:async a-source-that-moved-since-dispatch-cannot-be-completed
+  ;; The worker is handed a document id, not bytes, and fetches the content when
+  ;; it runs. So a receipt naming the revision Knoxx hashed at dispatch time is
+  ;; only substantiated if the source has not moved since — otherwise a pinned
+  ;; old revision gets reported translated on the strength of a translation of
+  ;; different bytes.
+  (let [{:keys [deps]} (fixture :source-revision "sha256-something-else")
+        _ (await (dispatch/dispatch-work! deps (work) (context)))
+        result (await (dispatch/resolve-batch-report!
+                       deps {:status "processing"
+                             :batch_id "batch-1"
+                             :completed_document "knoxx.docs/probe"}))]
+    (testing "the completion is refused, naming both revisions"
+      (is (= :source-moved-since-dispatch
+             (:refusal/type (:translation/refusal result))))
+      (is (= dispatched-revision (:refusal/expected (:translation/refusal result))))
+      (is (= "sha256-something-else" (:refusal/actual (:translation/refusal result)))))
+
+    (testing "no receipt was minted for bytes nobody can vouch for"
+      (is (empty? (await (store/completed-translations! (:evidence-store deps))))))
+
+    (testing "the claim is retriable, because the new revision still needs work"
+      (let [stored (await (store/dispatch-for-key!
+                           (:evidence-store deps)
+                           (:dispatch/key (law/dispatch-record
+                                           (work) (context) :dispatch/accepted (clock)))))]
+        (is (= :dispatch/failed (:dispatch/outcome stored)))))))
+
+(deftest ^:async an-unreadable-source-cannot-substantiate-a-completion
+  (let [{:keys [deps]} (fixture)
+        deps (assoc deps :observe-source-revision
+                    (constantly (js/Promise.resolve nil)))
+        _ (await (dispatch/dispatch-work! deps (work) (context)))
+        result (await (dispatch/resolve-batch-report!
+                       deps {:status "processing"
+                             :batch_id "batch-1"
+                             :completed_document "knoxx.docs/probe"}))]
+    (testing "an unreadable source is not proof either"
+      (is (= :source-moved-since-dispatch
+             (:refusal/type (:translation/refusal result))))
+      (is (nil? (:refusal/actual (:translation/refusal result)))))))
+
+(deftest ^:async completing-without-a-source-observer-is-refused
+  (let [{:keys [deps]} (fixture)
+        without (dissoc deps :observe-source-revision)]
+    (testing "a caller that forgot the check fails rather than skipping it"
+      ;; Defaulting to 'assume unchanged' would delete the only evidence that
+      ;; the worker translated the revision the receipt names.
+      (try
+        (await (dispatch/resolve-batch-report!
+                without {:status "processing"
+                         :batch_id "batch-1"
+                         :completed_document "knoxx.docs/probe"}))
+        (is false "a missing observer must not be silently tolerated")
+        (catch :default err
+          (is (re-find #"source-revision observer" (ex-message err))))))))

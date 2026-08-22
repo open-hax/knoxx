@@ -340,7 +340,8 @@
     :dispatch-document-mismatch
     :dispatch-already-resolved
     :worker-revision-selector
-    :worker-batch-mismatch})
+    :worker-batch-mismatch
+    :source-moved-since-dispatch})
 
 (def Refusal
   "A typed refusal. Both sides travel on it: told only that something
@@ -442,6 +443,31 @@
                    (str (:dispatch/revision record)
                         "+" (name (:dispatch/locale record))
                         "@" batch-id))))
+
+(defn source-drift-refusal
+  "Refusal when the source no longer hashes to the revision that was dispatched.
+
+   The worker is handed a document *id*, not bytes, and it fetches the current
+   content when it eventually runs. So the bytes it translated are whatever the
+   document held at run time, while the receipt asserts the revision Knoxx
+   hashed at dispatch time. If the source changed in between, that assertion is
+   false: a pinned old revision would be reported translated on the strength of
+   a translation of different bytes.
+
+   Dispatching an immutable snapshot instead would be the stronger fix and is not
+   available — the batch contract accepts document ids and belongs to another
+   repository. What *is* available is refusing to assert what can no longer be
+   substantiated. An unchanged digest is real proof rather than a heuristic: if
+   the content is byte-identical at completion to what it was at dispatch, the
+   worker necessarily fetched those bytes.
+
+   A nil `observed-revision` means the source could not be read at all, which is
+   also not proof, and is refused for the same reason."
+  [record observed-revision]
+  (when (not= (:dispatch/revision record) observed-revision)
+    {:refusal/type :source-moved-since-dispatch
+     :refusal/expected (:dispatch/revision record)
+     :refusal/actual observed-revision}))
 
 (defn translation-receipt
   "Mint completed-translation evidence from a resolved binding.

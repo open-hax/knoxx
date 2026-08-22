@@ -42,7 +42,7 @@
 (deftest ^:async a-non-worker-report-produces-no-evidence
   (testing "the report is skipped, and says why"
     (let [result (await (translation/resolve-translation-evidence!
-                         {:role-slugs ["org_admin"]
+                         {} {:role-slugs ["org_admin"]
                           :permissions ["org.translations.manage"]}
                          {:status "complete"
                           :batch_id "batch-1"
@@ -54,7 +54,7 @@
 
   (testing "an anonymous report produces no evidence"
     (let [result (await (translation/resolve-translation-evidence!
-                         nil
+                         {} nil
                          {:status "complete"
                           :batch_id "batch-1"
                           :completed_document "knoxx.docs/probe"}))]
@@ -65,7 +65,7 @@
     ;; Proves the refusal above is the principal check rather than the store
     ;; being absent: the same call with a worker principal reaches the next gate.
     (let [result (await (translation/resolve-translation-evidence!
-                         {:role-slugs ["system_admin"]}
+                         {} {:role-slugs ["system_admin"]}
                          {:status "complete"
                           :batch_id "batch-1"
                           :completed_document "knoxx.docs/probe"}))]

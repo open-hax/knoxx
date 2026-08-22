@@ -13,6 +13,7 @@
   work actually queued. A facade that let the gate's predicates go read a file
   or a collection per call would put that drift straight back."
   (:require [knoxx.backend.domain.publication-resolver :as resolver]
+            [knoxx.backend.law.publication :as publication-law]
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
             [knoxx.backend.infra.routes.publications :as publications]
@@ -35,6 +36,24 @@
     (into []
           (mapcat #(resolver/desired-publications index %))
           (keys (:documents index)))))
+
+(defn admissible-intents
+  "The intents that could actually reconcile to a public materialization.
+
+   `domain.publication-gate` states outright that it decides only the
+   *evidential* half of admissibility and assumes the structural half holds
+   upstream — and until now nothing upstream of dispatch checked it. So an intent
+   targeting an archived garden, or a locale its garden does not accept, reached
+   the gate, derived translation work, and was enqueued on a shared worker for
+   content that can never be published. `translation-work-eligible?` cannot catch
+   it: it asks only whether the intent publishes and needs translating, which
+   both remain true.
+
+   `law.publication/admissible-publication?` is the contract that owns this
+   question, so it is called rather than re-derived. Filtering here rather than
+   inside the gate keeps the two halves where their own docstrings put them."
+  [index intents]
+  (filterv #(publication-law/admissible-publication? index %) intents))
 
 (defn- referenced-documents
   "The document records the given intents point at."
@@ -81,16 +100,20 @@
 (defn ^:async dispatch-translations!
   "Dispatch the derived translation work for one document, or for all of them.
 
-   Returns `{:dispatched [...] :considered n}`. The count is reported separately
-   because an empty dispatch list is ambiguous on its own — nothing needed
-   translating and nothing was even looked at read identically, and an operator
-   running this against the wrong scope deserves to be able to tell."
+   Returns `{:considered n :admissible n :dispatched [...]}`. The counts are
+   reported separately because an empty dispatch list is ambiguous on its own:
+   nothing needed translating, nothing was looked at, and everything looked at
+   was structurally inadmissible all read identically. An operator running this
+   against the wrong scope — or against a garden that has been archived —
+   deserves to be able to tell which."
   [config {:keys [evidence-store] :as deps} scope document-id]
   (let [index (await (publications/publication-index! config))
-        intents (hydrated-intents index document-id)
+        hydrated (hydrated-intents index document-id)
+        intents (admissible-intents index hydrated)
         documents (referenced-documents index intents)
         facts (await (gate-facts! config evidence-store (:org-id scope) documents))]
-    {:considered (count intents)
+    {:considered (count hydrated)
+     :admissible (count intents)
      :dispatched (await (dispatch/dispatch-intents! deps intents facts scope))}))
 
 (def worker-report-vocabulary
@@ -114,6 +137,31 @@
    :all-done {:status "complete" :names-document? false}
    :all-failed {:status "failed" :names-document? false}
    :some-failed {:status "partial" :names-document? false}})
+
+(defn- ^:async observe-source-revision!
+  "The dispatched document's current source revision, or nil if unreadable."
+  [config record]
+  (let [index (await (publications/publication-index! config))
+        document (get-in index [:documents (:dispatch/document record)])]
+    (when document
+      (get (await (source-revision/source-revisions! config [document]))
+           (:dispatch/document record)))))
+
+(defn source-revision-observer!
+  "A function that re-reads a dispatched document's current source revision.
+
+   Supplied to `resolve-batch-report!` so it can verify the source has not moved
+   between dispatch and completion — see
+   `law.translation-dispatch/source-drift-refusal` for why that verification is
+   the strongest thing available when the worker is handed an id rather than
+   bytes.
+
+   The resource index is loaded per call rather than closed over. A completion
+   report arrives long after the dispatch that caused it, and the whole question
+   being asked is what the source looks like *now*; a cached index would answer
+   with what it looked like when the process last loaded one."
+  [config]
+  (partial observe-source-revision! config))
 
 (defn ^:async resolve-batch-status!
   "Turn one worker batch-status report into translation evidence.

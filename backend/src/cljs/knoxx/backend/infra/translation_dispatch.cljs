@@ -269,6 +269,17 @@
 
 ;; ── Resolving the worker's answer ──────────────────────────────────────────
 
+(defn- ^:async refuse-drifted-completion!
+  "Refuse a completion whose source has moved, and make the claim retriable.
+
+   Retriable rather than merely refused: the document still needs translating,
+   now at its new revision, and leaving the claim in flight would strand it."
+  [evidence-store record drift]
+  (await (store/resolve-dispatch! evidence-store (:dispatch/key record)
+                                  :dispatch/failed
+                                  "source moved between dispatch and completion"))
+  {:translation/refusal drift})
+
 (defn ^:async resolve-batch-report!
   "Turn one worker status report into translation evidence, or refuse it.
 
@@ -283,7 +294,15 @@
    translation that may still be running.
 
    Returns `{:translation/receipt r}` on success, or `{:translation/refusal f}`."
-  [{:keys [evidence-store clock]} report]
+  [{:keys [evidence-store clock observe-source-revision]} report]
+  ;; Required, not optional, and for the same reason
+  ;; `publication-target-registry` requires its locale guard: a caller that
+  ;; forgot to supply the check must fail, not quietly get a version with the
+  ;; check missing. Defaulting to "assume unchanged" would delete the only
+  ;; evidence that the worker translated the revision this receipt names.
+  (when-not (fn? observe-source-revision)
+    (throw (ex-info "resolving a completion requires a source-revision observer"
+                    {:batch_id (:batch_id report)})))
   (let [checked (law/assert-valid! :translation-dispatch/status-report
                                    law/BatchStatusReport
                                    report)
@@ -293,7 +312,15 @@
                        (:completed_document checked)))]
     (if-let [refusal (law/completion-refusal record checked)]
       {:translation/refusal refusal}
-      (await (record-completion! evidence-store clock record nil)))))
+      ;; The worker was handed a document id and fetched the content when it ran,
+      ;; so the bytes it translated are only knowably the dispatched revision if
+      ;; the source has not moved since. Verified rather than assumed — see
+      ;; `law/source-drift-refusal`.
+      (if-let [drift (law/source-drift-refusal
+                      record
+                      (await (observe-source-revision record)))]
+        (await (refuse-drifted-completion! evidence-store record drift))
+        (await (record-completion! evidence-store clock record nil))))))
 
 (defn ^:async fail-batch-document!
   "Record that the worker could not translate one document of a batch.

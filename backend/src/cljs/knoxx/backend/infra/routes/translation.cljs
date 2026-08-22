@@ -300,11 +300,15 @@
 
   The catch is what keeps this step from failing the status update it hangs off:
   see `resolve-translation-evidence!` for why that update must not be retried."
-  [evidence-store report]
+  [config evidence-store report]
   (try
     (await (translation-dispatch/resolve-batch-status!
             {:evidence-store evidence-store
-             :clock (fn [] (.toISOString (js/Date.)))}
+             :clock (fn [] (.toISOString (js/Date.)))
+             ;; Built here rather than inside the facade: the observer needs the
+             ;; runtime config, and a facade that constructs its own
+             ;; dependencies cannot be given a different one by a test.
+             :observe-source-revision (translation-dispatch/source-revision-observer! config)}
             report))
     (catch :default err
       {:translation/error (or (not-empty (str (ex-message err)))
@@ -325,7 +329,7 @@
   retry storm here could strand the batch. The outcome travels in the response
   instead, which keeps it observable rather than silent: an operator debugging a
   translation that never produced a receipt can see the refusal that stopped it."
-  [ctx report]
+  [config ctx report]
   (let [evidence-store (evidence-registry/current)]
     (cond
       (not (worker-principal? ctx))
@@ -335,7 +339,7 @@
       {:translation/skipped {:reason :translation-evidence-unavailable}}
 
       :else
-      (await (resolve-evidence-safely! evidence-store report)))))
+      (await (resolve-evidence-safely! config evidence-store report)))))
 
 (defn- ^:async update-batch-status!
   "Record the batch status with its owner, then resolve Knoxx's own evidence.
@@ -352,7 +356,7 @@
         ;; The report carries the batch id from the route, not the body: the
         ;; worker does not repeat it, and the binding is keyed by it.
         evidence (await (resolve-translation-evidence!
-                         ctx (assoc body :batch_id batch-id)))]
+                         config ctx (assoc body :batch_id batch-id)))]
     (assoc response :translation evidence)))
 
 (defn- update-batch-status-op

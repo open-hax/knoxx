@@ -32,7 +32,10 @@
     (await (store/reserve-dispatch! evidence-store record))
     (await (store/bind-dispatch-batch! evidence-store (:dispatch/key record) "batch-1"))
     {:evidence-store evidence-store
-     :clock (constantly at)}))
+     :clock (constantly at)
+     ;; Agrees with the dispatched revision, so completion is not refused for
+     ;; source drift. The drift path has its own test.
+     :observe-source-revision (constantly (js/Promise.resolve (:revision work)))}))
 
 (deftest failed-document-id-reads-both-shapes-the-worker-can-send
   (testing "a bare id string"
@@ -156,3 +159,44 @@
     (testing "the binding is resolved by batch id and marked failed"
       (is (= :dispatch/failed (:dispatch/outcome result)))
       (is (= "All documents failed" (:dispatch/detail (:dispatch/record result)))))))
+
+(deftest structurally-inadmissible-intents-are-not-dispatched
+  ;; `domain.publication-gate` states it decides only the evidential half of
+  ;; admissibility and assumes the structural half holds upstream. Nothing
+  ;; upstream of dispatch checked it, so an intent targeting an archived garden
+  ;; or an unaccepted locale derived work and was enqueued on a shared worker for
+  ;; content that can never be published.
+  (let [intent {:publication/id :knoxx.docs/probe-es
+                :publication/document :knoxx.docs/probe
+                :publication/garden :knoxx.docs/garden
+                :publication/locale :es
+                :publication/revision "sha256-aaa111bbb222"
+                :publication/state :published
+                :publication/path "/probe"
+                :translation/review :none
+                :document/source-locale :en}
+        index (fn [{:keys [status locales]}]
+                {:documents {:knoxx.docs/probe {:document/id :knoxx.docs/probe}}
+                 :gardens {:knoxx.docs/garden {:garden/id :knoxx.docs/garden
+                                               :garden/status status
+                                               :garden/locales locales}}})]
+    (testing "an active garden accepting the locale is admissible"
+      (is (= [intent] (facade/admissible-intents
+                       (index {:status :active :locales [:es]}) [intent]))))
+
+    (testing "an archived garden is not"
+      (is (empty? (facade/admissible-intents
+                   (index {:status :archived :locales [:es]}) [intent]))))
+
+    (testing "a locale the garden does not accept is not"
+      (is (empty? (facade/admissible-intents
+                   (index {:status :active :locales [:fr]}) [intent]))))
+
+    (testing "an archived intent is not, even in an active garden"
+      (is (empty? (facade/admissible-intents
+                   (index {:status :active :locales [:es]})
+                   [(assoc intent :publication/state :archived)]))))
+
+    (testing "a dangling garden reference is not"
+      (is (empty? (facade/admissible-intents
+                   {:documents {:knoxx.docs/probe {}} :gardens {}} [intent]))))))
