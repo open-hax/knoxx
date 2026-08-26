@@ -3,8 +3,8 @@
 
   `domain.publication-gate` takes a `facts` map of *synchronous* predicates:
 
-    :translated-revision?  [document locale revision] -> boolean
-    :approved?             [document locale revision] -> boolean
+    :translated-revision?  [document garden locale revision] -> boolean
+    :approved?             [document garden locale revision] -> boolean
 
   That signature is not incidental, and it is the reason this namespace exists
   as its own step. The gate computes evidence exactly once so a revision
@@ -26,7 +26,7 @@
 (defn evidence-key
   "The four coordinates every lookup is keyed by.
 
-   A vector rather than nested maps: the three coordinates always travel
+   A vector rather than nested maps: the four coordinates always travel
    together, and a partial key is never a meaningful thing to hold."
   [document garden locale revision]
   [document garden locale revision])
@@ -73,7 +73,7 @@
   (some? (get-in evidence [:receipts (evidence-key document garden locale revision)])))
 
 (defn receipt-for
-  "The completed translation receipt for this triple, or nil.
+  "The completed translation receipt for these four coordinates, or nil.
 
    Distinct from `translated-revision?` on purpose: approval evidence has to
    join against the receipt's *output* revision, not merely learn that one

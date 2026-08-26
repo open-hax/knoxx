@@ -108,95 +108,112 @@
 (def ^:private root-a (str temp-root "/checkout-a"))
 (def ^:private root-b (str temp-root "/checkout-b"))
 
-(deftest ^:async each-document-resolves-against-its-own-contract-root
-  ;; The regression, in full. `load-all-contract-records!` scans EVERY entry
-  ;; `contract-root-paths` returns, while `contracts-dir-path` is explicitly the
-  ;; legacy *first*-root view. So a document declared in the second root had its
-  ;; repository-relative source read from the first root's checkout. Both ways
-  ;; that lands are silent:
-  ;;
-  ;;   the first checkout has no such file  -> nil revision, no work dispatched
-  ;;   the first checkout has a same-named  -> an unrelated file is hashed, and
-  ;;   file                                    that digest becomes the revision
-  ;;                                            a translation receipt asserts
-  ;;
-  ;; The second is the dangerous one: nothing fails, and the evidence is wrong.
-  (let [_ (await (fs/write-file-ensure-dir! (str root-a "/contracts/.keep") ""))
-        _ (await (fs/write-file-ensure-dir! (str root-b "/contracts/.keep") ""))
-        _ (await (fs/write-file-ensure-dir! (str root-a "/docs/probe.md") "# From A"))
-        _ (await (fs/write-file-ensure-dir! (str root-b "/docs/probe.md") "# From B"))
-        _ (await (fs/write-file-ensure-dir! (str root-b "/docs/only-in-b.md") "# Only B"))
-        roots [(str root-a "/contracts") (str root-b "/contracts")]]
-    (with-redefs [contract-loader/contract-root-paths (constantly roots)]
-      (testing "a resource's own file path decides which checkout owns it"
-        (is (= root-a (source-revision/resource-source-root
-                       {} (str root-a "/contracts/publications/probe.edn"))))
-        (is (= root-b (source-revision/resource-source-root
-                       {} (str root-b "/contracts/publications/probe.edn")))))
+(def ^:private two-roots
+  "Both checkouts' contract roots, in the order `contract-root-paths` returns
+   them — so `root-a` is the legacy first-root view and `root-b` is the one that
+   used to be unreachable."
+  [(str root-a "/contracts") (str root-b "/contracts")])
 
-      (testing "a contract root names itself"
-        ;; A record whose file path IS the root — the boundary case the prefix
-        ;; check has to admit rather than treat as outside it.
-        (is (= root-b (source-revision/resource-source-root
-                       {} (str root-b "/contracts")))))
+(defn- ^:async seed-two-checkouts!
+  "Two checkouts, each with a contract root and a `docs/probe.md` of its own.
 
-      (testing "a path under no known root resolves to no checkout"
-        ;; Guessing here would be the same defect wearing a different mask.
-        (is (nil? (source-revision/resource-source-root
-                   {} "/somewhere/else/contracts/probe.edn"))))
+   The same relative path in both is the whole point: resolved against the wrong
+   root it reads a real file with different bytes, which is the silent half of
+   the regression. `only-in-b.md` covers the loud half, where the wrong root has
+   nothing to read at all."
+  []
+  (await (fs/write-file-ensure-dir! (str root-a "/contracts/.keep") ""))
+  (await (fs/write-file-ensure-dir! (str root-b "/contracts/.keep") ""))
+  (await (fs/write-file-ensure-dir! (str root-a "/docs/probe.md") "# From A"))
+  (await (fs/write-file-ensure-dir! (str root-b "/docs/probe.md") "# From B"))
+  (await (fs/write-file-ensure-dir! (str root-b "/docs/only-in-b.md") "# Only B"))
+  true)
 
-      (testing "a sibling directory is not a prefix match"
-        ;; `<root>/contracts-old` starts with `<root>/contracts` as a string and
-        ;; is a different directory; only a `/` boundary counts.
-        (is (nil? (source-revision/resource-source-root
-                   {} (str root-a "/contracts-old/probe.edn")))))
+(deftest ^:async a-resources-own-path-decides-which-checkout-owns-it
+  ;; `load-all-contract-records!` scans EVERY entry `contract-root-paths`
+  ;; returns, while `contracts-dir-path` is explicitly the legacy *first*-root
+  ;; view. Selecting by provenance is what closes the gap between them.
+  (await (seed-two-checkouts!))
+  (with-redefs [contract-loader/contract-root-paths (constantly two-roots)]
+    (testing "each root claims the resources beneath it"
+      (is (= root-a (source-revision/resource-source-root
+                     {} (str root-a "/contracts/publications/probe.edn"))))
+      (is (= root-b (source-revision/resource-source-root
+                     {} (str root-b "/contracts/publications/probe.edn")))))
 
-      (testing "the legacy view still answers with the first root"
-        ;; Named explicitly so the two are visibly different things. This is
-        ;; what every document used to be resolved against.
-        (is (= root-a (source-revision/source-root {}))))
+    (testing "a contract root names itself"
+      ;; A record whose file path IS the root — the boundary case the prefix
+      ;; check has to admit rather than treat as outside it.
+      (is (= root-b (source-revision/resource-source-root
+                     {} (str root-b "/contracts")))))
 
-      (testing "a document owned by the second root is read from the second root"
-        (let [revisions (await (source-revision/source-revisions!
-                                {}
-                                [(document :knoxx.docs/probe "docs/probe.md")]
-                                {:knoxx.docs/probe root-b}))]
-          (is (= (source-revision/content-revision "# From B")
-                 (get revisions :knoxx.docs/probe)))
-          (is (not= (source-revision/content-revision "# From A")
-                    (get revisions :knoxx.docs/probe)))))
+    (testing "a path under no known root resolves to no checkout"
+      ;; Guessing here would be the same defect wearing a different mask.
+      (is (nil? (source-revision/resource-source-root
+                 {} "/somewhere/else/contracts/probe.edn"))))
 
-      (testing "without its owning root the same document hashes the wrong file"
-        ;; The pre-fix behavior, pinned so the regression cannot return quietly.
-        (let [revisions (await (source-revision/source-revisions!
-                                {}
-                                [(document :knoxx.docs/probe "docs/probe.md")]))]
-          (is (= (source-revision/content-revision "# From A")
-                 (get revisions :knoxx.docs/probe)))))
+    (testing "a sibling directory is not a prefix match"
+      ;; `<root>/contracts-old` starts with `<root>/contracts` as a string and
+      ;; is a different directory; only a `/` boundary counts.
+      (is (nil? (source-revision/resource-source-root
+                 {} (str root-a "/contracts-old/probe.edn")))))
 
-      (testing "a document only the second root has is otherwise unreadable"
-        (let [found (await (source-revision/source-revisions!
-                            {}
-                            [(document :knoxx.docs/only-b "docs/only-in-b.md")]
-                            {:knoxx.docs/only-b root-b}))
-              missed (await (source-revision/source-revisions!
-                             {}
-                             [(document :knoxx.docs/only-b "docs/only-in-b.md")]))]
-          (is (= (source-revision/content-revision "# Only B")
-                 (get found :knoxx.docs/only-b)))
-          ;; Absent, not nil-valued: the gate reports the revision unresolved
-          ;; and derives no translation work at all.
-          (is (not (contains? missed :knoxx.docs/only-b)))))
+    (testing "the legacy view still answers with the first root"
+      ;; Named explicitly so the two are visibly different things. This is what
+      ;; every document used to be resolved against.
+      (is (= root-a (source-revision/source-root {}))))))
 
-      (testing "a document with no owning root falls back to the legacy root"
-        ;; Not every record carries resolvable provenance, and a partial roots
-        ;; map must not make previously-working documents stop resolving.
-        (let [revisions (await (source-revision/source-revisions!
-                                {}
-                                [(document :knoxx.docs/probe "docs/probe.md")]
-                                {:knoxx.docs/other root-b}))]
-          (is (= (source-revision/content-revision "# From A")
-                 (get revisions :knoxx.docs/probe))))))))
+(deftest ^:async the-owning-root-decides-which-bytes-are-hashed
+  ;; The dangerous half of the regression: both checkouts have a real
+  ;; `docs/probe.md`, so resolving against the wrong one does not fail. It
+  ;; hashes an unrelated file and that digest becomes the revision a translation
+  ;; receipt asserts.
+  (await (seed-two-checkouts!))
+  (with-redefs [contract-loader/contract-root-paths (constantly two-roots)]
+    (testing "a document owned by the second root is read from the second root"
+      (let [revisions (await (source-revision/source-revisions!
+                              {}
+                              [(document :knoxx.docs/probe "docs/probe.md")]
+                              {:knoxx.docs/probe root-b}))]
+        (is (= (source-revision/content-revision "# From B")
+               (get revisions :knoxx.docs/probe)))
+        (is (not= (source-revision/content-revision "# From A")
+                  (get revisions :knoxx.docs/probe)))))
+
+    (testing "without its owning root the same document hashes the wrong file"
+      ;; The pre-fix behavior, pinned so the regression cannot return quietly.
+      (let [revisions (await (source-revision/source-revisions!
+                              {}
+                              [(document :knoxx.docs/probe "docs/probe.md")]))]
+        (is (= (source-revision/content-revision "# From A")
+               (get revisions :knoxx.docs/probe)))))))
+
+(deftest ^:async an-unresolvable-root-leaves-the-revision-absent
+  ;; The loud half, plus the compatibility case. A partial roots map must not
+  ;; make a previously-working document stop resolving.
+  (await (seed-two-checkouts!))
+  (with-redefs [contract-loader/contract-root-paths (constantly two-roots)]
+    (testing "a document only the second root has is otherwise unreadable"
+      (let [found (await (source-revision/source-revisions!
+                          {}
+                          [(document :knoxx.docs/only-b "docs/only-in-b.md")]
+                          {:knoxx.docs/only-b root-b}))
+            missed (await (source-revision/source-revisions!
+                           {}
+                           [(document :knoxx.docs/only-b "docs/only-in-b.md")]))]
+        (is (= (source-revision/content-revision "# Only B")
+               (get found :knoxx.docs/only-b)))
+        ;; Absent, not nil-valued: the gate reports the revision unresolved and
+        ;; derives no translation work at all.
+        (is (not (contains? missed :knoxx.docs/only-b)))))
+
+    (testing "a document with no owning root falls back to the legacy root"
+      (let [revisions (await (source-revision/source-revisions!
+                              {}
+                              [(document :knoxx.docs/probe "docs/probe.md")]
+                              {:knoxx.docs/other root-b}))]
+        (is (= (source-revision/content-revision "# From A")
+               (get revisions :knoxx.docs/probe)))))))
 
 (deftest revision-facts-answer-the-gates-questions
   (let [revisions {:knoxx.docs/probe "sha256-current00000"}
