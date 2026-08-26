@@ -58,13 +58,24 @@ stale. Annotated rather than silently implemented around.
 
 1. **"Map each derived work item into the ingestion worker's input contract,
    carrying ... concrete source revision, and a stable dispatch/idempotency
-   identity."** The worker's contract cannot carry either.
-   `law.openplanner-translation/CreateTranslationBatchRequest` is
-   `{garden_id, target_lang, document_ids, source_lang, project, org_id,
-   membership_id}` — no revision field, no idempotency field — and the batch
-   collection belongs to another repository. The binding therefore stays
-   Knoxx-side as a `DispatchRecord` keyed to the batch id the worker returns,
-   and the worker is sent only what its contract admits. Rationale and the
+   identity."** The two halves resolved differently, and an earlier revision of
+   this correction — written when neither crossed — said both were impossible.
+   That is now only half true.
+
+   **Idempotency crosses.** `CreateTranslationBatchRequest` carries
+   `dispatch_key`, and Knoxx's own direct-Mongo adapter upserts the batch on
+   `{org_id, dispatch_key}` under a unique sparse index, so a repeated dispatch
+   adopts the existing batch instead of enqueueing a second one. It is an
+   additive field on an `{:closed false}` contract written by a Knoxx-owned
+   adapter, not a coordinated change in another repository. A REST server that
+   has not learned the field ignores it; `observe-batch!` then treats the
+   listing as uncorrelated rather than as evidence of absence, which costs
+   recovery precision and never correctness.
+
+   **The revision does not.** There is still no revision field, and putting one
+   there would place Knoxx's revision semantics in a foreign collection where
+   nothing validates them. The binding therefore stays Knoxx-side as a
+   `DispatchRecord` keyed to the batch id the worker returns. Rationale and the
    rejected alternative are in `law.translation-dispatch`.
 
 2. **"Decode and validate the worker result into a translation receipt."** The

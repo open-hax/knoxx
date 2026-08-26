@@ -88,6 +88,19 @@
   [config]
   (some-> (contract-loader/contracts-dir-path config) fs/parent))
 
+(defn resource-source-root
+  "The checkout root owning one loaded resource file.
+
+   Contract loading may scan several roots. The resource file's provenance,
+   rather than the legacy first-root view, decides which checkout a relative
+   document source belongs to."
+  [config resource-file-path]
+  (some (fn [contract-root]
+          (when (or (= resource-file-path contract-root)
+                    (str/starts-with? resource-file-path (str contract-root "/")))
+            (fs/parent contract-root)))
+        (contract-loader/contract-root-paths config)))
+
 (defn document-path
   "Where to actually read `document`'s source from.
 
@@ -116,8 +129,10 @@
 
 (defn- ^:async document-revision-entry!
   "One `[document-id revision]` pair, or `[document-id nil]` when unreadable."
-  [root document]
-  [(:document/id document) (await (document-revision! root document))])
+  [default-root document-roots document]
+  (let [document-id (:document/id document)
+        root (or (get document-roots document-id) default-root)]
+    [document-id (await (document-revision! root document))]))
 
 (defn ^:async source-revisions!
   "Current revision per document id, for every document in `documents`.
@@ -135,13 +150,16 @@
 
    `config` supplies the checkout root — see the namespace docstring for why the
    process working directory is the wrong answer."
-  [config documents]
-  (let [root (source-root config)]
-    (reduce (fn [revisions [document-id revision]]
-              (cond-> revisions
-                (some? revision) (assoc document-id revision)))
-            {}
-            (await (p/all (mapv #(document-revision-entry! root %) documents))))))
+  ([config documents]
+   (source-revisions! config documents {}))
+  ([config documents document-roots]
+   (let [root (source-root config)]
+     (reduce (fn [revisions [document-id revision]]
+               (cond-> revisions
+                 (some? revision) (assoc document-id revision)))
+             {}
+             (await (p/all (mapv #(document-revision-entry! root document-roots %)
+                                 documents)))))))
 
 (defn revision-facts
   "The two source-revision entries `domain.publication-gate` needs, closed over

@@ -11,6 +11,7 @@
            at "2026-08-22T09:00:00.000Z"}}]
   {:receipt/type :translation/completed
    :translation/document :knoxx.docs/probe
+   :translation/garden :knoxx.docs/promethean
    :translation/source-locale :en
    :translation/locale locale
    :translation/source-revision source-revision
@@ -19,15 +20,16 @@
    :translation/org-id "org-1"
    :translation/at at})
 
-(deftest translated-revision-is-keyed-by-all-three-coordinates
+(deftest translated-revision-is-keyed-by-all-four-coordinates
   (let [evidence (domain/evidence {:receipts [(receipt)]})]
     (testing "the exact triple is found"
-      (is (domain/translated-revision? evidence :knoxx.docs/probe :es "sha256-aaa111bbb222")))
+      (is (domain/translated-revision? evidence :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-aaa111bbb222")))
 
     (testing "no coordinate is ignored"
-      (is (not (domain/translated-revision? evidence :knoxx.docs/other :es "sha256-aaa111bbb222")))
-      (is (not (domain/translated-revision? evidence :knoxx.docs/probe :fr "sha256-aaa111bbb222")))
-      (is (not (domain/translated-revision? evidence :knoxx.docs/probe :es "sha256-different"))))))
+      (is (not (domain/translated-revision? evidence :knoxx.docs/other :knoxx.docs/promethean :es "sha256-aaa111bbb222")))
+      (is (not (domain/translated-revision? evidence :knoxx.docs/probe :knoxx.docs/other :es "sha256-aaa111bbb222")))
+      (is (not (domain/translated-revision? evidence :knoxx.docs/probe :knoxx.docs/promethean :fr "sha256-aaa111bbb222")))
+      (is (not (domain/translated-revision? evidence :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-different"))))))
 
 (deftest a-re-translation-wins-by-timestamp-not-arrival-order
   (let [older (receipt :revision "sha256-aaa111bbb222+es@batch-1"
@@ -38,7 +40,7 @@
       (is (= "sha256-aaa111bbb222+es@batch-2"
              (:translation/revision
               (domain/receipt-for (domain/evidence {:receipts [older newer]})
-                                  :knoxx.docs/probe :es "sha256-aaa111bbb222")))))
+                                  :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-aaa111bbb222")))))
 
     (testing "newest still wins when it arrives first"
       ;; The property arrival-order indexing would get wrong. A store is free to
@@ -46,7 +48,7 @@
       (is (= "sha256-aaa111bbb222+es@batch-2"
              (:translation/revision
               (domain/receipt-for (domain/evidence {:receipts [newer older]})
-                                  :knoxx.docs/probe :es "sha256-aaa111bbb222")))))))
+                                  :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-aaa111bbb222")))))))
 
 (deftest a-store-returning-garbage-is-refused-not-indexed
   (testing "an invalid receipt fails on the way in rather than becoming a fact"
@@ -59,7 +61,7 @@
   (let [facts (domain/gate-facts (domain/evidence {:receipts [(receipt)]}))]
     (testing "the translation predicate is present and answers"
       (is (fn? (:translated-revision? facts)))
-      (is ((:translated-revision? facts) :knoxx.docs/probe :es "sha256-aaa111bbb222")))
+      (is ((:translated-revision? facts) :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-aaa111bbb222")))
 
     (testing "nothing else is fabricated"
       ;; Defaulting :approved? or :current-source-revision here would let a
@@ -111,7 +113,7 @@
     (testing "the same pair in either order picks the same receipt"
       (is (= (:translation/revision
               (domain/receipt-for (domain/evidence {:receipts [a b]})
-                                  :knoxx.docs/probe :es "sha256-aaa111bbb222"))
+                                  :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-aaa111bbb222"))
              (:translation/revision
               (domain/receipt-for (domain/evidence {:receipts [b a]})
-                                  :knoxx.docs/probe :es "sha256-aaa111bbb222")))))))
+                                  :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-aaa111bbb222")))))))

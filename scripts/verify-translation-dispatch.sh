@@ -64,8 +64,10 @@ DOC_LOCAL="probe${RUN_ID}"
 DOC_ID="${NS}/${DOC_LOCAL}"
 PUB_TRANSLATED_ID="${NS}/${DOC_LOCAL}-es"
 PUB_NATIVE_ID="${NS}/${DOC_LOCAL}-en"
-SOURCE_REL="contracts/_verify_translation_dispatch/probe-${RUN_ID}.md"
-SOURCE_FILE="${REPO_ROOT}/${SOURCE_REL}"
+CONTRACTS_PARENT="$(cd "$(dirname "${CONTRACTS_DIR}")" && pwd)"
+CONTRACTS_NAME="$(basename "${CONTRACTS_DIR}")"
+SOURCE_REL="${CONTRACTS_NAME}/_verify_translation_dispatch/probe-${RUN_ID}.md"
+SOURCE_FILE="${CONTRACTS_PARENT}/${SOURCE_REL}"
 # `:source/current`, not a pinned token. A pin must equal the digest Knoxx can
 # observe of the source file, and an opaque `rev-...` value never can — dispatch
 # would refuse it as `:pin-not-tied-to-observable-bytes` on every run. The gate
@@ -306,7 +308,7 @@ resp="$(http POST "/api/publications/translations/dispatch" auth "{\"document\":
 dispatch_status="$(status_of "$resp")"
 
 if [ "$dispatch_status" = "503" ]; then
-  warn "translation evidence persistence is unavailable (MongoDB not connected)"
+  fail "translation evidence persistence is unavailable" "MongoDB is a required precondition"
   note "The route refuses rather than accepting a dispatch whose revision binding"
   note "would be lost on restart. Start MongoDB and re-run to verify sections 3-5."
 elif [ "$dispatch_status" = "200" ]; then
@@ -332,8 +334,9 @@ elif [ "$dispatch_status" = "200" ]; then
   case "$outcome" in
     dispatch/accepted)
       pass "the worker accepted the batch ${C_DIM}(dispatch/accepted)${C_RESET}"
+      expected_digest="sha256-$(sha256sum "$SOURCE_FILE" | awk '{print $1}')"
       expect_jq "the accepted dispatch is bound to a concrete content digest" \
-        '[.. | strings] | any(startswith("sha256-"))' "$resp"
+        ".dispatched[0].record[\"source-digest\"] == \"${expected_digest}\"" "$resp"
       note "resolved from :source/current, so the binding names real bytes"
       ;;
     dispatch/failed)

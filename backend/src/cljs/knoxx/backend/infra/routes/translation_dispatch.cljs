@@ -62,6 +62,20 @@
         (keep #(get-in index [:documents (:publication/document %)]))
         (distinct (map :publication/document intents))))
 
+(defn document-source-roots
+  "Checkout root per canonical document id, derived from resource provenance."
+  [config records]
+  (into {}
+        (keep (fn [record]
+                (when (and (:ok? record) (= :document (:resource/kind record)))
+                  (let [document (-> record
+                                     publications/single-kind-definition
+                                     resolver/canonicalize-document)
+                        root (source-revision/resource-source-root
+                              config (:resource/file-path record))]
+                    (when root [(:document/id document) root])))))
+        records))
+
 (defn current-source-locale-receipts
   "Only the receipts whose source locale is still the document's declared one.
 
@@ -125,8 +139,10 @@
    `translation-work` derives from the `:translation-missing` and
    `:translation-stale` blockers, never from the review blocker, so a review
    requirement does not suppress the translation that would satisfy it."
-  [config evidence-store {:keys [org-id project] :as scope} documents]
-  (let [revisions (await (source-revision/source-revisions! config documents))
+  ([config evidence-store scope documents]
+   (gate-facts! config evidence-store scope documents {}))
+  ([config evidence-store {:keys [org-id project] :as scope} documents document-roots]
+  (let [revisions (await (source-revision/source-revisions! config documents document-roots))
         ;; Scoped in the *query*. Reading every receipt ever recorded and
         ;; narrowing afterwards made each dispatch pass grow with the global
         ;; history of every tenant, and left the collection's own indexes unused.
@@ -142,7 +158,7 @@
         evidence (evidence-domain/evidence {:receipts receipts})]
     (merge (source-revision/revision-facts revisions)
            (evidence-domain/gate-facts evidence)
-           {:approved? (constantly false)})))
+           {:approved? (constantly false)}))))
 
 (defn ^:async dispatch-translations!
   "Dispatch the derived translation work for one document, or for all of them.
@@ -154,11 +170,13 @@
    against the wrong scope — or against a garden that has been archived —
    deserves to be able to tell which."
   [config {:keys [evidence-store] :as deps} scope document-id]
-  (let [index (await (publications/publication-index! config))
+  (let [records (await (publications/resource-records! config))
+        index (publications/publication-index records)
         hydrated (hydrated-intents index document-id)
         intents (admissible-intents index hydrated)
         documents (referenced-documents index intents)
-        facts (await (gate-facts! config evidence-store scope documents))]
+        roots (document-source-roots config records)
+        facts (await (gate-facts! config evidence-store scope documents roots))]
     {:considered (count hydrated)
      :admissible (count intents)
      :dispatched (await (dispatch/dispatch-intents! deps intents facts scope))}))
@@ -188,10 +206,12 @@
 (defn- ^:async observe-source-revision!
   "The dispatched document's current source revision, or nil if unreadable."
   [config record]
-  (let [index (await (publications/publication-index! config))
+  (let [records (await (publications/resource-records! config))
+        index (publications/publication-index records)
         document (get-in index [:documents (:dispatch/document record)])]
     (when document
-      (get (await (source-revision/source-revisions! config [document]))
+      (get (await (source-revision/source-revisions!
+                   config [document] (document-source-roots config records)))
            (:dispatch/document record)))))
 
 (defn source-revision-observer!
@@ -218,32 +238,45 @@
    because a Knoxx-created batch carries exactly one document. See
    `worker-report-vocabulary` for what the worker actually sends and why that
    matters. `failed-document-id` is still read because the field exists in the
-   contract and a different worker may populate it."
+   contract and a different worker may populate it.
+
+   The report is validated and its batch id resolved *before* any store lookup,
+   and both checks are load-bearing. Every branch below joins on that id, and a
+   nil one is not a wildcard the stores decline to match — it is the value they
+   match unbound records by. See `law/report-batch-id`."
   [deps report]
-  (let [failed-document (law/failed-document-id (:failed_document report))
-        batch-id (:batch_id report)]
+  (let [checked (law/assert-valid! :translation-dispatch/status-report
+                                   law/BatchStatusReport
+                                   report)
+        failed-document (law/failed-document-id (:failed_document checked))
+        batch-id (law/report-batch-id checked)]
     (cond
+      (nil? batch-id)
+      {:translation/refusal {:refusal/type :batch-id-missing
+                             :refusal/actual (:batch_id checked)}}
+
       ;; Any status naming a completed document resolves that binding. The
       ;; worker sends "processing" here; the others are accepted so a worker
       ;; that reports differently still works.
-      (some? (:completed_document report))
-      (dispatch/resolve-batch-report! deps report)
+      (some? (:completed_document checked))
+      (await (dispatch/resolve-batch-report! deps checked))
 
       (some? failed-document)
-      (dispatch/fail-batch-document! deps batch-id failed-document
-                                     (or (:error report) "worker reported failure"))
+      (await (dispatch/fail-batch-document! deps batch-id failed-document
+                                            (or (:error checked)
+                                                "worker reported failure")))
 
       ;; A batch-level failure names nothing, so the batch id is the binding.
       ;; Without this the claim would sit in flight forever and never be retried.
-      (= "failed" (:status report))
-      (dispatch/fail-batch! deps batch-id
-                            (or (:error report) "worker reported batch failure"))
+      (= "failed" (:status checked))
+      (await (dispatch/fail-batch! deps batch-id
+                                   (or (:error checked)
+                                       "worker reported batch failure")))
 
       :else
       ;; Reported rather than dropped. `complete` and `partial` legitimately name
       ;; nothing — the per-document reports already resolved each binding — and
       ;; an operator debugging a translation that never appeared needs to see the
       ;; difference between 'nothing to resolve' and 'silently ignored'.
-      (js/Promise.resolve {:translation/skipped
-                           {:reason :no-document-named
-                            :status (:status report)}}))))
+      {:translation/skipped {:reason :no-document-named
+                             :status (:status checked)}})))

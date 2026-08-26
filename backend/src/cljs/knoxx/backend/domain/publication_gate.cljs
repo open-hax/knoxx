@@ -18,8 +18,8 @@
   receipt store, worker, or HTTP dependency:
 
     :current-source-revision      [document] -> revision or nil
-    :translated-revision?         [document locale revision] -> boolean
-    :approved?                    [document locale revision] -> boolean
+    :translated-revision?         [document garden locale revision] -> boolean
+    :approved?                    [document garden locale revision] -> boolean
     :source-revision-superseded?  [intent revision] -> boolean
 
   Admissibility is deliberately split across two layers rather than duplicated.
@@ -62,6 +62,7 @@
   [intent facts]
   (let [revision (resolve-concrete-revision intent facts)
         document (:publication/document intent)
+        garden (:publication/garden intent)
         locale (:publication/locale intent)]
     (if (nil? revision)
       {:concrete-revision nil :blockers [:publication-revision-unresolved]}
@@ -69,11 +70,11 @@
        :blockers
        (cond-> []
          (and (translation-required? intent)
-              (not ((:translated-revision? facts) document locale revision)))
+              (not ((:translated-revision? facts) document garden locale revision)))
          (conj :translation-missing)
 
          (and (= :required (:translation/review intent))
-              (not ((:approved? facts) document locale revision)))
+              (not ((:approved? facts) document garden locale revision)))
          (conj :translation-review-required)
 
          ((:source-revision-superseded? facts) intent revision)

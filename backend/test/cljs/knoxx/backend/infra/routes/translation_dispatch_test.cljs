@@ -5,6 +5,7 @@
   shapes for several reasons. Which of them resolves a binding, which records a
   failure, and which does neither is decided here — so it is tested here."
   (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.infra.routes.translation-dispatch :as facade]
             [knoxx.backend.infra.translation-evidence-store :as store]
             [knoxx.backend.law.translation-dispatch :as law]))
@@ -111,6 +112,95 @@
     (testing "nothing was recorded either way"
       (is (empty? (await (store/completed-translations! (:evidence-store deps) evidence-scope)))))))
 
+(deftest ^:async a-report-naming-no-batch-is-refused-before-any-store-lookup
+  ;; The regression: every branch of `resolve-batch-status!` joins on the batch
+  ;; id, and a nil id is not a value the stores decline to match — it is the
+  ;; value they match *unbound* records by. `dispatch-for-batch!` filters on
+  ;; `(= batch-id (:dispatch/batch-id record))`, so a batch-level failure report
+  ;; arriving without an id selected the first claim whose send never bound one
+  ;; and marked it failed. That claim belongs to a different document entirely.
+  (let [evidence-store (store/memory-store)
+        unbound (law/dispatch-record {:document :knoxx.docs/other
+                                      :locale :fr
+                                      :revision "sha256-ccc333ddd444"
+                                      :replace-stale? false}
+                                     (assoc context
+                                            :dispatch/document-wire-id "knoxx.docs/other")
+                                     :dispatch/accepted
+                                     at)
+        deps {:evidence-store evidence-store
+              :clock (constantly at)
+              :observe-source-revision (constantly (js/Promise.resolve
+                                                    (:dispatch/source-digest context)))}]
+    (await (store/reserve-dispatch! evidence-store unbound))
+
+    (testing "a batch-level failure with no batch id is refused, not applied"
+      (is (= :batch-id-missing
+             (:refusal/type (:translation/refusal
+                             (await (facade/resolve-batch-status!
+                                     deps {:status "failed"
+                                           :error "worker died"})))))))
+
+    (testing "a blank batch id is the same missing binding, not a blank one"
+      (is (= :batch-id-missing
+             (:refusal/type (:translation/refusal
+                             (await (facade/resolve-batch-status!
+                                     deps {:status "failed" :batch_id "   "})))))))
+
+    (testing "a completion with no batch id is refused before the join"
+      (is (= :batch-id-missing
+             (:refusal/type (:translation/refusal
+                             (await (facade/resolve-batch-status!
+                                     deps {:status "processing"
+                                           :completed_document "knoxx.docs/other"})))))))
+
+    (testing "the unrelated unbound claim is untouched"
+      ;; This is the whole point. Before the guard it read :dispatch/failed and
+      ;; the next pass re-dispatched translation work that had never been sent.
+      (is (= :dispatch/accepted
+             (:dispatch/outcome (await (store/dispatch-for-key!
+                                        evidence-store
+                                        (:dispatch/key unbound)))))))))
+
+(deftest documents-are-mapped-to-the-checkout-that-actually-declared-them
+  ;; `document-source-roots` is the other half of the multi-root fix: the
+  ;; per-document root only helps if something derives it from each record's own
+  ;; provenance. A composite entry registering both a document and a publication
+  ;; must project onto the document facet first, or its `:document/id` is gone
+  ;; by the time the root is attached and the mapping is silently empty.
+  (let [document-record
+        (fn [root id]
+          {:ok? true
+           :resource/kind :document
+           :resource/file-path (str root "/contracts/publications/" (name id) ".edn")
+           :resource/definition {:document/id id
+                                 :document/title "Probe"
+                                 :document/source-locale :en
+                                 :document/source {:path "docs/probe.md"}}})
+        roots ["/srv/a/contracts" "/srv/b/contracts"]
+        records [(document-record "/srv/a" :knoxx.docs/from-a)
+                 (document-record "/srv/b" :knoxx.docs/from-b)
+                 ;; A record that failed to load carries no usable provenance.
+                 (assoc (document-record "/srv/b" :knoxx.docs/broken) :ok? false)
+                 ;; A different kind is not a document and must not appear.
+                 (assoc (document-record "/srv/a" :knoxx.docs/garden)
+                        :resource/kind :garden)]]
+    (with-redefs [contract-loader/contract-root-paths (constantly roots)]
+      (let [mapped (facade/document-source-roots {} records)]
+        (testing "each document points at its own checkout"
+          (is (= "/srv/a" (get mapped :knoxx.docs/from-a)))
+          (is (= "/srv/b" (get mapped :knoxx.docs/from-b))))
+
+        (testing "records that cannot supply provenance are simply absent"
+          ;; Absent, not mapped to a guess: a document with no entry falls back
+          ;; to the legacy first root, which is the prior behavior.
+          (is (not (contains? mapped :knoxx.docs/broken)))
+          (is (not (contains? mapped :knoxx.docs/garden))))
+
+        (testing "a record living outside every known root maps to nothing"
+          (is (empty? (facade/document-source-roots
+                       {} [(document-record "/elsewhere" :knoxx.docs/stray)]))))))))
+
 (deftest tenant-receipts-do-not-leak-across-organizations
   ;; Translation is tenant-scoped: the worker keys segments by organization, so a
   ;; translation produced for org A does not exist for org B. Loading receipts
@@ -119,6 +209,7 @@
   (let [receipt (fn [org]
                   {:receipt/type :translation/completed
                    :translation/document :knoxx.docs/probe
+                   :translation/garden :knoxx.docs/promethean
                    :translation/source-locale :en
                    :translation/locale :es
                    :translation/source-revision "sha256-aaa111bbb222"
@@ -216,6 +307,7 @@
   (let [receipt (fn [source-locale]
                   {:receipt/type :translation/completed
                    :translation/document :knoxx.docs/probe
+                   :translation/garden :knoxx.docs/promethean
                    :translation/source-locale source-locale
                    :translation/locale :es
                    :translation/source-revision "sha256-aaa111bbb222"

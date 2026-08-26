@@ -7,24 +7,32 @@
   The card behind this namespace assumed derived work maps onto the ingestion
   worker's input contract 'carrying document identity, source and target locale,
   concrete source revision, and a stable dispatch/idempotency identity'. The
-  first three map. The last two do not exist over there:
-  `law.openplanner-translation/CreateTranslationBatchRequest` is
-  `{garden_id, target_lang, document_ids, source_lang, project, org_id,
-  membership_id}` and has no revision field and no idempotency field. The batch
-  collection is not Knoxx's, and Knoxx's own guidance is not to change another
-  repository to deliver a Knoxx feature.
+  first three map directly. The last two are split, and the split is the point.
 
-  So the revision binding stays here. Knoxx records a `DispatchRecord` — the
-  concrete revision, the locales, and the dispatch key — against the batch id
-  the worker hands back, and sends the worker only the fields its contract
-  admits. The worker never learns about revisions; it does not need to. When it
-  reports a document complete, the binding is joined back and *that* is where a
-  stale or mismatched answer is refused.
+  **Idempotency does cross.** `CreateTranslationBatchRequest` now carries
+  `dispatch_key`, and the Knoxx-owned direct-Mongo adapter upserts the batch on
+  `{org_id, dispatch_key}` under a unique sparse index. That is what makes an
+  ambiguous send recoverable *exactly* rather than by a field-and-timestamp
+  heuristic that two concurrent sends satisfy identically. An earlier version of
+  this docstring said the request had no idempotency field; that was true of the
+  request as it stood and is no longer true of it.
 
-  The rejected alternative was widening the batch request with extra keys. It
-  is `{:closed false}`, so it would have worked, and it would have put Knoxx's
-  revision semantics into a foreign collection where nothing validates them and
-  no contract here could see them drift.
+  It is an additive field on an `{:closed false}` contract, written by Knoxx's
+  own adapter — not a coordinated change in OpenPlanner. A REST server that has
+  not learned the field ignores it, which costs correlation but not correctness:
+  `infra.translation-dispatch/observe-batch!` treats a listing that came back
+  uncorrelated as evidence the lookup was not correlation-aware, never as
+  evidence of absence.
+
+  **The revision does not cross.** There is still no revision field, and Knoxx
+  does not want one there: revision semantics in a foreign collection are
+  semantics nothing here validates and no contract here can see drift. So the
+  binding stays local. Knoxx records a `DispatchRecord` — the concrete revision,
+  the locales, and the dispatch key — against the batch id the worker hands
+  back, and sends the worker only the fields its contract admits. The worker
+  never learns about revisions; it does not need to. When it reports a document
+  complete, the binding is joined back and *that* is where a stale or mismatched
+  answer is refused.
 
   ## Dispatch facts are not translation facts
 
@@ -120,11 +128,11 @@
    durable evidence in place and the new project reused dispatch keys and
    receipts belonging to the old one.
 
-   Membership and garden stay out. Those really do only scope who asked and
-   where the batch was filed; folding them in would let two principals in one
-   tenant dispatch the same translation twice, which is exactly the duplicate
-   this key exists to collapse."
-  [:org-id :project :document :source-locale :locale :revision])
+   Membership stays out because it scopes who asked. Garden does not: the
+   worker includes it in the translation prompt and persists it on every
+   segment, so equal source bytes translated for two gardens are two different
+   outputs. Collapsing them would let one garden's receipt satisfy another."
+  [:org-id :project :garden :document :source-locale :locale :revision])
 
 (defn dispatch-key
   "One stable key per logical translation request, per tenant.
@@ -139,16 +147,26 @@
    stable-looking key for a moving target. The organization is required for the
    same class of reason: a key missing its tenant is a key for the wrong
    question."
-  [{:keys [org-id project document source-locale locale revision]}]
+  [{:keys [org-id project garden document source-locale locale revision]}]
   (when-not (m/validate ConcreteRevision revision)
     (throw (ex-info "translation dispatch key requires a concrete revision"
                     {:document document :revision revision})))
   (when-not (m/validate NonBlankString org-id)
     (throw (ex-info "translation dispatch key requires an organization"
                     {:document document :org-id org-id})))
-  (->> [org-id project document source-locale locale revision]
+  (when-not (m/validate NonBlankString garden)
+    (throw (ex-info "translation dispatch key requires a garden"
+                    {:document document :garden garden})))
+  (->> [org-id project garden document source-locale locale revision]
        (mapv pr-str)
        (str/join "|")))
+
+(defn wire-resource-id
+  "Decode a qualified wire id such as `docs/site` without a JS dependency."
+  [value]
+  (let [[namespace-part name-part] (str/split (str value) #"/" 2)]
+    (when (and (seq namespace-part) (seq name-part))
+      (keyword namespace-part name-part))))
 
 ;; ── Worker input ───────────────────────────────────────────────────────────
 
@@ -176,6 +194,7 @@
    [:source_lang NonBlankString]
    [:org_id NonBlankString]
    [:membership_id NonBlankString]
+   [:dispatch_key NonBlankString]
    [:project {:optional true} [:maybe NonBlankString]]])
 
 (defn worker-request
@@ -192,7 +211,15 @@
             :document_ids [(:dispatch/document-wire-id context)]
             :source_lang (name (:dispatch/source-locale context))
             :org_id (:dispatch/org-id context)
-            :membership_id (:dispatch/membership-id context)}
+            :membership_id (:dispatch/membership-id context)
+            :dispatch_key (dispatch-key
+                           {:org-id (:dispatch/org-id context)
+                            :project (:dispatch/project context)
+                            :garden (:dispatch/garden context)
+                            :document (:document work)
+                            :source-locale (:dispatch/source-locale context)
+                            :locale (:locale work)
+                            :revision (:revision work)})}
      (some? (:dispatch/project context))
      (assoc :project (:dispatch/project context)))))
 
@@ -276,6 +303,7 @@
    [:dispatch/outcome Outcome]
    [:dispatch/org-id NonBlankString]
    [:dispatch/project {:optional true} [:maybe NonBlankString]]
+   [:dispatch/garden :qualified-keyword]
    [:dispatch/document :qualified-keyword]
    [:dispatch/document-wire-id NonBlankString]
    [:dispatch/source-locale locale/Locale]
@@ -298,12 +326,14 @@
    (cond-> {:dispatch/key (dispatch-key
                            {:org-id (:dispatch/org-id context)
                             :project (:dispatch/project context)
+                            :garden (:dispatch/garden context)
                             :document (:document work)
                             :source-locale (:dispatch/source-locale context)
                             :locale (:locale work)
                             :revision (:revision work)})
             :dispatch/outcome outcome
             :dispatch/org-id (:dispatch/org-id context)
+            :dispatch/garden (wire-resource-id (:dispatch/garden context))
             :dispatch/document (:document work)
             :dispatch/document-wire-id (:dispatch/document-wire-id context)
             :dispatch/source-locale (:dispatch/source-locale context)
@@ -369,12 +399,32 @@
                        [:document_id :document_wire_id :document :id])
     :else nil))
 
+(defn report-batch-id
+  "The batch id a worker report is bound to, or nil when it names none.
+
+   Read through `NonBlankString` rather than taken as given. A nil or blank id
+   is not a wildcard — it is a *missing* binding, and both evidence stores
+   resolve it as one: `dispatch-for-batch!` matches on equality, so a nil id
+   selects exactly those records that never received a batch id, which are the
+   dispatches whose send failed before the worker ever answered. A batch-level
+   failure report arriving without an id would therefore mark an unrelated,
+   still-unbound claim failed and re-dispatch work that was never attempted.
+
+   The route supplies the id from the URL, so in the ordinary path this is
+   always present. It is checked anyway because the report is untrusted input
+   and the failure mode is silent."
+  [report]
+  (let [id (:batch_id report)]
+    (when (m/validate NonBlankString id)
+      (str/trim id))))
+
 (def refusal-types
   "Every reason a worker answer is refused as translation evidence.
 
    Enumerated as data so a caller classifies by lookup rather than by parsing a
    message, and so a new refusal cannot be introduced without appearing here."
-  #{:dispatch-record-missing
+  #{:batch-id-missing
+    :dispatch-record-missing
     :dispatch-document-mismatch
     :dispatch-already-resolved
     :worker-revision-selector
@@ -582,6 +632,21 @@
    [:completed_documents {:optional true} [:maybe [:vector :string]]]
    [:failed_documents {:optional true} [:maybe [:vector :any]]]])
 
+(defn- failed-document-ids
+  "The document ids a batch's `failed_documents` names.
+
+   Entries are bare ids or maps naming one, depending on what the status route
+   was handed. An entry naming neither is dropped rather than guessed at: a
+   guess here would produce a lookup that cannot match, which reads as 'this
+   document did not fail'."
+  [batch]
+  (into #{}
+        (keep (fn [entry]
+                (cond
+                  (string? entry) entry
+                  (map? entry) (or (:document_id entry) (:document entry)))))
+        (:failed_documents batch)))
+
 (defn batch-document-outcome
   "What `batch` says happened to `document-wire-id`: `:completed`, `:failed`, or
    nil for still running or unknown.
@@ -595,20 +660,19 @@
 
    A named failure wins over a named completion. If a document appears in both,
    something has retried inside the batch and the pessimistic reading is the one
-   that cannot fabricate a receipt."
+   that cannot fabricate a receipt.
+
+   `batch` is validated first, and one that does not satisfy `BatchView` answers
+   nil. It crosses an untrusted boundary from another repository's store, and
+   these two arrays are what decide whether a receipt is minted — a
+   `completed_documents` holding something other than ids would compare equal to
+   nothing and silently report the work still running. Nil says the same thing
+   honestly: the caller leaves the claim in flight, which is recoverable."
   [batch document-wire-id]
-  (let [failed-ids (into #{}
-                         (keep (fn [entry]
-                                 (cond
-                                   (string? entry) entry
-                                   (map? entry) (or (:document_id entry)
-                                                    (:document entry))
-                                   :else nil)))
-                         (:failed_documents batch))
-        completed-ids (set (:completed_documents batch))]
+  (when (m/validate BatchView batch)
     (cond
-      (contains? failed-ids document-wire-id) :failed
-      (contains? completed-ids document-wire-id) :completed)))
+      (contains? (failed-document-ids batch) document-wire-id) :failed
+      (contains? (set (:completed_documents batch)) document-wire-id) :completed)))
 
 (defn source-drift-refusal
   "Refusal when the source no longer hashes to the revision that was dispatched.
@@ -680,6 +744,7 @@
   (evidence/assert-receipt!
    {:receipt/type :translation/completed
     :translation/document (:dispatch/document record)
+    :translation/garden (:dispatch/garden record)
     :translation/source-locale (:dispatch/source-locale record)
     :translation/locale (:dispatch/locale record)
     :translation/source-revision (:dispatch/revision record)

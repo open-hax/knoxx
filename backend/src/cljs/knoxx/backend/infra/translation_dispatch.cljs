@@ -13,15 +13,15 @@
   namespace only asks it for work and interprets what it says, which is what the
   card means by dispatching 'through the established worker boundary'.
 
-  The revision the worker never sees stays here, in a dispatch record. See
-  `law.translation-dispatch` for why that binding cannot live in the batch.
+  The worker stores the dispatch key for exact recovery; revision evidence stays
+  here, in the Knoxx dispatch record joined through that key.
 
   ## Observe before deciding
 
   Three of the paths below recover rather than guess, and they share one reason:
-  the worker's batch contract carries no idempotency key, so a request whose
-  outcome is unknown cannot be safely repeated — a second batch would translate
-  the same revision twice, and nothing would collapse the two. The same rule
+  older worker batches carried no idempotency key, so a request whose outcome is
+  unknown cannot be safely repeated against a legacy server. New batches carry
+  a Knoxx dispatch key and are tenant-uniqued by it. The same rule
   `infra.publication-effects/reconcile-in-flight!` follows for the same reason.
 
   So an ambiguous send is observed (`recover-ambiguous-send!`), an in-flight
@@ -90,12 +90,8 @@
 (defn- ^:async observe-batch!
   "Ask the worker whether a batch already exists for *this* dispatch.
 
-   Matched on garden, target locale and the document — everything the batch
-   carries — and then on creation time, which is the part that makes it a match
-   on this dispatch rather than on any dispatch. A tenant that translated the
-   same document into the same locale before has an older batch matching all
-   three, and binding to it would mint a receipt for a revision that batch never
-   saw. See `law/batch-created-after?`.
+   Matched first on the exact dispatch key persisted by the worker, then checked
+   against garden, target locale, document and creation time as defense in depth.
 
    `record` supplies the claim's own instant, so a batch created before the claim
    is excluded outright. See `law/batch-matches-dispatch?` for the rest.
@@ -108,27 +104,28 @@
                          client
                          {:org_id (:dispatch/org-id context)
                           :garden_id (:dispatch/garden context)
+                          :dispatch_key (:dispatch/key record)
                           :target_lang (name (:locale work))}))
         batches (vec (:batches response))
-        candidates (filterv #(law/batch-matches-dispatch? % context work
-                                                          (:dispatch/at record))
+        candidates (filterv #(and (= (:dispatch/key record) (:dispatch_key %))
+                                  (law/batch-matches-dispatch? % context work
+                                                               (:dispatch/at record)))
                             batches)]
-    ;; NO candidate is ever adopted, not even a sole one. Every field the batch
-    ;; carries is compared and the creation time bounds it below, and none of
-    ;; that identifies which *request* created it — the batch contract has
-    ;; nowhere to put a dispatch id. One unrelated actor creating a matching
-    ;; batch after this claim produces exactly one candidate, and adopting it
-    ;; would let `recover-settled-batch!` mint a receipt for this claim's source
-    ;; revision from a batch that never carried it.
-    ;;
-    ;; So observation is used only in the direction it can be trusted: it can
-    ;; *refute* "the send did not land", never confirm which batch is ours.
+    ;; The dispatch key is persisted in the worker queue under a tenant-scoped
+    ;; unique index. Unlike the old field-and-timestamp heuristic, one matching
+    ;; row therefore identifies the exact request and is safe to adopt.
     {:candidates candidates
      ;; Absence in a capped list is not absence. The direct Mongo listing sorts
      ;; newest-first and stops at `batch-listing-cap`, so a busy garden can push
      ;; our batch off the end — and reading that as "the send did not land" is
      ;; exactly how a duplicate translation happens.
-     :conclusive? (< (count batches) batch-listing-cap)}))
+     :conclusive? (and (< (count batches) batch-listing-cap)
+                       ;; A legacy REST server can ignore the new query field and
+                       ;; return unrelated rows. That is evidence the lookup was
+                       ;; not correlation-aware, never evidence of absence.
+                       (every? #(= (:dispatch/key record) (:dispatch_key %)) batches))}))
+
+(declare bind-created-batch!)
 
 (defn- ^:async recover-ambiguous-send!
   "Decide what an ambiguous batch creation left behind.
@@ -137,16 +134,10 @@
    land, and only then does the claim become retriable. Anything else — matching
    batches found, or a truncated listing — leaves the claim in flight.
 
-   Nothing is ever bound from observation. A matching batch does not identify the
-   request that created it, so binding one could attribute this claim to a batch
-   that translated a different revision, and `recover-settled-batch!` would then
-   mint a receipt for content nobody produced. Fabricated evidence is worse than
-   a stranded claim, which is at least visible in the record's detail.
-
-   The cost is real and stated on the card: an ambiguous send whose batch *did*
-   land leaves a claim that no later pass can bind or retry, so that revision
-   needs an operator. Closing it needs a dispatch correlation value on the batch,
-   which is another repository's contract."
+   A sole matching batch is safe to bind because the queue persists the claim's
+   dispatch key under a tenant-scoped unique index. This is the correlation the
+   earlier implementation lacked; it makes both an ambiguous send and a failed
+   local binding write automatically recoverable."
   [evidence-store client work context record detail]
   (let [dispatch-key (:dispatch/key record)]
     (try
@@ -163,13 +154,20 @@
                                 record)
            :dispatch/detail detail}
 
+          (= 1 (count candidates))
+          (let [batch-id (:batch_id (first candidates))
+                rebound (await (bind-created-batch! evidence-store record batch-id))]
+            (assoc rebound
+                   :dispatch/detail (str detail
+                                         "; recovered the exact worker batch from"
+                                         " its durable dispatch key")))
+
           (seq candidates)
           {:dispatch/outcome :dispatch/accepted
            :dispatch/record record
            :dispatch/detail (str detail
-                                 "; " (count candidates)
-                                 " batch(es) match this dispatch but none carries a"
-                                 " dispatch id, so none can be attributed to it")}
+                                 "; multiple batches carry one dispatch key;"
+                                 " the queue uniqueness invariant is broken")}
 
           :else
           {:dispatch/outcome :dispatch/accepted
@@ -201,10 +199,11 @@
    callback could never join. The receipt would be unrecoverable for a write that
    merely blipped.
 
-   One retry, then the batch id is put in the detail rather than thrown away, so
-   an operator has the one value needed to repair the binding by hand. Bounded
-   rather than looped: a store that cannot accept two writes is not going to
-   accept a hundred."
+   One retry, then the batch remains recoverable through the dispatch key that
+   was persisted atomically with it in the worker queue. A later pass can look
+   up that exact batch and repair the claim without guessing or creating a
+   duplicate. Bounded rather than looped: a store that cannot accept two writes
+   is not going to accept a hundred."
   [evidence-store record batch-id]
   (let [dispatch-key (:dispatch/key record)
         bound (or (await (try-bind! evidence-store dispatch-key batch-id))
@@ -215,16 +214,15 @@
        :dispatch/record record
        :dispatch/detail (str "the worker accepted batch " batch-id
                              " but the binding could not be recorded;"
-                             " bind it manually to recover the receipt")})))
+                             " it remains recoverable by dispatch key")})))
 
 (defn- ^:async accept-dispatch!
   "Call the worker for a freshly reserved claim, and record what happened.
 
-   A failure is not automatically a retriable failure. The worker request has no
-   idempotency key, so an exception after the request went out leaves the
-   outcome genuinely unknown, and treating that as failed would let a retry
-   translate the same revision twice. `recover-ambiguous-send!` observes before
-   deciding."
+   A failure is not automatically a retriable failure. An exception after the
+   request went out leaves the outcome genuinely unknown; the durable dispatch
+   key lets `recover-ambiguous-send!` identify a landed request exactly, while
+   compatibility with an older server stays conservative."
   [evidence-store client work context record]
   (let [created (try
                   {:batch-id (await (request-batch! client work context))}
@@ -380,7 +378,7 @@
 
    Returns the outcome and the record it applies to. A duplicate is not an
    error: it is the correct answer to asking twice."
-  [{:keys [evidence-store client clock] :as deps} work context]
+  [{:keys [clock] :as deps} work context]
   (let [checked-work (law/assert-valid! :translation-dispatch/work law/DerivedWork work)
         pin-refusal (law/pin-refusal checked-work context)
         record (law/dispatch-record checked-work

@@ -72,7 +72,8 @@
     (await (extern-mongo/ensure-index! dispatches [[:batch_id 1] [:document_wire_id 1]] {}))
     (await (extern-mongo/ensure-index! receipts [[:dispatch_key 1]] {}))
     (await (extern-mongo/ensure-index! receipts
-                                       [[:document 1] [:locale 1] [:source_revision 1]] {}))
+                                       [[:document 1] [:garden 1] [:locale 1]
+                                        [:source_revision 1]] {}))
     ;; The scope every evidence read narrows by.
     (await (extern-mongo/ensure-index! receipts [[:org_id 1] [:project 1]] {}))
     true))
@@ -166,6 +167,7 @@
   [receipt]
   {:dispatch_key (:translation/dispatch-key receipt)
    :document (pr-str (:translation/document receipt))
+   :garden (pr-str (:translation/garden receipt))
    :locale (name (:translation/locale receipt))
    :source_revision (:translation/source-revision receipt)
    ;; Scope columns, so a read narrows in the query rather than in memory.

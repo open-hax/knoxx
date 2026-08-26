@@ -208,6 +208,7 @@
    [:map
     [:receipt/type [:= :translation/completed]]
     [:translation/document :qualified-keyword]
+    [:translation/garden :qualified-keyword]
     [:translation/source-locale locale/Locale]
     [:translation/locale locale/Locale]
     [:translation/source-revision ConcreteRevision]

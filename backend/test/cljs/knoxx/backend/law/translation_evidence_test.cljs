@@ -7,6 +7,7 @@
 (def ^:private receipt
   {:receipt/type :translation/completed
    :translation/document :knoxx.docs/probe
+   :translation/garden :knoxx.docs/promethean
    :translation/source-locale :en
    :translation/locale :es
    :translation/source-revision "sha256-abc123def456"

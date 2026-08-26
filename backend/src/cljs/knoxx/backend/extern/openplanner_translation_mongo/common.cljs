@@ -195,7 +195,10 @@
                  (.createIndex segments #js {"org_id" 1})
                  (.createIndex segments #js {"project" 1})
                  (.createIndex batches #js {"garden_id" 1 "target_lang" 1 "status" 1})
-                 (.createIndex batches #js {"org_id" 1 "status" 1 "created_at" 1})]))
+                 (.createIndex batches #js {"org_id" 1 "status" 1 "created_at" 1})
+                 (.createIndex batches #js {"org_id" 1 "dispatch_key" 1}
+                               #js {"unique" true "sparse" true
+                                    "name" "batch_dispatch_key_unique_idx"})]))
     true))
 
 (defn- ^:async init-indexes!
@@ -335,6 +338,7 @@
       :source_lang (jget row "source_lang")
       :project (jget row "project")
       :org_id (jget row "org_id")
+      :dispatch_key (jget row "dispatch_key")
       :status (jget row "status")
       :document_ids (string-array row "document_ids")
       :completed_documents (string-array row "completed_documents")

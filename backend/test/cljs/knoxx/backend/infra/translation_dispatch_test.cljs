@@ -142,7 +142,8 @@
               :document_ids ["knoxx.docs/probe"]
               :source_lang "en"
               :org_id "org-1"
-              :membership_id "member-1"}
+              :membership_id "member-1"
+              :dispatch_key (:dispatch/key (:dispatch/record result))}
              (first @batches))))
 
     (testing "the revision the worker cannot carry is bound Knoxx-side"
@@ -195,14 +196,12 @@
     (testing "a client answering without a batch id is a failure, not success"
       (is (= :dispatch/failed (:dispatch/outcome result))))))
 
-(deftest ^:async a-matching-batch-is-never-adopted-even-when-it-is-the-only-one
-  ;; The create threw and one matching batch exists. It is tempting to bind it —
-  ;; the response was probably just lost — but a matching batch does not identify
-  ;; the *request* that created it, and the batch contract has nowhere to put a
-  ;; dispatch id. One unrelated actor creating a matching batch after this claim
-  ;; produces exactly this situation, and binding it would let
-  ;; `recover-settled-batch!` mint a receipt for a revision that batch never
-  ;; carried.
+(deftest ^:async a-legacy-matching-batch-is-never-adopted-even-when-it-is-the-only-one
+  ;; The create threw and one old-shape matching batch exists. Without the
+  ;; dispatch key this does not identify the request that created it: one
+  ;; unrelated actor creating the same document/locale batch produces exactly
+  ;; this situation. A legacy server may also ignore the new dispatch_key query
+  ;; field, so its response is not evidence that the keyed batch is absent.
   (let [{:keys [batches deps]}
         (fixture :answer (fn [_ _] (throw (ex-info "connection reset" {})))
                  :observed (fn [_] {:batches [{:batch_id "batch-existing"
@@ -216,7 +215,7 @@
       ;; Retriable would risk translating the same revision twice; bound would
       ;; risk fabricating evidence. In flight is the only honest answer.
       (is (= :dispatch/accepted (:dispatch/outcome result)))
-      (is (re-find #"none can be attributed" (:dispatch/detail result))))
+      (is (re-find #"not proof the send failed" (:dispatch/detail result))))
 
     (testing "no second batch is ever sent"
       (let [retry (await (dispatch/dispatch-work! deps (work) (context)))]
@@ -279,9 +278,9 @@
                                        (:evidence-store deps) evidence-scope))})
             gate-facts (evidence-domain/gate-facts loaded)]
         (is ((:translated-revision? gate-facts)
-             :knoxx.docs/probe :es "sha256-aaa111bbb222"))
+             :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-aaa111bbb222"))
         (is (not ((:translated-revision? gate-facts)
-                  :knoxx.docs/probe :fr "sha256-aaa111bbb222")))))
+                  :knoxx.docs/probe :knoxx.docs/promethean :fr "sha256-aaa111bbb222")))))
 
     (testing "the same report a second time cannot mint a second receipt"
       (let [again (await (dispatch/resolve-batch-report!
@@ -561,8 +560,8 @@
     (testing "the historical batch is not adopted"
       (is (not= "batch-from-last-year" (:dispatch/batch-id (:dispatch/record result)))))
 
-    (testing "the claim is treated as a send that did not land"
-      (is (= :dispatch/failed (:dispatch/outcome result))))))
+    (testing "a legacy response cannot prove the keyed batch absent"
+      (is (= :dispatch/accepted (:dispatch/outcome result))))))
 
 (deftest ^:async observation-will-not-bind-a-batch-of-unknown-age
   (let [{:keys [deps]}
@@ -570,9 +569,9 @@
                  :observed (fn [_] {:batches [{:batch_id "batch-undated"
                                                :document_ids ["knoxx.docs/probe"]}]}))
         result (await (dispatch/dispatch-work! deps (work) (context)))]
-    (testing "an unknown creation time is not evidence of provenance"
+    (testing "an uncorrelated legacy row is not evidence of provenance or absence"
       (is (not= "batch-undated" (:dispatch/batch-id (:dispatch/record result))))
-      (is (= :dispatch/failed (:dispatch/outcome result))))))
+      (is (= :dispatch/accepted (:dispatch/outcome result))))))
 
 (deftest batch-provenance-is-decided-by-creation-time
   (let [claim-at "2026-08-22T09:00:00.000Z"]
@@ -620,12 +619,10 @@
     ;; it. If that changes, this fails rather than silently drifting.
     (is (= 50 dispatch/batch-listing-cap))))
 
-(deftest ^:async an-ambiguous-set-of-candidate-batches-is-not-adopted
-  ;; Creation time bounds candidates below but is not a unique correlation
-  ;; token — the batch contract has nowhere to put one. Two concurrent sends for
-  ;; the same document produce two indistinguishable candidates, and adopting
-  ;; either would bind this claim to a batch that may have translated a
-  ;; different revision.
+(deftest ^:async an-ambiguous-legacy-set-is-not-adopted
+  ;; Two old-shape matching batches remain uncorrelated. A server returning them
+  ;; may have ignored the dispatch_key filter, so Knoxx neither adopts one nor
+  ;; treats their response as evidence that its exact request is absent.
   (let [candidate (fn [id] {:batch_id id
                             :created_at "2026-08-22T09:00:00.000Z"
                             :document_ids ["knoxx.docs/probe"]})
@@ -638,7 +635,7 @@
 
     (testing "the claim stays in flight, and says why"
       (is (= :dispatch/accepted (:dispatch/outcome result)))
-      (is (re-find #"none can be attributed" (:dispatch/detail result))))))
+      (is (re-find #"not proof the send failed" (:dispatch/detail result))))))
 
 (deftest batch-matching-compares-every-field-the-batch-carries
   (let [context* {:dispatch/garden "knoxx.docs/promethean"
@@ -802,19 +799,21 @@
              (:dispatch/outcome (await (dispatch/dispatch-work!
                                         deps (work) (context)))))))))
 
-(deftest ^:async a-known-batch-id-is-not-lost-when-the-binding-write-fails
+(deftest ^:async a-known-batch-id-is-recovered-when-the-binding-write-fails
   ;; A failure *after* the batch id is known is not an ambiguous send: the batch
   ;; exists and can be named. Routing it through observation would be strictly
-  ;; worse, because observation never adopts a candidate — the claim would stay
-  ;; unbound, the worker would finish, and its callback could never join.
+  ;; worse without durable correlation. The worker now stores the dispatch key,
+  ;; so the next reconciliation pass can recover the exact batch and repair the
+  ;; binding without creating a duplicate.
   (let [attempts (atom 0)
         failing-store (let [inner (store/memory-store)]
                         (reify store/ITranslationEvidenceStore
                           (reserve-dispatch! [_ r] (store/reserve-dispatch! inner r))
                           (resolve-dispatch! [_ k o d] (store/resolve-dispatch! inner k o d))
-                          (bind-dispatch-batch! [_ _k _b]
-                            (swap! attempts inc)
-                            (throw (ex-info "write failed" {})))
+                          (bind-dispatch-batch! [_ k b]
+                            (if (<= (swap! attempts inc) 2)
+                              (throw (ex-info "write failed" {}))
+                              (store/bind-dispatch-batch! inner k b)))
                           (dispatch-for-key! [_ k] (store/dispatch-for-key! inner k))
                           (dispatch-for-batch-document! [_ b d]
                             (store/dispatch-for-batch-document! inner b d))
@@ -823,19 +822,32 @@
                           (completed-translations! [_ s] (store/completed-translations! inner s))))
         batches (atom [])
         deps {:evidence-store failing-store
-              :client (fake-client {:batches batches})
+              :client (fake-client
+                       {:batches batches
+                        :observed (fn [opts]
+                                    {:batches [{:batch_id "batch-1"
+                                                :dispatch_key (:dispatch_key opts)
+                                                :created_at "2026-08-22T09:00:00.000Z"
+                                                :document_ids ["knoxx.docs/probe"]}]})})
               :clock clock
               :observe-source-revision (constantly (js/Promise.resolve dispatched-revision))}
-        result (await (dispatch/dispatch-work! deps (work) (context)))]
+        result (await (dispatch/dispatch-work! deps (work) (context)))
+        attempts-after-first @attempts
+        recovered (await (dispatch/dispatch-work! deps (work) (context)))]
     (testing "the binding is retried, bounded"
-      (is (= 2 @attempts) "one attempt plus one retry, not a loop"))
+      (is (= 2 attempts-after-first) "one attempt plus one retry, not a loop"))
 
-    (testing "the claim stays in flight and the batch id survives in the detail"
+    (testing "the first pass stays in flight and preserves the recovery route"
       (is (= :dispatch/accepted (:dispatch/outcome result)))
       (is (re-find #"batch-1" (:dispatch/detail result)))
-      (is (re-find #"bind it manually" (:dispatch/detail result))))
+      (is (re-find #"recoverable by dispatch key" (:dispatch/detail result))))
 
-    (testing "the worker was asked exactly once"
+    (testing "the next pass binds the exact queued batch"
+      (is (= 3 @attempts))
+      (is (= "batch-1" (:dispatch/batch-id (:dispatch/record recovered))))
+      (is (re-find #"durable dispatch key" (:dispatch/detail recovered))))
+
+    (testing "the worker was asked exactly once across both passes"
       (is (= 1 (count @batches))))))
 
 (deftest ^:async recovery-reads-the-batch-per-document-not-its-overall-status

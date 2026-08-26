@@ -24,15 +24,16 @@
   (:require [knoxx.backend.law.translation-evidence :as law]))
 
 (defn evidence-key
-  "The triple every lookup is keyed by.
+  "The four coordinates every lookup is keyed by.
 
    A vector rather than nested maps: the three coordinates always travel
    together, and a partial key is never a meaningful thing to hold."
-  [document locale revision]
-  [document locale revision])
+  [document garden locale revision]
+  [document garden locale revision])
 
 (defn index-receipts
-  "Index completed translation receipts by `[document locale source-revision]`.
+  "Index completed translation receipts by
+   `[document garden locale source-revision]`.
 
    Every receipt is validated on the way in. A store is replaceable, so what it
    returns is untrusted input — the rule `law.publication-receipts` already
@@ -46,7 +47,8 @@
   [receipts]
   (reduce (fn [index receipt]
             (let [checked (law/assert-receipt! receipt)
-                  entry-key (evidence-key (:translation/document checked)
+              entry-key (evidence-key (:translation/document checked)
+                                          (:translation/garden checked)
                                           (:translation/locale checked)
                                           (:translation/source-revision checked))]
               (if (law/supersedes? checked (get index entry-key))
@@ -67,8 +69,8 @@
 (defn translated-revision?
   "Whether a completed translation exists for this document, target locale and
    concrete source revision."
-  [evidence document locale revision]
-  (some? (get-in evidence [:receipts (evidence-key document locale revision)])))
+  [evidence document garden locale revision]
+  (some? (get-in evidence [:receipts (evidence-key document garden locale revision)])))
 
 (defn receipt-for
   "The completed translation receipt for this triple, or nil.
@@ -76,8 +78,8 @@
    Distinct from `translated-revision?` on purpose: approval evidence has to
    join against the receipt's *output* revision, not merely learn that one
    exists."
-  [evidence document locale revision]
-  (get-in evidence [:receipts (evidence-key document locale revision)]))
+  [evidence document garden locale revision]
+  (get-in evidence [:receipts (evidence-key document garden locale revision)]))
 
 (defn gate-facts
   "The `facts` entry this card owns, closed over loaded evidence.
@@ -90,5 +92,5 @@
    get a gate that answers — which is the failure mode where a publication is
    admitted on evidence nobody produced."
   [evidence]
-  {:translated-revision? (fn [document locale revision]
-                           (translated-revision? evidence document locale revision))})
+  {:translated-revision? (fn [document garden locale revision]
+                           (translated-revision? evidence document garden locale revision))})

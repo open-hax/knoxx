@@ -62,9 +62,12 @@ attempts one document, and terminates on its own.
   ```bash
   pm2 describe knoxx-backend | grep cwd
   ```
-- MongoDB connected. If it is not, the dispatch route answers **503** and the
-  script reports it as a known gap rather than a pass. That refusal is the
-  designed behavior, not a bug: see *Why 503 and not a fallback* below.
+- MongoDB connected, as a hard precondition. If it is not, the dispatch route
+  answers **503**, and the script now **fails** rather than warning. That
+  refusal is the designed behavior of the route — see *Why 503 and not a
+  fallback* below — but it means sections 3–5 never ran, so a run that exited 0
+  on it would have reported a pass for dispatch and idempotency checks that were
+  skipped entirely. Start MongoDB and re-run.
 
 ## What each section proves
 
@@ -199,6 +202,10 @@ would go on to translate successfully, its completion report would arrive, and
 nothing would exist to join that answer to a revision. The receipt would never
 be minted, and the gate would report that translation as never done, forever.
 A 503 an operator can see beats a translation that silently disappears.
+
+The script's treatment of that 503 is the opposite question, and it is a
+failure. The route is right to refuse; a verification run that refused to
+dispatch anything has verified nothing about dispatch, and must not exit 0.
 
 ## Who may make Knoxx believe a translation exists
 
