@@ -110,3 +110,81 @@
                  limit (.limit limit))
         rows (await (.toArray cursor))]
     (vec (js->clj rows :keywordize-keys true))))
+
+(def duplicate-key-error-code
+  "MongoDB's duplicate-key error code.
+
+   Named rather than inlined because it is the only signal that distinguishes
+   'another writer got there first' from 'the write failed'. Read as a failure,
+   an atomic claim degrades into a retry loop that never claims anything; read
+   as a success, two writers both believe they hold the same key."
+  11000)
+
+(defn duplicate-key-error?
+  "True when `err` is Mongo refusing a write that would violate a unique index.
+
+   Both spellings are read. The driver puts the code on `code`, but a write
+   surfaced through a bulk path carries it on the first entry of
+   `writeErrors`, and a caller that checked only one of them would treat a
+   collided claim as an outage."
+  [err]
+  (let [code (or (aget err "code")
+                 (some-> (aget err "writeErrors")
+                         (aget 0)
+                         (aget "code")))]
+    (= duplicate-key-error-code code)))
+
+(defn ^:async insert-one-unique!
+  "Insert one CLJS document, reporting collision rather than throwing it.
+
+   Returns `{:inserted? true :doc doc}` when this caller won the insert, and
+   `{:inserted? false}` when a unique index refused it. This is the atomic
+   claim: the insert IS the check, with no await between reading and writing,
+   which is the property `infra.publication-effects/IIdempotencyStore` spells
+   out as the reason a separate existence-check is not equivalent.
+
+   Any other error propagates. A failed write whose cause is unknown must not
+   be reported as a peaceful collision."
+  [collection-handle doc]
+  (try
+    (await (.insertOne collection-handle (clj->js doc)))
+    {:inserted? true :doc doc}
+    (catch :default err
+      (if (duplicate-key-error? err)
+        {:inserted? false}
+        (throw err)))))
+
+(defn ^:async update-one!
+  "Apply a CLJS update document to at most one match of a field-equality query.
+
+   Returns `{:matched-count n :modified-count n}` with nil for a count the
+   driver did not report, so a caller can tell 'no such document' from 'found
+   it and changed nothing' — a distinction a boolean would erase."
+  [collection-handle query update-doc]
+  (assert-query! query)
+  (let [result (await (.updateOne collection-handle
+                                  (clj->js query)
+                                  (clj->js update-doc)))]
+    {:matched-count (let [n (aget result "matchedCount")]
+                      (when (number? n) n))
+     :modified-count (let [n (aget result "modifiedCount")]
+                       (when (number? n) n))}))
+
+(defn ^:async ensure-index!
+  "Create one index on a native collection handle from CLJS data.
+
+   `keys` is an ordered vector of `[field direction]` pairs and `opts` a CLJS map
+   such as `{:unique true}`. Ordered because a compound index is direction- and
+   order-sensitive, and a CLJS map would not preserve either.
+
+   Here rather than at the store, because this is where MongoDB interop is
+   allowed to exist: `#js` construction and driver calls belong to the extern
+   adapter that owns the boundary, and a store that built native objects itself
+   would split that ownership across two namespaces."
+  [collection-handle keys opts]
+  (let [spec (reduce (fn [acc [field direction]]
+                       (doto acc (aset (name field) direction)))
+                     #js {}
+                     keys)]
+    (await (.createIndex collection-handle spec (clj->js (or opts {}))))
+    true))

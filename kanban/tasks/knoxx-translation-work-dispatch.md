@@ -5,7 +5,7 @@ write-id: "1787011200003-0.176845"
 points: "5"
 title: "Translation — dispatch gated work to ingestion"
 priority: "P1"
-status: "ready"
+status: "review"
 uuid: "knoxx-translation-work-dispatch"
 created_at: "2026-08-22T00:00:00Z"
 ---
@@ -50,3 +50,109 @@ The existing translation/publication gate and translation ingestion worker.
   translate twice.
 - Tests prove failed, stale, selector, and mismatched-revision results cannot
   satisfy the gate or cause publication.
+
+## Card premise corrections
+
+Written before the code existed, three of this card's premises turned out to be
+stale. Annotated rather than silently implemented around.
+
+1. **"Map each derived work item into the ingestion worker's input contract,
+   carrying ... concrete source revision, and a stable dispatch/idempotency
+   identity."** The two halves resolved differently, and an earlier revision of
+   this correction — written when neither crossed — said both were impossible.
+   That is now only half true.
+
+   **Idempotency crosses.** `CreateTranslationBatchRequest` carries
+   `dispatch_key`, and Knoxx's own direct-Mongo adapter upserts the batch on
+   `{org_id, dispatch_key}` under a unique sparse index, so a repeated dispatch
+   adopts the existing batch instead of enqueueing a second one. It is an
+   additive field on an `{:closed false}` contract written by a Knoxx-owned
+   adapter, not a coordinated change in another repository. A REST server that
+   has not learned the field ignores it; `observe-batch!` then treats the
+   listing as uncorrelated rather than as evidence of absence, which costs
+   recovery precision and never correctness.
+
+   **The revision does not.** There is still no revision field, and putting one
+   there would place Knoxx's revision semantics in a foreign collection where
+   nothing validates them. The binding therefore stays Knoxx-side as a
+   `DispatchRecord` keyed to the batch id the worker returns. Rationale and the
+   rejected alternative are in `law.translation-dispatch`.
+
+2. **"Decode and validate the worker result into a translation receipt."** The
+   worker never reports a translated revision, because it has no such concept.
+   The output revision is therefore minted by Knoxx from the source revision,
+   the target locale, and the producing batch id — which is also what makes it
+   change on re-translation, so later review evidence cannot be transplanted.
+   See `law.translation-dispatch/output-revision`.
+
+3. **An unstated precondition.** `domain.publication-gate`'s
+   `:current-source-revision` fact had no production provider — only test
+   stubs — so an intent declaring `:source/current` resolved to nil and derived
+   no work at all. Without it this card's first DoD line is unreachable, so
+   `infra.publication-source-revision` supplies it as a content digest of the
+   document's source file.
+
+## Known gaps left open
+
+`:source-revision-superseded?` is implemented but unreachable in the current gate
+flow, and the `:translation-stale` blocker it feeds is therefore inert. The
+blocker is really about the revision an existing *translation* was made from,
+and the gate's fact signature `[intent revision]` does not carry that. Closing
+it needs a gate-level change and its own card; the reasoning is recorded on
+`infra.publication-source-revision/revision-facts` rather than papered over with
+a policy nobody asked for.
+
+### An ambiguous send whose batch landed can strand its claim
+
+If `create-translation-batch!` throws *after* the worker committed the batch,
+Knoxx cannot tell which batch is its own: the batch record carries no dispatch
+identifier, and garden, target locale, document, project, source language and
+creation time together still do not identify the request that created it. One
+unrelated actor creating a matching batch after the claim produces exactly one
+candidate, and adopting it would let `recover-settled-batch!` mint a receipt for
+a source revision that batch never carried.
+
+So observation is used only to *refute* "the send did not land". It never binds.
+The consequence, stated rather than hidden: such a claim stays in flight, no
+later pass can bind or retry it, and that revision needs an operator. The record's
+detail says so.
+
+That is the deliberate side of the trade — fabricated evidence is worse than a
+visible stranded claim — but it is a real operational gap. Closing it needs a
+dispatch correlation value carried on the batch, which is a contract change in
+another repository and therefore its own cross-repo card.
+
+### A pinned revision must name the bytes that are there
+
+An intent may pin any nonblank revision, and nothing can resolve a historical or
+opaque token to content — there is no version authority, only the current file.
+So a pin that was never the bytes on disk is refused before a batch is created:
+the worker would translate its current document and the drift guard would compare
+the current digest against itself, agree, and mint a receipt claiming the pinned
+revision was translated.
+
+`:source/current` intents are unaffected, since the gate resolves them to exactly
+that digest. A pin naming the current content is equally fine. Anything else is
+`:dispatch/unreachable` — terminal, because no retry makes a pin resolvable.
+
+The narrowing is deliberate: pinning a revision Knoxx cannot observe is not a
+supported publication, and the alternative was a false receipt.
+
+### The drift check cannot see what the worker read — but it could
+
+`source-drift-refusal` compares digests of the *repository* source. The worker
+fetches its input from OpenPlanner's store, so a document already divergent over
+there is translated while both observations agree. The check catches every case
+where the local source moved, which is a receipt that is definitely wrong, but it
+does not establish what was translated.
+
+Reading the predecessor (`openplanner/src/routes/v1/translations.ts`) changes what
+is possible here. Each translation *segment* stores its `source_text`, so the
+bytes the worker actually translated are readable through the existing segments
+API — no contract change needed. What is not settled is how to reconcile
+segment-level source text with a whole-file digest: segmentation is the worker's,
+and concatenation order is not guaranteed to reproduce the file.
+
+So this stays open, but it is a *design* question rather than a cross-repo
+blocker, which is what it was previously carded as. Worth its own card with that
+correction.

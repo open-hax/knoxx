@@ -114,9 +114,9 @@
      :store store
      :intent hydrated
      :facts {:current-source-revision (constantly concrete-revision)
-             :translated-revision? (fn [_document locale revision]
+             :translated-revision? (fn [_document _garden locale revision]
                                      (contains? (:translated @evidence) [locale revision]))
-             :approved? (fn [_document locale revision]
+             :approved? (fn [_document _garden locale revision]
                           (contains? (:approved @evidence) [locale revision]))
              :source-revision-superseded? (constantly false)
              :materialized-publication

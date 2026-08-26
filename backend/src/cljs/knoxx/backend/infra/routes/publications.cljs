@@ -84,13 +84,17 @@
        (filter :ok?)
        (mapv single-kind-definition)))
 
-(defn ^:async publication-index!
-  [config]
-  (let [records (await (resource-records! config))
-        blockers (invalid-resource-blockers records)]
+(defn publication-index
+  "Build the desired-state index from an already loaded record snapshot."
+  [records]
+  (let [blockers (invalid-resource-blockers records)]
     (when (seq blockers)
       (throw (ex-info "invalid publication resources" {:blockers blockers})))
     (resolver/publication-index (mapv single-kind-definition (filter :ok? records)))))
+
+(defn ^:async publication-index!
+  [config]
+  (publication-index (await (resource-records! config))))
 
 (defn ^:async list-publication-documents!
   "The whole desired topology: `{:documents [...] :gardens [...]}`."

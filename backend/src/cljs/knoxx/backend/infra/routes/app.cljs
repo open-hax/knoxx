@@ -16,6 +16,7 @@
             [knoxx.backend.infra.routes.resources :as resource-routes]
             [knoxx.backend.extern.fastify.publications :as publication-routes]
             [knoxx.backend.extern.fastify.translation-config :as translation-config-routes]
+            [knoxx.backend.extern.fastify.translation-dispatch :as translation-dispatch-routes]
             [knoxx.backend.extern.fastify.cms-publication :as cms-publication-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
@@ -1537,7 +1538,10 @@
                                               :ensure-permission!]))
     (cms-publication-routes/register-cms-publication-routes! app runtime config helpers)
     (translation-config-routes/register-translation-config-routes!
-     app runtime config helpers)))
+     app runtime config helpers)
+    (translation-dispatch-routes/register-translation-dispatch-routes!
+     app runtime config (select-keys helpers [:with-request-context!
+                                              :ensure-permission!]))))
 
 (defn- register-resource-and-media-routes!
   [app runtime config]
