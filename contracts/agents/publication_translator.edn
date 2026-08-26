@@ -30,6 +30,27 @@
            :max-chars 400000
            :preserve-system true}
 
+ ;; Exactly one tool, and it is load-bearing for the OpenPlanner cutover rather
+ ;; than a tidiness preference.
+ ;;
+ ;; `:role/translator` also grants :cap/read, :cap/memory and :cap/semantic,
+ ;; which exist for the *human* translation workspace. :cap/semantic carries
+ ;; `graph_query`, and `graph_query` is one of the ten operations
+ ;; `infra.clients.openplanner-mongo` still delegates to OpenPlanner REST — so a
+ ;; translation session was reaching `POST /v1/graph/memory` on every turn.
+ ;; Observed: fourteen such calls, every one a 500, on a stack whose whole point
+ ;; is that OpenPlanner is gone. Where the deployment is configured correctly
+ ;; those become "OpenPlanner is not configured" instead, which is a hard tool
+ ;; error rather than a hang, but still not translation.
+ ;;
+ ;; The session needs nothing else: the source bytes arrive on the event, the
+ ;; document/garden/locale arrive as the resource-policy pin, and the only
+ ;; lawful output is one submitted pair.
+ ;;
+ ;; This key was inert on agent contracts until `domain.contracts.resolve`
+ ;; learned to read it — see `allowed-tool-ids` there.
+ :tools/allowed ["save_translation"]
+
  :agent
  {:roles [:role/translator]
   :model "gemma4:31b"

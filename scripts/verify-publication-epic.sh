@@ -478,6 +478,36 @@ else
        "${CONTRACTS_DIR}/capabilities/cap_translation.edn"
 fi
 
+# The four links that were each individually broken, and are each individually
+# checkable. Every one of them failed silently before — no surface reported any
+# of it — which is why they are asserted rather than assumed.
+step "8c. the four links the translation path needs"
+
+# 1. Derived work must actually reach dispatch. `referenced-documents` used to
+#    return [] for every input, so `:current-source-revision` was nil for every
+#    document and every intent short-circuited on :publication-revision-unresolved.
+response="$(http POST /api/publications/translations/dispatch auth '{}')"
+if expect_status "dispatch answers an authorized caller" "200" "$response"; then
+  expect_jq "the runner is the agent, not the absent ingestion worker" \
+    '.runner == "agent"' "$response"
+  # `dispatched` empty while `admissible` is non-zero is the exact shape the
+  # `referenced-documents` bug produced, and it reads like "nothing to do".
+  expect_jq "admissible intents actually derive work" \
+    '(.admissible // 0) == 0 or ((.dispatched // []) | length) > 0' "$response"
+fi
+
+# 2. The pin must reach the tool. Carried by the event, forwarded by
+#    :actions/start-agent-session, and put on the turn's auth context by
+#    `auth-context-for-agent-turn` — the last of which was missing, so
+#    save_translation fell through to the OpenPlanner segment path.
+# 3. The tool schema must accept a submission that omits what the pin supplies.
+# 4. The organization must come from the claim, not from a request context a
+#    triggered session does not have.
+#
+# All three show up the same way: a claim that stays in flight with no receipt.
+note "links 2-4 are observable only after an agent run completes; see"
+note "docs/verification/publication-epic.md for the live walkthrough"
+
 # KNOWN GAP — a WARN every run, never a FAIL. See
 # knoxx.backend.infra.translation-agent-dispatch/known-gap.
 printf '%s   WARN%s  an agent-dispatched claim whose session dies mid-run stays in flight\n' \

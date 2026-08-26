@@ -59,10 +59,27 @@
   (filterv #(publication-law/admissible-publication? index %) intents))
 
 (defn- referenced-documents
-  "The document records the given intents point at."
+  "The document records the given intents point at.
+
+   The lookup keys off the id directly, because `distinct` is already fed the
+   *ids* — the `map` extracted them. Extracting again inside `keep`, as this did
+   when it shipped, asked a keyword for its `:publication/document`, got nil for
+   every entry, and returned an empty vector every single time.
+
+   Nothing reported it. An empty document list makes
+   `source-revision/source-revisions!` produce an empty map, so
+   `:current-source-revision` answers nil for every document, so every intent
+   short-circuits on `:publication-revision-unresolved` and derives no
+   translation work — which `dispatch-translations!` reports as
+   `{:considered 5 :admissible 5 :dispatched []}`. That reads exactly like
+   \"nothing needed translating\", and it is why four localized intents sat
+   blocked with no surface saying why.
+
+   Introduced in `knoxx-translation-work-dispatch` (#253) and load-bearing for
+   both runners: the worker path was equally dead."
   [index intents]
   (into []
-        (keep #(get-in index [:documents (:publication/document %)]))
+        (keep #(get-in index [:documents %]))
         (distinct (map :publication/document intents))))
 
 (defn document-source-roots

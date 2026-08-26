@@ -263,6 +263,45 @@ Worth knowing while reviewing, because the diff is smaller than it looks:
 - **No new identity scheme.** The run id is carried in the session's resource
   policies, not imposed on the runtime's own session ids.
 
+### What a live run found (2026-08-26)
+
+The composition was tested against a local instance on the deployed contract set.
+Five things were broken between "the gate derives work" and "bytes reach the
+site". Every one of them failed **silently** — the dispatch surface answered 200
+and reported `{:considered 5 :admissible 5 :dispatched []}`, which reads exactly
+like nothing needed translating.
+
+| # | Break | Where |
+|---|---|---|
+| 1 | `referenced-documents` re-extracted the id from a sequence of ids, so it returned `[]` every time. No document → no source revision → every intent short-circuits on `:publication-revision-unresolved`. **Both runners were dead.** | `infra/routes/translation_dispatch.cljs`, from #253 |
+| 2 | `translation-params` required `document_id`, which the prompt tells the agent to omit because the session is pinned. The schema validator refused before the handler ran. | `infra/openplanner/tools.cljs` |
+| 3 | `auth-context-for-agent-turn` never carried `:resource-policies` onto the turn's auth context, so the pin reached telemetry and stopped. `save_translation` fell through to the OpenPlanner segment path. | `infra/agent/turn.cljs` |
+| 4 | That fall-through then called `translation-org-id!`, which negotiates a tenant between a *request context* and a policy — and a triggered session has none (`org_id`, `user_email`, `membership_id` all nil). | `infra/openplanner/tools.cljs` |
+| 5 | `:tools/allowed` was inert on agent contracts — read only from `:policy` contracts. So `:role/translator`'s `:cap/semantic` kept handing the session `graph_query`, one of the ten operations still delegated to **OpenPlanner REST**. | `domain/contracts/resolve.cljs` |
+
+After all five, the full chain ran: four locales dispatched, four agent sessions,
+four correct translations submitted, four revision-specific receipts, one
+approved, and `/de/garden/` materialized from the agent's German while the other
+three stayed `translation-review-required`.
+
+### The residual OpenPlanner surface
+
+Worth stating plainly, because `KNOXX_OPENPLANNER_CLIENT_MODE=mongo` reads like a
+removal and is not one. `infra.clients.openplanner/client` builds the direct-Mongo
+record **wrapping a REST client**, and `infra.clients.openplanner-mongo` delegates
+ten operations to it:
+
+`graph-memory!` · `graph-export!` · `upsert-document!` · `documents-stats!` ·
+`graph-monitoring!` · `build-semantic-edges!` · `record-labels!` ·
+`record-reaction!` · `v1-json!` · `forward-v1!`
+
+The deployed compose sets neither `OPENPLANNER_BASE_URL` nor
+`OPENPLANNER_API_KEY`, so in production each of those raises "OpenPlanner is not
+configured" rather than reaching a service. **A local instance that inherits
+those variables from the invoking shell does not behave like production** — it
+finds a live stack and fails slowly instead. `scripts/` and any local runner
+should unset both.
+
 ### One thing it did strengthen
 
 The source document travels *on the event*, embedded in the brief. The worker is

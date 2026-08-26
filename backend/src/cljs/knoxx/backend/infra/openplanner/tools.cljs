@@ -49,15 +49,32 @@
    [:sessionId {:description "Knoxx conversation/session id stored in OpenPlanner."} :string]])
 
 (def translation-params
+  "`save_translation`'s parameters.
+
+  Every coordinate is optional, because `save-translation-segment` and
+  `publication-translation-pair` both default all four from the session's
+  `:resourcePolicies` — that fallback predates this schema and is what makes a
+  pinned translation session work at all. Declaring them required contradicted
+  it: the JSON-schema validator refuses the call before either handler runs, so
+  an agent that correctly omitted a coordinate its session was already pinned to
+  got a `must have required properties document_id` refusal, and its
+  translation was thrown away. Observed live: four correct translations
+  produced by the model, refused at the schema, and lost.
+
+  Optional in the schema is not unenforced. `save-openplanner-segment!` still
+  throws when `document_id` resolves blank after the policy fallback, and
+  `law.translation-agent-submission/pair-refusal` still refuses a submission
+  whose coordinates disagree with the pin. The check moved to where the
+  defaulted value is actually known, which is the only place it can be correct."
   [:map
    [:source_text {:description "Original source text"} :string]
    [:translated_text {:description "Translated text"} :string]
-   [:source_lang {:description "Source language code (e.g. 'en')"} :string]
-   [:target_lang {:description "Target language code (e.g. 'es')"} :string]
-   [:document_id {:description "Document ID being translated"} :string]
+   [:source_lang {:optional true :description "Source language code (e.g. 'en'). Omit to use the language this session is pinned to."} :string]
+   [:target_lang {:optional true :description "Target language code (e.g. 'es'). Omit to use the language this session is pinned to."} :string]
+   [:document_id {:optional true :description "Document ID being translated. Omit to use the document this session is pinned to."} :string]
    [:garden_id {:optional true :description "Garden ID"} :string]
    [:project {:optional true :description "Project name"} :string]
-   [:segment_index {:description "0-based segment index"} :int]])
+   [:segment_index {:optional true :description "0-based segment index. 0 for a whole-document translation."} :int]])
 
 (def create-file-params
   [:map
@@ -273,22 +290,35 @@
   session was already pinned to and the two sinks agree about what a submission
   means.
 
-  The organization is resolved through `translation-scope/translation-org-id!`
-  rather than read straight off the policy overlay. That call is the tenancy
-  guard: an ordinary membership may only target its own organization, and only a
-  system principal may name another. Skipping it because the overlay already
-  carries an `org_id` would have let a session started under one tenant record
-  translation evidence under a different one — and since the pinned overlay's
-  `org_id` comes from the dispatch record, the resolved value agreeing with it is
-  what ties the acting principal to the claim."
-  [auth-context params policies]
+  The organization comes from the pin, NOT from
+  `translation-scope/translation-org-id!`. That function negotiates a tenant
+  between a *request context* and a resource policy — an ordinary membership may
+  only target its own organization, and only a system principal may name
+  another. A triggered session has no request context at all: `spawn-direct!`
+  builds its actor from a contract rather than from an HTTP caller, so the run
+  carries `org_id`, `user_email` and `membership_id` all nil. Called here it
+  therefore threw `organization is required for save_translation` on every
+  submission, and four correct translations were lost to it.
+
+  Taking the pinned value is not a loosening, because the pinned value is not
+  caller-supplied. `law.translation-agent/session-policies` derives it from a
+  dispatch record that `reserve-dispatch!` persisted under an authenticated
+  request, and `infra.translation-agent-sink/submit-pair!` re-reads that record
+  by `run_id` and refuses unless its `:dispatch/key` matches the overlay. The
+  receipt's `:translation/org-id` is then minted from the *stored record*, never
+  from this map — so a forged overlay cannot invent a tenant, because it would
+  have to also produce a stored claim that agrees with it.
+
+  The OpenPlanner segment path is untouched and still negotiates, because it
+  really does run from request contexts."
+  [params policies]
   {:source_text (aget params "source_text")
    :translated_text (aget params "translated_text")
    :source_lang (policy-value params policies "source_lang" :source_lang :source-lang)
    :target_lang (policy-value params policies "target_lang" :target_lang :target-lang)
    :document_id (policy-value params policies "document_id" :document_id :document-id)
    :garden_id (policy-value params policies "garden_id" :garden_id :garden-id)
-   :org_id (translation-scope/translation-org-id! auth-context policies)
+   :org_id (policy-value params policies "org_id" :org_id :org-id)
    :segment_index (aget params "segment_index")})
 
 (defn- ^:async save-publication-translation!
@@ -298,9 +328,9 @@
   produced output revision back to the agent rather than a segment index,
   because that is the value a human reviewer's approval will be pinned to and
   the only identifier that distinguishes this run's output from a re-run's."
-  [auth-context config params policies on-update]
+  [config params policies on-update]
   (maybe-tool-update! on-update "Recording translated publication document…")
-  (let [pair (publication-translation-pair auth-context params policies)
+  (let [pair (publication-translation-pair params policies)
         result (await (translation-agent/save-pair! config policies pair))
         receipt (:translation/receipt result)]
     (tool-text-result
@@ -315,7 +345,7 @@
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           policies (:resourcePolicies auth-context)]
       (if (translation-agent-law/contract-backed? policies)
-        (await (save-publication-translation! auth-context config params policies on-update))
+        (await (save-publication-translation! config params policies on-update))
         (await (save-openplanner-segment! auth-context config params on-update))))))
 
 (def graph-query-tool
