@@ -175,29 +175,53 @@
        (filter #(= publication-id (:publication/id %)))
        first))
 
+(defn- ^:async outcome-of!
+  "The receipt one trigger produced, and the revision to correlate it with.
+
+   Every failure past intent lookup — a dangling document reference,
+   an unresolvable target, a failed observation, a missing artifact, a refused
+   effect — becomes a failed receipt here, so a broken publication is
+   observable in the same channel as every other outcome rather than as an
+   exception nobody correlated.
+
+   Hydration is deliberately INSIDE this try. It was outside, which meant a
+   dangling `:publication/document` escaped the runtime with no receipt at all
+   — the one failure the comment above it promised could not happen.
+
+   Emission is deliberately OUTSIDE it: see `reconcile-intent!`."
+  [reconciler ctx index raw-intent]
+  (try
+    (let [intent (publication-law/hydrate-publication-intent index raw-intent)
+          target (registry/resolve-target! (:registry reconciler)
+                                           (:publication/target intent))
+          observed (await (effects/observe! target ctx intent))
+          {:keys [plan receipt]} (await (plan-then-execute! reconciler target ctx
+                                                            index intent observed))]
+      {:revision (:concrete-revision plan) :receipt receipt})
+    (catch :default err
+      (let [evidence (ex-data err)]
+        {:revision (some-> evidence ::plan :concrete-revision)
+         :receipt (failure-receipt (::target evidence) (::plan evidence) err)}))))
+
 (defn- ^:async reconcile-intent!
-  "Resolve, observe, plan, execute, record — for an intent known to exist."
+  "Resolve, observe, plan, execute, record — for an intent known to exist.
+
+   Exactly one `record!`, and it is outside the failure handling on purpose.
+   With emission inside the try, a sink that threw while writing a *success*
+   receipt was caught as though the reconciliation had failed, and the handler
+   emitted a second receipt describing the sink failure instead of the outcome.
+   One trigger, two emission attempts, and the error that propagated was the
+   second one — so the actual result of the run was lost.
+
+   Now the outcome is decided first and emitted once. A sink failure propagates
+   untouched, which is what the receipt being the only evidence of an effect
+   demands: dropping it quietly, or replacing it with a receipt about the
+   dropping, are both worse than failing the trigger loudly."
   [reconciler trigger index raw-intent]
-  (let [intent (publication-law/hydrate-publication-intent index raw-intent)
-        ctx {:reconciliation/trigger (:trigger/id trigger)
-             :reconciliation/origin (:trigger/origin trigger)}]
-    (try
-      (let [target (registry/resolve-target! (:registry reconciler)
-                                             (:publication/target intent))
-            observed (await (effects/observe! target ctx intent))
-            {:keys [plan receipt]} (await (plan-then-execute! reconciler target ctx
-                                                              index intent observed))]
-        (await (record! reconciler trigger (:concrete-revision plan) receipt)))
-      (catch :default err
-        ;; Every failure past intent lookup — unresolvable target, failed
-        ;; observation, missing artifact, refused effect — is a failed receipt,
-        ;; so a broken target is observable in the same channel as every other
-        ;; outcome rather than as an exception nobody correlated.
-        (let [evidence (ex-data err)]
-          (await (record! reconciler trigger
-                          (some-> evidence ::plan :concrete-revision)
-                          (failure-receipt (::target evidence) (::plan evidence)
-                                           err))))))))
+  (let [ctx {:reconciliation/trigger (:trigger/id trigger)
+             :reconciliation/origin (:trigger/origin trigger)}
+        {:keys [revision receipt]} (await (outcome-of! reconciler ctx index raw-intent))]
+    (await (record! reconciler trigger revision receipt))))
 
 (defn ^:async reconcile!
   "Run one reconciliation trigger to a receipt.

@@ -92,7 +92,7 @@
    so `public-routes` and `materialization-count` observe the same target the
    runtime published through."
   [& {:keys [facts fail? load-index! locale-admissible? artifact-source
-             declarations*]}]
+             declarations* emit-receipt!]}]
   (let [bundle (memory/memory-target {:id target-id :fail? fail?})
         receipts (atom [])
         resources (atom (index))]
@@ -109,7 +109,10 @@
        :evidence-facts (or facts (evidence-facts))
        :artifact-source (or artifact-source artifact-for)
        :locale-admissible? (or locale-admissible? (constantly true))
-       :emit-receipt! (fn [receipt] (swap! receipts conj receipt) nil)})}))
+       :emit-receipt! (fn [receipt]
+                        (swap! receipts conj receipt)
+                        (when emit-receipt! (emit-receipt! receipt))
+                        nil)})}))
 
 (defn- trigger
   [& {:keys [id] :or {id :test/trigger}}]
@@ -316,6 +319,53 @@
       (is (= :publication/blocked (:receipt/type receipt)))
       (is (= [:publication-revision-unresolved] (vec (:blockers receipt)))))
     (is (= 0 (memory/materialization-count target)))))
+
+;; ── Exactly one receipt, whatever happens ──────────────────────────────────
+
+(deftest ^:async a-failing-sink-is-not-answered-with-a-second-receipt
+  ;; The regression: `record!` used to sit inside the failure handling, so a
+  ;; sink that threw while writing a SUCCESS receipt was caught as though the
+  ;; reconciliation had failed — and the handler emitted a second receipt
+  ;; describing the sink failure instead of the outcome. One trigger, two
+  ;; emission attempts, and the error that propagated was the second one, so
+  ;; the actual result of the run was lost.
+  (let [{:keys [reconciler receipts target]}
+        (fixture :emit-receipt! (fn [_] (throw (ex-info "sink is down" {}))))]
+    (testing "the sink failure propagates rather than being swallowed"
+      (is (thrown? js/Error (await (reconciler/reconcile! reconciler (trigger))))))
+
+    (testing "the sink was offered exactly one receipt"
+      ;; Two would mean the failure handler re-entered emission.
+      (is (= 1 (count @receipts)))
+      (is (= :publication/materialized (:receipt/type (first @receipts)))))
+
+    (testing "and the effect itself still happened"
+      ;; A sink that cannot record is not a reason to claim nothing was
+      ;; published — that is exactly the divergence the receipt exists to make
+      ;; visible, and pretending otherwise would hide it.
+      (is (= 1 (memory/materialization-count target))))))
+
+(deftest ^:async a-dangling-document-reference-is-a-receipt-not-an-escape
+  ;; `hydrate-publication-intent` throws on a dangling `:publication/document`
+  ;; rather than defaulting a source locale. It used to run outside the failure
+  ;; handling, so that throw left the runtime with no receipt at all — the one
+  ;; failure the handler's own comment promised could not happen.
+  (let [{:keys [reconciler receipts resources target]} (fixture)
+        _ (swap! resources update :documents dissoc :knoxx.docs/probe)
+        receipt (await (reconciler/reconcile! reconciler (trigger)))]
+    (testing "the broken reference is reported as drift"
+      (is (= :publication/failed (:receipt/type receipt)))
+      (is (true? (:failure/drift? receipt))))
+
+    (testing "it is correlated, and it is the only receipt"
+      (is (= :knoxx.docs/probe-es (:correlation/publication receipt)))
+      (is (= :test/trigger (:correlation/trigger receipt)))
+      ;; No plan was ever produced, so there is no revision to correlate with.
+      (is (nil? (:correlation/revision receipt)))
+      (is (= 1 (count @receipts))))
+
+    (testing "and nothing was published on the strength of a missing document"
+      (is (= 0 (memory/materialization-count target))))))
 
 ;; ── The trigger itself ─────────────────────────────────────────────────────
 
