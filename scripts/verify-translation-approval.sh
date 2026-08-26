@@ -59,6 +59,9 @@ DOC_ID="${NS}/${DOC_LOCAL}"
 # outputs, so review evidence that named no garden would authorize bytes the
 # reviewer never read.
 GARDEN_ID="${NS}/probe-garden"
+# The same garden as an EDN keyword, which is the spelling the receipt blob and
+# the `garden` query column both use — `pr-str` of a qualified keyword.
+GARDEN_EDN=":${GARDEN_ID}"
 # Both derived from the *configured* contract root, never from `REPO_ROOT`.
 # `KNOXX_CONTRACTS_DIR` may point at a different checkout, and a fixture whose
 # EDN lives under that root while its source lives under this one declares a
@@ -327,6 +330,7 @@ elif ! mongo_eval 'db.runCommand({ping:1})' >/dev/null 2>&1; then
 else
   receipt_edn="{:receipt/type :translation/completed"
   receipt_edn="${receipt_edn} :translation/document ${DOC_EDN}"
+  receipt_edn="${receipt_edn} :translation/garden ${GARDEN_EDN}"
   receipt_edn="${receipt_edn} :translation/source-locale :en"
   receipt_edn="${receipt_edn} :translation/locale :es"
   receipt_edn="${receipt_edn} :translation/source-revision \"${SOURCE_REVISION}\""
@@ -344,6 +348,7 @@ else
   if mongo_eval "db.knoxx_translation_receipts.insertOne({
        dispatch_key: \"${DISPATCH_KEY}\",
        document: \"${DOC_EDN}\",
+       garden: \"${GARDEN_EDN}\",
        locale: \"es\",
        source_revision: \"${SOURCE_REVISION}\",
        org_id: \"${ORG_ID}\",
@@ -354,7 +359,7 @@ else
     pass "seeded one completed-translation receipt for this run"
     note "org ${ORG_ID}, project ${PROJECT:-<none>}, revision ${SOURCE_REVISION}"
 
-    good="{\"document\":\"${DOC_ID}\",\"locale\":\"es\",\"revision\":\"${SOURCE_REVISION}\",\"translation_revision\":\"${TRANSLATION_REVISION}\"}"
+    good="{\"document\":\"${DOC_ID}\",\"garden\":\"${GARDEN_ID}\",\"locale\":\"es\",\"revision\":\"${SOURCE_REVISION}\",\"translation_revision\":\"${TRANSLATION_REVISION}\"}"
 
     resp="$(http POST "$APPROVALS_URL" auth "$good")"
     if expect_status "POST approvals records the approval" "201" "$resp"; then
@@ -386,6 +391,16 @@ else
       expect_jq "the refusal names both sides" \
         "[.. | strings] | index(\"${TRANSLATION_REVISION}\")" "$resp"
       note "so a reviewer can see whether their request or the record was stale"
+    fi
+
+    # The garden is a coordinate of the receipt, so naming another one is not a
+    # narrower version of the same approval — it is an approval of a translation
+    # that does not exist. Checked over HTTP because a reviewer reading one
+    # garden's bytes must not be able to authorize another garden's.
+    elsewhere="$(printf '%s' "$good" | jq -c '.garden = "knoxx.verifyapproval/some-other-garden"')"
+    resp="$(http POST "$APPROVALS_URL" auth "$elsewhere")"
+    if expect_status "the same output in another garden is not approvable" "409" "$resp"; then
+      note "the receipt is keyed by garden, so this is 'no such translation'"
     fi
   else
     warn "could not seed a receipt, so the successful path is skipped"
