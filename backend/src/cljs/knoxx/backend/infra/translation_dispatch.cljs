@@ -245,15 +245,24 @@
    claim, and `law/completion-refusal` refuses that on the way back in.
 
    `detail` distinguishes how the completion was learned: nil for the worker's
-   own report, a reason string when it was recovered from the batch's state."
+   own report, a reason string when it was recovered from the batch's state.
+
+   The *settled* record travels back alongside the receipt. It is the record
+   this claim now has, and returning the pre-settlement one instead produced a
+   value that disagreed with itself: a caller reading the outcome off the
+   returned record saw `:dispatch/accepted` while the same map's own
+   `:dispatch/outcome` said completed. `resolve-dispatch!` answers nil when
+   somebody else settled the claim first, and that is left absent rather than
+   filled in with the stale copy."
   [evidence-store clock record detail]
   (let [receipt (law/translation-receipt record (law/output-revision record) (clock))]
     (await (store/record-translation! evidence-store receipt))
-    (await (store/resolve-dispatch! evidence-store
-                                    (:dispatch/key record)
-                                    :dispatch/completed
-                                    detail))
-    {:translation/receipt receipt}))
+    (let [settled (await (store/resolve-dispatch! evidence-store
+                                                  (:dispatch/key record)
+                                                  :dispatch/completed
+                                                  detail))]
+      (cond-> {:translation/receipt receipt}
+        (some? settled) (assoc :dispatch/record settled)))))
 
 (defn- ^:async refuse-drifted-completion!
   "Refuse a completion whose source has moved, and settle the claim for good.
@@ -269,10 +278,12 @@
    pinned the old revision genuinely cannot be satisfied, and its gate staying
    blocked is the honest outcome. See `law/unreachable-outcome`."
   [evidence-store record drift]
-  (await (store/resolve-dispatch! evidence-store (:dispatch/key record)
-                                  law/unreachable-outcome
-                                  "source moved between dispatch and completion"))
-  {:translation/refusal drift})
+  (let [settled (await (store/resolve-dispatch!
+                        evidence-store (:dispatch/key record)
+                        law/unreachable-outcome
+                        "source moved between dispatch and completion"))]
+    (cond-> {:translation/refusal drift}
+      (some? settled) (assoc :dispatch/record settled))))
 
 (defn- ^:async complete-if-source-agrees!
   "Mint the receipt only if the source still hashes to the dispatched revision.
@@ -330,7 +341,13 @@
                :dispatch/outcome (if (:translation/receipt result)
                                    :dispatch/completed
                                    law/unreachable-outcome)
-               :dispatch/record record))
+               ;; The settled record when the completion settled one, the claim
+               ;; as it was otherwise. Overwriting it with `record`
+               ;; unconditionally is what made this branch contradict itself,
+               ;; and it is the one branch where that matters most: the whole
+               ;; reason it exists is that bookkeeping was lost once already.
+               ;; The `:failed` branch below has always read the updated record.
+               :dispatch/record (or (:dispatch/record result) record)))
 
       :failed
       {:dispatch/outcome :dispatch/failed

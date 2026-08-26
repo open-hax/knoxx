@@ -794,10 +794,51 @@
                                         (:evidence-store deps)
                                         (:dispatch/key (:dispatch/record first-result))))))))
 
+    (testing "the record it answers with agrees with the outcome it reports"
+      ;; It used to answer with the *pre-recovery* record, whose own
+      ;; `:dispatch/outcome` still read `:dispatch/accepted` while the map
+      ;; around it said completed. A caller reading the outcome off the record
+      ;; — the obvious thing to do with a returned record — saw an in-flight
+      ;; claim that had in fact been settled, and would keep waiting on it.
+      (is (= :dispatch/completed
+             (:dispatch/outcome (:dispatch/record recovered))))
+      (is (= (:dispatch/key (:dispatch/record first-result))
+             (:dispatch/key (:dispatch/record recovered)))))
+
     (testing "a third pass has nothing left to do"
       (is (= :dispatch/duplicate
              (:dispatch/outcome (await (dispatch/dispatch-work!
-                                        deps (work) (context)))))))))
+                                        deps (work) (context)))))))
+
+    (testing "no second receipt was minted along the way"
+      ;; The failure this guards is the loop: an outcome that never reports
+      ;; completed leaves the claim readable as in-flight, so every later pass
+      ;; recovers the same batch and attempts another receipt.
+      (is (= 1 (count (await (store/completed-translations!
+                              (:evidence-store deps) evidence-scope))))))))
+
+(deftest ^:async a-refused-drifted-completion-answers-with-the-settled-claim
+  ;; The same self-consistency the completed branch needs, on the branch that
+  ;; settles a claim it cannot substantiate. `refuse-drifted-completion!` marks
+  ;; the claim unreachable; answering with the pre-refusal record would report a
+  ;; claim as still accepted at the same moment it was closed for good.
+  (let [{:keys [deps]} (fixture :batch-status "complete"
+                                :source-revision "sha256-moved00000000")
+        _ (await (dispatch/dispatch-work! deps (work) (context)))
+        drifted (await (dispatch/dispatch-work! deps (work) (context)))]
+    (testing "the completion is refused for drift"
+      (is (= :source-moved-since-dispatch
+             (:refusal/type (:translation/refusal drifted))))
+      (is (nil? (:translation/receipt drifted))))
+
+    (testing "the claim is terminal, and the answer says so"
+      (is (= law/unreachable-outcome (:dispatch/outcome drifted)))
+      (is (= law/unreachable-outcome
+             (:dispatch/outcome (:dispatch/record drifted)))))
+
+    (testing "nothing was recorded as a translation"
+      (is (empty? (await (store/completed-translations!
+                          (:evidence-store deps) evidence-scope)))))))
 
 (deftest ^:async a-known-batch-id-is-recovered-when-the-binding-write-fails
   ;; A failure *after* the batch id is known is not an ambiguous send: the batch
