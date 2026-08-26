@@ -73,3 +73,33 @@ The existing translation receipt and publication gate contracts.
    without a tenant is admissible everywhere. `:review/org-id` is required and
    `:review/project` is carried, both inherited from the receipt rather than from
    the request so a reviewer cannot file into another scope.
+
+4. **A second unstated requirement, learned the same way.** The garden is a
+   *coordinate* of an approval, not scope that happens to travel with it.
+   `knoxx-translation-work-dispatch` made the completed-translation receipt
+   garden-specific under review, because the ingestion worker builds its prompt
+   with `garden_id` and translated-document reads filter by it — one document
+   translated into one locale for two gardens is two different outputs. The
+   approval half had to follow or the same leak reappeared one step later, with
+   a reviewer who read garden A's bytes admitting publication of garden B's.
+   `:review/garden` is therefore required on both `Approval` and
+   `ApprovalRequest`, `approved?` and `index-approvals` key by it, and it is
+   taken from the receipt rather than from the request.
+
+## What this card does NOT deliver
+
+The approval *surface*, not the approval *control*. Nothing in the frontend
+calls `POST /api/publications/translations/approvals`; the existing translation
+review UI still posts to `/api/translations/documents/:id/:locale/review`, which
+is the older document-review model and is not what the publication gate reads.
+
+So today a reviewer clicking "Approve All" does not produce evidence
+`domain.publication-gate` recognizes. That is a real gap and it is deliberately
+not papered over here: making the legacy review status count as a publication
+approval is exactly the shortcut that would let unreviewed bytes publish.
+
+Closing it needs one thing this card cannot assume — a read surface exposing
+which `[document garden locale]` currently has a completed translation and at
+which pair of revisions. The UI has `garden_id` but no notion of either
+revision, and the approval contract requires both. That belongs to the UI card
+together with the endpoint it reads.
