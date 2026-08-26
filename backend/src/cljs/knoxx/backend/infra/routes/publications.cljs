@@ -6,7 +6,8 @@
   namespace, and no external publication backend appears in its contract. The
   owning extern adapter is `knoxx.backend.extern.fastify.publications`."
   (:require [knoxx.backend.domain.publication-resolver :as resolver]
-            [knoxx.backend.domain.resources.loader :as resources]))
+            [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.law.publication :as law]))
 
 (def ^:private kind-id-key
   {:document :document/id
@@ -100,6 +101,22 @@
   "The whole desired topology: `{:documents [...] :gardens [...]}`."
   [config]
   (resolver/list-document-views (await (publication-index! config))))
+
+(def GardenDeploymentListView
+  "Deployment DTO. The public site address is adapter configuration, while the
+   nested Garden and publication values remain the pure domain projection."
+  [:map {:closed true}
+   [:site-url law/NonBlankString]
+   [:gardens [:vector law/PublicationGardenView]]])
+
+(defn ^:async list-publication-gardens!
+  "Deployed Garden contracts, publication placements, and their public site."
+  [config]
+  (law/assert-valid!
+   :publication/garden-deployment-list
+   GardenDeploymentListView
+   (assoc (resolver/list-garden-views (await (publication-index! config)))
+          :site-url (:publication-site-url config))))
 
 (defn ^:async publication-document-view!
   "One document's desired topology: `{:document ... :publications [...]}`."

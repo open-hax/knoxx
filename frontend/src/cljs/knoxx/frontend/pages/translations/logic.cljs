@@ -78,5 +78,65 @@
 (defn still-listed? [documents selected]
   (boolean (some #(= (doc-key %) (doc-key selected)) documents)))
 
+(defn- review-key [value]
+  [(or (:document value) (:document_id value))
+   (or (:garden value) (:garden_id value))
+   (or (:locale value) (:target_lang value))])
+
+(defn attach-publication-reviews
+  "Join revision-bound publication evidence onto segment rows and retain
+   contract-authored translations even when no worker document exists."
+  [documents reviews]
+  (let [by-key (into {} (map (juxt review-key identity)) reviews)
+        attached (mapv #(assoc % :publication_review (get by-key (review-key %))) documents)
+        existing (set (map review-key documents))
+        authored (->> reviews
+                      (filter #(and (= "authored-contract" (:content_source %))
+                                    (not (contains? existing (review-key %)))))
+                      (mapv (fn [review]
+                              {:document_id (:document review)
+                               :garden_id (:garden review)
+                               :source_lang (:source_locale review)
+                               :target_lang (:locale review)
+                               :title (:title review)
+                               :overall_status (if (:approved review)
+                                                 "fully_approved"
+                                                 "pending_review")
+                               :approved (if (:approved review) 1 0)
+                               :total_segments 1
+                               :authored_content true
+                               :publication_review review})))]
+    (into attached authored)))
+
+(defn authored-detail
+  [selected]
+  (let [review (:publication_review selected)
+        source-blocks (str/split (or (:source_text review) "") #"\n\s*\n")
+        translated-blocks (str/split (or (:translated_text review) "") #"\n\s*\n")
+        segments (mapv (fn [index translated]
+                         {:id (str (:document_id selected) "-" (:target_lang selected) "-" index)
+                          :segment_index index
+                          :status (if (:approved review) "approved" "pending")
+                          :source_lang (:source_lang selected)
+                          :target_lang (:target_lang selected)
+                          :source_text (get source-blocks index "")
+                          :translated_text translated})
+                       (range (count translated-blocks))
+                       translated-blocks)]
+    {:document {:title (:title selected)
+                :source_lang (:source_lang selected)}
+     :target_lang (:target_lang selected)
+     :summary {:total_segments (count segments)
+               :approved (if (:approved review) (count segments) 0)
+               :overall_status (if (:approved review)
+                                 "fully_approved"
+                                 "pending_review")}
+     :segments segments}))
+
+(defn approval-request
+  "The exact immutable coordinates the server exposed for approval."
+  [review]
+  (select-keys review [:document :garden :locale :revision :translation_revision]))
+
 (defn sft-filename [project target-lang]
   (str project "-" (or (not-empty target-lang) "all") "-translations.jsonl"))

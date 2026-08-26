@@ -65,6 +65,19 @@
     (fn []
       (is (= "openplanner-project" (:openplanner-mcp-project (config/cfg)))))))
 
+(deftest publication-site-url-is-deployment-configuration
+  (with-env! {"KNOXX_PUBLICATION_SITE_URL" nil
+              "KNOXX_PUBLICATION_CONTENT_ROOT" nil}
+    (fn []
+      (is (= "http://localhost:4173" (:publication-site-url (config/cfg))))
+      (is (nil? (:publication-content-root (config/cfg))))))
+  (with-env! {"KNOXX_PUBLICATION_SITE_URL" "https://open-hax.promethean.rest"
+              "KNOXX_PUBLICATION_CONTENT_ROOT" "/srv/website-content"}
+    (fn []
+      (is (= "https://open-hax.promethean.rest"
+             (:publication-site-url (config/cfg))))
+      (is (= "/srv/website-content" (:publication-content-root (config/cfg)))))))
+
 ;; ── Event-runtime kill switch ──────────────────────────────────────────────
 
 (deftest event-runtimes-disabled-defaults-to-off

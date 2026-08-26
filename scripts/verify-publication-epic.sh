@@ -394,6 +394,97 @@ else
   fail "KNOXX_EXPECT_OPENPLANNER_REST still appears in shipped source" "$(printf '%s' "$hits" | head -3)"
 fi
 
+step "8b. the translation producer — an agent actor, not a worker"
+
+# The check whose absence caused the failure this section verifies is fixed.
+#
+# Every other publication surface in this script can pass while nothing is able
+# to produce a translation: the gate derives work, a claim is taken, and the
+# batch goes to an ingestion worker this deployment does not run. The four
+# localized intents then stay blocked forever and no surface says why. So what is
+# asserted here is the *producer*, not the plumbing.
+#
+# The composition is three existing contracts plus one that was missing:
+#   contracts/roles/translator.edn            the role      (already existed)
+#   contracts/capabilities/cap_translation.edn the tool      (already existed)
+#   contracts/namespaces/publication.edn       the trigger   (added)
+#   contracts/agents/publication_translator.edn the agent    (added)
+
+response="$(http GET /api/admin/config/events auth)"
+if expect_status "the event runtime surface answers an authorized caller" "200" "$response"; then
+  trigger="$(body_of "$response" | jq -c '
+    [.runtime.triggers[]?
+     | select((.events // []) | map(tostring) | any(test("publication/translation-needed")))]
+    | first // empty' 2>/dev/null)"
+
+  if [ -z "$trigger" ] || [ "$trigger" = "null" ]; then
+    fail "a trigger subscribes to publication/translation-needed" \
+         "$(body_of "$response" | jq -c '[.runtime.triggers[]?.id]' 2>/dev/null)"
+    note "with no such trigger, every localized intent stays blocked and nothing reports why"
+  else
+    pass "a trigger subscribes to publication/translation-needed"
+
+    if [ "$(printf '%s' "$trigger" | jq -r '.enabled')" = "true" ]; then
+      pass "that trigger is enabled"
+    else
+      fail "that trigger is enabled" "$trigger"
+    fi
+
+    if [ "$(printf '%s' "$trigger" | jq -r '.action')" = "actions/start-agent-session" ] \
+       || [ "$(printf '%s' "$trigger" | jq -r '.action')" = ":actions/start-agent-session" ]; then
+      pass "its action starts an agent session, rather than posting to a worker"
+    else
+      fail "its action starts an agent session" "$(printf '%s' "$trigger" | jq -r '.action')"
+    fi
+
+    agent_id="$(printf '%s' "$trigger" | jq -r '.agent // empty')"
+    if [ -z "$agent_id" ]; then
+      fail "the trigger names an agent contract" "$trigger"
+    else
+      pass "the trigger names agent contract '${agent_id}'"
+
+      # The file being on disk proves nothing. A contract only starts a session
+      # if it resolves through role, capability and actor scope, and the catalog
+      # is the one view that has done all three.
+      response="$(http GET /api/knoxx/agents/catalog auth)"
+      if expect_status "the agent catalog answers an authorized caller" "200" "$response"; then
+        if printf '%s' "$(body_of "$response")" \
+             | jq -e --arg id "$agent_id" '[.agents[]? | select((.id // "") == $id)] | length > 0' \
+             >/dev/null 2>&1; then
+          pass "'${agent_id}' resolves in the deployed catalog"
+        else
+          fail "'${agent_id}' resolves in the deployed catalog" \
+               "$(body_of "$response" | jq -c '[.agents[]?.id]' 2>/dev/null)"
+          note "a trigger naming an unresolvable contract fails exactly like having no trigger"
+        fi
+      fi
+    fi
+  fi
+fi
+
+# The role and capability halves are contract data, so they are checked on disk:
+# they are what makes `save_translation` reachable at all, and a deployment that
+# lost either would resolve the agent and then hand it no way to submit.
+if [ -f "${CONTRACTS_DIR}/roles/translator.edn" ]; then
+  pass "the translator role contract is present"
+else
+  fail "the translator role contract is present" "${CONTRACTS_DIR}/roles/translator.edn"
+fi
+
+if grep -q "save_translation" "${CONTRACTS_DIR}/capabilities/cap_translation.edn" 2>/dev/null; then
+  pass "cap/translation still grants save_translation"
+else
+  fail "cap/translation still grants save_translation" \
+       "${CONTRACTS_DIR}/capabilities/cap_translation.edn"
+fi
+
+# KNOWN GAP — a WARN every run, never a FAIL. See
+# knoxx.backend.infra.translation-agent-dispatch/known-gap.
+printf '%s   WARN%s  an agent-dispatched claim whose session dies mid-run stays in flight\n' \
+  "$C_YELLOW" "$C_RESET"
+note "there is no session read that can settle it, so that revision needs an operator"
+note "the worker path recovers this from batch state; the agent path has no equivalent"
+
 step "9. advisory — OpenPlanner surfaces still live outside this epic's scope"
 
 # NOT a failure. law.publication-surface declares that retired paths must have

@@ -60,7 +60,11 @@
    [:document/source-locale Locale]
    [:document/source
     [:map
-     [:path NonBlankString]]]])
+     [:path NonBlankString]]]
+   [:document/translations {:optional true}
+    [:map-of Locale
+     [:map
+      [:path NonBlankString]]]]])
 
 (def Garden
   [:map
@@ -144,6 +148,20 @@
   [:map
    [:documents [:vector PublicationDocumentView]]
    [:gardens [:vector Garden]]])
+
+(def PublicationGardenView
+  "One deployed Garden contract with the publication placements that target it.
+
+   Content does not live here, and presentation does not live here. The view
+   only relates a Garden's stable identity/locale catalog to the publication
+   intents whose paths are placed in that Garden."
+  [:map
+   [:garden Garden]
+   [:publications [:vector PublicationIntent]]])
+
+(def PublicationGardenListView
+  [:map
+   [:gardens [:vector PublicationGardenView]]])
 
 ;; ── Boundary helpers ───────────────────────────────────────────────────────
 

@@ -10,11 +10,9 @@
   write permissions are deliberately distinct: seeing the publication topology
   must not imply authority to change what is public.
 
-  NOTE: the card describes `/api/publications/gardens` and
-  `/api/publications/health`. Neither was built — gardens arrive inside the
-  topology response rather than as a separate route, and no health route exists
-  on this path. The list below is what actually ships; `surface-count` is
-  asserted against it so a silently shortened list fails."
+  NOTE: `/api/publications/gardens` is the deploy-owned Garden review surface.
+  No health route exists on this path. The list below is what actually ships;
+  `surface-count` is asserted against it so a silently shortened list fails."
   (:require [knoxx.backend.law.publication :as publication]))
 
 (def RequiredSurface
@@ -43,6 +41,12 @@
     :why "one document's desired topology"}
 
    {:method "GET"
+    :path "/api/publications/gardens"
+    :permission "org.publications.read"
+    :access :read
+    :why "deployed Garden contracts, locale catalogs, and publication placements"}
+
+   {:method "GET"
     :path "/api/cms/publications/documents"
     :permission "org.publications.read"
     :access :read
@@ -68,40 +72,40 @@
     ;; other tenant (#233).
     :permission "platform.translations.manage"
     :access :write
-    :why "the authoritative translation model selection"}])
+    :why "the authoritative translation model selection"}
+
+   {:method "GET"
+    :path "/api/publications/translations/reviews"
+    :permission "org.translations.read"
+    :access :read
+    :why "revision-bound translation evidence available for publication review"}])
 
 (def surface-count
   "Asserted in tests so a silently shortened list fails rather than quietly
    verifying less."
-  6)
+  8)
 
 (def retired-authority-paths
   "Paths this epic actually retired: they must have NO caller anywhere in the
    shipped source trees, and the guard scans those trees rather than an
    allow-list of files somebody remembered to add.
 
-   `/api/openplanner/v1/gardens` is deliberately NOT here. It still has callers,
-   so listing it made this claim false while the guard passed — it walked a fixed
-   file list that happened to exclude them. Known-remaining legacy paths are
-   named below instead, with their callers, so the exception is visible and
-   cannot quietly grow."
-  ["/api/openplanner/v1/translations/config"
+  Garden REST is included because the deploy-owned Garden review surface has
+  replaced every supported caller."
+  ["/api/openplanner/v1/gardens"
+   "/api/openplanner/v1/public/gardens/"
+   "/api/openplanner/v1/translations/config"
    "/v1/translations/config"])
 
 (def legacy-paths-with-known-callers
   "Legacy paths that still have shipped callers, mapped to the production files
-   that call them. Outside this epic's CMS/translation scope — the Gardens page
-   was never in it, and the CMS publish call is retired by the frontend cutover,
-   not here.
+   that call them. The remaining CMS publish call is retired by the frontend
+   cutover, not by the Garden read-model migration.
 
    Asserted positively rather than skipped: the guard checks that these are
    *exactly* the callers, so a new one fails the build and a removed one shows up
    as progress rather than as a silently weakened test."
-  {"/api/openplanner/v1/gardens"
-   ["frontend/src/cljs/knoxx/frontend/pages/gardens/api.cljs"
-    "frontend/src/cljs/knoxx/frontend/pages/gardens/logic.cljs"]
-
-   "/api/openplanner/v1/cms/publish"
+  {"/api/openplanner/v1/cms/publish"
    ["frontend/src/pages/CmsPage.tsx"]})
 
 (def scanned-source-roots

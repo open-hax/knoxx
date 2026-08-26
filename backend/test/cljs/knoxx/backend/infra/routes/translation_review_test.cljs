@@ -58,7 +58,13 @@
   (let [evidence-store (store/memory-store)]
     (doseq [r receipts]
       (await (store/record-translation! evidence-store r)))
-    {:evidence-store evidence-store :clock (constantly at)}))
+    {:evidence-store evidence-store
+     :clock (constantly at)
+     :publication-index
+     {:publications [{:publication/id :knoxx.publications/probe-es
+                      :publication/document :knoxx.docs/probe
+                      :publication/garden :knoxx.docs/promethean
+                      :publication/locale :es}]}}))
 
 (deftest ^:async an-authorized-approval-is-recorded-with-attribution
   (let [deps (await (store-with! [(receipt)]))
@@ -171,3 +177,18 @@
       (is (empty? (filter #(= :publication/materialized (:receipt/type %))
                           (await (store/completed-translations!
                                   (:evidence-store deps) query-scope))))))))
+
+(deftest ^:async review-list-exposes-the-exact-revisions-the-approval-needs
+  (let [deps (await (store-with! [(receipt)]))
+        before (first (:reviews (await (facade/reviewable-translations! deps scope))))]
+    (is (= :knoxx.docs/probe (:document before)))
+    (is (= :knoxx.publications/probe-es (:publication before)))
+    (is (= :knoxx.docs/promethean (:garden before)))
+    (is (= :es (:locale before)))
+    (is (= "sha256-aaa111bbb222" (:revision before)))
+    (is (= "sha256-aaa111bbb222+es@batch-1" (:translation_revision before)))
+    (is (false? (:approved before)))
+    (await (facade/approve-translation! deps scope (request)))
+    (let [after (first (:reviews (await (facade/reviewable-translations! deps scope))))]
+      (is (true? (:approved after)))
+      (is (= at (:approved_at after))))))

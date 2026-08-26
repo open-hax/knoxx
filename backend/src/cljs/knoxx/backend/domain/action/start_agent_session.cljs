@@ -109,6 +109,30 @@
       (nonblank (:agent/id ctx))
       (nonblank (:agent/contract ctx))))
 
+(defn- action-resource-policies
+  "The resource-policy overlay a triggered session starts with, or nil.
+
+  Two sources, and the order is the trust order. `:action/with` is contract data
+  an operator wrote, so it wins. The event's own
+  `[:event/payload :resource-policies]` is only read when the trigger asked for
+  it with `:resource-policies-from-event`, because a trigger that did not ask
+  must not have its agent's resource scope set by whoever emitted the event.
+
+  The opt-in exists because a trigger contract is static while a pin is
+  per-event: `law.translation-agent/TranslationNeededEvent` carries the document,
+  locale and claim one attempt is for, and writing that into `:trigger/with`
+  would mean one trigger per document. Nothing here interprets the overlay —
+  forwarding a map the agent runner already knows how to read is the whole job,
+  and reading it would put a caller's domain into a generic action."
+  [ctx action]
+  (let [declared (or (get-in action [:action/with :resource-policies])
+                     (get-in action [:action/with :resourcePolicies]))
+        from-event? (or (get-in action [:action/with :resource-policies-from-event])
+                        (get-in action [:action/with :resourcePoliciesFromEvent]))
+        carried (when from-event?
+                  (get-in ctx [:event :event/payload :resource-policies]))]
+    (or declared carried)))
+
 (defn- actor-id
   [ctx resolved]
   (or (nonblank (:actor/id ctx))
@@ -222,6 +246,7 @@
         ids (triggered-session-identifiers trigger event agent-id ts
                                            {:sticky? (sticky-session-source? source)})
         task-input (action-task-input action trigger resolved)
+        resource-policies (action-resource-policies ctx action)
         rendered-message (render-start-message trigger event task-input (:trigger-id ids))]
     (when (:deprecated-agent-task-fallback? task-input)
       (errors/log-warning!
@@ -236,19 +261,21 @@
       :session_id (:session-id ids)
       :run_id (:run-id ids)
       :message rendered-message
-      :agent_spec (merge {:contract_id agent-id
-                          :actor_id actor-id'
-                          :role (:role resolved)
-                          :system_prompt (:system-prompt resolved)
-                          :model (:model resolved)
-                          :thinking_level (:thinking-level resolved)
-                          :tool_policies (:tool-policies resolved)
-                          :sources (:sources resolved)
-                          :memory_hydration (:memory-hydration resolved)
-                          :context_policy (sticky-context-policy resolved source)
-                          :task_source (some-> (:task-source task-input) qualified-name)
-                          :rendered_task_prompt (:task task-input)
-                          :deprecated_agent_task_fallback (:deprecated-agent-task-fallback? task-input)}
+      :agent_spec (merge (cond-> {:contract_id agent-id
+                                  :actor_id actor-id'
+                                  :role (:role resolved)
+                                  :system_prompt (:system-prompt resolved)
+                                  :model (:model resolved)
+                                  :thinking_level (:thinking-level resolved)
+                                  :tool_policies (:tool-policies resolved)
+                                  :sources (:sources resolved)
+                                  :memory_hydration (:memory-hydration resolved)
+                                  :context_policy (sticky-context-policy resolved source)
+                                  :task_source (some-> (:task-source task-input) qualified-name)
+                                  :rendered_task_prompt (:task task-input)
+                                  :deprecated_agent_task_fallback (:deprecated-agent-task-fallback? task-input)}
+                           (some? resource-policies)
+                           (assoc :resource_policies resource-policies))
                          (triggered-audit-metadata trigger event ids))
       :model (:model resolved)})))
 

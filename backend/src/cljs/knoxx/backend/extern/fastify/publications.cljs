@@ -7,7 +7,7 @@
   synchronous facade stays compatible if it later becomes effectful without
   introducing a `.then`.
 
-  Both routes authorize. The projection reads document titles, garden
+  Every route authorizes. The projection reads document titles, garden
   membership, and publication paths off the filesystem, so an unauthenticated
   caller must not be able to enumerate it."
   (:require [knoxx.backend.extern.fastify :as fastify]
@@ -142,4 +142,11 @@
                                (fn [decoded]
                                  (publications/publication-document-view!
                                   config (get-in decoded [:params :documentId]))))})
+  (fastify/route!
+   app
+   {:method "GET"
+    :url "/api/publications/gardens"
+    :handler (authorized-route runtime handlers
+                               (fn [_decoded]
+                                 (publications/list-publication-gardens! config)))})
   nil)

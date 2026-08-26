@@ -114,3 +114,19 @@
            (facade/invalid-resource-blockers
             [{:ok? false
               :resource/file-path "/contracts/publications/malformed.edn"}])))))
+
+(deftest garden-deployment-view-separates-membership-placement-and-site-address
+  (let [index (resolver/publication-index
+               [(facade/single-kind-definition (first (expanded-records)))
+                garden-definition
+                (facade/single-kind-definition (second (expanded-records)))])
+        view (assoc (resolver/list-garden-views index)
+                    :site-url "https://open-hax.promethean.rest")
+        garden-view (first (:gardens view))]
+    (is (= "https://open-hax.promethean.rest" (:site-url view)))
+    (is (= :knoxx.docs/promethean (get-in garden-view [:garden :garden/id])))
+    (is (= [:en :es] (get-in garden-view [:garden :garden/locales])))
+    (is (= "/probe" (get-in garden-view [:publications 0 :publication/path])))
+    (testing "neither content nor presentation becomes Garden authority"
+      (is (not-any? #(contains? (:garden garden-view) %)
+                    [:content :theme :layout :description])))))

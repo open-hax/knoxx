@@ -1,0 +1,58 @@
+;; The event/trigger half of publication translation.
+;;
+;; Per `docs/design/resource-architecture.md`, a trigger is "an agreement to act
+;; after observing a matching event" — it is not the agent, and the agent is not
+;; the trigger. `contracts/agents/publication_translator.edn` holds the prompt,
+;; model and role; this file holds the agreement to run it.
+;;
+;; The event is emitted by `infra.translation-agent-dispatch`, whose claim was
+;; reserved by `law.translation-dispatch` from work `domain.publication-gate`
+;; derived. So nothing here decides *whether* a translation is needed: by the
+;; time this trigger fires, that has been decided, keyed and claimed.
+{:namespace :publication
+ :resources
+ [{:trigger/id :translation-needed
+   :trigger/kind :event
+   :trigger/listener "pi"
+   :trigger/events [:publication/translation-needed]
+   :trigger/action :actions/start-agent-session
+
+   :trigger/with
+   {:agent-id "publication_translator"
+
+    ;; The pin arrives on the event, not from this contract.
+    ;;
+    ;; One trigger serves every document and every locale, while the claim it
+    ;; runs for is per-attempt: the document, garden, target locale, tenant and
+    ;; dispatch key all change per event. Written here they could only ever name
+    ;; one document, so either every locale of every document needed its own
+    ;; trigger resource, or `:actions/start-agent-session` had to learn to infer
+    ;; a translation pin from a payload — domain knowledge a generic action must
+    ;; not hold.
+    ;;
+    ;; So this flag is the whole mechanism: it states that this trigger accepts
+    ;; a resource-policy overlay from events of the types above, and
+    ;; `law.translation-agent/session-policies` is what builds it. Only triggers
+    ;; that opt in are affected; an emitter cannot widen an agent's resource
+    ;; scope through a trigger that did not ask.
+    :resource-policies-from-event true
+
+    :task
+    "A publication intent needs this document translated.
+
+The event content above contains the complete source document, delimited, and
+names the source and target languages. Translate it and submit the result with
+save_translation.
+
+Your session is already pinned to the document, garden, source language and
+target language this translation is for. Omit those parameters; supplying a
+different value is refused rather than honored.
+
+Submit once, with the complete translated document and segment_index 0. The
+reply names the revision a human reviewer will approve. Nothing reaches the
+public site until a person approves that exact revision."}
+
+   :trigger/context
+   {:reason "a publication intent needs a translated revision"}
+
+   :enabled true}]}

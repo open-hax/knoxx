@@ -20,11 +20,16 @@
   (:require [clojure.string :as str]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.publication-contract-content :as contract-content]
+            [knoxx.backend.infra.publication-source-revision :as source-revision]
             [knoxx.backend.infra.routes.translation-review :as facade]
+            [knoxx.backend.infra.routes.publications :as publications]
+            [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
             [knoxx.backend.infra.stores.translation-evidence-registry :as registry]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.translation-evidence :as law]
-            [knoxx.backend.shape.resource-identity :as resource-identity]))
+            [knoxx.backend.shape.resource-identity :as resource-identity]
+            [promesa.core :as p]))
 
 (def approve-permission
   "Recording review evidence is a review action, so it takes the permission the
@@ -33,6 +38,8 @@
    Deliberately NOT `org.translations.manage`: approving is what a reviewer does,
    and requiring queue-management authority would mean only admins could review."
   "org.translations.review")
+
+(def read-permission "org.translations.read")
 
 (def refusal-status
   "HTTP status per refusal type, as a table.
@@ -138,16 +145,83 @@
      :project (some-> (:session-project-name config) str not-empty)
      :principal (principal-of ctx)}))
 
+(defn- ^:async ensure-contract-receipts!
+  [config evidence-store scope]
+  (let [records (await (publications/resource-records! config))
+        index (publications/publication-index records)
+        documents (vec (vals (:documents index)))
+        roots (translation-dispatch/document-source-roots config records)
+        revisions (await (source-revision/source-revisions!
+                          config documents roots))]
+    {:index index
+     :roots roots
+     :authored (await (contract-content/ensure-receipts!
+                       evidence-store index roots scope revisions))}))
+
+(defn- authored-receipt-for
+  [authored review]
+  (some #(when (= [(:translation/document %)
+                    (:translation/garden %)
+                    (:translation/locale %)
+                    (:translation/source-revision %)
+                    (:translation/revision %)]
+                   [(:document review)
+                    (:garden review)
+                    (:locale review)
+                    (:revision review)
+                    (:translation_revision review)])
+           %)
+        authored))
+
+(defn- ^:async hydrate-authored-review!
+  [index roots authored review]
+  (if (authored-receipt-for authored review)
+    (let [document (get-in index [:documents (:document review)])
+          root (get roots (:document/id document))
+          [source translated]
+          (await (p/all [(contract-content/source-content! root document)
+                         (contract-content/localized-content!
+                          root document (:locale review))]))]
+      (assoc review
+             :title (:document/title document)
+             :source_locale (:document/source-locale document)
+             :source_text source
+             :translated_text translated
+             :content_source :authored-contract))
+    review))
+
 (defn- ^:async approve!
   [config ctx decoded]
   (if-let [evidence-store (registry/current)]
-    (facade/approve-translation!
-     {:evidence-store evidence-store
-      :clock (fn [] (.toISOString (js/Date.)))}
-     (review-scope config ctx)
-     decoded)
+    (let [scope (review-scope config ctx)
+          _ (await (ensure-contract-receipts! config evidence-store scope))]
+      (facade/approve-translation!
+       {:evidence-store evidence-store
+        :clock (fn [] (.toISOString (js/Date.)))}
+       scope
+       decoded))
     ;; Approval evidence that does not survive a restart is worse than none: the
     ;; gate would admit a publication today and block it tomorrow.
+    (throw (ex-info "translation evidence persistence is not configured"
+                    {:status 503
+                    :code "translation_evidence_unavailable"}))))
+
+(defn- ^:async reviewable!
+  [config ctx]
+  (if-let [evidence-store (registry/current)]
+    (let [scope (review-scope config ctx)
+          {:keys [index roots authored]}
+          (await (ensure-contract-receipts! config evidence-store scope))
+          result (await
+                  (facade/reviewable-translations!
+                   {:evidence-store evidence-store
+                    :publication-index index}
+                   scope))
+          reviews (await
+                   (p/all
+                    (mapv #(hydrate-authored-review! index roots authored %)
+                          (:reviews result))))]
+      {:reviews (vec reviews)})
     (throw (ex-info "translation evidence persistence is not configured"
                     {:status 503
                      :code "translation_evidence_unavailable"}))))
@@ -191,8 +265,34 @@
           (fastify/log-unclassified-failure! "translation-review" err))
         (fastify/send-json! reply status (error-body/error-body err status))))))
 
+(defn- ^:async send-reviewable!
+  [reply operation]
+  (try
+    (fastify/send-json! reply 200
+                        (resource-identity/encode-wire-values (await (operation))))
+    (catch :default err
+      (let [status (error-status err)]
+        (when-not (error-body/classified? status)
+          (fastify/log-unclassified-failure! "translation-review" err))
+        (fastify/send-json! reply status (error-body/error-body err status))))))
+
 (defn register-translation-review-routes!
   [app runtime config handlers]
+  (fastify/route!
+   app
+   {:method "GET"
+    :url "/api/publications/translations/reviews"
+    :handler
+    (^:async fn [request reply]
+      (await
+       ((:with-request-context! handlers) runtime request reply
+        (^:async fn [ctx]
+          (await
+           (send-reviewable!
+            reply
+            (fn []
+              ((:ensure-permission! handlers) ctx read-permission)
+              (reviewable! config ctx))))))))})
   (fastify/route!
    app
    {:method "POST"

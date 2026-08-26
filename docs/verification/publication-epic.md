@@ -206,6 +206,81 @@ over, all of them at the boundary the tests fake:
    not been re-run against a live backend since the fix, so treat it as derived
    from the code rather than observed.
 
+## The translation producer (§8b)
+
+The section added with the agent-actor composition, and the one worth reading
+before the others, because its absence is what made everything else able to pass
+while the site stayed monolingual.
+
+### What it asserts, and why that and not something else
+
+A translation only happens if four contracts line up. Three already existed and
+had never been connected:
+
+| Contract | What it supplies | Status before |
+|---|---|---|
+| `contracts/roles/translator.edn` | the role, and its `:cap/translation` | existed |
+| `contracts/capabilities/cap_translation.edn` | the tool, `save_translation` | existed |
+| `contracts/agents/publication_translator.edn` | an agent holding that role | **missing** |
+| `contracts/namespaces/publication.edn` | the trigger that runs it | **missing** |
+
+So §8b checks the *producer*, not the plumbing: a trigger subscribing to
+`publication/translation-needed`, enabled, whose action starts an agent session
+rather than posting a batch, naming a contract that **resolves in the deployed
+catalog**. The last part is the one that earns its keep — a contract file being
+present on disk proves nothing, because it only starts a session if it resolves
+through role, capability and actor scope, and the catalog is the one view that
+has done all three.
+
+The role and capability halves are checked on disk instead, because they are
+contract data rather than runtime state, and losing either would resolve the
+agent and then hand it no way to submit anything.
+
+### Why an agent and not the worker
+
+`knowledge-ops-translation-mt-pipeline` landed a translation worker, and it runs
+out of `ingestion/`. The production compose stack for this site builds `proxx`,
+`knoxx` and `caddy` — nothing else. Dispatching to the worker there queued
+batches nothing would ever pick up, which is why
+`infra.routes.translation-dispatch/default-runner` is `:agent` and why
+`KNOXX_TRANSLATION_RUNNER: agent` is stated explicitly in the compose file even
+though it is also the code default. Set `KNOXX_TRANSLATION_RUNNER=worker` where
+the ingestion worker really is deployed and owns the documents.
+
+### What the composition did NOT invent
+
+Worth knowing while reviewing, because the diff is smaller than it looks:
+
+- **No new evidence model.** The sink hands a finished run to
+  `infra.translation-dispatch/resolve-batch-report!` — the same completion path
+  the worker's status callback goes through. The drift guard, the receipt
+  minting, the claim settlement and the refusal law all stay there.
+- **No new pinning mechanism.** `save_translation` has read
+  `:resourcePolicies` for `document_id`, `garden_id`, `source_lang`,
+  `target_lang` and `project` since long before this. What was missing was one
+  hop: `:actions/start-agent-session` never forwarded resource policies. It does
+  now, and only for a trigger that opts in with `:resource-policies-from-event`.
+- **No new identity scheme.** The run id is carried in the session's resource
+  policies, not imposed on the runtime's own session ids.
+
+### One thing it did strengthen
+
+The source document travels *on the event*, embedded in the brief. The worker is
+handed a document id and fetches its own input, so
+`law.translation-dispatch/source-drift-refusal` can only compare repository
+digests before and after and can never establish what was actually translated —
+a limitation recorded on `knoxx-translation-work-dispatch`. Handed the bytes the
+claim was taken for, an agent translates the dispatched revision by
+construction, and the drift check becomes a redundant second one rather than the
+only one.
+
+The cost is a bound: `law.translation-agent/max-brief-chars`. An oversize
+document is **refused at emit time, never truncated** — a truncated source would
+be translated in full by an agent with no way to know it read a fragment, and
+the receipt would then attest that the whole revision was translated.
+
+---
+
 ## Known gap, surfaced deliberately
 
 `law/publication_surface.cljs:74` declares `retired-authority-paths` as paths
@@ -251,3 +326,6 @@ PR against that repo, not this one.
 | §5/§6 return 200 instead of 409 | The facade is reading deduped/filtered records again — the exact regression those sections exist to catch |
 | `fixture directory already exists` | A previous run was killed; `rm -rf contracts/_verify` and retry |
 | `agent-browser cannot launch a browser` | `agent-browser install --with-deps` |
+| §8b: `a trigger subscribes to publication/translation-needed` fails | `contracts/namespaces/publication.edn` is absent from the contract root the live backend loaded — in production that root is `open-hax/services`' `contracts/knoxx`, not this repo's `contracts/` |
+| §8b: the trigger resolves but the agent does not | the agent contract is present but its actor, role or capability does not resolve; `GET /api/knoxx/agents/catalog` lists what did |
+| A translation session runs but every `save_translation` is refused | the trigger is missing `:resource-policies-from-event`, so the session started unpinned and the sink has no claim to join |

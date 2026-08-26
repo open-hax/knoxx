@@ -21,6 +21,18 @@
                     (js/encodeURIComponent target-lang) "/review")
                {:method "POST" :body payload}))
 
+(defn list-publication-reviews []
+  (api/request "/api/publications/translations/reviews"))
+
+(defn approve-publication-translation [payload]
+  (api/request "/api/publications/translations/approvals"
+               {:method "POST" :body payload}))
+
+(defn reconcile-publication [publication-id]
+  (api/request "/api/publications/reconcile"
+               {:method "POST"
+                :body {:publicationId publication-id}}))
+
 (defn submit-label [segment-id payload]
   (api/request (str "/api/translations/segments/"
                     (js/encodeURIComponent segment-id) "/labels")
