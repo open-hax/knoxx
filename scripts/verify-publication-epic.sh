@@ -179,6 +179,18 @@ fi
 if body_of "$probe" | jq -e --arg id "$DOC_ID" '[.documents[].document.id] | index($id)' >/dev/null 2>&1; then
   pass "seeded fixture is visible to the running backend"
 else
+  # A blocker naming the fixture file is PROOF the backend read it. Reporting
+  # that as "cannot see it" is what sent a reader to check pm2 while the real
+  # answer — the fixture no longer satisfies a schema — sat in the response.
+  if body_of "$probe" | jq -e --arg d "$FIXTURE_DIR" \
+       '[.error.blockers[]? | select(.["file-path"] | tostring | startswith($d))] | length > 0' \
+       >/dev/null 2>&1; then
+    printf '%s   FAIL%s  the backend READ the fixture and rejected it\n' "$C_RED" "$C_RESET"
+    note "This is a fixture/schema drift, not a wrong checkout. The blocker names the file and its kind:"
+    note "$(body_of "$probe" | jq -c '.error.blockers' 2>/dev/null | head -c 300)"
+    note "Update scripts/lib/publication-fixture.sh to satisfy the current law.publication shapes."
+    die "the verification fixture is stale"
+  fi
   printf '%s   FAIL%s  the running backend cannot see %s\n' "$C_RED" "$C_RESET" "${FIXTURE_DIR#$REPO_ROOT/}"
   note "It is probably serving a different checkout. Check: pm2 describe knoxx-backend | grep cwd"
   note "Response was: $(body_of "$probe" | head -c 300)"
@@ -309,7 +321,7 @@ sleep 1
 resp="$(http GET "/api/publications/documents" auth)"
 expect_status "a schema-invalid resource makes the projection fail closed" "409" "$resp"
 expect_jq "and it says WHICH resource was rejected" \
-  '(.detail.blockers // .error.blockers // []) | length > 0' "$resp"
+  '(.error.blockers // .detail.blockers // []) | length > 0' "$resp"
 
 note "the failure mode being prevented: the loader drops an invalid record, so"
 note "without this the projection would 200 with the intent silently absent."
@@ -412,9 +424,13 @@ step "8b. the translation producer — an agent actor, not a worker"
 
 response="$(http GET /api/admin/config/events auth)"
 if expect_status "the event runtime surface answers an authorized caller" "200" "$response"; then
+  # Matched on `.id`, not `.events`: `encode-wire-values` renders an event
+  # keyword with `name`, so :publication/translation-needed reaches the wire as
+  # "translation-needed" and the namespace is only recoverable from the id.
   trigger="$(body_of "$response" | jq -c '
     [.runtime.triggers[]?
-     | select((.events // []) | map(tostring) | any(test("publication/translation-needed")))]
+     | select(((.id // "") | tostring | test("translation-needed"))
+              or (((.events // []) | map(tostring) | any(test("translation-needed")))))]
     | first // empty' 2>/dev/null)"
 
   if [ -z "$trigger" ] || [ "$trigger" = "null" ]; then
@@ -430,8 +446,9 @@ if expect_status "the event runtime surface answers an authorized caller" "200" 
       fail "that trigger is enabled" "$trigger"
     fi
 
-    if [ "$(printf '%s' "$trigger" | jq -r '.action')" = "actions/start-agent-session" ] \
-       || [ "$(printf '%s' "$trigger" | jq -r '.action')" = ":actions/start-agent-session" ]; then
+    # The wire renders :actions/start-agent-session with `name`, so the
+    # namespace is gone by the time it gets here. Match the tail.
+    if [ "$(printf '%s' "$trigger" | jq -r '.action')" = "start-agent-session" ]; then
       pass "its action starts an agent session, rather than posting to a worker"
     else
       fail "its action starts an agent session" "$(printf '%s' "$trigger" | jq -r '.action')"
@@ -446,7 +463,13 @@ if expect_status "the event runtime surface answers an authorized caller" "200" 
       # The file being on disk proves nothing. A contract only starts a session
       # if it resolves through role, capability and actor scope, and the catalog
       # is the one view that has done all three.
-      response="$(http GET /api/knoxx/agents/catalog auth)"
+      #
+      # Asked AS THE TRIGGER'"'"'S LISTENER, because the catalog is actor-scoped: the
+      # default actor is chat_primary and the translator belongs to pi, so a bare
+      # lookup reports "does not resolve" for a contract that resolves fine for
+      # the actor the session actually runs as.
+      listener="$(printf '%s' "$trigger" | jq -r '.listener // empty')"
+      response="$(http GET "/api/knoxx/agents/catalog${listener:+?actorId=$listener}" auth)"
       if expect_status "the agent catalog answers an authorized caller" "200" "$response"; then
         if printf '%s' "$(body_of "$response")" \
              | jq -e --arg id "$agent_id" '[.agents[]? | select((.id // "") == $id)] | length > 0' \
