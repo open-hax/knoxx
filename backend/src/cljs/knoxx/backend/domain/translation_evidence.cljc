@@ -17,10 +17,10 @@
   while the store feeding it is not. It is the first portable `domain.*`
   namespace in this backend; its requires are laws only, so it loads anywhere.
 
-  This card supplies the *translation* half. `:approved?` is
-  `knoxx-translation-approval-surface`, and `gate-facts` deliberately returns a
-  partial map rather than defaulting the half it does not own — see its
-  docstring."
+  Both evidential predicates live here now, and `approved?` is a *join* rather
+  than a lookup: an approval only counts while it still names the translation
+  output the receipt currently holds. `gate-facts` still returns a partial map —
+  the two source-revision facts are owned elsewhere — see its docstring."
   (:require [knoxx.backend.law.translation-evidence :as law]))
 
 (defn evidence-key
@@ -57,14 +57,40 @@
           {}
           receipts))
 
+(defn index-approvals
+  "Index approvals by `[document garden locale revision]`.
+
+   Validated on the way in for the same reason as receipts. Unlike receipts,
+   *all* approvals for a key are retained rather than collapsed to the newest:
+   whether an approval is current depends on the receipt it is joined against, and
+   discarding the older ones here would decide that question in the wrong place —
+   before the join, and without the receipt in hand.
+
+   Concretely: approve output A, re-translate to B, then re-translate to
+   something byte-identical to A. Keeping only the newest approval would have
+   discarded the one that legitimately matches."
+  [approvals]
+  (reduce (fn [index approval]
+            (let [checked (law/assert-approval! approval)]
+              (update index
+                      (evidence-key (:review/document checked)
+                                    (:review/garden checked)
+                                    (:review/locale checked)
+                                    (:review/revision checked))
+                      (fnil conj [])
+                      checked)))
+          {}
+          approvals))
+
 (defn evidence
   "The index a runtime loads once and then reads repeatedly.
 
    Order-insensitive: `index-receipts` resolves a re-translated source revision
    by comparing timestamps, so a store is free to return receipts in whatever
    order its query produced."
-  [{:keys [receipts]}]
-  {:receipts (index-receipts receipts)})
+  [{:keys [receipts approvals]}]
+  {:receipts (index-receipts receipts)
+   :approvals (index-approvals approvals)})
 
 (defn translated-revision?
   "Whether a completed translation exists for this document, target locale and
@@ -81,8 +107,32 @@
   [evidence document garden locale revision]
   (get-in evidence [:receipts (evidence-key document garden locale revision)]))
 
+(defn approved?
+  "Whether a *current* approval exists for this document, garden, target locale
+   and concrete source revision.
+
+   Both halves are required. Without a receipt there is nothing to approve, so an
+   approval alone is never enough; and an approval that does not name the
+   receipt's current output revision has been superseded by a re-translation and
+   stops counting. Neither case is an error — see
+   `law.translation-evidence/approval-current?`.
+
+   This is why `:approved?` cannot be a plain store lookup. The gate can only
+   tell it the source revision, and the source revision alone does not identify
+   which bytes were reviewed."
+  [evidence document garden locale revision]
+  (let [entry-key (evidence-key document garden locale revision)
+        receipt (get-in evidence [:receipts entry-key])]
+    (boolean
+     (and (some? receipt)
+          (some (fn [approval]
+                  (and (law/approval-matches? approval document garden locale revision)
+                       (law/approval-current? approval receipt)))
+                (get-in evidence [:approvals entry-key]))))))
+
 (defn gate-facts
-  "The `facts` entry this card owns, closed over loaded evidence.
+  "The two evidential `facts` entries this namespace owns, closed over loaded
+   evidence.
 
    Returned as a *partial* facts map. The gate also needs
    `:current-source-revision` and `:source-revision-superseded?`, which are
@@ -93,4 +143,6 @@
    admitted on evidence nobody produced."
   [evidence]
   {:translated-revision? (fn [document garden locale revision]
-                           (translated-revision? evidence document garden locale revision))})
+                           (translated-revision? evidence document garden locale revision))
+   :approved? (fn [document garden locale revision]
+                (approved? evidence document garden locale revision))})

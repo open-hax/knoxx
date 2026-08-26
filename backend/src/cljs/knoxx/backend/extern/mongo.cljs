@@ -7,6 +7,20 @@
    speak CLJS maps only."
   (:require [knoxx.backend.law.mongo :as law-mongo]))
 
+(defn collection
+  "The named collection handle on a native database handle.
+
+   Acquisition belongs here for the same reason every other driver call does:
+   `db` is an opaque JavaScript handle and `.collection` is a driver method on
+   it. A store reaching for that method itself would split MongoDB ownership
+   across two namespaces — this adapter owning reads, writes and indexes while
+   `infra.*` owned handle acquisition.
+
+   What comes back is another opaque handle, and it is only ever passed back
+   into this namespace's own functions."
+  [db collection-name]
+  (.collection db collection-name))
+
 (defn ^:async insert-one!
   "Insert one CLJS document into a native collection handle. Returns the doc."
   [collection-handle doc]

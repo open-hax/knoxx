@@ -49,8 +49,20 @@
   "Collection holding completed-translation receipts. Append-only."
   "knoxx_translation_receipts")
 
-(defn- dispatches-coll [db] (.collection db DISPATCHES_COLLECTION))
-(defn- receipts-coll [db] (.collection db RECEIPTS_COLLECTION))
+(def APPROVALS_COLLECTION
+  "Collection holding review approvals. One row per approved output, enforced by
+   a unique index rather than by a read-then-write."
+  "knoxx_translation_approvals")
+
+;; Acquired through the extern adapter rather than by calling `.collection` on
+;; the database handle here. `db` is an opaque JavaScript handle and
+;; `.collection` is a driver method on it, so reaching for it from `infra.*`
+;; would leave this namespace owning handle acquisition while `extern.mongo`
+;; owned every read, write and index built from the result — the split that
+;; adapter exists to prevent.
+(defn- dispatches-coll [db] (extern-mongo/collection db DISPATCHES_COLLECTION))
+(defn- receipts-coll [db] (extern-mongo/collection db RECEIPTS_COLLECTION))
+(defn- approvals-coll [db] (extern-mongo/collection db APPROVALS_COLLECTION))
 
 (defn ^:async setup-indexes!
   "Create required indexes. Idempotent.
@@ -66,7 +78,8 @@
    translation is dispatched twice."
   [db]
   (let [dispatches (dispatches-coll db)
-        receipts (receipts-coll db)]
+        receipts (receipts-coll db)
+        approvals (approvals-coll db)]
     (await (extern-mongo/ensure-index! dispatches [[:dispatch_key 1]] {:unique true}))
     ;; The join `dispatch-for-batch-document!` performs.
     (await (extern-mongo/ensure-index! dispatches [[:batch_id 1] [:document_wire_id 1]] {}))
@@ -76,6 +89,10 @@
                                         [:source_revision 1]] {}))
     ;; The scope every evidence read narrows by.
     (await (extern-mongo/ensure-index! receipts [[:org_id 1] [:project 1]] {}))
+    (await (extern-mongo/ensure-index! approvals [[:org_id 1] [:project 1]] {}))
+    ;; Unique, and for the same reason as dispatch_key: it is what makes
+    ;; recording an approval idempotent rather than append-once-per-click.
+    (await (extern-mongo/ensure-index! approvals [[:approval_key 1]] {:unique true}))
     true))
 
 ;; ── Codecs ─────────────────────────────────────────────────────────────────
@@ -304,6 +321,55 @@
                                            :document_wire_id document-wire-id
                                            :limit 1})))))
 
+(defn- approval-key
+  "The unique-index value for one approval.
+
+   Derived from `store/approval-identity` rather than restated, so durable and
+   in-memory uniqueness cannot disagree about what counts as the same approval.
+   `pr-str` keeps `:es` distinct from the string \"es\"."
+  [approval]
+  (pr-str (store/approval-identity approval)))
+
+(defn- encode-approval
+  [approval]
+  {:approval_key (approval-key approval)
+   :document (pr-str (:review/document approval))
+   :garden (pr-str (:review/garden approval))
+   :locale (name (:review/locale approval))
+   :revision (:review/revision approval)
+   :org_id (:review/org-id approval)
+   :project (scope-value (:review/project approval))
+   :approval_edn (pr-str approval)})
+
+(defn- decode-approval
+  [doc]
+  (when doc
+    (evidence-law/assert-approval! (edn/read-string (:approval_edn doc)))))
+
+(defn- ^:async claim-approval!
+  "Record `approval` unless its exact output is already approved.
+
+   The insert IS the check, exactly as in `claim-dispatch!`. Read-then-write would
+   let two reviewers clicking together both insert, leaving two records free to
+   disagree about who approved."
+  [db approval]
+  (let [{:keys [inserted?]}
+        (await (extern-mongo/insert-one-unique! (approvals-coll db)
+                                               (encode-approval approval)))]
+    (if inserted?
+      {:approval/status :recorded :approval approval}
+      {:approval/status :existing
+       :approval (decode-approval
+                  (first (await (extern-mongo/find-docs!
+                                 (approvals-coll db)
+                                 {:approval_key (approval-key approval)
+                                  :limit 1}))))})))
+
+(defn- ^:async read-approvals!
+  [db scope]
+  (mapv decode-approval
+        (await (extern-mongo/find-docs! (approvals-coll db) (scope-query scope)))))
+
 (defn- ^:async find-batch-only-dispatch!
   [db batch-id]
   (decode-dispatch
@@ -355,4 +421,10 @@
       (append-receipt! db (evidence-law/assert-receipt! receipt)))
 
     (completed-translations! [_ scope]
-      (read-receipts! db scope))))
+      (read-receipts! db scope))
+
+    (record-approval! [_ approval]
+      (claim-approval! db (evidence-law/assert-approval! approval)))
+
+    (approvals! [_ scope]
+      (read-approvals! db scope))))

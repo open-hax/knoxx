@@ -234,3 +234,225 @@
    already applies across the effect boundary."
   [receipt]
   (assert-valid! :translation/receipt CompletedTranslationReceipt receipt))
+
+;; ── Approval ───────────────────────────────────────────────────────────────
+
+(def Principal
+  "Who approved, as at least one durable identity.
+
+   Attribution that cannot be resolved back to a person is not attribution. A
+   principal carrying only blank strings would satisfy a shape made of optional
+   keys, so the presence rule is a law rather than a convention."
+  [:and
+   [:map
+    [:principal/user-id {:optional true} [:maybe :string]]
+    [:principal/user-email {:optional true} [:maybe :string]]
+    [:principal/membership-id {:optional true} [:maybe :string]]]
+   [:fn {:error/message "an approval principal requires at least one durable identity"}
+    (fn [principal]
+      (boolean (some nonblank-string?
+                     ((juxt :principal/user-id
+                            :principal/user-email
+                            :principal/membership-id)
+                      principal))))]])
+
+(def ApprovalRequest
+  "What a caller may submit.
+
+   No principal and no timestamp: both are attributed by the server from the
+   authenticated context and the clock, so a caller can neither claim to be
+   someone else nor backdate review evidence. No organization or project either —
+   those come from the receipt being approved, which is already scoped.
+
+   Closed, and that is load-bearing rather than tidy: an extra key on an approval
+   request is precisely the shape a caller would use to try to smuggle
+   `:review/principal` or `:review/at` past attribution."
+  [:map {:closed true}
+   [:review/document :qualified-keyword]
+   [:review/garden :qualified-keyword]
+   [:review/locale locale/Locale]
+   [:review/revision ConcreteRevision]
+   [:review/translation-revision ConcreteRevision]])
+
+(def Approval
+  "Immutable review evidence, in the vocabulary the gate already speaks.
+
+   `domain.publication-gate/review-satisfies-intent?` compares `:review/state`,
+   `:review/document`, `:review/locale` and `:review/revision`. Those four are
+   named identically here on purpose: the gate is not modified to accommodate
+   approval evidence, approval evidence is declared in the words the gate
+   already uses.
+
+   `:review/revision` is the concrete *source* revision, not the translated one.
+   That is what a publication intent resolves to and therefore what the gate can
+   ask about; the card's phrase 'concrete translated revision' reads the other
+   way and taken literally would produce approvals the gate could never match.
+   `:review/translation-revision` carries the produced output alongside, and is
+   the field the gate does not read — see `approval-current?`.
+
+   `:review/org-id` and `:review/project` are required for the same reason
+   `CompletedTranslationReceipt` carries them: the translation an approval
+   attests to exists in one tenant and one project, so review evidence that
+   named neither would be admissible everywhere. That lesson was learned the hard
+   way one card earlier.
+
+   `:review/garden` is required for the third instance of that same lesson. The
+   worker builds its prompt with `garden_id`, so the same document translated
+   into the same locale for two gardens is two different outputs — and a
+   garden-agnostic approval would let a reviewer who read one garden's bytes
+   admit publication of the other's. It is not carried as scope-that-happens-to-
+   travel: it is a coordinate of the receipt being approved, and it is taken from
+   that receipt rather than from the request."
+  [:map
+   [:review/state [:= :approved]]
+   [:review/document :qualified-keyword]
+   [:review/garden :qualified-keyword]
+   [:review/locale locale/Locale]
+   [:review/revision ConcreteRevision]
+   [:review/translation-revision ConcreteRevision]
+   [:review/org-id NonBlankString]
+   [:review/project {:optional true} [:maybe NonBlankString]]
+   [:review/principal Principal]
+   [:review/at Instant]])
+
+(def approval-refusal-types
+  "Every reason an approval request is refused.
+
+   Enumerated as data so an HTTP adapter maps refusal to status by lookup rather
+   than by re-deriving the classification from a message string, and so a new
+   refusal cannot be introduced without appearing here."
+  #{:translation-receipt-missing
+    :translation-document-mismatch
+    :translation-garden-mismatch
+    :translation-locale-mismatch
+    :translation-source-revision-mismatch
+    :translation-revision-mismatch})
+
+(def ApprovalRefusal
+  "A typed refusal. Both sides of a mismatch travel on it: told only that a
+   revision disagreed, a caller cannot see whether its own request or the
+   recorded translation was the stale one."
+  [:map
+   [:refusal/type (into [:enum] (sort approval-refusal-types))]
+   [:refusal/requested {:optional true} :any]
+   [:refusal/recorded {:optional true} :any]])
+
+(defn assert-approval-request!
+  "Validate a decoded approval request before any lookup or write."
+  [request]
+  (assert-valid! :translation-review/request ApprovalRequest request))
+
+(defn assert-approval!
+  "Validate approval evidence before it is persisted or returned, and again when
+   it is read back — a store is replaceable, so its output is untrusted input."
+  [approval]
+  (assert-valid! :translation-review/approval Approval approval))
+
+(defn approval-refusal
+  "Why `request` may not be approved against `receipt`, or nil when it may.
+
+   Data rather than a throw. The caller is an HTTP adapter that must answer with
+   a status and a body either way, and a refusal here is an ordinary outcome of a
+   well-formed request rather than an exceptional one.
+
+   A nil receipt is the first branch because every comparison below would
+   otherwise read fields off nothing and report a mismatch against nil, which
+   describes the wrong problem: there is no translation to approve, rather than a
+   translation that disagrees."
+  [request receipt]
+  (cond
+    (nil? receipt)
+    {:refusal/type :translation-receipt-missing
+     :refusal/requested (select-keys request [:review/document
+                                              :review/garden
+                                              :review/locale
+                                              :review/revision])}
+
+    (not= (:translation/document receipt) (:review/document request))
+    {:refusal/type :translation-document-mismatch
+     :refusal/requested (:review/document request)
+     :refusal/recorded (:translation/document receipt)}
+
+    (not= (:translation/garden receipt) (:review/garden request))
+    ;; Unreachable through the facade, which looks the receipt up by garden —
+    ;; and checked anyway, because this contract is also what a second caller
+    ;; would be validated against, and a garden mismatch is the one that admits
+    ;; bytes nobody read.
+    {:refusal/type :translation-garden-mismatch
+     :refusal/requested (:review/garden request)
+     :refusal/recorded (:translation/garden receipt)}
+
+    (not= (:translation/locale receipt) (:review/locale request))
+    {:refusal/type :translation-locale-mismatch
+     :refusal/requested (:review/locale request)
+     :refusal/recorded (:translation/locale receipt)}
+
+    (not= (:translation/source-revision receipt) (:review/revision request))
+    {:refusal/type :translation-source-revision-mismatch
+     :refusal/requested (:review/revision request)
+     :refusal/recorded (:translation/source-revision receipt)}
+
+    (not= (:translation/revision receipt) (:review/translation-revision request))
+    ;; The caller named a produced output that is not the current one. Accepting
+    ;; it would record review evidence for bytes the store no longer describes.
+    {:refusal/type :translation-revision-mismatch
+     :refusal/requested (:review/translation-revision request)
+     :refusal/recorded (:translation/revision receipt)}))
+
+(defn approve
+  "Build immutable approval evidence from a validated request, the completed
+   receipt it is recorded against, the acting principal, and a clock reading.
+
+   Pure: `at` is supplied rather than read. Every identity field is taken from
+   the *receipt* rather than from the request — including the tenant and project,
+   which the request never carries — so the persisted evidence describes what the
+   store actually holds. `approval-refusal` has already established that the two
+   agree on everything the request did name."
+  [_request receipt principal at]
+  (assert-approval!
+   (cond-> {:review/state :approved
+            :review/document (:translation/document receipt)
+            :review/garden (:translation/garden receipt)
+            :review/locale (:translation/locale receipt)
+            :review/revision (:translation/source-revision receipt)
+            :review/translation-revision (:translation/revision receipt)
+            :review/org-id (:translation/org-id receipt)
+            :review/principal principal
+            :review/at at}
+     (some? (:translation/project receipt))
+     (assoc :review/project (:translation/project receipt)))))
+
+(defn approval-matches?
+  "Whether `approval` is evidence about the document, garden, locale and
+   concrete source revision the gate is asking about.
+
+   The gate's own question restated as a predicate over one approval, so a fact
+   provider need not re-derive it. It deliberately does NOT consider
+   `:review/translation-revision` — see `approval-current?`."
+  [approval document garden locale revision]
+  (and (= :approved (:review/state approval))
+       (= document (:review/document approval))
+       (= garden (:review/garden approval))
+       (= locale (:review/locale approval))
+       (= revision (:review/revision approval))
+       true))
+
+(defn approval-current?
+  "Whether `approval` still describes the translation output `receipt` holds.
+
+   The gate asks `approved?` with a document, a locale and a concrete *source*
+   revision, which is all a publication intent can tell it. That triple is not
+   enough on its own: re-running a translation for the same source revision
+   produces new bytes under a new output revision, and an approval matching only
+   the triple would keep authorizing them.
+
+   So the fact provider joins the two facts, and this is the join condition. An
+   approval whose `:review/translation-revision` no longer matches the receipt's
+   `:translation/revision` is not deleted and not an error — it simply stops
+   being current, exactly as `domain.publication-gate` says a stale
+   translation's approval stops satisfying the new revision."
+  [approval receipt]
+  (and (some? receipt)
+       (= (:review/translation-revision approval)
+          (:translation/revision receipt))
+       true))
