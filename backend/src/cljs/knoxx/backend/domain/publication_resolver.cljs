@@ -46,8 +46,12 @@
   [:garden/id :garden/title :garden/status :garden/locales])
 
 (def publication-projection-keys
-  [:publication/id :publication/document :publication/garden :publication/locale
-   :publication/revision :publication/state :publication/path :translation/review])
+  ;; `:publication/target` is declared desired state (which adapter the intent
+  ;; asks for), so it projects — the reconciler resolves it through the target
+  ;; registry. Dropping it here made every loaded intent untargeted.
+  [:publication/id :publication/document :publication/garden :publication/target
+   :publication/locale :publication/revision :publication/state :publication/path
+   :translation/review])
 
 (defn canonicalize-document
   [resource]
