@@ -5,7 +5,8 @@
   principal, the timestamp and the tenant are all attributed by the server, and
   the only way to be sure of that is to try to send them."
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.extern.fastify.translation-review :as adapter]))
+            [knoxx.backend.extern.fastify.translation-review :as adapter]
+            [knoxx.backend.law.translation-evidence :as law]))
 
 (defn- request
   [body]
@@ -116,11 +117,10 @@
       (is (true? (:refused body)))
       (is (= :translation-revision-mismatch (:refusal/type (:refusal body))))))
 
-  (testing "every refusal type has a status chosen for it"
-    ;; A table rather than a cond, so a new refusal cannot be added without one.
-    (is (= (set (keys adapter/refusal-status))
-           #{:translation-receipt-missing
-             :translation-document-mismatch
-             :translation-locale-mismatch
-             :translation-source-revision-mismatch
-             :translation-revision-mismatch}))))
+  (testing "every refusal type the law can produce has a status chosen for it"
+    ;; Compared against `law/approval-refusal-types`, not against a second copy
+    ;; of the adapter's own keys. A restated list validates the table against
+    ;; itself: adding a refusal type to the law and forgetting the adapter left
+    ;; both this assertion and `refusal-status` unchanged and still agreeing,
+    ;; while the new type fell through `get`'s default to a status nobody chose.
+    (is (= law/approval-refusal-types (set (keys adapter/refusal-status))))))

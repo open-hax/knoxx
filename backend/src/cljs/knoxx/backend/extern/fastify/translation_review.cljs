@@ -39,14 +39,21 @@
 
    A table rather than a cond, so a new refusal type cannot be added without a
    status being chosen for it, and so classification is never re-derived from a
-   message string.
+   message string. Written out rather than derived from
+   `law/approval-refusal-types` with a default, because a default is exactly the
+   forcing function this table exists to be: it would let a new refusal reach
+   the wire on a status nobody picked. `translation_review_test` asserts the key
+   set equals law's, so the two cannot drift silently either.
 
    All 409. A missing translation is not a 404 — the request is well formed and
    the document exists, the system simply is not in a state where approving means
    anything yet. A mismatch is the same shape of problem: the caller is not wrong
-   about syntax, it disagrees with recorded fact."
+   about syntax, it disagrees with recorded fact. A garden mismatch is a mismatch
+   like the rest: the receipt is keyed by garden, so naming another one is a
+   disagreement with recorded fact rather than a malformed request."
   {:translation-receipt-missing 409
    :translation-document-mismatch 409
+   :translation-garden-mismatch 409
    :translation-locale-mismatch 409
    :translation-source-revision-mismatch 409
    :translation-revision-mismatch 409})
