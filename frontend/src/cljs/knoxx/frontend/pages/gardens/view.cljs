@@ -1,5 +1,12 @@
 (ns knoxx.frontend.pages.gardens.view
-  "Read-only review of deploy-owned Garden and publication contracts."
+  "Review of deploy-owned Garden and publication contracts, and the one action
+   a reviewer can take on them: demanding that a placement be reconciled.
+
+   Publishing lives here rather than on the translation page because the
+   translation page is built from translation receipts. A source-locale intent
+   has none — it needs no translation — so it never appears there, and until
+   this action existed it had no route to publication through any UI at all.
+   Its bytes were deployed, valid, and unreachable."
   (:require [helix.core :refer [$ defnc]]
             [helix.hooks :as hooks]
             [helix.dom :as d]
@@ -35,7 +42,7 @@
                 :class-name "text-sm font-medium text-cyan-300 hover:text-cyan-200"}
                "Open published page ↗"))))
 
-(defnc garden-card [{:keys [garden]}]
+(defnc garden-card [{:keys [garden publishing on-publish]}]
   (let [{:keys [id title status locales placements]} garden]
     ($ ui/card {:variant :elevated :padding :md}
        (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
@@ -53,7 +60,10 @@
               (if (seq placements)
                 (d/ul {:class-name "space-y-2"}
                       (for [placement placements]
-                        ($ placement-row {:key (:id placement) :placement placement})))
+                        ($ placement-row {:key (:id placement)
+                                          :placement placement
+                                          :publishing publishing
+                                          :on-publish on-publish})))
                 (d/p {:class-name "text-sm text-slate-500"}
                      "No publication intents target this Garden."))))))
 
@@ -61,7 +71,11 @@
   (d/div {:class-name "rounded-lg border border-red-900/40 bg-red-950/30 p-4 text-sm text-red-300"}
          error))
 
-(defnc gardens-body [{:keys [deployment loading error]}]
+(defn- notice-banner [notice]
+  (d/div {:class-name "rounded-lg border border-emerald-900/40 bg-emerald-950/30 p-4 text-sm text-emerald-300"}
+         notice))
+
+(defnc gardens-body [{:keys [deployment loading error notice publishing on-publish]}]
   (let [{:keys [site-url gardens]} deployment]
     (d/div {:class-name "space-y-4"}
            (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
@@ -81,24 +95,50 @@
              ($ ui/card {:padding :md}
                 (d/div {:class-name "text-sm text-slate-500"} "Loading deployed Garden contracts...")))
            (when error (error-banner error))
+           (when notice (notice-banner notice))
            (when (and (not loading) (empty? gardens) (nil? error))
              ($ ui/card {:padding :lg}
                 (d/p {:class-name "text-center text-slate-500"}
                      "No deployed Garden contracts were found.")))
            (d/div {:class-name "grid gap-4"}
                   (for [garden gardens]
-                    ($ garden-card {:key (:id garden) :garden garden}))))))
+                    ($ garden-card {:key (:id garden)
+                                    :garden garden
+                                    :publishing publishing
+                                    :on-publish on-publish}))))))
 
 (defnc gardens-page []
   (let [[deployment set-deployment!] (hooks/use-state nil)
         [loading set-loading!] (hooks/use-state true)
-        [error set-error!] (hooks/use-state nil)]
-    (hooks/use-effect
-     []
-     (-> (api/load-deployment!)
-         (.then set-deployment!)
-         (.catch (fn [^js err]
-                   (set-error! (or (.-message err) (str err)))))
-         (.finally #(set-loading! false)))
-     nil)
-    ($ gardens-body {:deployment deployment :loading loading :error error})))
+        [error set-error!] (hooks/use-state nil)
+        [notice set-notice!] (hooks/use-state nil)
+        ;; The publication id in flight, or nil. One at a time: reconciliation
+        ;; writes an artifact and renames a shared manifest, and two concurrent
+        ;; demands from one reviewer is a race this UI has no reason to create.
+        [publishing set-publishing!] (hooks/use-state nil)
+        load! (fn [] (-> (api/load-deployment!)
+                         (.then set-deployment!)
+                         (.catch (fn [^js err]
+                                   (set-error! (or (.-message err) (str err)))))
+                         (.finally #(set-loading! false))))
+        on-publish
+        (fn [publication-id]
+          (set-publishing! publication-id)
+          (set-error! nil)
+          (set-notice! nil)
+          (-> (api/reconcile-publication! publication-id)
+              (.then (fn [receipt]
+                       (set-notice! (str publication-id " \u2014 "
+                                         (logic/receipt-summary receipt)))
+                       ;; Re-read: a publish can change what the projection
+                       ;; reports, and a stale card is how a reviewer comes to
+                       ;; believe a second click is needed.
+                       (load!)))
+              (.catch (fn [^js err]
+                        (set-error! (str publication-id " \u2014 "
+                                         (or (.-message err) (str err))))))
+              (.finally #(set-publishing! nil))))]
+    (hooks/use-effect [] (load!) nil)
+    ($ gardens-body {:deployment deployment :loading loading :error error
+                     :notice notice :publishing publishing
+                     :on-publish on-publish})))

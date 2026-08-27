@@ -77,23 +77,25 @@
 
 ;; ── segment review panel ─────────────────────────────────────────────────────
 
-(defnc label-score-fields [{:keys [form on-change]}]
+(defnc label-score-fields [{:keys [form on-change disabled]}]
   (d/div {:class-name "grid gap-3"}
          (for [field [:adequacy :fluency :terminology :risk]]
            (d/label {:key (name field) :class-name "block text-sm"}
                     (d/span {:class-name "mb-1 block font-medium capitalize text-slate-200"}
                             (name field))
                     (d/select {:value (get form field)
+                               :disabled (boolean disabled)
                                :on-change #(on-change (assoc form field (.. % -target -value)))
                                :class-name "w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-100"}
                               (for [v (logic/field-options field)]
                                 (d/option {:key v :value v} v)))))))
 
-(defn- label-textarea [label value placeholder rows on-change]
+(defn- label-textarea [label value placeholder rows on-change & [disabled]]
   (d/label {:class-name "block text-sm"}
            (d/span {:class-name "mb-1 block font-medium text-slate-200"} label)
            (d/textarea {:value (or value "")
                         :on-change on-change
+                        :disabled (boolean disabled)
                         :rows rows
                         :placeholder placeholder
                         :class-name "w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-100"})))
@@ -115,8 +117,21 @@
                            (when (:corrected_text label)
                              (d/span {:class-name "ml-1"} "· corrected"))))))))
 
+(defnc authored-review-notice []
+  (d/div {:class-name "rounded-lg border border-amber-900/40 bg-amber-950/20 p-3 text-xs text-amber-200"}
+         (d/p {:class-name "font-medium"} "Read-only: this translation was authored, not produced.")
+         (d/p {:class-name "mt-1 text-amber-200/80"}
+              "Its text comes from a locale file the Document contract names, so there is no
+               persisted segment behind it to label. Scoring writes to
+               /api/translations/segments/:id/labels, which resolves :id as a Mongo ObjectId
+               and refuses one that names no stored segment \u2014 so a submit here would fail
+               rather than record anything.")
+         (d/p {:class-name "mt-1 text-amber-200/80"}
+              "Approve the whole revision for publication above. Per-segment scoring returns
+               on its own for agent-produced translations, which carry real segments.")))
+
 (defnc segment-detail-panel
-  [{:keys [segment form saving on-change on-submit]}]
+  [{:keys [segment form saving on-change on-submit read-only?]}]
   (if-not segment
     (d/p {:class-name "text-sm text-slate-400"} "Click a segment annotation to review it.")
     (d/div {:class-name "space-y-4"}
@@ -124,22 +139,29 @@
                   (d/h4 {:class-name "text-sm font-semibold text-slate-200"}
                         (str "Segment " (:segment_index segment)))
                   ($ status-badge {:status (:status segment)}))
+           (when read-only? ($ authored-review-notice))
            (d/div {:class-name "space-y-3"}
                   (segment-source-block (str "Source (" (logic/lang-name (:source_lang segment)) ")")
                                         (:source_text segment))
                   (segment-source-block (str "Translation (" (logic/lang-name (:target_lang segment)) ")")
                                         (:translated_text segment)))
-           ($ label-score-fields {:form form :on-change on-change})
+           ($ label-score-fields {:form form :on-change on-change :disabled read-only?})
            (label-textarea "Corrected translation" (:corrected_text form)
                            "Optional. If you enter a correction and submit the review, this becomes the rendered translation."
-                           4 #(on-change (assoc form :corrected_text (.. % -target -value))))
+                           4 #(on-change (assoc form :corrected_text (.. % -target -value)))
+                           read-only?)
            (label-textarea "Editor notes" (:editor_notes form)
                            "Terminology caveats, tone issues, etc."
-                           2 #(on-change (assoc form :editor_notes (.. % -target -value))))
-           (d/div {:class-name "flex gap-2"}
-                  ($ ui/button {:disabled saving :on-click #(on-submit "approve")} "Submit review")
-                  ($ ui/button {:variant :secondary :disabled saving :on-click #(on-submit "needs_edit")} "Submit as in review")
-                  ($ ui/button {:variant :ghost :disabled saving :on-click #(on-submit "reject")} "Mark rejected"))
+                           2 #(on-change (assoc form :editor_notes (.. % -target -value)))
+                           read-only?)
+           ;; Omitted rather than disabled when read-only. A disabled Submit
+           ;; still asserts that submitting is the thing to do here and that
+           ;; something is temporarily in the way; neither is true.
+           (when-not read-only?
+             (d/div {:class-name "flex gap-2"}
+                    ($ ui/button {:disabled saving :on-click #(on-submit "approve")} "Submit review")
+                    ($ ui/button {:variant :secondary :disabled saving :on-click #(on-submit "needs_edit")} "Submit as in review")
+                    ($ ui/button {:variant :ghost :disabled saving :on-click #(on-submit "reject")} "Mark rejected")))
            ($ previous-labels {:labels (:labels segment)}))))
 
 ;; ── async runners ────────────────────────────────────────────────────────────
@@ -365,13 +387,14 @@
                                               :on-select #(set-selected doc)}))))))
 
 (defnc segment-review-pane
-  [{:keys [segment form saving set-form on-submit]}]
+  [{:keys [segment form saving set-form on-submit read-only?]}]
   (d/aside {:class-name "flex w-[440px] shrink-0 flex-col overflow-hidden"}
            (d/div {:class-name "shrink-0 border-b border-slate-800 px-4 py-3"}
                   (d/h3 {:class-name "text-sm font-semibold text-slate-200"} "Segment Review"))
            (d/div {:class-name "min-h-0 flex-1 overflow-auto p-4"}
                   ($ segment-detail-panel {:segment segment :form form :saving saving
-                                           :on-change set-form :on-submit on-submit}))))
+                                           :on-change set-form :on-submit on-submit
+                                           :read-only? read-only?}))))
 
 ;; ── page ─────────────────────────────────────────────────────────────────────
 
@@ -430,9 +453,14 @@
                                                          (run-document-review! selected overall setters reload-docs!))
                                             :on-publication-approval
                                             #(run-publication-approval! selected setters reload-docs!)}))
-                  (when-not (:authored_content selected)
-                    ($ segment-review-pane {:segment selected-segment :form form :saving saving
-                                            :set-form set-form!
-                                            :on-submit (fn [overall]
-                                                         (run-segment-submit! selected-segment form overall
-                                                                              selected setters reload-docs!))}))))))
+                  ;; Rendered for authored content too, read-only. Hiding it
+                  ;; entirely was why the review apparatus looked lost: every
+                  ;; document currently in the garden is authored, so the pane
+                  ;; never appeared and the page seemed to offer nothing but a
+                  ;; single approve button.
+                  ($ segment-review-pane {:segment selected-segment :form form :saving saving
+                                          :set-form set-form!
+                                          :read-only? (boolean (:authored_content selected))
+                                          :on-submit (fn [overall]
+                                                       (run-segment-submit! selected-segment form overall
+                                                                            selected setters reload-docs!))})))))
