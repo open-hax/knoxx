@@ -115,12 +115,25 @@
                            (when (:corrected_text label)
                              (d/span {:class-name "ml-1"} "· corrected"))))))))
 
-(defnc authored-review-notice []
+(defnc authored-review-notice
+  "Why this translation cannot be scored here, and what it is.
+
+   Two separate facts, deliberately not merged. The read-only REASON is that a
+   contract-backed translation has no persisted segment for a label to attach
+   to — identically true of authored and agent content. What the reviewer is
+   LOOKING AT is the other fact, and it matters: approving text a person wrote
+   and approving text a model produced are different acts."
+  [{:keys [content-source]}]
   (d/div {:class-name "rounded-lg border border-amber-900/40 bg-amber-950/20 p-3 text-xs text-amber-200"}
-         (d/p {:class-name "font-medium"} "Read-only: this translation was authored, not produced.")
+         (d/p {:class-name "font-medium"}
+              (case content-source
+                "agent" "Read-only: produced by the translation agent."
+                "authored-contract" "Read-only: authored by hand, not produced."
+                "Read-only: contract-backed translation."))
          (d/p {:class-name "mt-1 text-amber-200/80"}
-              "Its text comes from a locale file the Document contract names, so there is no
-               persisted segment behind it to label. Scoring writes to
+              "Its unit of content is a whole file, so there is no persisted segment behind
+               it to label \u2014 agent submissions are refused a segment index other than 0,
+               and authored locale files were never segmented at all. Scoring writes to
                /api/translations/segments/:id/labels, which resolves :id as a Mongo ObjectId
                and refuses one that names no stored segment \u2014 so a submit here would fail
                rather than record anything.")
@@ -133,7 +146,7 @@
                revision above.")))
 
 (defnc segment-detail-panel
-  [{:keys [segment form saving on-change on-submit read-only?]}]
+  [{:keys [segment form saving on-change on-submit read-only? content-source]}]
   (if-not segment
     (d/p {:class-name "text-sm text-slate-400"} "Click a segment annotation to review it.")
     (d/div {:class-name "space-y-4"}
@@ -141,7 +154,7 @@
                   (d/h4 {:class-name "text-sm font-semibold text-slate-200"}
                         (str "Segment " (:segment_index segment)))
                   ($ status-badge {:status (:status segment)}))
-           (when read-only? ($ authored-review-notice))
+           (when read-only? ($ authored-review-notice {:content-source content-source}))
            (d/div {:class-name "space-y-3"}
                   (segment-source-block (str "Source (" (logic/lang-name (:source_lang segment)) ")")
                                         (:source_text segment))
@@ -215,7 +228,7 @@
 (defn- run-load-detail! [selected {:keys [set-detail-loading! set-detail!
                                           set-seg-idx! set-form! set-error!]}]
   (set-detail-loading! true)
-  (-> (if (:authored_content selected)
+  (-> (if (:contract_content selected)
         (js/Promise.resolve (logic/authored-detail selected))
         (api/get-document (:document_id selected) (:target_lang selected)))
       (.then (fn [detail]
@@ -359,7 +372,7 @@
                            (d/span (str "· " (get-in detail [:summary :total_segments]) " segments"))
                            ($ status-badge {:status (get-in detail [:summary :overall_status])})))
                    (d/div {:class-name "flex gap-2"}
-                          (when-not (:authored_content selected)
+                          (when-not (:contract_content selected)
                             ($ ui/button {:size :sm :disabled saving :on-click #(on-review "approve")} "Approve All"))
                           (when-let [review (:publication_review selected)]
                             (if (:approved review)
@@ -368,9 +381,9 @@
                               ($ ui/button {:size :sm :variant :primary :disabled saving
                                             :on-click on-publication-approval}
                                  "Approve for publication")))
-                          (when-not (:authored_content selected)
+                          (when-not (:contract_content selected)
                             ($ ui/button {:size :sm :variant :secondary :disabled saving :on-click #(on-review "needs_edit")} "Needs Edit"))
-                          (when-not (:authored_content selected)
+                          (when-not (:contract_content selected)
                             ($ ui/button {:size :sm :variant :ghost :disabled saving :on-click #(on-review "reject")} "Reject All"))))
             ($ progress-bar {:approved (get-in detail [:summary :approved])
                              :total (get-in detail [:summary :total_segments])}))
@@ -398,14 +411,15 @@
                                               :on-select #(set-selected doc)}))))))
 
 (defnc segment-review-pane
-  [{:keys [segment form saving set-form on-submit read-only?]}]
+  [{:keys [segment form saving set-form on-submit read-only? content-source]}]
   (d/aside {:class-name "flex w-[440px] shrink-0 flex-col overflow-hidden"}
            (d/div {:class-name "shrink-0 border-b border-slate-800 px-4 py-3"}
                   (d/h3 {:class-name "text-sm font-semibold text-slate-200"} "Segment Review"))
            (d/div {:class-name "min-h-0 flex-1 overflow-auto p-4"}
                   ($ segment-detail-panel {:segment segment :form form :saving saving
                                            :on-change set-form :on-submit on-submit
-                                           :read-only? read-only?}))))
+                                           :read-only? read-only?
+                                           :content-source content-source}))))
 
 ;; ── page ─────────────────────────────────────────────────────────────────────
 
@@ -471,7 +485,8 @@
                   ;; single approve button.
                   ($ segment-review-pane {:segment selected-segment :form form :saving saving
                                           :set-form set-form!
-                                          :read-only? (boolean (:authored_content selected))
+                                          :read-only? (boolean (:contract_content selected))
+                                          :content-source (:content_source selected)
                                           :on-submit (fn [overall]
                                                        (run-segment-submit! selected-segment form overall
                                                                             selected setters reload-docs!))})))))
