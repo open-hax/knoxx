@@ -424,14 +424,16 @@ step "8b. the translation producer — an agent actor, not a worker"
 
 response="$(http GET /api/admin/config/events auth)"
 if expect_status "the event runtime surface answers an authorized caller" "200" "$response"; then
-  # Matched on `.id`, not `.events`: `encode-wire-values` renders an event
-  # keyword with `name`, so :publication/translation-needed reaches the wire as
-  # "translation-needed" and the namespace is only recoverable from the id.
-  trigger="$(body_of "$response" | jq -c '
-    [.runtime.triggers[]?
-     | select(((.id // "") | tostring | test("translation-needed"))
-              or (((.events // []) | map(tostring) | any(test("translation-needed")))))]
-    | first // empty' 2>/dev/null)"
+  # Selected by EXACT id. `encode-wire-values` renders an event keyword with
+  # `name`, so :publication/translation-needed reaches the wire as
+  # "translation-needed" and the namespace survives only on `.id` — which is why
+  # `.id` is the field to compare, and why it is compared with `==`.
+  #
+  # A substring match would take `first` of anything whose id merely contains
+  # the phrase, and that trigger's enabled/agent/listener would then satisfy
+  # every assertion below while the publication trigger went unchecked.
+  trigger="$(body_of "$response" | jq -c \
+    '[.runtime.triggers[]? | select((.id // "") == "publication/translation-needed")] | first // empty' 2>/dev/null)"
 
   if [ -z "$trigger" ] || [ "$trigger" = "null" ]; then
     fail "a trigger subscribes to publication/translation-needed" \
