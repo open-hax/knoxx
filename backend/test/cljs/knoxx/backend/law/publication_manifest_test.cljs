@@ -14,7 +14,8 @@
    :publication/state :published
    :publication/path "/es/notes/hello"
    :translation/review :required
-   :document/source-locale :en})
+   :document/source-locale :en
+   :document/title "Probe"})
 
 (def ^:private artifact
   {:artifact/content "<!doctype html><p>Hola</p>"
@@ -64,6 +65,26 @@
                     (str/split #"/"))))))
 
 ;; ── routes ─────────────────────────────────────────────────────────────────
+
+(deftest route-carries-the-document-title
+  (testing "`:route/title` is what a reader's listing renders. The contract has
+            always declared the key and nothing populated it, so every
+            published route listed as untitled."
+    (is (= "Probe" (:route/title (manifest/route-for-artifact intent artifact)))))
+
+  (testing "omitted rather than blank when the document has no usable title —
+            a reader falls back to the document id, which is a worse label than
+            a real title and a better one than an empty string"
+    (doseq [empty-ish [nil "" "   "]]
+      (is (not (contains? (manifest/route-for-artifact
+                           (assoc intent :document/title empty-ish) artifact)
+                          :route/title))
+          (str "a title of " (pr-str empty-ish) " must not reach the manifest"))))
+
+  (testing "a titled route still satisfies the manifest contract"
+    (is (some? (manifest/assert-manifest!
+                (manifest/upsert-route (manifest/empty-manifest)
+                                       (manifest/route-for-artifact intent artifact)))))))
 
 (deftest route-carries-artifact-values-verbatim
   (let [route (manifest/route-for-artifact intent artifact)]

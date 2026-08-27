@@ -195,16 +195,28 @@
 
     `:route/media-type` and `:route/encoding` are copied VERBATIM from the
     validated artifact — no derivation, no defaulting. `:route/artifact` is
-    the relative artifact PATH, never the artifact value."
+    the relative artifact PATH, never the artifact value.
+
+    `:route/title` comes from the hydrated intent's `:document/title`, which
+    `law.publication/hydrate-publication-intent` copies off the referenced
+    Document after validating it. It is what a reader's listing renders; the
+    contract has always declared the key optional and nothing populated it, so
+    every published route listed as untitled."
   [intent artifact]
-  {:route/path (:publication/path intent)
+  (cond-> {:route/path (:publication/path intent)
    :route/locale (:publication/locale intent)
    :route/document (document-path-segment (:publication/document intent))
    :route/revision (:artifact/revision artifact)
    :route/artifact (artifact-relative-path intent artifact)
    :route/media-type (:artifact/media-type artifact)
    :route/encoding (:artifact/encoding artifact)
-   :publication/id (:publication/id intent)})
+   :publication/id (:publication/id intent)}
+
+    ;; Optional, and omitted rather than blank. A reader's listing falls back to
+    ;; the document id when there is no title, which is a worse label than a
+    ;; real one and a better one than an empty string.
+    (nonblank-string? (:document/title intent))
+    (assoc :route/title (:document/title intent))))
 
 (defn find-route
   "The route materialized for `publication-id`, or nil. Keyed on publication
