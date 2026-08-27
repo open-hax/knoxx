@@ -199,11 +199,12 @@
 
 ;; ── Registration ───────────────────────────────────────────────────────────
 
-(deftest registers-list-and-document-routes
+(deftest registers-document-and-garden-routes
   (let [routes (registered-routes {})]
-    (is (= 2 (count routes)))
+    (is (= 3 (count routes)))
     (is (some? (route-for routes "/api/publications/documents")))
     (is (some? (route-for routes "/api/publications/documents/:documentId")))
+    (is (some? (route-for routes "/api/publications/gardens")))
     (testing "no legacy publishing-backend path is registered"
       (let [legacy-marker (str "open" "planner")]
         (is (not (str/includes? (str/lower-case (pr-str routes)) legacy-marker)))))))
@@ -426,4 +427,3 @@
       (let [body (js->clj (:body @captured) :keywordize-keys true)]
         (is (= {:detail error-body/opaque-detail} body))
         (is (not (str/includes? (pr-str body) "secret.edn")))))))
-

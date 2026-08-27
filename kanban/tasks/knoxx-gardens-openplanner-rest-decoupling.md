@@ -1,14 +1,15 @@
 ---
-uuid: knoxx-gardens-openplanner-rest-decoupling
-title: Gardens — Decouple Legacy OpenPlanner REST Transport
-status: ready
-priority: P1
-points: 3
+uuid: "knoxx-gardens-openplanner-rest-decoupling"
+title: "Gardens — Decouple Legacy OpenPlanner REST Transport"
+status: "in_progress"
+priority: "P1"
+points: "3"
 labels:
   - tasks
   - publication
   - gardens
   - has-parent
+write-id: "1787759429714-0.pjnl4gjhlui9btdsl5"
 ---
 
 # Gardens — Decouple Legacy OpenPlanner REST Transport

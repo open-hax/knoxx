@@ -30,7 +30,9 @@
    through `extern.fastify`; no native object crosses into the runtime."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.publication-reconciler :as reconciler]
+            [knoxx.backend.infra.publication-runtime :as production]
             [knoxx.backend.infra.publication-target-memory :as memory]
             [knoxx.backend.infra.publication-target-registry :as registry]
             [knoxx.backend.infra.publication-target-static-site :as static-site]
@@ -81,13 +83,15 @@
 ;; ── Reconciler construction ────────────────────────────────────────────────
 
 (defonce ^:private runtimes* (atom {}))
+(defonce ^:private production-journals* (atom {}))
 
 (defn reset-cached-runtimes!
   "Forget every constructed reconciler. Test support: construction is memoized
    per config so idempotency reservations and the receipt journal survive
    across requests, and a test needs a clean memo."
   []
-  (reset! runtimes* {}))
+  (reset! runtimes* {})
+  (reset! production-journals* {}))
 
 (defn- build-runtime
   "Construct the reconciler and its default journal one config spec describes.
@@ -122,6 +126,28 @@
         (let [built (build-runtime config spec)]
           (swap! runtimes* assoc config built)
           built))))
+
+(defn- production-scope
+  [config ctx]
+  (let [org-id (some-> (authz/ctx-org-id ctx) str not-empty)]
+    (when-not org-id
+      (throw (ex-info "publication reconciliation requires an organization context"
+                      {:status 403 :code "reconciliation_context_required"})))
+    {:org-id org-id
+     :project (some-> (:session-project-name config) str not-empty)}))
+
+(defn- production-journal
+  [scope]
+  (or (get @production-journals* scope)
+      (let [journal (reconciler/make-receipt-journal)]
+        (get (swap! production-journals*
+                    #(if (contains? % scope) % (assoc % scope journal)))
+             scope))))
+
+(defn- ^:async production-runtime!
+  [config ctx]
+  (let [scope (production-scope config ctx)]
+    (await (production/make-runtime! config scope (production-journal scope)))))
 
 ;; ── Responses ──────────────────────────────────────────────────────────────
 
@@ -161,22 +187,35 @@
 (defn- ^:async handle-reconcile!
   "Run one decoded trigger and answer with its correlated receipt. 503 when no
    reconciler is configured: the demand is lawful, the capability is absent."
-  [config request reply]
+  [config ctx request reply]
   (if-let [{:keys [reconciler]} (runtime-for config)]
     (await (send-result! reply
                          #(reconciler/reconcile!
                            reconciler
                            (decode-trigger (fastify/request-body request)))))
-    (fastify/send-json! reply 503
-                        {:detail "publication reconciliation is not configured"})))
+    (if (production/configured? config)
+      (await
+       (send-result!
+        reply
+        (^:async fn []
+          (let [{:keys [reconciler]} (await (production-runtime! config ctx))]
+            (await
+             (reconciler/reconcile!
+              reconciler
+              (decode-trigger (fastify/request-body request))))))))
+      (fastify/send-json! reply 503
+                          {:detail "publication reconciliation is not configured"}))))
 
 (defn- ^:async handle-receipts!
   "Answer with the receipt journal the configured reconciler has emitted into."
-  [config _request reply]
+  [config ctx _request reply]
   (if-let [{:keys [journal]} (runtime-for config)]
     (await (send-result! reply (fn [] {:receipts ((:receipts journal))})))
-    (fastify/send-json! reply 503
-                        {:detail "publication reconciliation is not configured"})))
+    (if (production/configured? config)
+      (let [journal (production-journal (production-scope config ctx))]
+        (await (send-result! reply (fn [] {:receipts ((:receipts journal))}))))
+      (fastify/send-json! reply 503
+                          {:detail "publication reconciliation is not configured"}))))
 
 ;; ── Registration ───────────────────────────────────────────────────────────
 
@@ -195,7 +234,7 @@
               runtime request reply
               (^:async fn [ctx]
                 (ensure-permission! ctx reconcile-permission)
-                (await (handle-reconcile! config request reply))))))})
+                (await (handle-reconcile! config ctx request reply))))))})
   (fastify/route!
    app
    {:method "GET"
@@ -206,5 +245,5 @@
               runtime request reply
               (^:async fn [ctx]
                 (ensure-permission! ctx receipts-permission)
-                (await (handle-receipts! config request reply))))))})
+                (await (handle-receipts! config ctx request reply))))))})
   nil)

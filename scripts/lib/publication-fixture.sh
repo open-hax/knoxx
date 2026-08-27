@@ -36,9 +36,16 @@ fixture_write_valid() {
    :document/source-locale :en
    :document/source {:path "docs/verify-probe.md"}}
 
+  ;; :garden/locales is REQUIRED — `law.publication/Garden` has demanded a
+   ;; non-empty LocaleCatalog since #250 (publication-locale-catalog), and this
+   ;; fixture was not updated with it. A garden without one is dropped by the
+   ;; loader, which made step 0 abort with "the backend cannot see the fixture"
+   ;; and sent the reader off to check pm2. It must contain the source locale
+   ;; and every locale the fixture publishes into.
   {:garden/id :probe-garden
    :garden/title "Verification Garden"
-   :garden/status :active}
+   :garden/status :active
+   :garden/locales [:en :es :fr]}
 
   {:publication/id :probe-es
    :publication/document :probe

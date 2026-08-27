@@ -12,6 +12,8 @@
   coordinated change to another repository for no gain. See
   `infra.routes.translation` for where that report is resolved."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.event.dispatch :as event-dispatch]
+            [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -110,7 +112,15 @@
       ;; that recovery goes through the same source-drift check as the worker's
       ;; own report. Without the observer here, recovery would have no way to
       ;; verify what it was about to record.
-      :observe-source-revision (facade/source-revision-observer! config)}
+      :observe-source-revision (facade/source-revision-observer! config)
+      ;; The agent runner's two dependencies, assembled here rather than inside
+      ;; the facade — and not merely for the usual injectability reason. The
+      ;; event dispatcher's own require closure reaches the agent tool surface,
+      ;; which reaches the contract-backed `save_translation` sink, which reaches
+      ;; the facade: required from there this would be a cycle. Nothing requires
+      ;; this adapter, so the boundary is where it can be named.
+      :emit! (fn [event] (event-dispatch/dispatch! config event))
+      :digest-hex crypto/sha256-hex}
      (scope config ctx)
      (:document decoded))
     ;; No durable store means a dispatch whose revision binding would be lost.

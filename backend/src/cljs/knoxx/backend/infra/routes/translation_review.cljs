@@ -66,3 +66,63 @@
       (await (store/record-approval!
               evidence-store
               (law/approve checked receipt (:principal scope) (clock)))))))
+
+(defn- current-approval
+  [approvals receipt]
+  (some #(when (and (law/approval-matches?
+                     %
+                     (:translation/document receipt)
+                     (:translation/garden receipt)
+                     (:translation/locale receipt)
+                     (:translation/source-revision receipt))
+                    (law/approval-current? % receipt))
+           %)
+        approvals))
+
+(defn reviewable-wire
+  "Project one current translation receipt and its current approval status.
+
+   The revisions needed by the approval request cross this read boundary, so
+   the frontend never guesses them from mutable segment state."
+  [approvals publication-id receipt]
+  (let [approval (current-approval approvals receipt)]
+    (cond-> {:publication publication-id
+             :document (:translation/document receipt)
+             :garden (:translation/garden receipt)
+             :locale (:translation/locale receipt)
+             :revision (:translation/source-revision receipt)
+             :translation_revision (:translation/revision receipt)
+             :translated_at (:translation/at receipt)
+             :approved (boolean approval)}
+      approval (assoc :approved_at (:review/at approval)))))
+
+(defn ^:async reviewable-translations!
+  "Current completed translations in this tenant/project, with approval state."
+  [{:keys [evidence-store publication-index]} scope]
+  (let [query-scope (select-keys scope [:org-id :project])
+        receipts (->> (await (store/completed-translations! evidence-store query-scope))
+                      (filterv #(and (= (:org-id scope) (:translation/org-id %))
+                                     (= (:project scope) (:translation/project %))))
+                      evidence-domain/index-receipts
+                      vals)
+        approvals (->> (await (store/approvals! evidence-store query-scope))
+                       (filterv #(and (= (:org-id scope) (:review/org-id %))
+                                      (= (:project scope) (:review/project %)))))
+        publication-id-for
+        (fn [receipt]
+          (some (fn [intent]
+                  (when (and (= (:translation/document receipt)
+                                (:publication/document intent))
+                             (= (:translation/garden receipt)
+                                (:publication/garden intent))
+                             (= (:translation/locale receipt)
+                                (:publication/locale intent)))
+                    (:publication/id intent)))
+                (:publications publication-index)))]
+    {:reviews (->> receipts
+                   (keep #(when-let [publication-id (publication-id-for %)]
+                            (reviewable-wire approvals publication-id %)))
+                   (sort-by (juxt #(str (:document %))
+                                  #(str (:garden %))
+                                  #(str (:locale %))))
+                   vec)}))

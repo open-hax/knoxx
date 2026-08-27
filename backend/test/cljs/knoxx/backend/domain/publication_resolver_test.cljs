@@ -82,6 +82,16 @@
       (is (= :translation-pipeline
              (resolver/canonical-id nil :translation-pipeline))))))
 
+(deftest document-projection-preserves-authored-localized-content
+  (let [localized (assoc local-document
+                         :document/translations
+                         {:es {:path "docs/translation-pipeline.es.md"}})
+        index (resolver/publication-index [localized local-garden local-intent])]
+    (is (= {:es {:path "docs/translation-pipeline.es.md"}}
+           (get-in index
+                   [:documents :knoxx.docs/translation-pipeline
+                    :document/translations])))))
+
 ;; ── 2/3 canonical identity inside payloads ────────────────────────────────
 
 (deftest indexed-payload-identity-is-canonical

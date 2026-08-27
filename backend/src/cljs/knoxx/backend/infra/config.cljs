@@ -96,6 +96,20 @@
    ;; MongoDB + self-sourced embeddings); "rest" = force the fetch client.
    :openplanner-client-mode (env "KNOXX_OPENPLANNER_CLIENT_MODE" "mongo")})
 
+(defn- publication-config
+  []
+  {:publication-site-url
+   (env "KNOXX_PUBLICATION_SITE_URL" "http://localhost:4173")
+   :publication-content-root
+   (some-> (aget js/process.env "KNOXX_PUBLICATION_CONTENT_ROOT") str str/trim not-empty)
+   ;; Which producer a translation dispatch asks. See
+   ;; `infra.routes.translation-dispatch/runner-kinds` for the two, and
+   ;; `default-runner` there for why the agent is the default: this deployment
+   ;; does not run the `ingestion/` worker, so defaulting to it queued batches
+   ;; nothing would ever pick up.
+   :translation-runner
+   (some-> (aget js/process.env "KNOXX_TRANSLATION_RUNNER") str str/trim not-empty)})
+
 (defn- provider-config
   []
   {:proxx-base-url (env "PROXX_BASE_URL" "http://proxx:8789")
@@ -192,6 +206,7 @@
   (merge
    (base-server-config)
    (workspace-config)
+   (publication-config)
    (provider-config)
    (integration-config)
    (voice-config)

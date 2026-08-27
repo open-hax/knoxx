@@ -74,6 +74,40 @@
     (is (not (logic/still-listed? docs {:document_id "d1" :target_lang "de"}))
         "same doc id but different lang is a different review")))
 
+(deftest publication-review-joins-on-document-garden-and-locale
+  (let [review {:publication "publications/doc-1-es"
+                :document "docs/doc-1" :garden "gardens/promethean"
+                :locale "es" :revision "source-sha"
+                :translation_revision "translation-sha" :approved false}
+        [joined] (logic/attach-publication-reviews
+                  [{:document_id "docs/doc-1" :garden_id "gardens/promethean"
+                    :target_lang "es"}]
+                  [review])]
+    (is (= review (:publication_review joined)))
+    (is (= {:document "docs/doc-1" :garden "gardens/promethean"
+            :locale "es" :revision "source-sha"
+            :translation_revision "translation-sha"}
+           (logic/approval-request review)))))
+
+(deftest authored-contract-reviews-remain-visible-without-worker-documents
+  (let [review {:publication "publications/doc-1-es"
+                :document "docs/doc-1" :garden "gardens/promethean"
+                :locale "es" :source_locale "en"
+                :title "Promethean" :content_source "authored-contract"
+                :source_text "Hello\n\nGarden"
+                :translated_text "Hola\n\nJardín"
+                :revision "source-sha"
+                :translation_revision "translation-sha"
+                :approved false}
+        [document] (logic/attach-publication-reviews [] [review])
+        detail (logic/authored-detail document)]
+    (is (:authored_content document))
+    (is (= "Promethean" (:title document)))
+    (is (= "pending_review" (:overall_status document)))
+    (is (= 2 (count (:segments detail))))
+    (is (= "Hello" (get-in detail [:segments 0 :source_text])))
+    (is (= "Jardín" (get-in detail [:segments 1 :translated_text])))))
+
 (deftest sft-filename-contract
   (is (= "devel-es-translations.jsonl" (logic/sft-filename "devel" "es")))
   (is (= "devel-all-translations.jsonl" (logic/sft-filename "devel" ""))))

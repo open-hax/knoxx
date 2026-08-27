@@ -179,6 +179,18 @@ fi
 if body_of "$probe" | jq -e --arg id "$DOC_ID" '[.documents[].document.id] | index($id)' >/dev/null 2>&1; then
   pass "seeded fixture is visible to the running backend"
 else
+  # A blocker naming the fixture file is PROOF the backend read it. Reporting
+  # that as "cannot see it" is what sent a reader to check pm2 while the real
+  # answer — the fixture no longer satisfies a schema — sat in the response.
+  if body_of "$probe" | jq -e --arg d "$FIXTURE_DIR" \
+       '[.error.blockers[]? | select(.["file-path"] | tostring | startswith($d))] | length > 0' \
+       >/dev/null 2>&1; then
+    printf '%s   FAIL%s  the backend READ the fixture and rejected it\n' "$C_RED" "$C_RESET"
+    note "This is a fixture/schema drift, not a wrong checkout. The blocker names the file and its kind:"
+    note "$(body_of "$probe" | jq -c '.error.blockers' 2>/dev/null | head -c 300)"
+    note "Update scripts/lib/publication-fixture.sh to satisfy the current law.publication shapes."
+    die "the verification fixture is stale"
+  fi
   printf '%s   FAIL%s  the running backend cannot see %s\n' "$C_RED" "$C_RESET" "${FIXTURE_DIR#$REPO_ROOT/}"
   note "It is probably serving a different checkout. Check: pm2 describe knoxx-backend | grep cwd"
   note "Response was: $(body_of "$probe" | head -c 300)"
@@ -309,7 +321,7 @@ sleep 1
 resp="$(http GET "/api/publications/documents" auth)"
 expect_status "a schema-invalid resource makes the projection fail closed" "409" "$resp"
 expect_jq "and it says WHICH resource was rejected" \
-  '(.detail.blockers // .error.blockers // []) | length > 0' "$resp"
+  '(.error.blockers // .detail.blockers // []) | length > 0' "$resp"
 
 note "the failure mode being prevented: the loader drops an invalid record, so"
 note "without this the projection would 200 with the intent silently absent."
@@ -393,6 +405,140 @@ if [ -z "$hits" ]; then
 else
   fail "KNOXX_EXPECT_OPENPLANNER_REST still appears in shipped source" "$(printf '%s' "$hits" | head -3)"
 fi
+
+step "8b. the translation producer — an agent actor, not a worker"
+
+# The check whose absence caused the failure this section verifies is fixed.
+#
+# Every other publication surface in this script can pass while nothing is able
+# to produce a translation: the gate derives work, a claim is taken, and the
+# batch goes to an ingestion worker this deployment does not run. The four
+# localized intents then stay blocked forever and no surface says why. So what is
+# asserted here is the *producer*, not the plumbing.
+#
+# The composition is three existing contracts plus one that was missing:
+#   contracts/roles/translator.edn            the role      (already existed)
+#   contracts/capabilities/cap_translation.edn the tool      (already existed)
+#   contracts/namespaces/publication.edn       the trigger   (added)
+#   contracts/agents/publication_translator.edn the agent    (added)
+
+response="$(http GET /api/admin/config/events auth)"
+if expect_status "the event runtime surface answers an authorized caller" "200" "$response"; then
+  # Selected by EXACT id. `encode-wire-values` renders an event keyword with
+  # `name`, so :publication/translation-needed reaches the wire as
+  # "translation-needed" and the namespace survives only on `.id` — which is why
+  # `.id` is the field to compare, and why it is compared with `==`.
+  #
+  # A substring match would take `first` of anything whose id merely contains
+  # the phrase, and that trigger's enabled/agent/listener would then satisfy
+  # every assertion below while the publication trigger went unchecked.
+  trigger="$(body_of "$response" | jq -c \
+    '[.runtime.triggers[]? | select((.id // "") == "publication/translation-needed")] | first // empty' 2>/dev/null)"
+
+  if [ -z "$trigger" ] || [ "$trigger" = "null" ]; then
+    fail "a trigger subscribes to publication/translation-needed" \
+         "$(body_of "$response" | jq -c '[.runtime.triggers[]?.id]' 2>/dev/null)"
+    note "with no such trigger, every localized intent stays blocked and nothing reports why"
+  else
+    pass "a trigger subscribes to publication/translation-needed"
+
+    if [ "$(printf '%s' "$trigger" | jq -r '.enabled')" = "true" ]; then
+      pass "that trigger is enabled"
+    else
+      fail "that trigger is enabled" "$trigger"
+    fi
+
+    # The wire renders :actions/start-agent-session with `name`, so the
+    # namespace is gone by the time it gets here. Match the tail.
+    if [ "$(printf '%s' "$trigger" | jq -r '.action')" = "start-agent-session" ]; then
+      pass "its action starts an agent session, rather than posting to a worker"
+    else
+      fail "its action starts an agent session" "$(printf '%s' "$trigger" | jq -r '.action')"
+    fi
+
+    agent_id="$(printf '%s' "$trigger" | jq -r '.agent // empty')"
+    if [ -z "$agent_id" ]; then
+      fail "the trigger names an agent contract" "$trigger"
+    else
+      pass "the trigger names agent contract '${agent_id}'"
+
+      # The file being on disk proves nothing. A contract only starts a session
+      # if it resolves through role, capability and actor scope, and the catalog
+      # is the one view that has done all three.
+      #
+      # Asked AS THE TRIGGER'"'"'S LISTENER, because the catalog is actor-scoped: the
+      # default actor is chat_primary and the translator belongs to pi, so a bare
+      # lookup reports "does not resolve" for a contract that resolves fine for
+      # the actor the session actually runs as.
+      listener="$(printf '%s' "$trigger" | jq -r '.listener // empty')"
+      response="$(http GET "/api/knoxx/agents/catalog${listener:+?actorId=$listener}" auth)"
+      if expect_status "the agent catalog answers an authorized caller" "200" "$response"; then
+        if printf '%s' "$(body_of "$response")" \
+             | jq -e --arg id "$agent_id" '[.agents[]? | select((.id // "") == $id)] | length > 0' \
+             >/dev/null 2>&1; then
+          pass "'${agent_id}' resolves in the deployed catalog"
+        else
+          fail "'${agent_id}' resolves in the deployed catalog" \
+               "$(body_of "$response" | jq -c '[.agents[]?.id]' 2>/dev/null)"
+          note "a trigger naming an unresolvable contract fails exactly like having no trigger"
+        fi
+      fi
+    fi
+  fi
+fi
+
+# The role and capability halves are contract data, so they are checked on disk:
+# they are what makes `save_translation` reachable at all, and a deployment that
+# lost either would resolve the agent and then hand it no way to submit.
+if [ -f "${CONTRACTS_DIR}/roles/translator.edn" ]; then
+  pass "the translator role contract is present"
+else
+  fail "the translator role contract is present" "${CONTRACTS_DIR}/roles/translator.edn"
+fi
+
+if grep -q "save_translation" "${CONTRACTS_DIR}/capabilities/cap_translation.edn" 2>/dev/null; then
+  pass "cap/translation still grants save_translation"
+else
+  fail "cap/translation still grants save_translation" \
+       "${CONTRACTS_DIR}/capabilities/cap_translation.edn"
+fi
+
+# The four links that were each individually broken, and are each individually
+# checkable. Every one of them failed silently before — no surface reported any
+# of it — which is why they are asserted rather than assumed.
+step "8c. the four links the translation path needs"
+
+# 1. Derived work must actually reach dispatch. `referenced-documents` used to
+#    return [] for every input, so `:current-source-revision` was nil for every
+#    document and every intent short-circuited on :publication-revision-unresolved.
+response="$(http POST /api/publications/translations/dispatch auth '{}')"
+if expect_status "dispatch answers an authorized caller" "200" "$response"; then
+  expect_jq "the runner is the agent, not the absent ingestion worker" \
+    '.runner == "agent"' "$response"
+  # `dispatched` empty while `admissible` is non-zero is the exact shape the
+  # `referenced-documents` bug produced, and it reads like "nothing to do".
+  expect_jq "admissible intents actually derive work" \
+    '(.admissible // 0) == 0 or ((.dispatched // []) | length) > 0' "$response"
+fi
+
+# 2. The pin must reach the tool. Carried by the event, forwarded by
+#    :actions/start-agent-session, and put on the turn's auth context by
+#    `auth-context-for-agent-turn` — the last of which was missing, so
+#    save_translation fell through to the OpenPlanner segment path.
+# 3. The tool schema must accept a submission that omits what the pin supplies.
+# 4. The organization must come from the claim, not from a request context a
+#    triggered session does not have.
+#
+# All three show up the same way: a claim that stays in flight with no receipt.
+note "links 2-4 are observable only after an agent run completes; see"
+note "docs/verification/publication-epic.md for the live walkthrough"
+
+# KNOWN GAP — a WARN every run, never a FAIL. See
+# knoxx.backend.infra.translation-agent-dispatch/known-gap.
+printf '%s   WARN%s  an agent-dispatched claim whose session dies mid-run stays in flight\n' \
+  "$C_YELLOW" "$C_RESET"
+note "there is no session read that can settle it, so that revision needs an operator"
+note "the worker path recovers this from batch state; the agent path has no equivalent"
 
 step "9. advisory — OpenPlanner surfaces still live outside this epic's scope"
 

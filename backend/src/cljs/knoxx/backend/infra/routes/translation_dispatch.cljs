@@ -12,10 +12,13 @@
   selector cannot resolve differently between the decision to translate and the
   work actually queued. A facade that let the gate's predicates go read a file
   or a collection per call would put that drift straight back."
-  (:require [knoxx.backend.domain.publication-resolver :as resolver]
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.law.publication :as publication-law]
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
+            [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
+            [knoxx.backend.infra.translation-agent-dispatch :as agent-dispatch]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.translation-dispatch :as dispatch]
             [knoxx.backend.infra.translation-evidence-store :as store]
@@ -56,10 +59,27 @@
   (filterv #(publication-law/admissible-publication? index %) intents))
 
 (defn- referenced-documents
-  "The document records the given intents point at."
+  "The document records the given intents point at.
+
+   The lookup keys off the id directly, because `distinct` is already fed the
+   *ids* — the `map` extracted them. Extracting again inside `keep`, as this did
+   when it shipped, asked a keyword for its `:publication/document`, got nil for
+   every entry, and returned an empty vector every single time.
+
+   Nothing reported it. An empty document list makes
+   `source-revision/source-revisions!` produce an empty map, so
+   `:current-source-revision` answers nil for every document, so every intent
+   short-circuits on `:publication-revision-unresolved` and derives no
+   translation work — which `dispatch-translations!` reports as
+   `{:considered 5 :admissible 5 :dispatched []}`. That reads exactly like
+   \"nothing needed translating\", and it is why four localized intents sat
+   blocked with no surface saying why.
+
+   Introduced in `knoxx-translation-work-dispatch` (#253) and load-bearing for
+   both runners: the worker path was equally dead."
   [index intents]
   (into []
-        (keep #(get-in index [:documents (:publication/document %)]))
+        (keep #(get-in index [:documents %]))
         (distinct (map :publication/document intents))))
 
 (defn document-source-roots
@@ -128,6 +148,8 @@
   [org-id receipts]
   (filterv #(= org-id (:translation/org-id %)) receipts))
 
+(declare gate-evidence!)
+
 (defn ^:async gate-facts!
   "Every fact `domain.publication-gate` needs, read once, scoped to one tenant.
 
@@ -146,7 +168,24 @@
    two answers drift."
   ([config evidence-store scope documents]
    (gate-facts! config evidence-store scope documents {}))
-  ([config evidence-store {:keys [org-id project] :as scope} documents document-roots]
+  ([config evidence-store scope documents document-roots]
+   (:facts (await (gate-evidence! config evidence-store scope documents
+                                  document-roots)))))
+
+(defn ^:async gate-evidence!
+  "The loaded translation evidence *and* the facts derived from it, read once.
+
+   Split out from `gate-facts!` because two callers need different halves of one
+   read. The gate needs only the closures; `infra.publication-runtime`
+   additionally needs the evidence value itself, to look up the *output* revision
+   an intent's receipt names so it can read the bytes that revision identifies.
+
+   Returned together rather than exposed as two functions on purpose. Loading
+   the receipts twice would let the facts the gate decided with and the receipt
+   the content was read from come from two different reads — and a
+   re-translation landing between them would publish the new bytes under the old
+   approval, which is precisely the transplant the two-revision design prevents."
+  [config evidence-store {:keys [org-id project] :as scope} documents document-roots]
   (let [revisions (await (source-revision/source-revisions! config documents document-roots))
         ;; Scoped in the *query*. Reading every receipt ever recorded and
         ;; narrowing afterwards made each dispatch pass grow with the global
@@ -167,8 +206,80 @@
                                       (= project (:review/project %)))))
         evidence (evidence-domain/evidence {:receipts receipts
                                             :approvals approvals})]
-    (merge (source-revision/revision-facts revisions)
-           (evidence-domain/gate-facts evidence)))))
+    {:evidence evidence
+     :facts (merge (source-revision/revision-facts revisions)
+                   (evidence-domain/gate-facts evidence))}))
+
+(def runner-kinds
+  "The producers a deployment may ask translations from.
+
+   `:agent` runs `contracts/agents/publication_translator.edn` through the
+   event/trigger runtime — no external service, and the bytes travel with the
+   request. `:worker` posts a batch to the OpenPlanner ingestion worker, which is
+   the original path and still the right one where that worker is deployed and
+   owns the document."
+  #{:agent :worker})
+
+(def default-runner
+  "The producer used when a deployment names none.
+
+   `:agent`, because a deployment that has not been told otherwise does not have
+   the ingestion worker: `knowledge-ops-translation-mt-pipeline` runs it out of
+   `ingestion/`, and the production compose stack for this site does not include
+   it. Defaulting to `:worker` there meant every dispatch posted a batch nothing
+   would ever pick up, and the four localized intents stayed blocked with no
+   visible reason."
+  :agent)
+
+(defn runner
+  "Which producer this deployment asks for translations from.
+
+   An unrecognized value falls back to the default rather than throwing, and says
+   nothing about it here — the config layer is where a bad env var should be
+   reported, and a reconcile request failing on it would take the whole
+   publication path down for a typo."
+  [config]
+  (let [named (some-> (:translation-runner config) str str/trim str/lower-case
+                      not-empty keyword)]
+    (if (contains? runner-kinds named) named default-runner)))
+
+(defn- ^:async document-source!
+  "The bytes of one intent's source document, or nil when unreadable."
+  [index roots intent]
+  (when-let [document (get-in index [:documents (:publication/document intent)])]
+    (await (contract-content/source-content!
+            (get roots (:document/id document)) document))))
+
+(defn ^:async dispatch-intents-to-agent!
+  "Announce the derived translation work of every intent to an agent actor.
+
+   The agent-path counterpart of `infra.translation-dispatch/dispatch-intents!`,
+   and sequential for the same reason that one is: fanning an entire garden's
+   backlog out in one pass is how a reconciliation run becomes an incident, and
+   here each item starts a model session rather than merely queueing a row.
+
+   An intent whose source cannot be read is reported rather than dispatched. The
+   bytes are what the agent translates, so there is no lawful dispatch without
+   them — and silently skipping would look identical to 'nothing needed doing'."
+  [deps index intents facts scope roots]
+  (let [results (atom [])]
+    (doseq [intent intents]
+      (when-let [work (dispatch/derived-work intent facts)]
+        (let [digest ((:current-source-revision facts) (:publication/document intent))
+              source (await (document-source! index roots intent))]
+          (swap! results conj
+                 (assoc (if (str/blank? (str source))
+                          {:dispatch/outcome :dispatch/failed
+                           :dispatch/detail
+                           (str "the document's source could not be read, so"
+                                " there are no bytes to translate")}
+                          (await (agent-dispatch/dispatch-work!
+                                  deps
+                                  (:action/with work)
+                                  (dispatch/dispatch-context intent scope digest)
+                                  source)))
+                        :publication/id (:publication/id intent))))))
+    @results))
 
 (defn ^:async dispatch-translations!
   "Dispatch the derived translation work for one document, or for all of them.
@@ -186,10 +297,15 @@
         intents (admissible-intents index hydrated)
         documents (referenced-documents index intents)
         roots (document-source-roots config records)
-        facts (await (gate-facts! config evidence-store scope documents roots))]
+        facts (await (gate-facts! config evidence-store scope documents roots))
+        selected-runner (runner config)]
     {:considered (count hydrated)
      :admissible (count intents)
-     :dispatched (await (dispatch/dispatch-intents! deps intents facts scope))}))
+     :runner selected-runner
+     :dispatched (if (= :agent selected-runner)
+                   (await (dispatch-intents-to-agent! deps index intents facts
+                                                      scope roots))
+                   (await (dispatch/dispatch-intents! deps intents facts scope)))}))
 
 (def worker-report-vocabulary
   "What the ingestion worker actually sends, read from
