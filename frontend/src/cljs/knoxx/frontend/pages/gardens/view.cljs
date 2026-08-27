@@ -28,8 +28,9 @@
                     :class-name "rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300"}
                    (str (logic/language-name locale) " · " locale)))))
 
-(defnc placement-row [{:keys [placement]}]
-  (let [{:keys [id locale path state url]} placement]
+(defnc placement-row [{:keys [placement publishing on-publish]}]
+  (let [{:keys [id locale path state url]} placement
+        in-flight? (= publishing id)]
     (d/li {:class-name "flex flex-col gap-2 rounded border border-slate-800 bg-slate-950/40 p-3 sm:flex-row sm:items-center sm:justify-between"}
           (d/div
            (d/div {:class-name "flex flex-wrap items-center gap-2"}
@@ -38,9 +39,22 @@
                   (d/span {:class-name "text-xs text-slate-500"}
                           (logic/language-name locale)))
            (d/p {:class-name "mt-1 font-mono text-[11px] text-slate-600"} id))
-          (d/a {:href url :target "_blank" :rel "noreferrer"
-                :class-name "text-sm font-medium text-cyan-300 hover:text-cyan-200"}
-               "Open published page ↗"))))
+          (d/div {:class-name "flex items-center gap-3"}
+                 ;; Offered for any placement whose contract asks to be published.
+                 ;; Deliberately NOT hidden once bytes exist: `:state` is desired
+                 ;; state, not a materialization fact, so this UI cannot tell
+                 ;; whether a placement is actually live. Reconciling an
+                 ;; already-published revision answers `publication/noop` and says
+                 ;; so, which beats a button that guesses and hides itself.
+                 (when (logic/placement-published? placement)
+                   ($ ui/button {:size :sm
+                                 :variant :secondary
+                                 :disabled (some? publishing)
+                                 :on-click #(on-publish id)}
+                      (if in-flight? "Publishing..." "Publish")))
+                 (d/a {:href url :target "_blank" :rel "noreferrer"
+                       :class-name "text-sm font-medium text-cyan-300 hover:text-cyan-200"}
+                      "Open published page ↗")))))
 
 (defnc garden-card [{:keys [garden publishing on-publish]}]
   (let [{:keys [id title status locales placements]} garden]
