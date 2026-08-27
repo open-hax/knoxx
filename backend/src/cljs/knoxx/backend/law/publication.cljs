@@ -129,7 +129,8 @@
    [:publication/state PublicationState]
    [:publication/path PublicationPath]
    [:translation/review [:enum :none :required]]
-   [:document/source-locale Locale]])
+   [:document/source-locale Locale]
+   [:document/title string?]])
 
 ;; ── Projection views ───────────────────────────────────────────────────────
 
@@ -195,13 +196,20 @@
    resources))
 
 (defn hydrate-publication-intent
-  "Copy the referenced document's validated source locale onto intent, so
-   translation laws never guess `:en`. Throws rather than defaulting a locale
-   when the document reference is dangling."
+  "Copy the referenced document's validated source locale and title onto
+   intent, so translation laws never guess `:en` and the manifest can name a
+   route without a second document lookup at the effect boundary. Throws rather
+   than defaulting a locale when the document reference is dangling.
+
+   Both are copied from the document AFTER reference validation rather than
+   duplicated as resource truth, so neither can drift from the document that
+   owns it."
   [resource-index intent]
   (let [document (get-in resource-index [:documents (:publication/document intent)])]
     (assert-valid! (:publication/document intent) Document document)
-    (assoc intent :document/source-locale (:document/source-locale document))))
+    (assoc intent
+           :document/source-locale (:document/source-locale document)
+           :document/title (:document/title document))))
 
 (def reconcilable-publication-states
   "Desired states that may take part in reconciliation. `:published` reconciles
