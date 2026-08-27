@@ -90,6 +90,18 @@
   [request]
   (or (aget request "hostname") "localhost"))
 
+(defn request-remote-address
+  "The peer address Fastify saw, as a string, or nil.
+
+   request.ip is Fastify's own resolution and is preferred; the raw socket is
+   the fallback for a request that never went through Fastify's ip getter, such
+   as one built by a test or replayed onto the raw server."
+  [request]
+  (let [ip (or (aget request "ip")
+               (some-> request (aget "raw") (aget "socket") (aget "remoteAddress"))
+               (some-> request (aget "socket") (aget "remoteAddress")))]
+    (when (string? ip) ip)))
+
 (defn reply-header!
   [reply name value]
   (.header reply name value))
