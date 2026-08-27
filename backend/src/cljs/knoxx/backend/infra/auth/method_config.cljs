@@ -14,15 +14,20 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.contracts.loader :as contracts]
             [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.extern.node-env :as node-env]
             [knoxx.backend.law.auth-methods :as law]))
 
 (def mcp-surface :mcp)
 
 (def ^:private mcp-contract-id "mcp_http")
 
-(defn- env
-  [k]
-  (some-> (aget js/process.env k) str str/trim not-empty))
+(def ^:private env
+  "Read through the extern adapter that owns `js/process.env`.
+
+   Direct `aget` on `js/process.env` is interop, and the style guide keeps
+   interop inside `extern.*`. `extern.node-env/variable` returns a CLJS scalar,
+   so nothing here has to know the environment is a JavaScript object."
+  node-env/variable)
 
 (defn- production?
   []
