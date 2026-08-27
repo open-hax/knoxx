@@ -83,3 +83,20 @@
    the publish action exists to resolve."
   [placement]
   (= "published" (:state placement)))
+
+(defn receipt-tone
+  "How a reconciliation receipt should be presented: `:success`, `:warning` or
+   `:error`.
+
+   Separate from `receipt-summary` because the words and the colour must agree,
+   and a banner that paints every outcome emerald contradicts a summary written
+   precisely so a blocked plan does not read as a published one. A receipt this
+   function does not recognize is a warning rather than a success: the
+   reconciler emits receipts for outcomes that are not wins, and the unknown
+   case is far likelier to be one of those than a success nobody named."
+  [receipt]
+  (case (:type receipt)
+    ("publication/materialized" "publication/noop" "publication/removed") :success
+    "publication/blocked" :warning
+    "publication/failed" :error
+    :warning))

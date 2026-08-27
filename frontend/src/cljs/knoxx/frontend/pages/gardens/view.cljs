@@ -85,11 +85,21 @@
   (d/div {:class-name "rounded-lg border border-red-900/40 bg-red-950/30 p-4 text-sm text-red-300"}
          error))
 
-(defn- notice-banner [notice]
-  (d/div {:class-name "rounded-lg border border-emerald-900/40 bg-emerald-950/30 p-4 text-sm text-emerald-300"}
+(def ^:private tone-classes
+  {:success "border-emerald-900/40 bg-emerald-950/30 text-emerald-300"
+   :warning "border-amber-900/40 bg-amber-950/30 text-amber-200"
+   :error   "border-red-900/40 bg-red-950/30 text-red-300"})
+
+(defn- notice-banner
+  "A reconciliation outcome, coloured by what it actually says. Success styling
+   is reserved for receipts that record one; everything else, including an
+   unrecognized type, is at least a warning."
+  [notice tone]
+  (d/div {:class-name (str "rounded-lg border p-4 text-sm "
+                           (get tone-classes tone (:warning tone-classes)))}
          notice))
 
-(defnc gardens-body [{:keys [deployment loading error notice publishing on-publish]}]
+(defnc gardens-body [{:keys [deployment loading error notice notice-tone publishing on-publish]}]
   (let [{:keys [site-url gardens]} deployment]
     (d/div {:class-name "space-y-4"}
            (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
@@ -109,7 +119,7 @@
              ($ ui/card {:padding :md}
                 (d/div {:class-name "text-sm text-slate-500"} "Loading deployed Garden contracts...")))
            (when error (error-banner error))
-           (when notice (notice-banner notice))
+           (when notice (notice-banner notice notice-tone))
            (when (and (not loading) (empty? gardens) (nil? error))
              ($ ui/card {:padding :lg}
                 (d/p {:class-name "text-center text-slate-500"}
@@ -126,6 +136,7 @@
         [loading set-loading!] (hooks/use-state true)
         [error set-error!] (hooks/use-state nil)
         [notice set-notice!] (hooks/use-state nil)
+        [notice-tone set-notice-tone!] (hooks/use-state :success)
         ;; The publication id in flight, or nil. One at a time: reconciliation
         ;; writes an artifact and renames a shared manifest, and two concurrent
         ;; demands from one reviewer is a race this UI has no reason to create.
@@ -142,6 +153,7 @@
           (set-notice! nil)
           (-> (api/reconcile-publication! publication-id)
               (.then (fn [receipt]
+                       (set-notice-tone! (logic/receipt-tone receipt))
                        (set-notice! (str publication-id " \u2014 "
                                          (logic/receipt-summary receipt)))
                        ;; Re-read: a publish can change what the projection
@@ -154,5 +166,5 @@
               (.finally #(set-publishing! nil))))]
     (hooks/use-effect [] (load!) nil)
     ($ gardens-body {:deployment deployment :loading loading :error error
-                     :notice notice :publishing publishing
-                     :on-publish on-publish})))
+                     :notice notice :notice-tone notice-tone
+                     :publishing publishing :on-publish on-publish})))

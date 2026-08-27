@@ -77,25 +77,23 @@
 
 ;; ── segment review panel ─────────────────────────────────────────────────────
 
-(defnc label-score-fields [{:keys [form on-change disabled]}]
+(defnc label-score-fields [{:keys [form on-change]}]
   (d/div {:class-name "grid gap-3"}
          (for [field [:adequacy :fluency :terminology :risk]]
            (d/label {:key (name field) :class-name "block text-sm"}
                     (d/span {:class-name "mb-1 block font-medium capitalize text-slate-200"}
                             (name field))
                     (d/select {:value (get form field)
-                               :disabled (boolean disabled)
                                :on-change #(on-change (assoc form field (.. % -target -value)))
                                :class-name "w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-100"}
                               (for [v (logic/field-options field)]
                                 (d/option {:key v :value v} v)))))))
 
-(defn- label-textarea [label value placeholder rows on-change & [disabled]]
+(defn- label-textarea [label value placeholder rows on-change]
   (d/label {:class-name "block text-sm"}
            (d/span {:class-name "mb-1 block font-medium text-slate-200"} label)
            (d/textarea {:value (or value "")
                         :on-change on-change
-                        :disabled (boolean disabled)
                         :rows rows
                         :placeholder placeholder
                         :class-name "w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-100"})))
@@ -127,8 +125,12 @@
                and refuses one that names no stored segment \u2014 so a submit here would fail
                rather than record anything.")
          (d/p {:class-name "mt-1 text-amber-200/80"}
-              "Approve the whole revision for publication above. Per-segment scoring returns
-               on its own for agent-produced translations, which carry real segments.")))
+              "Scoring, corrections and notes are not shown because there is nothing stored to
+               show \u2014 no label can exist without a segment to attach it to, so any values
+               here would be invented rather than recalled.")
+         (d/p {:class-name "mt-1 text-amber-200/80"}
+              "The text itself is real and is what would be published. Approve the whole
+               revision above.")))
 
 (defnc segment-detail-panel
   [{:keys [segment form saving on-change on-submit read-only?]}]
@@ -145,15 +147,24 @@
                                         (:source_text segment))
                   (segment-source-block (str "Translation (" (logic/lang-name (:target_lang segment)) ")")
                                         (:translated_text segment)))
-           ($ label-score-fields {:form form :on-change on-change :disabled read-only?})
-           (label-textarea "Corrected translation" (:corrected_text form)
-                           "Optional. If you enter a correction and submit the review, this becomes the rendered translation."
-                           4 #(on-change (assoc form :corrected_text (.. % -target -value)))
-                           read-only?)
-           (label-textarea "Editor notes" (:editor_notes form)
-                           "Terminology caveats, tone issues, etc."
-                           2 #(on-change (assoc form :editor_notes (.. % -target -value)))
-                           read-only?)
+           ;; Omitted entirely when read-only, not rendered disabled.
+           ;;
+           ;; `form` holds `logic/default-label` — good / good / correct / safe —
+           ;; and an authored translation has no stored label to load into it,
+           ;; because it has no persisted segment for a label to hang off. A
+           ;; disabled control showing those defaults presents invented scores as
+           ;; though they were a reviewer's, which is worse than showing nothing:
+           ;; hiding the apparatus loses information, fabricating its contents
+           ;; manufactures it.
+           (when-not read-only?
+             (hx/<>
+              ($ label-score-fields {:form form :on-change on-change})
+              (label-textarea "Corrected translation" (:corrected_text form)
+                              "Optional. If you enter a correction and submit the review, this becomes the rendered translation."
+                              4 #(on-change (assoc form :corrected_text (.. % -target -value))))
+              (label-textarea "Editor notes" (:editor_notes form)
+                              "Terminology caveats, tone issues, etc."
+                              2 #(on-change (assoc form :editor_notes (.. % -target -value))))))
            ;; Omitted rather than disabled when read-only. A disabled Submit
            ;; still asserts that submitting is the thing to do here and that
            ;; something is temporarily in the way; neither is true.

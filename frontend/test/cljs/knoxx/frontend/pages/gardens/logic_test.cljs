@@ -76,3 +76,20 @@
     (is (false? (logic/placement-published? {:state "withheld"})))
     (is (false? (logic/placement-published? {:state "archived"})))
     (is (false? (logic/placement-published? {})))))
+
+(deftest receipt-tone-never-paints-a-non-success-as-success
+  (testing "the words and the colour have to agree; a summary written so a
+            blocked plan does not read as published is undone by a banner that
+            paints every outcome emerald"
+    (is (= :success (logic/receipt-tone {:type "publication/materialized"})))
+    (is (= :success (logic/receipt-tone {:type "publication/noop"})))
+    (is (= :success (logic/receipt-tone {:type "publication/removed"})))
+    (is (= :warning (logic/receipt-tone {:type "publication/blocked"})))
+    (is (= :error (logic/receipt-tone {:type "publication/failed"}))))
+
+  (testing "an unrecognized or absent type is a warning, not a success: the
+            reconciler emits receipts for outcomes that are not wins, and the
+            unknown case is likelier to be one of those"
+    (is (= :warning (logic/receipt-tone {:type "publication/something-new"})))
+    (is (= :warning (logic/receipt-tone {})))
+    (is (= :warning (logic/receipt-tone {:type "materialized"})))))
