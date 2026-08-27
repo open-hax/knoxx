@@ -79,6 +79,85 @@
         (catch :default err
           (app-log-error! app "MCP gateway initialization failed" err))))))
 
+(def ^:private event-runtimes-disabled-banner
+  ["╔══════════════════════════════════════════════════════════════════════╗"
+   "║  EVENT RUNTIMES ARE DISABLED — KNOXX_DISABLE_EVENT_RUNTIMES is set   ║"
+   "║                                                                      ║"
+   "║  NOT RUNNING: schedules, triggers, Discord actor gateways.           ║"
+   "║  This process will not answer Discord messages, fire scheduled       ║"
+   "║  jobs, or react to any contract event.                               ║"
+   "║                                                                      ║"
+   "║  This mode exists ONLY for local human verification. If you are      ║"
+   "║  seeing this in production, Knoxx is silently doing nothing.         ║"
+   "╚══════════════════════════════════════════════════════════════════════╝"])
+
+(def ^:private event-runtimes-nag-ms 60000)
+
+(defonce ^:private nag-timer* (atom nil))
+
+(defn- clear-event-runtimes-nag!
+  "Stop the nag, so the timer's lifetime tracks the state it reports.
+
+   Called on the enabled boot path rather than only on shutdown. A process that
+   armed the nag and then started its runtimes for real — a hot reload with the
+   flag no longer set, or a caller passing an explicit config — would otherwise
+   keep warning every minute that nothing is running while everything is. A
+   warning that outlives its condition is worse than no warning: it teaches the
+   reader to disbelieve the next one."
+  []
+  (when-let [timer @nag-timer*]
+    (js/clearInterval timer)
+    (reset! nag-timer* nil)))
+
+(defn- warn-event-runtimes-disabled!
+  "Say it loudly at boot, then keep saying it.
+
+   A one-line startup notice scrolls away in seconds and a process can then sit
+   for hours looking healthy while doing none of its event work. The recurring
+   nag is unref'd so it never holds the process open at shutdown.
+
+   Both `start!` and `start-background-services!` announce this, because either
+   can be the boot path depending on entry point, and a hot reload can run one
+   of them again. The timer is armed once so those paths do not stack nags."
+  []
+  (doseq [line event-runtimes-disabled-banner]
+    (js/console.warn line))
+  (when-not @nag-timer*
+    (let [timer (js/setInterval
+                 #(js/console.warn
+                   "[event-runtimes] STILL DISABLED via KNOXX_DISABLE_EVENT_RUNTIMES —"
+                   "no schedules, no triggers, no Discord gateways")
+                 event-runtimes-nag-ms)]
+      (when (fn? (some-> timer .-unref))
+        (.unref timer))
+      (reset! nag-timer* timer)))
+  @nag-timer*)
+
+(defn- ^:async bind-discord-actor-gateways!
+  "Connect the Discord actor gateways and route their events into the driver
+   runtime.
+
+   Extracted from `start-background-services!` so the boot sequence there reads
+   as a list of services rather than burying the two dispatch closures in the
+   middle of it."
+  [resolved-config policy-context]
+  (await (discord-source/bind-gateways!
+          {:policy-db policy-context
+           :on-message! (fn [msg]
+                          (source-runtime/dispatch-driver-event!
+                           resolved-config
+                           :driver/discord
+                           (:gatewayActorId msg)
+                           {:event/type :discord.message
+                            :event/payload msg}))
+           :on-voice-state! (fn [state]
+                              (source-runtime/dispatch-driver-event!
+                               resolved-config
+                               :driver/discord
+                               (:gatewayActorId state)
+                               {:event/type :discord.voice.state-update
+                                :event/payload state}))})))
+
 (defn- ^:async start-background-services!
   [app resolved-config]
   (driver-builtin/register-built-in-drivers!)
@@ -86,26 +165,15 @@
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. The event runtime and MCP discovery remain background work.
   (try
-    (event-runtime/start! resolved-config)
-    (resource-routes/start-resource-watcher! resolved-config)
-    (let [policy-context (:policy-context (lifecycle/context))]
-      (when policy-context
-        (await (discord-source/bind-gateways!
-                {:policy-db policy-context
-                 :on-message! (fn [msg]
-                                (source-runtime/dispatch-driver-event!
-                                 resolved-config
-                                 :driver/discord
-                                 (:gatewayActorId msg)
-                                 {:event/type :discord.message
-                                  :event/payload msg}))
-                 :on-voice-state! (fn [state]
-                                    (source-runtime/dispatch-driver-event!
-                                     resolved-config
-                                     :driver/discord
-                                     (:gatewayActorId state)
-                                     {:event/type :discord.voice.state-update
-                                      :event/payload state}))}))))
+    (let [event-runtimes? (not (:event-runtimes-disabled? resolved-config))
+          policy-context (:policy-context (lifecycle/context))]
+      (if event-runtimes?
+        (clear-event-runtimes-nag!)
+        (warn-event-runtimes-disabled!))
+      (event-runtime/start! resolved-config)
+      (resource-routes/start-resource-watcher! resolved-config)
+      (when (and event-runtimes? policy-context)
+        (await (bind-discord-actor-gateways! resolved-config policy-context))))
     (await (initialize-mcp-gateway! app resolved-config))
     (catch :default err
       (app-log-error! app "Background startup services failed" err))))
@@ -166,7 +234,12 @@
           (resource-routes/sync-resource-index! config)
           (catch :default err
             (app-log-error! app "Failed to sync resource index" err)))
-        ;; Start the event runtime composition shell.
+        ;; Start the event runtime composition shell. `start!` self-gates on
+        ;; KNOXX_DISABLE_EVENT_RUNTIMES; this path never reaches
+        ;; start-background-services!, so it announces the mode itself.
+        (if (event-runtime/disabled? config)
+          (warn-event-runtimes-disabled!)
+          (clear-event-runtimes-nag!))
         (event-runtime/start! config)
         (resource-routes/start-resource-watcher! config)
         (await (app-listen! app (:host config) (:port config)))

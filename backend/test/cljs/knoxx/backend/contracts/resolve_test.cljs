@@ -151,6 +151,64 @@
           (is (not (contains? (set (keys (:extras resolved))) :tool-deny))
               ":tool-deny is a known key, not leaked into extras"))))))
 
+(defn- resolve-with-tools
+  "Resolve one agent contract against a fixed role grant of three tools."
+  [contract]
+  (with-redefs [loader/find-contract-record-sync (fn [_ class id]
+                                                   (case class
+                                                     "agents" {:id id :contract contract}
+                                                     nil))
+                sut/default-actor-id (fn [_] "actor-a")
+                sut/resolve-actor (fn [_ _] {:id "actor-a" :role-slugs [] :capability-ids []})
+                roles/role-system-prompt (fn [_ _] nil)
+                roles/role-task-prompt (fn [_ _] nil)
+                roles/role-tool-ids (fn [_ role]
+                                      (when (= "creative" role)
+                                        ["discord.send" "graph_query" "save_translation"]))]
+    (sut/resolve-agent-contract empty-fixture-config (:contract/id contract))))
+
+(defn- agent-with
+  [extra]
+  (merge {:contract/id "agent-allow"
+          :contract/kind :agent
+          :contract/actors ["actor-a"]
+          :trigger-kind :manual
+          :agent {:roles [:role/creative]}}
+         extra))
+
+(deftest resolve-agent-contract-applies-tools-allowed
+  (testing "an allowlist narrows the granted set to exactly what it names"
+    ;; Previously inert: `domain.policy.tools` reads `:tools/allowed` only from
+    ;; :policy contracts, so an agent could declare one and still receive its
+    ;; whole role surface. That is how a translation session kept reaching
+    ;; graph_query — and through it OpenPlanner REST.
+    (let [resolved (resolve-with-tools (agent-with {:tools/allowed ["save_translation"]}))]
+      (is (= ["save_translation"] (:tool-ids resolved)))
+      (is (= [{:toolId "save_translation" :effect "allow"}] (:tool-policies resolved))
+          "the narrowed set is what becomes allow policies")))
+
+  (testing "an EMPTY allowlist is passthrough, not a muzzle"
+    ;; The semantics `domain.policy.tools/tool-call-contract-denied` already
+    ;; documents. `contracts/agents/broadcast_studio_audio_transcriber.edn`
+    ;; ships `:tools/allowed []`, so reading empty as deny-all would silently
+    ;; strip every tool from an agent that works today.
+    (let [resolved (resolve-with-tools (agent-with {:tools/allowed []}))]
+      (is (= ["discord.send" "graph_query" "save_translation"] (:tool-ids resolved)))))
+
+  (testing "no allowlist at all is passthrough"
+    (let [resolved (resolve-with-tools (agent-with {}))]
+      (is (= ["discord.send" "graph_query" "save_translation"] (:tool-ids resolved)))))
+
+  (testing "a name the roles never granted cannot be allowed into existence"
+    (let [resolved (resolve-with-tools (agent-with {:tools/allowed ["save_translation" "bash"]}))]
+      (is (= ["save_translation"] (:tool-ids resolved))
+          "the allowlist narrows a granted set; it is not itself a grant")))
+
+  (testing "deny wins over allow, so a contract cannot allow back what it denied"
+    (let [resolved (resolve-with-tools (agent-with {:tools/allowed ["save_translation" "graph_query"]
+                                                    :tool-deny [:graph_query]}))]
+      (is (= ["save_translation"] (:tool-ids resolved))))))
+
 (deftest agent-catalog-treats-missing-trigger-kind-as-manual
   (let [agent-contract {:contract/id "knoxx_default"
                         :contract/kind :agent

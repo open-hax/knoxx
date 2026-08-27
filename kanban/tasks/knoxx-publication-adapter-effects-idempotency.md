@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "3sp", "has-parent", "publication", "adapters", "idempotency"]
-write-id: "1786565795799-0.ymzn39ev3q98kogh8ms"
+write-id: "1786608046220-0.usz4p9hqg4ee0llkwrt"
 points: "3"
 title: "Implement publication adapter effects and idempotency contract"
 priority: "P1"
-status: "ready"
+status: "review"
 uuid: "knoxx-publication-adapter-effects-idempotency"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -147,9 +147,6 @@ Then implement `knoxx.backend.infra.publication-effects` until green.
 
 ---
 Ready gate 2026-08-12: sized 3sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Depends on knoxx-publication-reconcile-plan-laws for the plan shape it executes.
-
 ---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `execute-plan!`'s pseudocode has no fallback for an unrecognized `:op` (falls through to `nil` instead of a typed failure) and doesn't validate the incoming plan or the adapter's publish!/remove! result against an explicit contract at the effect boundary — add both before implementing. Also, `publish-once!`'s replay protection is a separate existence-check + materialize, which is not atomic; a concurrent call or a crash between the two steps can duplicate a public artifact or leave unrecoverable state. Use one atomic idempotency-key reservation instead.
-
----

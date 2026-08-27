@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "contracts"]
-write-id: "1786602901096-0.8i7gumo66xbwsw54siq"
+write-id: "1786605356211-0.peaefl708trd54saw9n"
 points: "5"
 title: "Define document, garden, and publication resource contracts"
 priority: "P0"
-status: "review"
+status: "done"
 uuid: "knoxx-publication-resource-contracts"
 created_at: "2026-08-12T00:00:00Z"
 ---

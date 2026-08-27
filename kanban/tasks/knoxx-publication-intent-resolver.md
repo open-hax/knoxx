@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "domain"]
-write-id: "1786565792741-0.bmrzlxjk8ehhm2y6dn8"
+write-id: "1786605378024-0.kuatvftrlake4kj0hz"
 points: "5"
 title: "Resolve desired publication topology from the Knoxx resource graph"
 priority: "P0"
-status: "ready"
+status: "review"
 uuid: "knoxx-publication-intent-resolver"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -263,11 +263,29 @@ Fastify adapter until green.
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Note: canonical-identity-in-payload and archived-vs-active conflict identity are the two highest-risk behaviours; both have dedicated first tests.
-
 ---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `PublicationListView` and `document-view` use bare `:map` entries instead of a concrete `PublicationDocumentView` schema (with nested `Document`/`Garden`/`PublicationIntent`); `document-view`'s assembled result isn't validated before `list-document-views` exposes it, so data missing the `:document/id` the CMS facade reads at `[:document :document/id]` can pass through undetected. Define and validate the concrete schema before implementing.
 
 Pre-implementation review 2026-08-13 (Codex, not yet actioned): `index-canonical!`'s conflict exception puts the map already present in the index under `:existing` and the one being inserted under `:incoming`, but which payload lands in which key depends purely on filesystem/loader enumeration order — the same conflicting pair can throw with `:existing`/`:incoming` swapped across runs. The card requires identical, deterministic failure evidence regardless of enumeration order; sort or otherwise canonicalize the pair (e.g. by a stable key on the payloads themselves) before throwing, instead of using positional insertion order.
+
+---
+Implemented 2026-08-13. Namespaces: knoxx.backend.domain.publication-resolver (pure), knoxx.backend.infra.routes.publications (facade, CLJS data only), knoxx.backend.extern.fastify.publications (owns all Fastify interop), plus PublicationDocumentView/PublicationListView in law.publication. Routes GET /api/publications/documents and /api/publications/documents/:documentId registered in routes/app.cljs.
+
+Both pre-implementation review findings actioned. CodeRabbit: the view shapes are concrete — PublicationDocumentView composes law Document + [:vector PublicationIntent], PublicationListView composes those plus Garden, and document-view validates before list-document-views can expose it, so a document missing the canonical :document/id the CMS reads at [:document :document/id] fails at assembly. Codex: index-canonical! no longer reports :existing/:incoming, which encoded loader enumeration order in the error itself; the pair is now one :conflicting-payloads vector sorted by an order-independent rendering, and conflicting-duplicate-ids-fail-deterministically asserts both enumeration orders yield equal ex-data. Verified that assertion bites by reverting to :existing/:incoming — it failed with the payloads swapped exactly as Codex predicted, then passed again after restoring.
+
+Key implementation finding: katamorph's entry-definition stamps :namespace, :resource/qualified-id and :contract/id on an expanded manifest entry but leaves the entry's own :document/id namespace-LOCAL. Since law Document requires qualified-keyword?, manifest-sourced documents could not validate. That is exactly the 'local-id canonicalization' item knoxx-publication-resource-contracts recorded as blocked on this card; canonical-id now resolves it and is deliberately one rule for own ids and references alike, so a local ref and a qualified ref compare equal. An already-qualified id keeps its own namespace over the manifest's, and with no namespace in scope a bare id is left alone rather than qualified under nil (which would strip identity rather than add it).
+
+Verification: shadow-cljs compile test 831 tests / 2476 assertions, 0 failures 0 errors (+22 tests, +66 assertions over card 1); compile server 0 warnings; clj-kondo 194 warnings / 0 errors, identical to the main baseline, none in the new files.
+
+Post-review 2026-08-13: all five Codex findings on PR #230 actioned in one follow-up commit, none deferred. Two were integration bugs my own tests could not have caught, because they build resource maps directly and never exercise the loader: (1) namespace-resource-record validated expanded manifest definitions BEFORE canonicalization, so every manifest-sourced document/garden/publication failed the qualified-id shapes and was dropped by the loader, leaving the facade serving an empty topology — my commit message identified the local-id problem correctly but fixed it downstream of the drop; (2) dedup-contracts is first-wins on [class id], so two files declaring one canonical id with different payloads collapsed to whichever the filesystem enumerated first, making index-canonical!'s deterministic conflict detection unreachable through the real load path. Fixed by canonicalizing before validation and by adding load-all-contract-records!/load-all-resource-records!, an undeduped path used only by the publication facade; dedup-contracts is untouched for every other kind, and load-all-contracts! is now expressed in terms of the undeduped path so they cannot drift.
+
+(3) send-json! serializes with clj->js, which renders keywords with name, so :knoxx.docs/translation-pipeline reached the CMS as "translation-pipeline" and distinct namespaces collapsed onto one wire id. Keyword values now encode as namespace/name with no EDN colon; map keys stay unqualified per this codebase's documented wire convention, and the test pins the exact key set so the convention is asserted rather than assumed. This is the encoding knoxx-cms-resource-backed-publication-ui specifies, arriving early — that card can now consume shape.resource-identity/encode-keyword, decode-keyword and encode-wire-values instead of defining its own.
+
+(4) dangling references returned a successful but incomplete topology: a missing document silently vanished because list-document-views iterates the documents it has, and a missing garden passed through because hydration validates only the document. reference-blockers now surfaces both deterministically and the adapter maps them to 409. (5) Malli maps are open, so execution facts attached to an otherwise-valid resource survived into the projection; the projection now selects declared fields, since a schema alone cannot enforce 'resources declare desired state only'.
+
+The canonical identity rule moved to knoxx.backend.shape.resource-identity so the loader and resolver consume one implementation rather than restating it on either side of the load boundary.
+
+Verification after fixes: 846 tests / 2549 assertions on this branch, 0 failures 0 errors; compile server 0 warnings; clj-kondo 194 warnings / 0 errors (main baseline) after extracting index-one, assert-no-conflicts! and assert-references-resolve! to clear a function-length warning the blocker check introduced.
 
 ---

@@ -35,12 +35,14 @@
 (def promethean-garden
   {:garden/id :gardens/promethean
    :garden/title "Promethean"
-   :garden/status :active})
+   :garden/status :active
+   :garden/locales [:en :es :fr]})
 
 (def legacy-garden
   {:garden/id :gardens/legacy
    :garden/title "Legacy"
-   :garden/status :archived})
+   :garden/status :archived
+   :garden/locales [:en]})
 
 (def style-guide-fr-intent
   {:publication/id :knoxx.docs/translation-pipeline-fr
@@ -104,6 +106,12 @@
   (is (false? (m/validate pub/Garden (assoc promethean-garden :garden/status "active"))))
   (is (false? (m/validate pub/Garden (assoc promethean-garden :garden/status :deleted)))))
 
+(deftest garden-locale-catalog-is-explicit-and-distinct
+  (is (true? (m/validate pub/Garden promethean-garden)))
+  (doseq [locales [nil [] [:en :en] [:locale/en]]]
+    (is (false? (m/validate pub/Garden (assoc promethean-garden :garden/locales locales)))
+        (pr-str locales))))
+
 ;; ── 5 PublicationIntentResource ──────────────────────────────────────────
 
 (deftest publication-intent-resource-validates-relation
@@ -156,8 +164,19 @@
                  resource-index
                  (assoc example-manifest-intent :publication/document :knoxx.docs/unknown))))
     (is (false? (pub/admissible-publication?
+                  resource-index
+                  (assoc example-manifest-intent :publication/garden :gardens/unknown))))))
+
+(deftest admissible-publication?-requires-a-target-accepted-locale
+  (let [resource-index (pub/index-resources [translation-pipeline-document promethean-garden])]
+    (is (true? (pub/admissible-publication? resource-index example-manifest-intent)))
+    (is (false? (pub/admissible-publication?
                  resource-index
-                 (assoc example-manifest-intent :publication/garden :gardens/unknown))))))
+                 (assoc example-manifest-intent :publication/locale :de))))
+    (is (= :publication-locale-unsupported
+           (pub/publication-locale-blocker
+            resource-index
+            (assoc example-manifest-intent :publication/locale :de))))))
 
 (deftest admissible-publication?-rejects-archived-intent-state-with-an-active-garden
   (let [resource-index (pub/index-resources [translation-pipeline-document promethean-garden])]
@@ -214,3 +233,100 @@
                              first)
             legacy-backend-marker (str "open" "planner")]
         (is (not (str/includes? (str/lower-case law-require) legacy-backend-marker)))))))
+
+;; ── 11 the materialized artifact ──────────────────────────────────────────
+
+(def probe-artifact
+  {:artifact/content "<!doctype html><p>Sonda</p>"
+   :artifact/media-type "text/html"
+   :artifact/encoding "utf-8"
+   :artifact/locale :es
+   :artifact/revision "rev-7f3a91c"})
+
+(deftest publication-artifact-declares-content-media-type-encoding-locale-revision
+  (is (true? (m/validate pub/PublicationArtifact probe-artifact)))
+  (testing "bytes are content too — the difference from a string is only whether
+            the renderer already applied the declared encoding"
+    (is (true? (m/validate pub/PublicationArtifact
+                           (assoc probe-artifact :artifact/content
+                                  (.encode (js/TextEncoder.) "<p>Sonda</p>"))))))
+  (testing "every field is load-bearing: an adapter that has to guess one of them
+            is an adapter making a publication decision"
+    (doseq [field [:artifact/content :artifact/media-type :artifact/encoding
+                   :artifact/locale :artifact/revision]]
+      (is (false? (m/validate pub/PublicationArtifact (dissoc probe-artifact field)))
+          (str field " must be required"))))
+  (testing "extra keys are allowed — an artifact may carry renderer provenance"
+    (is (true? (m/validate pub/PublicationArtifact
+                           (assoc probe-artifact :render/engine :markdown))))))
+
+(deftest media-type-carries-no-charset-parameter
+  (testing "accepted"
+    (doseq [media-type ["text/html" "application/edn" "image/svg+xml" "text/plain"]]
+      (is (true? (pub/valid-media-type? media-type)) media-type)))
+  (testing "refused — a charset parameter duplicates :artifact/encoding, and two
+            places to declare one encoding is two places that can disagree"
+    (doseq [media-type ["text/html; charset=utf-8" "text/html charset=utf-8"
+                        "texthtml" "text/" "/html" "" "  "]]
+      (is (false? (pub/valid-media-type? media-type)) (pr-str media-type)))))
+
+(deftest character-encoding-is-declared-not-guessed
+  (doseq [encoding ["utf-8" "UTF-8" "iso-8859-1" "windows-1252"]]
+    (is (true? (pub/valid-character-encoding? encoding)) encoding))
+  (doseq [bad ["" "  " "utf 8" "utf-8; q=1"]]
+    (is (false? (pub/valid-character-encoding? bad)) (pr-str bad))))
+
+(deftest artifact-rejects-a-revision-selector-anywhere
+  (testing "the whole value is walked, keys included, so a selector cannot ride
+            along on a key the shape does not name"
+    (doseq [[label value] [["the revision itself" {:artifact/revision :source/current}]
+                           ["an extra key" {:render/from :source/current}]
+                           ["nested in a map" {:render/provenance {:from :source/current}}]
+                           ["nested in a vector" {:render/inputs [:source/current]}]
+                           ["a map key" {:render/by {:source/current true}}]
+                           ["a sibling nobody has invented yet"
+                            {:render/from :source/head}]]]
+      (is (false? (pub/free-of-revision-selectors? (merge probe-artifact value)))
+          label)
+      (is (false? (m/validate pub/PublicationArtifact (merge probe-artifact value)))
+          label)))
+  (testing "while a document's own :source key is not a selector — the namespace
+            is what marks one, not the word"
+    (is (true? (pub/free-of-revision-selectors?
+                (assoc probe-artifact :document/source {:path "docs/probe.md"}))))))
+
+(deftest artifact-revision-conflict-carries-both-revisions
+  (is (nil? (pub/artifact-revision-conflict probe-artifact "rev-7f3a91c"))
+      "agreement is not a conflict")
+  (let [conflict (pub/artifact-revision-conflict probe-artifact "rev-other")]
+    (is (= {:conflict/type :publication/artifact-revision-conflict
+            :conflict/artifact-revision "rev-7f3a91c"
+            :conflict/concrete-revision "rev-other"}
+           conflict))
+    (is (true? (pub/artifact-revision-conflict? conflict)))
+    (is (true? (m/validate pub/ArtifactRevisionConflict conflict))))
+  (testing "assert-artifact! returns the artifact on agreement and throws the
+            conflict otherwise, with both revisions in ex-data"
+    (is (= probe-artifact (pub/assert-artifact! probe-artifact "rev-7f3a91c")))
+    (is (thrown-with-msg? js/Error #"revision conflict"
+                          (pub/assert-artifact! probe-artifact "rev-other")))
+    (is (= {:conflict/type :publication/artifact-revision-conflict
+            :conflict/artifact-revision "rev-7f3a91c"
+            :conflict/concrete-revision "rev-other"}
+            (try (pub/assert-artifact! probe-artifact "rev-other")
+                 nil
+                 (catch :default err (ex-data err)))))))
+
+(deftest artifact-locale-conflict-carries-both-locales
+  (let [intent (assoc example-manifest-intent :publication/locale :es)
+        conflict (pub/artifact-locale-conflict (assoc probe-artifact :artifact/locale :fr) intent)]
+    (is (= :cross-check pub/artifact-locale-identity-decision))
+    (is (= {:conflict/type :publication/artifact-locale-conflict
+            :conflict/artifact-locale :fr
+            :conflict/publication-locale :es}
+           conflict))
+    (is (true? (pub/artifact-locale-conflict? conflict)))
+    (is (thrown-with-msg? js/Error #"locale conflict"
+                          (pub/assert-artifact! (assoc probe-artifact :artifact/locale :fr)
+                                                intent
+                                                "rev-7f3a91c")))))

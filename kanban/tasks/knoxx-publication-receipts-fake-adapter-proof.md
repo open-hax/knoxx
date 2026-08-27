@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "2sp", "has-parent", "publication", "receipts", "tests"]
-write-id: "1786565796398-0.18ujvt6yfxde3dc8gs"
+write-id: "1786608413183-0.u2q50wyr91exro4l93t"
 points: "2"
 title: "Define publication receipts and prove the boundary with a fake adapter"
 priority: "P1"
-status: "ready"
+status: "review"
 uuid: "knoxx-publication-receipts-fake-adapter-proof"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -149,9 +149,20 @@ Whole-seam proof second, all `^:async` where effects are awaited:
 
 ---
 Ready gate 2026-08-12: sized 2sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Closes the adapter-boundary roll-up; depends on the planner and effect cards.
-
 ---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `FakePublicationTarget`/`IPublicationTarget` is sketched inside the `knoxx.backend.domain.publication-receipts` namespace; move the fake adapter to a test or `infra.*` namespace and keep only receipt schemas/projections in `domain.*`. Only `PublicationMaterializedReceipt` is defined — add schemas for the failed/blocked/noop variants too, have `execute-plan!` return values that conform to them, and validate the materialized receipt before `observed-materialization` reads `:materialized/revision`/`:materialized/path` off it. The fake adapter should also implement the same atomic replay-protection guarantee flagged on `knoxx-publication-adapter-effects-idempotency`, or its tests don't actually prove the production contract.
 
+---
+Implemented 2026-08-13. Closes the P1 adapter-boundary roll-up (3+3+2 all in review).
+
+CodeRabbit findings actioned, partly in the earlier effects card: (1) the fake adapter is NOT in a domain namespace — knoxx.backend.infra.publication-target-memory is an adapter implementation and belongs in infra, which the finding explicitly sanctioned; domain.publication-receipts holds only shapes and pure projections. (2) failed/blocked/noop/removed receipt variants are all defined (law.publication-receipts) and execute-plan! returns values conforming to them; failed-blocked-noop-receipts-are-distinct asserts none satisfies PublicationMaterializedReceipt and observed-materialization returns nil for each, so a blocked receipt can never be mistaken for something being public. (3) the materialized receipt is validated before any field is read. (4) the in-memory store implements the same atomic reservation contract production must — one swap, no await between reading and claiming the key.
+
+A real bug surfaced from boundary-covers-path-move, which failed on first run with BOTH routes public. Observation was keyed by the desired path, so after a path move the planner could not see the route it was replacing: :previous came back nil and the adapter never removed the old route. Observation is now keyed by publication IDENTITY in both the memory target's observe! and the boundary fixture's facts. This is the exact failure mode the card's 'a path move replaces/removes the prior route instead of leaving both public' law exists to prevent, and a path-keyed lookup could never have satisfied it.
+
+drift-keys is defined once in domain.publication-receipts and consumed by both the projection and the planner's convergence comparison, so the two cannot drift apart; observed-materialization-feeds-planner-drift asserts the projection's key set equals the planner's own desired-materialization key set rather than restating it.
+
+Whole-seam proof covers publish, replay (equal receipt, one materialization), path move, withheld and archived removal, archived-garden removal, observation-after-convergence producing :noop, and adapter failure surfacing as drift with the intent map identical? afterwards. no-hosted-backend-in-the-seam greps eight source files including the test itself, so absence is proven rather than assumed.
+
+Verification: 947 tests / 3141 assertions, 0 failures 0 errors; compile server 0 warnings; clj-kondo 194 warnings / 0 errors (main baseline) after extracting route-for and record-route!.
 ---

@@ -83,9 +83,16 @@
   (get resource-kind->class (normalize-resource-kind resource-kind)))
 
 (defn- resource-kind-from-class
+  "The resource kind a contract class names, or nil when it names none.
+
+   A record rejected before its identity could be read carries no class, and
+   `(keyword (str nil))` would render that absence as the empty keyword — a
+   kind that matches nothing yet is not nil, so callers could not tell
+   \"unknown kind\" from \"no kind\". Absence stays absent."
   [class-name]
-  (or (get class->resource-kind class-name)
-      (keyword (str/replace (str class-name) #"_" "-"))))
+  (when-let [class-name (some-> class-name str str/trim not-empty)]
+    (or (get class->resource-kind class-name)
+        (keyword (str/replace class-name #"_" "-")))))
 
 (defn resource-record
   [record]
@@ -111,6 +118,13 @@
 (defn ^:async load-all-resources!
   [config]
   (mapv resource-record (await (contract-loader/load-all-contracts! config))))
+
+(defn ^:async load-all-resource-records!
+  "Every resource record without `[kind id]` dedup, for callers that must
+   detect a colliding canonical identity instead of silently inheriting
+   whichever file the filesystem enumerated first."
+  [config]
+  (mapv resource-record (await (contract-loader/load-all-contract-records! config))))
 
 (defn resource-record-sync
   [config resource-kind resource-id]

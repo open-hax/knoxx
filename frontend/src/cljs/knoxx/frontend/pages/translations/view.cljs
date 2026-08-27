@@ -149,12 +149,31 @@
                                         set-selected! set-detail!]}]
   (set-loading! true)
   (set-error! nil)
-  (-> (api/list-documents {:project project :target-lang target-lang})
-      (.then (fn [res]
-               (set-documents! (vec (:documents res)))
-               (when (and selected (not (logic/still-listed? (:documents res) selected)))
-                 (set-selected! nil)
-                 (set-detail! nil))))
+  (-> (js/Promise.all
+       #js [(api/list-documents {:project project :target-lang target-lang})
+            (api/list-publication-reviews)])
+      (.then (fn [results]
+               (let [documents-response (aget results 0)
+                     reviews-response (aget results 1)
+                     reviews (cond->> (:reviews reviews-response)
+                               (seq target-lang)
+                               (filter #(= target-lang (:locale %))))
+                     documents (logic/attach-publication-reviews
+                                (:documents documents-response)
+                                reviews)]
+                 (set-documents! documents)
+                 (when selected
+                   (if (logic/still-listed? documents selected)
+                     (let [updated (first
+                                    (filter #(and (= (:document_id %) (:document_id selected))
+                                                  (= (:target_lang %) (:target_lang selected)))
+                                            documents))]
+                       (when (not= (:publication_review updated)
+                                   (:publication_review selected))
+                         (set-selected! updated)))
+                     (do
+                       (set-selected! nil)
+                       (set-detail! nil)))))))
       (.catch (fn [^js err]
                 (set-error! (or (.-message err) (str err)))
                 (set-documents! [])))
@@ -163,7 +182,9 @@
 (defn- run-load-detail! [selected {:keys [set-detail-loading! set-detail!
                                           set-seg-idx! set-form! set-error!]}]
   (set-detail-loading! true)
-  (-> (api/get-document (:document_id selected) (:target_lang selected))
+  (-> (if (:authored_content selected)
+        (js/Promise.resolve (logic/authored-detail selected))
+        (api/get-document (:document_id selected) (:target_lang selected)))
       (.then (fn [detail]
                (set-detail! detail)
                (set-seg-idx! nil)
@@ -202,6 +223,21 @@
                    (.then set-detail!))))
       (.catch (fn [^js err] (set-error! (or (.-message err) (str err)))))
       (.finally #(set-saving! false))))
+
+(defn- run-publication-approval!
+  [selected {:keys [set-saving! set-error! set-notice!]} reload-docs!]
+  (set-saving! true)
+  (set-error! nil)
+  (let [review (:publication_review selected)]
+    (-> (api/approve-publication-translation
+         (logic/approval-request review))
+      (.then (fn [_] (api/reconcile-publication (:publication review))))
+      (.then (fn [receipt]
+               (set-notice! (str "Translation approved; publication reconciliation: "
+                                 (or (:type receipt) "recorded") "."))
+               (reload-docs!)))
+      (.catch (fn [^js err] (set-error! (or (.-message err) (str err)))))
+      (.finally #(set-saving! false)))))
 
 (defn- run-export! [project target-lang {:keys [set-notice! set-error!]}]
   (-> (api/sft-export {:project project :target-lang target-lang})
@@ -263,7 +299,8 @@
          (d/button {:class-name "ml-2 underline" :on-click on-dismiss} "dismiss")))
 
 (defnc document-pane
-  [{:keys [selected detail detail-loading saving seg-idx set-seg-idx on-review]}]
+  [{:keys [selected detail detail-loading saving seg-idx set-seg-idx
+           on-review on-publication-approval]}]
   (cond
     (nil? selected)
     (d/div {:class-name "flex flex-1 items-center justify-center text-sm text-slate-500"}
@@ -289,9 +326,19 @@
                            (d/span (str "· " (get-in detail [:summary :total_segments]) " segments"))
                            ($ status-badge {:status (get-in detail [:summary :overall_status])})))
                    (d/div {:class-name "flex gap-2"}
-                          ($ ui/button {:size :sm :disabled saving :on-click #(on-review "approve")} "Approve All")
-                          ($ ui/button {:size :sm :variant :secondary :disabled saving :on-click #(on-review "needs_edit")} "Needs Edit")
-                          ($ ui/button {:size :sm :variant :ghost :disabled saving :on-click #(on-review "reject")} "Reject All")))
+                          (when-not (:authored_content selected)
+                            ($ ui/button {:size :sm :disabled saving :on-click #(on-review "approve")} "Approve All"))
+                          (when-let [review (:publication_review selected)]
+                            (if (:approved review)
+                              (d/span {:class-name "rounded bg-emerald-900/30 px-3 py-2 text-xs font-medium text-emerald-300"}
+                                      "Approved for publication")
+                              ($ ui/button {:size :sm :variant :primary :disabled saving
+                                            :on-click on-publication-approval}
+                                 "Approve for publication")))
+                          (when-not (:authored_content selected)
+                            ($ ui/button {:size :sm :variant :secondary :disabled saving :on-click #(on-review "needs_edit")} "Needs Edit"))
+                          (when-not (:authored_content selected)
+                            ($ ui/button {:size :sm :variant :ghost :disabled saving :on-click #(on-review "reject")} "Reject All"))))
             ($ progress-bar {:approved (get-in detail [:summary :approved])
                              :total (get-in detail [:summary :total_segments])}))
      (d/div {:class-name "min-h-0 flex-1 overflow-auto p-4"}
@@ -380,9 +427,12 @@
                                             :detail-loading detail-loading :saving saving
                                             :seg-idx seg-idx :set-seg-idx set-seg-idx!
                                             :on-review (fn [overall]
-                                                         (run-document-review! selected overall setters reload-docs!))}))
-                  ($ segment-review-pane {:segment selected-segment :form form :saving saving
-                                          :set-form set-form!
-                                          :on-submit (fn [overall]
-                                                       (run-segment-submit! selected-segment form overall
-                                                                            selected setters reload-docs!))})))))
+                                                         (run-document-review! selected overall setters reload-docs!))
+                                            :on-publication-approval
+                                            #(run-publication-approval! selected setters reload-docs!)}))
+                  (when-not (:authored_content selected)
+                    ($ segment-review-pane {:segment selected-segment :form form :saving saving
+                                            :set-form set-form!
+                                            :on-submit (fn [overall]
+                                                         (run-segment-submit! selected-segment form overall
+                                                                              selected setters reload-docs!))}))))))
