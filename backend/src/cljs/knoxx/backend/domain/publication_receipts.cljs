@@ -37,8 +37,16 @@
   "The exact fields the planner compares to decide convergence. Named here and
    consumed by both the planner and this projection so the two cannot drift
    apart — a projection that returned a different key set would make every
-   comparison silently fail."
-  [:materialized/revision :materialized/path])
+   comparison silently fail.
+
+   `:materialized/title` is here because the manifest route's title is DERIVED
+   from the Document contract, and derived state that convergence ignores can
+   never be corrected. Without it a route materialized before titles existed
+   kept `:route/title` absent forever: same revision, same path, so `converge`
+   answered `:noop` on every attempt and the site listed the document as
+   untitled with no way to fix it short of deleting the route. The same hole
+   would swallow any later rename."
+  [:materialized/revision :materialized/path :materialized/title])
 
 (defn materialized?
   [receipt]
@@ -50,7 +58,12 @@
    materialization that is otherwise identical."
   [:map {:closed true}
    [:materialized/revision ConcreteRevision]
-   [:materialized/path publication/PublicationPath]])
+   [:materialized/path publication/PublicationPath]
+   ;; Optional, because a route materialized before titles existed genuinely
+   ;; has none and its receipt must stay readable. Present in `drift-keys`
+   ;; regardless: absent-versus-present is exactly the drift that makes such a
+   ;; route republish and acquire its title.
+   [:materialized/title {:optional true} [:maybe :string]]])
 
 (defn observed-materialization
   "The observation the planner compares, or nil for any receipt that is not a

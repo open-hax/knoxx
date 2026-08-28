@@ -12,7 +12,13 @@
               :status "active" :locales ["en" "es" "fr" "de" "ja"]
               :placements [{:id "open-hax/home-en" :locale "en" :path "/"
                             :state "published"
-                            :url "https://open-hax.promethean.rest/"}]}]})
+                            :url "https://open-hax.promethean.rest/"}
+                           {:id "open-hax/home-es" :locale "es" :path "/es/"
+                            :state "published"
+                            :url "https://open-hax.promethean.rest/es/"}
+                           {:id "open-hax/home-archived" :locale "fr" :path "/fr/"
+                            :state "archived"
+                            :url "https://open-hax.promethean.rest/fr/"}]}]})
 
 (def load-calls (atom 0))
 (def ^:private real-load api/load-deployment!)
@@ -45,7 +51,7 @@
              (is (some? (.queryByText rendered "Contract locale catalog")))
              (is (some? (.queryByText rendered "Publication placements")))
              (let [website-link (.getByRole rendered "link" #js {:name "Open website ↗"})
-                   page-link (.getByRole rendered "link" #js {:name "Open published page ↗"})]
+                   page-link (first (.getAllByRole rendered "link" #js {:name "Open published page ↗"}))]
                (is (= "https://open-hax.promethean.rest" (.getAttribute website-link "href")))
                (is (= "https://open-hax.promethean.rest/" (.getAttribute page-link "href"))))
              (is (nil? (.queryByRole rendered "button" #js {:name "+ New Garden"})))
@@ -68,8 +74,9 @@
       (-> (wait-until "placement rendered"
                       #(some? (.queryByText rendered "Open Hax Promethean")))
           (.then (fn []
-                   (is (some? (.queryByText rendered "Publish"))
-                       "a placement whose contract asks to be published offers a publish action")))
+                   (is (= 2 (count (.getAllByText rendered "Publish")))
+                       "every placement whose contract asks to be published offers
+                        a publish action; the archived one does not")))
           (.finally done)))))
 
 (deftest publish-calls-reconcile-and-reports-the-receipt
@@ -84,7 +91,7 @@
         (-> (wait-until "placement rendered"
                         #(some? (.queryByText rendered "Open Hax Promethean")))
             (.then (fn []
-                     (rtl/fireEvent.click (.getByText rendered "Publish"))
+                     (rtl/fireEvent.click (first (.getAllByText rendered "Publish")))
                      (wait-until "receipt reported"
                                  #(some? (.queryByText
                                           rendered
@@ -99,6 +106,42 @@
             ;; when it needs to speak up.
             (.catch (fn [err]
                       (is false (str "publish flow did not complete: " err))))
+            (.finally (fn []
+                        (set! api/reconcile-publication! real-reconcile)
+                        (done))))))))
+
+(deftest publish-all-runs-every-publishable-placement-in-order
+  (async done
+    (let [calls (atom [])
+          real-reconcile api/reconcile-publication!]
+      ;; Resolve on a microtask so a concurrent implementation would interleave
+      ;; and produce a different order than the listed one.
+      (set! api/reconcile-publication!
+            (fn [publication-id]
+              (-> (js/Promise.resolve nil)
+                  (.then (fn [_]
+                           (swap! calls conj publication-id)
+                           (if (= publication-id "open-hax/home-es")
+                             {:type "publication/blocked"
+                              :blockers ["translation-missing"]}
+                             {:type "publication/materialized"}))))))
+      (let [rendered (rtl/render ($ gardens-page))]
+        (-> (wait-until "garden rendered"
+                        #(some? (.queryByText rendered "Open Hax Promethean")))
+            (.then (fn []
+                     (is (some? (.queryByText rendered "Publish all (2)"))
+                         "archived placements are not offered for publication")
+                     (rtl/fireEvent.click (.getByText rendered "Publish all (2)"))
+                     (wait-until "run summary reported"
+                                 #(some? (.queryByText
+                                          rendered
+                                          (fn [content _]
+                                            (str/includes? (str content) "1 published")))))))
+            (.then (fn []
+                     (is (= ["open-hax/home-en" "open-hax/home-es"] @calls)
+                         "sequential and in listed order — every publish renames
+                          the same manifest, and concurrent renames lose one")))
+            (.catch (fn [err] (is false (str "publish-all did not complete: " err))))
             (.finally (fn []
                         (set! api/reconcile-publication! real-reconcile)
                         (done))))))))

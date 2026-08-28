@@ -92,10 +92,17 @@
              (= (:materialized/revision observed) (:concrete-revision op))
              (= (:materialized/path observed) (get-in op [:intent :publication/path])))
       (let [receipt (law/assert-receipt!
-                     {:receipt/type :publication/materialized
-                      :materialized/revision (:materialized/revision observed)
-                      :materialized/path (:materialized/path observed)
-                      :idempotency/key idempotency-key})]
+                     (cond-> {:receipt/type :publication/materialized
+                              :materialized/revision (:materialized/revision observed)
+                              :materialized/path (:materialized/path observed)
+                              :idempotency/key idempotency-key}
+                       ;; Carried so a receipt-derived observation reports the
+                       ;; same key set the manifest-derived one does. Omitted
+                       ;; when absent, matching how the planner spells "no
+                       ;; title" — otherwise every receipt-based comparison
+                       ;; would drift against a key only one side has.
+                       (some? (:materialized/title observed))
+                       (assoc :materialized/title (:materialized/title observed))))]
         (complete! store idempotency-key receipt)
         receipt)
       (do (release! store idempotency-key)

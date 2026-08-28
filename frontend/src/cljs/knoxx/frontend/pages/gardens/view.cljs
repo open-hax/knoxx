@@ -56,14 +56,29 @@
                        :class-name "text-sm font-medium text-cyan-300 hover:text-cyan-200"}
                       "Open published page ↗")))))
 
-(defnc garden-card [{:keys [garden publishing on-publish]}]
+(defnc garden-card [{:keys [garden publishing on-publish on-publish-all]}]
   (let [{:keys [id title status locales placements]} garden]
     ($ ui/card {:variant :elevated :padding :md}
        (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
               (d/div
                (d/h2 {:class-name "text-lg font-semibold"} title)
                (d/p {:class-name "mt-1 font-mono text-xs text-slate-500"} id))
-              (status-pill status))
+              (d/div {:class-name "flex items-center gap-3"}
+                     ;; Sequential, one reconciliation at a time — the same
+                     ;; discipline `infra.translation-dispatch/dispatch-intents!`
+                     ;; keeps, and for the same reason: each publish writes an
+                     ;; artifact and renames a shared manifest, and fanning a
+                     ;; garden out in one pass is how a reconciliation run
+                     ;; becomes an incident.
+                     (when (seq (logic/publishable-placements garden))
+                       ($ ui/button {:size :sm
+                                     :variant :primary
+                                     :disabled (some? publishing)
+                                     :on-click #(on-publish-all garden)}
+                          (str "Publish all ("
+                               (count (logic/publishable-placements garden))
+                               ")")))
+                     (status-pill status)))
        (d/div {:class-name "mt-4"}
               (d/p {:class-name "mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500"}
                    "Contract locale catalog")
@@ -99,7 +114,8 @@
                            (get tone-classes tone (:warning tone-classes)))}
          notice))
 
-(defnc gardens-body [{:keys [deployment loading error notice notice-tone publishing on-publish]}]
+(defnc gardens-body [{:keys [deployment loading error notice notice-tone
+                             publishing on-publish on-publish-all]}]
   (let [{:keys [site-url gardens]} deployment]
     (d/div {:class-name "space-y-4"}
            (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
@@ -129,7 +145,8 @@
                     ($ garden-card {:key (:id garden)
                                     :garden garden
                                     :publishing publishing
-                                    :on-publish on-publish}))))))
+                                    :on-publish on-publish
+                                    :on-publish-all on-publish-all}))))))
 
 (defnc gardens-page []
   (let [[deployment set-deployment!] (hooks/use-state nil)
@@ -163,8 +180,42 @@
               (.catch (fn [^js err]
                         (set-error! (str publication-id " \u2014 "
                                          (or (.-message err) (str err))))))
-              (.finally #(set-publishing! nil))))]
+              (.finally #(set-publishing! nil))))
+
+        on-publish-all
+        (fn [garden]
+          (let [placements (logic/publishable-placements garden)]
+            (set-error! nil)
+            (set-notice! nil)
+            ;; Strictly sequential: each step waits for the previous receipt.
+            ;; `reduce` over a promise chain rather than `Promise.all`, because
+            ;; every publish renames the same manifest and concurrent renames
+            ;; are how one of them is lost.
+            (-> (reduce (fn [chain placement]
+                          (.then chain
+                                 (fn [acc]
+                                   (set-publishing! (:id placement))
+                                   (-> (api/reconcile-publication! (:id placement))
+                                       (.then #(conj acc %))
+                                       ;; One refusal must not abandon the rest
+                                       ;; of the garden; it is recorded as a
+                                       ;; failed receipt and the run continues.
+                                       (.catch (fn [^js err]
+                                                 (conj acc {:type "publication/failed"
+                                                            :reason (or (.-message err)
+                                                                        (str err))})))))))
+                        (js/Promise.resolve [])
+                        placements)
+                (.then (fn [receipts]
+                         (set-notice-tone! (logic/run-tone receipts))
+                         (set-notice! (str (:title garden) " — "
+                                           (logic/run-summary receipts)))
+                         (load!)))
+                (.catch (fn [^js err]
+                          (set-error! (or (.-message err) (str err)))))
+                (.finally #(set-publishing! nil)))))]
     (hooks/use-effect [] (load!) nil)
     ($ gardens-body {:deployment deployment :loading loading :error error
                      :notice notice :notice-tone notice-tone
-                     :publishing publishing :on-publish on-publish})))
+                     :publishing publishing :on-publish on-publish
+                     :on-publish-all on-publish-all})))

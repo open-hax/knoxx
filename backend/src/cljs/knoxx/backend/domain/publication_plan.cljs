@@ -21,7 +21,8 @@
      explicitly non-public converges — is the fail-open shape #229 removed from
      `admissible-publication?`, and it would let a `nil`, misspelt, or
      still-string-encoded state become a public effect."
-  (:require [knoxx.backend.domain.publication-gate :as gate]
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.publication-gate :as gate]
             [knoxx.backend.domain.publication-receipts :as receipts]
             [knoxx.backend.law.publication :as law]))
 
@@ -37,8 +38,15 @@
 
 (defn desired-materialization
   [intent revision]
-  {:materialized/revision revision
-   :materialized/path (:publication/path intent)})
+  (cond-> {:materialized/revision revision
+           :materialized/path (:publication/path intent)}
+    ;; Omitted rather than nil when the document has no usable title, so that
+    ;; desired and observed agree by ABSENCE for a titleless route instead of
+    ;; drifting forever against a key one side spells and the other does not.
+    ;; `law.publication-manifest/route-for-artifact` omits it on the same
+    ;; condition, so the two cannot disagree about what "no title" looks like.
+    (not (str/blank? (:document/title intent)))
+    (assoc :materialized/title (:document/title intent))))
 
 (defn- observed-materialization
   "Compared against `desired-materialization` using the key set named by

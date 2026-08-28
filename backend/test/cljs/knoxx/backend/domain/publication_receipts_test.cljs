@@ -69,12 +69,38 @@
   (let [observed (receipts/observed-materialization materialized)]
     (is (= {:materialized/revision "abc123" :materialized/path "/docs/demo"} observed))
     (testing "the key set is the planner's own, not a parallel definition"
-      (is (= (set receipts/drift-keys) (set (keys observed))))
+      ;; SUBSET, not equality. `:materialized/title` is optional: a route
+      ;; materialized before titles existed has none, and both sides spell that
+      ;; as an ABSENT key rather than a nil one. Requiring the key always
+      ;; present would mean a titleless route desired `title ""` while the
+      ;; manifest — whose `route-for-artifact` omits blank titles — never
+      ;; carried one, and the two would drift against each other forever.
+      (is (every? (set receipts/drift-keys) (keys observed))
+          "no key outside the planner's set")
       (let [intent {:publication/path "/docs/demo"}
             desired (plan/desired-materialization intent "abc123")]
         (is (= (set (keys desired)) (set (keys observed)))
             "desired and observed must be comparable by construction")
-        (is (= desired observed))))))
+        (is (= desired observed))))
+
+    (testing "a titled materialization projects the title, and still agrees
+              with what the planner desires for a titled document"
+      (let [titled (assoc materialized :materialized/title "Probe")
+            observed-titled (receipts/observed-materialization titled)
+            desired (plan/desired-materialization
+                     {:publication/path "/docs/demo" :document/title "Probe"}
+                     "abc123")]
+        (is (= (set receipts/drift-keys) (set (keys observed-titled))))
+        (is (= desired observed-titled)
+            "a route whose title matches converges; one whose title is absent
+             drifts, which is what lets an untitled route acquire one")))
+
+    (testing "absent versus present IS the drift that backfills a title"
+      (is (not= (plan/desired-materialization
+                 {:publication/path "/docs/demo" :document/title "Probe"}
+                 "abc123")
+                observed)
+          "a titled document over an untitled route must not read as converged"))))
 
 (deftest observed-for-tracks-the-latest-receipt
   (let [removal {:receipt/type :publication/removed
@@ -103,7 +129,11 @@
                               :materialized/path ""}]]
       (is (thrown? js/Error (receipts/observed-materialization partial-receipt))
           (str (pr-str partial-receipt) " must not project"))))
-  (testing "while a complete one still projects exactly the planner's key set"
+  (testing "while a complete one projects only the planner's keys"
+    (is (every? (set receipts/drift-keys)
+                (keys (receipts/observed-materialization materialized))))
     (is (= (set receipts/drift-keys)
-           (set (keys (receipts/observed-materialization materialized)))))))
+           (set (keys (receipts/observed-materialization
+                       (assoc materialized :materialized/title "Probe")))))
+        "and a titled one projects all of them")))
 
