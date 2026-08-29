@@ -25,6 +25,9 @@ files while consumers depend only on a repository boundary.
 - Reuse the existing namespace/resource EDN contract shape rather than introducing a
   second content language.
 - Keep filesystem/Git path details inside the provider implementation.
+- Treat organization scope as part of every tenant-owned canonical identity. File paths may
+  partition scopes internally, but adapters derive scope from authenticated actor context and
+  neither list nor resolve may fall back across scopes.
 - Validate writes before they become repository authority.
 - Implement the conflict contract from `knoxx-cms-contract-validation`: equality compares the
   complete canonical authority record (validated payload plus domain provenance, excluding
@@ -43,6 +46,10 @@ files while consumers depend only on a repository boundary.
 - Preserve concurrent writes to different resource identities that share one namespace
   manifest. Use atomic sibling preservation or manifest-level compare-and-swap/retry so a
   read-modify-write cycle cannot silently erase another resource's accepted update.
+- Make manifest/revision publication crash-safe and cross-process, not merely protected by an
+  in-memory lock. Stage and validate complete bytes, durably publish one atomic replacement,
+  and acknowledge success only after the new authority is readable; an injected crash may
+  expose the old or new complete revision, never a partial/corrupt hybrid.
 - Expose resource-scoped versions, not namespace-file hashes, mtimes, or manifest revisions.
   Updating one sibling may rotate internal storage metadata but must leave every untouched
   sibling's public version token identical along with its payload and provenance.
@@ -71,6 +78,9 @@ layout.
 
 - A resource consumer can run the same contract tests against a fake and the file/EDN
   provider.
+- Same-name resources in two organization scopes remain isolated for list, resolve, writes,
+  history, and reference closure; authenticated adapters reject cross-tenant access without
+  revealing whether the target exists.
 - Canonical resource identities and validation behavior are provider-independent.
 - File-backed resources can be edited through a narrow write operation and immediately
   re-read through the same repository contract.
@@ -84,4 +94,6 @@ layout.
   prior resource version.
 - A pins B1, B advances to B2, and A@A1 still resolves the exact B1 closure/digest. Missing
   pinned revisions and cycles fail without changing either current or historical authority.
+- Cross-process race and injected-crash tests observe only complete old/new manifests and
+  never acknowledge a write before its resource revision and closure can be re-read.
 - No consumer needs to know a resource came from disk in order to use it.

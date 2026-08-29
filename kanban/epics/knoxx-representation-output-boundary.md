@@ -44,6 +44,11 @@ concrete representation. It does not own:
 - transduction of content semantics;
 - evaluation/review judgments.
 
+Every provider contract names its input and provider/config versions, output media metadata,
+and deterministic digest. Concrete renderers own contextual escaping and explicit trusted
+markup capabilities; a representation boundary may not turn untrusted content into executable
+HTML or leak repository/provider credentials into output.
+
 ## Candidate children
 
 - `knoxx-react-ssr-representation-provider` (P3/deferred) — expose the existing HTML/Helix

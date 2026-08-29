@@ -68,7 +68,9 @@ Explicitly **out of scope here**:
    resolved-config artifact produced by that existing boundary, without loading
    publication code. After the prerequisite above, the proof succeeds with publication
    law, runtime/orchestration, routes, stores, and resources absent while still exercising
-   the active configuration authority.
+   the active configuration authority. The resolved artifact is bound to the same
+   authenticated organization and immutable config/policy version as the source; a
+   cross-tenant or client-fabricated config artifact fails before provider invocation.
 3. A successful provider result becomes a candidate bound to that exact source revision.
 4. A provider failure produces no successful candidate.
 5. A retry/retranslation preserves earlier attempt evidence instead of overwriting it.
@@ -76,6 +78,9 @@ Explicitly **out of scope here**:
    authority.
 7. A deliberate break at each hop fails the test for that hop with enough context to
    identify the boundary.
+8. Provider-returned tenant/source identity drift is rejected, while the successful
+   candidate receipt preserves the exact config/policy revision, canonical request
+   parameters, provider/model identity, and raw-result evidence digest.
 
 ## Done when
 
@@ -87,6 +92,9 @@ Explicitly **out of scope here**:
   configuration boundary when the publication subsystem is absent; a namespace dependency
   check fails if translation config regains a publication-law/runtime dependency.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
+- The history proof injects append-success/projection-failure and out-of-order delivery,
+  verifies monotonic per-key ordinals, then proves idempotent byte-equivalent replay and
+  migration restart.
 - Failures distinguish source shaping, provider invocation, candidate validation,
   persistence, and read projection rather than collapsing into one pipeline failure.
 

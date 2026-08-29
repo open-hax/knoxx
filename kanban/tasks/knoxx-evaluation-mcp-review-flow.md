@@ -26,7 +26,9 @@ generic where the semantics are generic.
 
 The exact names may change during implementation, but the behavioral surface must cover:
 
-- list/claim or enumerate pending review cases;
+- enumerate tenant-scoped pending review cases. This first slice does not introduce a mutable
+  claim/lease state; concurrent reviewers are reconciled by the immutable receipt and case
+  status laws rather than a UI-only reservation;
 - fetch one case with its artifacts, context, rubric, and evidence;
 - explain what judgment is being requested and why;
 - record one or more judgments;
@@ -84,6 +86,8 @@ repository/receipt store:
    exclusive conflicting receipts as `:needs-adjudication`, and returns `:satisfied` only for
    a complete non-conflicting set bound to the exact case, rubric, and artifact versions. An
    authorized adjudication receipt names the conflicting receipts rather than replacing them.
+   The fixture includes explicit obligation ids, allowed values, role/quorum rules,
+   exclusivity groups, and adjudicator roles so no adapter invents completion defaults.
 10. Only `:satisfied` advances to the next pending case; `:pending` and
     `:needs-adjudication` remain visible work.
 11. The authenticated organization discovers only its cases. Cross-tenant direct fetches and

@@ -62,7 +62,7 @@ Settle these before migration:
 | immutable attempt/event id | a retried save must be recognized as the same event, not appended twice |
 | source artifact identity | the candidate must remain bound to the exact input it transformed |
 | segment/candidate grouping key | exactly `(org_id, document_id, segment_index, target_lang)` for event grouping and every projection read/write |
-| ordering rule | concurrent candidates must fold deterministically; wall clock is not enough |
+| ordering rule | the store atomically assigns a unique monotonic ordinal per grouping key; wall clock never selects current authority |
 | retry behavior | equal canonical events for one attempt identity return the existing event; any payload difference conflicts and preserves the original |
 | projection recovery | define what happens when append succeeds but projection update fails |
 
@@ -82,6 +82,21 @@ or evidence—returns
 projection authoritative, and appends nothing. When different events race for one attempt
 identity, exactly one is stored and the other returns that conflict; equal concurrent retries
 store one event and both callers observe it.
+
+Every accepted new attempt receives the next unique monotonic ordinal for its grouping key in
+the same atomic operation that appends the event. A materialized projection stores its last
+applied ordinal and advances only for a higher ordinal; delayed/out-of-order workers cannot
+move it backward. Replay folds events in ordinal order and must reproduce byte-equivalent
+current state. If append succeeds but projection update fails, the durable event remains
+authoritative and an idempotent replay/recovery step advances the projection from its
+checkpoint without appending another attempt.
+
+Legacy migration derives a deterministic initial event id from the complete grouping key and
+the legacy row's immutable source/candidate revision facts. Re-running migration returns the
+equal existing event; a changed row reusing that derived identity stops with the normal
+`:attempt-id-reused` conflict for operator reconciliation. Migration writes the event before
+the projection, resumes from durable checkpoints, and keeps the existing read endpoint
+available until every migrated grouping key can be served from the new projection.
 
 ## Boundary rules
 
@@ -107,6 +122,11 @@ land a migration that leaves that endpoint erroring.
   and segment coordinates remain isolated in both append history and current projection.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
+- Concurrent distinct attempts receive unique per-key ordinals; out-of-order projection
+  delivery cannot regress current state, and replay/recovery is byte-equivalent and
+  idempotent after an injected append/projection split failure.
+- Running legacy migration twice appends no duplicates; changed legacy authority at a reused
+  deterministic migration identity conflicts instead of being silently replaced.
 - An evaluation receipt can bind to a candidate that remains addressable after a newer
   translation exists.
 - `save_translation` is honestly non-destructive, with the MCP annotation updated.

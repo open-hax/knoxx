@@ -38,6 +38,12 @@ Translation-specific fields such as locale and terminology remain in translation
 artifacts/context or an adapter-owned extension map; they are not required by the
 generic core.
 
+Each requested judgment descriptor has a stable obligation id; exact case/rubric/artifact
+version refs; allowed judgment or decision values; required reviewer roles and quorum; an
+explicit compatibility/exclusivity group; and the roles allowed to adjudicate that group.
+The generic status fold consumes those fields directly rather than inferring completion from
+the number of receipts or from UI workflow state.
+
 ## Laws
 
 - Artifact roles are semantic, not layout coordinates (`:source` / `:candidate`, never
@@ -75,6 +81,9 @@ generic core.
    receipt resolves the named conflict without deleting either input receipt.
 10. A complete non-conflicting receipt set for the exact case, rubric, and artifact versions
     is `:satisfied`; stale-version receipts do not satisfy the case.
+11. Two descriptors with different role/quorum and exclusivity rules fold identically in the
+    pure law and every adapter; missing descriptor fields fail validation rather than
+    defaulting to satisfied.
 
 ## Done when
 

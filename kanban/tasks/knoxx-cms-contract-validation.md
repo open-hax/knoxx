@@ -27,7 +27,9 @@ contract cannot be tested unconditionally.
 
 Define/verify contract tests for:
 
-- resolve one resource by canonical identity;
+- resolve one resource by canonical identity. Tenant-owned identities include their
+  organization scope; global and organization scopes are explicit and never inferred from a
+  provider path;
 - list/query resources without exposing provider storage layout;
 - validated writes and explicit rejection of malformed resources;
 - deterministic duplicate/conflict handling;
@@ -35,6 +37,12 @@ Define/verify contract tests for:
 - identity/version behavior needed by downstream consumers;
 - provider failure/error semantics;
 - read-after-write behavior where the contract promises it.
+
+Authenticated adapters derive the allowed organization scope from actor context rather than
+accepting a client-selected tenant. The same namespace/name fixture in two organizations must
+remain isolated across resolve, list, write, reference closure, and version history. A direct
+cross-tenant identity returns a non-enumerating `:authorization/forbidden` result before the
+provider reveals existence or mutates authority.
 
 ### Provider-neutral conflict contract
 

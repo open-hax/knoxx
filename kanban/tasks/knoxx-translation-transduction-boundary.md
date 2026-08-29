@@ -30,6 +30,13 @@ knowledge.
   model/provider choice) in the translation operation/provider contract.
 - Return provenance sufficient to explain which provider/model/policy produced the
   candidate and from which immutable source revision/segment.
+- Carry the canonical organization/scope from the source artifact and authenticated
+  operation context through provider selection and output shaping. Provider arguments or
+  results cannot override it, and a config artifact resolved for another organization is
+  rejected before invocation.
+- Bind provenance to the exact resolved provider-config/policy version, normalized request
+  parameters, provider/model identity, and raw-result evidence digest needed to reproduce or
+  audit decoding; volatile transport timing stays in an excluded execution envelope.
 - Isolate provider invocation behind one replaceable boundary.
 - Keep persistence/history outside the provider call; `knoxx-translations-event-sourced`
   owns durable attempt history.
@@ -58,6 +65,9 @@ compatibility.
 - Re-running the same source may produce another candidate; neither run overwrites the
   historical evidence of the other.
 - A provider failure cannot synthesize a successful candidate artifact.
+- Candidate identity and provenance retain the authenticated organization and exact resolved
+  config revision; cross-tenant config injection or provider-returned scope changes fail
+  closed with no candidate or history append.
 - The pure contract layer contains no HTTP, OpenPlanner, Mongo, React, or publication
   dependencies.
 
@@ -66,6 +76,9 @@ compatibility.
 - The current machine-translation operation can be described and tested as typed input ->
   candidate + provenance.
 - A fake provider can substitute for the production provider in contract tests.
+- Negative contract tests reject cross-tenant resolved config and provider-returned identity
+  drift, and prove the successful receipt names the exact config/policy revision and canonical
+  request/result evidence.
 - Translation-specific data is present where needed without leaking publication/review/UI
   concepts into the transduction core.
 - The boundary is compatible with a future generic workflow operation `requires` /
