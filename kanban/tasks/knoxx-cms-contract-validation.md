@@ -44,6 +44,11 @@ outcome and error shape:
 
 - creating an absent identity with no expected version returns `:created` and an opaque,
   immutable version token;
+- writing an absent identity with a non-nil expected version returns
+  `{:error/type :resource/conflict :error/reason :resource-absent
+  :resource/id <identity> :expected-version <expected> :actual-version nil}`, performs
+  no create, and leaves the identity absent. An expected version is a compare-and-swap
+  precondition, never permission to create;
 - retrying the same identity and canonically equal payload with either no expected version
   or the current version returns `:unchanged`, the existing resource, and the same version
   without another write;
@@ -63,8 +68,9 @@ outcome and error shape:
 
 Compatibility tests must assert the complete conflict data above, not only that an
 exception occurred. They must also re-read after every duplicate or conflict and prove
-that no authority changed. Include the stale-version/equal-payload case so every provider
-implements the same precedence rule.
+that no authority changed. Include both the absent-resource/non-nil-precondition case and
+the stale-version/equal-payload case so every provider implements the same precedence
+rules.
 
 Run the same semantic suite against:
 
@@ -95,8 +101,9 @@ Do not require a browser page to prove repository health.
 - The repository compatibility suite fails for semantic contract violations regardless of
   provider implementation.
 - The file/EDN provider passes the same suite as the fake provider.
-- Exact duplicate retries are idempotent; identity collisions and stale-version writes
-  return the provider-neutral conflict shape and preserve the prior resource.
+- Exact duplicate retries are idempotent; absent-resource precondition failures, identity
+  collisions, and stale-version writes return the provider-neutral conflict shape and
+  preserve the prior resource or absence.
 - Production verification exercises the configured repository boundary unconditionally,
   rather than skipping because OpenPlanner REST is absent.
 - No test defines "CMS correctness" as the continued existence of legacy OpenPlanner

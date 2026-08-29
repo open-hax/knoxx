@@ -59,10 +59,14 @@ Use one deterministic translation segment fixture and a fake repository/receipt 
 2. Fetch returns source + candidate + rubric/context with immutable ids/versions.
 3. Recording approval writes one receipt and leaves candidate evidence unchanged.
 4. Recording a correction preserves both original candidate and correction.
-5. Retrying the same receipt write is idempotent by receipt/event identity.
-6. Retrying that identity with any different judgment, correction, decision, artifact id,
-   or artifact version fails with `:evaluation/conflict`; the original immutable receipt
-   is returned by read-back unchanged and no second receipt is appended.
+5. Retrying the same receipt/event identity is idempotent only when the complete canonical,
+   validated receipt payload is semantically equal. Store-assigned envelope metadata that
+   the receipt contract explicitly excludes is not part of this comparison.
+6. Retrying that identity with any canonical payload difference fails with
+   `:evaluation/conflict`. This includes, without limiting the comparison, reviewer
+   identity/role, case identity/version, rubric identity/version, source/candidate artifact
+   identity/version, judgment, correction, decision, provenance, and evidence. Read-back
+   returns the original immutable receipt unchanged and no second receipt is appended.
 7. A new candidate revision does not inherit the old receipt.
 8. The final query reports the case satisfied and returns the next pending case.
 9. The entire proof runs with the translation review frontend absent.

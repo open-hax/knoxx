@@ -53,6 +53,12 @@ Explicitly **out of scope here**:
   overwrite bugs are observable.
 - Extend/reuse current translation laws where they still describe the right semantics;
   do not preserve OpenPlanner-specific vocabulary merely because it exists today.
+- Before proof 2, remove `knoxx.backend.domain.translation-config`'s dependency on
+  `knoxx.backend.law.publication`. Today it imports that namespace only for the generic
+  `assert-valid!` helper. Move that helper to a domain-neutral law/validation boundary (or
+  make translation-config own its validation call) without duplicating the existing
+  configuration adapter. This namespace-graph repair is a prerequisite to claiming a
+  publication-free proof.
 
 ## Required proofs
 
@@ -60,8 +66,9 @@ Explicitly **out of scope here**:
 2. Provider selection/config resolves through Knoxx-owned
    `knoxx.backend.infra.routes.translation-config/resolved-config!`, or an injected
    resolved-config artifact produced by that existing boundary, without loading
-   publication code. The proof succeeds with publication namespaces and resources absent
-   while still exercising the active configuration authority.
+   publication code. After the prerequisite above, the proof succeeds with publication
+   law, runtime/orchestration, routes, stores, and resources absent while still exercising
+   the active configuration authority.
 3. A successful provider result becomes a candidate bound to that exact source revision.
 4. A provider failure produces no successful candidate.
 5. A retry/retranslation preserves earlier attempt evidence instead of overwriting it.
@@ -77,7 +84,8 @@ Explicitly **out of scope here**:
   absent.
 - A fake provider can prove the contract without live model infrastructure.
 - Provider selection remains independently provable through the resolved translation
-  configuration boundary when the publication subsystem is absent.
+  configuration boundary when the publication subsystem is absent; a namespace dependency
+  check fails if translation config regains a publication-law/runtime dependency.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - Failures distinguish source shaping, provider invocation, candidate validation,
   persistence, and read projection rather than collapsing into one pipeline failure.
