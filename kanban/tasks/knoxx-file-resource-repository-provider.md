@@ -22,6 +22,10 @@ files while consumers depend only on a repository boundary.
 
 - Define the smallest provider-neutral operations required by current consumers: resolve
   one, list/query, and validated write/replace with an `expected-version` precondition.
+- Keep these operations on the same repository authority extended by
+  `knoxx-resource-repository-snapshot-observation` (#282). Its `observe-many` operation must
+  reuse the fake/file providers and their public versions/authorization rather than wrapping
+  sequential resolves in a translation-specific adapter.
 - Reuse the existing namespace/resource EDN contract shape rather than introducing a
   second content language.
 - Keep filesystem/Git path details inside the provider implementation.
@@ -74,7 +78,8 @@ files while consumers depend only on a repository boundary.
 
 A future Optimizely provider should be able to implement the same semantic operations.
 Compatibility tests must therefore assert behavior and contract shape, not filesystem
-layout.
+layout. The multi-resource observation extension in #282 adds its concurrency/absence suite
+to this same provider-compatibility boundary.
 
 ## Non-goals
 

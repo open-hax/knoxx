@@ -14,7 +14,8 @@ category: epics
 
 The useful open-source CMS core is not a visual editor and not a specific backend.
 It is a **resource repository contract**: identity, schema, references, versioning,
-read/write/list operations, and provider boundaries over content/resource data.
+read/write/list operations, atomic multi-resource observations, and provider boundaries over
+content/resource data.
 
 Knoxx should have a file/EDN provider because it is transparent, Git-native,
 diffable, scriptable, AI-readable, and fast to develop against. A client using Optimizely
@@ -44,6 +45,10 @@ are version-pinned and resolve to an exposed immutable transitive closure, so an
 sibling write or a referenced target's later update cannot silently change evidence already
 bound to an older resource revision.
 
+Consumers that need more than one resource use one provider-neutral snapshot observation.
+That operation returns one linearized set of present versions and exact absence entries;
+sequential consumer reads are not a substitute.
+
 ## First provider
 
 The open-source reference provider should use the existing namespace/resource EDN shape
@@ -56,6 +61,8 @@ not assumed to be the only resource family.
 
 - `knoxx-cms-contract-validation` — reframe around repository/provider laws and production verification instead of validating a legacy OpenPlanner REST dependency.
 - `knoxx-file-resource-repository-provider` — define and prove the EDN/file-backed read/write/list/version boundary.
+- `knoxx-resource-repository-snapshot-observation` — add one linearizable multi-resource
+  observation and authoritative absence contract across fake/file providers.
 - Future: provider compatibility tests that a second implementation can satisfy without consumers branching on provider identity.
 - Future: narrow editing interfaces (CLI/MCP/UI) as consumers of the same resource-write operations.
 
@@ -88,4 +95,6 @@ idea moves here; its visual-page-builder scope does not become a prerequisite.
 - Provider identity is not part of semantic resource contracts.
 - Old resource revisions and their complete version-pinned reference closures remain
   addressable after current resources advance.
+- Multi-resource consumers can observe one state that existed, including exact requested
+  absences, without provider-specific reads or unrelated-write identity churn.
 - Publication, transduction, evaluation, and representation can each consume repository data without acquiring repository-provider knowledge.

@@ -15,6 +15,8 @@ category: tasks
 > Depends on: `knoxx-translation-config-publication-dependency-removal` (#273)
 > Depends on: `knoxx-cms-contract-validation` and
 > `knoxx-file-resource-repository-provider` for provider-neutral resource versions
+> Depends on: `knoxx-resource-repository-snapshot-observation` (#282) for one
+> provider-neutral multi-resource observation and exact absence entry
 > Integrates with: `knoxx-translations-event-sourced` for server-admitted attempt identity
 
 ## Purpose
@@ -66,9 +68,11 @@ The resolved artifact contains:
 
 Resource versions come from the provider-neutral repository contract and its retained
 revisions, never file mtimes, manifest hashes, current re-reads, or caller input. Resolution
-observes the global and organization-override identities in one consistent repository snapshot.
-When the override is absent, the artifact carries a trusted absence witness for its exact
-canonical identity and that snapshot, not a caller-computable marker.
+uses #282's `observe-many` operation for the global and organization-override identities,
+rather than composing sequential single-resource reads. The returned observation has one
+linearization point and one scoped identity over every present version and exact absence entry.
+When the override is absent, the artifact carries that repository-authoritative absence for its
+exact canonical identity, not a caller-computable marker.
 
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
@@ -110,7 +114,9 @@ The publication-free namespace closure from #273 remains an invariant.
 3. Updating either contributor changes the artifact; updating an unrelated resource does not.
 4. Resolve with no override, create one, then persist a candidate: its receipt retains and
    verifies the originally attested absence without re-reading current config. Updating a
-   present contributor exercises the same race law.
+   present contributor exercises the same race law. Deterministic fake/file barriers prove the
+   observation is a complete before-state or after-state, never a torn pair from sequential
+   reads.
 5. Cross-tenant, fabricated, stale, missing, value/revision-mismatched, unsigned, and
    signature/receipt-replayed artifacts all fail before provider invocation and append no
    candidate/history. A caller-computed digest plus a forged absent marker is insufficient.
@@ -137,6 +143,8 @@ The publication-free namespace closure from #273 remains an invariant.
   versioned artifact through separate, non-interchangeable operations over one resolver.
 - Global and optional override revisions—or trusted snapshot-bound absence—are mechanically
   attributable and immutable.
+- Resolution consumes one #282 `observe-many` result; fake/file race proofs admit no torn
+  combination from sequential reads.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
   while idempotent retries of the same source/operation/attempt retain their exact artifact.
 - Provider invocation and durable evidence carry the identical artifact end to end.
