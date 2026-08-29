@@ -11,6 +11,7 @@ category: tasks
 # Validate the translation transduction pipeline boundary by boundary
 
 > Parent epic: `knoxx-transduction-provider-pipeline`
+> Blocked by: `knoxx-translation-config-publication-dependency-removal` ([#273](https://github.com/open-hax/knoxx/issues/273))
 
 ## Purpose
 
@@ -53,12 +54,10 @@ Explicitly **out of scope here**:
   overwrite bugs are observable.
 - Extend/reuse current translation laws where they still describe the right semantics;
   do not preserve OpenPlanner-specific vocabulary merely because it exists today.
-- Before proof 2, remove `knoxx.backend.domain.translation-config`'s dependency on
-  `knoxx.backend.law.publication`. Today it imports that namespace only for the generic
-  `assert-valid!` helper. Move that helper to a domain-neutral law/validation boundary (or
-  make translation-config own its validation call) without duplicating the existing
-  configuration adapter. This namespace-graph repair is a prerequisite to claiming a
-  publication-free proof.
+- Complete blocking card `knoxx-translation-config-publication-dependency-removal` (#273)
+  before proof 2. It owns the namespace-graph repair, behavior/error parity, and the existing
+  adapter's publication-absent integration proof; this card consumes that evidence rather than
+  hiding an implementation prerequisite inside its approach notes.
 
 ## Required proofs
 
