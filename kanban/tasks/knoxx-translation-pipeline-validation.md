@@ -97,7 +97,10 @@ Explicitly **out of scope here**:
    identity at config and event admission. A commit-then-timeout retry of one composite is
    idempotent; changed same-composite reuse conflicts; one raw id reused across segments/targets
    remains independent; and distinct ids with equal content create distinct attempts. Store-only
-   tests are insufficient for this proof.
+   tests are insufficient for this proof. Inject config-admission crashes after observation,
+   after attestation minting, before complete install, and after install/before response:
+   pre-install crashes leave no reservation or provider call, post-install retry returns the
+   installed artifact, and equal concurrent losers cannot return a different resolved snapshot.
 10. Real GET/PATCH config routes derive scope only from a verified session or configured API
     key. A valid organization-A session plus headers naming an existing organization-B
     membership cannot read B, and a header-only request reaches no repository operation.
@@ -115,8 +118,11 @@ Explicitly **out of scope here**:
 - The resolved-config artifact carries both contributing resource revisions and its
   deterministic identity through provider invocation and durable attempt evidence; a later
   config change cannot rewrite which policy selected the candidate.
-- The real boundary proves config reservation and event history agree on one composite attempt
+- The real boundary proves complete config admission and event history agree on one composite attempt
   identity, including cross-segment/target raw-id reuse and same-composite conflict behavior.
+- The config boundary atomically installs a complete attempt/artifact record; injected crashes
+  and equal races cannot strand a reservation or let provider/event admission consume a losing
+  candidate artifact.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - The public save boundary preserves caller idempotency identity end to end instead of minting
   per-call ids or collapsing intentional equal-content attempts.

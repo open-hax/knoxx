@@ -131,11 +131,23 @@ derives the same canonical `AttemptIdentity` used by
 `knoxx-translations-event-sourced`: the full
 `{:org-id :document-id :segment-index :target-lang}` grouping key, where `:org-id` is the
 server-derived effective organization, plus the caller-stable
-`attempt_id`. Config admission atomically reserves that composite identity with the immutable
-source revision and canonical request facts, resolves current configuration, and consumes the
-new attestation into that slot. Raw attempt ids are not globally unique: the same value under a
-different segment or target-language grouping is a distinct attempt and receives its own
-current configuration. That first composite admission is the freshness boundary.
+`attempt_id`. The facade may perform authenticated observations and mint a candidate artifact
+before durable admission, but those values are not an attempt reservation and cannot authorize
+provider invocation. It then atomically unique-inserts/compares one complete
+`AttemptConfigAdmission` containing the composite identity, immutable source/canonical request
+facts, and full attested artifact. There is no externally visible pre-artifact or `:pending`
+reservation. Raw attempt ids are not globally unique: the same value under a different segment
+or target-language grouping is a distinct attempt and receives its own current configuration.
+That complete atomic install is the durable freshness boundary.
+
+A crash after any observation or attestation-minting step but before the atomic install leaves
+no attempt admission; a retry may resolve current configuration and the first complete install
+wins. A crash after install but before response returns the installed artifact on retry.
+Concurrent canonically equal callers may resolve different candidate snapshots, but exactly one
+complete record is installed; every loser discards its candidate and returns the installed
+winner. Changed source/request facts for that composite identity conflict. Orphan repository
+operation receipts remain audit history only, and an unattached attestation fails provider
+invocation because no matching installed admission exists.
 
 A canonically equal retry of the same composite identity retrieves the same attested
 artifact—even after configuration changes or a lost response. Reusing the same composite with
@@ -181,15 +193,21 @@ The publication-free namespace closure from #273 remains an invariant.
    lost-response retry returns the identical artifact, while changed same-composite reuse
    conflicts. Two segments and two target languages reuse one raw `attempt_id` and are admitted
    independently under their distinct grouping keys.
-6. Existing consumers, backend compile, unit/integration tests, and MCP E2E pass with every
+6. Inject crashes after the final observation, after attestation minting, immediately before
+   atomic install, and after install/before response. Every pre-install crash leaves no attempt
+   state or provider side effect and retry may resolve anew; the post-install retry returns the
+   exact stored artifact. Race equal callers whose observations straddle a config change: one
+   complete admission wins and all equal losers return it rather than their candidate; changed
+   request facts conflict. No durable partial/pending record is observable.
+7. Existing consumers, backend compile, unit/integration tests, and MCP E2E pass with every
    publication-owned namespace absent from the config boundary closure.
-7. The real authenticated GET route resolves global/override precedence without an attempt id,
+8. The real authenticated GET route resolves global/override precedence without an attempt id,
    creates no attempt/attestation record, and returns the expected wire view. At the same fake
    repository snapshot its values equal the attempt artifact, but passing that view to provider
    invocation fails before any side effect. A valid organization-A session plus identity
    headers naming a real organization-B membership cannot read B; header-only, expired, and
    forged-session requests reach no repository operation and reveal no config existence/value.
-8. Namespace/source guards keep the domain resolver free of law/shape/infra/store/extern
+9. Namespace/source guards keep the domain resolver free of law/shape/infra/store/extern
    imports, validators, codecs, Promise use, and repository calls; keep `law.*` free of I/O;
    and keep `shape.*` pure, domain-agnostic, and limited to structure morphisms. Domain table
    tests receive already validated typed observations, law tests decide admissibility, shape
@@ -222,6 +240,9 @@ The publication-free namespace closure from #273 remains an invariant.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
   while idempotent retries of the same composite attempt retain their exact artifact and
   cross-group reuse of a raw id remains independent.
+- Attempt admission installs identity, canonical request/source facts, and the complete attested
+  artifact atomically; crash/race proofs expose no stranded reservation, unattached invocation
+  authority, or loser-selected artifact.
 - Provider invocation and durable evidence carry the identical artifact end to end.
 - Config races and cross-tenant/fabricated artifacts fail closed with the negative proofs above.
 - The existing GET route has a route-level no-attempt/no-write proof and cannot mint invocation

@@ -75,11 +75,18 @@ use the same document and segment index across two organizations and across two 
 languages, then prove their histories, deduplication, candidates, and current projections
 never merge.
 
-Every upstream reservation for that attempt—including resolved translation configuration—uses
+Every upstream admission record for that attempt—including resolved translation configuration—uses
 this same composite `AttemptIdentity`. The raw caller id is not globally unique. Reusing it for
 another segment or target language creates an independent attempt; reusing the same composite
 identity with changed source, candidate, request, or configuration facts conflicts. Config
 admission and event admission may not disagree about that identity boundary.
+
+The upstream config owner does not persist a bare reservation: it atomically installs the
+complete identity/request/source facts with one attested config artifact before provider
+invocation. Event admission later names that exact installed artifact in the canonical event.
+A crash before config install leaves no reservation; a crash after install reuses it. This
+config record and the later produced-candidate event are distinct lifecycle facts, but neither
+may partially install or reinterpret the shared identity.
 
 The production `save_translation` MCP input schema exposes a required stable `attempt_id`
 (idempotency key) created by the initiating workflow/caller and reused after timeout or lost
@@ -178,8 +185,11 @@ land a migration that leaves that endpoint erroring.
 - Cross-organization and cross-target-language fixtures with otherwise identical document
   and segment coordinates remain isolated in both append history and current projection.
 - The same raw `attempt_id` reused across two segments and two target languages produces
-  independent config reservations/events, while changed reuse inside one composite grouping
+  independent complete config admissions/events, while changed reuse inside one composite grouping
   conflicts consistently at config and event admission.
+- Config-install crash/race fixtures prove no bare reservation can strand the later event:
+  pre-install retry may resolve anew, post-install retry reuses the exact artifact, and the
+  canonical event accepts only that installed artifact identity/attestation.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
 - During partial migration, per-key authority routes reads/writes to exactly one source; crash
