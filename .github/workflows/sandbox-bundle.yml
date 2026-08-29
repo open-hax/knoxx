@@ -102,29 +102,90 @@ jobs:
         with:
           cli: ${{ env.CLOJURE_TOOLS_VERSION }}
 
-      - name: Install, validate, test, and build
-        id: validate
+      - name: Install root dependencies
+        id: install_root
         continue-on-error: true
         shell: bash
         run: |
-          set -euo pipefail
-          {
-            pnpm install --frozen-lockfile
-            pnpm -C backend install --frozen-lockfile
-            pnpm -C frontend install --frozen-lockfile
-            pnpm -C backend run typecheck
-            pnpm -C backend run test:coverage
-            pnpm -C frontend run typecheck
-            pnpm -C frontend run test:coverage
-            cd ingestion
-            clojure -P -A:test
-            clojure -M:test
-          } 2>&1 | tee "$OUT/logs/validate.log"
+          set -o pipefail
+          pnpm install --frozen-lockfile 2>&1 | tee "$OUT/logs/install-root.log"
 
-      - name: Collect generated outputs and portable toolchains
+      - name: Install backend dependencies
+        id: install_backend
         if: always()
-        env:
-          VALIDATION_OUTCOME: ${{ steps.validate.outcome }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm -C backend install --frozen-lockfile 2>&1 | tee "$OUT/logs/install-backend.log"
+
+      - name: Install frontend dependencies
+        id: install_frontend
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm -C frontend install --frozen-lockfile 2>&1 | tee "$OUT/logs/install-frontend.log"
+
+      - name: Run backend typecheck
+        id: backend_typecheck
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm -C backend run typecheck 2>&1 | tee "$OUT/logs/backend-typecheck.log"
+
+      - name: Run backend tests and coverage
+        id: backend_tests
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm -C backend run test:coverage 2>&1 | tee "$OUT/logs/backend-tests.log"
+
+      - name: Run frontend typecheck
+        id: frontend_typecheck
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm -C frontend run typecheck 2>&1 | tee "$OUT/logs/frontend-typecheck.log"
+
+      - name: Run frontend tests and coverage
+        id: frontend_tests
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm -C frontend run test:coverage 2>&1 | tee "$OUT/logs/frontend-tests.log"
+
+      - name: Prepare ingestion dependencies
+        id: ingestion_prepare
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          (cd ingestion && clojure -P -A:test) 2>&1 | tee "$OUT/logs/ingestion-prepare.log"
+
+      - name: Run ingestion tests
+        id: ingestion_tests
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          (cd ingestion && clojure -M:test) 2>&1 | tee "$OUT/logs/ingestion-tests.log"
+
+      - name: Collect generated outputs
+        id: collect_runtime
+        if: always()
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -143,17 +204,58 @@ jobs:
           if [[ -n "${PNPM_HOME:-}" && -d "$PNPM_HOME" ]]; then
             tar -czf "$OUT/toolchain/pnpm-home.tar.gz" -C "$(dirname "$PNPM_HOME")" "$(basename "$PNPM_HOME")"
           fi
-          clojure_archive="$OUT/toolchain/clojure-tools-${CLOJURE_TOOLS_VERSION}.tar.gz"
-          babashka_archive="$OUT/toolchain/babashka-${BABASHKA_VERSION}-linux-amd64-static.tar.gz"
+
+      - name: Collect pinned Clojure CLI archive
+        id: collect_clojure
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$OUT/toolchain/clojure-tools-${CLOJURE_TOOLS_VERSION}.tar.gz"
+          download="$RUNNER_TEMP/clojure-tools-${CLOJURE_TOOLS_VERSION}.tar.gz"
+          trap 'rm -f "$download"' EXIT
           curl -fsSL \
             "https://download.clojure.org/install/clojure-tools-${CLOJURE_TOOLS_VERSION}.tar.gz" \
-            -o "$clojure_archive"
-          printf '%s  %s\n' "$CLOJURE_TOOLS_SHA256" "$clojure_archive" | sha256sum --check --strict
+            -o "$download"
+          printf '%s  %s\n' "$CLOJURE_TOOLS_SHA256" "$download" | sha256sum --check --strict
+          mv "$download" "$archive"
+
+      - name: Collect pinned Babashka archive
+        id: collect_babashka
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$OUT/toolchain/babashka-${BABASHKA_VERSION}-linux-amd64-static.tar.gz"
+          download="$RUNNER_TEMP/babashka-${BABASHKA_VERSION}-linux-amd64-static.tar.gz"
+          trap 'rm -f "$download"' EXIT
           curl -fsSL \
             "https://github.com/babashka/babashka/releases/download/v${BABASHKA_VERSION}/babashka-${BABASHKA_VERSION}-linux-amd64-static.tar.gz" \
-            -o "$babashka_archive"
-          printf '%s  %s\n' "$BABASHKA_SHA256" "$babashka_archive" | sha256sum --check --strict
+            -o "$download"
+          printf '%s  %s\n' "$BABASHKA_SHA256" "$download" | sha256sum --check --strict
+          mv "$download" "$archive"
 
+      - name: Write bundle metadata and checksums
+        id: finalize_bundle
+        if: always()
+        env:
+          INSTALL_ROOT_OUTCOME: ${{ steps.install_root.outcome }}
+          INSTALL_BACKEND_OUTCOME: ${{ steps.install_backend.outcome }}
+          INSTALL_FRONTEND_OUTCOME: ${{ steps.install_frontend.outcome }}
+          BACKEND_TYPECHECK_OUTCOME: ${{ steps.backend_typecheck.outcome }}
+          BACKEND_TESTS_OUTCOME: ${{ steps.backend_tests.outcome }}
+          FRONTEND_TYPECHECK_OUTCOME: ${{ steps.frontend_typecheck.outcome }}
+          FRONTEND_TESTS_OUTCOME: ${{ steps.frontend_tests.outcome }}
+          INGESTION_PREPARE_OUTCOME: ${{ steps.ingestion_prepare.outcome }}
+          INGESTION_TESTS_OUTCOME: ${{ steps.ingestion_tests.outcome }}
+          RUNTIME_OUTCOME: ${{ steps.collect_runtime.outcome }}
+          CLOJURE_ARCHIVE_OUTCOME: ${{ steps.collect_clojure.outcome }}
+          BABASHKA_ARCHIVE_OUTCOME: ${{ steps.collect_babashka.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
           for file in package.json pnpm-lock.yaml pnpm-workspace.yaml deps.edn shadow-cljs.edn; do
             [[ -f "$file" ]] && cp "$file" "$OUT/metadata/$file"
           done
@@ -170,15 +272,51 @@ jobs:
             --arg revision "$GITHUB_SHA" \
             --arg ref "$GITHUB_REF" \
             --arg generated_at "$generated_at" \
-            --arg validation "$VALIDATION_OUTCOME" \
+            --arg install_root "$INSTALL_ROOT_OUTCOME" \
+            --arg install_backend "$INSTALL_BACKEND_OUTCOME" \
+            --arg install_frontend "$INSTALL_FRONTEND_OUTCOME" \
+            --arg backend_typecheck "$BACKEND_TYPECHECK_OUTCOME" \
+            --arg backend_tests "$BACKEND_TESTS_OUTCOME" \
+            --arg frontend_typecheck "$FRONTEND_TYPECHECK_OUTCOME" \
+            --arg frontend_tests "$FRONTEND_TESTS_OUTCOME" \
+            --arg ingestion_prepare "$INGESTION_PREPARE_OUTCOME" \
+            --arg ingestion_tests "$INGESTION_TESTS_OUTCOME" \
+            --arg runtime "$RUNTIME_OUTCOME" \
+            --arg clojure_archive "$CLOJURE_ARCHIVE_OUTCOME" \
+            --arg babashka_archive "$BABASHKA_ARCHIVE_OUTCOME" \
             '{
               sandbox_bundle_version: 1,
               repository: $repository,
               revision: $revision,
               ref: $ref,
               generated_at: $generated_at,
-              validation: $validation,
-              entrypoint: "pnpm -C backend run test:coverage",
+              outcomes: {
+                install_root: $install_root,
+                install_backend: $install_backend,
+                install_frontend: $install_frontend,
+                backend_typecheck: $backend_typecheck,
+                backend_tests: $backend_tests,
+                frontend_typecheck: $frontend_typecheck,
+                frontend_tests: $frontend_tests,
+                ingestion_prepare: $ingestion_prepare,
+                ingestion_tests: $ingestion_tests,
+                runtime_collection: $runtime,
+                clojure_archive: $clojure_archive,
+                babashka_archive: $babashka_archive
+              },
+              setup_commands: [
+                "pnpm install --frozen-lockfile",
+                "pnpm -C backend install --frozen-lockfile",
+                "pnpm -C frontend install --frozen-lockfile",
+                "cd ingestion && clojure -P -A:test"
+              ],
+              validation_commands: [
+                "pnpm -C backend run typecheck",
+                "pnpm -C backend run test:coverage",
+                "pnpm -C frontend run typecheck",
+                "pnpm -C frontend run test:coverage",
+                "cd ingestion && clojure -M:test"
+              ],
               network_required_after_restore: true
             }' > "$OUT/manifest.json"
           (cd "$OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
@@ -220,7 +358,21 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Preserve validation result
-        if: always() && steps.validate.outcome == 'failure'
+      - name: Preserve collection and validation result
+        if: >-
+          always() &&
+          (steps.install_root.outcome == 'failure' ||
+           steps.install_backend.outcome == 'failure' ||
+           steps.install_frontend.outcome == 'failure' ||
+           steps.backend_typecheck.outcome == 'failure' ||
+           steps.backend_tests.outcome == 'failure' ||
+           steps.frontend_typecheck.outcome == 'failure' ||
+           steps.frontend_tests.outcome == 'failure' ||
+           steps.ingestion_prepare.outcome == 'failure' ||
+           steps.ingestion_tests.outcome == 'failure' ||
+           steps.collect_runtime.outcome == 'failure' ||
+           steps.collect_clojure.outcome == 'failure' ||
+           steps.collect_babashka.outcome == 'failure' ||
+           steps.finalize_bundle.outcome == 'failure')
         shell: bash
         run: exit 1
