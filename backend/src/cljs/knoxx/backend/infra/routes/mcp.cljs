@@ -12,6 +12,7 @@
             [knoxx.backend.infra.routes.mcp.consent :as consent]
             [knoxx.backend.infra.routes.mcp.params :as params]
             [knoxx.backend.infra.routes.mcp.transport :as transport]
+            [knoxx.backend.extern.mcp-token :as mcp-token]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
             [knoxx.backend.law.mcp-oauth :as law]
@@ -634,8 +635,8 @@
    Which methods may answer here is the authentication contract's decision, not
    this route's. :trusted-loopback is consulted first and only ever answers for
    a request auth-methods already accepted under the guards the contract
-   declares; when no contract enables it, the call is a nil and the bearer
-   falls through to the OAuth store exactly as before.
+   declares. A bearer reaches the OAuth store only when the same contract
+   explicitly enables :oauth-bearer; removal and disablement both refuse it.
 
    A grant becomes an ordinary token record, so everything downstream — context
    resolution, granted-tools, actor scoping, the transport — cannot tell which
@@ -644,9 +645,12 @@
   (when-not (str/blank? bearer)
     (if-let [grant (auth-methods/trusted-loopback-grant
                     config auth-methods/mcp-surface request bearer)]
-      (auth-methods/grant->token-record
-       grant (tool-name-set (available-tools runtime config nil)))
-      (await (load-token-record! bearer)))))
+      (mcp-token/native-record
+       (auth-methods/grant->token-record
+        grant (tool-name-set (available-tools runtime config nil))))
+      (when (auth-methods/method-enabled?
+             config auth-methods/mcp-surface :oauth-bearer)
+        (await (load-token-record! bearer))))))
 
 (defroute mcp-handle-post! [base config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z] "POST" "/mcp" []
   (let [^js request request
