@@ -118,6 +118,18 @@ cannot fabricate a valid artifact. Unrelated resource writes cannot rotate the a
 Attempt consumers change atomically to use the admitted operation; inspection consumers retain
 the read-only operation on the same configuration boundary.
 
+Fixed-point sequencing is bounded by a server-owned `ObservationRetryPolicy`: a maximum number
+of complete observation passes, a monotonic server deadline, and cancellation checked before
+and after every repository observation. Clients cannot extend the budget or supply its clock.
+Each selector or policy-reference change consumes a pass and restarts from the canonical config
+identity set. If the set never stabilizes before any limit, the facade returns the stable typed
+error `{:error/type :translation-config/unstable-observation :error/reason
+:retry-budget-exhausted :observation/attempt-count <bounded-count>}`; cancellation uses the same
+error type with `:error/reason :cancelled`. Neither result exposes resource values or presence,
+mints a `ResolvedConfigArtifact`/attestation, installs attempt admission, or invokes a provider.
+Any provisional repository operation receipts remain audit evidence only. A stable pass within
+the budget continues through the unchanged final-observation validation and admission path.
+
 Authorization policy remains separate from semantic repository observation identity. If policy
 V1 allows the final observation and V2 later allows the same unchanged resources, the resource
 versions and observation identity remain stable but the new operation receipt, resolved
@@ -214,6 +226,11 @@ The publication-free namespace closure from #273 remains an invariant.
    round trips prove structure only, and facade integration tests prove `observe-many`
    sequencing, fixed-point retry, receipt binding, and both typed operations without a second
    effectful orchestration path.
+10. A fake repository alternates a selector or provider-policy reference on every pass. The
+    facade terminates at the configured attempt/deadline bound with the typed unstable-observation
+    error and creates no artifact, attestation, attempt admission, or provider call. Cancellation
+    at each observation boundary has the same fail-closed proof; a closure that stabilizes on the
+    last permitted pass succeeds normally.
 
 ## Non-goals
 
@@ -245,6 +262,8 @@ The publication-free namespace closure from #273 remains an invariant.
   authority, or loser-selected artifact.
 - Provider invocation and durable evidence carry the identical artifact end to end.
 - Config races and cross-tenant/fabricated artifacts fail closed with the negative proofs above.
+- Fixed-point churn and cancellation terminate within the server-owned retry policy and cannot
+  produce partial invocation authority or an unbounded repository loop.
 - The existing GET route has a route-level no-attempt/no-write proof and cannot mint invocation
   authority or derive scope from client identity headers.
 - Publication-free closure, backend compile/tests, and MCP E2E pass.

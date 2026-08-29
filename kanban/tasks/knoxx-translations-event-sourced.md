@@ -151,6 +151,24 @@ atomically advances the marker; before that CAS the event/projection is staged e
 read authority. Once `:events`, reads use the projection only and never fall back to or
 dual-write the legacy row.
 
+Marker absence is a bootstrap pre-state, not a third authority value. Every first read,
+migration, or save acquires the same per-key migration/admission fence and tests marker absence
+and legacy-row existence in one transactionally consistent decision. When a legacy row exists,
+one compare-and-swap claims `:legacy` and the migration path below owns cutover. When no legacy
+row exists, a first save uses one atomic store transaction to compare both facts as still absent,
+append its canonical event with the next ordinal, install its projection, and set the marker to
+`:events`; no marker-only or event-only intermediate state is visible. A read or migration that
+finds no row may establish an empty `:events` authority, after which a save uses normal event
+admission.
+
+Concurrent first save and migration retry the whole fenced decision after a failed compare. A
+migration that claims an existing legacy row completes that deterministic initial event before
+the save is appended; a first save that wins the verified no-legacy transaction leaves migration
+to observe `:events` and do nothing. A crash before either atomic bootstrap changes nothing; a
+crash after it exposes the complete chosen authority and, for a saving caller, its admitted event
+and projection. Thus no candidate waits on a marker that nobody owns, disappears between legacy
+discovery and cutover, or is written to both authorities.
+
 `save_translation` acquires the same per-key migration/admission fence. For a legacy key it
 completes/reuses the initial event and projection, advances the marker, and only then appends
 the new canonical attempt; it never writes both authorities. A crash before marker advancement
@@ -195,6 +213,10 @@ land a migration that leaves that endpoint erroring.
 - During partial migration, per-key authority routes reads/writes to exactly one source; crash
   fixtures on both sides of cutover prove no stale fallback, missing save, or divergent
   dual-write.
+- A previously unseen grouping key with no marker or legacy row atomically establishes
+  `:events` together with its first saved event/projection. Two concurrent first saves and a
+  first save racing legacy discovery prove one bootstrap authority, normal attempt-id conflict
+  or ordering law for the candidates, no indefinite block, and no lost or dual-written save.
 - Concurrent distinct attempts receive unique per-key ordinals; out-of-order projection
   delivery cannot regress current state, and replay/recovery is byte-equivalent and
   idempotent after an injected append/projection split failure.

@@ -13,6 +13,7 @@ category: tasks
 > Parent epic: `knoxx-transduction-provider-pipeline`
 > Blocked by: `knoxx-translation-config-publication-dependency-removal` ([#273](https://github.com/open-hax/knoxx/issues/273))
 > Blocked by: `knoxx-versioned-resolved-translation-config` ([#275](https://github.com/open-hax/knoxx/issues/275))
+> Blocked by: `knoxx-translation-config-trusted-auth-context` ([#283](https://github.com/open-hax/knoxx/issues/283))
 
 ## Purpose
 
@@ -74,9 +75,9 @@ Explicitly **out of scope here**:
    `knoxx.backend.infra.routes.translation-config/admit-resolved-config-for-attempt!`, the
    attempt operation added to the existing facade by #275, or an injected artifact produced by
    that operation, without loading publication code. The read-only `EffectiveConfigView` from
-   the GET route is explicitly rejected here. After both prerequisites above, the proof succeeds
-   with every publication-owned law, runtime/orchestration, route, store, and resource namespace
-   absent while still exercising the active configuration authority. The resolved artifact is
+   the GET route is explicitly rejected here. After all three prerequisites above, the proof
+   succeeds with every publication-owned law, runtime/orchestration, route, store, and resource
+   namespace absent while still exercising the active configuration authority. The resolved artifact is
    bound to the same server-derived effective organization and immutable global plus optional
    organization override config/policy revisions as the source. Ordinary actors cannot target
    another organization; authorized system-admin delegation binds the target plus actor
