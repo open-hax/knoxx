@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 
 const backendRoot = fileURLToPath(new URL("../..", import.meta.url));
 const smokeScript = "scripts/smoke_test.sh";
+const bootstrapVerifier = fileURLToPath(
+  new URL("../../../scripts/verify-bootstrap-credential-rotation.sh", import.meta.url),
+);
 
 function fakeCurlDir() {
   const dir = mkdtempSync(join(tmpdir(), "knoxx-smoke-curl-"));
@@ -121,4 +124,17 @@ test("allows credentialed HTTPS and exact loopback HTTP URLs", () => {
       );
     }
   }
+});
+
+test("bootstrap verifier disables curl config and proxies for every request", () => {
+  const curlInvocations = readFileSync(bootstrapVerifier, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^(?:if )?curl /.test(line));
+
+  assert.equal(curlInvocations.length, 3);
+  assert.ok(
+    curlInvocations.every((line) => /^(?:if )?curl -q --noproxy '\*' /.test(line)),
+    `unhardened curl invocation:\n${curlInvocations.join("\n")}`,
+  );
 });

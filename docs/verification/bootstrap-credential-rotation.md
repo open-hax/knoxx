@@ -50,6 +50,8 @@ duration of the run. On success, failure, interrupt, or termination, the script
 stops its child process, drops only databases whose generated names match
 `knoxx_bootstrap_verify_rotation_*` or
 `knoxx_bootstrap_verify_failure_*`, and removes the temporary evidence.
+Every HTTP request disables user curl configuration and proxy routing so the
+generated administrator credentials remain on the intended loopback transport.
 
 ## Deployment contract
 

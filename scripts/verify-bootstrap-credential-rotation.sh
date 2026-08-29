@@ -146,7 +146,8 @@ start_server() {
 wait_for_ready() {
   local label="$1" attempt
   for attempt in $(seq 1 240); do
-    if curl -fsS --max-time 1 "http://127.0.0.1:${SERVER_PORT}/health" \
+    if curl -q --noproxy '*' -fsS --max-time 1 \
+      "http://127.0.0.1:${SERVER_PORT}/health" \
       >/dev/null 2>&1; then
       pass "$label starts this checkout and answers /health"
       return 0
@@ -161,7 +162,8 @@ wait_for_ready() {
 expect_startup_failure() {
   local label="$1" attempt status
   for attempt in $(seq 1 240); do
-    if curl -fsS --max-time 1 "http://127.0.0.1:${SERVER_PORT}/health" \
+    if curl -q --noproxy '*' -fsS --max-time 1 \
+      "http://127.0.0.1:${SERVER_PORT}/health" \
       >/dev/null 2>&1; then
       fail "$label must not bind an HTTP listener"
       stop_server
@@ -191,7 +193,7 @@ login_response() {
   local payload
   payload="$(jq -cn --arg email "$email" --arg password "$password" \
     '{email:$email,password:$password}')"
-  curl -sS --max-time 10 -o "$body" -w '%{http_code}' \
+  curl -q --noproxy '*' -sS --max-time 10 -o "$body" -w '%{http_code}' \
     -H 'content-type: application/json' \
     --data "$payload" \
     "http://127.0.0.1:${SERVER_PORT}/api/auth/local/login" 2>/dev/null \
