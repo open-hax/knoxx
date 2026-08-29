@@ -28,10 +28,17 @@ files while consumers depend only on a repository boundary.
 - Validate writes before they become repository authority.
 - Implement the conflict contract from `knoxx-cms-contract-validation`: an exact-payload
   retry is `:unchanged` with the existing version; a different payload for an existing
-  identity is an `:identity-exists` conflict; and a replace whose expected version is not
-  current is a `:stale-version` conflict. Both conflicts return the canonical
+  identity with no expected version is an `:identity-exists` conflict; a changed valid
+  payload with the current expected version is `:updated`; and a replace whose expected
+  version is not current is a `:stale-version` conflict. Both conflicts return the canonical
   `:resource/conflict` error data and leave the file, payload, provenance, and version
   unchanged.
+- Make the expected-version decision and durable write one atomic, linearizable operation.
+  If two replacements race from the same version, exactly one may return `:updated`; the
+  loser must observe the new actual version, return `:stale-version`, and change no bytes.
+- Preserve concurrent writes to different resource identities that share one namespace
+  manifest. Use atomic sibling preservation or manifest-level compare-and-swap/retry so a
+  read-modify-write cycle cannot silently erase another resource's accepted update.
 - Preserve enough version/provenance information for downstream publication,
   transduction, and evaluation consumers to bind to immutable revisions where required.
 - Prove the boundary using an in-memory/fake provider plus the real file provider.
@@ -58,4 +65,7 @@ layout.
   re-read through the same repository contract.
 - Fake and file providers return identical outcomes for create, equal retry, valid
   compare-and-swap replace, identity collision, and stale replace.
+- A same-identity concurrent replacement case proves exactly one update wins and one returns
+  `:stale-version`; a different-identity concurrent case proves both accepted sibling writes
+  survive and can be re-read from the shared namespace manifest.
 - No consumer needs to know a resource came from disk in order to use it.

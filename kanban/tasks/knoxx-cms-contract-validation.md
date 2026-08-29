@@ -66,11 +66,26 @@ outcome and error shape:
 - replacing with the current version and an equal payload returns `:unchanged` with the
   same version.
 
+The expected-version check and durable write are one atomic, linearizable operation, not a
+separate read followed by an unconditional write. When two changed payloads concurrently
+replace the same resource from version V, exactly one request returns `:updated`; the other
+returns the canonical `:stale-version` conflict with the winner's version as
+`:actual-version`, and the winning payload remains authoritative.
+
+Providers that store multiple resource identities in one physical manifest must also
+preserve accepted sibling writes. Two concurrent writes to different identities in the same
+namespace may not pass their resource checks and then erase one another through
+last-writer-wins file replacement. The implementation may use atomic sibling preservation or
+manifest-level compare-and-swap/retry, but the provider-neutral observable result is that
+both accepted writes remain present and re-readable.
+
 Compatibility tests must assert the complete conflict data above, not only that an
 exception occurred. They must also re-read after every duplicate or conflict and prove
 that no authority changed. Include both the absent-resource/non-nil-precondition case and
 the stale-version/equal-payload case so every provider implements the same precedence
-rules.
+rules. Include a same-identity concurrent replacement case where one request updates and one
+returns `:stale-version`, plus a different-identity concurrent write case where both siblings
+survive in a shared manifest.
 
 Run the same semantic suite against:
 
@@ -104,6 +119,8 @@ Do not require a browser page to prove repository health.
 - Exact duplicate retries are idempotent; absent-resource precondition failures, identity
   collisions, and stale-version writes return the provider-neutral conflict shape and
   preserve the prior resource or absence.
+- Concurrent compare-and-swap replacement is linearizable, and concurrent accepted writes
+  to sibling identities cannot lose either resource through a shared-manifest race.
 - Production verification exercises the configured repository boundary unconditionally,
   rather than skipping because OpenPlanner REST is absent.
 - No test defines "CMS correctness" as the continued existence of legacy OpenPlanner
