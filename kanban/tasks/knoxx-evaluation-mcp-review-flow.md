@@ -122,7 +122,10 @@ repository/receipt store:
     `:needs-adjudication` remain visible work.
     The canonical `:defer` decision has `:keeps-pending` completion effect, contributes no
     satisfaction quorum, and remains discoverable with its reason/evidence rather than being
-    silently advanced or stranded.
+    silently advanced or stranded. A same-principal satisfying follow-up must name the defer
+    judgment in an obligation-scoped supersession edge; the unlinked form is rejected with no
+    append. Another principal's satisfying value does not conflict with defer and counts only
+    as the rubric's quorum allows.
 11. The authenticated organization discovers only its cases. Cross-tenant direct fetches and
     writes return the same non-enumerating `:authorization/forbidden` result and persist
     nothing. A client-supplied tenant, reviewer identity, or reviewer role cannot override the

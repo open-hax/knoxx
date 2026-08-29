@@ -37,6 +37,8 @@ knowledge.
 - Bind provenance to the exact resolved provider-config/policy version, normalized request
   parameters, provider/model identity, and raw-result evidence digest needed to reproduce or
   audit decoding; volatile transport timing stays in an excluded execution envelope.
+  `knoxx-versioned-resolved-translation-config` (#275) owns the production artifact containing
+  global and optional organization-override revisions; this contract consumes it unchanged.
 - Isolate provider invocation behind one replaceable boundary.
 - Keep persistence/history outside the provider call; `knoxx-translations-event-sourced`
   owns durable attempt history.

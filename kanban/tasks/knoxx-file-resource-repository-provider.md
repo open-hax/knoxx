@@ -61,6 +61,11 @@ files while consumers depend only on a repository boundary.
   floating current values. Resolve the complete transitive closure in deterministic order,
   return its digest, retain older targets after updates, and reject missing pinned versions or
   cycles with the provider-neutral invalid-reference data before modifying authority.
+- Authorize every direct/transitive reference target under the authenticated actor context
+  before checking its existence/version: tenant targets must match the actor's organization and
+  global targets must pass server-owned read policy. Root authorization never delegates target
+  access. Existing/missing foreign targets return the same non-enumerating denial on write and
+  resolve, expose no closure/version facts, and leave root/current/history authority unchanged.
 - Preserve enough version/provenance information for downstream publication,
   transduction, and evaluation consumers to bind to immutable revisions where required.
 - Prove the boundary using an in-memory/fake provider plus the real file provider.
@@ -100,6 +105,9 @@ layout.
   prior resource version.
 - A pins B1, B advances to B2, and A@A1 still resolves the exact B1 closure/digest. Missing
   pinned revisions and cycles fail without changing either current or historical authority.
+- Direct and transitive foreign-reference fixtures (both existing and missing) are denied
+  before lookup with identical observable results; permitted/denied global reference targets
+  follow server-owned read policy and no denial leaks closure/version facts.
 - Cross-process race and injected-crash tests observe only complete old/new manifests and
   never acknowledge a write before its resource revision and closure can be re-read.
 - No consumer needs to know a resource came from disk in order to use it.

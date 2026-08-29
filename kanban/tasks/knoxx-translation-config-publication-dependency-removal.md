@@ -63,6 +63,8 @@ honestly until the complete namespace closure is repaired.
 - Adding provider invocation, publication admission, evaluation, or rendering behavior.
 - Introducing a parallel `resolved-translation-config!` adapter.
 - Removing publication-resource validation from the shared loader.
+- Emitting immutable resolved-config provenance; that separate consumer is
+  `knoxx-versioned-resolved-translation-config` (#275).
 - Implementing the broader pipeline proofs owned by
   `knoxx-translation-pipeline-validation`.
 
@@ -74,4 +76,5 @@ honestly until the complete namespace closure is repaired.
 - The existing `resolved-config!` adapter succeeds with publication entirely absent.
 - Normal full-loader behavior still validates publication resources.
 - The namespace regression, unit/integration tests, backend compile, and backend suite pass.
-- `knoxx-translation-pipeline-validation` can begin proof 2 without an implicit prerequisite.
+- `knoxx-versioned-resolved-translation-config` can evolve the adapter without an implicit
+  publication dependency.

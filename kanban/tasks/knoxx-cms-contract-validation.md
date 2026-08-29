@@ -52,6 +52,20 @@ organization administrator without that platform capability may consume the glob
 when its read policy permits but cannot create, replace, or delete it. A client cannot change
 scope or required capability in the same write it is trying to authorize.
 
+### Reference-edge authorization
+
+Authorization applies to the requested root **and independently to every direct and transitive
+reference edge** before the provider checks target existence or version. A tenant-owned target
+must be in the authenticated organization; a global target must pass its server-owned read
+policy. Authorization to read or write the root never delegates authority to its targets, and
+an explicitly foreign target identity is not a scope bypass.
+
+Both write-time reference validation and read-time closure resolution return the same
+non-enumerating `:authorization/forbidden` result for an unauthorized existing target, absent
+target, or retained historical version. They expose no target payload, actual version,
+reference closure, or digest and do not create/change the root. Apply the check at every hop so
+an authorized first edge cannot conceal a foreign transitive edge.
+
 ### Provider-neutral conflict contract
 
 Every write/replace request carries a canonical resource identity, a canonical authority
@@ -136,7 +150,10 @@ returns `:stale-version`, plus a different-identity concurrent write case where 
 survive in a shared manifest and each untouched sibling retains its prior resource version.
 Create A pinned to B1, update B to B2, and prove A@A1 still resolves the same ordered B1
 closure and digest; missing versions and cycles must return the exact invalid-reference data
-without changing authority.
+without changing authority. In separate fixtures, make an organization-A root reference both
+an existing and a missing organization-B target, and place the foreign edge one hop deeper.
+Every write/resolve attempt must produce the same non-enumerating denial and reveal no closure
+facts. Exercise permitted and denied global targets through their server-owned read policy too.
 
 Run the same semantic suite against:
 
@@ -182,6 +199,9 @@ Do not require a browser page to prove repository health.
   non-enumerating authorization result without rotating payload, provenance, or version.
 - Resolution exposes an immutable version-pinned transitive reference closure; target updates,
   missing revisions, and cycles cannot silently change an older root revision's meaning.
+- Every direct/transitive reference target is independently authorized before lookup; foreign
+  existing/missing targets and denied global targets are non-enumerating and cannot change the
+  root or disclose closure/version facts.
 - Production verification exercises the configured repository boundary unconditionally,
   rather than skipping because OpenPlanner REST is absent.
 - No test defines "CMS correctness" as the continued existence of legacy OpenPlanner

@@ -12,6 +12,7 @@ category: tasks
 
 > Parent epic: `knoxx-transduction-provider-pipeline`
 > Blocked by: `knoxx-translation-config-publication-dependency-removal` ([#273](https://github.com/open-hax/knoxx/issues/273))
+> Blocked by: `knoxx-versioned-resolved-translation-config` ([#275](https://github.com/open-hax/knoxx/issues/275))
 
 ## Purpose
 
@@ -58,6 +59,10 @@ Explicitly **out of scope here**:
   before proof 2. It owns the namespace-graph repair, behavior/error parity, and the existing
   adapter's publication-absent integration proof; this card consumes that evidence rather than
   hiding an implementation prerequisite inside its approach notes.
+- Complete `knoxx-versioned-resolved-translation-config` (#275) before proof 2. It evolves the
+  same adapter to emit one authenticated artifact naming the exact global and optional
+  organization-override resource revisions; this card consumes that artifact rather than
+  reconstructing provenance after provider invocation.
 
 ## Required proofs
 
@@ -65,11 +70,11 @@ Explicitly **out of scope here**:
 2. Provider selection/config resolves through Knoxx-owned
    `knoxx.backend.infra.routes.translation-config/resolved-config!`, or an injected
    resolved-config artifact produced by that existing boundary, without loading
-   publication code. After the prerequisite above, the proof succeeds with every
+   publication code. After both prerequisites above, the proof succeeds with every
    publication-owned law, runtime/orchestration, route, store, and resource namespace absent
    while still exercising the active configuration authority. The resolved artifact is bound
-   to the same
-   authenticated organization and immutable config/policy version as the source; a
+   to the same authenticated organization and immutable global plus optional organization
+   override config/policy revisions as the source; a
    cross-tenant or client-fabricated config artifact fails before provider invocation.
 3. A successful provider result becomes a candidate bound to that exact source revision.
 4. A provider failure produces no successful candidate.
@@ -96,6 +101,9 @@ Explicitly **out of scope here**:
   configuration boundary when the publication subsystem is absent; transitive namespace
   closure checks fail if the law, domain, or existing adapter regains any publication-owned
   dependency.
+- The resolved-config artifact carries both contributing resource revisions and its
+  deterministic identity through provider invocation and durable attempt evidence; a later
+  config change cannot rewrite which policy selected the candidate.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - The public save boundary preserves caller idempotency identity end to end instead of minting
   per-call ids or collapsing intentional equal-content attempts.

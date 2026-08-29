@@ -50,6 +50,15 @@ an obligation is satisfied. Its receipt remains durable and the case remains dis
 pending work (with the defer reason/evidence); only a later satisfying judgment or valid
 supersession can advance it.
 
+`:keeps-pending` values do not enter compatibility/exclusivity conflict sets because they
+express no terminal position. They still occupy that principal/role/obligation's current
+judgment head. A later satisfying value from the same principal is a changed vote and must
+explicitly supersede the pending head; an unlinked changed value is rejected at admission and
+cannot be chosen by timestamp or array order. A satisfying value from another principal may
+count toward the rubric's quorum without conflicting with the defer, while the defer remains
+durable history. Thus defer-then-approve is deterministic without manufacturing adjudication
+or silently discarding the pending receipt.
+
 Quorum is counted per obligation and required role over **distinct authenticated principal
 identities**, using the immutable principal/role facts recorded on admitted receipts. Multiple
 receipt ids or revisions from one principal contribute at most one vote to that obligation-role
@@ -64,8 +73,10 @@ authenticated principal, and reviewer role. Admission validates and advances eve
 principal/obligation/role head atomically or appends nothing: two concurrent successors cannot
 both win. The status fold uses the one unsuperseded judgment leaf per obligation and retains
 every receipt/ancestor as history; correcting obligation A does not suppress unrelated judgment
-B carried by the same prior receipt. It never chooses by wall clock. Multiple judgments without
-a valid supersession relation remain coexisting evidence and conflicting exclusive values yield
+B carried by the same prior receipt. It never chooses by wall clock. A satisfying value after a
+same-principal `:keeps-pending` head is rejected without a valid supersession relation; other
+independently admitted judgments remain coexisting evidence, and conflicting exclusive values
+yield
 `:needs-adjudication`. Cross-principal, cross-obligation, cross-version, already-superseded,
 missing-target, and cyclic relations fail validation without appending.
 
@@ -120,7 +131,10 @@ the admitted decision, and the fold never selects an adjudication by timestamp o
     pure law and every adapter; missing descriptor fields fail validation rather than
     defaulting to satisfied.
     An allowed value without completion effect fails validation; `:defer` keeps the case
-    pending/discoverable and cannot contribute satisfaction quorum.
+    pending/discoverable and cannot contribute satisfaction quorum. A same-principal
+    defer-then-approve succeeds only with an explicit supersession edge and then uses the
+    approve leaf; the unlinked form is rejected without append. A different principal's
+    satisfying value does not conflict with the defer and is evaluated normally under quorum.
 12. Repeated receipts from one principal leave a two-reviewer quorum `:pending`; adding a
     second authenticated principal satisfies it, while spoofed reviewer ids never count.
 13. An approve receipt followed by a valid same-principal reject supersession retains both but

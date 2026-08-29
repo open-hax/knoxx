@@ -60,6 +60,8 @@ the boundary first; additional providers/types can implement that boundary later
 - `knoxx-translation-config-publication-dependency-removal` — remove direct law/domain and
   transitive shared-loader publication dependencies, then prove publication-free provider
   selection through the existing Knoxx adapter without creating a parallel config boundary.
+- `knoxx-versioned-resolved-translation-config` — evolve that adapter to emit one authenticated,
+  immutable artifact naming the exact global and optional organization-override revisions.
 - `knoxx-translations-event-sourced` — preserve translation/transduction attempts as immutable history rather than destructive current-state upserts.
 - `knoxx-translation-pipeline-validation` — validate the translation transduction path only through candidate artifact + receipt; evaluation and rendering are separate acceptance surfaces.
 - Future: typed transduction operation/provider contract once the upstream Eta-mu/Katamorph workflow action vocabulary exposes `requires` / `provides` dataflow contracts.
