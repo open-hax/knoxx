@@ -1,7 +1,9 @@
 (ns knoxx.backend.infra.mongo-client
   "MongoDB client for Knoxx session/run persistence.
    Replaces Redis as the primary state store."
-  (:require ["mongodb" :refer [MongoClient]]))
+  (:require
+    [knoxx.backend.extern.mongo :as extern-mongo]
+    ["mongodb" :refer [MongoClient]]))
 
 (defonce mongo-client* (atom nil))
 (defonce mongo-db* (atom nil))
@@ -70,27 +72,11 @@
   @mongo-client*)
 
 (defn ^:async with-transaction!
-  "Run `f` in a Mongo transaction and always close its session.
-
-   Knoxx's Mongo deployment contract is a replica set. Keeping transaction
-   setup here gives stores one boundary for majority write concern, driver
-   retries, and session cleanup instead of reimplementing raw driver lifecycle
-   at each call site."
+  "Run `f` through the CLJS-first Mongo transaction boundary."
   ([f]
    (with-transaction! (get-client) f))
   ([client f]
-   (when-not client
-     (throw (js/Error. "Mongo client is required for a transaction")))
-   (let [session (.startSession client)]
-     (try
-       (await (.withTransaction
-               session
-               (^:async fn []
-                 (await (f session)))
-               #js {:readConcern #js {:level "snapshot"}
-                    :writeConcern #js {:w "majority"}}))
-       (finally
-         (await (.endSession session)))))))
+   (await (extern-mongo/with-transaction! client f))))
 
 (defn ^:async close-mongo!
   "Close MongoDB connection."

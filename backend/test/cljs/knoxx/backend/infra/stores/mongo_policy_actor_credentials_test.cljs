@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.stores.mongo-policy-actor-credentials-test
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
+            [knoxx.backend.extern.mongo :as extern-mongo]
             [knoxx.backend.infra.stores.mongo-policy-actor-credentials :as creds]))
 
 ;; Mock built on the same pattern as mongo-policy-tools-test.
@@ -94,6 +95,12 @@
                                         d))]
                          (mock-collection docs)))}))
 
+(defn- immediate-transaction! [f]
+  (let [session #js {:withTransaction (fn [callback _options] (callback))
+                     :endSession (fn [] (js/Promise.resolve nil))}
+        client #js {:startSession (fn [] session)}]
+    (extern-mongo/with-transaction! client f)))
+
 (deftest ^:async upsert-actor-credential-basic-test
   (testing "upsert creates a new credential and returns PG-shaped row"
     (let [db (mock-db)
@@ -155,7 +162,6 @@
 
 (deftest ^:async reconcile-bootstrap-local-password-serializes-and-replaces-test
   (let [db (mock-db)
-        session #js {:id "session-1"}
         transaction-count* (atom 0)
         transaction-tail* (atom (js/Promise.resolve nil))
         with-transaction! (^:async fn [f]
@@ -168,7 +174,7 @@
                               (reset! transaction-tail* next-turn)
                               (await previous)
                               (try
-                                (await (f session))
+                                (await (immediate-transaction! f))
                                 (finally
                                   (@release* nil)))))]
     (await (creds/upsert-actor-credential!
@@ -235,7 +241,7 @@
                          (fn [& _]
                            (reset! credentials-mutated?* true)
                            (js/Promise.resolve #js {}))}))}
-        with-transaction! (fn [f] (f #js {:id "session"}))]
+        with-transaction! immediate-transaction!]
     (try
       (await (creds/reconcile-bootstrap-local-password!
               db {:user-id "current-user"
@@ -274,7 +280,7 @@
         with-transaction! (^:async fn [f]
                             (let [before @credentials*]
                               (try
-                                (await (f #js {:id "session"}))
+                                (await (immediate-transaction! f))
                                 (catch :default err
                                   (reset! credentials* before)
                                   (throw err)))))]
@@ -288,7 +294,7 @@
               with-transaction!))
       (is false "replacement failure must propagate")
       (catch js/Error err
-        (is (= "simulated upsert failure" (.-message err)))))
+        (is (= "Mongo updateOne failed" (.-message err)))))
     (is (= ["old-user"]
            (mapv :user_id (filter #(= "active" (:status %)) @credentials*)))
         "transaction rollback keeps the prior administrator active")))
@@ -298,7 +304,7 @@
         transaction-count* (atom 0)
         with-transaction! (fn [f]
                             (swap! transaction-count* inc)
-                            (f #js {}))]
+                            (immediate-transaction! f))]
     (await (creds/upsert-actor-credential!
             db "current-user" "org" "local"
             {:kind "password"

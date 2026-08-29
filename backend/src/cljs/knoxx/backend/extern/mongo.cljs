@@ -1,10 +1,10 @@
 (ns knoxx.backend.extern.mongo
-  "Extern adapter owning the MongoDB collection-handle boundary.
+  "Extern adapter owning MongoDB client, session, and collection boundaries.
 
-   Knoxx does not ship a MongoDB driver; callers inject a native collection
-   handle (any object exposing insertOne/find with a toArray cursor). All raw
-   interop with that handle is born and dies here — store records upstream
-   speak CLJS maps only."
+   Callers inject native client or collection handles. All raw interop with
+   those handles, native option encoding, result decoding, and transaction
+   session lifecycle are born and die here. Store records and transaction
+   operations upstream speak CLJS maps only."
   (:require [knoxx.backend.law.mongo :as law-mongo]))
 
 (defn ^:async insert-one!
@@ -12,6 +12,90 @@
   [collection-handle doc]
   (await (.insertOne collection-handle (clj->js doc)))
   doc)
+
+(defn- native-update-options
+  [session {:keys [upsert write-concern case-insensitive?]}]
+  (let [options #js {}]
+    (when (some? upsert)
+      (aset options "upsert" (boolean upsert)))
+    (when write-concern
+      (aset options "writeConcern" #js {:w (str write-concern)}))
+    (when case-insensitive?
+      (aset options "collation" #js {:locale "en" :strength 2}))
+    (when session
+      (aset options "session" session))
+    options))
+
+(defn- update-result->cljs [result]
+  {:matched-count (aget result "matchedCount")
+   :modified-count (aget result "modifiedCount")
+   :upserted-count (aget result "upsertedCount")})
+
+(defn- ^:async update-one-native!
+  [session collection-handle query update options]
+  (try
+    (-> (await (.updateOne
+                collection-handle
+                (clj->js query)
+                (clj->js update)
+                (native-update-options session options)))
+        update-result->cljs)
+    (catch :default err
+      (throw (ex-info "Mongo updateOne failed"
+                      {:mongo/code (aget err "code")}
+                      err)))))
+
+(defn- ^:async update-many-native!
+  [session collection-handle query update options]
+  (try
+    (-> (await (.updateMany
+                collection-handle
+                (clj->js query)
+                (clj->js update)
+                (native-update-options session options)))
+        update-result->cljs)
+    (catch :default err
+      (throw (ex-info "Mongo updateMany failed"
+                      {:mongo/code (aget err "code")}
+                      err)))))
+
+(defn ^:async update-one!
+  "Update one document from CLJS query/update maps and return decoded counts.
+
+   `options` accepts :upsert, :write-concern, and :case-insensitive?. Native
+   Mongo option names and result objects never escape this adapter."
+  [collection-handle query update options]
+  (await (update-one-native! nil collection-handle query update options)))
+
+(defn- transaction-api [session]
+  {:update-one!
+   (fn [collection-handle query update options]
+     (update-one-native! session collection-handle query update options))
+   :update-many!
+   (fn [collection-handle query update options]
+     (update-many-native! session collection-handle query update options))})
+
+(defn ^:async with-transaction!
+  "Run `f` in a Mongo transaction through a CLJS-first operation map.
+
+   The callback receives :update-one! and :update-many! functions. Neither the
+   native ClientSession nor driver option/result shapes escape this adapter.
+   Knoxx's deployment contract is a replica set, so the transaction uses
+   snapshot read concern and majority write concern and lets the driver retry
+   transient write conflicts. The session is closed on every exit path."
+  [client f]
+  (when-not client
+    (throw (js/Error. "Mongo client is required for a transaction")))
+  (let [session (.startSession client)]
+    (try
+      (await (.withTransaction
+              session
+              (^:async fn []
+                (await (f (transaction-api session))))
+              #js {:readConcern #js {:level "snapshot"}
+                   :writeConcern #js {:w "majority"}}))
+      (finally
+        (await (.endSession session))))))
 
 (defn- decoded-instant
   "A time value only when it satisfies law.mongo/EpochMillis.

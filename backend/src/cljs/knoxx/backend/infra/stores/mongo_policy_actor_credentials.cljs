@@ -27,6 +27,7 @@
    Documents are stamped with :system_instance_id like the run store."
   (:require
     [clojure.string :as str]
+    [knoxx.backend.extern.mongo :as extern-mongo]
     [knoxx.backend.infra.mongo-client :as mongo-client]
     [knoxx.backend.infra.system-instance :as system-instance]
     [knoxx.backend.law.mongo :as mongo-law]))
@@ -34,7 +35,6 @@
 (def ACTOR_CREDENTIALS_COLLECTION "knoxx_actor_credentials")
 (def ^:private MEMBERSHIPS_COLLECTION "knoxx_memberships")
 (def ^:private RECONCILIATION_LOCKS_COLLECTION "knoxx_policy_reconciliation_locks")
-(def ^:private CASE_INSENSITIVE_COLLATION #js {:locale "en" :strength 2})
 
 (defn- credentials-coll [db] (.collection db ACTOR_CREDENTIALS_COLLECTION))
 
@@ -359,83 +359,81 @@
    exists and is safe to use."
   [db org-id]
   (try
-    (await (.updateOne
+    (await (extern-mongo/update-one!
             (.collection db RECONCILIATION_LOCKS_COLLECTION)
-            #js {:_id (reconciliation-lock-id org-id)}
-            #js {:$setOnInsert #js {:created_at (js/Date.)}}
-            #js {:upsert true
-                 :writeConcern #js {:w "majority"}}))
+            {:_id (reconciliation-lock-id org-id)}
+            {:$setOnInsert {:created_at (js/Date.)}}
+            {:upsert true :write-concern "majority"}))
     (catch :default err
-      (when-not (= 11000 (.-code err))
+      (when-not (= 11000 (:mongo/code (ex-data err)))
         (throw err)))))
 
 (defn- ^:async lock-reconciliation!
-  [locks org-id now session]
-  (let [result (await (.updateOne
+  [update-one! locks org-id now]
+  (let [result (await (update-one!
                        locks
-                       #js {:_id (reconciliation-lock-id org-id)}
-                       #js {:$set #js {:updated_at now
-                                       :system_instance_id (system-instance/current-id)}}
-                       #js {:session session}))]
-    (when-not (= 1 (.-matchedCount result))
+                       {:_id (reconciliation-lock-id org-id)}
+                       {:$set {:updated_at now
+                               :system_instance_id (system-instance/current-id)}}
+                       {}))]
+    (when-not (= 1 (:matched-count result))
       (throw (js/Error. "bootstrap reconciliation lock disappeared before transaction")))
     result))
 
 (defn- ^:async deactivate-managed-credentials!
-  [credentials managed-query current-id now session]
-  (await (.updateMany
+  [update-many! credentials managed-query current-id now]
+  (await (update-many!
           credentials
-          (clj->js (assoc managed-query :user_id {:$ne current-id}))
-          #js {:$set #js {:status "inactive"
-                          :updated_at now
-                          :system_instance_id (system-instance/current-id)}}
-          #js {:session session
-               :collation CASE_INSENSITIVE_COLLATION})))
+          (assoc managed-query :user_id {:$ne current-id})
+          {:$set {:status "inactive"
+                  :updated_at now
+                  :system_instance_id (system-instance/current-id)}}
+          {:case-insensitive? true})))
 
 (defn- ^:async upsert-bootstrap-credential!
-  [credentials {:keys [current-id current-org current-account secret-json]}
-   now session]
-  (await (.updateOne
+  [update-one! credentials
+   {:keys [current-id current-org current-account secret-json]} now]
+  (await (update-one!
           credentials
-          #js {:user_id current-id
-               :org_id current-org
-               :provider "local"
-               :kind "password"}
-          #js {:$set (clj->js {:account_identifier current-account
-                               :secret_json secret-json
-                               :status "active"
-                               :updated_at now
-                               :system_instance_id (system-instance/current-id)})
-               :$setOnInsert (clj->js {:credential_id (str (random-uuid))
-                                       :created_at now})}
-          #js {:upsert true :session session})))
+          {:user_id current-id
+           :org_id current-org
+           :provider "local"
+           :kind "password"}
+          {:$set {:account_identifier current-account
+                  :secret_json secret-json
+                  :status "active"
+                  :updated_at now
+                  :system_instance_id (system-instance/current-id)}
+           :$setOnInsert {:credential_id (str (random-uuid))
+                          :created_at now}}
+          {:upsert true})))
 
 (defn- ^:async revoke-managed-credentials!
-  [credentials managed-query now session]
-  (await (.updateMany
+  [update-many! credentials managed-query now]
+  (await (update-many!
           credentials
-          (clj->js managed-query)
-          #js {:$set #js {:status "inactive"
-                          :updated_at now
-                          :system_instance_id (system-instance/current-id)}}
-          #js {:session session
-               :collation CASE_INSENSITIVE_COLLATION})))
+          managed-query
+          {:$set {:status "inactive"
+                  :updated_at now
+                  :system_instance_id (system-instance/current-id)}}
+          {:case-insensitive? true})))
 
 (defn- ^:async reconcile-bootstrap-transaction!
   [db {:keys [current-id current-org managed-accounts secret-json] :as context}
-   session]
+   {:keys [update-one! update-many!]}]
   (let [credentials (credentials-coll db)
         locks (.collection db RECONCILIATION_LOCKS_COLLECTION)
         now (js/Date.)
         managed-query (managed-bootstrap-query current-org managed-accounts)]
-    (await (lock-reconciliation! locks current-org now session))
+    (await (lock-reconciliation! update-one! locks current-org now))
     (if (some? secret-json)
       (do
         (await (deactivate-managed-credentials!
-                credentials managed-query current-id now session))
-        (await (upsert-bootstrap-credential! credentials context now session)))
+                update-many! credentials managed-query current-id now))
+        (await (upsert-bootstrap-credential!
+                update-one! credentials context now)))
       (await (revoke-managed-credentials!
-              credentials managed-query now session)))
+              update-many! credentials managed-query now)))
     nil))
 
 (defn ^:async reconcile-bootstrap-local-password!
@@ -460,5 +458,6 @@
      (await (ensure-reconciliation-lock! db current-org))
      (await
       (with-transaction!
-        (^:async fn [session]
-          (await (reconcile-bootstrap-transaction! db context session))))))))
+        (^:async fn [transaction]
+          (await (reconcile-bootstrap-transaction!
+                  db context transaction))))))))
