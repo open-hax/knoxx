@@ -111,12 +111,12 @@ generation as semantic resource versions.
    returns no observation; replaying V1 or substituting a receipt from another principal,
    effective scope, capability, requested coordinate set, or observation is rejected. The final
    fixed-point consumer cannot attest a provisional smaller-set receipt.
-10. Observe a current config revision that pins policy P1 while that policy identity is current
-    at P2. One mixed-coordinate observation returns the current config and retained P1 exactly;
-    it never substitutes P2 or exhausts a stable closure. Updating policy current to P3 leaves
-    the exact-P1 result stable. Missing P1 produces the canonical referenced-version error with
-    no partial observation/receipt, and current optional absence remains distinguishable from
-    unavailable pinned history.
+10. Observe a current selected-model/catalog revision that pins policy P1 while that policy
+    identity is current at P2. One mixed-coordinate observation returns the current model and
+    retained P1 exactly; it never substitutes P2 or exhausts a stable closure. Updating policy
+    current to P3 leaves the exact-P1 result stable. Missing P1 produces the canonical
+    referenced-version error with no partial observation/receipt, and current optional absence
+    remains distinguishable from unavailable pinned history.
 
 ## Non-goals
 

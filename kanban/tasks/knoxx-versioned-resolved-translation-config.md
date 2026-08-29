@@ -95,18 +95,22 @@ exact canonical identity, not a caller-computable marker.
 The selected model coordinate is data-dependent, so the effectful facade reaches one final
 fixed-point observation without pretending sequential reads are atomic. It provisionally
 observes the two current config coordinates and gives that immutable observation to the pure
-resolver to derive the selected catalog identity plus required retained version. It observes the
-expanded coordinate set, gives the new observation back to the resolver to derive every
-referenced provider-policy identity plus pinned version, and repeats until the required canonical
-coordinate set is stable. The facade then obtains one final `observe-many`
-result containing the unchanged config resources, selected model, and complete pinned policy
-closure. Translation-config law validates that final observation and the pure domain resolver
-resolves only the admitted typed result. An unavailable pinned version fails with the canonical
+resolver to derive only the selected model/catalog identity: today's config value is an ID, not a
+versioned resource reference. The next pass observes the config coordinates again plus that model
+identity as `:current`. Only the returned model authority record and public version may derive its
+validated exact provider-policy reference coordinates. The facade repeats until the selected
+model identity and its required canonical policy-coordinate set are stable, then obtains one final
+`observe-many` result containing both current config coordinates, the selected model as
+`:current`, and its complete exact-version policy closure. Translation-config law verifies that
+the final config still selects that model and the final model record still names exactly those
+pinned dependencies before the pure domain resolver consumes the admitted typed result. A config
+selector or model dependency change restarts the full sequence; the final observation's returned
+model version is the artifact's selected-model revision. No step fabricates that version or reads
+the model outside `observe-many`. An unavailable pinned version fails with the canonical
 referenced-version error and produces no artifact, attestation, admission, or provider call; it
-is never replaced by that identity's current revision or treated as optional absence. Any changed
-selector or reference restarts effectful sequencing; only the final single observation is attested.
-An unrelated catalog entry is
-excluded and cannot rotate the artifact.
+is never replaced by that identity's current revision or treated as optional absence. Only the
+final single observation is attested. An unrelated catalog entry is excluded and cannot rotate
+the artifact.
 
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
@@ -241,11 +245,13 @@ The publication-free namespace closure from #273 remains an invariant.
     error and creates no artifact, attestation, attempt admission, or provider call. Cancellation
     at each observation boundary has the same fail-closed proof; a closure that stabilizes on the
     last permitted pass succeeds normally.
-11. A selected catalog revision pins provider policy P1, then that policy's current revision
-    advances through P2 and P3. The final mixed-coordinate observation and artifact retain P1
-    exactly without substituting current state or exhausting retry. An unavailable pinned P1
-    returns the canonical referenced-version error and creates no partial observation, artifact,
-    attestation, admission, or provider call.
+11. Config selects model identity M as a string. Observe M1 as `:current`; M1 pins provider
+    policy P1 while that policy's current revision advances through P2 and P3. The final
+    mixed-coordinate observation and artifact bind M1 plus retained P1 exactly without inventing
+    a model version, substituting policy current state, or exhausting retry. Race M1 with M2 that
+    pins P2: the final result is either coherent M1/P1 or M2/P2, never M2/P1. An unavailable pinned
+    version returns the canonical referenced-version error and creates no partial observation,
+    artifact, attestation, admission, or provider call.
 
 ## Non-goals
 
@@ -266,8 +272,9 @@ The publication-free namespace closure from #273 remains an invariant.
 - Resolution consumes one #282 `observe-many` result; fake/file race proofs admit no torn
   combination from sequential reads, and repository schema-version rotation changes observation
   plus artifact identity.
-- Version-pinned catalog/policy coordinates resolve retained revisions even after current state
-  advances; current substitution and pinned-version absence witnesses are impossible.
+- The selected model is observed as current before its returned record/version derives exact
+  policy coordinates; final recheck yields one coherent model/policy closure without fabricated
+  versions, current-policy substitution, or pinned-version absence witnesses.
 - The artifact and attestation carry the exact final repository operation receipt and ordered
   authorization-policy versions; policy rotation reauthorizes new attempts without rotating
   semantic resource/observation versions, and historical receipts never become capabilities.
