@@ -52,6 +52,22 @@ organization administrator without that platform capability may consume the glob
 when its read policy permits but cannot create, replace, or delete it. A client cannot change
 scope or required capability in the same write it is trying to authorize.
 
+### Capability-policy versioning
+
+Server-owned capability policy is authorization authority, not resource content. Changing that
+policy does **not** rotate an otherwise unchanged resource version or reference-closure digest.
+Every authorized repository operation nevertheless emits a `RepositoryOperationReceipt`
+binding the authenticated principal, effective scope, operation/capability, canonical resource
+identity, and exact server-owned `authorization-policy-version` used for the decision.
+
+Historical operation receipts remain verifiable evidence of what was authorized then, but they
+are not reusable capabilities. Every new read/write/resolve reauthorizes against current policy
+before repository access. If policy V1 permits a global write and V2 denies it, the V1 receipt
+and unchanged resource version remain historical evidence; replay or new mutation under V2
+fails without exposing or changing authority. Downstream semantic receipts continue to bind
+resource versions/closures, while any claim about who was authorized also binds the operation
+receipt.
+
 ### Reference-edge authorization
 
 Authorization applies to the requested root **and independently to every direct and transitive
@@ -154,6 +170,10 @@ without changing authority. In separate fixtures, make an organization-A root re
 an existing and a missing organization-B target, and place the foreign edge one hop deeper.
 Every write/resolve attempt must produce the same non-enumerating denial and reveal no closure
 facts. Exercise permitted and denied global targets through their server-owned read policy too.
+Change that policy from allowed V1 to denied V2 without changing the resource: assert the
+resource version/closure stays byte-identical, the V1 operation receipt remains historically
+verifiable but grants no current access, and a V2 attempt fails with a V2-attributable
+non-enumerating result and no mutation.
 
 Run the same semantic suite against:
 
@@ -197,6 +217,9 @@ Do not require a browser page to prove repository health.
 - An organization administrator cannot mutate an explicitly global translation configuration;
   a principal with `platform.translations.manage` can, and denied attempts return the same
   non-enumerating authorization result without rotating payload, provenance, or version.
+- Capability-policy changes leave semantic resource versions unchanged but rotate the policy
+  version on operation receipts; historical receipts remain evidence and never authorize a
+  later operation.
 - Resolution exposes an immutable version-pinned transitive reference closure; target updates,
   missing revisions, and cycles cannot silently change an older root revision's meaning.
 - Every direct/transitive reference target is independently authorized before lookup; foreign

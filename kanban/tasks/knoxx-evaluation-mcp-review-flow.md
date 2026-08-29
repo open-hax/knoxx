@@ -130,6 +130,10 @@ repository/receipt store:
    decision is one atomically admitted receipt in that organization's slot, so opposite
    finalizations cannot both satisfy the case. Appending equal evidence after finalization
    preserves that slot/decision; advancing a head creates a new unresolved conflict generation.
+   A mixed fixture with a missing obligation plus an unrelated exclusive conflict returns
+   `:needs-adjudication` together with both `:conflict-sets` and `:missing-obligations`;
+   after resolving only the conflict it becomes `:pending`, not `:satisfied`. MCP discovery
+   and fetch preserve those details exactly.
 10. Only `:satisfied` advances to the next pending case; `:pending` and
     `:needs-adjudication` remain visible work.
     The canonical `:defer` decision has `:keeps-pending` completion effect, contributes no

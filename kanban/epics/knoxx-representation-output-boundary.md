@@ -47,8 +47,12 @@ concrete representation. It does not own:
 Every provider contract names its input and provider/config versions, output media metadata,
 and deterministic digest. Concrete renderers own contextual escaping and explicit trusted
 markup capabilities minted outside caller-controlled artifacts and bound to an exact artifact
-digest/mode; a representation boundary may not honor self-asserted trust, turn untrusted
-content into executable HTML, or leak repository/provider credentials into output.
+digest, representation mode, provider/config identity, and admitted render operation. The
+public `trusted-html` constructor and its `TrustedHtml` value are data wrappers, not proof of
+that authority. A representation boundary validates and consumes the unforgeable capability
+before raw rendering; it may not honor plain/self-asserted trust, replay authority across
+operations, turn untrusted content into executable HTML, or leak repository/provider
+credentials into output.
 
 ## Candidate children
 

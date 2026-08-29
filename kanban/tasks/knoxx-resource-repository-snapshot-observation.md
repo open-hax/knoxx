@@ -35,13 +35,17 @@ set of resource identities. It returns a typed `ResourceObservation` containing:
 - for each identity, either its complete canonical authority record and resource-scoped
   version, or an authoritative absence entry for that exact identity;
 - the repository contract/schema version; and
-- an immutable observation identity over only those ordered identities and results.
+- an immutable observation identity over the repository contract/schema version plus only
+  those ordered identities and results.
 
 The provider linearizes all requested reads at one repository state. A returned combination
 must therefore have existed, even when writers race the operation. The observation identity is
 stable when the requested results are unchanged: internal manifest generations and unrelated
 resource writes cannot rotate it. Updating a requested resource or changing one requested
 identity from absent to present changes the next observation.
+Changing the repository contract/schema version also changes observation identity even when
+all requested resource values remain equal; consumers never interpret one identity under two
+repository contracts.
 
 The operation authorizes every requested identity under the server-authenticated actor before
 disclosing any existence, version, or partial result. Existing and missing foreign identities
@@ -73,6 +77,8 @@ generation as semantic resource versions.
    an in-memory lock.
 7. A future remote-provider compatibility fixture can satisfy the same suite without consumers
    branching on provider identity.
+8. Keeping resources equal while changing the repository contract/schema version rotates the
+   observation identity, and the dependent config artifact/attestation names the new version.
 
 ## Non-goals
 

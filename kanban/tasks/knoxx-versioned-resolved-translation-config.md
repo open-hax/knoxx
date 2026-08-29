@@ -17,6 +17,8 @@ category: tasks
 > `knoxx-file-resource-repository-provider` for provider-neutral resource versions
 > Depends on: `knoxx-resource-repository-snapshot-observation` (#282) for one
 > provider-neutral multi-resource observation and exact absence entry
+> Depends on: `knoxx-translation-config-trusted-auth-context` (#283) for session/API-key
+> scope that cannot be selected by caller identity headers
 > Integrates with: `knoxx-translations-event-sourced` for server-admitted attempt identity
 
 ## Purpose
@@ -40,9 +42,10 @@ catalog validation, and wire/domain codecs. The existing translation-config faca
 explicit operations over it:
 
 1. **Inspect effective config** — the existing authenticated
-   `GET /api/translations/config`/`config-response!` use case accepts organization context only
-   and returns a typed `EffectiveConfigView`. It performs no attempt reservation or write and
-   carries no provider-invocation authority.
+   `GET /api/translations/config`/`config-response!` use case accepts only trusted
+   session/API-key organization context from #283 and returns a typed `EffectiveConfigView`.
+   Client identity headers cannot select its scope. It performs no attempt reservation or
+   write and carries no provider-invocation authority.
 2. **Admit config for attempt** — `admit-resolved-config-for-attempt!` requires the
    server-admitted attempt/source/operation context and returns the attested
    `ResolvedConfigArtifact` below.
@@ -58,11 +61,15 @@ store.
 The resolved artifact contains:
 
 - effective typed configuration values;
-- the authenticated organization used for resolution;
+- the server-derived effective organization used for resolution plus authenticated actor and
+  delegation evidence when a trusted system administrator targets another organization;
 - the server-admitted composite attempt identity (event grouping key plus caller-stable attempt
   id), immutable source identity/revision, and canonical operation;
+- the repository contract/schema version and snapshot observation identity;
 - exact canonical identity and resource-scoped version of the global default;
 - exact canonical identity and resource-scoped version of the optional organization override;
+- exact canonical identity/resource version of the selected model-catalog entry plus the
+  version-pinned closure/digest of any referenced provider/allowlisting policy;
 - a resolution-policy/schema version; and
 - a deterministic artifact identity/digest over the ordered contributing facts; and
 - a trusted immutable resolution attestation covering the entire artifact, including absence.
@@ -75,12 +82,23 @@ linearization point and one scoped identity over every present version and exact
 When the override is absent, the artifact carries that repository-authoritative absence for its
 exact canonical identity, not a caller-computable marker.
 
+The selected model identity is data-dependent, so resolution reaches one final fixed-point
+observation without pretending sequential reads are atomic. It provisionally observes the two
+config identities, derives the selected catalog identity, observes that expanded identity set,
+derives any referenced provider-policy identities, and repeats until the required canonical set
+is stable. It then performs/validates one final `observe-many` result containing the unchanged
+config resources, selected model, and complete pinned policy closure. Any changed selector or
+reference restarts resolution; only that final single observation is attested. An unrelated
+catalog entry is excluded and cannot rotate the artifact.
+
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
-bytes. It binds the complete composite attempt identity, authenticated organization,
-snapshot/observation identity, every present resource version, the absent-override witness,
-policy/schema version, and artifact digest. Validation verifies that authority without
-re-reading current config. A later override creation therefore does not invalidate an
+bytes. It binds the complete composite attempt identity, authenticated actor/origin
+organization, effective organization plus delegation evidence, repository contract/schema
+version, snapshot/observation identity, every present resource version, the absent-override
+witness, selected model-catalog revision/provider-policy closure, resolution-policy/schema
+version, and artifact digest. Validation verifies that authority without re-reading current
+config. A later override creation therefore does not invalidate an
 already-started attempt, while merely omitting an existing override or recomputing the digest
 cannot fabricate a valid artifact. Unrelated resource writes cannot rotate the artifact.
 Attempt consumers change atomically to use the admitted operation; inspection consumers retain
@@ -89,7 +107,8 @@ the read-only operation on the same configuration boundary.
 There is no free-floating reusable attestation. Before provider invocation, the server
 derives the same canonical `AttemptIdentity` used by
 `knoxx-translations-event-sourced`: the full
-`{:org-id :document-id :segment-index :target-lang}` grouping key plus the caller-stable
+`{:org-id :document-id :segment-index :target-lang}` grouping key, where `:org-id` is the
+server-derived effective organization, plus the caller-stable
 `attempt_id`. Config admission atomically reserves that composite identity with the immutable
 source revision and canonical request facts, resolves current configuration, and consumes the
 new attestation into that slot. Raw attempt ids are not globally unique: the same value under a
@@ -106,9 +125,9 @@ binding, not by trusting client time.
 Provider selection receives this artifact and durable attempt/candidate evidence carries it
 unchanged. A configuration update after attempt admission creates a different artifact for a
 later attempt but cannot rewrite the provenance of the admitted attempt. The artifact is valid
-only for its authenticated organization, source, operation, and attempt; client-fabricated,
-cross-tenant, cross-attempt, stale, missing, or value/revision-mismatched artifacts fail before
-provider invocation without an existence leak.
+only for its effective organization, authenticated actor/delegation, source, operation, and
+attempt; client-fabricated, unauthorized cross-tenant, cross-attempt, stale, missing, or
+value/revision-mismatched artifacts fail before provider invocation without an existence leak.
 
 The publication-free namespace closure from #273 remains an invariant.
 
@@ -117,13 +136,19 @@ The publication-free namespace closure from #273 remains an invariant.
 1. Global-only resolution returns the exact global revision, snapshot-bound absence witness for
    the override identity, byte-stable artifact identity, and trusted attestation.
 2. Global plus organization override resolution names both ordered revisions and binds to the
-   authenticated organization.
-3. Updating either contributor changes the artifact; updating an unrelated resource does not.
+   effective organization. An ordinary actor cannot select another tenant; an authenticated
+   system administrator's explicit delegated target succeeds and remains bound with actor
+   evidence.
+3. Updating either contributor or the repository contract/schema version changes the artifact;
+   updating the selected model/provider policy also changes it; updating an unrelated resource
+   or unselected catalog entry does not.
 4. Resolve with no override, create one, then persist a candidate: its receipt retains and
    verifies the originally attested absence without re-reading current config. Updating a
    present contributor exercises the same race law. Deterministic fake/file barriers prove the
    observation is a complete before-state or after-state, never a torn pair from sequential
-   reads.
+   reads. Race a config selector change, selected catalog update, and provider-policy reference
+   update during fixed-point expansion; the admitted artifact names one final coexistent closure
+   or retries, never a mixed catalog decision.
 5. Cross-tenant, fabricated, stale, missing, value/revision-mismatched, unsigned, and
    signature/receipt-replayed artifacts all fail before provider invocation and append no
    candidate/history. A caller-computed digest plus a forged absent marker is insufficient.
@@ -136,7 +161,9 @@ The publication-free namespace closure from #273 remains an invariant.
 7. The real authenticated GET route resolves global/override precedence without an attempt id,
    creates no attempt/attestation record, and returns the expected wire view. At the same fake
    repository snapshot its values equal the attempt artifact, but passing that view to provider
-   invocation fails before any side effect.
+   invocation fails before any side effect. A valid organization-A session plus identity
+   headers naming a real organization-B membership cannot read B; header-only, expired, and
+   forged-session requests reach no repository operation and reveal no config existence/value.
 
 ## Non-goals
 
@@ -151,14 +178,15 @@ The publication-free namespace closure from #273 remains an invariant.
 - One existing production facade preserves read-only inspection and admits an authenticated,
   versioned artifact through separate, non-interchangeable operations over one resolver.
 - Global and optional override revisions—or trusted snapshot-bound absence—are mechanically
-  attributable and immutable.
+  attributable and immutable together with the selected model-catalog/provider-policy closure.
 - Resolution consumes one #282 `observe-many` result; fake/file race proofs admit no torn
-  combination from sequential reads.
+  combination from sequential reads, and repository schema-version rotation changes observation
+  plus artifact identity.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
   while idempotent retries of the same composite attempt retain their exact artifact and
   cross-group reuse of a raw id remains independent.
 - Provider invocation and durable evidence carry the identical artifact end to end.
 - Config races and cross-tenant/fabricated artifacts fail closed with the negative proofs above.
 - The existing GET route has a route-level no-attempt/no-write proof and cannot mint invocation
-  authority.
+  authority or derive scope from client identity headers.
 - Publication-free closure, backend compile/tests, and MCP E2E pass.

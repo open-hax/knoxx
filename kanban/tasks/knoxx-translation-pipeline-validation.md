@@ -63,6 +63,9 @@ Explicitly **out of scope here**:
   same adapter to emit one authenticated artifact naming the exact global and optional
   organization-override resource revisions; this card consumes that artifact rather than
   reconstructing provenance after provider invocation.
+- Complete `knoxx-translation-config-trusted-auth-context` (#283) before proof 2. It prevents
+  externally supplied identity headers from selecting config scope and supplies trusted
+  session/API-key context.
 
 ## Required proofs
 
@@ -73,11 +76,12 @@ Explicitly **out of scope here**:
    that operation, without loading publication code. The read-only `EffectiveConfigView` from
    the GET route is explicitly rejected here. After both prerequisites above, the proof succeeds
    with every publication-owned law, runtime/orchestration, route, store, and resource namespace
-   absent
-   while still exercising the active configuration authority. The resolved artifact is bound
-   to the same authenticated organization and immutable global plus optional organization
-   override config/policy revisions as the source; a
-   cross-tenant or client-fabricated config artifact fails before provider invocation.
+   absent while still exercising the active configuration authority. The resolved artifact is
+   bound to the same server-derived effective organization and immutable global plus optional
+   organization override config/policy revisions as the source. Ordinary actors cannot target
+   another organization; authorized system-admin delegation binds the target plus actor
+   evidence end to end. Cross-tenant, client-header-selected, or fabricated config artifacts
+   fail before provider invocation without an existence/value leak.
 3. A successful provider result becomes a candidate bound to that exact source revision.
 4. A provider failure produces no successful candidate.
 5. A retry/retranslation preserves earlier attempt evidence instead of overwriting it.
@@ -94,6 +98,9 @@ Explicitly **out of scope here**:
    idempotent; changed same-composite reuse conflicts; one raw id reused across segments/targets
    remains independent; and distinct ids with equal content create distinct attempts. Store-only
    tests are insufficient for this proof.
+10. Real GET/PATCH config routes derive scope only from a verified session or configured API
+    key. A valid organization-A session plus headers naming an existing organization-B
+    membership cannot read B, and a header-only request reaches no repository operation.
 
 ## Done when
 

@@ -89,6 +89,25 @@ per invocation, substitute the transport `_tool-call-id`, or derive identity fro
 Organization scope remains server-derived and combines with this value at event admission.
 Distinct attempt ids with byte-equivalent content intentionally remain distinct attempts.
 
+### Canonical attempt event
+
+Define one versioned `CanonicalAttemptEvent` before storage. Its compared/digested fields are:
+
+- the complete composite `AttemptIdentity`;
+- authenticated actor and effective/delegated organization evidence;
+- immutable source artifact identity, revision, media/locale facts, and digest;
+- candidate artifact identity, canonical content/media facts, and digest;
+- the exact resolved-config artifact identity/attestation;
+- provider, model, provider-config/policy versions, and normalized request parameters; and
+- provenance plus raw-result evidence digest.
+
+One canonical encoder/version supplies admission equality, the evidence digest, persistence,
+and replay. Store-assigned ordinal/record id, accepted/updated timestamps, transport tool-call
+id, retry count, latency, logs, worker/process identity, and projection checkpoint/envelope
+metadata are explicitly excluded. Those generated facts may surround the stored payload but a
+retry never recomputes them for equality. Any change to a canonical field conflicts; changes
+only to excluded execution-envelope facts return the original admitted event.
+
 Attempt admission is one atomic unique-insert/compare operation on that composite identity,
 not a read followed by an append. A retry whose complete canonical validated event equals the
 stored event returns the original event without another append. Any difference—including the
@@ -117,6 +136,20 @@ reuses the same derived id with a different canonical payload and stops with the
 event. Migration writes the event before the projection, resumes from durable checkpoints, and
 keeps the existing read endpoint available until every migrated grouping key can be served from
 the new projection.
+
+Partial migration uses one server-owned, compare-and-swap `MigrationAuthority` marker per
+grouping key with only `:legacy` or `:events`. While `:legacy`, reads use the legacy row.
+Migration writes and verifies the deterministic initial event and projection first, then
+atomically advances the marker; before that CAS the event/projection is staged evidence, not
+read authority. Once `:events`, reads use the projection only and never fall back to or
+dual-write the legacy row.
+
+`save_translation` acquires the same per-key migration/admission fence. For a legacy key it
+completes/reuses the initial event and projection, advances the marker, and only then appends
+the new canonical attempt; it never writes both authorities. A crash before marker advancement
+leaves legacy authoritative and retryable; a crash after advancement leaves events
+authoritative and replay repairs any projection checkpoint. Different grouping keys may cut
+over independently.
 
 ## Boundary rules
 
@@ -149,6 +182,9 @@ land a migration that leaves that endpoint erroring.
   conflicts consistently at config and event admission.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
+- During partial migration, per-key authority routes reads/writes to exactly one source; crash
+  fixtures on both sides of cutover prove no stale fallback, missing save, or divergent
+  dual-write.
 - Concurrent distinct attempts receive unique per-key ordinals; out-of-order projection
   delivery cannot regress current state, and replay/recovery is byte-equivalent and
   idempotent after an injected append/projection split failure.

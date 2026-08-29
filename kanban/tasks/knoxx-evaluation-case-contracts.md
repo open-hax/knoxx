@@ -85,9 +85,10 @@ principal, and reviewer role. Admission validates and advances every named
 principal/obligation/role slot atomically or appends nothing: two concurrent successors cannot
 both win. Advancing one slot makes every equal receipt in its prior generation an immutable
 ancestor, so correcting once cannot leave a duplicate old vote effective. The status fold uses
-the one head leaf per obligation and retains every receipt/ancestor as history; correcting
-obligation A does not suppress unrelated judgment B carried by the same prior receipt. It never
-chooses by wall clock. Any changed same-principal value, including one after a
+one current head per `{obligation-id, authenticated-principal-id, reviewer-role}` slot and
+retains every receipt/ancestor as history; correcting obligation A or one reviewer's slot does
+not suppress unrelated judgments or another principal/role slot carried by the same prior
+receipt. It never chooses by wall clock. Any changed same-principal value, including one after a
 `:keeps-pending` head, is rejected without a valid head/version supersession. Independently
 admitted judgments from distinct principals remain coexisting evidence, and conflicting
 exclusive values yield
@@ -108,10 +109,12 @@ missing-target, and cyclic relations fail validation without appending.
 - Multiple evaluations may coexist; disagreement is historical evidence and may later
   be adjudicated rather than overwritten.
 - Case completion is a pure status fold over the immutable case/rubric/artifact versions and
-  their receipts. It returns `:pending` while any requested judgment or reviewer-role
-  obligation is missing, `:needs-adjudication` while mutually exclusive judgments or
-  decisions conflict, and `:satisfied` only when every requested obligation is met and no
-  conflict remains. Receipts for another case, rubric, or artifact version never count.
+  their receipts. It returns `:needs-adjudication` whenever any unresolved exclusivity or
+  decision conflict exists, even when unrelated obligations are also missing; otherwise it
+  returns `:pending` while any requested judgment or reviewer-role obligation is missing and
+  `:satisfied` only when every requested obligation is met. The result also carries
+  deterministic `:conflict-sets` and `:missing-obligations` details, so conflict precedence
+  never hides pending work. Receipts for another case, rubric, or artifact version never count.
 - Adjudication is another immutable, version-bound receipt that names the conflicting receipt
   identities and is produced only by a reviewer role authorized by the rubric; history is not
   overwritten to manufacture satisfaction.
@@ -175,6 +178,10 @@ head advance creates a new conflict generation that the old decision cannot reso
     conflict-set identities, proposal quorums, and decision slots with no existence signal.
     Append an equal duplicate judgment after finalization and prove the existing decision still
     applies with no second slot; advancing a conflicting head produces a new unresolved set.
+15. A fixture with one missing obligation plus an unrelated exclusive conflict returns
+    `:needs-adjudication` and reports both the conflict set and missing obligation. Resolving
+    only the conflict transitions it to `:pending`; satisfying the remaining obligation then
+    transitions it to `:satisfied`.
 
 ## Done when
 
@@ -186,5 +193,7 @@ head advance creates a new conflict generation that the old decision cannot reso
   leave duplicate old votes effective.
 - The pure completion fold prevents partial, disputed, or stale receipt sets from advancing a
   case.
+- Mixed conflict/incomplete cases use one precedence law without hiding either conflict or
+  pending-work details.
 - Adjudication conflict and decision identities are scoped by server-authenticated organization.
 - No UI layout, publication state, or provider implementation is encoded in the core.
