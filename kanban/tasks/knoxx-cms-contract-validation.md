@@ -81,7 +81,10 @@ preserve accepted sibling writes. Two concurrent writes to different identities 
 namespace may not pass their resource checks and then erase one another through
 last-writer-wins file replacement. The implementation may use atomic sibling preservation or
 manifest-level compare-and-swap/retry, but the provider-neutral observable result is that
-both accepted writes remain present and re-readable.
+both accepted writes remain present and re-readable. Public version tokens are scoped to one
+resource identity and its canonical payload/provenance revision; an internal manifest hash,
+mtime, or storage revision may not leak out as that token. Writing resource B therefore leaves
+resource A's version byte-for-byte identical when A itself did not change.
 
 Compatibility tests must assert the complete conflict data above, not only that an
 exception occurred. They must also re-read after every duplicate or conflict and prove
@@ -90,7 +93,7 @@ the stale-version/equal-payload case so every provider implements the same prece
 rules. Include different-payload and equal-payload concurrent create cases for one absent
 identity, a same-identity concurrent replacement case where one request updates and one
 returns `:stale-version`, plus a different-identity concurrent write case where both siblings
-survive in a shared manifest.
+survive in a shared manifest and each untouched sibling retains its prior resource version.
 
 Run the same semantic suite against:
 
@@ -125,7 +128,8 @@ Do not require a browser page to prove repository health.
   collisions, and stale-version writes return the provider-neutral conflict shape and
   preserve the prior resource or absence.
 - Concurrent compare-and-swap replacement is linearizable, and concurrent accepted writes
-  to sibling identities cannot lose either resource through a shared-manifest race.
+  to sibling identities cannot lose either resource or rotate an untouched sibling's
+  resource-scoped version through a shared-manifest race.
 - Concurrent creates for one absent identity store one authoritative resource: a changed
   loser conflicts and an equal retry is unchanged.
 - Production verification exercises the configured repository boundary unconditionally,

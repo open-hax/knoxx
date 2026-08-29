@@ -42,6 +42,9 @@ files while consumers depend only on a repository boundary.
 - Preserve concurrent writes to different resource identities that share one namespace
   manifest. Use atomic sibling preservation or manifest-level compare-and-swap/retry so a
   read-modify-write cycle cannot silently erase another resource's accepted update.
+- Expose resource-scoped versions, not namespace-file hashes, mtimes, or manifest revisions.
+  Updating one sibling may rotate internal storage metadata but must leave every untouched
+  sibling's public version token identical along with its payload and provenance.
 - Preserve enough version/provenance information for downstream publication,
   transduction, and evaluation consumers to bind to immutable revisions where required.
 - Prove the boundary using an in-memory/fake provider plus the real file provider.
@@ -72,5 +75,6 @@ layout.
   `:identity-exists`, while equal payloads store once and return one `:unchanged`. A concurrent
   replacement case proves exactly one update wins and one returns `:stale-version`; a
   different-identity concurrent case proves both accepted sibling writes survive and can be
-  re-read from the shared namespace manifest.
+  re-read from the shared namespace manifest, with each untouched sibling retaining its exact
+  prior resource version.
 - No consumer needs to know a resource came from disk in order to use it.

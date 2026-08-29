@@ -33,7 +33,8 @@ The exact names may change during implementation, but the behavioral surface mus
 - record an SME correction without destroying the candidate artifact;
 - accept/reject/defer (or the rubric's equivalent decision);
 - persist an immutable evaluation receipt;
-- show whether the receipt satisfied the requested evaluation obligations;
+- show the pure case status (`:pending`, `:needs-adjudication`, or `:satisfied`) derived from
+  all version-bound receipts and the requested judgment/reviewer-role obligations;
 - advance to the next case.
 
 For the translation fixture the agent must be able to show source text, candidate text,
@@ -45,6 +46,11 @@ that publication law can later query.
 - MCP is a capability adapter, not the evaluation domain model.
 - Tool handlers delegate to pure evaluation/domain operations and repository/effect
   boundaries; no semantic law lives only in an MCP handler.
+- The MCP adapter derives organization, reviewer identity, and reviewer roles from the
+  authenticated principal/actor context. Request payloads cannot select or override tenant,
+  reviewer, or role. Case discovery is tenant-scoped; direct case/artifact/receipt operations
+  enforce the same ownership before read or write and return a non-enumerating
+  `:authorization/forbidden` failure across the boundary.
 - The flow does not require the existing translation React/TS UI.
 - Publication is not mutated merely to clear review state. Publication consumes the
   resulting evidence independently.
@@ -53,7 +59,8 @@ that publication law can later query.
 
 ## TDD / proof
 
-Use one deterministic translation segment fixture and a fake repository/receipt store:
+Use deterministic translation segment fixtures for two organizations and a fake
+repository/receipt store:
 
 1. Agent can discover the pending case.
 2. Fetch returns source + candidate + rubric/context with immutable ids/versions.
@@ -73,8 +80,17 @@ Use one deterministic translation segment fixture and a fake repository/receipt 
    winner. Race two equal payloads: one receipt persists and both callers observe it
    idempotently.
 8. A new candidate revision does not inherit the old receipt.
-9. The final query reports the case satisfied and returns the next pending case.
-10. The entire proof runs with the translation review frontend absent.
+9. The pure status fold keeps incomplete multi-judgment or multi-role sets `:pending`, reports
+   exclusive conflicting receipts as `:needs-adjudication`, and returns `:satisfied` only for
+   a complete non-conflicting set bound to the exact case, rubric, and artifact versions. An
+   authorized adjudication receipt names the conflicting receipts rather than replacing them.
+10. Only `:satisfied` advances to the next pending case; `:pending` and
+    `:needs-adjudication` remain visible work.
+11. The authenticated organization discovers only its cases. Cross-tenant direct fetches and
+    writes return the same non-enumerating `:authorization/forbidden` result and persist
+    nothing. A client-supplied tenant, reviewer identity, or reviewer role cannot override the
+    authenticated principal, including when it names a real SME in the same organization.
+12. The entire proof runs with the translation review frontend absent.
 
 ## Done when
 
@@ -84,5 +100,9 @@ Use one deterministic translation segment fixture and a fake repository/receipt 
 - Translation-specific context is preserved without appearing in the generic core law.
 - Concurrent receipt retries cannot create two authorities for one identity; unique
   admission and canonical-payload comparison are atomic.
+- Discovery, artifact reads, and receipt writes are tenant-owned, and durable reviewer facts
+  come from the authenticated actor rather than client assertions.
+- Case advancement consumes the pure version-bound satisfaction/adjudication fold and cannot
+  skip partial or disputed work.
 - The same MCP/domain operations could be presented later by Angular, Helix, CLI, or
   another agent without changing the stored evaluation semantics.
