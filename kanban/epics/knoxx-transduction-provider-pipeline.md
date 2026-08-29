@@ -57,7 +57,8 @@ the boundary first; additional providers/types can implement that boundary later
 
 - `knoxx-translation-transduction-boundary` — express the existing machine-translation path
   as typed source artifact -> candidate artifact + provenance behind a replaceable provider.
-- `knoxx-translation-config-publication-dependency-removal` — unblock publication-free provider
+- `knoxx-translation-config-publication-dependency-removal` — remove direct law/domain and
+  transitive shared-loader publication dependencies, then prove publication-free provider
   selection through the existing Knoxx adapter without creating a parallel config boundary.
 - `knoxx-translations-event-sourced` — preserve translation/transduction attempts as immutable history rather than destructive current-state upserts.
 - `knoxx-translation-pipeline-validation` — validate the translation transduction path only through candidate artifact + receipt; evaluation and rendering are separate acceptance surfaces.

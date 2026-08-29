@@ -1,14 +1,14 @@
 ---
 uuid: "knoxx-translation-config-publication-dependency-removal"
-title: "Remove the translation-config dependency on publication law"
+title: "Remove translation config's transitive dependency on publication"
 status: incoming
 priority: P1
-labels: ["tasks", "3sp", "has-parent", "translations", "transduction", "config", "boundaries"]
+labels: ["tasks", "5sp", "has-parent", "translations", "transduction", "config", "boundaries"]
 created_at: "2026-08-29T18:03:05Z"
-points: 3
+points: 5
 category: tasks
 ---
-# Remove the translation-config dependency on publication law
+# Remove translation config's transitive dependency on publication
 
 > Parent epic: `knoxx-transduction-provider-pipeline`
 > GitHub issue: [#273](https://github.com/open-hax/knoxx/issues/273)
@@ -16,43 +16,62 @@ category: tasks
 ## Purpose
 
 Make the existing Knoxx-owned translation configuration boundary independently usable by
-transduction. `knoxx.backend.domain.translation-config` currently requires
-`knoxx.backend.law.publication` only for the generic `assert-valid!` helper, so a proof that
-provider selection works with publication absent cannot compile honestly.
+transduction. The dependency is wider than one validation helper:
+
+- `law.translation-config` imports publication law for `NonBlankString` and `Locale`;
+- `domain.translation-config` imports it for `assert-valid!`; and
+- the existing `infra.routes.translation-config/resolved-config!` adapter reaches publication
+  transitively through `domain.resources.loader` -> `domain.contracts.loader` ->
+  `law.contracts` -> `law.publication`.
+
+A provider-selection proof with the publication subsystem absent therefore cannot compile
+honestly until the complete namespace closure is repaired.
 
 ## Scope
 
-- Move the generic validation helper to a domain-neutral law/validation boundary, or make
-  translation-config own the validation call.
-- Update `knoxx.backend.domain.translation-config` and its callers without creating a second
-  resolved-config adapter.
+- Move `NonBlankString`, `Locale`, and generic schema validation to neutral owners shared by
+  publication and translation config, or let translation config own the generic pieces it
+  needs. Preserve the current Malli schemas and error shape.
+- Remove the eager publication dependency from the existing resource/contract-loader path.
+  Use a neutral resource-schema registry, injected kind validator, or equivalent boundary;
+  do not replace the loader with a translation-only shadow implementation.
+- Update `law.translation-config`, `domain.translation-config`, and their callers without
+  creating a second resolved-config adapter.
 - Retain `knoxx.backend.infra.routes.translation-config/resolved-config!` as the one existing
   Knoxx-owned integration boundary.
 - Preserve valid/invalid configuration outcomes and exact error data.
-- Add a namespace-graph regression test that forbids translation-config from requiring
-  publication law, runtime/orchestration, routes, stores, or resources.
+- Add a transitive namespace-closure regression from each of `law.translation-config`,
+  `domain.translation-config`, and `infra.routes.translation-config`. Every publication-owned
+  law, runtime/orchestration, route, store, and resource namespace is forbidden.
 
 ## TDD / proof
 
 1. Capture current valid and invalid translation-config outcomes, including exact error data.
-2. Make the namespace-dependency test fail on the current publication-law require.
-3. Move/own validation at the neutral translation boundary and make both tests pass.
-4. Exercise the existing `infra.routes.translation-config/resolved-config!` adapter with all
-   publication namespaces/resources absent.
-5. Compile and run backend tests so callers cannot retain a hidden dependency.
+2. Make the namespace-closure test fail separately on the direct law/domain imports and the
+   adapter's transitive loader path.
+3. Neutralize the scalar/locale/validation ownership and prove exact behavior parity.
+4. Decouple the shared resource-loader graph without bypassing the existing adapter or
+   weakening validation of non-translation resource kinds.
+5. Compile and exercise the existing `infra.routes.translation-config/resolved-config!`
+   adapter with every publication-owned namespace/source unavailable.
+6. Run the full resource/contract loader and backend suites so the neutral registry cannot
+   silently stop validating publication resources in normal deployments.
 
 ## Non-goals
 
 - Changing provider-selection policy or configuration schema.
 - Adding provider invocation, publication admission, evaluation, or rendering behavior.
 - Introducing a parallel `resolved-translation-config!` adapter.
+- Removing publication-resource validation from the shared loader.
 - Implementing the broader pipeline proofs owned by
   `knoxx-translation-pipeline-validation`.
 
 ## Done when
 
-- Translation configuration validation has no publication namespace dependency.
+- The complete transitive namespace closure from all three entry points contains no
+  publication-owned namespace.
 - Valid/invalid behavior and error data match the captured contract.
 - The existing `resolved-config!` adapter succeeds with publication entirely absent.
-- The namespace regression, unit tests, backend compile, and backend suite pass.
+- Normal full-loader behavior still validates publication resources.
+- The namespace regression, unit/integration tests, backend compile, and backend suite pass.
 - `knoxx-translation-pipeline-validation` can begin proof 2 without an implicit prerequisite.

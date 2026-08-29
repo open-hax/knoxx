@@ -65,9 +65,10 @@ Explicitly **out of scope here**:
 2. Provider selection/config resolves through Knoxx-owned
    `knoxx.backend.infra.routes.translation-config/resolved-config!`, or an injected
    resolved-config artifact produced by that existing boundary, without loading
-   publication code. After the prerequisite above, the proof succeeds with publication
-   law, runtime/orchestration, routes, stores, and resources absent while still exercising
-   the active configuration authority. The resolved artifact is bound to the same
+   publication code. After the prerequisite above, the proof succeeds with every
+   publication-owned law, runtime/orchestration, route, store, and resource namespace absent
+   while still exercising the active configuration authority. The resolved artifact is bound
+   to the same
    authenticated organization and immutable config/policy version as the source; a
    cross-tenant or client-fabricated config artifact fails before provider invocation.
 3. A successful provider result becomes a candidate bound to that exact source revision.
@@ -92,8 +93,9 @@ Explicitly **out of scope here**:
   absent.
 - A fake provider can prove the contract without live model infrastructure.
 - Provider selection remains independently provable through the resolved translation
-  configuration boundary when the publication subsystem is absent; a namespace dependency
-  check fails if translation config regains a publication-law/runtime dependency.
+  configuration boundary when the publication subsystem is absent; transitive namespace
+  closure checks fail if the law, domain, or existing adapter regains any publication-owned
+  dependency.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - The public save boundary preserves caller idempotency identity end to end instead of minting
   per-call ids or collapsing intentional equal-content attempts.
