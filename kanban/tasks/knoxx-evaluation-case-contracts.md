@@ -44,6 +44,13 @@ explicit compatibility/exclusivity group; and the roles allowed to adjudicate th
 The generic status fold consumes those fields directly rather than inferring completion from
 the number of receipts or from UI workflow state.
 
+Quorum is counted per obligation and required role over **distinct authenticated principal
+identities**, using the immutable principal/role facts recorded on admitted receipts. Multiple
+receipt ids or revisions from one principal contribute at most one vote to that obligation-role
+requirement; a replacement/correction may change that principal's effective judgment but
+cannot manufacture another reviewer. A principal may satisfy a different required role only
+when its authenticated role facts and the rubric's role-overlap policy explicitly allow it.
+
 ## Laws
 
 - Artifact roles are semantic, not layout coordinates (`:source` / `:candidate`, never
@@ -84,6 +91,8 @@ the number of receipts or from UI workflow state.
 11. Two descriptors with different role/quorum and exclusivity rules fold identically in the
     pure law and every adapter; missing descriptor fields fail validation rather than
     defaulting to satisfied.
+12. Repeated receipts from one principal leave a two-reviewer quorum `:pending`; adding a
+    second authenticated principal satisfies it, while spoofed reviewer ids never count.
 
 ## Done when
 

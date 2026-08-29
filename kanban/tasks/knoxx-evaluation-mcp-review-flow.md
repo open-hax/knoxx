@@ -39,6 +39,13 @@ The exact names may change during implementation, but the behavioral surface mus
   all version-bound receipts and the requested judgment/reviewer-role obligations;
 - advance to the next case.
 
+Every receipt-write tool input includes a required caller/workflow-stable `receipt_id`
+(idempotency key), and every result echoes it with the admitted immutable receipt. The MCP
+handler validates and passes that identity unchanged to atomic receipt admission; it cannot
+mint a new id per call, substitute a transport tool-call id, or derive identity from receipt
+content. Organization/reviewer facts remain server-derived. Distinct receipt ids with
+canonically equal evaluations remain distinct historical evaluations.
+
 For the translation fixture the agent must be able to show source text, candidate text,
 locale/terminology/context, collect the SME's correction or approval, and leave evidence
 that publication law can later query.
@@ -81,6 +88,9 @@ repository/receipt store:
    one persists and the other returns `:evaluation/conflict`; read-back returns exactly the
    winner. Race two equal payloads: one receipt persists and both callers observe it
    idempotently.
+   Exercise the real MCP schema/handler with a commit-then-lost-response retry: the same
+   caller-stable `receipt_id` returns the original receipt, changed reuse conflicts, and two
+   distinct ids with equal evaluation content persist as two intentional evaluations.
 8. A new candidate revision does not inherit the old receipt.
 9. The pure status fold keeps incomplete multi-judgment or multi-role sets `:pending`, reports
    exclusive conflicting receipts as `:needs-adjudication`, and returns `:satisfied` only for
@@ -104,6 +114,8 @@ repository/receipt store:
 - Translation-specific context is preserved without appearing in the generic core law.
 - Concurrent receipt retries cannot create two authorities for one identity; unique
   admission and canonical-payload comparison are atomic.
+- Caller-stable receipt identity survives the real MCP boundary and response loss; store-only
+  idempotency tests do not satisfy this card.
 - Discovery, artifact reads, and receipt writes are tenant-owned, and durable reviewer facts
   come from the authenticated actor rather than client assertions.
 - Case advancement consumes the pure version-bound satisfaction/adjudication fold and cannot

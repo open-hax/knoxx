@@ -32,9 +32,12 @@ HTML representation without the provider knowing where the input came from.
   provider, or a generated fixture without representation code branching on source.
 - Keep hydration/browser concerns optional and explicit.
 - Contextually escape all untrusted text, attribute, URL, and serialized hydration values.
-  Raw/trusted markup is a separate validated capability in the input contract, never a string
-  convention; the provider rejects unsafe URL schemes and cannot copy repository/provider
-  credentials or provenance-only secrets into output.
+  Raw/trusted markup is an opaque capability minted by a trusted sanitizer/compiler or
+  explicitly authorized policy boundary **outside** caller-controlled artifact data, tied to
+  the exact artifact digest and representation mode. It is never a serializable boolean/tag
+  that a file resource, remote CMS, request payload, or provider result can self-assert. The
+  provider rejects self-asserted markers and unsafe URL schemes and cannot copy
+  repository/provider credentials or provenance-only secrets into output.
 - Produce byte-identical HTML and digest for the same canonical input plus provider/config
   version. A render failure returns no successful representation and no partial output for a
   publication consumer to mistake as authority.
@@ -49,8 +52,9 @@ HTML representation without the provider knowing where the input came from.
 ## Done when
 
 - One explicit semantic/view input produces HTML through a provider contract.
-- Contract tests cover text/attribute/script-closing/URL injection, raw-markup refusal,
-  deterministic repeated rendering, and failure with no successful output.
+- Contract tests cover text/attribute/script-closing/URL injection, self-asserted trusted
+  markers, raw-markup refusal without an external artifact-bound capability, capability
+  mismatch/replay, deterministic repeated rendering, and failure with no successful output.
 - Tests prove the representation path has no repository-provider dependency.
 - The provider can be selected as one workflow operation whose output may be stored,
   published, returned over HTTP, or ignored by the caller.
