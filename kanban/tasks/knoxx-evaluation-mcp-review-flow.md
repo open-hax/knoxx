@@ -107,8 +107,9 @@ repository/receipt store:
    Exercise the real MCP schema/handler with a commit-then-lost-response retry: the same
    caller-stable `receipt_id` returns the original receipt, changed reuse conflicts, and two
    distinct ids with equal evaluation content persist as two intentional receipts joined to
-   one effective head/vote. Append duplicate approve receipts, then supersede the returned
-   head/version with reject; both approvals become history and neither remains effective.
+   one effective head/vote without advancing its version. Append duplicate approve receipts,
+   then supersede the returned head/version with reject; both approvals become history and
+   neither remains effective.
    Race the duplicate with the successor and prove the old generation cannot reopen.
 8. A new candidate revision does not inherit the old receipt.
    A same-principal correction explicitly supersedes current matching judgment-head slots and
@@ -124,9 +125,11 @@ repository/receipt store:
    The fixture includes explicit obligation ids, allowed values, role/quorum rules,
    exclusivity groups, and adjudicator roles so no adapter invents completion defaults.
    Competing adjudicator proposals use the server-authenticated-organization-scoped canonical
-   conflict-set identity and distinct-principal quorum; the actual decision is one atomically
-   admitted receipt in that organization's slot, so opposite finalizations cannot both satisfy
-   the case.
+   conflict-set identity over sorted effective `{judgment_head_id, head_version}` pairs and
+   distinct-principal quorum. Equal duplicate receipt evidence is identity-neutral. The actual
+   decision is one atomically admitted receipt in that organization's slot, so opposite
+   finalizations cannot both satisfy the case. Appending equal evidence after finalization
+   preserves that slot/decision; advancing a head creates a new unresolved conflict generation.
 10. Only `:satisfied` advances to the next pending case; `:pending` and
     `:needs-adjudication` remain visible work.
     The canonical `:defer` decision has `:keeps-pending` completion effect, contributes no

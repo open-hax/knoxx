@@ -71,11 +71,12 @@ obligation-id, authenticated-principal-id, reviewer-role}`; receipt id and judgm
 not head identity. Its linearizable slot holds a `head-version`, the current canonical judgment
 value/effect, and every immutable receipt/judgment id that attests that equal value. A distinct
 receipt id with a canonically equal judgment appends intentional evidence and joins the current
-head generation, but creates no second leaf or vote. Equal-duplicate admission and a changed
-successor serialize through this same slot, so a late old-value receipt cannot resurrect an
-earlier generation. Head equality compares the effective value/completion effect at the exact
-version-bound obligation; different rationale/evidence remains distinct receipt history but
-cannot multiply that principal's vote.
+head generation without advancing `head-version`, but creates no second leaf or vote.
+Equal-duplicate admission and a changed successor serialize through this same slot, so a late
+old-value receipt cannot resurrect an earlier generation. Head equality compares the effective
+value/completion effect at the exact version-bound obligation; different rationale/evidence
+remains distinct receipt history but cannot multiply that principal's vote or change conflict
+identity.
 
 A changed vote is another immutable receipt with obligation-scoped supersession entries of
 `{obligation-id, judgment-head-id, expected-head-version}`. Each target must be the current
@@ -117,16 +118,20 @@ missing-target, and cyclic relations fail validation without appending.
 
 A conflict set has a canonical identity derived from the server-authenticated organization,
 exact case/rubric/artifact versions, obligation/exclusivity group, and sorted conflicting
-receipt ids. The organization is part of both conflict-set identity and the unique decision
-slot; caller-supplied scope never participates. The rubric declares allowed resolutions plus
-adjudicator roles and distinct-principal quorum. Adjudicator proposal receipts are immutable
-evidence but do not directly satisfy the case. Once compatible proposals reach quorum, a
-domain operation atomically creates one `AdjudicationDecisionReceipt` in that organization's
-unique slot for the conflict-set identity, naming the resolution and exact quorum-member
-receipt ids.
+effective `{judgment-head-id, head-version}` pairs. Equal receipt ids/evidence members are
+identity-neutral because they do not change an effective head generation. The organization is
+part of both conflict-set identity and the unique decision slot; caller-supplied scope never
+participates. The rubric declares allowed resolutions plus adjudicator roles and
+distinct-principal quorum. Adjudicator proposal receipts are immutable evidence but do not
+directly satisfy the case. Once compatible proposals reach quorum, a domain operation
+atomically creates one `AdjudicationDecisionReceipt` in that organization's unique slot for the
+conflict-set identity, naming the resolution, exact effective head generations, and exact
+quorum-member proposal receipt ids.
 An opposite decision racing for the empty slot yields exactly one winner and one
 `:evaluation/conflict`; an equal retry is unchanged. Later incompatible proposals cannot change
 the admitted decision, and the fold never selects an adjudication by timestamp or array order.
+Appending equal evidence after finalization leaves the same conflict identity/decision. A real
+head advance creates a new conflict generation that the old decision cannot resolve.
 
 ## TDD plan
 
@@ -168,6 +173,8 @@ the admitted decision, and the fold never selects an adjudication by timestamp o
     and every provider folds the same case status with all proposal evidence retained. Two
     organizations reuse every case/rubric/artifact/receipt id and still receive independent
     conflict-set identities, proposal quorums, and decision slots with no existence signal.
+    Append an equal duplicate judgment after finalization and prove the existing decision still
+    applies with no second slot; advancing a conflicting head produces a new unresolved set.
 
 ## Done when
 
