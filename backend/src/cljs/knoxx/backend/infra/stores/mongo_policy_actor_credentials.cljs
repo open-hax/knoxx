@@ -36,7 +36,8 @@
 (def ^:private MEMBERSHIPS_COLLECTION "knoxx_memberships")
 (def ^:private RECONCILIATION_LOCKS_COLLECTION "knoxx_policy_reconciliation_locks")
 
-(defn- credentials-coll [db] (.collection db ACTOR_CREDENTIALS_COLLECTION))
+(defn- credentials-coll [db]
+  (extern-mongo/collection db ACTOR_CREDENTIALS_COLLECTION))
 
 ;; ---------------------------------------------------------------------------
 ;; Row-shape adapters
@@ -100,8 +101,8 @@
    Returns the credential row with :actor_id and :org_slug filled in,
    or nil if the membership is missing."
    [db cred]
-   (let [memberships (.collection db "knoxx_memberships")
-         orgs (.collection db "knoxx_orgs")
+   (let [memberships (extern-mongo/collection db "knoxx_memberships")
+         orgs (extern-mongo/collection db "knoxx_orgs")
          membership (keywordize (await (.findOne memberships
                                                  #js {"user_id" (:user_id cred)
                                                       "org_id" (:org_id cred)})))]
@@ -156,7 +157,7 @@
    verified against that membership rather than used to find it: a token whose
    actor and membership disagree is refused, not reconciled."
   [db {:keys [actor-id org-id membership-id]}]
-  (let [memberships (.collection db MEMBERSHIPS_COLLECTION)
+  (let [memberships (extern-mongo/collection db MEMBERSHIPS_COLLECTION)
         actor       (some-> actor-id str str/trim not-empty)
         org         (some-> org-id str str/trim not-empty)
         membership  (some-> membership-id str str/trim not-empty)]
@@ -207,7 +208,7 @@
              sorted (sort-by :updated_at > docs)
              best (first sorted)]
          (when best
-           (let [orgs (.collection db "knoxx_orgs")
+           (let [orgs (extern-mongo/collection db "knoxx_orgs")
                  org (keywordize (await (.findOne orgs #js {"org_id" (:org_id best)})))]
              (assoc (credential-doc->row best)
                     :actor_id actor-id
@@ -360,7 +361,7 @@
   [db org-id]
   (try
     (await (extern-mongo/update-one!
-            (.collection db RECONCILIATION_LOCKS_COLLECTION)
+            (extern-mongo/collection db RECONCILIATION_LOCKS_COLLECTION)
             {:_id (reconciliation-lock-id org-id)}
             {:$setOnInsert {:created_at (js/Date.)}}
             {:upsert true :write-concern "majority"}))
@@ -422,7 +423,7 @@
   [db {:keys [current-id current-org managed-accounts secret-json] :as context}
    {:keys [update-one! update-many!]}]
   (let [credentials (credentials-coll db)
-        locks (.collection db RECONCILIATION_LOCKS_COLLECTION)
+        locks (extern-mongo/collection db RECONCILIATION_LOCKS_COLLECTION)
         now (js/Date.)
         managed-query (managed-bootstrap-query current-org managed-accounts)]
     (await (lock-reconciliation! update-one! locks current-org now))

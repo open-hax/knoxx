@@ -49,6 +49,72 @@
    select every normally persisted document."
   [:and string? [:fn {:error/message "must be nonblank"} (complement str/blank?)]])
 
+(defn- field-name? [field]
+  (and (keyword? field)
+       (not (str/starts-with? (name field) "$"))))
+
+(declare mutation-query-shape?)
+
+(defn- field-condition? [condition]
+  (or (string? condition)
+      (number? condition)
+      (boolean? condition)
+      (nil? condition)
+      (and (map? condition)
+           (= 1 (count condition))
+           (let [[operator operand] (first condition)]
+             (case operator
+               :$in (and (vector? operand)
+                         (every? #(or (string? %)
+                                     (number? %)
+                                     (boolean? %)
+                                     (nil? %))
+                                 operand))
+               :$exists (boolean? operand)
+               :$ne (or (string? operand)
+                        (number? operand)
+                        (boolean? operand)
+                        (nil? operand))
+               false)))))
+
+(defn- mutation-query-clause? [[field condition]]
+  (if (= :$or field)
+    (and (vector? condition)
+         (seq condition)
+         (every? mutation-query-shape? condition))
+    (and (field-name? field)
+         (field-condition? condition))))
+
+(defn- mutation-query-shape? [query]
+  (and (map? query)
+       (seq query)
+       (every? mutation-query-clause? query)))
+
+(def MutationQuery
+  "A nonempty update query composed only from field equality, `$in`, `$ne`,
+   `$exists`, and nonempty `$or` clauses.
+
+   Generic mutation adapters must reject `{}` because Mongo interprets it as
+   every document. Keeping the operator allow-list here also prevents a caller
+   from smuggling executable or otherwise unreviewed query operators through a
+   supposedly CLJS-first boundary."
+  [:fn {:error/message "must be a nonempty admissible mutation query"}
+   mutation-query-shape?])
+
+(def MutationUpdate
+  "A nonempty Mongo update document containing nonempty `$set`, `$unset`, or
+   `$setOnInsert` field maps.
+
+   Replacement documents and arbitrary update operators are deliberately not
+   part of this adapter's contract."
+  [:and
+   [:map-of
+    [:enum :$set :$unset :$setOnInsert "$set" "$unset" "$setOnInsert"]
+    [:and
+     [:map-of [:or keyword? string?] any?]
+     [:fn {:error/message "mutation operator must set at least one field"} seq]]]
+   [:fn {:error/message "must contain at least one mutation operator"} seq]])
+
 (defn valid-query?
   [query]
   (m/validate FieldEqualityQuery query))
@@ -61,3 +127,13 @@
   "Whether value is a nonblank canonical identifier."
   [value]
   (m/validate NonBlankIdentifier value))
+
+(defn valid-mutation-query?
+  "Whether query is safe for the generic update boundary."
+  [query]
+  (m/validate MutationQuery query))
+
+(defn valid-mutation-update?
+  "Whether update is an admissible nonempty mutation document."
+  [update]
+  (m/validate MutationUpdate update))

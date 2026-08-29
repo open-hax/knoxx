@@ -11,8 +11,9 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-const backendRoot = new URL("../..", import.meta.url).pathname;
+const backendRoot = fileURLToPath(new URL("../..", import.meta.url));
 const smokeScript = "scripts/smoke_test.sh";
 
 function fakeCurlDir() {
@@ -24,6 +25,7 @@ function fakeCurlDir() {
 set -euo pipefail
 out=""
 route="proxyable"
+first_arg="\${1:-}"
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == "-o" ]]; then
     out="$2"
@@ -35,7 +37,7 @@ while [[ $# -gt 0 ]]; do
     shift
   fi
 done
-[[ -z "\${FAKE_CURL_CALL_FILE:-}" ]] || printf '%s\n' "$route" >> "$FAKE_CURL_CALL_FILE"
+[[ -z "\${FAKE_CURL_CALL_FILE:-}" ]] || printf '%s\t%s\n' "$first_arg" "$route" >> "$FAKE_CURL_CALL_FILE"
 [[ -z "$out" ]] || printf '{}\n' > "$out"
 printf '200'
 `,
@@ -60,10 +62,20 @@ function runSmoke({ baseUrl, apiKey = "", bearer = "" }) {
         MODEL_LAB_OPENAI_API_KEY: bearer,
       },
     });
-    const curlRoutes = existsSync(callFile)
-      ? readFileSync(callFile, "utf8").trim().split("\n")
+    const curlInvocations = existsSync(callFile)
+      ? readFileSync(callFile, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => {
+            const [firstArg, route] = line.split("\t");
+            return { firstArg, route };
+          })
       : [];
-    return Object.assign(result, { curlCalls: curlRoutes.length, curlRoutes });
+    return Object.assign(result, {
+      curlCalls: curlInvocations.length,
+      curlRoutes: curlInvocations.map(({ route }) => route),
+      curlFirstArgs: curlInvocations.map(({ firstArg }) => firstArg),
+    });
   } finally {
     rmSync(curlDir, { recursive: true, force: true });
   }
@@ -98,6 +110,10 @@ test("allows credentialed HTTPS and exact loopback HTTP URLs", () => {
     const result = runSmoke({ baseUrl, bearer: "test-only" });
     assert.equal(result.status, 0, `${baseUrl}: ${result.stderr}`);
     assert.ok(result.curlCalls > 0, `${baseUrl}: curl was not exercised`);
+    assert.ok(
+      result.curlFirstArgs.every((arg) => arg === "-q"),
+      `${baseUrl}: curlrc disabling was not the first argument`,
+    );
     if (baseUrl.startsWith("http://")) {
       assert.ok(
         result.curlRoutes.every((route) => route === "direct"),

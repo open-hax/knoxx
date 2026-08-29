@@ -61,7 +61,9 @@ request() {
   local out="$TMP_DIR/$(echo "$label" | tr -cs '[:alnum:]' '_').json"
   local err="$TMP_DIR/$(echo "$label" | tr -cs '[:alnum:]' '_').err"
   local url="${BASE_URL%/}${path}"
-  local -a args=(-sS -o "$out" -w '%{http_code}' -X "$method" "$url" -H 'Accept: application/json')
+  # `-q` must be first so no user/system curlrc can enable redirects or
+  # otherwise alter credential transport before these controls.
+  local -a args=(-q -sS -o "$out" -w '%{http_code}' -X "$method" "$url" -H 'Accept: application/json')
 
   if [[ "$LOOPBACK_HTTP" == "1" ]]; then
     # Never let http_proxy/ALL_PROXY redirect loopback credentials off-host.

@@ -45,8 +45,31 @@
    :modified-count (aget result "modifiedCount")
    :upserted-count (aget result "upsertedCount")})
 
+(defonce ^:private transaction-operation-by-error (js/WeakMap.))
+
+(defn- mongo-operation-error [operation err]
+  (ex-info (str "Mongo " operation " failed")
+           {:mongo/code (aget err "code")}
+           err))
+
+(defn- remember-transaction-operation! [err operation]
+  (when (object? err)
+    (.set transaction-operation-by-error err operation))
+  err)
+
+(defn- remembered-transaction-operation [err]
+  (when (object? err)
+    (.get transaction-operation-by-error err)))
+
+(defn- assert-mutation! [query update]
+  (when-not (law-mongo/valid-mutation-query? query)
+    (throw (ex-info "refusing an unsafe Mongo mutation query" {:query query})))
+  (when-not (law-mongo/valid-mutation-update? update)
+    (throw (ex-info "refusing an unsafe Mongo mutation document" {:update update}))))
+
 (defn- ^:async update-one-native!
   [session collection-handle query update options]
+  (assert-mutation! query update)
   (try
     (-> (await (.updateOne
                 collection-handle
@@ -55,12 +78,15 @@
                 (native-update-options session options)))
         update-result->cljs)
     (catch :default err
-      (throw (ex-info "Mongo updateOne failed"
-                      {:mongo/code (aget err "code")}
-                      err)))))
+      (if session
+        ;; withTransaction must see the original MongoError and its
+        ;; TransientTransactionError label so the driver can retry.
+        (throw (remember-transaction-operation! err "updateOne"))
+        (throw (mongo-operation-error "updateOne" err))))))
 
 (defn- ^:async update-many-native!
   [session collection-handle query update options]
+  (assert-mutation! query update)
   (try
     (-> (await (.updateMany
                 collection-handle
@@ -69,17 +95,19 @@
                 (native-update-options session options)))
         update-result->cljs)
     (catch :default err
-      (throw (ex-info "Mongo updateMany failed"
-                      {:mongo/code (aget err "code")}
-                      err)))))
+      (if session
+        (throw (remember-transaction-operation! err "updateMany"))
+        (throw (mongo-operation-error "updateMany" err))))))
 
 (defn ^:async update-one!
   "Update one document from CLJS query/update maps and return decoded counts.
 
    `options` accepts :upsert, :write-concern, and :case-insensitive?. Native
    Mongo option names and result objects never escape this adapter."
-  [collection-handle query update options]
-  (await (update-one-native! nil collection-handle query update options)))
+  ([collection-handle query update]
+   (await (update-one-native! nil collection-handle query update {})))
+  ([collection-handle query update options]
+   (await (update-one-native! nil collection-handle query update options))))
 
 (defn- transaction-api [session]
   {:update-one!
@@ -102,12 +130,19 @@
     (throw (js/Error. "Mongo client is required for a transaction")))
   (let [session (.startSession client)]
     (try
-      (await (.withTransaction
-              session
-              (^:async fn []
-                (await (f (transaction-api session))))
-              #js {:readConcern #js {:level "snapshot"}
-                   :writeConcern #js {:w "majority"}}))
+      (try
+        (await (.withTransaction
+                session
+                (^:async fn []
+                  (await (f (transaction-api session))))
+                #js {:readConcern #js {:level "snapshot"}
+                     :writeConcern #js {:w "majority"}}))
+        (catch :default err
+          ;; Translation happens only after the convenient transaction API has
+          ;; finished retrying. Arbitrary callback errors retain their identity.
+          (if-let [operation (remembered-transaction-operation err)]
+            (throw (mongo-operation-error operation err))
+            (throw err))))
       (finally
         (await (.endSession session))))))
 
@@ -251,22 +286,6 @@
       (if (duplicate-key-error? err)
         {:inserted? false}
         (throw err)))))
-
-(defn ^:async update-one!
-  "Apply a CLJS update document to at most one match of a field-equality query.
-
-   Returns `{:matched-count n :modified-count n}` with nil for a count the
-   driver did not report, so a caller can tell 'no such document' from 'found
-   it and changed nothing' — a distinction a boolean would erase."
-  [collection-handle query update-doc]
-  (assert-query! query)
-  (let [result (await (.updateOne collection-handle
-                                  (clj->js query)
-                                  (clj->js update-doc)))]
-    {:matched-count (let [n (aget result "matchedCount")]
-                      (when (number? n) n))
-     :modified-count (let [n (aget result "modifiedCount")]
-                       (when (number? n) n))}))
 
 (defn ^:async ensure-index!
   "Create one index on a native collection handle from CLJS data.

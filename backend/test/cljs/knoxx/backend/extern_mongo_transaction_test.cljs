@@ -87,3 +87,79 @@
       (catch js/Error err
         (is (= "transaction failed" (.-message err)))))
     (is @closed?* "session is closed after an aborted transaction")))
+
+(deftest ^:async transaction-boundary-preserves-native-retry-labels-test
+  (let [attempts* (atom 0)
+        closed?* (atom false)
+        transient-error (js/Error. "write conflict")
+        _ (aset transient-error "hasErrorLabel"
+                (fn [label] (= "TransientTransactionError" label)))
+        collection
+        #js {:updateOne
+             (fn [& _]
+               (if (= 1 (swap! attempts* inc))
+                 (js/Promise.reject transient-error)
+                 (js/Promise.resolve
+                  #js {:matchedCount 1 :modifiedCount 1 :upsertedCount 0})))}
+        session
+        #js {:withTransaction
+             (fn [callback _options]
+               (letfn [(run! []
+                         (.catch
+                          (callback)
+                          (fn [err]
+                            (let [has-error-label (aget err "hasErrorLabel")]
+                              (if (and has-error-label
+                                       (.call has-error-label err
+                                              "TransientTransactionError"))
+                                (run!)
+                                (js/Promise.reject err))))))]
+                 (run!)))
+             :endSession
+             (fn []
+               (reset! closed?* true)
+               (js/Promise.resolve nil))}
+        client #js {:startSession (fn [] session)}
+        result
+        (await
+         (extern-mongo/with-transaction!
+          client
+          (^:async fn [{:keys [update-one!]}]
+            (await (update-one!
+                    collection
+                    {:_id "lock"}
+                    {:$set {:updated_at 1}}
+                    {})))))]
+    (is (= 2 @attempts*) "the driver can retry the original labeled error")
+    (is (= 1 (:matched-count result)))
+    (is @closed?* "the retried transaction still closes its session")))
+
+(deftest ^:async mutation-boundary-rejects-unsafe-shapes-test
+  (let [calls* (atom 0)
+        collection
+        #js {:updateOne
+             (fn [& _]
+               (swap! calls* inc)
+               (js/Promise.resolve #js {:matchedCount 0}))}]
+    (try
+      (await (extern-mongo/update-one!
+              collection {} {:$set {:status "inactive"}} {}))
+      (is false "an empty mutation query must be rejected")
+      (catch js/Error err
+        (is (re-find #"unsafe Mongo mutation query" (.-message err)))))
+    (try
+      (await (extern-mongo/update-one!
+              collection {:credential_id "credential"} {} {}))
+      (is false "an empty mutation document must be rejected")
+      (catch js/Error err
+        (is (re-find #"unsafe Mongo mutation document" (.-message err)))))
+    (try
+      (await (extern-mongo/update-one!
+              collection
+              {:credential_id "credential"}
+              {:$unset {:status true}}
+              {}))
+      (is false "an unapproved mutation operator must be rejected")
+      (catch js/Error err
+        (is (re-find #"unsafe Mongo mutation document" (.-message err)))))
+    (is (zero? @calls*) "invalid mutations never reach the driver")))
