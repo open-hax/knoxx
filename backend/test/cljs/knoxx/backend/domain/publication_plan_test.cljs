@@ -118,6 +118,13 @@
            (:desired result)))
     (is (= "probe-revision" (:concrete-revision result)))))
 
+(deftest blank-observed-title-is-canonical-absence
+  (testing "historical adapters may report blank while desired titleless routes omit"
+    (let [result (plan-for {} {:observed (assoc converged-observation
+                                                :materialized/title "  ")})]
+      (is (= :noop (:op result)))
+      (is (not (contains? (:desired result) :materialized/title))))))
+
 (deftest revision-drift-publishes
   (let [result (plan-for {} {:observed (assoc converged-observation
                                               :materialized/revision "older")})]

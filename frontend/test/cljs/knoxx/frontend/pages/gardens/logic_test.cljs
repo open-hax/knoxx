@@ -93,3 +93,76 @@
     (is (= :warning (logic/receipt-tone {:type "publication/something-new"})))
     (is (= :warning (logic/receipt-tone {})))
     (is (= :warning (logic/receipt-tone {:type "materialized"})))))
+
+(deftest a-noop-with-a-reason-is-a-refusal-not-a-success
+  (testing "a noop has three causes and the receipt says which in :reason.
+            `converge` emits its noop with NO reason, so absence is the only
+            case that means 'already published' — the others are the planner
+            declining to publish at all, and reporting them as success told a
+            reviewer their content was live when it was not"
+    (is (= "Already published at this revision; nothing changed."
+           (logic/receipt-summary {:type "publication/noop"})))
+    (is (= :success (logic/receipt-tone {:type "publication/noop"})))
+
+    (is (= "Not published: the contract does not ask for this to be public."
+           (logic/receipt-summary {:type "publication/noop"
+                                   :reason "publication-not-public"})))
+    (is (= :warning (logic/receipt-tone {:type "publication/noop"
+                                         :reason "publication-not-public"})))
+
+    (is (= "Not published: the garden is not active."
+           (logic/receipt-summary {:type "publication/noop"
+                                   :reason "garden-not-active"})))
+    (is (= :warning (logic/receipt-tone {:type "publication/noop"
+                                         :reason "garden-not-active"})))
+
+    (testing "an unrecognized reason is surfaced verbatim rather than
+              flattened into the converged message"
+      (is (= "Nothing was done: some-new-reason."
+             (logic/receipt-summary {:type "publication/noop"
+                                     :reason "some-new-reason"})))
+      (is (= :warning (logic/receipt-tone {:type "publication/noop"
+                                           :reason "some-new-reason"}))))))
+
+;; ── publish-all runs ───────────────────────────────────────────────────────
+
+(deftest run-summary-counts-every-outcome-not-only-successes
+  (testing "most of a garden is usually not publishable yet — a locale awaiting
+            translation or approval answers blocked — so a summary naming only
+            what published would read as though the rest had quietly worked"
+    (is (= "2 published, 1 already current, 3 blocked, (6 attempted)"
+           (logic/run-summary
+            [{:type "publication/materialized"}
+             {:type "publication/materialized"}
+             {:type "publication/noop"}
+             {:type "publication/blocked" :blockers ["translation-missing"]}
+             {:type "publication/blocked" :blockers ["translation-missing"]}
+             {:type "publication/blocked" :blockers ["translation-review-required"]}])))
+
+    (testing "a reasoned noop is not counted as already-current: the planner
+              declined to publish it"
+      (is (= "1 not published, (1 attempted)"
+             (logic/run-summary [{:type "publication/noop"
+                                  :reason "garden-not-active"}]))))
+
+    (is (= "1 failed, (1 attempted)"
+           (logic/run-summary [{:type "publication/failed"}])))
+    (is (= "nothing to publish, (0 attempted)" (logic/run-summary [])))))
+
+(deftest run-tone-reports-the-worst-outcome
+  (testing "a single failure must not be hidden behind a majority of successes"
+    (is (= :success (logic/run-tone [{:type "publication/materialized"}
+                                     {:type "publication/noop"}])))
+    (is (= :warning (logic/run-tone [{:type "publication/materialized"}
+                                     {:type "publication/blocked"}])))
+    (is (= :error (logic/run-tone [{:type "publication/materialized"}
+                                   {:type "publication/blocked"}
+                                   {:type "publication/failed"}])))
+    (is (= :success (logic/run-tone [])))))
+
+(deftest publishable-placements-are-the-ones-the-contract-asks-to-publish
+  (is (= [{:id "a" :state "published"}]
+         (logic/publishable-placements
+          {:placements [{:id "a" :state "published"}
+                        {:id "b" :state "withheld"}
+                        {:id "c" :state "archived"}]}))))

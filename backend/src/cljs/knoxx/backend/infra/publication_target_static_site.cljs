@@ -261,11 +261,17 @@
   (when-let [manifest (await (read-manifest! root))]
     (when-let [route (manifest-law/find-route manifest (:publication/id intent))]
       (when (fs/exists? (fs/join root (:route/artifact route)))
-        {:materialized/revision (:route/revision route)
-         :materialized/path (:route/path route)
-         :publication/id (:publication/id route)
-         :locale (:route/locale route)
-         :route/artifact (:route/artifact route)}))))
+        (cond-> {:materialized/revision (:route/revision route)
+                 :materialized/path (:route/path route)
+                 :publication/id (:publication/id route)
+                 :locale (:route/locale route)
+                 :route/artifact (:route/artifact route)}
+          ;; The manifest is the published fact, so the title it carries is
+          ;; what is actually public. A route written before titles existed has
+          ;; none, which is exactly the drift that must be reported so the
+          ;; planner republishes it.
+          (some? (:route/title route))
+          (assoc :materialized/title (:route/title route)))))))
 
 ;; ── Construction ───────────────────────────────────────────────────────────
 

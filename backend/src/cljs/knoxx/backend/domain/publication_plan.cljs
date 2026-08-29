@@ -37,15 +37,17 @@
 
 (defn desired-materialization
   [intent revision]
-  {:materialized/revision revision
-   :materialized/path (:publication/path intent)})
+  (receipts/canonical-materialization
+   {:materialized/revision revision
+    :materialized/path (:publication/path intent)
+    :materialized/title (:document/title intent)}))
 
 (defn- observed-materialization
   "Compared against `desired-materialization` using the key set named by
-   `receipts/drift-keys`, so the planner and the receipt projection cannot
-   diverge on what convergence means."
+  `receipts/drift-keys`, so the planner and the receipt projection cannot
+  diverge on what convergence means."
   [observed]
-  (select-keys observed receipts/drift-keys))
+  (receipts/canonical-materialization observed))
 
 (defn- takedown
   "Removal when something is materialized, otherwise nothing to do. Never

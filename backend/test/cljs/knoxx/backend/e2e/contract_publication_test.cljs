@@ -252,7 +252,11 @@
               :revision concrete-revision
               :path publication-path
               :materialized/revision concrete-revision
-              :materialized/path publication-path}
+              :materialized/path publication-path
+              ;; Part of the drift comparison, so a renamed document
+              ;; republishes and a route written before titles existed can
+              ;; acquire one. Taken from the hydrated intent, hence "Probe".
+              :materialized/title "Probe"}
              (dissoc receipt :idempotency/key))))
     (testing "and it satisfies the full observation contract"
       (is (true? (receipts/materialized? receipt)))
