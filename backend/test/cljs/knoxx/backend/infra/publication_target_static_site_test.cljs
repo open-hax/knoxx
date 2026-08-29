@@ -348,7 +348,9 @@
             (is (= 1 (count (:manifest/routes manifest))))
             (is (= "/probe" (:route/path (first (:manifest/routes manifest)))))))
         (testing "and the next write replaces it wholly"
-          (let [new-plan (assoc publish-plan :concrete-revision "revision-two")
+          (let [new-plan (-> publish-plan
+                             (assoc :concrete-revision "revision-two")
+                             (assoc-in [:desired :materialized/revision] "revision-two"))
                 new-artifact (assoc artifact
                                     :artifact/content "<!doctype html><p>Segunda</p>"
                                     :artifact/revision "revision-two")

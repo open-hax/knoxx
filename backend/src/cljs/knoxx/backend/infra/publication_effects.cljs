@@ -74,11 +74,11 @@
     (throw (ex-info "publish idempotency key requires a concrete revision"
                     {:publication/id (:publication/id intent)
                      :concrete-revision concrete-revision})))
-  (->> (conj (mapv #(pr-str (get intent %)) key-dimensions)
-             (pr-str (receipts/canonical-title (:document/title intent)))
-             (pr-str adapter-id)
-             (pr-str concrete-revision))
-       (str/join "|")))
+  (let [canonical-title (receipts/canonical-title (:document/title intent))]
+    (->> (cond-> (mapv #(pr-str (get intent %)) key-dimensions)
+           canonical-title (conj (pr-str canonical-title))
+           true (conj (pr-str adapter-id) (pr-str concrete-revision)))
+         (str/join "|"))))
 
 ;; ── Replay-safe publish ────────────────────────────────────────────────────
 

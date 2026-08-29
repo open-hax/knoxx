@@ -132,6 +132,20 @@
       (is (= base (effects/publish-idempotency-key
                    :fake/target (assoc intent :publication/state :withheld) "probe-revision"))))))
 
+(deftest titleless-key-preserves-the-pre-title-layout
+  (let [legacy-key (->> (conj (mapv #(pr-str (get intent %)) effects/key-dimensions)
+                              (pr-str :fake/target)
+                              (pr-str "probe-revision"))
+                        (str/join "|"))]
+    (is (= legacy-key
+           (effects/publish-idempotency-key :fake/target intent "probe-revision")))
+    (is (= legacy-key
+           (effects/publish-idempotency-key
+            :fake/target (assoc intent :document/title "   ") "probe-revision")))
+    (is (not= legacy-key
+              (effects/publish-idempotency-key
+               :fake/target (assoc intent :document/title "Probe") "probe-revision")))))
+
 (deftest key-requires-concrete-revision
   (is (thrown-with-msg? js/Error #"requires a concrete revision"
                         (effects/publish-idempotency-key :fake/target intent nil))))
