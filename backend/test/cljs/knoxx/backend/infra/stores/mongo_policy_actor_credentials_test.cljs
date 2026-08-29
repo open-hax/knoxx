@@ -121,21 +121,55 @@
 (deftest ^:async deactivate-other-bootstrap-local-passwords-test
   (let [captured* (atom nil)
         db #js {:collection
-                (fn [_]
-                  #js {:updateMany
-                       (fn [query update]
-                         (reset! captured*
-                                 {:query (js->clj query :keywordize-keys true)
-                                  :update (js->clj update :keywordize-keys true)})
-                         (js/Promise.resolve #js {}))})}]
+                (fn [name]
+                  (case name
+                    "knoxx_users"
+                    #js {:find
+                         (fn [_]
+                           #js {:toArray
+                                (fn []
+                                  (js/Promise.resolve
+                                   #js [#js {"user_id" "legacy-user"
+                                             "auth_provider" "bootstrap"}]))})}
+
+                    "knoxx_memberships"
+                    #js {:find
+                         (fn [_]
+                           #js {:toArray
+                                (fn []
+                                  (js/Promise.resolve
+                                   #js [#js {"user_id" "legacy-user"
+                                             "actor_id" "system_admin"}]))})}
+
+                    "knoxx_actor_credentials"
+                    #js {:updateMany
+                         (fn [query update]
+                           (reset! captured*
+                                   {:query (js->clj query :keywordize-keys true)
+                                    :update (js->clj update :keywordize-keys true)})
+                           (js/Promise.resolve #js {}))}))}]
     (await (creds/deactivate-other-bootstrap-local-passwords! db "current-user"))
     (is (= {:provider "local"
             :kind "password"
             :status "active"
-            :secret_json.bootstrap-system-admin true
-            :user_id {:$ne "current-user"}}
+            :user_id {:$ne "current-user"}
+            :$or [{:secret_json.bootstrap-system-admin true}
+                  {:user_id {:$in ["legacy-user"]}}]}
            (:query @captured*)))
     (is (= "inactive" (get-in @captured* [:update :$set :status])))))
+
+(deftest ^:async deactivate-other-bootstrap-local-passwords-rejects-blank-id-test
+  (let [collection-called?* (atom false)
+        db #js {:collection
+                (fn [_]
+                  (reset! collection-called?* true)
+                  #js {})}]
+    (try
+      (await (creds/deactivate-other-bootstrap-local-passwords! db "  "))
+      (is false "blank current user id must be rejected")
+      (catch js/Error err
+        (is (re-find #"current-user-id is required" (.-message err)))))
+    (is (false? @collection-called?*) "validation happens before database access")))
 
 (deftest ^:async credential-doc->row-test
   (testing "credential-doc->row renames credential_id to :id and drops Mongo fields"

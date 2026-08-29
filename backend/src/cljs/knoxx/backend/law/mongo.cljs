@@ -4,7 +4,8 @@
    Contract policy only — no I/O. extern.mongo calls these on the way out, so
    the admissible shape of a decoded value is stated in one place rather than
    re-derived by each caller that consumes it."
-  (:require [malli.core :as m]))
+  (:require [clojure.string :as str]
+            [malli.core :as m]))
 
 (def max-time-value
   "ECMAScript's maximum time value: ±100,000,000 days from the epoch.
@@ -42,6 +43,12 @@
    nothing at all when the query matched none."
   [:maybe [:map-of keyword? any?]])
 
+(def NonBlankIdentifier
+  "A canonical identifier safe to use as the exclusion anchor of a bulk
+   Mongo mutation. Empty identifiers are forbidden because `$ne \"\"` would
+   select every normally persisted document."
+  [:and string? [:fn {:error/message "must be nonblank"} (complement str/blank?)]])
+
 (defn valid-query?
   [query]
   (m/validate FieldEqualityQuery query))
@@ -49,3 +56,8 @@
 (defn valid-document?
   [doc]
   (m/validate DecodedDocument doc))
+
+(defn valid-identifier?
+  "Whether value is a nonblank canonical identifier."
+  [value]
+  (m/validate NonBlankIdentifier value))

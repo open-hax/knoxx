@@ -28,10 +28,12 @@
   (:require
     [clojure.string :as str]
     [knoxx.backend.infra.mongo-client :as mongo-client]
-    [knoxx.backend.infra.system-instance :as system-instance]))
+    [knoxx.backend.infra.system-instance :as system-instance]
+    [knoxx.backend.law.mongo :as mongo-law]))
 
 (def ACTOR_CREDENTIALS_COLLECTION "knoxx_actor_credentials")
 (def ^:private MEMBERSHIPS_COLLECTION "knoxx_memberships")
+(def ^:private USERS_COLLECTION "knoxx_users")
 
 (defn- credentials-coll [db] (.collection db ACTOR_CREDENTIALS_COLLECTION))
 
@@ -309,18 +311,47 @@
 
 (defn ^:async deactivate-other-bootstrap-local-passwords!
   "Deactivate bootstrap-managed local passwords that belong to an earlier
-   configured bootstrap identity."
+   configured bootstrap identity.
+
+   Newly written credentials carry an explicit bootstrap marker. Credentials
+   created before that marker are identified through the durable directory
+   projection: a bootstrap-authenticated user whose membership still names the
+   system_admin actor. Intersecting both signals avoids treating ordinary
+   bootstrap allowlist users as historical system administrators."
   ([current-user-id]
    (deactivate-other-bootstrap-local-passwords! (mongo-client/get-db) current-user-id))
   ([db current-user-id]
-   (await (.updateMany
-           (credentials-coll db)
-           #js {"provider" "local"
-                "kind" "password"
-                "status" "active"
-                "secret_json.bootstrap-system-admin" true
-                "user_id" #js {"$ne" (str current-user-id)}}
-           #js {"$set" #js {"status" "inactive"
-                             "updated_at" (js/Date.)
-                             "system_instance_id" (system-instance/current-id)}}))
-   nil))
+   (let [current-id (some-> current-user-id str str/trim)]
+     (when-not (mongo-law/valid-identifier? current-id)
+       (throw (js/Error. "current-user-id is required before bootstrap credential reconciliation")))
+     (let [bootstrap-users
+           (->> (await (.toArray
+                        (.find (.collection db USERS_COLLECTION)
+                               #js {"auth_provider" "bootstrap"
+                                    "user_id" #js {"$ne" current-id}})))
+                keywordize)
+           bootstrap-user-ids (mapv :user_id bootstrap-users)
+           legacy-user-ids
+           (if (seq bootstrap-user-ids)
+             (->> (await (.toArray
+                          (.find (.collection db MEMBERSHIPS_COLLECTION)
+                                 #js {"actor_id" "system_admin"
+                                      "user_id" #js {"$in" (clj->js bootstrap-user-ids)}})))
+                  keywordize
+                  (mapv :user_id))
+             [])
+           managed-identity-clauses
+           (cond-> [#js {"secret_json.bootstrap-system-admin" true}]
+             (seq legacy-user-ids)
+             (conj #js {"user_id" #js {"$in" (clj->js legacy-user-ids)}}))]
+       (await (.updateMany
+               (credentials-coll db)
+               #js {"provider" "local"
+                    "kind" "password"
+                    "status" "active"
+                    "user_id" #js {"$ne" current-id}
+                    "$or" (clj->js managed-identity-clauses)}
+               #js {"$set" #js {"status" "inactive"
+                                 "updated_at" (js/Date.)
+                                 "system_instance_id" (system-instance/current-id)}}))
+       nil))))
