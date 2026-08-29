@@ -44,9 +44,11 @@ Every receipt-write tool input includes a required caller/workflow-stable `recei
 handler validates and passes that identity unchanged to atomic receipt admission; it cannot
 mint a new id per call, substitute a transport tool-call id, or derive identity from receipt
 content. Organization/reviewer facts remain server-derived. Distinct receipt ids with
-canonically equal evaluations remain distinct historical evaluations but join one
-server-derived principal/role/obligation judgment head and contribute one vote. Tool results
-return that `judgment_head_id` and current `head_version`; neither is caller-selected.
+canonically equal effective determinations—including equal correction target/schema/content
+fingerprints—remain distinct historical evaluations but join one server-derived
+principal/role/obligation judgment head and contribute one vote. Tool results return that
+`judgment_head_id`, current `head_version`, and the effective correction ref/fingerprint when
+present; none is caller-selected.
 
 The durable receipt identity is the server-composed `{org-id, receipt-id}` pair, where
 `org-id` comes only from authenticated actor context. The store's uniqueness and comparison
@@ -54,7 +56,8 @@ boundary uses that composite key; a caller-chosen id is never global and cannot 
 or probe another organization's receipt. Tool results expose the caller id plus its authorized
 scope without accepting a client override.
 
-When an SME changes its own prior judgment, the tool also carries the explicit
+When an SME changes its own prior judgment value or revises correction content while retaining
+the same value, the tool also carries the explicit
 obligation-scoped `{obligation_id, judgment_head_id, expected_head_version}` supersession
 entries selected from evidence already returned for that authenticated principal. The handler
 cannot infer supersession from time/content, supersede another principal/obligation, or
@@ -106,15 +109,19 @@ repository/receipt store:
    idempotently.
    Exercise the real MCP schema/handler with a commit-then-lost-response retry: the same
    caller-stable `receipt_id` returns the original receipt, changed reuse conflicts, and two
-   distinct ids with equal evaluation content persist as two intentional receipts joined to
-   one effective head/vote without advancing its version. Append duplicate approve receipts,
-   then supersede the returned head/version with reject; both approvals become history and
-   neither remains effective.
+   distinct ids with equal evaluation/correction content persist as two intentional receipts
+   joined to one effective head/vote without advancing its version. Append duplicate approve
+   receipts, then supersede the returned head/version with reject; both approvals become
+   history and neither remains effective.
    Race the duplicate with the successor and prove the old generation cannot reopen.
 8. A new candidate revision does not inherit the old receipt.
    A same-principal correction explicitly supersedes current matching judgment-head slots and
-   changes only those obligation votes while retaining history and unrelated judgments in the
-   prior receipt. Missing/cross-principal/cross-obligation/stale-version or competing
+   changes only those obligation determinations while retaining history and unrelated judgments
+   in the prior receipt. Submit two `:corrected` receipts with different replacement text: the
+   unlinked second receipt is rejected, while a valid current-head/version supersession makes
+   its correction ref/fingerprint the sole effective replacement. Exact duplicate correction
+   content under a distinct receipt id joins the current generation without advancing it.
+   Missing/cross-principal/cross-obligation/stale-version or competing
    supersession fails without append; a same-principal changed value without the current head
    id/version is rejected, while two distinct principals' conflicting values remain
    `:needs-adjudication`. Multi-obligation supersession admission is atomic.
@@ -163,8 +170,9 @@ repository/receipt store:
   admission and canonical-payload comparison are atomic.
 - Caller-stable receipt identity survives the real MCP boundary and response loss; store-only
   idempotency tests do not satisfy this card.
-- Equal same-principal receipts remain distinct history but share one effective head; a later
-  correction atomically retires the whole prior generation.
+- Equal same-principal determinations remain distinct history but share one effective head; a
+  same-value correction revision atomically retires the whole prior generation and exposes one
+  authoritative correction to status, publication, and training consumers.
 - Discovery, artifact reads, and receipt writes are tenant-owned, and durable reviewer facts
   come from the authenticated actor rather than client assertions.
 - Case advancement consumes the pure version-bound satisfaction/adjudication fold and cannot

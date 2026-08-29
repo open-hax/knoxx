@@ -68,17 +68,23 @@ when its authenticated role facts and the rubric's role-overlap policy explicitl
 
 The server derives one `judgment-head-id` from `{org-id, case/rubric/artifact versions,
 obligation-id, authenticated-principal-id, reviewer-role}`; receipt id and judgment value are
-not head identity. Its linearizable slot holds a `head-version`, the current canonical judgment
-value/effect, and every immutable receipt/judgment id that attests that equal value. A distinct
-receipt id with a canonically equal judgment appends intentional evidence and joins the current
-head generation without advancing `head-version`, but creates no second leaf or vote.
-Equal-duplicate admission and a changed successor serialize through this same slot, so a late
-old-value receipt cannot resurrect an earlier generation. Head equality compares the effective
-value/completion effect at the exact version-bound obligation; different rationale/evidence
-remains distinct receipt history but cannot multiply that principal's vote or change conflict
-identity.
+not head identity. Its linearizable slot holds a `head-version`, the current canonical effective
+determination, and every immutable receipt/judgment/correction id that attests that equal
+determination. The determination contains the judgment value/completion effect and an optional
+effective correction fingerprint over the exact corrected artifact/version, correction-schema
+version, and canonical replacement/patch bytes. Its projection exposes that fingerprint and
+the authoritative correction ref/content; correction receipt ids alone never choose a winner.
+A distinct receipt id with a canonically equal determination appends intentional evidence and
+joins the current head generation without advancing `head-version`, but creates no second leaf
+or vote. Equal-duplicate admission and a changed successor serialize through this same slot, so
+a late old determination cannot resurrect an earlier generation. Head equality includes
+correction absence/presence and that semantic fingerprint: identical correction content under
+distinct receipt ids may join one generation, while the same judgment value with different
+replacement text is a changed determination. Different rationale/evidence remains distinct
+receipt history but cannot multiply that principal's vote or change conflict identity.
 
-A changed vote is another immutable receipt with obligation-scoped supersession entries of
+A changed determination—judgment value/effect or effective correction—is another immutable
+receipt with obligation-scoped supersession entries of
 `{obligation-id, judgment-head-id, expected-head-version}`. Each target must be the current
 head for the same organization, case/rubric/artifact versions, obligation, authenticated
 principal, and reviewer role. Admission validates and advances every named
@@ -88,8 +94,9 @@ ancestor, so correcting once cannot leave a duplicate old vote effective. The st
 one current head per `{obligation-id, authenticated-principal-id, reviewer-role}` slot and
 retains every receipt/ancestor as history; correcting obligation A or one reviewer's slot does
 not suppress unrelated judgments or another principal/role slot carried by the same prior
-receipt. It never chooses by wall clock. Any changed same-principal value, including one after a
-`:keeps-pending` head, is rejected without a valid head/version supersession. Independently
+receipt. It never chooses by wall clock. Any changed same-principal value or correction,
+including one after a `:keeps-pending` head, is rejected without a valid head/version
+supersession. Independently
 admitted judgments from distinct principals remain coexisting evidence, and conflicting
 exclusive values yield
 `:needs-adjudication`. Cross-principal, cross-obligation, cross-version, already-superseded,
@@ -144,7 +151,11 @@ head advance creates a new conflict generation that the old decision cannot reso
 3. Three-artifact source/candidate/reference case validates.
 4. A receipt against candidate revision A cannot satisfy candidate revision B.
 5. Two reviewers can produce conflicting receipts without overwriting each other.
-6. A correction retains a reference to the candidate it corrects.
+6. A correction retains a reference to the candidate it corrects. Two distinct receipts with
+   the identical canonical correction join one head generation; a second `:corrected`
+   determination with different replacement text must supersede the current head/version and
+   becomes the sole effective correction while both proposals remain history. The same-value
+   changed correction without supersession is rejected and cannot yield `:satisfied`.
 7. Layout-only keys are neither required nor emitted by the generic projection.
 8. A partial multi-judgment or multi-role receipt set remains `:pending`.
 9. Conflicting exclusive judgments remain `:needs-adjudication`; an authorized adjudication
@@ -189,8 +200,10 @@ head advance creates a new conflict generation that the old decision cannot reso
   with the same generic core contracts.
 - The contracts are pure and runtime-independent.
 - Immutable version binding makes stale approvals/corrections mechanically detectable.
-- Equal same-principal receipts share one effective head generation, and a correction cannot
-  leave duplicate old votes effective.
+- Equal same-principal determinations, including equal semantic corrections, share one
+  effective head generation. Same-value correction revisions advance that head atomically, so
+  the status and downstream projection name exactly one effective replacement without leaving
+  duplicate old votes or ambiguous correction text.
 - The pure completion fold prevents partial, disputed, or stale receipt sets from advancing a
   case.
 - Mixed conflict/incomplete cases use one precedence law without hiding either conflict or
