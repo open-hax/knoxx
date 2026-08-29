@@ -59,7 +59,8 @@ The resolved artifact contains:
 
 - effective typed configuration values;
 - the authenticated organization used for resolution;
-- the server-admitted attempt id, immutable source identity/revision, and canonical operation;
+- the server-admitted composite attempt identity (event grouping key plus caller-stable attempt
+  id), immutable source identity/revision, and canonical operation;
 - exact canonical identity and resource-scoped version of the global default;
 - exact canonical identity and resource-scoped version of the optional organization override;
 - a resolution-policy/schema version; and
@@ -76,25 +77,31 @@ exact canonical identity, not a caller-computable marker.
 
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
-bytes. It binds
-the authenticated organization, snapshot/observation identity, every present resource version,
-the absent-override witness, policy/schema version, and artifact digest. Validation verifies
-that authority without re-reading current config. A later override creation therefore does not
-invalidate an already-started attempt, while merely omitting an existing override or recomputing
-the digest cannot fabricate a valid artifact. Unrelated resource writes cannot rotate the
-artifact. Attempt consumers change atomically to use the admitted operation; inspection
-consumers retain the read-only operation on the same configuration boundary.
+bytes. It binds the complete composite attempt identity, authenticated organization,
+snapshot/observation identity, every present resource version, the absent-override witness,
+policy/schema version, and artifact digest. Validation verifies that authority without
+re-reading current config. A later override creation therefore does not invalidate an
+already-started attempt, while merely omitting an existing override or recomputing the digest
+cannot fabricate a valid artifact. Unrelated resource writes cannot rotate the artifact.
+Attempt consumers change atomically to use the admitted operation; inspection consumers retain
+the read-only operation on the same configuration boundary.
 
 There is no free-floating reusable attestation. Before provider invocation, the server
-atomically admits/reserves the caller-stable `attempt_id` for the authenticated organization,
-immutable source revision, and canonical operation/request, resolves current configuration,
-and consumes the new attestation into that attempt slot. That first admission is the freshness
-boundary. A new attempt id always resolves current configuration and cannot present an older
-attempt's token. A canonically equal retry of the same attempt retrieves the same attested
-artifact—even after configuration changes or a lost response—while changed attempt-id reuse,
-source/request mismatch, or cross-attempt replay conflicts before provider invocation. Historic
-verification remains valid without a wall-clock expiry silently invalidating durable evidence;
-freshness is enforced by one-time attempt binding, not by trusting client time.
+derives the same canonical `AttemptIdentity` used by
+`knoxx-translations-event-sourced`: the full
+`{:org-id :document-id :segment-index :target-lang}` grouping key plus the caller-stable
+`attempt_id`. Config admission atomically reserves that composite identity with the immutable
+source revision and canonical request facts, resolves current configuration, and consumes the
+new attestation into that slot. Raw attempt ids are not globally unique: the same value under a
+different segment or target-language grouping is a distinct attempt and receives its own
+current configuration. That first composite admission is the freshness boundary.
+
+A canonically equal retry of the same composite identity retrieves the same attested
+artifact—even after configuration changes or a lost response. Reusing the same composite with
+changed source/request facts, or replaying its token under another composite identity, conflicts
+before provider invocation. Historic verification remains valid without a wall-clock expiry
+silently invalidating durable evidence; freshness is enforced by one-time composite attempt
+binding, not by trusting client time.
 
 Provider selection receives this artifact and durable attempt/candidate evidence carries it
 unchanged. A configuration update after attempt admission creates a different artifact for a
@@ -120,8 +127,10 @@ The publication-free namespace closure from #273 remains an invariant.
 5. Cross-tenant, fabricated, stale, missing, value/revision-mismatched, unsigned, and
    signature/receipt-replayed artifacts all fail before provider invocation and append no
    candidate/history. A caller-computed digest plus a forged absent marker is insufficient.
-   Reusing an old token under a new attempt or source fails; a same-attempt lost-response retry
-   returns the identical artifact, while changed reuse conflicts.
+   Reusing an old token under a new composite attempt or source fails; a same-attempt
+   lost-response retry returns the identical artifact, while changed same-composite reuse
+   conflicts. Two segments and two target languages reuse one raw `attempt_id` and are admitted
+   independently under their distinct grouping keys.
 6. Existing consumers, backend compile, unit/integration tests, and MCP E2E pass with every
    publication-owned namespace absent from the config boundary closure.
 7. The real authenticated GET route resolves global/override precedence without an attempt id,
@@ -146,7 +155,8 @@ The publication-free namespace closure from #273 remains an invariant.
 - Resolution consumes one #282 `observe-many` result; fake/file race proofs admit no torn
   combination from sequential reads.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
-  while idempotent retries of the same source/operation/attempt retain their exact artifact.
+  while idempotent retries of the same composite attempt retain their exact artifact and
+  cross-group reuse of a raw id remains independent.
 - Provider invocation and durable evidence carry the identical artifact end to end.
 - Config races and cross-tenant/fabricated artifacts fail closed with the negative proofs above.
 - The existing GET route has a route-level no-attempt/no-write proof and cannot mint invocation

@@ -75,6 +75,12 @@ use the same document and segment index across two organizations and across two 
 languages, then prove their histories, deduplication, candidates, and current projections
 never merge.
 
+Every upstream reservation for that attempt—including resolved translation configuration—uses
+this same composite `AttemptIdentity`. The raw caller id is not globally unique. Reusing it for
+another segment or target language creates an independent attempt; reusing the same composite
+identity with changed source, candidate, request, or configuration facts conflicts. Config
+admission and event admission may not disagree about that identity boundary.
+
 The production `save_translation` MCP input schema exposes a required stable `attempt_id`
 (idempotency key) created by the initiating workflow/caller and reused after timeout or lost
 response. The tool handler validates it, passes it unchanged through the domain/save boundary,
@@ -138,6 +144,9 @@ land a migration that leaves that endpoint erroring.
   attempts. The schema/handler proof fails if the id is absent, regenerated, or discarded.
 - Cross-organization and cross-target-language fixtures with otherwise identical document
   and segment coordinates remain isolated in both append history and current projection.
+- The same raw `attempt_id` reused across two segments and two target languages produces
+  independent config reservations/events, while changed reuse inside one composite grouping
+  conflicts consistently at config and event admission.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
 - Concurrent distinct attempts receive unique per-key ordinals; out-of-order projection
