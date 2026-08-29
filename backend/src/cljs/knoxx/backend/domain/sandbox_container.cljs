@@ -4,6 +4,8 @@
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.extern.node-fs :as extern-node-fs]
+            [knoxx.backend.law.sandbox :as sandbox-law]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
@@ -14,6 +16,10 @@
 
 (def ^:private sandbox-label-prefix "openhax.knoxx.sandbox")
 (def ^:private sandbox-max-buffer-bytes (* 2 1024 1024))
+(def ^:private isolated-sandbox-directory-mode
+  "Decimal 01777: writable inside this UUID-isolated bind mount, while the
+   sticky bit protects Knoxx-owned metadata from the non-root container user."
+  1023)
 
 (def create-params
   [:map
@@ -62,6 +68,10 @@
 (defn- fs-mkdir!
   [^js node-fs path opts]
   (.mkdir node-fs path opts))
+
+(defn- fs-chmod!
+  [^js node-fs path mode]
+  (extern-node-fs/chmod! node-fs path mode))
 
 (defn- fs-read-file!
   ([^js node-fs path]
@@ -146,6 +156,12 @@
 (defn- docker-command!
   [_runtime config args opts]
   (exec-file-result! exec-file-async (docker-bin config) args opts))
+
+(defn- require-internal-command-success!
+  [operation result]
+  (if-let [failure (sandbox-law/internal-command-failure operation result)]
+    (throw (ex-info (:message failure) {:sandbox/internal-command failure}))
+    result))
 
 (defn- ^:async sandbox-metadata!
   [runtime config sandbox-id]
@@ -273,6 +289,7 @@
         keepalive-cmd "trap 'exit 0' TERM INT; while true; do sleep 3600; done"]
     (await (ensure-sandbox-image! runtime config image))
     (await (fs-mkdir! fs host-dir #js {:recursive true}))
+    (await (fs-chmod! fs host-dir isolated-sandbox-directory-mode))
     (let [{:keys [ok stderr error]} (await (docker-command!
                                             runtime
                                             config
@@ -362,7 +379,9 @@
         max-chars (max 200 (min 20000 (or (aget params "max_chars") 6000)))
         command (str "cat " (shell-single-quote path))]
     (maybe-tool-update! on-update (str "Reading sandbox file " path "…"))
-    (let [result (await (sandbox-exec! runtime config sandbox-id command 60000))
+    (let [result (require-internal-command-success!
+                  "sandbox read"
+                  (await (sandbox-exec! runtime config sandbox-id command 60000)))
           [content _] (clip-text (:stdout result) max-chars)]
       (tool-text-result
        (str "Sandbox file " path "\n\n" content)
@@ -378,7 +397,9 @@
                      (shell-single-quote encoded)
                      " | base64 -d > " (shell-single-quote path))]
     (maybe-tool-update! on-update (str "Writing sandbox file " path "…"))
-    (let [result (await (sandbox-exec! runtime config sandbox-id command 60000))]
+    (let [result (require-internal-command-success!
+                  "sandbox write"
+                  (await (sandbox-exec! runtime config sandbox-id command 60000)))]
       (tool-text-result
        (str "Wrote sandbox file " path)
        (assoc result :path path :bytes (count content))))))
@@ -395,7 +416,9 @@
                      "else git commit -m " (shell-single-quote message) "; fi && "
                      "git status --short --branch")]
     (maybe-tool-update! on-update (str "Committing sandbox workspace for " sandbox-id "…"))
-    (let [result (await (sandbox-exec! runtime config sandbox-id command 120000))]
+    (let [result (require-internal-command-success!
+                  "sandbox commit"
+                  (await (sandbox-exec! runtime config sandbox-id command 120000)))]
       (tool-text-result
        (str "Sandbox commit exit=" (:exitCode result)
             (when-not (str/blank? (:stdout result))

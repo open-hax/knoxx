@@ -5,6 +5,11 @@
   [node-fs p opts]
   (.mkdir node-fs p (clj->js opts)))
 
+(defn chmod!
+  "Apply numeric POSIX mode `mode` to path `p` through node:fs/promises."
+  [node-fs p mode]
+  (.chmod node-fs p mode))
+
 (defn ^:async readdir-vector!
   [node-fs p]
   (let [files (await (.readdir node-fs p))]
