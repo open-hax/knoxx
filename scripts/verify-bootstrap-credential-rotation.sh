@@ -234,13 +234,18 @@ expect_count() {
 printf 'Knoxx bootstrap credential rotation — live verification\n'
 printf 'run id: %s\n' "$RUN_ID"
 
-for tool in bash curl jq mongosh node; do
+for tool in bash curl git jq mongosh node pnpm; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: ${tool}"
 done
 [ -n "$MONGO_URI" ] \
   || die 'set KNOXX_BOOTSTRAP_VERIFY_MONGODB_URI to an isolated, transaction-capable Mongo deployment'
-[ -f "$SERVER_ENTRY" ] \
-  || die "built server not found: ${SERVER_ENTRY}; run pnpm -C backend build first"
+
+REVIEWED_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" \
+  || die "cannot resolve the reviewed checkout revision"
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)" ]; then
+  die 'the checkout has uncommitted source files; commit or remove them before collecting revision-bound evidence'
+fi
+printf 'reviewed head: %s\n' "$REVIEWED_HEAD"
 
 if mongosh "$MONGO_URI" --quiet --eval '
   const hello = db.adminCommand({hello: 1});
@@ -250,6 +255,14 @@ if mongosh "$MONGO_URI" --quiet --eval '
 else
   die 'Mongo deployment is standalone or unreachable; atomic verification requires transactions'
 fi
+
+if pnpm -C "$REPO_ROOT/backend" build >"${EVIDENCE_DIR}/build.log" 2>&1; then
+  pass "rebuilt backend/dist/server.js from reviewed head ${REVIEWED_HEAD}"
+else
+  die "backend build failed: $(tail -n 12 "${EVIDENCE_DIR}/build.log" | tr '\n' ' ')"
+fi
+[ -f "$SERVER_ENTRY" ] \
+  || die "reviewed build did not produce ${SERVER_ENTRY}"
 
 printf '\nRotation and revocation\n'
 start_server "$ROTATION_DB" "$OLD_EMAIL" "$OLD_PASSWORD" "" seed-old

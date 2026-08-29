@@ -10,8 +10,9 @@ teardown work together.
 
 ## Preconditions
 
-- Build the backend from the revision being reviewed: `pnpm -C backend build`.
-- Provide `mongosh`, `node`, `curl`, and `jq`.
+- Use a clean checkout at the revision being reviewed. The verifier refuses
+  tracked or untracked source changes.
+- Provide `git`, `pnpm`, `mongosh`, `node`, `curl`, and `jq`.
 - Provide a Mongo replica set or sharded cluster that the verifier may create
   and drop uniquely named databases on. A standalone `mongod` is deliberately
   refused because it cannot uphold atomic credential replacement.
@@ -23,8 +24,10 @@ KNOXX_BOOTSTRAP_VERIFY_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0' \
   scripts/verify-bootstrap-credential-rotation.sh
 ```
 
-The script always executes `backend/dist/server.js` beneath its own checkout,
-chooses fresh loopback ports, and starts the process with production
+The script records `git rev-parse HEAD`, rebuilds the backend itself, and only
+then executes `backend/dist/server.js` beneath that checkout. A stale ignored
+bundle therefore cannot masquerade as evidence for the reviewed revision. It
+chooses fresh loopback ports and starts the process with production
 local-password policy, event runtimes disabled, and an isolated database name.
 
 ## Evidence paths
