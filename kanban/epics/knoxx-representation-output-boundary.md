@@ -46,9 +46,10 @@ concrete representation. It does not own:
 
 ## Candidate children
 
+- `knoxx-react-ssr-representation-provider` (P3/deferred) — expose the existing HTML/Helix
+  foundation as a representation provider over explicit view/artifact inputs and prove a
+  repository-agnostic server/static HTML path.
 - Future: define the representation operation contract (`requires` / `provides`) once the upstream typed workflow/action vocabulary is available.
-- Future: expose the existing HTML/Helix implementations as representation providers over explicit view/artifact inputs.
-- Future: prove a server/static HTML path whose input can come from the file resource repository, Optimizely, or another source without the representation code knowing which provider supplied it.
 
 ## Non-goals
 

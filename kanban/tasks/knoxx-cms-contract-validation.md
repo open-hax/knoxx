@@ -38,9 +38,11 @@ Define/verify contract tests for:
 
 ### Provider-neutral conflict contract
 
-Every write/replace request carries a canonical resource identity, canonical validated
-payload, and an `expected-version` precondition. Providers must return the same semantic
-outcome and error shape:
+Every write/replace request carries a canonical resource identity, a canonical authority
+record (validated semantic payload plus domain provenance), and an `expected-version`
+precondition. Store-assigned envelope metadata explicitly excluded by the resource contract
+does not participate in equality. Providers must return the same semantic outcome and error
+shape:
 
 - creating an absent identity with no expected version returns `:created` and an opaque,
   immutable version token;
@@ -49,22 +51,23 @@ outcome and error shape:
   :resource/id <identity> :expected-version <expected> :actual-version nil}`, performs
   no create, and leaves the identity absent. An expected version is a compare-and-swap
   precondition, never permission to create;
-- retrying the same identity and canonically equal payload with either no expected version
-  or the current version returns `:unchanged`, the existing resource, and the same version
-  without another write;
-- creating the same identity with a different payload returns
+- retrying the same identity and canonically equal authority record with either no expected
+  version or the current version returns `:unchanged`, the existing resource, and the same
+  version without another write;
+- creating the same identity with a different authority record returns
   `{:error/type :resource/conflict :error/reason :identity-exists
-  :resource/id <identity> :expected-version nil :actual-version <version>}`;
-- replacing with the current version and a changed valid payload returns `:updated` and a
-  new version;
+  :resource/id <identity> :expected-version nil :actual-version <version>}`. A
+  provenance-only difference is a different authority record;
+- replacing with the current version and a changed valid authority record returns `:updated`
+  and a new version, including when only domain provenance changed;
 - replacing with a stale or unknown version returns
   `{:error/type :resource/conflict :error/reason :stale-version
   :resource/id <identity> :expected-version <expected> :actual-version <actual>}` and
   leaves bytes, semantic payload, provenance, and version unchanged. This precondition
-  check takes precedence over payload equality: a stale expected version returns
-  `:stale-version` even when the proposed payload equals the current resource;
-- replacing with the current version and an equal payload returns `:unchanged` with the
-  same version.
+  check takes precedence over authority-record equality: a stale expected version returns
+  `:stale-version` even when the proposed payload and provenance equal the current resource;
+- replacing with the current version and an equal authority record returns `:unchanged` with
+  the same version.
 
 The identity-existence/expected-version decision and durable write are one atomic,
 linearizable operation, not a separate read followed by an unconditional write. When two
@@ -82,18 +85,42 @@ namespace may not pass their resource checks and then erase one another through
 last-writer-wins file replacement. The implementation may use atomic sibling preservation or
 manifest-level compare-and-swap/retry, but the provider-neutral observable result is that
 both accepted writes remain present and re-readable. Public version tokens are scoped to one
-resource identity and its canonical payload/provenance revision; an internal manifest hash,
+resource identity and its canonical authority-record revision; an internal manifest hash,
 mtime, or storage revision may not leak out as that token. Writing resource B therefore leaves
 resource A's version byte-for-byte identical when A itself did not change.
+
+### Revision-pinned reference resolution
+
+Every canonical resource reference names the target resource identity **and exact public
+version**. Providers retain each referenced immutable revision as an addressable value; an
+update creates a new version and cannot make an older pinned target disappear. A write that
+introduces an absent target version fails before authority changes with
+`{:error/type :resource/invalid-reference :error/reason :referenced-version-absent
+:resource/id <root-id> :reference/path <path> :reference/id <target-id>
+:reference/version <target-version>}`. A cyclic closure likewise fails with
+`:error/type :resource/invalid-reference`, `:error/reason :reference-cycle`, and the complete
+cycle in `:reference/path`.
+
+Resolving `root-id` at `root-version` returns the immutable root authority record plus a
+deterministically ordered closure containing every transitive `{resource/id, version}` pair
+and a digest of that closure. Effective/resolved content and downstream evaluation or
+publication receipts bind to the root pair **and** this closure, never to a floating current
+target. After referenced resource B advances from B1 to B2, resolving the old A revision still
+returns B1. Consuming B2 requires a new A revision whose canonical reference explicitly pins
+B2.
 
 Compatibility tests must assert the complete conflict data above, not only that an
 exception occurred. They must also re-read after every duplicate or conflict and prove
 that no authority changed. Include both the absent-resource/non-nil-precondition case and
-the stale-version/equal-payload case so every provider implements the same precedence
-rules. Include different-payload and equal-payload concurrent create cases for one absent
+the stale-version/equal-authority-record case so every provider implements the same precedence
+rules. Include provenance-only create/replace cases, different-record and equal-record
+concurrent create cases for one absent
 identity, a same-identity concurrent replacement case where one request updates and one
 returns `:stale-version`, plus a different-identity concurrent write case where both siblings
 survive in a shared manifest and each untouched sibling retains its prior resource version.
+Create A pinned to B1, update B to B2, and prove A@A1 still resolves the same ordered B1
+closure and digest; missing versions and cycles must return the exact invalid-reference data
+without changing authority.
 
 Run the same semantic suite against:
 
@@ -127,11 +154,15 @@ Do not require a browser page to prove repository health.
 - Exact duplicate retries are idempotent; absent-resource precondition failures, identity
   collisions, and stale-version writes return the provider-neutral conflict shape and
   preserve the prior resource or absence.
+- Provenance participates in canonical resource equality and versioning, while excluded
+  store envelope metadata does not.
 - Concurrent compare-and-swap replacement is linearizable, and concurrent accepted writes
   to sibling identities cannot lose either resource or rotate an untouched sibling's
   resource-scoped version through a shared-manifest race.
 - Concurrent creates for one absent identity store one authoritative resource: a changed
   loser conflicts and an equal retry is unchanged.
+- Resolution exposes an immutable version-pinned transitive reference closure; target updates,
+  missing revisions, and cycles cannot silently change an older root revision's meaning.
 - Production verification exercises the configured repository boundary unconditionally,
   rather than skipping because OpenPlanner REST is absent.
 - No test defines "CMS correctness" as the continued existence of legacy OpenPlanner

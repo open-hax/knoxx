@@ -26,10 +26,11 @@ files while consumers depend only on a repository boundary.
   second content language.
 - Keep filesystem/Git path details inside the provider implementation.
 - Validate writes before they become repository authority.
-- Implement the conflict contract from `knoxx-cms-contract-validation`: an exact-payload
-  retry is `:unchanged` with the existing version; a different payload for an existing
-  identity with no expected version is an `:identity-exists` conflict; a changed valid
-  payload with the current expected version is `:updated`; and a replace whose expected
+- Implement the conflict contract from `knoxx-cms-contract-validation`: equality compares the
+  complete canonical authority record (validated payload plus domain provenance, excluding
+  only contract-declared store envelope metadata). An exact retry is `:unchanged`; a different
+  record for an existing identity with no expected version is `:identity-exists`; a changed
+  valid record with the current expected version is `:updated`; and a replace whose expected
   version is not current is a `:stale-version` conflict. Both conflicts return the canonical
   `:resource/conflict` error data and leave the file, payload, provenance, and version
   unchanged.
@@ -45,6 +46,10 @@ files while consumers depend only on a repository boundary.
 - Expose resource-scoped versions, not namespace-file hashes, mtimes, or manifest revisions.
   Updating one sibling may rotate internal storage metadata but must leave every untouched
   sibling's public version token identical along with its payload and provenance.
+- Persist immutable resource revisions so references pin `{resource/id, version}` rather than
+  floating current values. Resolve the complete transitive closure in deterministic order,
+  return its digest, retain older targets after updates, and reject missing pinned versions or
+  cycles with the provider-neutral invalid-reference data before modifying authority.
 - Preserve enough version/provenance information for downstream publication,
   transduction, and evaluation consumers to bind to immutable revisions where required.
 - Prove the boundary using an in-memory/fake provider plus the real file provider.
@@ -70,11 +75,13 @@ layout.
 - File-backed resources can be edited through a narrow write operation and immediately
   re-read through the same repository contract.
 - Fake and file providers return identical outcomes for create, equal retry, valid
-  compare-and-swap replace, identity collision, and stale replace.
+  compare-and-swap replace, provenance-only change, identity collision, and stale replace.
 - Same-identity concurrent create cases prove changed payloads yield one `:created` plus one
   `:identity-exists`, while equal payloads store once and return one `:unchanged`. A concurrent
   replacement case proves exactly one update wins and one returns `:stale-version`; a
   different-identity concurrent case proves both accepted sibling writes survive and can be
   re-read from the shared namespace manifest, with each untouched sibling retaining its exact
   prior resource version.
+- A pins B1, B advances to B2, and A@A1 still resolves the exact B1 closure/digest. Missing
+  pinned revisions and cycles fail without changing either current or historical authority.
 - No consumer needs to know a resource came from disk in order to use it.

@@ -39,6 +39,11 @@ The repository owns persistence and retrieval of declared resources. It does **n
 - HTML/React/static representation;
 - a particular visual editing UI.
 
+Resource versions identify one immutable canonical payload/provenance revision. References
+are version-pinned and resolve to an exposed immutable transitive closure, so an unrelated
+sibling write or a referenced target's later update cannot silently change evidence already
+bound to an older resource revision.
+
 ## First provider
 
 The open-source reference provider should use the existing namespace/resource EDN shape
@@ -50,7 +55,7 @@ not assumed to be the only resource family.
 ## Children / board moves
 
 - `knoxx-cms-contract-validation` — reframe around repository/provider laws and production verification instead of validating a legacy OpenPlanner REST dependency.
-- Future: `knoxx-file-resource-repository-provider` — define and prove the EDN/file-backed read/write/list/version boundary.
+- `knoxx-file-resource-repository-provider` — define and prove the EDN/file-backed read/write/list/version boundary.
 - Future: provider compatibility tests that a second implementation can satisfy without consumers branching on provider identity.
 - Future: narrow editing interfaces (CLI/MCP/UI) as consumers of the same resource-write operations.
 
@@ -81,4 +86,6 @@ idea moves here; its visual-page-builder scope does not become a prerequisite.
 - Resource consumers can read/write/list canonical resources through a provider-neutral boundary.
 - The EDN/file implementation proves the open-source workflow end to end.
 - Provider identity is not part of semantic resource contracts.
+- Old resource revisions and their complete version-pinned reference closures remain
+  addressable after current resources advance.
 - Publication, transduction, evaluation, and representation can each consume repository data without acquiring repository-provider knowledge.
