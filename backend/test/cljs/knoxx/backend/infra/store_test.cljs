@@ -2,12 +2,12 @@
   "Tests for the IStore protocol: schema guard, memory backend, registry, and
    the MongoCollection record against a stubbed collection handle."
   (:require [cljs.test :refer [deftest is testing]]
+            [katamorph.store.law :as store-law]
+            [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.infra.store.memory :as memory]
             [knoxx.backend.infra.store.mongo :as mongo]
             [knoxx.backend.infra.store.protocol :as store]
-            [knoxx.backend.infra.store.registry :as store-registry]
-            [knoxx.backend.domain.resources.loader :as resources]
-            [open-hax.contract-runtime.store.law :as store-law]))
+            [knoxx.backend.infra.store.registry :as store-registry]))
 
 (defn- build-test-deps
   "Build contract-runtime deps for tests."
@@ -50,9 +50,13 @@
 (deftest ^:async memory-collection-guards-inserts
   (let [coll (memory/memory-collection {:store/id :t
                                         :store/schema [:map [:message-id :string]]})]
-    (let [err (await (-> (store/insert! coll {:message-id 7})
-                         (.then (fn [_] nil))
-                         (.catch (fn [e] e))))]
+    ;; Catch the rejected Promise at the await boundary. Chaining .catch onto
+    ;; the protocol call can still be reported as unhandled by the Shadow Node
+    ;; test runner before the handler is observed.
+    (let [err (try
+                (await (store/insert! coll {:message-id 7}))
+                nil
+                (catch :default e e))]
       (is (some? err) "invalid doc must reject"))
     (is (= [] (await (store/find-docs coll {}))) "invalid doc must not persist")))
 
@@ -69,7 +73,7 @@
   #js {:insertOne (fn [doc]
                     (swap! inserted* conj (js->clj doc :keywordize-keys true))
                     (js/Promise.resolve #js {:acknowledged true}))
-       :find (fn [query]
+       :find (fn [_query]
                (let [limited* (atom nil)]
                  #js {:limit (fn [n] (reset! limited* n)
                                #js {:toArray (fn [] (js/Promise.resolve (clj->js (take @limited* find-result))))})

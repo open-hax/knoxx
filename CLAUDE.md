@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+> **Roadmap:** [`ROADMAP.md`](ROADMAP.md) — this repo's slice. The hub, with the
+> seam, ownership table and sequencing rule, is [eta-mu/ROADMAP.md](https://github.com/open-hax/eta-mu/blob/main/ROADMAP.md).
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > Also read **AGENTS.md** — it contains mandatory coding style rules, namespace conventions, verification requirements, modern CLJS patterns, and licensing doctrine that apply to all work in this repo.
@@ -66,6 +69,16 @@ bash scripts/install-hooks.sh      # Install git hooks (run once per clone)
 bash scripts/pre-push-checks.sh    # Run all pre-push checks manually
 KNOXX_SKIP_PRE_PUSH=1 git push     # Skip pre-push checks (escape hatch)
 ```
+
+### Human verification
+
+```bash
+scripts/verify-publication-epic.sh   # API journey against a live Knoxx
+scripts/verify-publication-tour.sh   # Browser tour + screenshots
+```
+
+Every epic ships a pair like this. See **AGENTS.md → Human Verification
+Artifact** for what is required, and `docs/verification/` for the walkthroughs.
 
 Pre-push checks run: repo-wide size lint → backend clj-kondo → backend shadow-cljs compile → ingestion clj-kondo → frontend typecheck + size lint → discord-bot typecheck + size lint.
 

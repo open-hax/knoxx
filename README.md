@@ -1,5 +1,8 @@
 # Knoxx
 
+> **Roadmap:** [`ROADMAP.md`](ROADMAP.md) — this repo's slice. The hub, with the
+> seam, ownership table and sequencing rule, is [eta-mu/ROADMAP.md](https://github.com/open-hax/eta-mu/blob/main/ROADMAP.md).
+
 Knoxx is a local-first knowledge operations and agent workbench. It combines a
 shadow-cljs/Fastify backend, a shadow-cljs + React frontend, a JVM Clojure
 ingestion worker, contract-backed policy/actor/model definitions, and adapters
@@ -123,7 +126,9 @@ Prerequisites:
 
 - Node.js 22+ and pnpm.
 - Java 21+ for shadow-cljs / Closure Compiler.
-- Clojure CLI for `ingestion/`.
+- Clojure CLI for `ingestion/` and for every backend shadow-cljs command.
+  `backend/shadow-cljs.edn` runs in `:deps` mode, so shadow-cljs resolves its
+  classpath through tools.deps and launches via `clojure`.
 - Redis and PostgreSQL for sessions/policy/ingestion state.
 - Proxx for model access, usually on `http://127.0.0.1:8789`.
 - OpenPlanner for durable memory/events/graph, usually on

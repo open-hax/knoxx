@@ -4,7 +4,7 @@
             [knoxx.backend.domain.bluesky.client :as bsky-client]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.domain.actor.credentials :as actor-credentials]
+            [knoxx.backend.infra.actor.credentials :as actor-credentials]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]))
 

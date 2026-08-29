@@ -42,26 +42,34 @@
     (is (str/includes? mutated "(if (not (= x 1)) (+ x 1) false)"))
     (is (str/includes? mutated "(ns demo.core)"))))
 
-(deftest emit-mutant-source-creates-shadow-overlay-path
+(deftest with-mutated-source-mutates-in-place-then-restores
   (let [tmp-dir (.toFile (java.nio.file.Files/createTempDirectory "knoxx-mutation-test" (make-array java.nio.file.attribute.FileAttribute 0)))
         src-dir (io/file tmp-dir "src/cljs")
         source-file (io/file src-dir "demo/core.cljs")
-        output-dir (io/file tmp-dir "target/mutation")
-        source "(ns demo.core)\n(defn f [x] (if (= x 1) true false))\n"]
+        source "(ns demo.core)\n(defn f [x] (if (= x 1) true false))\n"
+        opts {:src-dir (.getPath src-dir)}]
     (try
       (.mkdirs (.getParentFile source-file))
       (spit source-file source)
       (let [mutant (->> (mutation/discover-mutants {:src-dir (.getPath src-dir)
                                                     :include-regex "demo/core.cljs$"
-                                                    :limit 1})
+                                                    :limit 0})
+                        (filter #(= :if-test-negation (:operator %)))
                         first)
-            emitted (mutation/emit-mutant-source! {:src-dir (.getPath src-dir)
-                                                   :output-dir (.getPath output-dir)}
-                                                  mutant)]
-        (is (.exists (io/file (:overlay-path emitted))))
-        (is (str/ends-with? (:overlay-path emitted) "target/mutation/mutants/m0001/src/cljs/demo/core.cljs"))
-        (is (= ["target/mutation/mutants/m0001/src/cljs" "src/cljs" "test/cljs"]
-               (:source-paths (mutation/shadow-config-merge emitted)))))
+            during (atom nil)]
+        (is (= (.getPath source-file)
+               (.getPath (mutation/mutant-source-path opts mutant))))
+
+        ;; The mutant is only in the tracked file while the body runs.
+        (mutation/with-mutated-source! opts mutant #(reset! during (slurp source-file)))
+        (is (str/includes? @during "(not (= x 1))"))
+        (is (= source (slurp source-file)))
+
+        ;; A throwing body must still restore, or the run leaves the tree dirty.
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (mutation/with-mutated-source! opts mutant
+                       #(throw (ex-info "boom" {})))))
+        (is (= source (slurp source-file))))
       (finally
         (doseq [f (reverse (file-seq tmp-dir))]
           (.delete f))))))

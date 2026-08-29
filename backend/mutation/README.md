@@ -26,8 +26,8 @@ pnpm run mutation:harness-test
 
 1. Parse CLJS source with `tools.reader` as a sanity pass and `rewrite-clj` as a position-preserving zipper.
 2. Apply pure mutation operators over s-expressions, e.g. `if` test negation, comparison flips, arithmetic operator flips, and literal flips.
-3. Emit one temporary source overlay per mutant under `target/mutation/mutants/<id>/src/cljs/...`.
-4. Invoke Shadow with a dynamic `--config-merge` source-path overlay so the mutant shadows the original namespace.
+3. Write the mutated form into the real source file for the duration of one mutant, restoring the original afterwards (with a JVM shutdown hook as a backstop). `shadow-cljs.edn` runs in `:deps` mode, where `:source-paths` is ignored — including via `--config-merge` — so a mutant cannot be layered in as an extra source path ahead of `src/cljs`.
+4. Invoke Shadow normally; it compiles the mutated file because that file *is* the source.
 5. Run the compiled node-test bundle and classify mutants as `:killed` or `:survived`.
 6. Write an EDN report to `target/mutation/report.edn`.
 

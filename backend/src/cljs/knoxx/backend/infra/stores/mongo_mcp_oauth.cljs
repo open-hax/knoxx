@@ -1,8 +1,10 @@
 (ns knoxx.backend.infra.stores.mongo-mcp-oauth
   "Mongo twin for MCP OAuth state (replaces Redis knoxx:mcp:* keys).
    Handles clients, auth codes, and access tokens."
-  (:require [knoxx.backend.infra.mongo-client :as mongo-client]
-            [knoxx.backend.infra.system-instance :as system-instance]))
+  (:require [knoxx.backend.extern.mongo :as extern-mongo]
+            [knoxx.backend.infra.mongo-client :as mongo-client]
+            [knoxx.backend.infra.system-instance :as system-instance]
+            [knoxx.backend.law.mcp-oauth :as law]))
 
 (def CLIENTS_COLLECTION "knoxx_mcp_clients")
 (def CODES_COLLECTION "knoxx_mcp_codes")
@@ -32,31 +34,59 @@
 (defn- keywordize [doc]
   (when doc (js->clj doc :keywordize-keys true)))
 
+(defn- live?
+  "True when a document has a readable expiry that is still in the future.
+
+   Reads :expiresAt — the key the writers actually use. The readers previously
+   asked for :expires-at, which no document has ever carried, so the default of
+   0 made every code and every token read as already expired: the token
+   exchange answered 'Unknown or expired code' for codes it had just minted,
+   and no access token could ever be presented successfully.
+
+   Each layer does its own part: extern.mongo decodes the driver's instant,
+   law.mcp-oauth decides what a decoded instant means, and this reads the
+   clock. An unreadable or missing expiry is not live, so the check fails
+   closed."
+  [doc]
+  (law/credential-live? (extern-mongo/instant-ms (:expiresAt doc))
+                        (.now js/Date)))
+
 ;; ─── Clients ────────────────────────────────────────────────────────────────
 
 (defn ^:async get-client!
-  "Read registered OAuth client by client_id."
+  "Read a registered OAuth client by client_id.
+
+   Returns the client record itself, not the storage envelope. set-client!
+   nests the registration under :client_data alongside bookkeeping fields, and
+   callers want the registration — every caller reads redirect_uris off the top
+   level of what this returns. Handing back the envelope made those lookups
+   undefined, so every registered client's redirect_uri was rejected and no MCP
+   OAuth flow could be completed.
+
+   Records written before the envelope existed are stored flat; fall back to
+   the whole document for those."
   ([client-id] (get-client! (mongo-client/get-db) client-id))
   ([db client-id]
    (when (and db client-id)
      (let [c (clients-coll db)
            result (await (.findOne c #js {"client_id" (str client-id)}))]
        (when result
-         (js/JSON.stringify (clj->js (keywordize result))))))))
+         (let [doc    (keywordize result)
+               record (or (:client_data doc) doc)]
+           (js/JSON.stringify (clj->js record))))))))
 
 (defn ^:async set-client!
-  "Store registered OAuth client."
+  "Store a registered OAuth client.
+
+   The registration is nested under :client_data, beside this store's own
+   bookkeeping. get-client! unwraps it again; keep the two in step. Clients
+   carry no TTL, unlike codes and tokens."
   ([client-id client-json] (set-client! (mongo-client/get-db) client-id client-json))
   ([db client-id client-json]
    (when (and db client-id)
      (let [c (clients-coll db)
            now (js/Date.)
-           parsed (js/JSON.parse client-json)
-           doc {:client_id (str client-id)
-                :client_data parsed
-                :created_at now
-                :system_instance_id (system-instance/current-id)
-                :expiresAt nil}] ;; No TTL for clients
+           parsed (js/JSON.parse client-json)]
        (await (.updateOne
                c
                #js {"client_id" (str client-id)}
@@ -68,17 +98,44 @@
 
 ;; ─── Codes ──────────────────────────────────────────────────────────────────
 
-(defn ^:async get-code!
-  "Read OAuth auth code."
-  ([code] (get-code! (mongo-client/get-db) code))
+(defn ^:async peek-code!
+  "Read a live OAuth auth code without spending it, as CLJS data or nil.
+
+   Deliberately non-destructive, and paired with consume-code!: an exchange
+   reads the code here to check the client, redirect and PKCE bindings, and
+   only claims it once those hold. Spending it first would let anyone who
+   merely observed the code on the front channel destroy it with a wrong
+   verifier and break the legitimate client's exchange."
+  ([code] (peek-code! (mongo-client/get-db) code))
   ([db code]
    (when (and db code)
      (let [c (codes-coll db)
            result (await (.findOne c #js {"code" (str code)}))]
        (when result
          (let [doc (keywordize result)]
-           (when (> (:expires-at doc 0) (.now js/Date))
-             (js/JSON.stringify (clj->js (:code_data doc))))))))))
+           (when (live? doc)
+             (:code_data doc))))))))
+
+(defn ^:async consume-code!
+  "Atomically claim an OAuth auth code, returning its data exactly once.
+
+   An authorization code is single use: RFC 6749 requires that presenting one
+   twice does not yield two credentials. The delete and the read are one
+   operation so that exactly one of any number of concurrent exchanges can
+   claim it — a read followed by a separate delete leaves a window in which
+   both callers see a live code and both mint a token.
+
+   Call this only once an exchange has been found admissible. The claim is what
+   settles a race between two otherwise-valid exchanges; it is not the place to
+   discover that a request was invalid, because a rejected request must not
+   spend the code."
+  ([code] (consume-code! (mongo-client/get-db) code))
+  ([db code]
+   (when (and db code)
+     (let [doc (await (extern-mongo/find-one-and-delete!
+                       (codes-coll db) {:code (str code)}))]
+       (when (and doc (live? doc))
+         (:code_data doc))))))
 
 (defn ^:async set-code!
   "Store OAuth auth code with TTL."
@@ -123,7 +180,7 @@
            result (await (.findOne c #js {"access_token" (str access-token)}))]
        (when result
          (let [doc (keywordize result)]
-           (when (> (:expires-at doc 0) (.now js/Date))
+           (when (live? doc)
              (js/JSON.stringify (clj->js (:token_data doc))))))))))
 
 (defn ^:async set-token!
@@ -153,13 +210,43 @@
        true))))
 
 (defn ^:async delete-token!
-  "Delete access token."
+  "Delete an access token by value, without regard to who owns it.
+
+   Unscoped on purpose, for callers that have already established ownership or
+   legitimately act outside a membership. Anything reachable from a user
+   request wants delete-token-for-membership! instead."
   ([access-token] (delete-token! (mongo-client/get-db) access-token))
   ([db access-token]
    (when (and db access-token)
      (let [c (tokens-coll db)]
        (await (.deleteOne c #js {"access_token" (str access-token)}))
        true))))
+
+(defn ^:async delete-token-for-membership!
+  "Delete an access token only when it belongs to this membership.
+
+   Returns true when a token was deleted and false when nothing matched, so a
+   caller can tell 'revoked' from 'not yours, or not there'. Deleting by token
+   value alone lets any authenticated caller revoke another membership's token
+   if they learn its value.
+
+   Blank or missing identity yields false rather than a widened query — the
+   delete is never issued at all."
+  ([access-token membership-id]
+   (delete-token-for-membership! (mongo-client/get-db) access-token membership-id))
+  ([db access-token membership-id]
+   (let [request {:access-token  (str (or access-token ""))
+                  :membership-id (str (or membership-id ""))}]
+     (if-not (and db (law/valid-revocation-request? request))
+       false
+       (let [result (await (extern-mongo/delete-one!
+                            (tokens-coll db)
+                            {:access_token  (:access-token request)
+                             :membership_id (:membership-id request)}))]
+         (when-not (law/valid-revocation-result? result)
+           (throw (ex-info "mongo delete-one! returned an undecodable result"
+                           {:result result})))
+         (pos? (:deleted-count result)))))))
 
 (defn ^:async list-tokens-for-membership!
   "List all tokens for a membership."
@@ -171,5 +258,5 @@
            results (await (.toArray cursor))]
        (vec (for [doc results
                   :let [d (keywordize doc)]
-                  :when (> (:expires-at d 0) (.now js/Date))]
+                  :when (live? d)]
               (js/JSON.stringify (clj->js (:token_data d)))))))))

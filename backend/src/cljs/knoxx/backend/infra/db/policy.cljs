@@ -13,6 +13,7 @@
    so existing callers that pass (context-pool ctx) into policy functions need
    not change. The pool first arg on policy functions is ignored."
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.auth.password :as password]
             [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy]
             [knoxx.backend.infra.stores.mongo-policy-directory :as mongo-directory]
@@ -493,12 +494,18 @@
 (defn- request-context-map
   [membership-row membership detailed-roles]
   (let [{:keys [permissions tool-policies role-slugs]} (request-policy-summary membership detailed-roles)
-        actor-id (or (normalize-actor-id (:actor_id membership-row))
+        ;; The membership's *stored* actor binding, or nil. Kept separate from
+        ;; actor-id below, which falls back to a role-derived default and is
+        ;; therefore never nil — so it cannot answer "was an actor assigned?".
+        ;; Anything deciding authority (which credentials a token may read) must
+        ;; use the binding; the default is a display and role convenience.
+        actor-binding (normalize-actor-id (:actor_id membership-row))
+        actor-id (or actor-binding
                      (default-membership-actor-id role-slugs))]
     {:user (request-user-map membership-row)
      :org (request-org-map membership-row)
      :membership (request-membership-map membership actor-id)
-     :actor {:id actor-id}
+     :actor {:id actor-id :binding actor-binding}
      :roles detailed-roles
      :role-slugs role-slugs
      :permissions permissions
@@ -663,6 +670,33 @@
                                                          :replace true}))
     (await (set-membership-actor-id! pool (:id membership) "system_admin"))
     {:user user :membership membership}))
+
+(defn ^:async ensure-bootstrap-local-password!
+  "Idempotently project the environment-owned bootstrap password into the
+   local credential store. Blank passwords revoke any previously provisioned
+   local bootstrap credential."
+  ([db primary-org bootstrap opts]
+   (ensure-bootstrap-local-password!
+    db primary-org bootstrap opts
+    {:deactivate-credential! mongo-actor-creds/deactivate-actor-credential!
+     :encode-password password/hash-password
+     :upsert-credential! mongo-actor-creds/upsert-actor-credential!}))
+  ([db primary-org bootstrap opts
+    {:keys [deactivate-credential! encode-password upsert-credential!]}]
+   (let [configured-password (some-> (or (:bootstrapSystemAdminPassword opts)
+                                         (:bootstrap-system-admin-password opts))
+                                     str not-empty)
+         user-id (get-in bootstrap [:user :id])
+         org-id (:id primary-org)]
+     (if configured-password
+       (await (upsert-credential!
+               db user-id org-id "local"
+               {:kind "password"
+                :account-identifier (get-in bootstrap [:user :email])
+                :secret-json (encode-password configured-password)
+                :status "active"}))
+       (await (deactivate-credential! db user-id org-id "local" "password")))
+     nil)))
 
 ;; ---------------------------------------------------------------------------
 ;; Audit
@@ -1374,10 +1408,18 @@
                             payload))
 
 (defn ^:async get-actor-credential!
-  [_policy-context actor-id provider]
-  (when-let [db (await (ensure-mongo-policy-db!))]
-    {:credential (mongo-actor-creds/credential-row->response
-                  (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider! db actor-id provider)))}))
+  "An actor's active credential for a provider.
+
+   scope narrows the membership lookup: {:org-id, :membership-id}. actor_id is
+   unique nowhere — not even within an org — so an unnarrowed lookup refuses an
+   ambiguous actor rather than returning some member's secret. A caller holding a
+   request context should pass its membership id, which is exact."
+  ([policy-context actor-id provider] (get-actor-credential! policy-context actor-id provider nil))
+  ([_policy-context actor-id provider scope]
+   (when-let [db (await (ensure-mongo-policy-db!))]
+     {:credential (mongo-actor-creds/credential-row->response
+                   (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
+                           db actor-id provider scope)))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation
@@ -1423,6 +1465,7 @@
     (let [primary-org (await (ensure-primary-org! nil opts))]
       (await (sync-contract-role-projections! nil))
       (let [bootstrap (await (ensure-bootstrap-user! nil primary-org opts))]
+        (await (ensure-bootstrap-local-password! db primary-org bootstrap opts))
         (await (allowlist-best-effort! nil primary-org opts))
         (await (sync-actor-contracts-best-effort! nil primary-org))
         (await (cleanup-expired-sessions-best-effort! nil))

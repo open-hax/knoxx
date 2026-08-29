@@ -110,3 +110,81 @@
     (catch :default err
       (when-not (= "ENOENT" (.-code err))
         (throw err)))))
+
+;; ── Publication-target additions ──────────────────────────────────────────
+;; Atomic create/rename and synchronous variants, added for the static-site
+;; publication target. Same boundary: node objects never leave this file.
+
+(defn join
+  "Join path segments with the platform separator, normalizing the result."
+  [& parts]
+  (.apply (.-join path) path (into-array (map str parts))))
+
+(defn parent
+  "The parent directory of path `p`."
+  [p]
+  (.dirname path (str p)))
+
+(defn ^:async rename!
+  "Promise<nil>. Atomically rename `from` to `to` (same filesystem)."
+  [from to]
+  (.rename fs (str from) (str to)))
+
+(defn ^:async read-file-or-nil!
+  "Promise<string|nil>. UTF-8 file contents, or nil when the file is absent."
+  [p]
+  (try
+    (await (.readFile fs (str p) "utf8"))
+    (catch :default err
+      (when-not (= "ENOENT" (.-code err))
+        (throw err))
+      nil)))
+
+(defn write-file-encoded!
+  "Promise<nil>. Write `text` to `p` using the named character encoding
+   (e.g. \"utf-8\"). Dirs must already exist."
+  [p text encoding]
+  (.writeFile fs (str p) (str text) (str encoding)))
+
+(defn write-bytes!
+  "Promise<nil>. Write a Uint8Array to `p` verbatim. Dirs must already exist."
+  [p bytes]
+  (.writeFile fs (str p) bytes))
+
+(defn write-file-exclusive-sync!
+  "Atomically create `p` with `content`, failing if it exists. Returns true
+   when this call created the file, false when it already existed; any other
+   error is thrown. One `open(2)` with O_EXCL — there is no separate
+   check-then-create for a concurrent caller to slip between."
+  [p content]
+  (try
+    (.writeFileSync node-fs (str p) (str content) #js {:flag "wx"})
+    true
+    (catch :default err
+      (if (= "EEXIST" (.-code err))
+        false
+        (throw err)))))
+
+(defn write-file-sync!
+  "Synchronously write `content` to `p` as UTF-8, creating or overwriting."
+  [p content]
+  (.writeFileSync node-fs (str p) (str content) "utf8"))
+
+(defn rename-sync!
+  "Synchronously and atomically rename `from` to `to` (same filesystem)."
+  [from to]
+  (.renameSync node-fs (str from) (str to)))
+
+(defn unlink-sync!
+  "Synchronously delete `p`. Never throws on an already-absent file."
+  [p]
+  (try
+    (.unlinkSync node-fs (str p))
+    (catch :default err
+      (when-not (= "ENOENT" (.-code err))
+        (throw err)))))
+
+(defn mkdir-sync!
+  "Synchronously create `p` and all parents. Safe to call if it exists."
+  [p]
+  (.mkdirSync node-fs (str p) #js {:recursive true}))

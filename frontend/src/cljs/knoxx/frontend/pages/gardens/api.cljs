@@ -1,30 +1,30 @@
 (ns knoxx.frontend.pages.gardens.api
-  "Gardens REST calls. CLJS port of the bare fetches in
-   src/pages/GardensPage.tsx (the OpenPlanner gardens endpoints take no
-   knoxx auth headers).")
+  "Authenticated Knoxx-owned Garden deployment reads, and the one write a
+   deployment review can make: demanding reconciliation of a placement."
+  (:require [knoxx.frontend.lib.api :as api]
+            [knoxx.frontend.pages.gardens.logic :as logic]))
 
-(defn- json-or-throw [^js res fallback-msg]
-  (if (.-ok res)
-    (-> (.json res) (.then #(js->clj % :keywordize-keys true)))
-    (-> (.text res)
-        (.then (fn [text]
-                 (throw (js/Error. (if (seq text)
-                                     text
-                                     (str fallback-msg (.-status res))))))))))
+(def list-path "/api/publications/gardens")
 
-(defn list-gardens []
-  (-> (js/fetch "/api/openplanner/v1/gardens")
-      (.then #(json-or-throw % "Failed to load gardens: "))))
+(defn load-deployment!
+  []
+  (-> (api/request list-path)
+      (.then logic/normalize-deployment)))
 
-(defn save-garden
-  "Executes a {:url :method :body} request built by logic/build-save-request."
-  [{:keys [url method body]}]
-  (-> (js/fetch url #js {:method method
-                         :headers #js {"Content-Type" "application/json"}
-                         :body (js/JSON.stringify (clj->js body))})
-      (.then #(json-or-throw % "Failed to save garden: "))))
+(defn reconcile-publication!
+  "Demand reconciliation of one publication and answer with its receipt.
 
-(defn delete-garden [garden-id]
-  (-> (js/fetch (str "/api/openplanner/v1/gardens/" (js/encodeURIComponent garden-id))
-                #js {:method "DELETE"})
-      (.then #(json-or-throw % "Failed to delete garden: "))))
+   Reconciliation is per-publication by contract: `law.publication-reconciler/
+   ReconcileTrigger` is a closed map requiring `:publication/id`, so there is no
+   reconcile-everything call to make here and a caller must name what it wants.
+
+   This is the only route to publication for an intent that needs no approval.
+   A translated locale reaches reconciliation through the translation page,
+   which chains it onto recording an approval — but a source-locale intent
+   carries `:translation/review :none`, has no translation receipt, never
+   appears among reviewable translations, and therefore had no path at all
+   before this."
+  [publication-id]
+  (api/request "/api/publications/reconcile"
+               {:method "POST"
+                :body {:publicationId publication-id}}))

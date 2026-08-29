@@ -5,6 +5,7 @@
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.domain.resources.namespace-file :as ns-file]
             [knoxx.backend.law.contracts :as v]
+            [knoxx.backend.shape.resource-identity :as resource-identity]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
@@ -12,8 +13,8 @@
 ;; ── Constants ──────────────────────────────────────────────────────────────
 
 (def contract-class-order
-  ["agents" "actors" "roles" "capabilities" "policies"
-   "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "triggers" "stores" "sub_agents" "cms"])
+  ["agents" "actors" "roles" "capabilities" "policies" "authentication"
+   "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "triggers" "stores" "sub_agents" "cms" "documents" "gardens" "publications"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@
       ("role" "roles") "roles"
       ("cap" "caps" "capability" "capabilities") "capabilities"
       ("policy" "policies") "policies"
+      ("auth" "authentication" "auth-method" "auth-methods" "auth_method" "auth_methods") "authentication"
       ("generator" "generators") "generators"
       ("schedule" "schedules") "schedules"
       ("source-mode" "source-modes" "source_mode" "source_modes") "source_modes"
@@ -98,6 +100,9 @@
       ("trigger" "triggers") "triggers"
       ("store" "stores") "stores"
       ("sub-agent" "sub-agents" "sub_agent" "sub_agents") "sub_agents"
+      ("document" "documents") "documents"
+      ("garden" "gardens") "gardens"
+      ("publication" "publications") "publications"
       (throw (js/Error. (str "Unknown contract class: " value))))))
 
 ;; ── Stderr logging ─────────────────────────────────────────────────────────
@@ -143,6 +148,16 @@
   [v]
   (if (keyword? v) (name v) (str v)))
 
+(defn qualified-keyword->str
+  "Like keyword->str, but keeps the namespace segment. Document/garden/
+   publication ids are namespace-qualified on purpose; stringifying them with
+   plain `name` would collide distinct namespaces (:tenant-a/foo and
+   :tenant-b/foo both becoming \"foo\"). Public so lookup call sites (e.g.
+   knoxx.backend.domain.resources.loader) can normalize a keyword id the
+   same way it was normalized when the record was indexed."
+  [v]
+  (if (keyword? v) (subs (str v) 1) (str v)))
+
 (defn- extract-contract-identity
   [raw]
   ;; IMPORTANT: prefer structural/canonical class inference before the raw
@@ -164,17 +179,23 @@
                           (when (:runtime-feature/id raw) "runtime_features")
                           (when (= :runtime-feature (:contract/kind raw)) "runtime_features")
                           (when (:model-family/id raw) "model_families")
+                          (when (:document/id raw) "documents")
+                          (when (:garden/id raw) "gardens")
+                          (when (:publication/id raw) "publications")
                           (:contract/kind raw)
                           (:kind raw))
                       keyword->str str/trim not-empty)
-        id   (some-> (or (:contract/id raw) (:id raw)
-                          (:actor/id raw) (:role/id raw) (:cap/id raw)
-                          (:model/id raw) (:model-family/id raw)
-                          (:generator/id raw) (:schedule/id raw)
-                          (:source-mode/id raw)
-                          (:source/id raw)
-                          (:runtime-feature/id raw))
-                      keyword->str str/trim not-empty)]
+        qualified-id (some-> (or (:document/id raw) (:garden/id raw) (:publication/id raw))
+                              qualified-keyword->str str/trim not-empty)
+        id   (or qualified-id
+                 (some-> (or (:contract/id raw) (:id raw)
+                             (:actor/id raw) (:role/id raw) (:cap/id raw)
+                             (:model/id raw) (:model-family/id raw)
+                             (:generator/id raw) (:schedule/id raw)
+                             (:source-mode/id raw)
+                             (:source/id raw)
+                             (:runtime-feature/id raw))
+                         keyword->str str/trim not-empty))]
     (when (and kind id) [kind id])))
 
 (defn- validate-and-build
@@ -194,12 +215,27 @@
          :edn-text     (str edn-text)}
         (do (stderr! "[contracts] validation failed: " file-path
                      " — " (pr-str (:errors valid)))
-            nil)))))
+            ;; A rejected record is reported rather than dropped, so callers that
+            ;; must not silently omit a resource can surface it as a blocker.
+            ;; `load-all-contracts!` filters these out, so every existing lookup
+            ;; caller sees exactly what it saw before.
+            {:ok? false
+             :id id
+             :contractClass kind
+             :file-path file-path
+             :errors (:errors valid)})))))
 
 (defn- namespace-resource-record
-  "Validate one expanded namespace resource definition into a contract record."
+  "Validate one expanded namespace resource definition into a contract record.
+
+   Identity is canonicalized BEFORE validation. Document, garden, and
+   publication ids are qualified keywords in their Malli shapes, but a manifest
+   entry declares its namespace once and writes the local id — so validating
+   first would fail those definitions and drop them here, and the resource
+   would never reach any projection."
   [file-path edn-text {:resource/keys [kind definition]}]
   (let [klass (normalize-contract-class (name kind))
+        definition (resource-identity/canonicalize-identity kind definition)
         valid (v/validate klass definition)]
     (if (:ok valid)
       {:ok? true
@@ -211,7 +247,11 @@
       (do (stderr! "[contracts] namespace resource validation failed: " file-path
                    " " (pr-str (:resource/qualified-id definition))
                    " — " (pr-str (:errors valid)))
-          nil))))
+          {:ok? false
+           :id (:contract/id definition)
+           :contractClass klass
+           :file-path file-path
+           :errors (:errors valid)}))))
 
 (defn parse-contract-file-records!
   "Parse + validate a single .edn file into a vector of contract records.
@@ -231,13 +271,33 @@
       (stderr! "[contracts] parse error: " file-path " — " (.-message err))
       [])))
 
+(defn- file-level-rejection
+  "A rejected record standing for a file that produced no record at all.
+
+   `parse-contract-file-records!` answers `[]` for a file it cannot read as EDN,
+   and every lookup caller depends on that contract — so the evidence is
+   reconstructed here, in the only path that exposes rejected records. Without
+   it a malformed publication file leaves no trace and the projection answers
+   200 with that intent silently absent. It carries no kind: an unparsed file
+   has no readable identity to take one from."
+  [file-path reason message]
+  {:ok? false
+   :file-path file-path
+   :errors [(cond-> {:file reason}
+              message (assoc :message message))]})
+
 (defn- ^:async read-contract-file!
   [file-path]
   (try
-    (parse-contract-file-records! file-path (await (.readFile fs file-path "utf8")))
+    (let [records (parse-contract-file-records!
+                   file-path
+                   (await (.readFile fs file-path "utf8")))]
+      (if (seq records)
+        records
+        [(file-level-rejection file-path :unparseable nil)]))
     (catch :default err
       (stderr! "[contracts] read error: " file-path " — " (.-message err))
-      nil)))
+      [(file-level-rejection file-path :unreadable (.-message err))])))
 
 ;; ── Deduplication ──────────────────────────────────────────────────────────
 
@@ -275,6 +335,8 @@
                   (parse-contract-file-records!
                    file-path
                    (.readFileSync node-fs file-path "utf8"))))
+        ;; Same as the async path: rejected records never reach a lookup caller.
+        (filterv :ok?)
         dedup-contracts))
 
 (defn load-all-contracts-sync
@@ -315,9 +377,15 @@
 
 ;; ── Public API ─────────────────────────────────────────────────────────────
 
-(defn ^:async load-all-contracts!
-  "Discover all .edn files under all contract roots, parse+validate each,
-   deduplicate on [kind id]. Returns Promise<vector<contract-record>>."
+(defn ^:async load-all-contract-records!
+  "Every parsed+validated record, WITHOUT `[kind id]` dedup.
+
+   `dedup-contracts` is first-wins, so two files declaring the same canonical
+   id with different payloads silently collapse to whichever the filesystem
+   enumerated first. Callers that must detect that collision rather than
+   inherit it — the publication projection, whose whole contract is that a
+   conflicting identity fails deterministically — need the undeduped records.
+   Ordinary lookup callers should keep using `load-all-contracts!`."
   [config]
   (let [roots (contract-root-paths config)
         file-lists (await (js/Promise.all (clj->js (map discover-contract-files! roots))))
@@ -329,7 +397,19 @@
     (->> (js/Array.from results)
          (remove nil?)
          (mapcat identity)
-         dedup-contracts)))
+         (remove nil?)
+         vec)))
+
+(defn ^:async load-all-contracts!
+  "Discover all .edn files under all contract roots, parse+validate each,
+   deduplicate on [kind id]. Returns Promise<vector<contract-record>>.
+
+   Rejected records are filtered out here, so this function's contract is
+   unchanged for every lookup caller. Only `load-all-contract-records!` exposes
+   them, for callers that must surface an invalid resource as a blocker instead
+   of silently omitting it."
+  [config]
+  (dedup-contracts (filterv :ok? (await (load-all-contract-records! config)))))
 
 (defn ^:async list-contract-ids!
   ([config] (list-contract-ids! config "agents"))

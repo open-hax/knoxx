@@ -285,5 +285,5 @@
           (.delete ^File old-target))
         {:status 200
          :body {:ok true
-                :path (rel-workspace-path target)
+                :path (rel-workspace-path tenant-id target)
                 :size (.length ^File target)}}))))

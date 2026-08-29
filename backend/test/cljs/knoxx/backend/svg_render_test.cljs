@@ -1,5 +1,5 @@
 (ns knoxx.backend.svg-render-test
-  (:require [cljs.test :refer [async deftest is testing]]
+  (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
             [knoxx.backend.infra.svg-render :as svg-render]
             ["node:fs" :as fs]))
@@ -36,6 +36,53 @@
      <rect width='240' height='120' fill='#101020'/>
      <text x='20' y='70' font-family='Georgia, Arial' font-size='42' fill='url(#g)' filter='url(#glow)'>Knoxx</text>
    </svg>")
+
+(deftest svg-document-renders-through-the-shared-markup-shell
+  (let [svg "<svg xmlns='http://www.w3.org/2000/svg'><rect width='1' height='1'/></svg>"]
+    (is (= (str "<!doctype html>\n"
+                "<html><head><meta charset=\"utf-8\"></head>"
+                "<body style=\"margin:0;padding:0;background:transparent\">"
+                svg
+                "</body></html>")
+           (svg-render/svg-document svg)))))
+
+(deftest ^:async prepare-page-disables-code-and-denies-network
+  (let [calls (atom [])
+        request-handler (atom nil)
+        page #js {}]
+    (aset page "setViewport"
+          (fn [viewport]
+            (swap! calls conj [:viewport (js->clj viewport :keywordize-keys true)])
+            (js/Promise.resolve nil)))
+    (aset page "setJavaScriptEnabled"
+          (fn [enabled?]
+            (swap! calls conj [:javascript enabled?])
+            (js/Promise.resolve nil)))
+    (aset page "setRequestInterception"
+          (fn [enabled?]
+            (swap! calls conj [:interception enabled?])
+            (js/Promise.resolve nil)))
+    (aset page "on"
+          (fn [event-name handler]
+            (swap! calls conj [:listener event-name])
+            (reset! request-handler handler)
+            page))
+
+    (is (= page (await (svg-render/prepare-page! page 320 180))))
+    (is (= [[:viewport {:width 320 :height 180}]
+            [:javascript false]
+            [:interception true]
+            [:listener "request"]]
+           @calls))
+
+    (let [abort-calls (atom [])
+          request #js {}]
+      (aset request "abort"
+            (fn [reason]
+              (swap! abort-calls conj reason)
+              (js/Promise.resolve nil)))
+      (@request-handler request)
+      (is (= ["blockedbyclient"] @abort-calls)))))
 
 (deftest ^:async svg->png-renders-browser-svg-features
   (testing "Chromium produces a PNG buffer for filter, text font fallback, and text gradient SVGs"

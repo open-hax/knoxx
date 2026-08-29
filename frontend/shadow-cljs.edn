@@ -1,4 +1,5 @@
-{:source-paths ["src/cljs" "src/dev" "src/e2e" "test/cljs"]
+{:source-paths ["src/cljs" "src/dev" "src/e2e" "test/cljs"
+                "../shared/src/cljs"]
  :dependencies [[lilactown/helix "0.2.2"]]
  :nrepl {:port 4501}
 

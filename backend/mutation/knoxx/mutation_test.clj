@@ -1,11 +1,12 @@
 (ns knoxx.mutation-test
   "S-expression mutation harness for Knoxx ClojureScript backend sources.
 
-  The harness mutates original CLJS forms with rewrite-clj, emits a temporary
-  source overlay per mutant, and delegates compile/test execution to shadow-cljs.
-  It intentionally stays in Clojure so mutation operators work on Lisp data, not
-  generated JavaScript."
+  The harness mutates original CLJS forms with rewrite-clj, temporarily
+  overwrites the real source file per mutant, and delegates compile/test
+  execution to shadow-cljs. It intentionally stays in Clojure so mutation
+  operators work on Lisp data, not generated JavaScript."
   (:require [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [clojure.tools.reader :as reader]
@@ -221,26 +222,49 @@
       :else
       (recur (z/next loc)))))
 
-(defn mutant-overlay-source-path
-  [output-dir mutant]
-  (.getPath (io/file output-dir "mutants" (:id mutant) "src" "cljs" (:relative-path mutant))))
+(defn mutant-source-path
+  [{:keys [src-dir] :or {src-dir default-src-dir}} mutant]
+  (io/file src-dir (:relative-path mutant)))
 
-(defn emit-mutant-source!
-  [{:keys [src-dir output-dir] :or {src-dir default-src-dir output-dir default-output-dir}}
-   mutant]
-  (let [original-path (io/file src-dir (:relative-path mutant))
-        mutated-path (io/file (mutant-overlay-source-path output-dir mutant))
-        mutated-source (apply-mutant-to-source (slurp original-path) mutant)]
-    (.mkdirs (.getParentFile mutated-path))
-    (spit mutated-path mutated-source)
-    (assoc mutant
-           :overlay-path (.getPath mutated-path))))
+(defn assert-clean-tree!
+  "with-mutated-source! restores src-dir via try/finally plus a JVM shutdown
+  hook, but neither runs on SIGKILL or power loss. Refusing to start against
+  a dirty tree means that worst case is always safely recoverable with
+  `git checkout -- <src-dir>`, since nothing uncommitted was ever at risk."
+  [{:keys [src-dir] :or {src-dir default-src-dir}}]
+  (let [result (shell/sh "git" "status" "--porcelain" "--" src-dir)]
+    (when (not= 0 (:exit result))
+      (throw (ex-info "git status failed while checking for uncommitted changes"
+                      {:src-dir src-dir :result result})))
+    (when-let [dirty (seq (remove str/blank? (str/split-lines (:out result))))]
+      (throw (ex-info (str "Refusing to run mutation tests against a dirty " src-dir
+                           ". Mutation runs temporarily overwrite real source files; "
+                           "commit or stash first so a killed run can always recover "
+                           "with `git checkout`.")
+                      {:src-dir src-dir :dirty-paths dirty})))))
 
-(defn shadow-config-merge
-  [mutant]
-  {:source-paths [(str "target/mutation/mutants/" (:id mutant) "/src/cljs")
-                  "src/cljs"
-                  "test/cljs"]})
+(defn with-mutated-source!
+  "backend/shadow-cljs.edn runs shadow-cljs in :deps mode, which hands the
+  entire classpath to tools.deps and ignores :source-paths outright (even via
+  --config-merge), so a mutant can no longer be layered in ahead of src/cljs
+  as an overlay path. Mutating the real file for the duration of one
+  compile+test cycle sidesteps that restriction entirely. Mutants run
+  strictly sequentially (see run-suite!), so there is never more than one
+  file mutated at a time. The shutdown hook guards against the file being
+  left mutated if the process is killed mid-mutation."
+  [opts mutant f]
+  (let [target (mutant-source-path opts mutant)
+        original (slurp target)
+        mutated (apply-mutant-to-source original mutant)
+        restore! #(spit target original)
+        hook (Thread. restore!)]
+    (.addShutdownHook (Runtime/getRuntime) hook)
+    (try
+      (spit target mutated)
+      (f)
+      (finally
+        (restore!)
+        (.removeShutdownHook (Runtime/getRuntime) hook)))))
 
 (defn process-result
   [exit-code timed-out? output]
@@ -278,11 +302,8 @@
         (pos? (or errors 0)))))
 
 (defn compile-mutant!
-  [{:keys [shadow-build timeout-ms] :or {shadow-build default-shadow-build timeout-ms default-timeout-ms}}
-   mutant]
-  (run-process! {:cmd ["pnpm" "exec" "shadow-cljs" "--force-spawn"
-                       "--config-merge" (pr-str (shadow-config-merge mutant))
-                       "compile" shadow-build]
+  [{:keys [shadow-build timeout-ms] :or {shadow-build default-shadow-build timeout-ms default-timeout-ms}}]
+  (run-process! {:cmd ["pnpm" "exec" "shadow-cljs" "--force-spawn" "compile" shadow-build]
                  :timeout-ms timeout-ms}))
 
 (defn run-mutant-tests!
@@ -292,19 +313,20 @@
 
 (defn evaluate-mutant!
   [opts mutant]
-  (let [emitted (emit-mutant-source! opts mutant)
-        compile-result (compile-mutant! opts emitted)]
-    (if (killed? compile-result)
-      (assoc emitted
-             :status :killed
-             :phase :compile
-             :result (select-keys compile-result [:exit-code :timed-out?]))
-      (let [test-result (run-mutant-tests! opts)]
-        (assoc emitted
-               :status (if (killed? test-result) :killed :survived)
-               :phase :test
-               :result (merge (select-keys test-result [:exit-code :timed-out?])
-                              (or (test-counters (:output test-result)) {})))))))
+  (with-mutated-source! opts mutant
+    (fn []
+      (let [compile-result (compile-mutant! opts)]
+        (if (killed? compile-result)
+          (assoc mutant
+                 :status :killed
+                 :phase :compile
+                 :result (select-keys compile-result [:exit-code :timed-out?]))
+          (let [test-result (run-mutant-tests! opts)]
+            (assoc mutant
+                   :status (if (killed? test-result) :killed :survived)
+                   :phase :test
+                   :result (merge (select-keys test-result [:exit-code :timed-out?])
+                                  (or (test-counters (:output test-result)) {})))))))))
 
 (defn report-summary
   [results]
@@ -393,6 +415,8 @@
 
 (defn run-suite!
   [opts]
+  (when (:run? opts)
+    (assert-clean-tree! opts))
   (let [mutants (discover-mutants opts)
         results (if (:run? opts)
                   (mapv #(evaluate-mutant! opts %) mutants)

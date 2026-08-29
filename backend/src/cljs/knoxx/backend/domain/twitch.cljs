@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.domain.actor.credentials :as actor-credentials]
+            [knoxx.backend.infra.actor.credentials :as actor-credentials]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]))
 
 (defonce ^:private twitch-connections

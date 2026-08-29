@@ -5,6 +5,9 @@
    cold-start cost. Uses puppeteer-core so deployments can provide Chromium via
    PUPPETEER_EXECUTABLE_PATH/KNOXX_CHROMIUM_PATH or a common system path."
   (:require [clojure.string :as str]
+            [knoxx.backend.law.svg :as svg-law]
+            [open-hax.uxx.markup :as markup]
+            [open-hax.uxx.render.html :as html]
             ["node:fs" :as fs]
             ["puppeteer-core" :as puppeteer-core]))
 
@@ -81,19 +84,40 @@
       (reset! browser-promise-atom launch-promise)
       (await launch-promise))))
 
-(defn- svg-document
+(defn- trusted-svg-markup
   [svg-string]
-  (str "<!doctype html>"
-       "<html><head><meta charset='utf-8'></head>"
-       "<body style='margin:0;padding:0;background:transparent'>"
-       svg-string
-       "</body></html>"))
+  (markup/trusted-html (svg-law/validate-svg! svg-string)))
+
+(defn svg-document-node
+  "Build the browser document around law-validated SVG using the shared AST."
+  [svg-string]
+  [:html {}
+   [:head {}
+    [:meta {:charset "utf-8"}]]
+   [:body {:style "margin:0;padding:0;background:transparent"}
+    (markup/raw-html (trusted-svg-markup svg-string))]])
+
+(defn svg-document
+  "Render a complete, deterministic browser document around validated SVG."
+  [svg-string]
+  (str "<!doctype html>\n" (html/render (svg-document-node svg-string))))
+
+(defn ^:async prepare-page!
+  "Configure a fresh Puppeteer page as a code-free, network-denied SVG canvas."
+  [page width height]
+  (await (.setViewport page #js {:width width :height height}))
+  (await (.setJavaScriptEnabled page false))
+  (await (.setRequestInterception page true))
+  (.on page "request"
+       (fn [request]
+         (.abort request "blockedbyclient")))
+  page)
 
 (defn- ^:async render-svg!
   [page svg-string width height]
-  (let [_ (await (.setViewport page #js {:width width :height height}))
-        _ (await (.setJavaScriptEnabled page false))
-        _ (await (.setContent page (svg-document svg-string) #js {:waitUntil "networkidle0"}))
+  (let [_ (await (prepare-page! page width height))
+        _ (await (.setContent page (svg-document svg-string)
+                              #js {:waitUntil "networkidle0"}))
         element (await (.$ page "svg"))]
     (when-not element
       (throw (js/Error. "Cannot render SVG: no <svg> element found.")))
@@ -107,7 +131,7 @@
     (.finally render-promise (fn [] (.close page)))))
 
 (defn ^:async svg->png
-  "Renders an SVG string to a PNG Node Buffer via headless Chromium.
+  "Renders a validated SVG string to a PNG Node Buffer via headless Chromium.
    Returns a js/Promise<Buffer>."
   [svg-string {:keys [width height] :or {width 600 height 300}}]
   (let [browser (await (get-browser))

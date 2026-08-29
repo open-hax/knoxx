@@ -45,7 +45,7 @@
         (is (some #{:discord.message} (:source/listens source)))))))
 
 (deftest normalized-trigger-has-correct-runtime-shape
-  (testing "the fixture trigger normalizes into the runtime shape expected by dispatch"
+  (testing "the fixture trigger folds legacy arguments into :trigger/with"
     (let [trigger (resources/resource-sync fixture-config :trigger "ussyverse_social_replies_event")
           normalized (trigger-normalize/normalize-trigger trigger)]
       (is (= "ussyverse_social_replies_event" (:trigger/id normalized)))
@@ -56,7 +56,9 @@
       (is (= ["discord_automation"] (mapv str [(:trigger/listener normalized)])))
       (is (= [:discord.message] (:trigger/events normalized)))
       (is (= :actions/start-agent-session (:trigger/action normalized)))
-      (is (= "ussyverse_social_replies" (:trigger/agent normalized)))
+      (is (= "ussyverse_social_replies" (get-in normalized [:trigger/with :agent-id])))
+      (is (string? (get-in normalized [:trigger/with :task])))
+      (is (nil? (:trigger/agent normalized)))
       (is (some? (:trigger/condition normalized)) "Normalized trigger should preserve condition"))))
 
 (deftest trigger-matches-keyword-event-from-disk

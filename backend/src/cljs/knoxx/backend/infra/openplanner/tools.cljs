@@ -8,6 +8,9 @@
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.http :refer [http-error]]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
+            [knoxx.backend.infra.openplanner.translation-scope :as translation-scope]
+            [knoxx.backend.infra.translation-agent-runtime :as translation-agent]
+            [knoxx.backend.law.translation-agent :as translation-agent-law]
             [knoxx.backend.domain.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
@@ -46,15 +49,32 @@
    [:sessionId {:description "Knoxx conversation/session id stored in OpenPlanner."} :string]])
 
 (def translation-params
+  "`save_translation`'s parameters.
+
+  Every coordinate is optional, because `save-translation-segment` and
+  `publication-translation-pair` both default all four from the session's
+  `:resourcePolicies` — that fallback predates this schema and is what makes a
+  pinned translation session work at all. Declaring them required contradicted
+  it: the JSON-schema validator refuses the call before either handler runs, so
+  an agent that correctly omitted a coordinate its session was already pinned to
+  got a `must have required properties document_id` refusal, and its
+  translation was thrown away. Observed live: four correct translations
+  produced by the model, refused at the schema, and lost.
+
+  Optional in the schema is not unenforced. `save-openplanner-segment!` still
+  throws when `document_id` resolves blank after the policy fallback, and
+  `law.translation-agent-submission/pair-refusal` still refuses a submission
+  whose coordinates disagree with the pin. The check moved to where the
+  defaulted value is actually known, which is the only place it can be correct."
   [:map
    [:source_text {:description "Original source text"} :string]
    [:translated_text {:description "Translated text"} :string]
-   [:source_lang {:description "Source language code (e.g. 'en')"} :string]
-   [:target_lang {:description "Target language code (e.g. 'es')"} :string]
-   [:document_id {:description "Document ID being translated"} :string]
+   [:source_lang {:optional true :description "Source language code (e.g. 'en'). Omit to use the language this session is pinned to."} :string]
+   [:target_lang {:optional true :description "Target language code (e.g. 'es'). Omit to use the language this session is pinned to."} :string]
+   [:document_id {:optional true :description "Document ID being translated. Omit to use the document this session is pinned to."} :string]
    [:garden_id {:optional true :description "Garden ID"} :string]
    [:project {:optional true :description "Project name"} :string]
-   [:segment_index {:description "0-based segment index"} :int]])
+   [:segment_index {:optional true :description "0-based segment index. 0 for a whole-document translation."} :int]])
 
 (def create-file-params
   [:map
@@ -202,44 +222,131 @@
       (let [resp (await (openplanner-client/events! (openplanner-client/client config) [event]))]
         (tool-text-result (str "Successfully pushed claim to graph: " claim) resp)))))
 
+(defn- policy-value
+  "Read a tool param, falling back to either spelling of the resource policy key."
+  [params resource-policies param-name snake-key kebab-key]
+  (or (aget params param-name)
+      (get resource-policies snake-key)
+      (get resource-policies kebab-key)))
+
+(defn- assert-translated!
+  "Reject a prose segment whose translation is byte-identical to its source."
+  [{:keys [source-text translated-text source-lang target-lang segment-index]}]
+  (let [normalized-source (str/trim (str (or source-text "")))
+        normalized-translated (str/trim (str (or translated-text "")))
+        prose-like? (or (> (count normalized-source) 24)
+                        (str/includes? normalized-source " "))]
+    (when (and (not (str/blank? source-lang))
+               (not (str/blank? target-lang))
+               (not= source-lang target-lang)
+               prose-like?
+               (= normalized-source normalized-translated))
+      (throw (js/Error. (str "translated_text matches source_text for segment " segment-index
+                             "; provide an actual " target-lang " translation"))))))
+
+(defn- save-translation-segment
+  "Build the pending segment a save_translation call persists."
+  [auth-context config params]
+  (let [policies (:resourcePolicies auth-context)]
+    {:source_text (aget params "source_text")
+     :translated_text (aget params "translated_text")
+     :source_lang (policy-value params policies "source_lang" :source_lang :source-lang)
+     :target_lang (policy-value params policies "target_lang" :target_lang :target-lang)
+     :document_id (policy-value params policies "document_id" :document_id :document-id)
+     :garden_id (policy-value params policies "garden_id" :garden_id :garden-id)
+     :project (or (aget params "project") (:project policies) (:project-name config))
+     :org_id (translation-scope/translation-org-id! auth-context policies)
+     :segment_index (aget params "segment_index")
+     :status "pending"
+     :mt_model "translation-agent"}))
+
+(defn- ^:async save-openplanner-segment!
+  "Persist one translated segment into the OpenPlanner translation database.
+
+  The original and still the right sink for a CMS document whose translation
+  truth lives in OpenPlanner. Extracted unchanged so the contract-backed sink
+  beside it is a sibling rather than a branch inside one handler."
+  [auth-context config params on-update]
+  (let [segment (save-translation-segment auth-context config params)
+        translated-text (:translated_text segment)
+        segment-index (:segment_index segment)]
+    (assert-translated! {:source-text (:source_text segment)
+                         :translated-text translated-text
+                         :source-lang (:source_lang segment)
+                         :target-lang (:target_lang segment)
+                         :segment-index segment-index})
+    (when (str/blank? (str (:document_id segment)))
+      (throw (js/Error. "document_id is required for save_translation")))
+    (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
+    (let [result (await (openplanner-client/create-translation-segment! (openplanner-client/client config) segment))]
+      (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
+                        result))))
+
+(defn- publication-translation-pair
+  "The submitted pair as the contract-backed sink receives it.
+
+  Deliberately built from the same `policy-value` fallbacks
+  `save-translation-segment` uses, so the agent may omit any coordinate its
+  session was already pinned to and the two sinks agree about what a submission
+  means.
+
+  The organization comes from the pin, NOT from
+  `translation-scope/translation-org-id!`. That function negotiates a tenant
+  between a *request context* and a resource policy — an ordinary membership may
+  only target its own organization, and only a system principal may name
+  another. A triggered session has no request context at all: `spawn-direct!`
+  builds its actor from a contract rather than from an HTTP caller, so the run
+  carries `org_id`, `user_email` and `membership_id` all nil. Called here it
+  therefore threw `organization is required for save_translation` on every
+  submission, and four correct translations were lost to it.
+
+  Taking the pinned value is not a loosening, because the pinned value is not
+  caller-supplied. `law.translation-agent/session-policies` derives it from a
+  dispatch record that `reserve-dispatch!` persisted under an authenticated
+  request, and `infra.translation-agent-sink/submit-pair!` re-reads that record
+  by `run_id` and refuses unless its `:dispatch/key` matches the overlay. The
+  receipt's `:translation/org-id` is then minted from the *stored record*, never
+  from this map — so a forged overlay cannot invent a tenant, because it would
+  have to also produce a stored claim that agrees with it.
+
+  The OpenPlanner segment path is untouched and still negotiates, because it
+  really does run from request contexts."
+  [params policies]
+  {:source_text (aget params "source_text")
+   :translated_text (aget params "translated_text")
+   :source_lang (policy-value params policies "source_lang" :source_lang :source-lang)
+   :target_lang (policy-value params policies "target_lang" :target_lang :target-lang)
+   :document_id (policy-value params policies "document_id" :document_id :document-id)
+   :garden_id (policy-value params policies "garden_id" :garden_id :garden-id)
+   :org_id (policy-value params policies "org_id" :org_id :org-id)
+   :segment_index (aget params "segment_index")})
+
+(defn- ^:async save-publication-translation!
+  "Record one translated publication document as Knoxx-owned evidence.
+
+  The sink for a document declared by a deployment contract. Reports the
+  produced output revision back to the agent rather than a segment index,
+  because that is the value a human reviewer's approval will be pinned to and
+  the only identifier that distinguishes this run's output from a re-run's."
+  [config params policies on-update]
+  (maybe-tool-update! on-update "Recording translated publication document…")
+  (let [pair (publication-translation-pair params policies)
+        result (await (translation-agent/save-pair! config policies pair))
+        receipt (:translation/receipt result)]
+    (tool-text-result
+     (str "Recorded translation of " (:document_id pair)
+          " into " (:target_lang pair)
+          " as revision " (:translation/revision receipt)
+          ". It is now awaiting human approval before it can be published.")
+     receipt)))
+
 (defn make-save-translation-execute [auth-context]
   (^:async fn [_runtime config _tool-call-id params a b c]
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-          resource-policies (:resourcePolicies auth-context)
-          source-text (aget params "source_text")
-          translated-text (aget params "translated_text")
-          source-lang (or (aget params "source_lang") (:source_lang resource-policies) (:source-lang resource-policies))
-          target-lang (or (aget params "target_lang") (:target_lang resource-policies) (:target-lang resource-policies))
-          document-id (or (aget params "document_id") (:document_id resource-policies) (:document-id resource-policies))
-          garden-id (or (aget params "garden_id") (:garden_id resource-policies) (:garden-id resource-policies))
-          project (or (aget params "project") (:project resource-policies) (:project-name config))
-          segment-index (aget params "segment_index")
-          normalized-source (str/trim (str (or source-text "")))
-          normalized-translated (str/trim (str (or translated-text "")))
-          prose-like? (or (> (count normalized-source) 24) (str/includes? normalized-source " "))
-          _ (when (and (not (str/blank? source-lang))
-                       (not (str/blank? target-lang))
-                       (not= source-lang target-lang)
-                       prose-like?
-                       (= normalized-source normalized-translated))
-              (throw (js/Error. (str "translated_text matches source_text for segment " segment-index
-                                      "; provide an actual " target-lang " translation"))))
-          _ (when (str/blank? (str document-id))
-              (throw (js/Error. "document_id is required for save_translation")))
-          segment {:source_text source-text
-                   :translated_text translated-text
-                   :source_lang source-lang
-                   :target_lang target-lang
-                   :document_id document-id
-                   :garden_id garden-id
-                   :project project
-                   :segment_index segment-index
-                   :status "pending"
-                   :mt_model "translation-agent"}]
-      (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
-      (let [result (await (openplanner-client/create-translation-segment! (openplanner-client/client config) segment))]
-        (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
-                          result)))))
+          policies (:resourcePolicies auth-context)]
+      (if (translation-agent-law/contract-backed? policies)
+        (await (save-publication-translation! config params policies on-update))
+        (await (save-openplanner-segment! auth-context config params on-update))))))
 
 (def graph-query-tool
   (partial create-tool-obj
@@ -247,7 +354,7 @@
            "Query the canonical OpenPlanner knowledge graph across the workspace, web, bluesky, and knoxx-session lakes."
            "Search the canonical knowledge graph when you need entities or cross-lake links rather than plain transcript memory or semantic document snippets."
            ["Use graph_query when the question is about entities, paths, URLs, provenance across lakes, or graph connectivity."
-            "Prefer graph_query over semantic_query when node/edge structure matters."
+            "Prefer graph_query over guessing about prior conversations or actions."
             "Use the lake filter to focus on workspace, web, bluesky, or knoxx-session when the search space is obvious."]
            graph-query-params
            graph-query-execute))
@@ -298,10 +405,12 @@
 (defn save-translation-tool [auth-context]
   (partial create-tool-obj
            "save_translation" "Save Translation"
-           "Save a translated segment to the OpenPlanner translation database."
-           "Save each translated segment after translating."
+           "Submit a translated source/translation pair for the document this session was started to translate."
+           "Save each translation you produce."
            ["Call save_translation for each segment you translate."
-            "Include the source_text, translated_text, language codes, document_id, and segment_index."]
+            "Include the source_text, translated_text, language codes, document_id, and segment_index."
+            "When this session was started to translate a published document, submit the COMPLETE localized document in one call with segment_index 0; the reply names the revision a human will review."
+            "Omit document_id, garden_id, source_lang and target_lang to accept the document and locale this session was pinned to; supplying a different one is refused."]
            translation-params
            (make-save-translation-execute auth-context)))
 
@@ -326,34 +435,29 @@
            push-claim-params
            (make-push-claim-execute auth-context)))
 
+(defn- any-tool-allowed?
+  "True when the context may use any of `tool-ids`; a nil context allows all."
+  [auth-context tool-ids]
+  (or (nil? auth-context)
+      (boolean (some #(ctx-tool-allowed? auth-context %) tool-ids))))
+
+(defn- openplanner-tool-builders
+  "Tool factories keyed by the tool ids that authorize them."
+  [auth-context]
+  [[["graph_query" "semantic_query"] graph-query-tool]
+   [["websearch"] websearch-tool]
+   [["web.read"] web-read-tool]
+   [["memory_search"] (memory-search-tool auth-context)]
+   [["memory_session"] (memory-session-tool auth-context)]
+   [["save_translation"] (save-translation-tool auth-context)]
+   [["create_new_file"] (create-new-file-tool auth-context)]
+   [["push_claim"] (push-claim-tool auth-context)]])
+
 (defn create-openplanner-custom-tools
   ([runtime config] (create-openplanner-custom-tools runtime config nil))
   ([runtime config auth-context]
    (clj->js
-    (vec
-     (remove nil?
-             [(when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "graph_query")
-                        (ctx-tool-allowed? auth-context "semantic_query"))
-                (graph-query-tool runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "websearch"))
-                (websearch-tool runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "web.read"))
-                (web-read-tool runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "memory_search"))
-                ((memory-search-tool auth-context) runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "memory_session"))
-                ((memory-session-tool auth-context) runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "save_translation"))
-                ((save-translation-tool auth-context) runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "create_new_file"))
-                ((create-new-file-tool auth-context) runtime config))
-              (when (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context "push_claim"))
-                ((push-claim-tool auth-context) runtime config))])))))
+    (into []
+          (comp (filter (fn [[tool-ids _]] (any-tool-allowed? auth-context tool-ids)))
+                (map (fn [[_ build]] (build runtime config))))
+          (openplanner-tool-builders auth-context)))))

@@ -1,7 +1,7 @@
 (ns knoxx.backend.infra.mongo-client
   "MongoDB client for Knoxx session/run persistence.
    Replaces Redis as the primary state store."
-  )
+  (:require ["mongodb" :refer [MongoClient]]))
 
 (defonce mongo-client* (atom nil))
 (defonce mongo-db* (atom nil))
@@ -25,8 +25,7 @@
   "Connect to MongoDB and cache client + db. Returns the Db instance."
   []
   (try
-    (let [MongoClient (.-MongoClient (js/require "mongodb"))
-          url (mongo-url)
+    (let [url (mongo-url)
           client (MongoClient. url #js {:serverSelectionTimeoutMS 5000})
           _ (await (.connect client))
           db (.db client (mongo-db-name))]

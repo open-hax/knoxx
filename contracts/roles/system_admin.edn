@@ -16,7 +16,8 @@
                      :cap/music
                      :cap/audio
                      :cap/multimodal
-                     :cap/openplanner]
+                     :cap/openplanner
+                     :cap/translation]
  :role/permissions ["platform.org.create"
                      "platform.org.read"
                      "platform.org.update"
@@ -106,6 +107,9 @@
                      "org.translations.review"
                      "org.translations.export"
                      "org.translations.manage"
+                     "platform.translations.manage"
+                     "org.publications.read"
+                     "org.publications.manage"
                      "org.events.control"
                      "org.proxx.observability.read"]
 }
