@@ -87,3 +87,13 @@
   spore: none
   receipt-refs: 2026-08-29T23:36:55.789Z
   note: When a split request has no stable child identities, return non-authorizing canonical advice and require explicit independent initiations instead of inventing partially recoverable authority.
+
+- ts: 2026-08-29T23:50:03.925Z
+  session: codex/knoxx238-repair
+  task: Canonicalize adjudication decision support evidence
+  p-efficiency: 0.76
+  p-friction: 0.65
+  p-skill-candidate: 0.60
+  spore: none
+  receipt-refs: 2026-08-29T23:50:03.925Z
+  note: Durable decisions should bind effective head generations, not arbitrary duplicate receipt ids; server-derived candidate support stays outside retry equality until one proof is installed.

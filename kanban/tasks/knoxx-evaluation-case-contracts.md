@@ -156,18 +156,28 @@ cross-conflict, cross-principal, cross-role, stale, or cyclic edges while retain
 as history.
 Only current proposal heads are quorum-eligible.
 
-Once compatible current heads reach quorum, a domain operation atomically verifies those named
-heads are still current and creates one `AdjudicationDecisionReceipt` in that organization's
-unique slot for the conflict-set identity, naming the resolution, exact rubric version, complete
-ordered obligation effects and selected terminal head generations, exact effective
-judgment-head generations, exact proposal-head generations, and quorum-member proposal receipt
-ids. Admission rejects missing/extra obligations, a descriptor-effect mismatch, a selection for
-the wrong obligation, a non-conflicting/stale selected head, a selected determination value that
-the resolution descriptor does not permit, or a selected head on a `:keeps-pending` entry rather
-than letting a receipt reinterpret the rubric.
-An opposite decision racing for the empty slot yields exactly one winner and one
-`:evaluation/conflict`; an equal retry is unchanged. Later incompatible proposals cannot change
-the admitted decision, and the fold never selects an adjudication by timestamp or array order.
+Once compatible current heads reach quorum, the finalization request names only the logical
+decision facts—conflict-set identity, resolution, exact rubric version, complete obligation
+effects, and selected terminal head generations—and cannot supply quorum evidence. At the same
+atomic linearization that verifies the decision and unique slot, the domain operation derives the
+complete canonically ordered set of compatible current proposal-head generations, using one
+effective head per authenticated principal and adjudicator role, and verifies the rubric's role
+and distinct-principal quorum. The resulting `AdjudicationDecisionReceipt` names the exact
+effective judgment-head generations and canonical supporting
+`{authenticated-principal-id, adjudicator-role, proposal-head-id, head-version}` tuples. Raw equal
+proposal receipt ids remain immutable history under their shared head generation but are
+identity-neutral and excluded from the decision payload and quorum proof.
+
+The uninstalled candidate support set is server-derived and excluded from retry equality. If
+compatible proposal evidence changes while equal finalizers race, one atomic decision wins and
+every equal logical finalizer or lost-response retry returns the exact installed decision; its
+installed supporting-head proof is immutable. Admission rejects missing/extra obligations, a
+descriptor-effect mismatch, a selection for the wrong obligation, a non-conflicting/stale
+selected head, a selected determination value that the resolution descriptor does not permit, or
+a selected head on a `:keeps-pending` entry rather than letting a receipt reinterpret the rubric.
+An opposite logical decision racing for the empty slot yields exactly one winner and one
+`:evaluation/conflict`. Later incompatible proposals cannot change the admitted decision, and the
+fold never selects an adjudication by timestamp or array order.
 Appending equal evidence after finalization leaves the same conflict identity/decision. The
 status fold removes that exact conflict generation from unresolved conflict sets. A
 `:satisfies` entry supplies its named terminal determination only for that obligation, while a
@@ -225,6 +235,12 @@ generation that the old decision cannot resolve.
     the old accept heads cannot authorize a decision, while the current reject heads can. Race
     one supersession with finalization and prove the decision transaction either names the still
     current generation or retries; equal duplicate proposals never add another quorum member.
+    Race equal finalizers while one principal appends another equal proposal receipt in the same
+    current proposal-head generation. Both finalizers return the same decision, whose canonical
+    supporting tuple names that head generation and contains no raw proposal receipt id. Repeat
+    after losing the winning response: the lost-response retry returns the exact installed
+    decision even if its uninstalled candidate support set observed additional compatible equal
+    evidence; the installed supporting-head proof remains unchanged.
     Keep one principal's resolution and total effect map equal while changing only a selected
     conflicting head generation: the unlinked proposal is rejected, while a valid current-head
     supersession withdraws the old selection from quorum. Race two such selection-only successors
@@ -273,6 +289,9 @@ generation that the old decision cannot resolve.
 - Adjudication conflict and decision identities are scoped by server-authenticated organization.
 - Adjudication quorum counts only one current proposal head per authenticated principal/role;
   proposal revision races cannot finalize from withdrawn or mixed generations.
+- Decision finalization derives one canonical supporting proposal-head proof at its atomic
+  linearization; equal receipt ids cannot perturb decision identity, and equal concurrent or
+  lost-response finalizers return the exact installed decision.
 - Every adjudication resolution has a rubric-versioned, total per-obligation effect map;
   nonterminal decisions and multi-obligation conflict groups cannot manufacture satisfaction.
 - A directional resolution can select only determination values explicitly permitted by its
