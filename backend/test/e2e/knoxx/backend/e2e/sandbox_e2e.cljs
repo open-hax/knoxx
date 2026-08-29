@@ -72,6 +72,22 @@
       (is (= :ok (:status status))
           (str "sandbox_container_status failed: " (:detail status))))))
 
+(defn- ^:async assert-metadata-private!
+  [client sandbox-id]
+  (testing "Knoxx metadata is outside the container-visible bind mount"
+    (let [ran (await (call! client "sandbox_container_exec"
+                            {:sandbox_id sandbox-id
+                             :command (str "if [ -e .knoxx-sandbox.json ]; "
+                                           "then echo exposed; exit 19; "
+                                           "else echo private; fi")
+                             :timeout_ms 30000}))]
+      (is (= :ok (:status ran))
+          (str "sandbox_container_exec failed: " (:detail ran)))
+      (is (str/includes? (str (:detail ran)) "Sandbox exec exit=0")
+          (str "sandbox metadata was visible in the workdir: " (:detail ran)))
+      (is (str/includes? (str (:detail ran)) "private")
+          (str "sandbox metadata privacy probe omitted its marker: " (:detail ran))))))
+
 (defn- ^:async assert-internal-command-errors!
   [client sandbox-id]
   (testing "a failed Knoxx-owned read is a tool error"
@@ -188,6 +204,7 @@
   (await (mcp/initialize! client))
   (when-let [sandbox-id (await (create-sandbox! client id*))]
     (await (assert-live! client sandbox-id))
+    (await (assert-metadata-private! client sandbox-id))
     (await (assert-internal-command-errors! client sandbox-id))
     (await (assert-file-roundtrip! client sandbox-id))
     (await (assert-exec! client sandbox-id))

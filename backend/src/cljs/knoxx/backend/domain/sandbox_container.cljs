@@ -18,8 +18,12 @@
 (def ^:private sandbox-max-buffer-bytes (* 2 1024 1024))
 (def ^:private isolated-sandbox-directory-mode
   "Decimal 01777: writable inside this UUID-isolated bind mount, while the
-   sticky bit protects Knoxx-owned metadata from the non-root container user."
+   sticky bit prevents deletion of any host-owned entries placed there."
   1023)
+
+(def ^:private sandbox-metadata-directory-mode
+  "Decimal 0700: host-only sandbox metadata is not visible in the bind mount."
+  448)
 
 (def create-params
   [:map
@@ -91,13 +95,17 @@
 
 (defn- sandbox-container-name
   [sandbox-id]
-  (str "knoxx-sandbox-" sandbox-id))
+  (str "knoxx-sandbox-" (sandbox-law/require-sandbox-id sandbox-id)))
 
-(declare sandbox-host-dir)
+(defn- sandbox-metadata-root
+  [_runtime config]
+  (path-resolve path (:sandbox-root-dir config) ".metadata"))
 
 (defn- sandbox-metadata-path
   [runtime config sandbox-id]
-  (path-resolve path (sandbox-host-dir runtime config sandbox-id) ".knoxx-sandbox.json"))
+  (path-resolve path
+                (sandbox-metadata-root runtime config)
+                (sandbox-law/sandbox-metadata-filename sandbox-id)))
 
 (defn- sandbox-build-context
   [_runtime config]
@@ -109,7 +117,9 @@
 
 (defn- sandbox-host-dir
   [_runtime config sandbox-id]
-  (path-resolve path (:sandbox-root-dir config) sandbox-id))
+  (path-resolve path
+                (:sandbox-root-dir config)
+                (sandbox-law/require-sandbox-id sandbox-id)))
 
 (defn- sandbox-workdir
   [config]
@@ -173,21 +183,28 @@
 
 (defn- ^:async write-sandbox-metadata!
   [runtime config sandbox-id metadata]
-  (let [metadata-path (sandbox-metadata-path runtime config sandbox-id)]
+  (let [metadata-root (sandbox-metadata-root runtime config)
+        metadata-path (sandbox-metadata-path runtime config sandbox-id)]
+    (await (fs-mkdir! fs metadata-root #js {:recursive true}))
+    (await (fs-chmod! fs metadata-root sandbox-metadata-directory-mode))
     (await (fs-write-file! fs metadata-path (.stringify js/JSON (clj->js metadata) nil 2) "utf8"))
     metadata))
 
 (defn- ^:async refresh-sandbox-ttl!
-  [runtime config sandbox-id]
+  [runtime config sandbox-id inspected]
   (let [metadata (await (sandbox-metadata! runtime config sandbox-id))
         created-at-ms (or (:createdAtMs metadata)
                           (when-let [created-at (:createdAt metadata)]
                             (.parse js/Date (str created-at)))
+                          (when-let [created-at (:createdAt inspected)]
+                            (.parse js/Date (str created-at)))
                           (.now js/Date))
         max-ttl-seconds (clamp-ttl-seconds config (:sandbox-max-ttl-seconds config))
         max-expires-at (or (:maxExpiresAt metadata)
+                           (:expiresAt inspected)
                            (+ created-at-ms (* 1000 max-ttl-seconds)))
-        ttl-seconds (clamp-ttl-seconds config (:ttlSeconds metadata))
+        ttl-seconds (clamp-ttl-seconds config (or (:ttlSeconds metadata)
+                                                  (:ttlSeconds inspected)))
         requested-expires-at (+ (.now js/Date) (* 1000 ttl-seconds))
         expires-at (min requested-expires-at max-expires-at)]
     (await (write-sandbox-metadata! runtime config sandbox-id (merge metadata {:createdAtMs created-at-ms
@@ -248,9 +265,13 @@
 (defn- ^:async sandbox-destroy!
   [runtime config sandbox-id]
   (let [host-dir (sandbox-host-dir runtime config sandbox-id)
+        metadata-path (sandbox-metadata-path runtime config sandbox-id)
         container-name (sandbox-container-name sandbox-id)]
     (try
       (await (docker-command! runtime config ["rm" "-f" container-name] {:timeout 30000}))
+      (catch :default _ nil))
+    (try
+      (await (.rm fs metadata-path #js {:force true}))
       (catch :default _ nil))
     (try
       (await (.rm fs host-dir #js {:recursive true :force true}))
@@ -268,7 +289,7 @@
     (if (and (pos? (:expiresAt info)) (> (.now js/Date) (:expiresAt info)))
       (do (await (sandbox-destroy! runtime config sandbox-id))
           (throw (js/Error. (str "Sandbox expired and was destroyed: " sandbox-id))))
-      (let [metadata (await (refresh-sandbox-ttl! runtime config sandbox-id))]
+      (let [metadata (await (refresh-sandbox-ttl! runtime config sandbox-id info))]
         (assoc info
                :expiresAt (:expiresAt metadata)
                :ttlSeconds (max 0 (int (/ (- (:expiresAt metadata) (.now js/Date)) 1000))))))))
@@ -290,23 +311,7 @@
     (await (ensure-sandbox-image! runtime config image))
     (await (fs-mkdir! fs host-dir #js {:recursive true}))
     (await (fs-chmod! fs host-dir isolated-sandbox-directory-mode))
-    (let [{:keys [ok stderr error]} (await (docker-command!
-                                            runtime
-                                            config
-                                            ["run" "-d" "--rm"
-                                             "--name" container-name
-                                             "--user" (sandbox-user config)
-                                             "--workdir" workdir
-                                             "-e" (str "HOME=" workdir)
-                                             "--label" (str sandbox-label-prefix "=true")
-                                             "--label" (str sandbox-label-prefix ".id=" sandbox-id)
-                                             "--label" (str sandbox-label-prefix ".expiresAt=" expires-at)
-                                             "-v" (str host-dir ":" workdir)
-                                             image
-                                             "sh" "-lc" keepalive-cmd]
-                                            {:timeout 180000}))]
-      (when-not ok
-        (throw (js/Error. (str "docker run failed: " (or error stderr)))))
+    (try
       (await (write-sandbox-metadata! runtime config sandbox-id {:sandboxId sandbox-id
                                                                  :image image
                                                                  :createdAtMs created-at-ms
@@ -314,7 +319,27 @@
                                                                  :ttlSeconds ttl
                                                                  :createdAt (.toISOString (js/Date.))
                                                                  :expiresAt expires-at}))
-      (await (ensure-live-sandbox! runtime config sandbox-id)))))
+      (let [{:keys [ok stderr error]} (await (docker-command!
+                                              runtime
+                                              config
+                                              ["run" "-d" "--rm"
+                                               "--name" container-name
+                                               "--user" (sandbox-user config)
+                                               "--workdir" workdir
+                                               "-e" (str "HOME=" workdir)
+                                               "--label" (str sandbox-label-prefix "=true")
+                                               "--label" (str sandbox-label-prefix ".id=" sandbox-id)
+                                               "--label" (str sandbox-label-prefix ".expiresAt=" expires-at)
+                                               "-v" (str host-dir ":" workdir)
+                                               image
+                                               "sh" "-lc" keepalive-cmd]
+                                              {:timeout 180000}))]
+        (when-not ok
+          (throw (js/Error. (str "docker run failed: " (or error stderr)))))
+        (await (ensure-live-sandbox! runtime config sandbox-id)))
+      (catch :default err
+        (await (sandbox-destroy! runtime config sandbox-id))
+        (throw err)))))
 
 (defn- ^:async sandbox-exec!
   [runtime config sandbox-id command timeout-ms]

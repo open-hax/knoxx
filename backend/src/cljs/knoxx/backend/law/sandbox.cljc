@@ -10,6 +10,24 @@
   "Maximum stderr/error characters retained in a tool-level failure."
   2000)
 
+(def ^:private sandbox-id-pattern
+  #"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+
+(defn require-sandbox-id
+  "Return one canonical server-issued sandbox UUID, or fail before it can
+   influence a Docker name or host filesystem path."
+  [sandbox-id]
+  (when-not (and (string? sandbox-id)
+                 (boolean (re-matches sandbox-id-pattern sandbox-id)))
+    (throw (ex-info "sandbox_id must be a canonical lowercase UUIDv4"
+                    {:sandbox/id sandbox-id})))
+  sandbox-id)
+
+(defn sandbox-metadata-filename
+  "The host-only metadata filename for a validated sandbox id."
+  [sandbox-id]
+  (str (require-sandbox-id sandbox-id) ".json"))
+
 (defn exact-git-safe-directory
   "Return one exact absolute sandbox workdir that Git may trust.
 

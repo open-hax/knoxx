@@ -2,6 +2,28 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.law.sandbox :as sandbox-law]))
 
+(def ^:private sandbox-id "550e8400-e29b-41d4-a716-446655440000")
+
+(deftest sandbox-id-law-test
+  (testing "one canonical UUIDv4 names both workspace and host-only metadata"
+    (is (= sandbox-id (sandbox-law/require-sandbox-id sandbox-id)))
+    (is (= (str sandbox-id ".json")
+           (sandbox-law/sandbox-metadata-filename sandbox-id))))
+
+  (testing "ambiguous, traversing, or non-server ids fail before path use"
+    (doseq [candidate [nil
+                       42
+                       ""
+                       "../sandbox"
+                       (str sandbox-id "/..")
+                       (str "prefix-" sandbox-id)
+                       (str sandbox-id "-suffix")
+                       "550E8400-E29B-41D4-A716-446655440000"
+                       "550e8400-e29b-11d4-a716-446655440000"
+                       "550e8400-e29b-41d4-7716-446655440000"]]
+      (is (thrown? js/Error (sandbox-law/require-sandbox-id candidate))
+          (str "expected rejection for " (pr-str candidate))))))
+
 (deftest exact-git-safe-directory-law-test
   (testing "one exact absolute workdir is accepted and normalized"
     (is (= "/workspace"
