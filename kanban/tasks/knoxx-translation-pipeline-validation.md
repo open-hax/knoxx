@@ -97,6 +97,10 @@ Explicitly **out of scope here**:
    initiator that persists an immutable, canonically ordered non-empty collection of attempt
    members: one stable `attempt_id` and exact server-derived
    organization/document/segment/target/source request per composite the bound turn may save.
+   All members share one server-derived effective organization, and the durable turn-admission
+   slot is keyed only by that organization plus `turn_id`, never by a claim, member-set, or
+   execution digest. The same raw `turn_id` under two organizations creates independent slots and
+   records; the same organization and turn id with changed membership conflicts.
    One atomic turn admission authorizes and installs the claim, execution snapshot, and complete
    ordered member-admission map before the real provider/model session starts. Publication
    dispatch and ordinary chat use distinct provider-neutral initiator variants; ordinary chat
@@ -119,11 +123,15 @@ Explicitly **out of scope here**:
    exposes no claim, snapshot, member admission, or session; retry reuses only stable initiator ids
    and must perform a fresh authorized whole-turn observation. The earlier receipt is audit
    evidence, never retry authority. A postcommit retry returns the exact complete turn, and equal
-   concurrent losers cannot return a different candidate. Advance current provider/model config
-   and rotate authorization policy allow-to-allow or allow-to-deny at each barrier: outcomes are a
+   concurrent losers cannot return a different candidate. A config-straddling equal loser excludes
+   its server-derived candidate execution digest from retry equality, discards it, and returns the
+   installed winner; substituting the installed digest after admission conflicts. Advance current
+   provider/model config and rotate authorization policy allow-to-allow or allow-to-deny at each
+   barrier: outcomes are a
    complete authorized old turn, a freshly observed complete new turn, or no turn on denial—never
-   mixed members or an old-receipt install. A genuinely different execution digest is partitioned
-   into a separately claimed/configured turn. A complete ordinary chat request follows the same
+   mixed members or an old-receipt install. When preflight determines that member groups genuinely
+   require different execution digests, it partitions them into separately identified turn claims
+   before admission; that is not a same-slot retry outcome. A complete ordinary chat request follows the same
    law and saves without a dispatch claim; an incomplete target withholds the tool from that turn
    and starts no translation-bound provider/model session.
 10. Real GET/PATCH config routes derive scope only from a verified session or configured API

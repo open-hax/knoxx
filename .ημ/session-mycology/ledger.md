@@ -57,3 +57,13 @@
   spore: none
   receipt-refs: 2026-08-29T22:49:06.069Z
   note: A coherent snapshot is not sufficient if members commit separately; claim, snapshot, full member map, authorization evidence, and receipt must cross one visibility boundary.
+
+- ts: 2026-08-29T23:02:54.503Z
+  session: codex/knoxx238-repair
+  task: Scope turn admission and settle config-straddling retry equality
+  p-efficiency: 0.72
+  p-friction: 0.71
+  p-skill-candidate: 0.63
+  spore: none
+  receipt-refs: 2026-08-29T23:02:54.503Z
+  note: Idempotency identity must use server-derived tenant scope and stable initiator facts; an unattached config candidate is disposable, while the installed winner is immutable authority.

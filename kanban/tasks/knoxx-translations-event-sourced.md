@@ -97,7 +97,11 @@ invalid. The turn claim also binds one immutable `TranslationTurnExecutionSnapsh
 `provider-session-config-digest` covering the exact provider/model identity, config/policy
 resource revisions, and normalized session parameters used by the one model session. Member
 source and request facts may differ, but every member config admission names that same snapshot
-and execution digest. Identity binding is one-way: the snapshot names a stable `turn_id` plus the
+and execution digest. All members name one server-derived effective organization, and the durable
+turn admission identity is that effective organization plus `turn_id`; the raw turn id is unique
+only within that organization. The member-set, snapshot, execution, and final claim digests are
+record facts rather than uniqueness keys, so changed membership cannot evade conflict by creating
+a digest-keyed slot. Identity binding is one-way: the snapshot names a stable `turn_id` plus the
 canonical member-set digest, and the final turn-claim digest names the snapshot digest; neither
 digest is defined in terms of itself. If preflight derives different execution digests, it
 partitions the members into separate turn claims before any model session rather than mixing
@@ -122,7 +126,12 @@ before the atomic turn admission leaves no persisted turn claim, execution snaps
 admission, or session. Recovery reuses only the initiator's stable turn/member ids and must perform
 a fresh authorized config observation before attempting the complete atomic install. A crash
 after commit returns the one complete stored turn on retry. The observation receipt is historical
-evidence for that one operation and is never reused to install a member later.
+evidence for that one operation and is never reused to install a member later. The server-derived
+candidate execution digest is excluded from retry equality: callers with the same stable
+organization/turn, authenticated initiator, and member/source/request facts return the installed
+whole-turn winner even when their unattached observations straddle a config change. Changed
+stable facts conflict, and a different execution configuration uses a new turn id rather than
+replacing the installed digest.
 
 The production `save_translation` MCP input schema exposes the required stable `attempt_id` on
 every call so the session echoes the pre-existing member value after timeout or lost response.

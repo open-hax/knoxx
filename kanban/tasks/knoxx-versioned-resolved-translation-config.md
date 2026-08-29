@@ -186,10 +186,16 @@ identity/digest makes member addition, removal, or replacement a conflict after 
 Publication dispatch and ordinary-chat preflight use distinct turn-claim variants but the same
 turn-wide admission law; an unbound chat turn does not receive `save_translation`.
 
-Before claim persistence, the initiator owns a stable `turn_id` and canonical member-set digest;
-the facade performs one coherent authenticated config observation for that complete member set
-and mints an immutable `TranslationTurnExecutionSnapshot`. The snapshot is bound to exactly that
-`turn_id` and member-set digest and carries the common provider/model identity, exact semantic
+Before claim persistence, the initiator owns a stable `turn_id` and canonical member-set digest.
+Every member must name the same server-derived effective organization; a mixed-organization
+member set is rejected before config observation or persistence. The durable admission slot
+identity is the pair of that effective organization and `turn_id`, and `turn_id` is unique only
+within that effective organization. The member-set digest, final claim digest, and execution
+digest are immutable record facts, but never key the admission slot; changing one cannot create a
+second slot for the same organization and turn id. The facade performs one coherent authenticated
+config observation for that complete member set and mints an immutable
+`TranslationTurnExecutionSnapshot`. The snapshot is bound to exactly that `turn_id` and member-set
+digest and carries the common provider/model identity, exact semantic
 config/provider-policy resource revisions and repository operation evidence, normalized provider
 session parameters, and canonical
 `provider-session-config-digest`. Member-specific source and request facts remain in their
@@ -210,7 +216,8 @@ map entries are not reservations and cannot authorize provider invocation.
 
 One atomic unique-insert/compare operation, `TranslationTurnConfigAdmission`, authorizes and
 installs the final turn claim, execution snapshot, complete ordered member-admission map, and one
-immutable `TranslationTurnAdmissionReceipt`. The receipt binds the authenticated principal,
+immutable `TranslationTurnAdmissionReceipt`. It targets that organization-scoped admission slot.
+The receipt binds the authenticated principal,
 effective scope/delegation, required capability, stable turn id, canonical member-set digest,
 execution snapshot/digest, every ordered member artifact, and the exact authorization-policy
 evidence used at the operation's linearization point. Nothing is externally visible until the
@@ -226,13 +233,23 @@ boundary.
 A crash or injected failure before that atomic commit leaves no persisted turn claim, execution
 snapshot, member admission, or provider/session side effect. Retry may reuse only the initiator's
 stable turn/member ids; it must perform a fresh `observe-many` authorization/config observation
-and build a new complete candidate turn. The earlier operation receipt remains audit history and
+and build a new complete candidate turn. Retry equality is evaluated over the effective
+organization, stable turn id, authenticated principal/effective delegation/required capability,
+and complete caller-stable canonical member/source/request facts. The freshly observed candidate
+execution digest is server-derived, cannot be supplied by the caller, and is excluded from retry
+equality; it is discarded when those stable facts match an installed record.
+The earlier operation receipt remains audit history and
 cannot authorize the retry. A current denial returns no admission; an allow-to-allow policy or
-semantic config rotation is reflected by the fresh whole-turn observation. A crash after commit
-but before response returns the exact complete record on retry. Concurrent canonically equal
-callers may build different unattached candidate turns, but exactly one whole record wins; every
-loser discards its candidates and returns the installed winner. Changed source/request facts,
-turn membership, or execution digest conflicts. There is no snapshot-derived missing-member
+semantic config rotation is reflected by the fresh
+whole-turn observation. A crash after commit but before response returns the exact complete
+record on retry. Concurrent callers with equal stable facts may build different unattached
+candidate turns whose execution digests straddle a semantic config change, but exactly one whole
+record wins; every loser discards its candidates and returns the installed winner. Reusing the
+same organization-scoped slot with a changed authenticated initiator, source/request facts, or
+turn membership conflicts.
+After installation, substituting the installed execution digest in a final claim, authenticated
+session, member artifact, or save also conflicts. A genuinely different execution configuration
+requires a new `turn_id` and a separately admitted turn. There is no snapshot-derived missing-member
 installation and therefore no later reauthorization seam.
 
 A canonically equal retry of the same composite identity retrieves the same attested
@@ -288,14 +305,19 @@ The publication-free namespace closure from #273 remains an invariant.
    lost-response retry returns the identical artifact, while changed same-composite reuse
    conflicts. Two segments and two target languages reuse one raw `attempt_id` and are admitted
    as independently identified entries under their distinct grouping keys inside one atomic turn
-   map.
+   map. The same raw `turn_id` under two organizations creates independent admission slots and
+   records with no collision or cross-tenant read. Within the same organization, the same
+   `turn_id` with changed membership conflicts instead of creating a digest-keyed second record.
 6. Inject crashes after the final observation, after attestation minting, immediately before
    atomic turn install, while staging each member, and after install/before response. Every
    pre-install crash leaves no claim, snapshot, member admission, or provider side effect and
    retry must freshly observe/authorize; the post-install retry returns the exact complete turn.
-   Race equal callers whose observations straddle a config change: one whole admission wins and
-   all equal losers return it rather than their candidate; changed request facts conflict. No
-   durable partial/pending record or reusable old receipt is observable.
+   Race callers with equal stable initiator facts whose observations straddle a config change:
+   authenticated initiator and member/source/request facts are the retry projection; the
+   server-derived candidate execution digest is excluded from retry equality, one whole
+   admission wins, and all equal losers return the installed winner rather than their candidate.
+   Changed request/member facts conflict, as does substituting the installed execution digest
+   after admission. No durable partial/pending record or reusable old receipt is observable.
 7. Existing consumers, backend compile, unit/integration tests, and MCP E2E pass with every
    publication-owned namespace absent from the config boundary closure.
 8. The real authenticated GET route resolves global/override precedence without an attempt id,
@@ -343,7 +365,9 @@ The publication-free namespace closure from #273 remains an invariant.
 14. Prepare one turn-wide execution snapshot and all member artifacts under provider/model config
     V1. Advance current config to V2 at barriers before authorization, during map construction, and
     immediately before atomic commit. Each run yields only a complete authorized V1 turn or aborts
-    and freshly admits a complete V2 turn; it never persists V1/V2 siblings. Rotate authorization
+    and freshly admits a complete V2 turn; it never persists V1/V2 siblings. A config-straddling
+    concurrent loser with the same stable initiator facts discards its unattached candidate and
+    returns the installed winner; the candidate digest is not a retry conflict. Rotate authorization
     policy allow-to-allow and allow-to-deny across the same barriers: a retry cannot reuse the old
     receipt, current allow produces a fresh whole-turn receipt, and current deny produces no
     admission or session. Substituting one member artifact, replaying the snapshot under another
