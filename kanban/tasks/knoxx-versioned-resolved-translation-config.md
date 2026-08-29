@@ -97,9 +97,10 @@ derive the selected catalog identity, observes the expanded identity set, gives 
 observation back to the resolver to derive referenced provider-policy identities, and repeats
 until the required canonical set is stable. The facade then obtains one final `observe-many`
 result containing the unchanged config resources, selected model, and complete pinned policy
-closure; the pure resolver validates and resolves only that result. Any changed selector or
-reference restarts effectful sequencing; only the final single observation is attested. An
-unrelated catalog entry is excluded and cannot rotate the artifact.
+closure. Translation-config law validates that final observation and the pure domain resolver
+resolves only the admitted typed result. Any changed selector or reference restarts effectful
+sequencing; only the final single observation is attested. An unrelated catalog entry is
+excluded and cannot rotate the artifact.
 
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled

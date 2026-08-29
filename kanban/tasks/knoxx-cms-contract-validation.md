@@ -59,6 +59,11 @@ policy does **not** rotate an otherwise unchanged resource version or reference-
 Every authorized repository operation nevertheless emits a `RepositoryOperationReceipt`
 binding the authenticated principal, effective scope, operation/capability, canonical resource
 identity, and exact server-owned `authorization-policy-version` used for the decision.
+For a provider-neutral operation over multiple identities, the same atomic receipt instead
+binds the canonical ordered identity set plus an ordered authorization entry of
+`{resource-identity, capability, authorization-policy-version}` for every member. It is emitted
+only with the complete successful result; there is no partial receipt whose allowed subset can
+be replayed as authority for the batch.
 
 Historical operation receipts remain verifiable evidence of what was authorized then, but they
 are not reusable capabilities. Every new read/write/resolve reauthorizes against current policy
@@ -220,6 +225,8 @@ Do not require a browser page to prove repository health.
 - Capability-policy changes leave semantic resource versions unchanged but rotate the policy
   version on operation receipts; historical receipts remain evidence and never authorize a
   later operation.
+- Single-resource and multi-resource operation receipts bind every authorization decision and
+  cannot drop, reorder, or substitute an identity/policy entry without failing verification.
 - Resolution exposes an immutable version-pinned transitive reference closure; target updates,
   missing revisions, and cycles cannot silently change an older root revision's meaning.
 - Every direct/transitive reference target is independently authorized before lookup; foreign
