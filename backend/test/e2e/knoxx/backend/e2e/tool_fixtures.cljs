@@ -39,11 +39,17 @@
 (def ^:private bridged
   "bridged from an external MCP server; present only when MCP_SERVERS names it")
 
+(def ^:private openplanner-not-configured
+  "OpenPlanner is not configured")
+
 (def fixtures
   {;; ── corpus and memory ────────────────────────────────────────────────────
-   "semantic_query"   {:args {:query "knoxx architecture" :topK 3}}
-   "graph_query"      {:args {:query "knoxx" :limit 3}}
-   "memory_search"    {:args {:query "mcp" :k 3}}
+   "semantic_query"   {:args {:query "knoxx architecture" :topK 3}
+                       :allowed-error openplanner-not-configured}
+   "graph_query"      {:args {:query "knoxx" :limit 3}
+                       :allowed-error openplanner-not-configured}
+   "memory_search"    {:args {:query "mcp" :k 3}
+                       :allowed-error openplanner-not-configured}
    "memory_session"   {:needs "a real session id"}
    "websearch"        {:args {:query "model context protocol" :numResults 3}}
    "web_read"         {:args {:url "https://example.com/" :maxChars 500}}

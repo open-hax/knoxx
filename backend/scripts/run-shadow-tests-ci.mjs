@@ -1,8 +1,36 @@
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
-function run() {
+const supportedBuilds = new Set(['test', 'e2e']);
+
+export function normalizeBuild(rawBuild) {
+  const build = rawBuild ?? 'test';
+  if (!supportedBuilds.has(build)) {
+    throw new Error(`Unsupported shadow-cljs test build: ${build}`);
+  }
+  return build;
+}
+
+export function parseTestCounters(output) {
+  const matches = [...String(output).matchAll(/\b(\d+) failures?,\s*(\d+) errors?\./g)];
+  const match = matches.at(-1);
+  if (!match) return null;
+  return {
+    failures: Number(match[1]),
+    errors: Number(match[2]),
+  };
+}
+
+export function testCountersExitCode(output) {
+  const counters = parseTestCounters(output);
+  if (!counters) return 1;
+  return counters.failures > 0 || counters.errors > 0 ? 1 : 0;
+}
+
+export function run(rawBuild) {
+  const build = normalizeBuild(rawBuild);
   const cmd = process.platform === 'win32' ? 'shadow-cljs.cmd' : 'shadow-cljs';
-  const args = ['compile', 'test'];
+  const args = ['compile', build];
 
   const child = spawn(cmd, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -43,11 +71,9 @@ function run() {
       return;
     }
 
-    const match = combined.match(/\b(\d+) failures?,\s*(\d+) errors?\./);
-    if (match) {
-      const failures = Number(match[1] || 0);
-      const errors = Number(match[2] || 0);
-      process.exit(failures > 0 || errors > 0 ? 1 : 0);
+    const counters = parseTestCounters(combined);
+    if (counters) {
+      process.exit(testCountersExitCode(combined));
       return;
     }
 
@@ -57,4 +83,14 @@ function run() {
   });
 }
 
-run();
+const invokedDirectly = process.argv[1]
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  try {
+    run(process.argv[2]);
+  } catch (err) {
+    console.error(`[knoxx] ${err.message}`);
+    process.exit(1);
+  }
+}
