@@ -89,15 +89,18 @@
 (defn- mock-lock-collection [docs]
   #js {:updateOne
        (fn [query update opts]
-         (let [id (.-_id query)
-               set-doc (js->clj (.-$set update) :keywordize-keys true)
-               set-on-insert (js->clj (.-$setOnInsert update) :keywordize-keys true)
+         ;; Use quoted property access in the native-driver double. These keys
+         ;; are encoded by the extern adapter and must not depend on Closure's
+         ;; treatment of property-access symbols in the test build.
+         (let [id (aget query "_id")
+               set-doc (js->clj (aget update "$set") :keywordize-keys true)
+               set-on-insert (js->clj (aget update "$setOnInsert") :keywordize-keys true)
                matched? (boolean (some #(= id (:_id %)) @docs))]
            (if matched?
              (swap! docs
                     (fn [values]
                       (mapv #(if (= id (:_id %)) (merge % set-doc) %) values)))
-             (when (and opts (.-upsert opts))
+             (when (and opts (aget opts "upsert"))
                (swap! docs conj (merge {:_id id} set-on-insert))))
            (js/Promise.resolve #js {:matchedCount (if matched? 1 0)})))
        :find
@@ -290,7 +293,7 @@
         original-update-one (.-updateOne credentials)
         _ (set! (.-updateOne credentials)
                 (fn [query update opts]
-                  (if (= "current-user" (.-user_id query))
+                  (if (= "current-user" (aget query "user_id"))
                     (js/Promise.reject (js/Error. "simulated upsert failure"))
                     (original-update-one query update opts))))
         db #js {:collection (fn [name]
