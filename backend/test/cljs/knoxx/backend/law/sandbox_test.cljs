@@ -2,6 +2,26 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.law.sandbox :as sandbox-law]))
 
+(deftest exact-git-safe-directory-law-test
+  (testing "one exact absolute workdir is accepted and normalized"
+    (is (= "/workspace"
+           (sandbox-law/exact-git-safe-directory "  /workspace  "))))
+
+  (testing "broad or ambiguous trust scopes fail closed"
+    (doseq [workdir [nil
+                     ""
+                     "workspace"
+                     "/"
+                     "/workspace/*"
+                     "*"
+                     "/workspace/../repo"
+                     "/workspace/./repo"
+                     "/workspace//repo"
+                     "/workspace/"]]
+      (is (thrown? js/Error
+                   (sandbox-law/exact-git-safe-directory workdir))
+          (str "expected rejection for " (pr-str workdir))))))
+
 (deftest internal-command-failure-law-test
   (testing "successful structured results pass through the classifier"
     (is (nil? (sandbox-law/internal-command-failure

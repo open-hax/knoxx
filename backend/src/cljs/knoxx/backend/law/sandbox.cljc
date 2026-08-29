@@ -10,6 +10,24 @@
   "Maximum stderr/error characters retained in a tool-level failure."
   2000)
 
+(defn exact-git-safe-directory
+  "Return one exact absolute sandbox workdir that Git may trust.
+
+   Git rejects a bind-mounted repository when the mount owner differs from the
+   non-root container user.  The runtime may grant trust to that one workdir,
+   but never to a relative path, the filesystem root, or a wildcard pattern."
+  [workdir]
+  (let [workdir (some-> workdir str str/trim not-empty)
+        segments (when workdir (rest (str/split workdir #"/" -1)))]
+    (when (or (nil? workdir)
+              (not (str/starts-with? workdir "/"))
+              (= workdir "/")
+              (str/includes? workdir "*")
+              (some #{"" "." ".."} segments))
+      (throw (ex-info "sandbox git safe.directory must be one exact absolute workdir"
+                      {:sandbox/workdir workdir})))
+    workdir))
+
 (defn- first-nonblank
   [values]
   (some (fn [value]

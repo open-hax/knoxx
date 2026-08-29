@@ -408,13 +408,16 @@
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
         message (or (aget params "message") "sandbox update")
+        safe-directory (sandbox-law/exact-git-safe-directory (sandbox-workdir config))
+        git-command (str "git -c safe.directory=" (shell-single-quote safe-directory))
         command (str "if [ ! -d .git ]; then git init -q .; fi && "
-                     "git config user.email sandbox@knoxx.local && "
-                     "git config user.name 'Knoxx Sandbox' && "
-                     "git add -A && "
-                     "if git diff --cached --quiet; then echo 'No staged changes to commit'; "
-                     "else git commit -m " (shell-single-quote message) "; fi && "
-                     "git status --short --branch")]
+                     git-command " config user.email sandbox@knoxx.local && "
+                     git-command " config user.name 'Knoxx Sandbox' && "
+                     git-command " add -A && "
+                     "if " git-command " diff --cached --quiet; "
+                     "then echo 'No staged changes to commit'; "
+                     "else " git-command " commit -m " (shell-single-quote message) "; fi && "
+                     git-command " status --short --branch")]
     (maybe-tool-update! on-update (str "Committing sandbox workspace for " sandbox-id "…"))
     (let [result (require-internal-command-success!
                   "sandbox commit"
