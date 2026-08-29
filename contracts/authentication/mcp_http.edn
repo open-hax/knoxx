@@ -1,0 +1,56 @@
+;; Which authentication methods the MCP Streamable HTTP surface accepts.
+;;
+;; This file is the whole answer. Before it existed, whether an unauthenticated
+;; local caller could reach /mcp was a property of process environment —
+;; invisible to anyone reading the repository, and impossible to assert on in a
+;; test. Adding a method here is a reviewable change; setting an env var was not.
+;;
+;; A method absent from this list is refused. So is a method present but not
+;; :auth-method/enabled, and so is an enabled method that grants no identity.
+{:contract/kind :authentication
+ :contract/id "mcp_http"
+ :contract/doc "Authentication methods accepted by POST /mcp."
+ :auth/surface :mcp
+
+ :auth/methods
+ [{:auth-method/id :oauth-bearer
+   :auth-method/enabled true
+   :auth-method/doc
+   "The shipped path: a token minted through /api/mcp/oauth/authorize and its
+    consent page, carrying the tools the user ticked and the actor they saw."}
+
+  ;; Permitted by contract, inert without a secret.
+  ;;
+  ;; Read :auth-method/enabled as "this deployment may use this method", not as
+  ;; "this method is live". law.auth-methods refuses unless a token of at least
+  ;; :min-token-length is configured in the named variable, so an image
+  ;; deployed without KNOXX_MCP_LOOPBACK_TOKEN has no second way in. Leaving
+  ;; that variable unset is the off switch, and it is off by default.
+  ;;
+  ;; :require-non-production is deliberately false, unlike everything else
+  ;; here. The post-deploy gate in services/knoxx/verify.sh must verify the
+  ;; production MCP surface, and it runs inside the backend container via
+  ;; `docker compose exec` — so it is on 127.0.0.1, which :require-loopback
+  ;; still enforces. The backend port is not published to the host, so nothing
+  ;; off-box can present this token even if it learned it.
+  ;;
+  ;; It is not an authorization bypass. The grant below is intersected with
+  ;; what the resolved membership can reach, so anything the resolved
+  ;; system_admin membership's roles deny stays denied.
+  {:auth-method/id :trusted-loopback
+   :auth-method/enabled true
+   :auth-method/doc
+   "The post-deploy verification gate, and local development. Inert unless
+    KNOXX_MCP_LOOPBACK_TOKEN is set on the backend process."
+   :auth-method/require-loopback true
+   :auth-method/require-non-production false
+   :auth-method/token-env "KNOXX_MCP_LOOPBACK_TOKEN"
+   :auth-method/min-token-length 16
+   :auth-method/grants
+   {:grant/user-email "system-admin@open-hax.local"
+    ;; The actor verification runs as. Naming the shipped bootstrap actor lets
+    ;; the gate reach
+    ;; credential-backed tools at all; leaving it out would make every Discord
+    ;; and Bluesky check refuse for want of an actor.
+    :grant/actor-id "system_admin"
+    :grant/tools :all}}]}

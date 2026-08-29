@@ -18,7 +18,7 @@
     "mutation:campaign": "clojure -M:mutation --run --limit 0",
     "mutation:harness-test": "clojure -M:mutation-test",
     "test:shadow": "shadow-cljs compile test",
-    "test:e2e": "node --test tests/*.e2e.test.mjs",
+    "test:e2e": "shadow-cljs compile e2e",
     "lint": "clj-kondo --lint src/cljs test/cljs",
     "lint:shared-markup": "clj-kondo --lint ../shared/src/cljs src/cljs/knoxx/backend/law/svg.cljs src/cljs/knoxx/backend/infra/routes/mcp/consent.cljs src/cljs/knoxx/backend/infra/svg_render.cljs test/cljs/knoxx/backend/law/svg_test.cljs test/cljs/knoxx/backend/uxx_html_renderer_test.cljs test/cljs/knoxx/backend/mcp_consent_rendering_test.cljs test/cljs/knoxx/backend/svg_render_test.cljs --fail-level error",
     "boundary:check": "node scripts/check-js-boundary.mjs --check",

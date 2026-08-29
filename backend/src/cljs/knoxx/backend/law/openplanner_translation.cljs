@@ -244,7 +244,8 @@
    [:source_lang {:optional true} OptionalString]
    [:project {:optional true} OptionalString]
    [:org_id NonBlankString]
-   [:membership_id NonBlankString]])
+   [:membership_id NonBlankString]
+   [:dispatch_key {:optional true} OptionalString]])
 
 (def CreateTranslationBatchResponse
   [:map {:closed false}
@@ -259,6 +260,7 @@
    [:garden_id {:optional true} OptionalString]
    [:target_lang {:optional true} OptionalString]
    [:status {:optional true} OptionalString]
+   [:dispatch_key {:optional true} OptionalString]
    [:org_id NonBlankString]])
 
 (def TranslationBatchesResponse

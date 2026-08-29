@@ -1,77 +1,102 @@
 (ns knoxx.frontend.pages.gardens.logic
-  "Pure logic for the gardens admin page. CLJS port of the helpers and
-   request construction in src/pages/GardensPage.tsx."
+  "Pure projection helpers for the deploy-owned Garden review surface.
+
+   A Garden owns identity and locale membership. Publication intents own paths.
+   Content and Puck presentation contracts deliberately do not enter this
+   model."
   (:require [clojure.string :as str]))
 
-(def themes
-  [{:value "monokai" :label "Monokai"
-    :colors {:bg "#272822" :text "#f8f8f2" :accent "#a6e22e"}}
-   {:value "night-owl" :label "Night Owl"
-    :colors {:bg "#011627" :text "#d6deeb" :accent "#82aaff"}}
-   {:value "proxy-console" :label "Proxy Console"
-    :colors {:bg "#0a0a0a" :text "#e0e0e0" :accent "#00d4ff"}}])
-
-(defn theme-info [theme]
-  (first (filter #(= theme (:value %)) themes)))
-
 (def available-languages
-  [{:code "es" :name "Español"} {:code "fr" :name "Français"}
-   {:code "de" :name "Deutsch"} {:code "ja" :name "日本語"}
-   {:code "zh" :name "中文"} {:code "ko" :name "한국어"}
-   {:code "pt" :name "Português"} {:code "ru" :name "Русский"}
-   {:code "it" :name "Italiano"} {:code "ar" :name "العربية"}
-   {:code "hi" :name "हिन्दी"} {:code "nl" :name "Nederlands"}
-   {:code "pl" :name "Polski"} {:code "tr" :name "Türkçe"}
-   {:code "vi" :name "Tiếng Việt"}])
+  {"en" "English" "es" "Español" "fr" "Français" "de" "Deutsch"
+   "ja" "日本語" "zh" "中文" "ko" "한국어" "pt" "Português"
+   "ru" "Русский" "it" "Italiano" "ar" "العربية" "hi" "हिन्दी"
+   "nl" "Nederlands" "pl" "Polski" "tr" "Türkçe" "vi" "Tiếng Việt"})
 
 (defn language-name [code]
-  (or (:name (first (filter #(= code (:code %)) available-languages)))
-      code))
+  (get available-languages code code))
 
-(defn toggle-language [langs code]
-  (if (some #{code} langs)
-    (filterv #(not= code %) langs)
-    (conj (vec langs) code)))
+(defn- trim-trailing-slash [value]
+  (str/replace (or value "") #"/+$" ""))
 
-(def blank-form
-  {:garden-id "" :title "" :description "" :theme "monokai"
-   :status "active" :target-languages [] :auto-translate true})
+(defn public-url
+  "Join a deployment base URL and a contract-owned publication path."
+  [site-url publication-path]
+  (str (trim-trailing-slash site-url)
+       (if (str/starts-with? publication-path "/") "" "/")
+       publication-path))
 
-(defn form-from-garden
-  "Edit-form state prefilled from an existing garden."
-  [garden]
-  {:garden-id (:garden_id garden)
-   :title (:title garden)
-   :description (or (:description garden) "")
-   :theme (or (:theme garden) "monokai")
-   :status (:status garden)
-   :target-languages (vec (or (:target_languages garden) []))
-   :auto-translate (if (some? (:auto_translate garden)) (:auto_translate garden) true)})
+(defn normalize-deployment
+  "Make the backend deployment DTO convenient for the UI without inventing
+   mutable Garden state."
+  [{:keys [site-url gardens]}]
+  {:site-url site-url
+   :gardens
+   (mapv (fn [{:keys [garden publications]}]
+           {:id (:id garden)
+            :title (:title garden)
+            :status (:status garden)
+            :locales (vec (:locales garden))
+            :placements
+            (->> publications
+                 (map (fn [publication]
+                        {:id (:id publication)
+                         :locale (:locale publication)
+                         :path (:path publication)
+                         :state (:state publication)
+                         :url (public-url site-url (:path publication))}))
+                 (sort-by (juxt :locale :path))
+                 vec)})
+         gardens)})
 
-(defn validate-form [{:keys [garden-id title]}]
-  (when (or (str/blank? garden-id) (str/blank? title))
-    "Garden ID and title are required"))
+(defn receipt-summary
+  "One line describing what a reconciliation receipt says happened.
 
-(defn build-save-request
-  "Save request {:url :method :body} — POST to create, PATCH to update."
-  [{:keys [garden-id title description theme status target-languages auto-translate]} editing?]
-  (if editing?
-    {:url (str "/api/openplanner/v1/gardens/" (js/encodeURIComponent garden-id))
-     :method "PATCH"
-     :body {:title title
-            :description description
-            :theme theme
-            :status status
-            :target_languages target-languages
-            :auto_translate auto-translate}}
-    {:url "/api/openplanner/v1/gardens"
-     :method "POST"
-     :body {:garden_id (str/trim garden-id)
-            :title title
-            :description description
-            :theme theme
-            :target_languages target-languages
-            :auto_translate auto-translate}}))
+   Matched against the FULL wire value, not its name. `send-result!` encodes
+   keyword values through `shape.resource-identity/encode-wire-values`, which
+   renders them `namespace/name` precisely so identity survives JSON — while
+   `clj->js` strips the namespace from map KEYS, which is why the key is
+   `:type` and the value is \"publication/materialized\". Matching on the name
+   alone would collapse distinct namespaces onto one branch, which is the thing
+   that encoding exists to prevent.
 
-(defn garden-html-url [garden-id]
-  (str "/api/openplanner/v1/public/gardens/" garden-id "/html"))
+   A receipt with no recognized type reports as recorded rather than as
+   success: the reconciler emits a receipt for a blocked or failed plan too,
+   and calling those success would be the UI lying on the reconciler's behalf."
+  [receipt]
+  (case (:type receipt)
+    "publication/materialized" "Published."
+    "publication/noop" "Already published at this revision; nothing changed."
+    "publication/removed" "Withdrawn from publication."
+    "publication/blocked" (str "Blocked: "
+                               (if-let [bs (seq (:blockers receipt))]
+                                 (str/join ", " bs)
+                                 "the plan is not admissible"))
+    "publication/failed" "Reconciliation failed; see the receipt journal."
+    (str "Reconciliation recorded"
+         (when-let [t (:type receipt)] (str ": " t))
+         ".")))
+
+(defn placement-published?
+  "Whether a placement's contract state asks for publication. `:state` is the
+   DESIRED state from the contract, never a materialization fact — a placement
+   can read `published` and have no bytes behind it, which is exactly the case
+   the publish action exists to resolve."
+  [placement]
+  (= "published" (:state placement)))
+
+(defn receipt-tone
+  "How a reconciliation receipt should be presented: `:success`, `:warning` or
+   `:error`.
+
+   Separate from `receipt-summary` because the words and the colour must agree,
+   and a banner that paints every outcome emerald contradicts a summary written
+   precisely so a blocked plan does not read as a published one. A receipt this
+   function does not recognize is a warning rather than a success: the
+   reconciler emits receipts for outcomes that are not wins, and the unknown
+   case is far likelier to be one of those than a success nobody named."
+  [receipt]
+  (case (:type receipt)
+    ("publication/materialized" "publication/noop" "publication/removed") :success
+    "publication/blocked" :warning
+    "publication/failed" :error
+    :warning))

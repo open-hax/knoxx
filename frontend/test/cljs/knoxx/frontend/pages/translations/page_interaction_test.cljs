@@ -13,9 +13,15 @@
 ;; jsdom globals come from the :test build's :prepend-js.
 
 (def doc-summary
-  {:document_id "doc-1" :target_lang "es" :title "Doc One"
-   :overall_status "pending_review" :source_lang "en" :garden_id "sonic"
+  {:document_id "docs/doc-1" :target_lang "es" :title "Doc One"
+   :overall_status "pending_review" :source_lang "en" :garden_id "gardens/sonic"
    :approved 1 :total_segments 2})
+
+(def publication-review
+  {:publication "publications/doc-1-es"
+   :document "docs/doc-1" :garden "gardens/sonic" :locale "es"
+   :revision "source-sha" :translation_revision "translation-sha"
+   :translated_at "2026-08-26T10:00:00.000Z" :approved false})
 
 (def doc-detail
   {:document {:title "Doc One" :source_lang "en"}
@@ -34,6 +40,9 @@
 
 (def ^:private originals
   {:list api/list-documents :get api/get-document :review api/review-document
+   :list-publication-reviews api/list-publication-reviews
+   :approve-publication api/approve-publication-translation
+   :reconcile-publication api/reconcile-publication
    :label api/submit-label :manifest api/get-manifest :sft api/sft-export
    :config api/pipeline-config :update-config api/update-pipeline-config
    :models api/list-proxx-models})
@@ -49,6 +58,18 @@
                    (fn [id lang]
                      (record! :get [id lang])
                      (js/Promise.resolve doc-detail)))
+             (set! api/list-publication-reviews
+                   (fn []
+                     (record! :publication-reviews true)
+                     (js/Promise.resolve {:reviews [publication-review]})))
+             (set! api/approve-publication-translation
+                   (fn [payload]
+                     (record! :publication-approval payload)
+                     (js/Promise.resolve {:approved true :status "recorded"})))
+             (set! api/reconcile-publication
+                   (fn [publication-id]
+                     (record! :reconcile publication-id)
+                     (js/Promise.resolve {:type "publication/materialized"})))
              (set! api/review-document
                    (fn [id lang payload]
                      (record! :review [id lang payload])
@@ -77,6 +98,9 @@
             (rtl/cleanup)
             (set! api/list-documents (:list originals))
             (set! api/get-document (:get originals))
+            (set! api/list-publication-reviews (:list-publication-reviews originals))
+            (set! api/approve-publication-translation (:approve-publication originals))
+            (set! api/reconcile-publication (:reconcile-publication originals))
             (set! api/review-document (:review originals))
             (set! api/submit-label (:label originals))
             (set! api/get-manifest (:manifest originals))
@@ -100,7 +124,7 @@
           (.then (fn []
                    (is (= {:project "devel" :target-lang ""} (first (:list @calls))))
                    (is (= "devel" (first (:manifest @calls))))
-                   (is (= [["doc-1" "es"]] (:get @calls)))
+                   (is (= [["docs/doc-1" "es"]] (:get @calls)))
                    (is (some? (.queryByText r "Hello world")) "segment source shown")
                    (done)))
           (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
@@ -133,7 +157,27 @@
                    (.click rtl/fireEvent (.getByRole r "button" #js {:name "Approve All"}))
                    (wait-until "notice" #(some? (.queryByText r "Document review: approve (2 segments)")))))
           (.then (fn []
-                   (is (= [["doc-1" "es" {:overall "approve"}]] (:review @calls)))
+                   (is (= [["docs/doc-1" "es" {:overall "approve"}]] (:review @calls)))
+                   (done)))
+          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+
+(deftest publication-approval-uses-revision-bound-evidence
+  (async done
+    (let [r (rtl/render ($ translation-review-page))]
+      (-> (select-first-document r)
+          (.then (fn []
+                   (.click rtl/fireEvent
+                           (.getByRole r "button" #js {:name "Approve for publication"}))
+                   (wait-until "publication approval notice"
+                               #(some? (.queryByText
+                                        r
+                                        "Translation approved; publication reconciliation: publication/materialized.")))))
+          (.then (fn []
+                   (is (= [{:document "docs/doc-1" :garden "gardens/sonic"
+                            :locale "es" :revision "source-sha"
+                            :translation_revision "translation-sha"}]
+                          (:publication-approval @calls)))
+                   (is (= ["publications/doc-1-es"] (:reconcile @calls)))
                    (done)))
           (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
 

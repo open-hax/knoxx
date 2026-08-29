@@ -1437,13 +1437,22 @@
    scope narrows the membership lookup: {:org-id, :membership-id}. actor_id is
    unique nowhere — not even within an org — so an unnarrowed lookup refuses an
    ambiguous actor rather than returning some member's secret. A caller holding a
-   request context should pass its membership id, which is exact."
+   request context should pass its membership id, which is exact.
+
+   Dispatches through the context's :get-actor-credential! when it carries one,
+   the same seam :resolve-context! and :query! already use. This is the query
+   seam mongo-policy-actor-credentials names as the correct dispatch point, and
+   it is what lets a harness supply credentials without a database: until it
+   existed, every credential-backed tool was unreachable from a test, which is
+   most of the Discord and Bluesky surface."
   ([policy-context actor-id provider] (get-actor-credential! policy-context actor-id provider nil))
-  ([_policy-context actor-id provider scope]
-   (when-let [db (await (ensure-mongo-policy-db!))]
-     {:credential (mongo-actor-creds/credential-row->response
-                   (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
-                           db actor-id provider scope)))})))
+  ([policy-context actor-id provider scope]
+   (if-let [f (:get-actor-credential! policy-context)]
+     (await (f actor-id provider scope))
+     (when-let [db (await (ensure-mongo-policy-db!))]
+       {:credential (mongo-actor-creds/credential-row->response
+                     (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
+                             db actor-id provider scope)))}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation

@@ -103,36 +103,53 @@
           (throw (ex-info (str "HTTP " code ": " error-body)
                           {:url url :code code})))))))
 
-(defn- fetch-translation-config-model
-  "Fetch translation model from OpenPlanner /v1/translations/config. Returns string or nil."
-  []
-  (try
-    (let [result (fetch-json (openplanner-url "/translations/config")
-                             (openplanner-headers))
-          model (get-in result [:config :model])
-          normalized (str/trim (str (or model "")))]
-      (when-not (str/blank? normalized)
-        normalized))
-    (catch Exception e
-      (println "[translation-worker] Failed to fetch translation config:"
-               (.getMessage e))
-      nil)))
+(defn fetch-translation-config-model
+  "Fetch the translation model from the Knoxx-owned config boundary,
+  `GET /api/translations/config`.
 
-(defn- resolve-translation-model
+  The response is the wire config itself — `{\"model\" ... \"source-locale\" ...
+  \"default-review\" ...}` — not wrapped under a `config` key, and `model` is a
+  catalog model id spelled exactly as the Knoxx model catalog spells it.
+
+  Returns the model string, or throws. It deliberately does NOT swallow the
+  error into `nil`: silently returning nil is what previously let the worker
+  fall through to an unrelated env default that could disagree with the resource
+  graph."
+  []
+  (let [result (fetch-json (knoxx-url "/api/translations/config") (knoxx-headers))
+        model (str/trim (str (or (:model result) "")))]
+    (when (str/blank? model)
+      (throw (ex-info "Knoxx translation config returned no model"
+                      {:response result})))
+    model))
+
+(defn resolve-translation-model
   "Resolve the model used by the translation agent.
 
-   Precedence:
-   1) OpenPlanner /v1/translations/config
-   2) TRANSLATION_MODEL env var (kms-ingestion.config/translation-model)
-   3) Fallback: glm-5"
+  Knoxx resources are the ONLY authority. There is no OpenPlanner read and no
+  env/default fallback: a config lookup failure is surfaced as a configuration
+  failure, because a worker that quietly translates with a different model than
+  the resource graph declares produces output nobody can account for.
+
+  `TRANSLATION_MODEL` is no longer consulted. If a fallback is ever wanted it
+  belongs in Knoxx-owned configuration, so that UI and worker consumers get the
+  same answer from the same place.
+
+  Successful lookups are cached briefly; failures are not cached, so a transient
+  outage does not pin a stale answer."
   []
   (let [now (System/currentTimeMillis)
         {:keys [model fetched-at]} @translation-model-cache*]
     (if (and model (< (- now fetched-at) translation-config-ttl-ms))
       model
-      (let [fresh (or (fetch-translation-config-model)
-                      (some-> (config/translation-model) str str/trim)
-                      "glm-5")]
+      (let [fresh (try
+                    (fetch-translation-config-model)
+                    (catch Exception e
+                      (throw (ex-info
+                              (str "Translation configuration unavailable from Knoxx: "
+                                   (.getMessage e))
+                              {:kind ::translation-config-unavailable}
+                              e))))]
         (reset! translation-model-cache* {:model fresh :fetched-at now})
         fresh))))
 

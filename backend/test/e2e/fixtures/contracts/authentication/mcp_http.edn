@@ -1,0 +1,31 @@
+;; The e2e suite's authentication contract.
+;;
+;; Identical to contracts/authentication/mcp_http.edn except that
+;; :trusted-loopback is enabled. That difference is the point: enabling a
+;; method is a contract edit, and the suite proves the shipped contract's
+;; default refuses the same request this one admits.
+{:contract/kind :authentication
+ :contract/id "mcp_http"
+ :contract/doc "Authentication methods accepted by POST /mcp during e2e runs."
+ :auth/surface :mcp
+
+ :auth/methods
+ [{:auth-method/id :oauth-bearer
+   :auth-method/enabled true}
+
+  {:auth-method/id :trusted-loopback
+   :auth-method/enabled true
+   :auth-method/doc "Admits the e2e harness, which binds to 127.0.0.1."
+   :auth-method/require-loopback true
+   :auth-method/require-non-production true
+   :auth-method/token-env "KNOXX_E2E_LOOPBACK_TOKEN"
+   :auth-method/min-token-length 8
+   :auth-method/grants
+   {:grant/user-email "system-admin@open-hax.local"
+    :grant/org-slug "open-hax"
+    ;; The actor the harness seeds credentials for. Naming it here is what
+    ;; makes credential-backed tools reachable: without an actor the token
+    ;; carries none, and every Bluesky or Discord call refuses before it
+    ;; reaches the network.
+    :grant/actor-id "e2e_actor"
+    :grant/tools :all}}]}
