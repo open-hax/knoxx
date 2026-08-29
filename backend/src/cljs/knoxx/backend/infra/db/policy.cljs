@@ -649,6 +649,28 @@
                                                  :name (str primary-org-name)
                                                  :kind (str primary-org-kind)}))))
 
+(defn- split-bootstrap-values [value]
+  (->> (str/split (str value) #"[\s,]+")
+       (map str/trim)
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn- previous-bootstrap-system-admin-emails
+  "Canonical credential identifiers that were previously configured as the
+   bootstrap administrator. The historical default is known without operator
+   input; custom prior identities must be named explicitly during migration."
+  [opts current-email]
+  (->> (concat ["system-admin@open-hax.local"]
+               (split-bootstrap-values
+                (or (:bootstrapSystemAdminPreviousEmails opts)
+                    (:bootstrap-system-admin-previous-emails opts)
+                    "")))
+       (map str/lower-case)
+       (remove #(= % (some-> current-email str str/lower-case)))
+       distinct
+       vec))
+
 (defn ^:async ensure-bootstrap-user!
   [pool primary-org opts]
   (let [db (await (db!))
@@ -690,8 +712,10 @@
                                          (:bootstrap-system-admin-password opts))
                                      str not-empty)
          user-id (get-in bootstrap [:user :id])
-         org-id (:id primary-org)]
-     (await (deactivate-other-bootstrap-credentials! db user-id))
+         user-email (get-in bootstrap [:user :email])
+         org-id (:id primary-org)
+         previous-emails (previous-bootstrap-system-admin-emails opts user-email)]
+     (await (deactivate-other-bootstrap-credentials! db user-id previous-emails))
      (if configured-password
        (await (upsert-credential!
                db user-id org-id "local"
@@ -1488,13 +1512,6 @@
       (catch :default err
         (.error js/console "[policy-db] Mongo policy DB init failed:" (.-message err))
         nil))))
-
-(defn- split-bootstrap-values [value]
-  (->> (str/split (str value) #"[\s,]+")
-       (map str/trim)
-       (remove str/blank?)
-       distinct
-       vec))
 
 (defn- bootstrap-allowlist-emails [opts]
   (->> (split-bootstrap-values (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts) ""))

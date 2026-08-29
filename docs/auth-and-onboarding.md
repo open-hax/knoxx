@@ -59,6 +59,7 @@ journalctl --user -u knoxx-tunnel -f    # Follow logs
 | `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL` | Yes | `system-admin@open-hax.local` | Email of the auto-seeded system admin |
 | `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME` | No | `Knoxx System Admin` | Display name for the bootstrap admin |
 | `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD` | For local admin login | - | Password for the bootstrap admin; keep it in the uncommitted host environment |
+| `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PREVIOUS_EMAILS` | On the first restart after changing a custom bootstrap email | - | Comma-separated prior bootstrap-admin emails whose legacy local credentials must be revoked |
 | `KNOXX_POLICY_DATABASE_URL` | Yes | - | PostgreSQL connection string |
 | `REDIS_URL` | Yes | `redis://127.0.0.1:6379` | Redis for session storage |
 | `GMAIL_APP_EMAIL` | For invite emails | - | Gmail address for sending invite emails |
@@ -118,8 +119,12 @@ replaces its role assignment with `system-admin`, assigns the `system_admin`
 actor, and upserts a scrypt password credential. Changing the environment
 password and restarting the development backend rotates the login password.
 Removing the password setting and restarting revokes the previously provisioned
-local credential. Changing the bootstrap email revokes bootstrap-managed local
-passwords belonging to the previous identity before provisioning the new one.
+local credential. When changing a custom bootstrap email, put every prior value
+in `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PREVIOUS_EMAILS` for the first restart so
+credentials created before Knoxx recorded bootstrap markers are also revoked.
+The documented default `system-admin@open-hax.local` is included automatically.
+Later rotations use the durable marker, and retaining the previous-email list is
+safe and idempotent.
 Ordinary `/signup` users remain `basic-user`; this bootstrap does not weaken
 self-signup or infer admin rights from arbitrary email/password logins.
 

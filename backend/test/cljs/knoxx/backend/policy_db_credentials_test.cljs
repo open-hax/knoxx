@@ -64,12 +64,15 @@
   (let [captured* (atom nil)]
     (await (policy-db/ensure-bootstrap-local-password!
             #js {} {:id "org"} {:user {:id "current-user" :email "new@example.com"}}
-            {:bootstrapSystemAdminPassword "new-password"}
+            {:bootstrapSystemAdminPassword "new-password"
+             :bootstrapSystemAdminPreviousEmails "Pi@Open-Hax.Local, old@example.com"}
             {:deactivate-credential! (fn [& _] (js/Promise.resolve nil))
              :deactivate-other-bootstrap-credentials!
-             (fn [_db current-user-id]
-               (reset! captured* current-user-id)
+             (fn [_db current-user-id previous-emails]
+               (reset! captured* [current-user-id previous-emails])
                (js/Promise.resolve nil))
              :encode-password (fn [_] {:hash "encoded"})
              :upsert-credential! (fn [& _] (js/Promise.resolve nil))}))
-    (is (= "current-user" @captured*))))
+    (is (= ["current-user"
+            ["system-admin@open-hax.local" "pi@open-hax.local" "old@example.com"]]
+           @captured*))))

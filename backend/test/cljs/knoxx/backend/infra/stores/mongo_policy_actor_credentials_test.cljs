@@ -123,24 +123,6 @@
         db #js {:collection
                 (fn [name]
                   (case name
-                    "knoxx_users"
-                    #js {:find
-                         (fn [_]
-                           #js {:toArray
-                                (fn []
-                                  (js/Promise.resolve
-                                   #js [#js {"user_id" "legacy-user"
-                                             "auth_provider" "bootstrap"}]))})}
-
-                    "knoxx_memberships"
-                    #js {:find
-                         (fn [_]
-                           #js {:toArray
-                                (fn []
-                                  (js/Promise.resolve
-                                   #js [#js {"user_id" "legacy-user"
-                                             "actor_id" "system_admin"}]))})}
-
                     "knoxx_actor_credentials"
                     #js {:updateMany
                          (fn [query update]
@@ -148,13 +130,14 @@
                                    {:query (js->clj query :keywordize-keys true)
                                     :update (js->clj update :keywordize-keys true)})
                            (js/Promise.resolve #js {}))}))}]
-    (await (creds/deactivate-other-bootstrap-local-passwords! db "current-user"))
+    (await (creds/deactivate-other-bootstrap-local-passwords!
+            db "current-user" ["PI@OPEN-HAX.LOCAL" "  "]))
     (is (= {:provider "local"
             :kind "password"
             :status "active"
             :user_id {:$ne "current-user"}
             :$or [{:secret_json.bootstrap-system-admin true}
-                  {:user_id {:$in ["legacy-user"]}}]}
+                  {:account_identifier {:$in ["pi@open-hax.local"]}}]}
            (:query @captured*)))
     (is (= "inactive" (get-in @captured* [:update :$set :status])))))
 

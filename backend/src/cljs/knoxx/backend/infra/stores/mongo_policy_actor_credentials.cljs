@@ -33,7 +33,6 @@
 
 (def ACTOR_CREDENTIALS_COLLECTION "knoxx_actor_credentials")
 (def ^:private MEMBERSHIPS_COLLECTION "knoxx_memberships")
-(def ^:private USERS_COLLECTION "knoxx_users")
 
 (defn- credentials-coll [db] (.collection db ACTOR_CREDENTIALS_COLLECTION))
 
@@ -314,36 +313,29 @@
    configured bootstrap identity.
 
    Newly written credentials carry an explicit bootstrap marker. Credentials
-   created before that marker are identified through the durable directory
-   projection: a bootstrap-authenticated user whose membership still names the
-   system_admin actor. Intersecting both signals avoids treating ordinary
-   bootstrap allowlist users as historical system administrators."
+   created before that marker are identified by explicitly configured prior
+   account identifiers. Those identifiers live on the credential itself, so
+   later user and actor projections cannot erase the migration signal."
   ([current-user-id]
-   (deactivate-other-bootstrap-local-passwords! (mongo-client/get-db) current-user-id))
+   (deactivate-other-bootstrap-local-passwords!
+    (mongo-client/get-db) current-user-id []))
   ([db current-user-id]
+   (deactivate-other-bootstrap-local-passwords! db current-user-id []))
+  ([db current-user-id previous-account-identifiers]
    (let [current-id (some-> current-user-id str str/trim)]
      (when-not (mongo-law/valid-identifier? current-id)
        (throw (js/Error. "current-user-id is required before bootstrap credential reconciliation")))
-     (let [bootstrap-users
-           (->> (await (.toArray
-                        (.find (.collection db USERS_COLLECTION)
-                               #js {"auth_provider" "bootstrap"
-                                    "user_id" #js {"$ne" current-id}})))
-                keywordize)
-           bootstrap-user-ids (mapv :user_id bootstrap-users)
-           legacy-user-ids
-           (if (seq bootstrap-user-ids)
-             (->> (await (.toArray
-                          (.find (.collection db MEMBERSHIPS_COLLECTION)
-                                 #js {"actor_id" "system_admin"
-                                      "user_id" #js {"$in" (clj->js bootstrap-user-ids)}})))
-                  keywordize
-                  (mapv :user_id))
-             [])
+     (let [legacy-account-identifiers
+           (->> previous-account-identifiers
+                (map #(some-> % str str/trim str/lower-case))
+                (remove str/blank?)
+                distinct
+                vec)
            managed-identity-clauses
            (cond-> [#js {"secret_json.bootstrap-system-admin" true}]
-             (seq legacy-user-ids)
-             (conj #js {"user_id" #js {"$in" (clj->js legacy-user-ids)}}))]
+             (seq legacy-account-identifiers)
+             (conj #js {"account_identifier"
+                        #js {"$in" (clj->js legacy-account-identifiers)}}))]
        (await (.updateMany
                (credentials-coll db)
                #js {"provider" "local"
