@@ -2,6 +2,7 @@
   "Discord voice channel tools: join, leave, say, listen."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.agent-context :as agent-ctx]
+            [knoxx.backend.infra.actor.acting :as actor-acting]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.domain.voice.client :as voice-client]
@@ -11,7 +12,18 @@
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             [promesa.core :as p]))
 
-(defn- gw [] (dg/gateway-manager))
+(defn- gw
+  "The gateway owned by the current actor.
+
+   MCP establishes an AsyncLocalStorage actor scope around every tool call. In
+   that scope, no actor and no manager both fail closed: neither may borrow the
+   process-wide gateway. Calls outside a request scope retain the legacy
+   default for bootstrap and non-MCP callers while they migrate."
+  []
+  (if (actor-acting/in-scope?)
+    (when-let [actor-id (actor-acting/current-actor-id)]
+      (dg/gateway-manager actor-id))
+    (dg/gateway-manager)))
 
 (defn- knoxx-control-client
   [config]
