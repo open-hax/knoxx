@@ -47,3 +47,13 @@
   spore: none
   receipt-refs: 2026-08-29T22:33:16.004Z
   note: Per-member identity is insufficient for one model turn; truthful provenance also needs one shared immutable provider-session configuration digest.
+
+- ts: 2026-08-29T22:49:06.069Z
+  session: codex/knoxx238-repair
+  task: Remove the missing-member snapshot reauthorization seam
+  p-efficiency: 0.69
+  p-friction: 0.76
+  p-skill-candidate: 0.64
+  spore: none
+  receipt-refs: 2026-08-29T22:49:06.069Z
+  note: A coherent snapshot is not sufficient if members commit separately; claim, snapshot, full member map, authorization evidence, and receipt must cross one visibility boundary.

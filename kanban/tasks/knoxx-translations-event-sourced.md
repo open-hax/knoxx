@@ -104,6 +104,9 @@ partitions the members into separate turn claims before any model session rather
 provenance. The authenticated session/tool context pins the turn-claim identity/digest, execution
 snapshot, and complete member map, and the session starts only after every member has a complete
 matching config admission.
+The claim, snapshot, and ordered member-admission map become visible together through one atomic
+`TranslationTurnConfigAdmission`; there is no independently committed member admission that a
+later operation must authorize from an old snapshot.
 
 Publication dispatch accepts a workflow-stable idempotency key or mints a server-stable value;
 its durable dispatch claim owns the turn claim and stores the stable per-member attempt ids.
@@ -115,11 +118,11 @@ follow-up turn instead. A claimed member collection cannot be expanded, removed,
 after the model turn starts; translating another segment requires a newly admitted follow-up turn.
 No already-running unbound turn may generate a candidate and synthesize admission at save time.
 Non-agent workflows establish the same per-attempt admission before their provider call. A crash
-after the turn claim or only some member admissions are stored leaves the exact collection
-retryable and starts no session; recovery reuses every pinned id and the exact turn execution
-snapshot, then completes or retrieves all member admissions before emitting. It never resolves a
-missing member against newer current config. If a member can no longer admit from the claimed
-snapshot, the turn remains non-runnable; a new snapshot requires a new turn claim.
+before the atomic turn admission leaves no persisted turn claim, execution snapshot, member
+admission, or session. Recovery reuses only the initiator's stable turn/member ids and must perform
+a fresh authorized config observation before attempting the complete atomic install. A crash
+after commit returns the one complete stored turn on retry. The observation receipt is historical
+evidence for that one operation and is never reused to install a member later.
 
 The production `save_translation` MCP input schema exposes the required stable `attempt_id` on
 every call so the session echoes the pre-existing member value after timeout or lost response.
@@ -246,9 +249,9 @@ land a migration that leaves that endpoint erroring.
 - The same raw `attempt_id` reused across two segments and two target languages produces
   independent complete config admissions/events, while changed reuse inside one composite grouping
   conflicts consistently at config and event admission.
-- Config-install crash/race fixtures prove no bare reservation can strand the later event:
-  pre-install retry may resolve anew, post-install retry reuses the exact artifact, and the
-  canonical event accepts only that installed artifact identity/attestation.
+- Turn-config crash/race fixtures prove no bare reservation or partial member can strand a later
+  event: pre-install retry must resolve/authorize anew, post-install retry reuses the exact complete
+  turn map, and each canonical event accepts only its embedded artifact identity/attestation.
 - The real agent-dispatch boundary durably pins the attempt id and complete config admission
   before session/provider start, then the real tool schema/handler accepts only that same id.
   Missing/mismatched echoes, session creation before admission, or save-time id generation fail
@@ -256,19 +259,20 @@ land a migration that leaves that endpoint erroring.
   id and starts exactly one session only after admission completes.
 - The real ordinary-chat boundary proves the same law without a publication dispatch: a complete
   interactive translation request installs and pins its interactive turn claim and every member
-  attempt/config admission before the model turn, exposes `save_translation`, and survives a
-  lost-response retry. One bound-turn fixture pre-admits two segment members, saves both in either
-  order, and proves each call uses its own composite identity, config artifact, event, and ordinal.
-  Omitting the second member rejects its save without consuming the first; adding or replacing a
-  member after turn start also fails and appends nothing. An incomplete target withholds the tool
-  and starts no translation turn; the handler neither demands a publication claim nor fabricates
-  an admission after candidate generation.
-- A deterministic barrier admits segment A from turn execution snapshot V1, advances current
-  provider/model config to V2 before segment B admission, and proves B still derives from the
-  turn-bound V1 snapshot before one V1 model session starts. Substituting a V2 member artifact,
+  attempt/config admission atomically before the model turn, exposes `save_translation`, and
+  survives a lost-response retry. One bound-turn fixture pre-admits two segment members, saves
+  both in either order, and proves each call uses its own composite identity, config artifact,
+  event, and ordinal. Omitting the second member rejects its save without consuming the first;
+  adding or replacing a member after turn start also fails and appends nothing. An incomplete
+  target withholds the tool and starts no translation turn; the handler neither demands a
+  publication claim nor fabricates an admission after candidate generation.
+- A deterministic barrier prepares a complete turn from config V1, advances current
+  provider/model config to V2 before atomic admission, and allows only one of two outcomes: the
+  already-authorized V1 operation commits every member under V1, or the whole operation aborts and
+  a fresh observation admits every member under V2. Injected failures after staging each member
+  expose no claim, snapshot, admission, or session. Substituting a V2 member into a V1 map,
   changing normalized session parameters, or claiming two legitimately different execution
-  digests starts no session and appends no event; the latter case is partitioned into separately
-  admitted turns. Crash recovery after only A is admitted reuses V1 rather than mixing current V2.
+  digests fails the whole commit; the latter case is partitioned into separately admitted turns.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
 - During partial migration, per-key authority routes reads/writes to exactly one source; crash

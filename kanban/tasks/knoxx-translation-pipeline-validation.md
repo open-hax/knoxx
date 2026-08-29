@@ -97,15 +97,16 @@ Explicitly **out of scope here**:
    initiator that persists an immutable, canonically ordered non-empty collection of attempt
    members: one stable `attempt_id` and exact server-derived
    organization/document/segment/target/source request per composite the bound turn may save.
-   Every member completes config admission before the real provider/model session starts.
-   Publication dispatch uses its durable turn claim; ordinary chat uses an interactive turn claim
-   installed by pre-turn hydration and requires no publication claim. The authenticated session
-   pins the claim identity/digest, one immutable `TranslationTurnExecutionSnapshot`, and the
+   One atomic turn admission authorizes and installs the claim, execution snapshot, and complete
+   ordered member-admission map before the real provider/model session starts. Publication
+   dispatch and ordinary chat use distinct provider-neutral initiator variants; ordinary chat
+   requires no publication claim. The authenticated session pins the claim identity/digest, one
+   immutable `TranslationTurnExecutionSnapshot`, and the
    complete member map. Every member artifact names that same semantic
    provider/model/config/provider-policy snapshot and `provider-session-config-digest`;
    member-specific request facts and authorization-operation receipts cannot change the model
-   session configuration. An authorization denial still blocks the entire turn before session
-   start. Each real `save_translation` invocation selects, echoes, and
+   session configuration. A denial at atomic turn admission yields no turn or session. Each real
+   `save_translation` invocation selects, echoes, and
    validates its member rather than minting or adding one after provider work. One bound session
    pre-admits at least two segments and saves them in either order; both receive their own member
    artifacts/events but truthful provenance for the same configured model session. Omitting a
@@ -113,18 +114,18 @@ Explicitly **out of scope here**:
    no candidate. A commit-then-timeout retry of one composite is idempotent; changed same-composite
    reuse conflicts; one raw id reused across segments/targets remains independent; and distinct
    ids with equal content create distinct attempts. Store-only tests are insufficient for this
-   proof. Inject config-admission crashes after observation, after attestation minting, before
-   complete install, between member installs, and after the final install/before response:
-   incomplete or mixed-snapshot collections start no session, post-install retry returns every
-   installed winner from the turn snapshot, and equal concurrent losers cannot return a different
-   artifact. Advance current provider/model config between two member installs: recovery derives
-   the second member from the pinned turn snapshot rather than mixing current config. A genuinely
-   different execution digest is partitioned into a separately claimed/configured turn. Crash
-   between turn-claim persistence and member admission; recovery reuses every pinned id and the
-   exact snapshot and starts one session only after the collection is coherent and complete. A
-   complete ordinary chat request follows the same law and saves without a dispatch claim; an
-   incomplete target withholds the tool from that turn and starts no translation-bound
-   provider/model session.
+   proof. Inject failures after observation, after attestation minting, while staging each member,
+   immediately before atomic commit, and after commit/before response. Every precommit failure
+   exposes no claim, snapshot, member admission, or session; retry reuses only stable initiator ids
+   and must perform a fresh authorized whole-turn observation. The earlier receipt is audit
+   evidence, never retry authority. A postcommit retry returns the exact complete turn, and equal
+   concurrent losers cannot return a different candidate. Advance current provider/model config
+   and rotate authorization policy allow-to-allow or allow-to-deny at each barrier: outcomes are a
+   complete authorized old turn, a freshly observed complete new turn, or no turn on denial—never
+   mixed members or an old-receipt install. A genuinely different execution digest is partitioned
+   into a separately claimed/configured turn. A complete ordinary chat request follows the same
+   law and saves without a dispatch claim; an incomplete target withholds the tool from that turn
+   and starts no translation-bound provider/model session.
 10. Real GET/PATCH config routes derive scope only from a verified session or configured API
     key. A valid organization-A session plus headers naming an existing organization-B
     membership cannot read B, and a header-only request reaches no repository operation.
@@ -148,10 +149,10 @@ Explicitly **out of scope here**:
   and equal races cannot strand a reservation or let provider/event admission consume a losing
   candidate artifact.
 - Publication dispatch and ordinary-chat preflight each persist an immutable turn claim and pin
-  every allowed composite attempt identity plus one coherent provider-session config snapshot
-  before provider/session start; `save_translation` validates one pre-admitted member per call but
-  cannot create, consume, reinterpret, or reconfigure another, and interactive multi-segment saves
-  do not require a publication claim.
+  every allowed composite attempt identity plus one coherent provider-session config snapshot as
+  one authorized atomic admission before provider/session start; `save_translation` validates one
+  pre-admitted member per call but cannot create, consume, reinterpret, reconfigure, or reauthorize
+  another, and interactive multi-segment saves do not require a publication claim.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - The public save boundary preserves caller idempotency identity end to end instead of minting
   per-call ids or collapsing intentional equal-content attempts.
