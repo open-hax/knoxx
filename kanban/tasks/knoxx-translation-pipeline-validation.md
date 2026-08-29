@@ -104,9 +104,13 @@ Explicitly **out of scope here**:
    One atomic turn admission authorizes and installs the claim, execution snapshot, and complete
    ordered member-admission map before the real provider/model session starts. Publication
    dispatch and ordinary chat use distinct provider-neutral initiator variants; ordinary chat
-   requires no publication claim. The authenticated session pins the claim identity/digest, one
-   immutable `TranslationTurnExecutionSnapshot`, and the
-   complete member map. Every member artifact names that same semantic
+   requires no publication claim. Retry equality includes the exact claim variant and its stable
+   variant-specific initiator facts: durable dispatch-claim identity/workflow idempotency key for
+   publication, or interactive translation-start claim identity for ordinary chat. A same-tenant
+   dispatch/ordinary-chat collision on one `turn_id` conflicts and never returns the wrong claim
+   type; changing only the variant-specific initiator facts also conflicts. The authenticated
+   session pins the claim identity/digest, one immutable `TranslationTurnExecutionSnapshot`, and
+   the complete member map. Every member artifact names that same semantic
    provider/model/config/provider-policy snapshot and `provider-session-config-digest`;
    member-specific request facts and authorization-operation receipts cannot change the model
    session configuration. A denial at atomic turn admission yields no turn or session. Each real
@@ -123,9 +127,10 @@ Explicitly **out of scope here**:
    exposes no claim, snapshot, member admission, or session; retry reuses only stable initiator ids
    and must perform a fresh authorized whole-turn observation. The earlier receipt is audit
    evidence, never retry authority. A postcommit retry returns the exact complete turn, and equal
-   concurrent losers cannot return a different candidate. A config-straddling equal loser excludes
-   its server-derived candidate execution digest from retry equality, discards it, and returns the
-   installed winner; substituting the installed digest after admission conflicts. Advance current
+   concurrent losers cannot return a different candidate. A config-straddling equal loser with the
+   same claim variant and variant-specific initiator facts excludes its server-derived candidate
+   execution digest from retry equality, discards it, and returns the installed winner;
+   substituting the installed digest after admission conflicts. Advance current
    provider/model config and rotate authorization policy allow-to-allow or allow-to-deny at each
    barrier: outcomes are a
    complete authorized old turn, a freshly observed complete new turn, or no turn on denial—never

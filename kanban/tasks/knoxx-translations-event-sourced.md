@@ -113,12 +113,16 @@ The claim, snapshot, and ordered member-admission map become visible together th
 later operation must authorize from an old snapshot.
 
 Publication dispatch accepts a workflow-stable idempotency key or mints a server-stable value;
-its durable dispatch claim owns the turn claim and stores the stable per-member attempt ids.
-Ordinary authenticated chat/tool translation uses an interactive turn claim created by the same
-pre-turn initiator and requires no publication dispatch claim. If an interactive request cannot
-yet name the complete set of grouping/source/request facts, the unbound turn does not receive
-`save_translation`; an explicit translation-start action gathers them and launches a bound
-follow-up turn instead. A claimed member collection cannot be expanded, removed, or reinterpreted
+its durable dispatch claim owns the turn claim and stores the stable per-member attempt ids. Its
+retry identity includes the publication-dispatch claim variant, durable dispatch-claim identity,
+and workflow idempotency key. Ordinary authenticated chat/tool translation uses an interactive
+turn claim created by the same pre-turn initiator and requires no publication dispatch claim. Its
+retry identity includes the ordinary-chat claim variant and interactive translation-start claim
+identity. A same-organization/turn mismatch in the claim variant or those variant-specific
+initiator facts conflicts rather than returning a claim of the wrong type. If an interactive
+request cannot yet name the complete set of grouping/source/request facts, the unbound turn does
+not receive `save_translation`; an explicit translation-start action gathers them and launches a
+bound follow-up turn instead. A claimed member collection cannot be expanded, removed, or reinterpreted
 after the model turn starts; translating another segment requires a newly admitted follow-up turn.
 No already-running unbound turn may generate a candidate and synthesize admission at save time.
 Non-agent workflows establish the same per-attempt admission before their provider call. A crash
@@ -128,8 +132,9 @@ a fresh authorized config observation before attempting the complete atomic inst
 after commit returns the one complete stored turn on retry. The observation receipt is historical
 evidence for that one operation and is never reused to install a member later. The server-derived
 candidate execution digest is excluded from retry equality: callers with the same stable
-organization/turn, authenticated initiator, and member/source/request facts return the installed
-whole-turn winner even when their unattached observations straddle a config change. Changed
+organization/turn, authenticated initiator, claim variant, variant-specific initiator facts, and
+member/source/request facts return the installed whole-turn winner even when their unattached
+observations straddle a config change. Changed
 stable facts conflict, and a different execution configuration uses a new turn id rather than
 replacing the installed digest.
 

@@ -184,7 +184,11 @@ stable member ids with their exact grouping/source/request facts before provider
 composites and non-canonical encodings are rejected before persistence, and the claim
 identity/digest makes member addition, removal, or replacement a conflict after admission.
 Publication dispatch and ordinary-chat preflight use distinct turn-claim variants but the same
-turn-wide admission law; an unbound chat turn does not receive `save_translation`.
+turn-wide admission law; an unbound chat turn does not receive `save_translation`. Before config
+observation, the canonical claim binds its variant and stable variant-specific initiator facts:
+publication-dispatch binds the durable dispatch-claim identity and workflow idempotency key, while
+ordinary-chat binds the interactive translation-start claim identity. These are immutable
+comparison facts, not alternate admission-slot keys.
 
 Before claim persistence, the initiator owns a stable `turn_id` and canonical member-set digest.
 Every member must name the same server-derived effective organization; a mixed-organization
@@ -218,8 +222,9 @@ One atomic unique-insert/compare operation, `TranslationTurnConfigAdmission`, au
 installs the final turn claim, execution snapshot, complete ordered member-admission map, and one
 immutable `TranslationTurnAdmissionReceipt`. It targets that organization-scoped admission slot.
 The receipt binds the authenticated principal,
-effective scope/delegation, required capability, stable turn id, canonical member-set digest,
-execution snapshot/digest, every ordered member artifact, and the exact authorization-policy
+effective scope/delegation, required capability, stable turn id, claim variant and
+variant-specific initiator facts, canonical member-set digest, execution snapshot/digest, every
+ordered member artifact, and the exact authorization-policy
 evidence used at the operation's linearization point. Nothing is externally visible until the
 whole map commits; there is no partial member, pre-artifact, or `:pending` turn reservation. The
 agent session starts only from that complete admitted record. It receives the turn claim,
@@ -235,18 +240,20 @@ snapshot, member admission, or provider/session side effect. Retry may reuse onl
 stable turn/member ids; it must perform a fresh `observe-many` authorization/config observation
 and build a new complete candidate turn. Retry equality is evaluated over the effective
 organization, stable turn id, authenticated principal/effective delegation/required capability,
-and complete caller-stable canonical member/source/request facts. The freshly observed candidate
-execution digest is server-derived, cannot be supplied by the caller, and is excluded from retry
-equality; it is discarded when those stable facts match an installed record.
+claim variant and its complete stable variant-specific initiator facts, and complete caller-stable
+canonical member/source/request facts. The freshly observed candidate execution digest is
+server-derived, cannot be supplied by the caller, and is excluded from retry equality; it is
+discarded when those stable facts match an installed record.
 The earlier operation receipt remains audit history and
 cannot authorize the retry. A current denial returns no admission; an allow-to-allow policy or
 semantic config rotation is reflected by the fresh
 whole-turn observation. A crash after commit but before response returns the exact complete
-record on retry. Concurrent callers with equal stable facts may build different unattached
-candidate turns whose execution digests straddle a semantic config change, but exactly one whole
-record wins; every loser discards its candidates and returns the installed winner. Reusing the
-same organization-scoped slot with a changed authenticated initiator, source/request facts, or
-turn membership conflicts.
+record on retry. Concurrent callers with equal stable facts, including the same claim variant and
+variant-specific initiator facts, may build different unattached candidate turns whose execution
+digests straddle a semantic config change, but exactly one whole record wins; every loser discards
+its candidates and returns the installed winner. Reusing the same organization-scoped slot with a
+changed authenticated initiator, claim variant, variant-specific initiator facts,
+source/request facts, or turn membership conflicts.
 After installation, substituting the installed execution digest in a final claim, authenticated
 session, member artifact, or save also conflicts. A genuinely different execution configuration
 requires a new `turn_id` and a separately admitted turn. There is no snapshot-derived missing-member
@@ -307,13 +314,15 @@ The publication-free namespace closure from #273 remains an invariant.
    as independently identified entries under their distinct grouping keys inside one atomic turn
    map. The same raw `turn_id` under two organizations creates independent admission slots and
    records with no collision or cross-tenant read. Within the same organization, the same
-   `turn_id` with changed membership conflicts instead of creating a digest-keyed second record.
+   `turn_id` with changed membership, claim variant, or variant-specific initiator facts conflicts
+   instead of creating a digest-keyed second record or returning a claim of the wrong type.
 6. Inject crashes after the final observation, after attestation minting, immediately before
    atomic turn install, while staging each member, and after install/before response. Every
    pre-install crash leaves no claim, snapshot, member admission, or provider side effect and
    retry must freshly observe/authorize; the post-install retry returns the exact complete turn.
    Race callers with equal stable initiator facts whose observations straddle a config change:
-   authenticated initiator and member/source/request facts are the retry projection; the
+   authenticated initiator, claim variant, stable variant-specific initiator facts, and
+   member/source/request facts are the retry projection; the
    server-derived candidate execution digest is excluded from retry equality, one whole
    admission wins, and all equal losers return the installed winner rather than their candidate.
    Changed request/member facts conflict, as does substituting the installed execution digest
@@ -360,14 +369,20 @@ The publication-free namespace closure from #273 remains an invariant.
     exact complete turn and member event. Inject failure after staging the first member: no claim,
     snapshot, member admission, provider call, or session is visible, and retry performs a fresh
     authorized whole-turn observation. An omitted member cannot save, and adding/replacing a
-    member after admission conflicts. An incomplete interactive target exposes no
-    `save_translation` tool and creates no turn admission; neither claim type can mint at save time.
+    member after admission conflicts. Reuse the same organization, `turn_id`, principal/capability,
+    and member facts across a publication-dispatch claim and ordinary-chat interactive claim in
+    both race orders: one variant may win, but the other conflicts without receiving that winner or
+    starting a mismatched session. Changing only the dispatch-claim identity/workflow idempotency
+    key or interactive translation-start claim identity has the same conflict. An incomplete
+    interactive target exposes no `save_translation` tool and creates no turn admission; neither
+    claim type can mint at save time.
 14. Prepare one turn-wide execution snapshot and all member artifacts under provider/model config
     V1. Advance current config to V2 at barriers before authorization, during map construction, and
     immediately before atomic commit. Each run yields only a complete authorized V1 turn or aborts
     and freshly admits a complete V2 turn; it never persists V1/V2 siblings. A config-straddling
-    concurrent loser with the same stable initiator facts discards its unattached candidate and
-    returns the installed winner; the candidate digest is not a retry conflict. Rotate authorization
+    concurrent loser with the same stable initiator facts, same claim variant, and same
+    variant-specific initiator facts discards its unattached candidate and returns the installed
+    winner; the candidate digest is not a retry conflict. Rotate authorization
     policy allow-to-allow and allow-to-deny across the same barriers: a retry cannot reuse the old
     receipt, current allow produces a fresh whole-turn receipt, and current deny produces no
     admission or session. Substituting one member artifact, replaying the snapshot under another

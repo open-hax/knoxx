@@ -67,3 +67,13 @@
   spore: none
   receipt-refs: 2026-08-29T23:02:54.503Z
   note: Idempotency identity must use server-derived tenant scope and stable initiator facts; an unattached config candidate is disposable, while the installed winner is immutable authority.
+
+- ts: 2026-08-29T23:17:56.466Z
+  session: codex/knoxx238-repair
+  task: Separate dispatch and interactive claim retry identity
+  p-efficiency: 0.75
+  p-friction: 0.66
+  p-skill-candidate: 0.61
+  spore: none
+  receipt-refs: 2026-08-29T23:17:56.466Z
+  note: A shared atomic slot still needs a complete comparison projection; claim variant and its stable owner facts prevent cross-workflow authority aliasing.
