@@ -141,8 +141,11 @@ write → read → exec → commit → destroy — threading the `sandbox_id` ea
 returns, against a real docker daemon. Calling the tools individually only ever
 proves they reject a missing id. It asserts a written file reads back byte for
 byte, that `exec` sees that file, and that `exec` really is inside a container
-(the hostname it reports is not this host's). `destroy` runs in a `finally`, so
-a failing test leaves no TTL-bound container behind.
+(the hostname it reports is not this host's). Each workspace is mode `0700`, is
+owned by the same non-root effective host identity that Docker runs as, and keeps
+its lifecycle metadata outside the bind mount. The guarded real-Docker proof
+checks that owner/mode boundary from inside the container. `destroy` runs in a
+`finally`, so a failing test leaves no TTL-bound container behind.
 
 Skipped with a loud log when no docker daemon answers, and hard-failed when
 `KNOXX_E2E_REQUIRE_DOCKER=true` — set that where docker is guaranteed, so a

@@ -1,7 +1,9 @@
 (ns knoxx.backend.infra.mongo-client
   "MongoDB client for Knoxx session/run persistence.
    Replaces Redis as the primary state store."
-  (:require ["mongodb" :refer [MongoClient]]))
+  (:require
+    [knoxx.backend.extern.mongo :as extern-mongo]
+    ["mongodb" :refer [MongoClient]]))
 
 (defonce mongo-client* (atom nil))
 (defonce mongo-db* (atom nil))
@@ -68,6 +70,18 @@
   "Get the current MongoDB Client instance, or nil if not connected."
   []
   @mongo-client*)
+
+(defn ^:async require-transaction-capable-topology!
+  "Validate that `db` can uphold Knoxx's atomic Mongo transaction contract."
+  [db]
+  (await (extern-mongo/require-transaction-capable-topology! db)))
+
+(defn ^:async with-transaction!
+  "Run `f` through the CLJS-first Mongo transaction boundary."
+  ([f]
+   (with-transaction! (get-client) f))
+  ([client f]
+   (await (extern-mongo/with-transaction! client f))))
 
 (defn ^:async close-mongo!
   "Close MongoDB connection."

@@ -18,6 +18,7 @@
 
 (def ^:private probe-path "e2e-probe.txt")
 (def ^:private probe-content "sandbox-e2e-content")
+(def ^:private missing-probe-path "missing-e2e-probe.txt")
 
 (def ^:private uuid-pattern
   "Sandbox ids are crypto.randomUUID values.
@@ -71,6 +72,80 @@
       (is (= :ok (:status status))
           (str "sandbox_container_status failed: " (:detail status))))))
 
+(defn- ^:async assert-metadata-private!
+  [client sandbox-id]
+  (testing "Knoxx metadata is outside the container-visible bind mount"
+    (let [ran (await (call! client "sandbox_container_exec"
+                            {:sandbox_id sandbox-id
+                             :command (str "if [ -e .knoxx-sandbox.json ]; "
+                                           "then echo exposed; exit 19; "
+                                           "else echo private; fi")
+                             :timeout_ms 30000}))]
+      (is (= :ok (:status ran))
+          (str "sandbox_container_exec failed: " (:detail ran)))
+      (is (str/includes? (str (:detail ran)) "Sandbox exec exit=0")
+          (str "sandbox metadata was visible in the workdir: " (:detail ran)))
+      (is (str/includes? (str (:detail ran)) "private")
+          (str "sandbox metadata privacy probe omitted its marker: " (:detail ran))))))
+
+(defn- ^:async assert-host-workspace-private!
+  [client sandbox-id]
+  (testing "the bind mount belongs only to the configured container identity"
+    (let [ran (await (call! client "sandbox_container_exec"
+                            {:sandbox_id sandbox-id
+                             :command (str "actual=$(stat -c '%a:%u:%g' .); "
+                                           "expected=700:$(id -u):$(id -g); "
+                                           "if [ \"$actual\" = \"$expected\" ]; "
+                                           "then printf 'private-owner=%s\\n' \"$actual\"; "
+                                           "else printf 'expected=%s actual=%s\\n' \"$expected\" \"$actual\" >&2; exit 23; fi")
+                             :timeout_ms 30000}))]
+      (is (= :ok (:status ran))
+          (str "sandbox_container_exec failed: " (:detail ran)))
+      (is (str/includes? (str (:detail ran)) "Sandbox exec exit=0")
+          (str "sandbox host workspace was not private: " (:detail ran)))
+      (is (str/includes? (str (:detail ran)) "private-owner=700:")
+          (str "sandbox ownership probe omitted its marker: " (:detail ran))))))
+
+(defn- ^:async assert-internal-command-errors!
+  [client sandbox-id]
+  (testing "a failed Knoxx-owned read is a tool error"
+    (let [read-back (await (call! client "sandbox_container_read"
+                                  {:sandbox_id sandbox-id :path missing-probe-path}))]
+      (is (= :tool-error (:status read-back))
+          (str "missing read must be a tool error: " read-back))
+      (is (str/includes? (str (:detail read-back)) "sandbox read failed (exit 1)")
+          (str "missing read omitted bounded exit evidence: " (:detail read-back)))))
+
+  (testing "a failed Knoxx-owned write is a tool error"
+    (await (call! client "sandbox_container_exec"
+                  {:sandbox_id sandbox-id
+                   :command "mkdir -p readonly && chmod 500 readonly"}))
+    (let [wrote (await (call! client "sandbox_container_write"
+                              {:sandbox_id sandbox-id
+                               :path "readonly/probe.txt"
+                               :content probe-content}))]
+      (is (= :tool-error (:status wrote))
+          (str "unwritable path must be a tool error: " wrote))
+      (is (str/includes? (str (:detail wrote)) "sandbox write failed (exit ")
+          (str "failed write omitted bounded exit evidence: " (:detail wrote))))
+    (await (call! client "sandbox_container_exec"
+                  {:sandbox_id sandbox-id
+                   :command "chmod 700 readonly && rm -rf readonly"})))
+
+  (testing "a failed Knoxx-owned commit is a tool error"
+    (await (call! client "sandbox_container_exec"
+                  {:sandbox_id sandbox-id
+                   :command "mkdir -p .git && chmod 000 .git"}))
+    (let [committed (await (call! client "sandbox_container_commit"
+                                  {:sandbox_id sandbox-id :message "must fail"}))]
+      (is (= :tool-error (:status committed))
+          (str "unusable git metadata must be a tool error: " committed))
+      (is (str/includes? (str (:detail committed)) "sandbox commit failed (exit ")
+          (str "failed commit omitted bounded exit evidence: " (:detail committed))))
+    (await (call! client "sandbox_container_exec"
+                  {:sandbox_id sandbox-id
+                   :command "chmod 700 .git && rm -rf .git"}))))
+
 (defn- ^:async assert-file-roundtrip!
   [client sandbox-id]
   (testing "a written file reads back byte for byte"
@@ -98,6 +173,15 @@
           (str "sandbox_container_exec failed: " (:detail ran)))
       (is (str/includes? (str (:detail ran)) probe-content)
           (str "exec did not observe the written file: " (:detail ran)))))
+  (testing "a user-requested nonzero exit remains observable result data"
+    (let [ran (await (call! client "sandbox_container_exec"
+                            {:sandbox_id sandbox-id
+                             :command "exit 17"
+                             :timeout_ms 30000}))]
+      (is (= :ok (:status ran))
+          (str "user exec nonzero must remain result data: " ran))
+      (is (str/includes? (str (:detail ran)) "Sandbox exec exit=17")
+          (str "user exec omitted its exit code: " (:detail ran)))))
   (testing "exec is genuinely inside a container, not on this host"
     (let [ran (await (call! client "sandbox_container_exec"
                             {:sandbox_id sandbox-id
@@ -138,6 +222,9 @@
   (await (mcp/initialize! client))
   (when-let [sandbox-id (await (create-sandbox! client id*))]
     (await (assert-live! client sandbox-id))
+    (await (assert-metadata-private! client sandbox-id))
+    (await (assert-host-workspace-private! client sandbox-id))
+    (await (assert-internal-command-errors! client sandbox-id))
     (await (assert-file-roundtrip! client sandbox-id))
     (await (assert-exec! client sandbox-id))
     (await (assert-commit! client sandbox-id))

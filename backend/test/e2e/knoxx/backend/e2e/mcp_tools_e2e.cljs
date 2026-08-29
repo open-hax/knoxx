@@ -119,6 +119,13 @@
 
 ;; ── 2. calling them ─────────────────────────────────────────────────────────
 
+(deftest reviewed-dependency-errors-remain-narrow-test
+  (doseq [tool-name ["semantic_query" "graph_query" "memory_search"]]
+    (is (fixtures/allowed-tool-error? tool-name "OpenPlanner is not configured")
+        (str tool-name " must admit the hermetic dependency absence"))
+    (is (not (fixtures/allowed-tool-error? tool-name "OpenPlanner request timed out"))
+        (str tool-name " must not admit a different OpenPlanner failure"))))
+
 (defn- ^:async sweep!
   "Call every fixture-covered tool in turn, returning {tool-name outcome}.
 
