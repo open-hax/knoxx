@@ -192,14 +192,29 @@ test("bootstrap verifier tracks the Node server process directly", () => {
 test("bootstrap verifier builds and runs only inside trapped evidence", () => {
   const source = readFileSync(bootstrapVerifier, "utf8");
 
-  assert.match(source, /^BUILD_ROOT="\$\{EVIDENCE_DIR\}\/reviewed-checkout"$/m);
-  assert.match(source, /^SERVER_ENTRY="\$\{BUILD_ROOT\}\/backend\/dist\/server\.js"$/m);
+  assert.match(source, /^BUILD_ROOT="\$\{EVIDENCE_DIR\}\/reviewed-workspace"$/m);
+  assert.match(source, /^KNOXX_ROOT="\$\{BUILD_ROOT\}\/knoxx"$/m);
+  assert.match(source, /^OPENPLANNER_ROOT="\$\{BUILD_ROOT\}\/openplanner"$/m);
+  assert.match(source, /^SERVER_ENTRY="\$\{KNOXX_ROOT\}\/backend\/dist\/server\.js"$/m);
   assert.match(
     source,
     /git -C "\$REPO_ROOT" archive "\$REVIEWED_HEAD" -- backend contracts shared/,
   );
-  assert.match(source, /pnpm -C "\$BUILD_ROOT\/backend" build/);
+  assert.match(
+    source,
+    /git -C "\$OPENPLANNER_SOURCE_ROOT" archive "\$OPENPLANNER_REVIEWED_HEAD"/,
+  );
+  assert.match(
+    source,
+    /pnpm -C "\$OPENPLANNER_ROOT" --filter '@open-hax\/openplanner-sdk\.\.\.' install --frozen-lockfile/,
+  );
+  assert.match(source, /pnpm -C "\$KNOXX_ROOT\/backend" install --frozen-lockfile/);
+  assert.match(source, /pnpm -C "\$KNOXX_ROOT\/backend" build/);
   assert.doesNotMatch(source, /pnpm -C "\$REPO_ROOT\/backend" build/);
+  assert.doesNotMatch(source, /ln -s "\$REPO_ROOT\/backend\/node_modules"/);
+  assert.match(source, /find "\$BUILD_ROOT" -type l -print0/);
+  assert.match(source, /dependency link escapes private workspace/);
+  assert.match(source, /KNOXX_BOOTSTRAP_VERIFY_OPENPLANNER_HEAD/);
 
   const cleanup = source.slice(
     source.indexOf("cleanup()"),

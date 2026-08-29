@@ -12,6 +12,10 @@ teardown work together.
 
 - Use a clean checkout at the revision being reviewed. The verifier refuses
   tracked or untracked source changes.
+- Keep an OpenPlanner clone available (the sibling `../openplanner` path is the
+  default) and choose the exact OpenPlanner commit whose SDK should participate
+  in the proof. The script archives that commit rather than reading its working
+  tree.
 - Provide `git`, `pnpm`, `mongosh`, `node`, `curl`, and `jq`.
 - Provide a Mongo replica set or sharded cluster that the verifier may create
   and drop uniquely named databases on. A standalone `mongod` is deliberately
@@ -21,16 +25,21 @@ Run:
 
 ```bash
 KNOXX_BOOTSTRAP_VERIFY_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0' \
+KNOXX_BOOTSTRAP_VERIFY_OPENPLANNER_HEAD="$(git -C ../openplanner rev-parse HEAD)" \
   scripts/verify-bootstrap-credential-rotation.sh
 ```
 
-The script records `git rev-parse HEAD`, archives exactly that revision into its
-private temporary directory, and rebuilds and executes
-`backend/dist/server.js` only inside that snapshot. A stale ignored bundle
-therefore cannot masquerade as evidence for the reviewed revision, and the
-verification build cannot overwrite or leave artifacts in the checkout. It
-chooses fresh loopback ports and starts the process with production local-
-password policy, event runtimes disabled, and an isolated database name.
+The script records the exact Knoxx and OpenPlanner commit ids, archives both
+revisions into a private sibling workspace, installs their frozen dependency
+trees there, and builds the OpenPlanner SDK before rebuilding and executing
+Knoxx's `backend/dist/server.js`. Every dependency symlink must resolve beneath
+that private workspace; a checkout `node_modules` link, dangling dependency, or
+path escape aborts before the Knoxx build. A stale ignored bundle or mutable
+sibling checkout therefore cannot masquerade as evidence for either reviewed
+revision, and the verification build cannot overwrite or leave artifacts in a
+checkout. The script chooses fresh loopback ports and starts the process with
+production local-password policy, event runtimes disabled, and an isolated
+database name.
 
 ## Evidence paths
 

@@ -11,12 +11,16 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MONGO_URI="${KNOXX_BOOTSTRAP_VERIFY_MONGODB_URI:-${MONGODB_URI:-}}"
+OPENPLANNER_SOURCE_ROOT="${KNOXX_BOOTSTRAP_VERIFY_OPENPLANNER_ROOT:-${REPO_ROOT}/../openplanner}"
+OPENPLANNER_REQUESTED_HEAD="${KNOXX_BOOTSTRAP_VERIFY_OPENPLANNER_HEAD:-}"
 RUN_ID="$(date -u +%Y%m%d%H%M%S)$$"
 ROTATION_DB="knoxx_bootstrap_verify_rotation_${RUN_ID}"
 FAILURE_DB="knoxx_bootstrap_verify_failure_${RUN_ID}"
 EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/knoxx-bootstrap-rotation.XXXXXX")"
-BUILD_ROOT="${EVIDENCE_DIR}/reviewed-checkout"
-SERVER_ENTRY="${BUILD_ROOT}/backend/dist/server.js"
+BUILD_ROOT="${EVIDENCE_DIR}/reviewed-workspace"
+KNOXX_ROOT="${BUILD_ROOT}/knoxx"
+OPENPLANNER_ROOT="${BUILD_ROOT}/openplanner"
+SERVER_ENTRY="${KNOXX_ROOT}/backend/dist/server.js"
 
 OLD_EMAIL="bootstrap-old-${RUN_ID}@open-hax.local"
 NEW_EMAIL="bootstrap-new-${RUN_ID}@open-hax.local"
@@ -123,7 +127,7 @@ start_server() {
   SERVER_PORT="$(free_port)"
   SERVER_LOG="${EVIDENCE_DIR}/${label}.log"
   (
-    cd "$BUILD_ROOT" || exit 1
+    cd "$KNOXX_ROOT" || exit 1
     exec env \
       NODE_ENV=production \
       HOST=127.0.0.1 \
@@ -142,7 +146,7 @@ start_server() {
       KNOXX_DISABLE_EVENT_RUNTIMES=true \
       KNOXX_SHUTDOWN_GRACE_MS=1000 \
       MCP_ENABLED=false \
-      CONTRACTS_DIR="$BUILD_ROOT/contracts" \
+      CONTRACTS_DIR="$KNOXX_ROOT/contracts" \
       node "$SERVER_ENTRY"
   ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
@@ -241,7 +245,7 @@ expect_count() {
 printf 'Knoxx bootstrap credential rotation — live verification\n'
 printf 'run id: %s\n' "$RUN_ID"
 
-for tool in bash curl git jq mongosh node pnpm tar; do
+for tool in bash curl find git jq mongosh node pnpm readlink tar; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: ${tool}"
 done
 [ -n "$MONGO_URI" ] \
@@ -254,18 +258,63 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)" ]; 
 fi
 printf 'reviewed head: %s\n' "$REVIEWED_HEAD"
 
-mkdir -p "$BUILD_ROOT" \
-  || die "cannot create private reviewed-checkout directory"
-if git -C "$REPO_ROOT" archive "$REVIEWED_HEAD" -- backend contracts shared \
-  | tar -x -C "$BUILD_ROOT"; then
-  pass "materialized reviewed head ${REVIEWED_HEAD} inside private build directory"
+[ -n "$OPENPLANNER_REQUESTED_HEAD" ] \
+  || die 'set KNOXX_BOOTSTRAP_VERIFY_OPENPLANNER_HEAD to the reviewed OpenPlanner commit'
+OPENPLANNER_REVIEWED_HEAD="$(git -C "$OPENPLANNER_SOURCE_ROOT" rev-parse "${OPENPLANNER_REQUESTED_HEAD}^{commit}" 2>/dev/null)" \
+  || die 'cannot resolve KNOXX_BOOTSTRAP_VERIFY_OPENPLANNER_HEAD in the configured OpenPlanner repository'
+printf 'reviewed OpenPlanner head: %s\n' "$OPENPLANNER_REVIEWED_HEAD"
+
+mkdir -p "$KNOXX_ROOT" "$OPENPLANNER_ROOT" \
+  || die "cannot create private reviewed workspace"
+if git -C "$REPO_ROOT" archive "$REVIEWED_HEAD" -- backend contracts shared package.json pnpm-lock.yaml \
+  | tar -x -C "$KNOXX_ROOT"; then
+  pass "materialized Knoxx head ${REVIEWED_HEAD} inside private workspace"
 else
-  die "could not materialize reviewed head ${REVIEWED_HEAD}"
+  die "could not materialize Knoxx head ${REVIEWED_HEAD}"
 fi
-[ -d "$REPO_ROOT/backend/node_modules" ] \
-  || die 'backend/node_modules is missing; install the reviewed dependencies first'
-ln -s "$REPO_ROOT/backend/node_modules" "$BUILD_ROOT/backend/node_modules" \
-  || die 'could not link reviewed dependencies into the private build directory'
+if git -C "$OPENPLANNER_SOURCE_ROOT" archive "$OPENPLANNER_REVIEWED_HEAD" \
+  | tar -x -C "$OPENPLANNER_ROOT"; then
+  pass "materialized OpenPlanner head ${OPENPLANNER_REVIEWED_HEAD} inside private workspace"
+else
+  die "could not materialize OpenPlanner head ${OPENPLANNER_REVIEWED_HEAD}"
+fi
+
+if pnpm -C "$OPENPLANNER_ROOT" --filter '@open-hax/openplanner-sdk...' install --frozen-lockfile \
+  >"${EVIDENCE_DIR}/openplanner-install.log" 2>&1; then
+  pass "installed OpenPlanner dependencies inside private workspace"
+else
+  die "OpenPlanner dependency install failed: $(tail -n 12 "${EVIDENCE_DIR}/openplanner-install.log" | tr '\n' ' ')"
+fi
+if pnpm -C "$OPENPLANNER_ROOT" --filter '@open-hax/openplanner-sdk...' build \
+  >"${EVIDENCE_DIR}/openplanner-build.log" 2>&1; then
+  pass "built OpenPlanner SDK and workspace dependencies from ${OPENPLANNER_REVIEWED_HEAD}"
+else
+  die "OpenPlanner SDK build failed: $(tail -n 12 "${EVIDENCE_DIR}/openplanner-build.log" | tr '\n' ' ')"
+fi
+if pnpm -C "$KNOXX_ROOT/backend" install --frozen-lockfile \
+  >"${EVIDENCE_DIR}/knoxx-install.log" 2>&1; then
+  pass "installed Knoxx dependencies inside private workspace"
+else
+  die "Knoxx dependency install failed: $(tail -n 12 "${EVIDENCE_DIR}/knoxx-install.log" | tr '\n' ' ')"
+fi
+
+while IFS= read -r -d '' dependency_link; do
+  dependency_target="$(readlink -f "$dependency_link" 2>/dev/null)" \
+    || die "dependency link does not resolve: ${dependency_link}"
+  case "$dependency_target" in
+    "$BUILD_ROOT"/*) ;;
+    *) die "dependency link escapes private workspace: ${dependency_link} -> ${dependency_target}" ;;
+  esac
+done < <(find "$BUILD_ROOT" -type l -print0)
+
+OPENPLANNER_SDK_PATH="$KNOXX_ROOT/backend/node_modules/@open-hax/openplanner-sdk"
+OPENPLANNER_SDK_TARGET="$(readlink -f "$OPENPLANNER_SDK_PATH" 2>/dev/null)" \
+  || die 'installed Knoxx dependencies do not resolve @open-hax/openplanner-sdk'
+EXPECTED_OPENPLANNER_SDK_TARGET="$(readlink -f "$OPENPLANNER_ROOT/packages/openplanner-sdk" 2>/dev/null)" \
+  || die 'reviewed OpenPlanner archive does not contain packages/openplanner-sdk'
+[ "$OPENPLANNER_SDK_TARGET" = "$EXPECTED_OPENPLANNER_SDK_TARGET" ] \
+  || die "Knoxx resolved an unexpected OpenPlanner SDK: ${OPENPLANNER_SDK_TARGET}"
+pass "all dependency links resolve inside the private two-revision workspace"
 
 if mongosh "$MONGO_URI" --quiet --eval '
   const hello = db.adminCommand({hello: 1});
@@ -276,7 +325,7 @@ else
   die 'Mongo deployment is standalone or unreachable; atomic verification requires transactions'
 fi
 
-if pnpm -C "$BUILD_ROOT/backend" build >"${EVIDENCE_DIR}/build.log" 2>&1; then
+if pnpm -C "$KNOXX_ROOT/backend" build >"${EVIDENCE_DIR}/build.log" 2>&1; then
   pass "rebuilt temporary backend/dist/server.js from reviewed head ${REVIEWED_HEAD}"
 else
   die "backend build failed: $(tail -n 12 "${EVIDENCE_DIR}/build.log" | tr '\n' ' ')"
