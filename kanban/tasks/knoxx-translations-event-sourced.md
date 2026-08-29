@@ -103,11 +103,13 @@ only within that organization. The member-set, snapshot, execution, and final cl
 record facts rather than uniqueness keys, so changed membership cannot evade conflict by creating
 a digest-keyed slot. Identity binding is one-way: the snapshot names a stable `turn_id` plus the
 canonical member-set digest, and the final turn-claim digest names the snapshot digest; neither
-digest is defined in terms of itself. If preflight derives different execution digests, it
-partitions the members into separate turn claims before any model session rather than mixing
-provenance. The authenticated session/tool context pins the turn-claim identity/digest, execution
-snapshot, and complete member map, and the session starts only after every member has a complete
-matching config admission.
+digest is defined in terms of itself. If preflight derives different execution digests, it returns
+the canonical `:translation/turn-partition-required` plan and persists no claim, snapshot, member
+admission, receipt, or session. The plan cannot authorize work, and config admission never derives
+child turn ids or automatically installs a partition. Each group may proceed only through a later
+explicit initiation with its own stable turn id and a fresh complete admission. The authenticated
+session/tool context pins the turn-claim identity/digest, execution snapshot, and complete member
+map, and the session starts only after every member has a complete matching config admission.
 The claim, snapshot, and ordered member-admission map become visible together through one atomic
 `TranslationTurnConfigAdmission`; there is no independently committed member admission that a
 later operation must authorize from an old snapshot.
@@ -284,9 +286,11 @@ land a migration that leaves that endpoint erroring.
   provider/model config to V2 before atomic admission, and allows only one of two outcomes: the
   already-authorized V1 operation commits every member under V1, or the whole operation aborts and
   a fresh observation admits every member under V2. Injected failures after staging each member
-  expose no claim, snapshot, admission, or session. Substituting a V2 member into a V1 map,
-  changing normalized session parameters, or claiming two legitimately different execution
-  digests fails the whole commit; the latter case is partitioned into separately admitted turns.
+  expose no claim, snapshot, admission, or session. Substituting a V2 member into a V1 map or
+  changing normalized session parameters fails the whole commit. Claiming two legitimately
+  different execution digests returns the canonical partition-required plan with no turn state or
+  session; only later explicit requests with distinct stable turn ids can admit the groups as
+  independent turns.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
 - During partial migration, per-key authority routes reads/writes to exactly one source; crash

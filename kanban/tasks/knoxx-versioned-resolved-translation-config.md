@@ -206,11 +206,22 @@ session parameters, and canonical
 attempt artifacts but cannot change that execution digest. Authorization-operation receipts and
 their policy versions remain evidence outside the provider-session digest: an authorization-only
 allow-policy rotation may rotate that evidence without pretending the model session changed. If
-the members legitimately resolve to different execution digests, preflight partitions them into
-separate turn claims and separately configured model sessions. The snapshot is not a
-free-floating attestation and cannot be replayed under another turn or member set. The final
-turn-claim digest then includes the snapshot identity/digest; the snapshot never includes that
-final digest, so the identity graph is canonical and non-circular.
+the members legitimately resolve to different execution digests, they are inadmissible as one
+turn. Preflight returns
+`{:error/type :translation/turn-partition-required :turn/id <turn-id>
+:partitions <canonical-ordered-partition-plan>}` to the authorized initiator. The plan groups exact
+member identities by observed provider-session config digest in canonical order, but is
+non-authorizing: it carries no claim, snapshot, artifact, admission receipt, or reusable token and
+starts no provider/model session. The whole attempted turn persists nothing. The facade does not
+mint or derive a child `turn_id` and never auto-installs any planned group. Each planned group
+requires a new initiation with its own stable `turn_id`, claim variant, and variant-specific
+initiator facts before a fresh observation/admission. A lost partition response is safe to retry
+because there is no parent or child state; the fresh observation returns its current canonical
+plan or admits one now-coherent turn. Separate explicit initiations are independent turns, not a
+partially committed parent batch. The snapshot is not a free-floating attestation and cannot be
+replayed under another turn or member set. The final turn-claim digest then includes the snapshot
+identity/digest; the snapshot never includes that final digest, so the identity graph is canonical
+and non-circular.
 
 The facade derives the complete ordered map of member artifacts from that exact turn snapshot
 instead of performing a new current-config observation per member. Each embedded
@@ -256,7 +267,8 @@ changed authenticated initiator, claim variant, variant-specific initiator facts
 source/request facts, or turn membership conflicts.
 After installation, substituting the installed execution digest in a final claim, authenticated
 session, member artifact, or save also conflicts. A genuinely different execution configuration
-requires a new `turn_id` and a separately admitted turn. There is no snapshot-derived missing-member
+requires an explicit new initiation with a stable `turn_id` and separately admitted turn; the
+facade cannot infer it from the installed slot. There is no snapshot-derived missing-member
 installation and therefore no later reauthorization seam.
 
 A canonically equal retry of the same composite identity retrieves the same attested
@@ -386,10 +398,14 @@ The publication-free namespace closure from #273 remains an invariant.
     policy allow-to-allow and allow-to-deny across the same barriers: a retry cannot reuse the old
     receipt, current allow produces a fresh whole-turn receipt, and current deny produces no
     admission or session. Substituting one member artifact, replaying the snapshot under another
-    turn/member set, changing normalized session parameters, or completing two execution digests
-    fails the whole commit. If members genuinely need different digests, preflight creates
-    separate turns. The one-way turn-id/member-set -> snapshot -> final-claim digest graph remains
-    canonical.
+    turn/member set, or changing normalized session parameters fails the whole commit. A
+    multi-digest member set returns the canonical `:translation/turn-partition-required` plan with
+    no claim, snapshot, member admission, receipt, provider call, or session. Inject a lost plan
+    response and prove retry has no parent/child state to recover; under the same observation it
+    recomputes the same plan. The facade never mints child ids or installs one group. Only later
+    explicit initiations, each with a distinct stable `turn_id` and complete claim facts, may admit
+    the planned groups as independent turns. The one-way turn-id/member-set -> snapshot ->
+    final-claim digest graph remains canonical.
 
 ## Non-goals
 

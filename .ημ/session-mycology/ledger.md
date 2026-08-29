@@ -77,3 +77,13 @@
   spore: none
   receipt-refs: 2026-08-29T23:17:56.466Z
   note: A shared atomic slot still needs a complete comparison projection; claim variant and its stable owner facts prevent cross-workflow authority aliasing.
+
+- ts: 2026-08-29T23:36:55.789Z
+  session: codex/knoxx238-repair
+  task: Remove unrecoverable automatic child-turn admission
+  p-efficiency: 0.78
+  p-friction: 0.62
+  p-skill-candidate: 0.57
+  spore: none
+  receipt-refs: 2026-08-29T23:36:55.789Z
+  note: When a split request has no stable child identities, return non-authorizing canonical advice and require explicit independent initiations instead of inventing partially recoverable authority.

@@ -134,11 +134,14 @@ Explicitly **out of scope here**:
    provider/model config and rotate authorization policy allow-to-allow or allow-to-deny at each
    barrier: outcomes are a
    complete authorized old turn, a freshly observed complete new turn, or no turn on denial—never
-   mixed members or an old-receipt install. When preflight determines that member groups genuinely
-   require different execution digests, it partitions them into separately identified turn claims
-   before admission; that is not a same-slot retry outcome. A complete ordinary chat request follows the same
-   law and saves without a dispatch claim; an incomplete target withholds the tool from that turn
-   and starts no translation-bound provider/model session.
+   mixed members or an old-receipt install. A multi-digest preflight returns one canonical
+   non-authorizing `:translation/turn-partition-required` plan and leaves no claim, snapshot, member
+   admission, receipt, provider call, or session. It never mints child ids or partially installs a
+   group. A lost-response retry recomputes current advice from zero durable partition state; each
+   group can run only after an explicit independent initiation supplies its own stable `turn_id`
+   and complete claim facts. A complete ordinary chat request follows the same law and saves
+   without a dispatch claim; an incomplete target withholds the tool from that turn and starts no
+   translation-bound provider/model session.
 10. Real GET/PATCH config routes derive scope only from a verified session or configured API
     key. A valid organization-A session plus headers naming an existing organization-B
     membership cannot read B, and a header-only request reaches no repository operation.
