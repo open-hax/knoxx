@@ -23,12 +23,13 @@ impossible to assert on.
  :auth/surface :mcp
  :auth/methods
  [{:auth-method/id :oauth-bearer      :auth-method/enabled true}
-  {:auth-method/id :trusted-loopback  :auth-method/enabled false
+  {:auth-method/id :trusted-loopback  :auth-method/enabled true
    :auth-method/require-loopback true
-   :auth-method/require-non-production true
+   :auth-method/require-non-production false
    :auth-method/token-env "KNOXX_MCP_LOOPBACK_TOKEN"
-   :auth-method/min-token-length 8
+   :auth-method/min-token-length 16
    :auth-method/grants {:grant/user-email "system-admin@open-hax.local"
+                        :grant/actor-id "system_admin"
                         :grant/tools :all}}]}
 ```
 
@@ -96,6 +97,11 @@ export KNOXX_MCP_LOOPBACK_TOKEN=some-long-local-token
 claude mcp add --transport http knoxx-dev http://127.0.0.1:8000/mcp \
   --header "Authorization: Bearer ${KNOXX_MCP_LOOPBACK_TOKEN}"
 ```
+
+The shipped values are shown above; they keep the method contract-enabled in
+production but inert until the named secret exists. For a non-production-only
+alternative, set `:auth-method/require-non-production true` explicitly rather
+than disabling the method and expecting the local flow to work.
 
 The backend logs a warning at startup whenever a surface accepts anything but
 OAuth. A silently open authentication method is a bug even when every guard

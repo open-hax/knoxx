@@ -3,9 +3,15 @@
 
    Authentication policy and grant construction stay in CLJS data. The MCP
    route still integrates with persisted JSON token records and downstream
-   JavaScript APIs, so it owns the single conversion into their native shape.")
+   JavaScript APIs, so it owns the single validated conversion into their
+   native shape. Malformed identity or grant data fails before JavaScript code
+   can reinterpret it."
+  (:require [knoxx.backend.law.mcp-token :as token-law]))
 
 (defn native-record
-  "Convert one CLJS token record to the JavaScript object the MCP route owns."
+  "Validate and convert one CLJS token record to the route's JavaScript object."
   [record]
-  (when record (clj->js record)))
+  (when record
+    (-> record
+        token-law/assert-record!
+        clj->js)))

@@ -30,7 +30,8 @@
         (let [init (await (mcp/initialize! (harness/client started "not-the-token")))]
           (is (not (:ok init)))
           (is (= 401 (:status init))
-              "an unknown bearer must fall through to the OAuth store and miss")))
+              (str "the e2e contract enables OAuth, so an unknown bearer reaches "
+                   "that store and misses; a contract without OAuth refuses earlier"))))
 
       (testing "a bearer under the contract's length floor"
         (let [init (await (mcp/initialize! (harness/client started "short")))]

@@ -5,7 +5,9 @@
 
 (deftest native-record-converts-cljs-data-once
   (let [record (mcp-token/native-record
-                {:userEmail "admin@example.test"
+                {:accessToken "authentication-contract"
+                 :clientId "knoxx-authentication-contract"
+                 :userEmail "admin@example.test"
                  :actorId "system_admin"
                  :tools ["semantic_query" "read"]})]
     (testing "the route receives the native field names its integration reads"
@@ -18,3 +20,23 @@
 
 (deftest native-record-preserves-absence
   (is (nil? (mcp-token/native-record nil))))
+
+(deftest native-record-refuses-malformed-authorization-data
+  (testing "required identity is checked before native conversion"
+    (is (thrown-with-msg?
+         js/Error
+         #"Invalid MCP token record"
+         (mcp-token/native-record
+          {:accessToken "authentication-contract"
+           :clientId "knoxx-authentication-contract"
+           :userEmail ""
+           :tools ["semantic_query"]}))))
+  (testing "tool grants must use the exact vector-of-names contract"
+    (is (thrown-with-msg?
+         js/Error
+         #"Invalid MCP token record"
+         (mcp-token/native-record
+          {:accessToken "authentication-contract"
+           :clientId "knoxx-authentication-contract"
+           :userEmail "admin@example.test"
+           :tools :all})))))
