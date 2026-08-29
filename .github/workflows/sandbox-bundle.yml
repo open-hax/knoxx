@@ -38,8 +38,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
-      OUT: ${{ github.workspace }}/../sandbox-export
-      DEPS_OUT: ${{ github.workspace }}/../sandbox-deps
+      OUT: /tmp/knoxx-sandbox-export
+      DEPS_OUT: /tmp/knoxx-sandbox-deps
       CLOJURE_TOOLS_VERSION: "1.12.5.1654"
       CLOJURE_TOOLS_SHA256: dc86cc56bc372fcef07bd87f44693eeb4b61cf5f44347883878364d03b5fb342
       BABASHKA_VERSION: "1.13.219"
@@ -110,6 +110,8 @@ jobs:
           set -euo pipefail
           {
             pnpm install --frozen-lockfile
+            pnpm -C backend install --frozen-lockfile
+            pnpm -C frontend install --frozen-lockfile
             pnpm -C backend run typecheck
             pnpm -C backend run test:coverage
             pnpm -C frontend run typecheck
