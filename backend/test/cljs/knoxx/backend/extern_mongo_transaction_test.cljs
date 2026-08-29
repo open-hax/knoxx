@@ -218,3 +218,36 @@
       (catch js/Error err
         (is (re-find #"unsafe Mongo mutation document" (.-message err)))))
     (is (zero? @calls*) "invalid mutations never reach the driver")))
+
+(deftest ^:async mutation-boundary-encodes-declared-bson-dates-test
+  (let [calls* (atom [])
+        timestamp 1700000000000
+        collection
+        #js {:updateOne
+             (fn [_query update _options]
+               (let [native-date (aget (aget update "$set") "updated_at")]
+                 (swap! calls* conj
+                        {:native-date? (instance? js/Date native-date)
+                         :epoch-ms (when (instance? js/Date native-date)
+                                     (.getTime native-date))}))
+               (js/Promise.resolve
+                #js {:matchedCount 1 :modifiedCount 1 :upsertedCount 0}))}]
+    (is (= {:matched-count 1 :modified-count 1 :upserted-count 0}
+           (await (extern-mongo/update-one!
+                   collection
+                   {:_id "lock"}
+                   {:$set {:updated_at timestamp}}
+                   {:bson-date-fields #{:updated_at}}))))
+    (is (= [{:native-date? true :epoch-ms timestamp}] @calls*))
+    (doseq [[update fields]
+            [[{:$set {:updated_at "not-an-instant"}} #{:updated_at}]
+             [{:$set {:updated_at timestamp}} #{:created_at}]]]
+      (try
+        (await (extern-mongo/update-one!
+                collection {:_id "lock"} update
+                {:bson-date-fields fields}))
+        (is false "invalid BSON Date encoding must be rejected")
+        (catch js/Error err
+          (is (re-find #"unsafe Mongo BSON Date encoding" (.-message err))))))
+    (is (= 1 (count @calls*))
+        "invalid or misspelled Date fields never reach the driver")))

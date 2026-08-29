@@ -359,41 +359,45 @@
    duplicate-key error after the winner commits, which still proves the lock
    exists and is safe to use."
   [db org-id]
-  (try
-    (await (extern-mongo/update-one!
-            (extern-mongo/collection db RECONCILIATION_LOCKS_COLLECTION)
-            {:_id (reconciliation-lock-id org-id)}
-            {:$setOnInsert {:created_at (js/Date.)}}
-            {:upsert true :write-concern "majority"}))
-    (catch :default err
-      (when-not (= 11000 (:mongo/code (ex-data err)))
-        (throw err)))))
+  (let [now-ms (extern-mongo/current-epoch-ms)]
+    (try
+      (await (extern-mongo/update-one!
+              (extern-mongo/collection db RECONCILIATION_LOCKS_COLLECTION)
+              {:_id (reconciliation-lock-id org-id)}
+              {:$setOnInsert {:created_at now-ms}}
+              {:upsert true
+               :write-concern "majority"
+               :bson-date-fields #{:created_at}}))
+      (catch :default err
+        (when-not (= 11000 (:mongo/code (ex-data err)))
+          (throw err))))))
 
 (defn- ^:async lock-reconciliation!
-  [update-one! locks org-id now]
+  [update-one! locks org-id now-ms]
   (let [result (await (update-one!
                        locks
                        {:_id (reconciliation-lock-id org-id)}
-                       {:$set {:updated_at now
+                       {:$set {:updated_at now-ms
                                :system_instance_id (system-instance/current-id)}}
-                       {}))]
+                       {:bson-date-fields #{:updated_at}}))]
     (when-not (= 1 (:matched-count result))
       (throw (js/Error. "bootstrap reconciliation lock disappeared before transaction")))
     result))
 
 (defn- ^:async deactivate-managed-credentials!
-  [update-many! credentials managed-query current-id now]
+  [update-many! credentials managed-query current-id now-ms]
   (await (update-many!
           credentials
           (assoc managed-query :user_id {:$ne current-id})
           {:$set {:status "inactive"
-                  :updated_at now
+                  :updated_at now-ms
                   :system_instance_id (system-instance/current-id)}}
-          {:case-insensitive? true})))
+          {:case-insensitive? true
+           :bson-date-fields #{:updated_at}})))
 
 (defn- ^:async upsert-bootstrap-credential!
   [update-one! credentials
-   {:keys [current-id current-org current-account secret-json]} now]
+   {:keys [current-id current-org current-account secret-json]} now-ms]
   (await (update-one!
           credentials
           {:user_id current-id
@@ -403,38 +407,40 @@
           {:$set {:account_identifier current-account
                   :secret_json secret-json
                   :status "active"
-                  :updated_at now
+                  :updated_at now-ms
                   :system_instance_id (system-instance/current-id)}
            :$setOnInsert {:credential_id (str (random-uuid))
-                          :created_at now}}
-          {:upsert true})))
+                          :created_at now-ms}}
+          {:upsert true
+           :bson-date-fields #{:created_at :updated_at}})))
 
 (defn- ^:async revoke-managed-credentials!
-  [update-many! credentials managed-query now]
+  [update-many! credentials managed-query now-ms]
   (await (update-many!
           credentials
           managed-query
           {:$set {:status "inactive"
-                  :updated_at now
+                  :updated_at now-ms
                   :system_instance_id (system-instance/current-id)}}
-          {:case-insensitive? true})))
+          {:case-insensitive? true
+           :bson-date-fields #{:updated_at}})))
 
 (defn- ^:async reconcile-bootstrap-transaction!
   [db {:keys [current-id current-org managed-accounts secret-json] :as context}
    {:keys [update-one! update-many!]}]
   (let [credentials (credentials-coll db)
         locks (extern-mongo/collection db RECONCILIATION_LOCKS_COLLECTION)
-        now (js/Date.)
+        now-ms (extern-mongo/current-epoch-ms)
         managed-query (managed-bootstrap-query current-org managed-accounts)]
-    (await (lock-reconciliation! update-one! locks current-org now))
+    (await (lock-reconciliation! update-one! locks current-org now-ms))
     (if (some? secret-json)
       (do
         (await (deactivate-managed-credentials!
-                update-many! credentials managed-query current-id now))
+                update-many! credentials managed-query current-id now-ms))
         (await (upsert-bootstrap-credential!
-                update-one! credentials context now)))
+                update-one! credentials context now-ms)))
       (await (revoke-managed-credentials!
-              update-many! credentials managed-query now)))
+              update-many! credentials managed-query now-ms)))
     nil))
 
 (defn ^:async reconcile-bootstrap-local-password!

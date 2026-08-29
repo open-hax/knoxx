@@ -59,6 +59,18 @@
   (await (.insertOne collection-handle (clj->js doc)))
   doc)
 
+(defn current-epoch-ms
+  "Return the host clock as a validated CLJS epoch-millisecond scalar.
+
+   Native Date access stays in this extern. Stores may carry the returned
+   number through pure CLJS operation maps and request BSON Date encoding only
+   when the mutation crosses back into the driver."
+  []
+  (let [now-ms (.now js/Date)]
+    (when-not (law-mongo/valid-epoch-ms? now-ms)
+      (throw (js/Error. "host clock returned an invalid epoch-millisecond value")))
+    now-ms))
+
 (defn- native-update-options
   [session {:keys [upsert write-concern case-insensitive?]}]
   (let [options #js {}]
@@ -99,20 +111,45 @@
     (.get transaction-operation-by-error err)
     (catch :default _ nil)))
 
-(defn- assert-mutation! [query update]
+(defn- assert-mutation! [query update {:keys [bson-date-fields]}]
   (when-not (law-mongo/valid-mutation-query? query)
     (throw (ex-info "refusing an unsafe Mongo mutation query" {:query query})))
   (when-not (law-mongo/valid-mutation-update? update)
-    (throw (ex-info "refusing an unsafe Mongo mutation document" {:update update}))))
+    (throw (ex-info "refusing an unsafe Mongo mutation document" {:update update})))
+  (when-not (law-mongo/valid-mutation-date-encoding?
+             update bson-date-fields)
+    (throw (ex-info "refusing an unsafe Mongo BSON Date encoding"
+                    {:update update :bson-date-fields bson-date-fields}))))
+
+(defn- native-mutation-update
+  [update bson-date-fields]
+  (let [date-field-names
+        (set (map #(if (keyword? %) (name %) %) bson-date-fields))]
+    (clj->js
+     (reduce-kv
+      (fn [native-update operator assignments]
+        (assoc native-update operator
+               (reduce-kv
+                (fn [native-assignments field value]
+                  (assoc native-assignments field
+                         (if (contains?
+                              date-field-names
+                              (if (keyword? field) (name field) field))
+                           (js/Date. value)
+                           value)))
+                {}
+                assignments)))
+      {}
+      update))))
 
 (defn- ^:async update-one-native!
   [session collection-handle query update options]
-  (assert-mutation! query update)
+  (assert-mutation! query update options)
   (try
     (-> (await (.updateOne
                 collection-handle
                 (clj->js query)
-                (clj->js update)
+                (native-mutation-update update (:bson-date-fields options))
                 (native-update-options session options)))
         update-result->cljs)
     (catch :default err
@@ -124,12 +161,12 @@
 
 (defn- ^:async update-many-native!
   [session collection-handle query update options]
-  (assert-mutation! query update)
+  (assert-mutation! query update options)
   (try
     (-> (await (.updateMany
                 collection-handle
                 (clj->js query)
-                (clj->js update)
+                (native-mutation-update update (:bson-date-fields options))
                 (native-update-options session options)))
         update-result->cljs)
     (catch :default err
@@ -140,8 +177,10 @@
 (defn ^:async update-one!
   "Update one document from CLJS query/update maps and return decoded counts.
 
-   `options` accepts :upsert, :write-concern, and :case-insensitive?. Native
-   Mongo option names and result objects never escape this adapter."
+   `options` accepts :upsert, :write-concern, :case-insensitive?, and a
+   :bson-date-fields set. Fields in that set must carry valid epoch-millisecond
+   scalars and are encoded as native Dates only here. Native Mongo option
+   names, Date values, and result objects never escape this adapter."
   ([collection-handle query update]
    (await (update-one-native! nil collection-handle query update {})))
   ([collection-handle query update options]

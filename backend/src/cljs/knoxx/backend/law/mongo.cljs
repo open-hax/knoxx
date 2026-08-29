@@ -64,6 +64,29 @@
   (and (keyword? field)
        (not (str/starts-with? (name field) "$"))))
 
+(defn- mutation-field-name [field]
+  (cond
+    (keyword? field) (name field)
+    (string? field) field
+    :else nil))
+
+(def MutationDateFields
+  "The nonempty set of mutation fields whose epoch-millisecond values the
+   Mongo extern must encode as BSON Dates.
+
+   Field names remain CLJS keywords or strings upstream. Dollar-prefixed names
+   are operators, not document fields, and are refused here."
+  [:and
+   [:set [:or keyword? string?]]
+   [:fn {:error/message "must name at least one ordinary mutation field"}
+    (fn [fields]
+      (and (seq fields)
+           (every? (fn [field]
+                     (let [field-name (mutation-field-name field)]
+                       (and (not (str/blank? field-name))
+                            (not (str/starts-with? field-name "$")))))
+                   fields)))]])
+
 (declare mutation-query-shape?)
 
 (defn- field-condition? [condition]
@@ -153,3 +176,26 @@
   "Whether update is an admissible nonempty mutation document."
   [update]
   (m/validate MutationUpdate update))
+
+(defn valid-mutation-date-encoding?
+  "Whether every declared BSON Date field exists in update and contains a
+   valid epoch-millisecond scalar.
+
+   Nil means no Date encoding was requested. Requiring every declared field to
+   exist makes a misspelled field fail closed instead of silently persisting a
+   number where a BSON Date was intended."
+  [update fields]
+  (or
+   (nil? fields)
+   (and
+    (m/validate MutationDateFields fields)
+    (every?
+     (fn [field]
+       (let [target (mutation-field-name field)
+             values (for [[_ assignments] update
+                          [candidate value] assignments
+                          :when (= target (mutation-field-name candidate))]
+                      value)]
+         (and (seq values)
+              (every? valid-epoch-ms? values))))
+     fields))))
