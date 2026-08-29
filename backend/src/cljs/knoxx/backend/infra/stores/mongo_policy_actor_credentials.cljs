@@ -33,6 +33,8 @@
 
 (def ACTOR_CREDENTIALS_COLLECTION "knoxx_actor_credentials")
 (def ^:private MEMBERSHIPS_COLLECTION "knoxx_memberships")
+(def ^:private RECONCILIATION_LOCKS_COLLECTION "knoxx_policy_reconciliation_locks")
+(def ^:private CASE_INSENSITIVE_COLLATION #js {:locale "en" :strength 2})
 
 (defn- credentials-coll [db] (.collection db ACTOR_CREDENTIALS_COLLECTION))
 
@@ -308,42 +310,155 @@
                                        "system_instance_id" (system-instance/current-id)}}))
    nil))
 
-(defn ^:async deactivate-other-bootstrap-local-passwords!
-  "Deactivate bootstrap-managed local passwords that belong to an earlier
-   configured bootstrap identity.
+(defn- canonical-account-identifiers
+  [account-identifiers]
+  (->> account-identifiers
+       (map #(some-> % str str/trim str/lower-case))
+       (remove str/blank?)
+       distinct
+       vec))
 
-   Newly written credentials carry an explicit bootstrap marker. Credentials
-   created before that marker are identified by explicitly configured prior
-   account identifiers. Those identifiers live on the credential itself, so
-   later user and actor projections cannot erase the migration signal."
-  ([current-user-id]
-   (deactivate-other-bootstrap-local-passwords!
-    (mongo-client/get-db) current-user-id []))
-  ([db current-user-id]
-   (deactivate-other-bootstrap-local-passwords! db current-user-id []))
-  ([db current-user-id previous-account-identifiers]
-   (let [current-id (some-> current-user-id str str/trim)]
-     (when-not (mongo-law/valid-identifier? current-id)
-       (throw (js/Error. "current-user-id is required before bootstrap credential reconciliation")))
-     (let [legacy-account-identifiers
-           (->> previous-account-identifiers
-                (map #(some-> % str str/trim str/lower-case))
-                (remove str/blank?)
-                distinct
-                vec)
-           managed-identity-clauses
-           (cond-> [#js {"secret_json.bootstrap-system-admin" true}]
-             (seq legacy-account-identifiers)
-             (conj #js {"account_identifier"
-                        #js {"$in" (clj->js legacy-account-identifiers)}}))]
-       (await (.updateMany
-               (credentials-coll db)
-               #js {"provider" "local"
-                    "kind" "password"
-                    "status" "active"
-                    "user_id" #js {"$ne" current-id}
-                    "$or" (clj->js managed-identity-clauses)}
-               #js {"$set" #js {"status" "inactive"
-                                 "updated_at" (js/Date.)
-                                 "system_instance_id" (system-instance/current-id)}}))
-       nil))))
+(defn- managed-bootstrap-query
+  [org-id account-identifiers]
+  (cond-> {:org_id org-id
+           :provider "local"
+           :kind "password"
+           :status "active"
+           :$or [{:secret_json.bootstrap-system-admin true}]}
+    (seq account-identifiers)
+    (update :$or conj {:account_identifier {:$in account-identifiers}})))
+
+(defn- bootstrap-reconciliation-context
+  [{:keys [user-id org-id account-identifier
+           previous-account-identifiers secret-json]}]
+  (let [current-id (some-> user-id str str/trim)
+        current-org (some-> org-id str str/trim)
+        current-account (some-> account-identifier str str/trim str/lower-case)]
+    (when-not (mongo-law/valid-identifier? current-id)
+      (throw (js/Error. "user-id is required before bootstrap credential reconciliation")))
+    (when-not (mongo-law/valid-identifier? current-org)
+      (throw (js/Error. "org-id is required before bootstrap credential reconciliation")))
+    (when-not (mongo-law/valid-identifier? current-account)
+      (throw (js/Error. "account-identifier is required before bootstrap credential reconciliation")))
+    (let [previous-accounts (canonical-account-identifiers previous-account-identifiers)]
+      {:current-id current-id
+       :current-org current-org
+       :current-account current-account
+       :managed-accounts (cond-> previous-accounts
+                           (nil? secret-json) (conj current-account))
+       :secret-json secret-json})))
+
+(defn- reconciliation-lock-id [org-id]
+  (str "bootstrap-system-admin-local-password:" org-id))
+
+(defn- ^:async ensure-reconciliation-lock!
+  "Create the intrinsic-unique lock before entering a transaction.
+
+   Concurrent first-use upserts can race on `_id`; the loser may receive a
+   duplicate-key error after the winner commits, which still proves the lock
+   exists and is safe to use."
+  [db org-id]
+  (try
+    (await (.updateOne
+            (.collection db RECONCILIATION_LOCKS_COLLECTION)
+            #js {:_id (reconciliation-lock-id org-id)}
+            #js {:$setOnInsert #js {:created_at (js/Date.)}}
+            #js {:upsert true
+                 :writeConcern #js {:w "majority"}}))
+    (catch :default err
+      (when-not (= 11000 (.-code err))
+        (throw err)))))
+
+(defn- ^:async lock-reconciliation!
+  [locks org-id now session]
+  (let [result (await (.updateOne
+                       locks
+                       #js {:_id (reconciliation-lock-id org-id)}
+                       #js {:$set #js {:updated_at now
+                                       :system_instance_id (system-instance/current-id)}}
+                       #js {:session session}))]
+    (when-not (= 1 (.-matchedCount result))
+      (throw (js/Error. "bootstrap reconciliation lock disappeared before transaction")))
+    result))
+
+(defn- ^:async deactivate-managed-credentials!
+  [credentials managed-query current-id now session]
+  (await (.updateMany
+          credentials
+          (clj->js (assoc managed-query :user_id {:$ne current-id}))
+          #js {:$set #js {:status "inactive"
+                          :updated_at now
+                          :system_instance_id (system-instance/current-id)}}
+          #js {:session session
+               :collation CASE_INSENSITIVE_COLLATION})))
+
+(defn- ^:async upsert-bootstrap-credential!
+  [credentials {:keys [current-id current-org current-account secret-json]}
+   now session]
+  (await (.updateOne
+          credentials
+          #js {:user_id current-id
+               :org_id current-org
+               :provider "local"
+               :kind "password"}
+          #js {:$set (clj->js {:account_identifier current-account
+                               :secret_json secret-json
+                               :status "active"
+                               :updated_at now
+                               :system_instance_id (system-instance/current-id)})
+               :$setOnInsert (clj->js {:credential_id (str (random-uuid))
+                                       :created_at now})}
+          #js {:upsert true :session session})))
+
+(defn- ^:async revoke-managed-credentials!
+  [credentials managed-query now session]
+  (await (.updateMany
+          credentials
+          (clj->js managed-query)
+          #js {:$set #js {:status "inactive"
+                          :updated_at now
+                          :system_instance_id (system-instance/current-id)}}
+          #js {:session session
+               :collation CASE_INSENSITIVE_COLLATION})))
+
+(defn- ^:async reconcile-bootstrap-transaction!
+  [db {:keys [current-id current-org managed-accounts secret-json] :as context}
+   session]
+  (let [credentials (credentials-coll db)
+        locks (.collection db RECONCILIATION_LOCKS_COLLECTION)
+        now (js/Date.)
+        managed-query (managed-bootstrap-query current-org managed-accounts)]
+    (await (lock-reconciliation! locks current-org now session))
+    (if (some? secret-json)
+      (do
+        (await (deactivate-managed-credentials!
+                credentials managed-query current-id now session))
+        (await (upsert-bootstrap-credential! credentials context now session)))
+      (await (revoke-managed-credentials!
+              credentials managed-query now session)))
+    nil))
+
+(defn ^:async reconcile-bootstrap-local-password!
+  "Atomically replace or revoke the bootstrap system-admin password.
+
+   Every reconciliation transaction first writes the same per-org lock
+   document. Mongo write-conflict retries therefore serialize two processes
+   that start with different bootstrap identities. Deactivation and replacement
+   then commit together: an upsert failure rolls the deactivation back, and no
+   observer can see the intermediate zero-credential state.
+
+   Credentials written before the bootstrap marker are selected only through
+   explicit account identifiers owned by the credential itself, so later actor
+   projection cannot erase the migration signal. A nil `secret-json` means the
+   configured bootstrap password is blank and all managed identities are
+   revoked in the same serialized transaction."
+  ([db opts]
+   (reconcile-bootstrap-local-password! db opts mongo-client/with-transaction!))
+  ([db opts with-transaction!]
+   (let [{:keys [current-org] :as context}
+         (bootstrap-reconciliation-context opts)]
+     (await (ensure-reconciliation-lock! db current-org))
+     (await
+      (with-transaction!
+        (^:async fn [session]
+          (await (reconcile-bootstrap-transaction! db context session))))))))

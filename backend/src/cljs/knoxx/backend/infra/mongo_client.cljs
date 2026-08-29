@@ -69,6 +69,29 @@
   []
   @mongo-client*)
 
+(defn ^:async with-transaction!
+  "Run `f` in a Mongo transaction and always close its session.
+
+   Knoxx's Mongo deployment contract is a replica set. Keeping transaction
+   setup here gives stores one boundary for majority write concern, driver
+   retries, and session cleanup instead of reimplementing raw driver lifecycle
+   at each call site."
+  ([f]
+   (with-transaction! (get-client) f))
+  ([client f]
+   (when-not client
+     (throw (js/Error. "Mongo client is required for a transaction")))
+   (let [session (.startSession client)]
+     (try
+       (await (.withTransaction
+               session
+               (^:async fn []
+                 (await (f session)))
+               #js {:readConcern #js {:level "snapshot"}
+                    :writeConcern #js {:w "majority"}}))
+       (finally
+         (await (.endSession session)))))))
+
 (defn ^:async close-mongo!
   "Close MongoDB connection."
   []

@@ -124,7 +124,10 @@ in `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PREVIOUS_EMAILS` for the first restart so
 credentials created before Knoxx recorded bootstrap markers are also revoked.
 The documented default `system-admin@open-hax.local` is included automatically.
 Later rotations use the durable marker, and retaining the previous-email list is
-safe and idempotent.
+safe and idempotent. Rotation and revocation are serialized per organization
+and committed as one Mongo replica-set transaction, so a failed replacement
+leaves the prior administrator credential active.
+
 Ordinary `/signup` users remain `basic-user`; this bootstrap does not weaken
 self-signup or infer admin rights from arbitrary email/password logins.
 

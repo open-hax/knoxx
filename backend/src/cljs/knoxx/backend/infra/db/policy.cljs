@@ -700,14 +700,11 @@
   ([db primary-org bootstrap opts]
    (ensure-bootstrap-local-password!
     db primary-org bootstrap opts
-    {:deactivate-credential! mongo-actor-creds/deactivate-actor-credential!
-     :deactivate-other-bootstrap-credentials!
-     mongo-actor-creds/deactivate-other-bootstrap-local-passwords!
-     :encode-password password/hash-password
-     :upsert-credential! mongo-actor-creds/upsert-actor-credential!}))
+    {:encode-password password/hash-password
+     :reconcile-bootstrap-credential!
+     mongo-actor-creds/reconcile-bootstrap-local-password!}))
   ([db primary-org bootstrap opts
-    {:keys [deactivate-credential! deactivate-other-bootstrap-credentials!
-            encode-password upsert-credential!]}]
+    {:keys [encode-password reconcile-bootstrap-credential!]}]
    (let [configured-password (some-> (or (:bootstrapSystemAdminPassword opts)
                                          (:bootstrap-system-admin-password opts))
                                      str not-empty)
@@ -715,16 +712,14 @@
          user-email (get-in bootstrap [:user :email])
          org-id (:id primary-org)
          previous-emails (previous-bootstrap-system-admin-emails opts user-email)]
-     (await (deactivate-other-bootstrap-credentials! db user-id previous-emails))
-     (if configured-password
-       (await (upsert-credential!
-               db user-id org-id "local"
-               {:kind "password"
-                :account-identifier (get-in bootstrap [:user :email])
-                :secret-json (assoc (encode-password configured-password)
-                                    :bootstrap-system-admin true)
-                :status "active"}))
-       (await (deactivate-credential! db user-id org-id "local" "password")))
+     (await (reconcile-bootstrap-credential!
+             db {:user-id user-id
+                 :org-id org-id
+                 :account-identifier user-email
+                 :previous-account-identifiers previous-emails
+                 :secret-json (when configured-password
+                                (assoc (encode-password configured-password)
+                                       :bootstrap-system-admin true))}))
      nil)))
 
 ;; ---------------------------------------------------------------------------

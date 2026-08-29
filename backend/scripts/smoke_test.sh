@@ -12,6 +12,7 @@ MODEL="${KNOXX_SMOKE_MODEL:-${PROXX_DEFAULT_MODEL:-glm-5}}"
 API_KEY="${KNOXX_API_KEY:-}"
 OPENAI_API_KEY="${MODEL_LAB_OPENAI_API_KEY:-}"
 TMP_DIR="$(mktemp -d)"
+LOOPBACK_HTTP=0
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -21,6 +22,20 @@ trap cleanup EXIT
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl is required" >&2
   exit 1
+fi
+
+normalized_base_url="$(printf '%s' "$BASE_URL" | tr '[:upper:]' '[:lower:]')"
+if [[ "$normalized_base_url" =~ ^http://localhost(:[0-9]+)?(/|$) ]] \
+  || [[ "$normalized_base_url" =~ ^http://127\.0\.0\.1(:[0-9]+)?(/|$) ]] \
+  || [[ "$normalized_base_url" =~ ^http://\[::1\](:[0-9]+)?(/|$) ]]; then
+  LOOPBACK_HTTP=1
+fi
+
+if [[ -n "$API_KEY" || -n "$OPENAI_API_KEY" ]]; then
+  if [[ ! "$normalized_base_url" =~ ^https:// ]] && [[ "$LOOPBACK_HTTP" != "1" ]]; then
+    echo "Refusing to send Knoxx smoke-test credentials over non-loopback HTTP; use HTTPS or a loopback BASE_URL." >&2
+    exit 1
+  fi
 fi
 
 pretty_body() {
@@ -47,6 +62,11 @@ request() {
   local err="$TMP_DIR/$(echo "$label" | tr -cs '[:alnum:]' '_').err"
   local url="${BASE_URL%/}${path}"
   local -a args=(-sS -o "$out" -w '%{http_code}' -X "$method" "$url" -H 'Accept: application/json')
+
+  if [[ "$LOOPBACK_HTTP" == "1" ]]; then
+    # Never let http_proxy/ALL_PROXY redirect loopback credentials off-host.
+    args+=(--noproxy '*')
+  fi
 
   if [[ -n "$API_KEY" ]]; then
     args+=(-H "X-API-Key: $API_KEY")
