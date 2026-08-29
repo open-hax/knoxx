@@ -9,7 +9,8 @@
   publication would be *observable* rather than assumed away. The store honours
   the same atomic reservation contract production must: a single swap claims the
   key, with no await between reading it and claiming it."
-  (:require [knoxx.backend.infra.publication-effects :as effects]
+  (:require [knoxx.backend.domain.publication-plan :as plan]
+            [knoxx.backend.infra.publication-effects :as effects]
             [knoxx.backend.law.publication-receipts :as law]))
 
 (defn memory-store
@@ -34,17 +35,23 @@
   (let [intent (:intent op)
         path (:publication/path intent)
         revision (:concrete-revision op)]
-    {:receipt/type :publication/materialized
-     :publication/id (:publication/id intent)
-     :adapter/id adapter-id
-     :idempotency/key (:idempotency/key op)
-     :document/id (:publication/document intent)
-     :target (:publication/garden intent)
-     :locale (:publication/locale intent)
-     :revision revision
-     :path path
-     :materialized/revision revision
-     :materialized/path path}))
+    ;; The drift keys come from `plan/desired-materialization` rather than being
+    ;; spelled again here. Three places independently computed "the materialized
+    ;; facts" — the planner's desired state, this adapter's receipt, and the
+    ;; static-site target's observation — so a key added to one drifted silently
+    ;; against the others and convergence compared maps that could never be
+    ;; equal. Reusing the planner's own function means this adapter cannot
+    ;; disagree with the thing that will compare against it.
+    (merge {:receipt/type :publication/materialized
+            :publication/id (:publication/id intent)
+            :adapter/id adapter-id
+            :idempotency/key (:idempotency/key op)
+            :document/id (:publication/document intent)
+            :target (:publication/garden intent)
+            :locale (:publication/locale intent)
+            :revision revision
+            :path path}
+           (plan/desired-materialization intent revision))))
 
 (defn- route-for
   "Observation keyed by publication IDENTITY, not by the desired path. Keying on

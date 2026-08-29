@@ -76,6 +76,10 @@
    [:receipt/type [:= :publication/materialized]]
    [:materialized/revision publication/ConcreteRevision]
    [:materialized/path publication/PublicationPath]
+   ;; Optional and maybe-nil: a receipt predating titles has none, and a
+   ;; document may legitimately carry a blank one. Required here would make
+   ;; every historical receipt unreadable.
+   [:materialized/title {:optional true} [:maybe :string]]
    [:idempotency/key publication/NonBlankString]])
 
 (def RemovedReceipt

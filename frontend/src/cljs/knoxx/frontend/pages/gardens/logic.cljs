@@ -48,32 +48,34 @@
                  vec)})
          gardens)})
 
+(defn- noop-summary
+  "Distinguish convergence from a reasoned refusal to publish."
+  [reason]
+  (case reason
+    "publication-not-public"
+    "Not published: the contract does not ask for this to be public."
+    "garden-not-active"
+    "Not published: the garden is not active."
+    nil "Already published at this revision; nothing changed."
+    (str "Nothing was done: " reason ".")))
+
+(defn- blocked-summary [blockers]
+  (str "Blocked: "
+       (if-let [values (seq blockers)]
+         (str/join ", " values)
+         "the plan is not admissible")))
+
 (defn receipt-summary
-  "One line describing what a reconciliation receipt says happened.
-
-   Matched against the FULL wire value, not its name. `send-result!` encodes
-   keyword values through `shape.resource-identity/encode-wire-values`, which
-   renders them `namespace/name` precisely so identity survives JSON — while
-   `clj->js` strips the namespace from map KEYS, which is why the key is
-   `:type` and the value is \"publication/materialized\". Matching on the name
-   alone would collapse distinct namespaces onto one branch, which is the thing
-   that encoding exists to prevent.
-
-   A receipt with no recognized type reports as recorded rather than as
-   success: the reconciler emits a receipt for a blocked or failed plan too,
-   and calling those success would be the UI lying on the reconciler's behalf."
+  "Describe one full namespaced receipt wire type without inventing success."
   [receipt]
   (case (:type receipt)
     "publication/materialized" "Published."
-    "publication/noop" "Already published at this revision; nothing changed."
+    "publication/noop" (noop-summary (:reason receipt))
     "publication/removed" "Withdrawn from publication."
-    "publication/blocked" (str "Blocked: "
-                               (if-let [bs (seq (:blockers receipt))]
-                                 (str/join ", " bs)
-                                 "the plan is not admissible"))
+    "publication/blocked" (blocked-summary (:blockers receipt))
     "publication/failed" "Reconciliation failed; see the receipt journal."
     (str "Reconciliation recorded"
-         (when-let [t (:type receipt)] (str ": " t))
+         (when-let [receipt-type (:type receipt)] (str ": " receipt-type))
          ".")))
 
 (defn placement-published?
@@ -96,7 +98,53 @@
    case is far likelier to be one of those than a success nobody named."
   [receipt]
   (case (:type receipt)
-    ("publication/materialized" "publication/noop" "publication/removed") :success
+    ("publication/materialized" "publication/removed") :success
+    ;; A noop is a success only when it means "already converged", which
+    ;; `converge` signals by emitting NO reason. A noop carrying one came from
+    ;; `takedown` — the contract does not ask for this to be public, or the
+    ;; garden is not active — and those are refusals to publish. Painting them
+    ;; emerald tells a reviewer their content is live when the planner has
+    ;; declined to make it so.
+    "publication/noop" (if (:reason receipt) :warning :success)
     "publication/blocked" :warning
     "publication/failed" :error
     :warning))
+
+(defn publishable-placements
+  "The placements a publish-all run would attempt, in listed order."
+  [garden]
+  (filterv placement-published? (:placements garden)))
+
+(defn run-summary
+  "One line for a completed publish-all run, counted by what actually happened.
+
+   Counts by outcome rather than reporting only successes, because most of a
+   garden is usually NOT publishable yet — a locale awaiting translation or
+   approval answers `blocked`, and a run that mentioned only what it published
+   would read as though the rest had quietly worked."
+  [receipts]
+  (let [published (count (filter #(= "publication/materialized" (:type %)) receipts))
+        converged (count (filter #(and (= "publication/noop" (:type %))
+                                       (nil? (:reason %)))
+                                 receipts))
+        blocked (count (filter #(= "publication/blocked" (:type %)) receipts))
+        failed (count (filter #(= "publication/failed" (:type %)) receipts))
+        other (- (count receipts) published converged blocked failed)]
+    (str/join ", "
+              (cond-> []
+                (pos? published) (conj (str published " published"))
+                (pos? converged) (conj (str converged " already current"))
+                (pos? blocked) (conj (str blocked " blocked"))
+                (pos? failed) (conj (str failed " failed"))
+                (pos? other) (conj (str other " not published"))
+                (empty? receipts) (conj "nothing to publish")
+                true (conj (str "(" (count receipts) " attempted)"))))))
+
+(defn run-tone
+  "The worst tone in a run. A single failure must not be hidden behind a
+   majority of successes."
+  [receipts]
+  (let [tones (set (map receipt-tone receipts))]
+    (cond (contains? tones :error) :error
+          (contains? tones :warning) :warning
+          :else :success)))

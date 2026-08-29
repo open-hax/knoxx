@@ -56,30 +56,46 @@
                        :class-name "text-sm font-medium text-cyan-300 hover:text-cyan-200"}
                       "Open published page ↗")))))
 
-(defnc garden-card [{:keys [garden publishing on-publish]}]
-  (let [{:keys [id title status locales placements]} garden]
-    ($ ui/card {:variant :elevated :padding :md}
-       (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
-              (d/div
-               (d/h2 {:class-name "text-lg font-semibold"} title)
-               (d/p {:class-name "mt-1 font-mono text-xs text-slate-500"} id))
-              (status-pill status))
-       (d/div {:class-name "mt-4"}
-              (d/p {:class-name "mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500"}
-                   "Contract locale catalog")
-              (locale-pills locales))
-       (d/div {:class-name "mt-5"}
-              (d/p {:class-name "mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500"}
-                   "Publication placements")
-              (if (seq placements)
-                (d/ul {:class-name "space-y-2"}
-                      (for [placement placements]
-                        ($ placement-row {:key (:id placement)
-                                          :placement placement
-                                          :publishing publishing
-                                          :on-publish on-publish})))
-                (d/p {:class-name "text-sm text-slate-500"}
-                     "No publication intents target this Garden."))))))
+(defn- publish-all-button [garden publishing on-publish-all]
+  (when-let [placements (seq (logic/publishable-placements garden))]
+    ($ ui/button {:size :sm
+                  :variant :primary
+                  :disabled (some? publishing)
+                  :on-click #(on-publish-all garden)}
+       (str "Publish all (" (count placements) ")"))))
+
+(defn- garden-card-header [garden publishing on-publish-all]
+  (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
+         (d/div
+          (d/h2 {:class-name "text-lg font-semibold"} (:title garden))
+          (d/p {:class-name "mt-1 font-mono text-xs text-slate-500"}
+               (:id garden)))
+         (d/div {:class-name "flex items-center gap-3"}
+                (publish-all-button garden publishing on-publish-all)
+                (status-pill (:status garden)))))
+
+(defn- garden-placement-list [placements publishing on-publish]
+  (if (seq placements)
+    (d/ul {:class-name "space-y-2"}
+          (for [placement placements]
+            ($ placement-row {:key (:id placement)
+                              :placement placement
+                              :publishing publishing
+                              :on-publish on-publish})))
+    (d/p {:class-name "text-sm text-slate-500"}
+         "No publication intents target this Garden.")))
+
+(defnc garden-card [{:keys [garden publishing on-publish on-publish-all]}]
+  ($ ui/card {:variant :elevated :padding :md}
+     (garden-card-header garden publishing on-publish-all)
+     (d/div {:class-name "mt-4"}
+            (d/p {:class-name "mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500"}
+                 "Contract locale catalog")
+            (locale-pills (:locales garden)))
+     (d/div {:class-name "mt-5"}
+            (d/p {:class-name "mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500"}
+                 "Publication placements")
+            (garden-placement-list (:placements garden) publishing on-publish))))
 
 (defn- error-banner [error]
   (d/div {:class-name "rounded-lg border border-red-900/40 bg-red-950/30 p-4 text-sm text-red-300"}
@@ -99,37 +115,110 @@
                            (get tone-classes tone (:warning tone-classes)))}
          notice))
 
-(defnc gardens-body [{:keys [deployment loading error notice notice-tone publishing on-publish]}]
+(defn- gardens-header [site-url]
+  (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
+         (d/div
+          (d/h1 {:class-name "text-2xl font-bold"} "Deployed Gardens")
+          (d/p {:class-name "mt-1 max-w-3xl text-sm text-slate-500"}
+               "Garden contracts own identity and languages. Publication contracts own placement. Content and Puck view contracts are reviewed independently."))
+         (d/div {:class-name "flex gap-2"}
+                (d/a {:href "/cms"
+                      :class-name "rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-200 hover:border-slate-500"}
+                     "Review content & layout")
+                (when (seq site-url)
+                  (d/a {:href site-url :target "_blank" :rel "noreferrer"
+                        :class-name "rounded-lg bg-cyan-700 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-600"}
+                       "Open website ↗")))))
+
+(defn- gardens-grid [gardens publishing on-publish on-publish-all]
+  (d/div {:class-name "grid gap-4"}
+         (for [garden gardens]
+           ($ garden-card {:key (:id garden)
+                           :garden garden
+                           :publishing publishing
+                           :on-publish on-publish
+                           :on-publish-all on-publish-all}))))
+
+(defnc gardens-body [{:keys [deployment loading error notice notice-tone
+                             publishing on-publish on-publish-all]}]
   (let [{:keys [site-url gardens]} deployment]
     (d/div {:class-name "space-y-4"}
-           (d/div {:class-name "flex flex-wrap items-start justify-between gap-3"}
-                  (d/div
-                   (d/h1 {:class-name "text-2xl font-bold"} "Deployed Gardens")
-                   (d/p {:class-name "mt-1 max-w-3xl text-sm text-slate-500"}
-                        "Garden contracts own identity and languages. Publication contracts own placement. Content and Puck view contracts are reviewed independently."))
-                  (d/div {:class-name "flex gap-2"}
-                         (d/a {:href "/cms"
-                               :class-name "rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-200 hover:border-slate-500"}
-                              "Review content & layout")
-                         (when (seq site-url)
-                           (d/a {:href site-url :target "_blank" :rel "noreferrer"
-                                 :class-name "rounded-lg bg-cyan-700 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-600"}
-                                "Open website ↗"))))
+           (gardens-header site-url)
            (when loading
              ($ ui/card {:padding :md}
-                (d/div {:class-name "text-sm text-slate-500"} "Loading deployed Garden contracts...")))
+                (d/div {:class-name "text-sm text-slate-500"}
+                       "Loading deployed Garden contracts...")))
            (when error (error-banner error))
            (when notice (notice-banner notice notice-tone))
            (when (and (not loading) (empty? gardens) (nil? error))
              ($ ui/card {:padding :lg}
                 (d/p {:class-name "text-center text-slate-500"}
                      "No deployed Garden contracts were found.")))
-           (d/div {:class-name "grid gap-4"}
-                  (for [garden gardens]
-                    ($ garden-card {:key (:id garden)
-                                    :garden garden
-                                    :publishing publishing
-                                    :on-publish on-publish}))))))
+           (gardens-grid gardens publishing on-publish on-publish-all))))
+
+(defn- error-message [err]
+  (or (ex-message err) (str err)))
+
+(defn- ^:async load-deployment!
+  [{:keys [set-deployment! set-error! set-loading!]}]
+  (try
+    (set-deployment! (await (api/load-deployment!)))
+    (catch :default err
+      (set-error! (error-message err)))
+    (finally
+      (set-loading! false))))
+
+(defn- set-receipt-notice!
+  [publication-id receipt {:keys [set-notice! set-notice-tone!]}]
+  (set-notice-tone! (logic/receipt-tone receipt))
+  (set-notice! (str publication-id " — " (logic/receipt-summary receipt))))
+
+(defn- ^:async publish-placement!
+  [publication-id {:keys [load! set-error! set-notice! set-publishing!] :as actions}]
+  (set-publishing! publication-id)
+  (set-error! nil)
+  (set-notice! nil)
+  (try
+    (set-receipt-notice! publication-id
+                         (await (api/reconcile-publication! publication-id))
+                         actions)
+    (await (load!))
+    (catch :default err
+      (set-error! (str publication-id " — " (error-message err))))
+    (finally
+      (set-publishing! nil))))
+
+(defn- ^:async reconcile-placement! [placement set-publishing!]
+  (set-publishing! (:id placement))
+  (try
+    (await (api/reconcile-publication! (:id placement)))
+    (catch :default err
+      {:type "publication/failed" :reason (error-message err)})))
+
+(defn- ^:async reconcile-placements! [placements set-publishing!]
+  (loop [[placement & remaining] placements
+         receipts []]
+    (if placement
+      (recur remaining
+             (conj receipts (await (reconcile-placement! placement set-publishing!))))
+      receipts)))
+
+(defn- ^:async publish-garden!
+  [garden {:keys [load! set-error! set-notice! set-notice-tone!
+                  set-publishing!]}]
+  (set-error! nil)
+  (set-notice! nil)
+  (try
+    (let [receipts (await (reconcile-placements!
+                           (logic/publishable-placements garden)
+                           set-publishing!))]
+      (set-notice-tone! (logic/run-tone receipts))
+      (set-notice! (str (:title garden) " — " (logic/run-summary receipts)))
+      (await (load!)))
+    (catch :default err
+      (set-error! (error-message err)))
+    (finally
+      (set-publishing! nil))))
 
 (defnc gardens-page []
   (let [[deployment set-deployment!] (hooks/use-state nil)
@@ -137,34 +226,16 @@
         [error set-error!] (hooks/use-state nil)
         [notice set-notice!] (hooks/use-state nil)
         [notice-tone set-notice-tone!] (hooks/use-state :success)
-        ;; The publication id in flight, or nil. One at a time: reconciliation
-        ;; writes an artifact and renames a shared manifest, and two concurrent
-        ;; demands from one reviewer is a race this UI has no reason to create.
         [publishing set-publishing!] (hooks/use-state nil)
-        load! (fn [] (-> (api/load-deployment!)
-                         (.then set-deployment!)
-                         (.catch (fn [^js err]
-                                   (set-error! (or (.-message err) (str err)))))
-                         (.finally #(set-loading! false))))
-        on-publish
-        (fn [publication-id]
-          (set-publishing! publication-id)
-          (set-error! nil)
-          (set-notice! nil)
-          (-> (api/reconcile-publication! publication-id)
-              (.then (fn [receipt]
-                       (set-notice-tone! (logic/receipt-tone receipt))
-                       (set-notice! (str publication-id " \u2014 "
-                                         (logic/receipt-summary receipt)))
-                       ;; Re-read: a publish can change what the projection
-                       ;; reports, and a stale card is how a reviewer comes to
-                       ;; believe a second click is needed.
-                       (load!)))
-              (.catch (fn [^js err]
-                        (set-error! (str publication-id " \u2014 "
-                                         (or (.-message err) (str err))))))
-              (.finally #(set-publishing! nil))))]
+        load-actions {:set-deployment! set-deployment! :set-error! set-error!
+                      :set-loading! set-loading!}
+        load! #(load-deployment! load-actions)
+        actions {:load! load! :set-error! set-error! :set-notice! set-notice!
+                 :set-notice-tone! set-notice-tone!
+                 :set-publishing! set-publishing!}]
     (hooks/use-effect [] (load!) nil)
     ($ gardens-body {:deployment deployment :loading loading :error error
                      :notice notice :notice-tone notice-tone
-                     :publishing publishing :on-publish on-publish})))
+                     :publishing publishing
+                     :on-publish #(publish-placement! % actions)
+                     :on-publish-all #(publish-garden! % actions)})))
