@@ -36,6 +36,32 @@ Define/verify contract tests for:
 - provider failure/error semantics;
 - read-after-write behavior where the contract promises it.
 
+### Provider-neutral conflict contract
+
+Every write/replace request carries a canonical resource identity, canonical validated
+payload, and an `expected-version` precondition. Providers must return the same semantic
+outcome and error shape:
+
+- creating an absent identity with no expected version returns `:created` and an opaque,
+  immutable version token;
+- retrying the same identity and canonically equal payload returns `:unchanged`, the
+  existing resource, and the same version without another write;
+- creating the same identity with a different payload returns
+  `{:error/type :resource/conflict :error/reason :identity-exists
+  :resource/id <identity> :expected-version nil :actual-version <version>}`;
+- replacing with the current version and a changed valid payload returns `:updated` and a
+  new version;
+- replacing with a stale or unknown version returns
+  `{:error/type :resource/conflict :error/reason :stale-version
+  :resource/id <identity> :expected-version <expected> :actual-version <actual>}` and
+  leaves bytes, semantic payload, provenance, and version unchanged;
+- replacing with the current version and an equal payload returns `:unchanged` with the
+  same version.
+
+Compatibility tests must assert the complete conflict data above, not only that an
+exception occurred. They must also re-read after every duplicate or conflict and prove
+that no authority changed.
+
 Run the same semantic suite against:
 
 1. an in-memory fake/reference implementation;
@@ -65,6 +91,8 @@ Do not require a browser page to prove repository health.
 - The repository compatibility suite fails for semantic contract violations regardless of
   provider implementation.
 - The file/EDN provider passes the same suite as the fake provider.
+- Exact duplicate retries are idempotent; identity collisions and stale-version writes
+  return the provider-neutral conflict shape and preserve the prior resource.
 - Production verification exercises the configured repository boundary unconditionally,
   rather than skipping because OpenPlanner REST is absent.
 - No test defines "CMS correctness" as the continued existence of legacy OpenPlanner

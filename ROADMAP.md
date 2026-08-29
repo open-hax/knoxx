@@ -2,7 +2,7 @@
 
 > Hub: **[eta-mu/ROADMAP.md](https://github.com/open-hax/eta-mu/blob/main/ROADMAP.md)** — read that for the seam, the ownership
 > table, and the sequencing rule. This file is only knoxx's slice.
-> Board: `kanban/{epics,tasks}/`. Last surveyed: 2026-08-04.
+> Board: `kanban/{epics,tasks}/`. Last surveyed: 2026-08-29.
 >
 > That link 404s until [eta-mu#167](https://github.com/open-hax/eta-mu/pull/167)
 > merges — the hub is written and on that branch, not yet on `main`. The path is
@@ -31,8 +31,10 @@ until the upstream criteria close.
 Everything achievable **without moving code**: become internally lawful and
 actor-aware, so extraction later is mechanical rather than archaeological.
 
-Epic: **`knoxx-decouple-into-katamorph-contracts`** (misleading name kept for
-card-link stability; scope is compliance, extraction is a listed non-goal).
+The compliance catch-all and the domain capability work are separate. Epic
+**`knoxx-decouple-into-katamorph-contracts`** keeps its misleading name for
+card-link stability, but owns only constitutional compliance; extraction is a
+listed non-goal.
 
 | Card | Why |
 |---|---|
@@ -40,12 +42,26 @@ card-link stability; scope is compliance, extraction is a listed non-goal).
 | `knoxx-mcp-actor-ascription` (P1) | Discord/Bluesky over MCP have **no owning actor**, so credentials throw. Fails safe, but those tools are non-functional remotely. |
 | `knoxx-deploy-actor-owning-local-credentials` (P1) | The above is useless in production without an actor that holds credentials. |
 | `knoxx-tool-namespace-boundary-audit` | Name each tool set's boundary before anything moves. |
-| `knoxx-translations-event-sourced` | Translations are a destructive upsert today. |
-| `knoxx-translation-pipeline-validation` | Never validated end to end; on the deploy health gate. |
-| `knoxx-cms-contract-validation` | Contracts never tested; deploy gate **skips** the CMS check every deploy. |
 | `knoxx-voice-tools-remote-transport` | Written for an owned realtime harness; MCP cannot steer. |
 | `knoxx-tool-vocabulary-rename` | "semantic" names a technique, not a subject. Do after the boundaries exist. |
 | `knoxx-mcp-consent-permission-groups` | **Blocked** on `eta-mu:capability-schema-reconciliation` — tool groups *are* capabilities. |
+
+### Parallel bounded capability work
+
+These epics may consume one another's immutable artifacts and receipts, but none owns
+another's semantics. In particular, candidate generation is not review, repository
+storage is not publication, and concrete layout/rendering is not content authority.
+
+| Capability epic | First bounded cards | Owns |
+|---|---|---|
+| **`knoxx-transduction-provider-pipeline`** (P1) | `knoxx-translation-transduction-boundary`, `knoxx-translation-pipeline-validation`, `knoxx-translations-event-sourced` | Typed candidate generation, provider policy, immutable attempts, and provenance. |
+| **`knoxx-evaluation-review-system`** (P1) | `knoxx-evaluation-case-contracts`, `knoxx-evaluation-mcp-review-flow`; UI adapter deferred | Rubrics, SME judgments/corrections, adjudication, and durable evaluation receipts. |
+| **`knoxx-resource-repository-cms`** (P2) | `knoxx-cms-contract-validation`, `knoxx-file-resource-repository-provider` | Provider-neutral resource identity, validation, versioned read/write/list behavior. |
+| **`knoxx-representation-output-boundary`** (P3) | `knoxx-react-ssr-representation-provider` | Conversion of resolved semantic/view artifacts into HTML, React, Markdown, PDF, or other concrete forms. |
+
+Publication remains an integration consumer: it resolves publication intent, requires
+the relevant evaluation evidence, selects representations, performs effects, and emits
+its own receipts without absorbing transduction, evaluation, repository, or layout law.
 
 ## Knoxx's position in the drift ledger
 

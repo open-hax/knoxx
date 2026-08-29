@@ -57,8 +57,11 @@ Explicitly **out of scope here**:
 ## Required proofs
 
 1. A source artifact with a concrete revision reaches the provider unchanged in identity.
-2. Provider selection/config resolves through the single Knoxx-owned authority produced by
-   the active publication/config stack.
+2. Provider selection/config resolves through Knoxx-owned
+   `resolved-translation-config!`, or an injected resolved-config artifact produced by
+   that boundary, without loading publication code. The proof succeeds with publication
+   namespaces and resources absent while still exercising the active configuration
+   authority.
 3. A successful provider result becomes a candidate bound to that exact source revision.
 4. A provider failure produces no successful candidate.
 5. A retry/retranslation preserves earlier attempt evidence instead of overwriting it.
@@ -73,6 +76,8 @@ Explicitly **out of scope here**:
 - The full translation candidate path runs with publication, review UI, and final renderer
   absent.
 - A fake provider can prove the contract without live model infrastructure.
+- Provider selection remains independently provable through the resolved translation
+  configuration boundary when the publication subsystem is absent.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - Failures distinguish source shaping, provider invocation, candidate validation,
   persistence, and read projection rather than collapsing into one pipeline failure.

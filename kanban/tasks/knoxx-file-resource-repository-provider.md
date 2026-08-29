@@ -21,12 +21,17 @@ files while consumers depend only on a repository boundary.
 ## Scope
 
 - Define the smallest provider-neutral operations required by current consumers: resolve
-  one, list/query, write/replace with validation, and explicit identity/version handling.
+  one, list/query, and validated write/replace with an `expected-version` precondition.
 - Reuse the existing namespace/resource EDN contract shape rather than introducing a
   second content language.
 - Keep filesystem/Git path details inside the provider implementation.
 - Validate writes before they become repository authority.
-- Define deterministic conflict behavior for duplicate resource identity.
+- Implement the conflict contract from `knoxx-cms-contract-validation`: an exact-payload
+  retry is `:unchanged` with the existing version; a different payload for an existing
+  identity is an `:identity-exists` conflict; and a replace whose expected version is not
+  current is a `:stale-version` conflict. Both conflicts return the canonical
+  `:resource/conflict` error data and leave the file, payload, provenance, and version
+  unchanged.
 - Preserve enough version/provenance information for downstream publication,
   transduction, and evaluation consumers to bind to immutable revisions where required.
 - Prove the boundary using an in-memory/fake provider plus the real file provider.
@@ -51,4 +56,6 @@ layout.
 - Canonical resource identities and validation behavior are provider-independent.
 - File-backed resources can be edited through a narrow write operation and immediately
   re-read through the same repository contract.
+- Fake and file providers return identical outcomes for create, equal retry, valid
+  compare-and-swap replace, identity collision, and stale replace.
 - No consumer needs to know a resource came from disk in order to use it.

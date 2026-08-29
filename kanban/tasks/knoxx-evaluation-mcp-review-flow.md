@@ -60,9 +60,12 @@ Use one deterministic translation segment fixture and a fake repository/receipt 
 3. Recording approval writes one receipt and leaves candidate evidence unchanged.
 4. Recording a correction preserves both original candidate and correction.
 5. Retrying the same receipt write is idempotent by receipt/event identity.
-6. A new candidate revision does not inherit the old receipt.
-7. The final query reports the case satisfied and returns the next pending case.
-8. The entire proof runs with the translation review frontend absent.
+6. Retrying that identity with any different judgment, correction, decision, artifact id,
+   or artifact version fails with `:evaluation/conflict`; the original immutable receipt
+   is returned by read-back unchanged and no second receipt is appended.
+7. A new candidate revision does not inherit the old receipt.
+8. The final query reports the case satisfied and returns the next pending case.
+9. The entire proof runs with the translation review frontend absent.
 
 ## Done when
 
