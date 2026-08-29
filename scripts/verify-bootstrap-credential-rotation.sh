@@ -10,12 +10,13 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER_ENTRY="${REPO_ROOT}/backend/dist/server.js"
 MONGO_URI="${KNOXX_BOOTSTRAP_VERIFY_MONGODB_URI:-${MONGODB_URI:-}}"
 RUN_ID="$(date -u +%Y%m%d%H%M%S)$$"
 ROTATION_DB="knoxx_bootstrap_verify_rotation_${RUN_ID}"
 FAILURE_DB="knoxx_bootstrap_verify_failure_${RUN_ID}"
 EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/knoxx-bootstrap-rotation.XXXXXX")"
+BUILD_ROOT="${EVIDENCE_DIR}/reviewed-checkout"
+SERVER_ENTRY="${BUILD_ROOT}/backend/dist/server.js"
 
 OLD_EMAIL="bootstrap-old-${RUN_ID}@open-hax.local"
 NEW_EMAIL="bootstrap-new-${RUN_ID}@open-hax.local"
@@ -119,7 +120,7 @@ start_server() {
   SERVER_PORT="$(free_port)"
   SERVER_LOG="${EVIDENCE_DIR}/${label}.log"
   (
-    cd "$REPO_ROOT" || exit 1
+    cd "$BUILD_ROOT" || exit 1
     exec env \
       NODE_ENV=production \
       HOST=127.0.0.1 \
@@ -137,7 +138,7 @@ start_server() {
       KNOXX_DISABLE_EVENT_RUNTIMES=true \
       KNOXX_SHUTDOWN_GRACE_MS=1000 \
       MCP_ENABLED=false \
-      CONTRACTS_DIR="$REPO_ROOT/contracts" \
+      CONTRACTS_DIR="$BUILD_ROOT/contracts" \
       node "$SERVER_ENTRY"
   ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
@@ -236,7 +237,7 @@ expect_count() {
 printf 'Knoxx bootstrap credential rotation — live verification\n'
 printf 'run id: %s\n' "$RUN_ID"
 
-for tool in bash curl git jq mongosh node pnpm; do
+for tool in bash curl git jq mongosh node pnpm tar; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: ${tool}"
 done
 [ -n "$MONGO_URI" ] \
@@ -249,6 +250,19 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)" ]; 
 fi
 printf 'reviewed head: %s\n' "$REVIEWED_HEAD"
 
+mkdir -p "$BUILD_ROOT" \
+  || die "cannot create private reviewed-checkout directory"
+if git -C "$REPO_ROOT" archive "$REVIEWED_HEAD" -- backend contracts shared \
+  | tar -x -C "$BUILD_ROOT"; then
+  pass "materialized reviewed head ${REVIEWED_HEAD} inside private build directory"
+else
+  die "could not materialize reviewed head ${REVIEWED_HEAD}"
+fi
+[ -d "$REPO_ROOT/backend/node_modules" ] \
+  || die 'backend/node_modules is missing; install the reviewed dependencies first'
+ln -s "$REPO_ROOT/backend/node_modules" "$BUILD_ROOT/backend/node_modules" \
+  || die 'could not link reviewed dependencies into the private build directory'
+
 if mongosh "$MONGO_URI" --quiet --eval '
   const hello = db.adminCommand({hello: 1});
   if (!(hello.setName || hello.msg === "isdbgrid")) quit(42);
@@ -258,8 +272,8 @@ else
   die 'Mongo deployment is standalone or unreachable; atomic verification requires transactions'
 fi
 
-if pnpm -C "$REPO_ROOT/backend" build >"${EVIDENCE_DIR}/build.log" 2>&1; then
-  pass "rebuilt backend/dist/server.js from reviewed head ${REVIEWED_HEAD}"
+if pnpm -C "$BUILD_ROOT/backend" build >"${EVIDENCE_DIR}/build.log" 2>&1; then
+  pass "rebuilt temporary backend/dist/server.js from reviewed head ${REVIEWED_HEAD}"
 else
   die "backend build failed: $(tail -n 12 "${EVIDENCE_DIR}/build.log" | tr '\n' ' ')"
 fi

@@ -187,3 +187,22 @@ test("bootstrap verifier tracks the Node server process directly", () => {
   assert.doesNotMatch(startServer, /^\s+env \\$/m);
   assert.match(startServer, /^\s+node "\$SERVER_ENTRY"$/m);
 });
+
+test("bootstrap verifier builds and runs only inside trapped evidence", () => {
+  const source = readFileSync(bootstrapVerifier, "utf8");
+
+  assert.match(source, /^BUILD_ROOT="\$\{EVIDENCE_DIR\}\/reviewed-checkout"$/m);
+  assert.match(source, /^SERVER_ENTRY="\$\{BUILD_ROOT\}\/backend\/dist\/server\.js"$/m);
+  assert.match(
+    source,
+    /git -C "\$REPO_ROOT" archive "\$REVIEWED_HEAD" -- backend contracts shared/,
+  );
+  assert.match(source, /pnpm -C "\$BUILD_ROOT\/backend" build/);
+  assert.doesNotMatch(source, /pnpm -C "\$REPO_ROOT\/backend" build/);
+
+  const cleanup = source.slice(
+    source.indexOf("cleanup()"),
+    source.indexOf("trap cleanup EXIT"),
+  );
+  assert.match(cleanup, /rm -rf "\$EVIDENCE_DIR"/);
+});

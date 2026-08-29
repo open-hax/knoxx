@@ -24,11 +24,13 @@ KNOXX_BOOTSTRAP_VERIFY_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0' \
   scripts/verify-bootstrap-credential-rotation.sh
 ```
 
-The script records `git rev-parse HEAD`, rebuilds the backend itself, and only
-then executes `backend/dist/server.js` beneath that checkout. A stale ignored
-bundle therefore cannot masquerade as evidence for the reviewed revision. It
-chooses fresh loopback ports and starts the process with production
-local-password policy, event runtimes disabled, and an isolated database name.
+The script records `git rev-parse HEAD`, archives exactly that revision into its
+private temporary directory, and rebuilds and executes
+`backend/dist/server.js` only inside that snapshot. A stale ignored bundle
+therefore cannot masquerade as evidence for the reviewed revision, and the
+verification build cannot overwrite or leave artifacts in the checkout. It
+chooses fresh loopback ports and starts the process with production local-
+password policy, event runtimes disabled, and an isolated database name.
 
 ## Evidence paths
 
@@ -45,9 +47,10 @@ The run demonstrates four externally distinguishable states:
    the prior credential still active and no active replacement. That is the
    rollback invariant—deactivation never commits by itself.
 
-HTTP bodies and server logs live only in a private temporary directory for the
-duration of the run. On success, failure, interrupt, or termination, the script
-stops its child process, drops only databases whose generated names match
+The archived source, build output, HTTP bodies, and server logs live only in a
+private temporary directory for the duration of the run. On success, failure,
+interrupt, or termination, the script stops its child process, drops only
+databases whose generated names match
 `knoxx_bootstrap_verify_rotation_*` or
 `knoxx_bootstrap_verify_failure_*`, and removes the temporary evidence.
 Every HTTP request disables user curl configuration and proxy routing so the
