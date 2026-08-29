@@ -28,10 +28,14 @@ function fakeCurlDir() {
 set -euo pipefail
 out=""
 route="proxyable"
+headers=()
 first_arg="\${1:-}"
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == "-o" ]]; then
     out="$2"
+    shift 2
+  elif [[ "$1" == "-H" ]]; then
+    headers+=("$2")
     shift 2
   elif [[ "$1" == "--noproxy" && "\${2:-}" == "*" ]]; then
     route="direct"
@@ -40,7 +44,8 @@ while [[ $# -gt 0 ]]; do
     shift
   fi
 done
-[[ -z "\${FAKE_CURL_CALL_FILE:-}" ]] || printf '%s\t%s\n' "$first_arg" "$route" >> "$FAKE_CURL_CALL_FILE"
+header_list="$(IFS='|'; printf '%s' "\${headers[*]}")"
+[[ -z "\${FAKE_CURL_CALL_FILE:-}" ]] || printf '%s\t%s\t%s\n' "$first_arg" "$route" "$header_list" >> "$FAKE_CURL_CALL_FILE"
 [[ -z "$out" ]] || printf '{}\n' > "$out"
 printf '200'
 `,
@@ -70,14 +75,19 @@ function runSmoke({ baseUrl, apiKey = "", bearer = "" }) {
           .trim()
           .split("\n")
           .map((line) => {
-            const [firstArg, route] = line.split("\t");
-            return { firstArg, route };
+            const [firstArg, route, headerList = ""] = line.split("\t");
+            return {
+              firstArg,
+              route,
+              headers: headerList === "" ? [] : headerList.split("|"),
+            };
           })
       : [];
     return Object.assign(result, {
       curlCalls: curlInvocations.length,
       curlRoutes: curlInvocations.map(({ route }) => route),
       curlFirstArgs: curlInvocations.map(({ firstArg }) => firstArg),
+      curlHeaders: curlInvocations.map(({ headers }) => headers),
     });
   } finally {
     rmSync(curlDir, { recursive: true, force: true });
@@ -126,6 +136,33 @@ test("allows credentialed HTTPS and exact loopback HTTP URLs", () => {
   }
 });
 
+test("keeps API and bearer credentials in their distinct headers", () => {
+  for (const credentials of [
+    { apiKey: "api-only", bearer: "" },
+    { apiKey: "", bearer: "bearer-only" },
+    { apiKey: "api-both", bearer: "bearer-both" },
+  ]) {
+    const result = runSmoke({
+      baseUrl: "https://knoxx.example",
+      ...credentials,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.curlHeaders.length > 0);
+    for (const headers of result.curlHeaders) {
+      assert.deepEqual(
+        headers.filter((header) => header.startsWith("X-API-Key: ")),
+        credentials.apiKey ? [`X-API-Key: ${credentials.apiKey}`] : [],
+      );
+      assert.deepEqual(
+        headers.filter((header) => header.startsWith("Authorization: ")),
+        credentials.bearer
+          ? [`Authorization: Bearer ${credentials.bearer}`]
+          : [],
+      );
+    }
+  }
+});
+
 test("bootstrap verifier disables curl config and proxies for every request", () => {
   const curlInvocations = readFileSync(bootstrapVerifier, "utf8")
     .split("\n")
@@ -137,4 +174,16 @@ test("bootstrap verifier disables curl config and proxies for every request", ()
     curlInvocations.every((line) => /^(?:if )?curl -q --noproxy '\*' /.test(line)),
     `unhardened curl invocation:\n${curlInvocations.join("\n")}`,
   );
+});
+
+test("bootstrap verifier tracks the Node server process directly", () => {
+  const source = readFileSync(bootstrapVerifier, "utf8");
+  const startServer = source.slice(
+    source.indexOf("start_server()"),
+    source.indexOf("wait_for_ready()"),
+  );
+
+  assert.match(startServer, /^\s+exec env \\$/m);
+  assert.doesNotMatch(startServer, /^\s+env \\$/m);
+  assert.match(startServer, /^\s+node "\$SERVER_ENTRY"$/m);
 });

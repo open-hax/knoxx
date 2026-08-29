@@ -120,7 +120,7 @@ start_server() {
   SERVER_LOG="${EVIDENCE_DIR}/${label}.log"
   (
     cd "$REPO_ROOT" || exit 1
-    env \
+    exec env \
       NODE_ENV=production \
       HOST=127.0.0.1 \
       PORT="$SERVER_PORT" \
