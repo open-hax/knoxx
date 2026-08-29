@@ -172,34 +172,44 @@ admitted and the V1 receipt cannot be replayed as authority. An idempotent retry
 admitted composite attempt retains its original V1 artifact as historical evidence rather than
 performing a new read under V2.
 
-There is no free-floating reusable attestation. Before provider invocation, the server
-derives the same canonical `AttemptIdentity` used by
-`knoxx-translations-event-sourced`: the full
+There is no free-floating reusable attestation. Before provider invocation, the server derives
+the same canonical `AttemptIdentity` used by `knoxx-translations-event-sourced`: the full
 `{:org-id :document-id :segment-index :target-lang}` grouping key, where `:org-id` is the
-server-derived effective organization, plus the caller-stable
-`attempt_id`. The initiating attempt workflow accepts or creates and durably pins that id with
-the exact grouping/source/request facts before it starts a provider or model session. Publication
-dispatch and ordinary-chat preflight use distinct provider-neutral attempt-claim variants but the
-same atomic admission law; an unbound chat turn does not receive `save_translation`. An admitted
-agent session receives the pin through authenticated server context; a later `save_translation`
-call only echoes and validates it and cannot become the identity minting boundary. The facade may
-perform authenticated observations and mint a candidate artifact
-before durable admission, but those values are not an attempt reservation and cannot authorize
-provider invocation. It then atomically unique-inserts/compares one complete
-`AttemptConfigAdmission` containing the composite identity, immutable source/canonical request
-facts, and full attested artifact. There is no externally visible pre-artifact or `:pending`
-reservation. Raw attempt ids are not globally unique: the same value under a different segment
-or target-language grouping is a distinct attempt and receives its own current configuration.
-That complete atomic install is the durable freshness boundary.
+server-derived effective organization, plus the caller-stable `attempt_id`.
 
-A crash after any observation or attestation-minting step but before the atomic install leaves
-no attempt admission; a retry may resolve current configuration and the first complete install
-wins. A crash after install but before response returns the installed artifact on retry.
-Concurrent canonically equal callers may resolve different candidate snapshots, but exactly one
+Every translation-bound agent turn first persists an immutable `TranslationTurnClaim` containing
+a non-empty, canonically ordered collection of provider-neutral attempt-claim members, one for
+every exact segment/target composite that turn may save. The initiating workflow accepts or
+creates and durably pins each member id with its exact grouping/source/request facts. Duplicate
+composites and non-canonical encodings are rejected before persistence, and the claim
+identity/digest makes member addition, removal, or replacement a conflict after the turn is
+claimed. Publication dispatch and ordinary-chat
+preflight use distinct turn-claim variants but the same per-member admission law; an unbound chat
+turn does not receive `save_translation`.
+
+The facade may perform authenticated observations and mint a candidate artifact for a member
+before durable admission, but those values are not an attempt reservation and cannot authorize
+provider invocation. It atomically unique-inserts/compares one complete
+`AttemptConfigAdmission` per claimed member, containing the composite identity, immutable
+source/canonical request facts, and full attested artifact. There is no externally visible
+pre-artifact or `:pending` reservation. The agent session starts only after every claimed member
+has a complete admission and receives the turn claim plus complete member map through
+authenticated server context; each later `save_translation` call only selects, echoes, and
+validates one member and cannot become an identity-minting or collection-expansion boundary. Raw
+attempt ids are not globally unique: the same value under a different segment or target-language
+grouping is a distinct attempt and receives its own current configuration. Each complete atomic
+member install is that attempt's durable freshness boundary.
+
+A crash after any member observation or attestation-minting step but before its atomic install
+leaves no admission for that member. Already installed siblings remain inert: no model session or
+provider starts until the exact claimed collection is complete. Retry resumes the immutable turn
+claim, may resolve only missing member admissions, and returns every installed winner. A crash
+after the final install but before response returns the complete collection on retry. Concurrent
+canonically equal callers may resolve different candidate snapshots for a member, but exactly one
 complete record is installed; every loser discards its candidate and returns the installed
-winner. Changed source/request facts for that composite identity conflict. Orphan repository
-operation receipts remain audit history only, and an unattached attestation fails provider
-invocation because no matching installed admission exists.
+winner. Changed source/request facts for a composite identity or changed turn membership
+conflicts. Orphan repository operation receipts remain audit history only, and an unattached
+attestation fails provider invocation because no matching installed admission exists.
 
 A canonically equal retry of the same composite identity retrieves the same attested
 artifact—even after configuration changes or a lost response. Reusing the same composite with
@@ -296,10 +306,15 @@ The publication-free namespace closure from #273 remains an invariant.
     denied frontier fingerprint is terminal, and alternating obsolete frontiers exhausts the
     existing bounded retry policy rather than looping or silently dropping coordinates.
 13. Exercise attempt admission through both a publication dispatch claim and an ordinary-chat
-    interactive claim. Each complete request installs the same canonical config admission before
-    its model turn and a lost-response retry returns that exact artifact. An incomplete interactive
-    target exposes no `save_translation` tool and creates no attempt claim, artifact, admission,
-    or provider call; neither path may reinterpret the other claim type or mint at save time.
+    interactive claim. Each turn names its complete canonical member collection and installs every
+    member config admission before its model turn. An ordinary-chat fixture claims two segments,
+    saves them in both orders, and binds each call to its own installed artifact; a lost-response
+    retry returns the exact member artifact/event. Crash after only the first member admission
+    starts no session and retry completes the same immutable collection. An omitted member cannot
+    save, and adding/replacing a member after claim persistence conflicts. An incomplete
+    interactive target exposes no `save_translation` tool and creates no turn claim, artifact,
+    admission, or provider call; neither path may reinterpret the other claim type or mint at save
+    time.
 
 ## Non-goals
 

@@ -27,3 +27,13 @@
   spore: none
   receipt-refs: 2026-08-29T21:57:44.970Z
   note: Coupled board contracts must share one provider-neutral initiation law; a review-local fix is incomplete when its owning config or integration card still encodes the rejected dispatch-only frame.
+
+- ts: 2026-08-29T22:17:14.159Z
+  session: codex/knoxx238-repair
+  task: Repair the multi-segment pre-turn admission gap on PR 238
+  p-efficiency: 0.74
+  p-friction: 0.67
+  p-skill-candidate: 0.59
+  spore: none
+  receipt-refs: 2026-08-29T22:17:14.159Z
+  note: A tool-capable turn needs one immutable pre-admitted member collection; per-call attempt identity alone cannot authorize repeated segment saves.

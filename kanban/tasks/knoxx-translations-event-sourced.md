@@ -88,27 +88,37 @@ A crash before config install leaves no reservation; a crash after install reuse
 config record and the later produced-candidate event are distinct lifecycle facts, but neither
 may partially install or reinterpret the shared identity.
 
-The initiating translation operation owns `attempt_id` before any provider or model session
-starts. Every context that exposes `save_translation` first installs one provider-neutral
-`TranslationAttemptClaim` with the exact grouping/source/request facts and matching
-`AttemptConfigAdmission`, then pins both in authenticated session/tool context. Publication
-dispatch accepts a workflow-stable idempotency key or mints a server-stable value and uses its
-durable dispatch claim as that attempt claim. Ordinary authenticated chat/tool translation uses
-an interactive attempt claim created by the same pre-turn initiator; it does not require or
-fabricate a publication dispatch claim. If an interactive request cannot yet name the exact
-grouping/source/request facts, the unbound turn does not receive `save_translation`; an explicit
-translation-start action gathers those facts and launches a bound follow-up turn instead. No
-already-running unbound turn may generate a candidate and synthesize admission at save time.
-Non-agent workflows establish the same admission before their provider call. A crash after any
-attempt claim is stored but before config admission leaves that claim retryable and starts no
-session; recovery reuses its pinned id and completes or retrieves the admission before emitting.
+The initiating translation operation owns an immutable `TranslationTurnClaim` before any
+provider or model session starts. That claim binds a non-empty, canonically ordered collection of
+provider-neutral `TranslationAttemptClaim` members: exactly one member for every complete
+segment/target composite the bound turn may save. Each member owns its stable `attempt_id`, exact
+grouping/source/request facts, and matching `AttemptConfigAdmission`; duplicate composites are
+invalid. The authenticated session/tool context pins the turn-claim identity/digest and complete
+member map, and the session starts only after every member has a complete config admission.
 
-The production `save_translation` MCP input schema exposes that required stable `attempt_id` so
-the session echoes the pre-existing value after timeout or lost response. The tool handler
-compares it with the authenticated session pin and installed config admission, passes the stored
-value unchanged through the domain/save boundary, and returns it with the admitted event/ordinal.
-Missing or different input is rejected and appends no candidate; the handler may not discard the
-value, mint a replacement per invocation, substitute the transport `_tool-call-id`, or derive
+Publication dispatch accepts a workflow-stable idempotency key or mints a server-stable value;
+its durable dispatch claim owns the turn claim and stores the stable per-member attempt ids.
+Ordinary authenticated chat/tool translation uses an interactive turn claim created by the same
+pre-turn initiator and requires no publication dispatch claim. If an interactive request cannot
+yet name the complete set of grouping/source/request facts, the unbound turn does not receive
+`save_translation`; an explicit translation-start action gathers them and launches a bound
+follow-up turn instead. A claimed member collection cannot be expanded, removed, or reinterpreted
+after the model turn starts; translating another segment requires a newly admitted follow-up turn.
+No already-running unbound turn may generate a candidate and synthesize admission at save time.
+Non-agent workflows establish the same per-attempt admission before their provider call. A crash
+after the turn claim or only some member admissions are stored leaves the exact collection
+retryable and starts no session; recovery reuses every pinned id and completes or retrieves all
+member admissions before emitting.
+
+The production `save_translation` MCP input schema exposes the required stable `attempt_id` on
+every call so the session echoes the pre-existing member value after timeout or lost response.
+The tool handler selects the exact member by the authenticated turn pin plus complete composite
+coordinate, compares the echo with that member and its installed config admission, passes the
+stored value unchanged through the domain/save boundary, and returns it with the admitted
+event/ordinal. The tool may be called repeatedly for different admitted members in either order;
+saving one member never consumes or authorizes another. Missing or different input, an unclaimed
+composite, or a claim-set change is rejected and appends no candidate. The handler may not discard
+the value, mint a replacement per invocation, substitute the transport `_tool-call-id`, or derive
 identity from content. Organization scope remains server-derived and combines with this value at
 event admission. Distinct attempt ids with byte-equivalent content intentionally remain distinct
 attempts.
@@ -231,10 +241,14 @@ land a migration that leaves that endpoint erroring.
   the proof and append no candidate. A dispatch-claim/admission split failure retries the pinned
   id and starts exactly one session only after admission completes.
 - The real ordinary-chat boundary proves the same law without a publication dispatch: a complete
-  interactive translation request installs and pins its interactive attempt claim/config
-  admission before the model turn, exposes `save_translation`, and survives a lost-response retry.
-  An incomplete target withholds the tool and starts no translation turn; the handler neither
-  demands a publication claim nor fabricates an admission after candidate generation.
+  interactive translation request installs and pins its interactive turn claim and every member
+  attempt/config admission before the model turn, exposes `save_translation`, and survives a
+  lost-response retry. One bound-turn fixture pre-admits two segment members, saves both in either
+  order, and proves each call uses its own composite identity, config artifact, event, and ordinal.
+  Omitting the second member rejects its save without consuming the first; adding or replacing a
+  member after turn start also fails and appends nothing. An incomplete target withholds the tool
+  and starts no translation turn; the handler neither demands a publication claim nor fabricates
+  an admission after candidate generation.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
 - During partial migration, per-key authority routes reads/writes to exactly one source; crash
