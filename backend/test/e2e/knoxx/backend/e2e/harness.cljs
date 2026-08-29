@@ -19,10 +19,26 @@
             [knoxx.backend.infra.routes.mcp :as mcp-routes]
             [knoxx.backend.runtime.state :as runtime-state]
             ["node:child_process" :refer [execFile]]
+            ["node:os" :as os]
             ["node:path" :as path]
             ["node:util" :refer [promisify]]))
 
 (def ^:private exec-file-async (promisify execFile))
+
+(defn host-name
+  "The host identity, exposed as CLJS data for isolation assertions."
+  []
+  (.hostname os))
+
+(defn report!
+  "Write one informational E2E line through the harness boundary."
+  [message]
+  (.log js/console (str message)))
+
+(defn warn!
+  "Write one E2E warning through the harness boundary."
+  [message]
+  (.warn js/console (str message)))
 
 (def discord-bot-token
   "The bot token the seeded Discord credential carries.

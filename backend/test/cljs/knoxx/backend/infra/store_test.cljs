@@ -2,12 +2,12 @@
   "Tests for the IStore protocol: schema guard, memory backend, registry, and
    the MongoCollection record against a stubbed collection handle."
   (:require [cljs.test :refer [deftest is testing]]
+            [katamorph.store.law :as store-law]
+            [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.infra.store.memory :as memory]
             [knoxx.backend.infra.store.mongo :as mongo]
             [knoxx.backend.infra.store.protocol :as store]
-            [knoxx.backend.infra.store.registry :as store-registry]
-            [knoxx.backend.domain.resources.loader :as resources]
-            [open-hax.contract-runtime.store.law :as store-law]))
+            [knoxx.backend.infra.store.registry :as store-registry]))
 
 (defn- build-test-deps
   "Build contract-runtime deps for tests."

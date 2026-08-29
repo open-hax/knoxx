@@ -90,24 +90,21 @@
       (finally (await (harness/stop! started))))))
 
 (deftest ^:async nrepl-eval-reports-an-unreachable-server-test
-  ;; No double is started, so the configured port has nothing listening. The
+  ;; No double is started, so the configured address has nothing listening. The
   ;; tool must say so rather than hang until its timeout, and must not fail at
   ;; the protocol level — a connection refusal is the tool's answer to give.
-  (let [started (await (harness/start!))
-        previous-port (aget js/process.env "KNOXX_NREPL_PORT")]
+  (let [started (await (harness/start!))]
     (try
-      ;; Port 1 is privileged and never bound by a user process.
-      (aset js/process.env "KNOXX_NREPL_PORT" "1")
-      (let [client  (harness/client started)
-            _       (await (mcp/initialize! client))
-            outcome (mcp/call-outcome
-                     (await (mcp/call-tool! client "nrepl_eval"
-                                            {:code "(+ 1 1)" :timeout_ms 5000})))]
-        (is (= :tool-error (:status outcome))
-            (str "an unreachable nREPL must be reported as a tool error, got "
-                 (pr-str outcome))))
+      (await
+       (nrepl-double/with-unreachable-nrepl!
+         (^:async fn []
+           (let [client  (harness/client started)
+                 _       (await (mcp/initialize! client))
+                 outcome (mcp/call-outcome
+                          (await (mcp/call-tool! client "nrepl_eval"
+                                                 {:code "(+ 1 1)" :timeout_ms 5000})))]
+             (is (= :tool-error (:status outcome))
+                 (str "an unreachable nREPL must be reported as a tool error, got "
+                      (pr-str outcome)))))))
       (finally
-        (if previous-port
-          (aset js/process.env "KNOXX_NREPL_PORT" previous-port)
-          (js-delete js/process.env "KNOXX_NREPL_PORT"))
         (await (harness/stop! started))))))

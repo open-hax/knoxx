@@ -320,15 +320,51 @@
        (remove str/blank?)
        (into #{})))
 
+(defn- allowed-tool-ids
+  "The allowlist an agent contract narrows its granted set to, or nil for none.
+
+   `:tool-deny` above is subtractive — it sheds one tool from an otherwise-fine
+   set. This is the opposite shape, for an agent whose whole job is one call: it
+   states the entire surface, so a role granting anything else cannot widen it.
+
+   It was already being written and was doing nothing. `:tools/allowed` is read
+   by `domain.policy.tools/tool-call-contract-denied`, which loads only contracts
+   whose `:contract/kind` is `:policy`, and nothing in this namespace looked at
+   it — so an agent contract could declare an allowlist and get the full role
+   surface anyway. `contracts/agents/broadcast_studio_audio_transcriber.edn`
+   declares one, which is how the belief that it worked got into the repo.
+
+   Empty means no restriction, matching the semantics
+   `tool-call-contract-denied` already documents for the policy-contract case.
+   That is also what keeps this change from silently muzzling the transcriber,
+   whose declaration is the empty vector.
+
+   Deny is applied before this, so a contract cannot allow back a tool it also
+   denied — the stricter of the two wins, which is the only composition order
+   that cannot surprise a reviewer."
+  [contract]
+  (let [ids (->> (concat (or (:tools/allowed contract) [])
+                         (or (get-in contract [:data :tools/allowed]) []))
+                 (map tool-registry/normalize-tool-id)
+                 (remove str/blank?)
+                 (into #{}))]
+    (when (seq ids) ids)))
+
 (defn- tool-context
   [config role-slugs capability-ids contract]
   (let [role-tool-ids (collect-role-tool-ids config role-slugs)
         capability-tool-ids (collect-capability-tool-ids config capability-ids)
         explicit-tool-ids (legacy-explicit-tool-ids contract)
         denied (denied-tool-ids contract)
+        allowed (allowed-tool-ids contract)
+        ;; Deny first, then the allowlist, so the stricter of the two always
+        ;; wins and a contract cannot allow back what it denied.
+        grantable? (fn [tool-id]
+                     (and (not (denied tool-id))
+                          (or (nil? allowed) (contains? allowed tool-id))))
         tool-ids (->> (concat role-tool-ids capability-tool-ids explicit-tool-ids)
                       distinct
-                      (remove denied)
+                      (filter grantable?)
                       sort
                       vec)]
     {:tool-ids tool-ids

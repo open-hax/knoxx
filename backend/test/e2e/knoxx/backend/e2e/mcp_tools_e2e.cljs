@@ -12,8 +12,8 @@
       and unusable, and nothing logs an error when that happens.
    2. Every tool with a fixture accepts its arguments and runs. A JSON-RPC
       error means the server refused or threw; a tool-level error means the
-      tool ran and reported a problem, which is a legitimate answer when the
-      thing it needs is not configured here.
+      tool ran and reported a problem. That only passes when its fixture names
+      the exact dependency error this harness intentionally cannot satisfy.
    3. A credential-backed tool resolves the seeded actor's credential and puts
       it on the wire. That path had no test at all before the policy context
       grew a credential seam."
@@ -42,9 +42,9 @@
    Annotations are not checked here — they are a separate, ratcheted concern
    below, because most of the catalog is missing them and that is old debt
    rather than a regression this suite introduced."
-  [{:keys [name description inputSchema]}]
+  [{tool-name :name :keys [description inputSchema]}]
   (cond-> []
-    (not (re-matches legal-tool-name (str name)))
+    (not (re-matches legal-tool-name (str tool-name)))
     (conj "name is not an MCP-legal tool name")
 
     (nil? inputSchema)
@@ -151,6 +151,13 @@
             tools   (await (exposed-tools! started))
             results (await (sweep! client tools))
             refused (into {} (filter (fn [[_ o]] (= :rpc-error (:status o)))) results)
+            unexpected-errors
+            (into {}
+                  (filter (fn [[tool-name outcome]]
+                            (and (= :tool-error (:status outcome))
+                                 (not (fixtures/allowed-tool-error?
+                                       tool-name (:detail outcome))))))
+                  results)
             errored (count (filter (fn [[_ o]] (= :tool-error (:status o))) results))
             ok      (count (filter (fn [[_ o]] (= :ok (:status o))) results))]
 
@@ -165,6 +172,14 @@
                    "a schema conversion or a handler is broken:\n"
                    (str/join "\n" (map (fn [[n o]] (str "  " n ": " (:detail o)))
                                        refused)))))
+
+        (testing "tool errors are only reviewed dependency failures"
+          (is (empty? unexpected-errors)
+              (str "these tools reported unreviewed errors. Fix the defect, or add "
+                   "the narrow dependency message as :allowed-error on its fixture:\n"
+                   (str/join "\n" (map (fn [[tool-name outcome]]
+                                          (str "  " tool-name ": " (:detail outcome)))
+                                        unexpected-errors)))))
 
         (testing "the sweep actually called something"
           (is (< 5 (count results))
@@ -219,6 +234,11 @@
                                          (fixtures/covered-elsewhere)))
                    "\n[mcp-e2e] known off the MCP surface:\n"
                    (fixtures/absence-report)))
+
+        (testing "each fixture has exactly one execution disposition"
+          (is (empty? (fixtures/disposition-faults))
+              (str "fixtures must declare exactly one of :args, :needs, :absent, "
+                   "or :covered-by: " (pr-str (fixtures/disposition-faults)))))
 
         (testing "no fixture names a tool that no longer exists"
           (is (empty? stale)

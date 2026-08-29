@@ -13,6 +13,7 @@
    so existing callers that pass (context-pool ctx) into policy functions need
    not change. The pool first arg on policy functions is ignored."
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.auth.password :as password]
             [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy]
             [knoxx.backend.infra.stores.mongo-policy-directory :as mongo-directory]
@@ -669,6 +670,33 @@
                                                          :replace true}))
     (await (set-membership-actor-id! pool (:id membership) "system_admin"))
     {:user user :membership membership}))
+
+(defn ^:async ensure-bootstrap-local-password!
+  "Idempotently project the environment-owned bootstrap password into the
+   local credential store. Blank passwords revoke any previously provisioned
+   local bootstrap credential."
+  ([db primary-org bootstrap opts]
+   (ensure-bootstrap-local-password!
+    db primary-org bootstrap opts
+    {:deactivate-credential! mongo-actor-creds/deactivate-actor-credential!
+     :encode-password password/hash-password
+     :upsert-credential! mongo-actor-creds/upsert-actor-credential!}))
+  ([db primary-org bootstrap opts
+    {:keys [deactivate-credential! encode-password upsert-credential!]}]
+   (let [configured-password (some-> (or (:bootstrapSystemAdminPassword opts)
+                                         (:bootstrap-system-admin-password opts))
+                                     str not-empty)
+         user-id (get-in bootstrap [:user :id])
+         org-id (:id primary-org)]
+     (if configured-password
+       (await (upsert-credential!
+               db user-id org-id "local"
+               {:kind "password"
+                :account-identifier (get-in bootstrap [:user :email])
+                :secret-json (encode-password configured-password)
+                :status "active"}))
+       (await (deactivate-credential! db user-id org-id "local" "password")))
+     nil)))
 
 ;; ---------------------------------------------------------------------------
 ;; Audit
@@ -1446,6 +1474,7 @@
     (let [primary-org (await (ensure-primary-org! nil opts))]
       (await (sync-contract-role-projections! nil))
       (let [bootstrap (await (ensure-bootstrap-user! nil primary-org opts))]
+        (await (ensure-bootstrap-local-password! db primary-org bootstrap opts))
         (await (allowlist-best-effort! nil primary-org opts))
         (await (sync-actor-contracts-best-effort! nil primary-org))
         (await (cleanup-expired-sessions-best-effort! nil))

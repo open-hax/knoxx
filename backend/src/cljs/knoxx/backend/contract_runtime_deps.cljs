@@ -1,7 +1,7 @@
 (ns knoxx.backend.contract-runtime-deps
-  "Wires Knoxx-specific implementations into the contract-runtime dependency
+  "Wires Knoxx-specific implementations into the katamorph dependency
    injection system. This is the single integration point between Knoxx's
-   deployment logic and the reusable contract runtime core."
+   deployment logic and the reusable katamorph contract runtime."
   (:require [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.domain.filter.registry :as filter-registry]
@@ -22,7 +22,7 @@
    :resource-class (fn [resource-kind] (resources/resource-class resource-kind))})
 
 (defn inject-deps!
-  "Inject contract-runtime dependencies into the runtime config.
-   Call this during bootstrap to wire the contract runtime."
+  "Inject the :contract-runtime/deps map katamorph reads into the runtime
+   config. Call this during bootstrap to wire the contract runtime."
   [config]
   (assoc config :contract-runtime/deps (build-deps)))

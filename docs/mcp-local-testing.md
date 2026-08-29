@@ -81,9 +81,18 @@ rather than a parallel one that could pass while production fails.
 Enable `:trusted-loopback` in the contract, set the token, and any MCP client
 works — including Claude Code:
 
-```bash
-KNOXX_MCP_LOOPBACK_TOKEN=some-long-local-token pnpm -C backend start:dev
+Terminal 1 owns the server secret:
 
+```bash
+export KNOXX_MCP_LOOPBACK_TOKEN=some-long-local-token
+pnpm -C backend start:dev
+```
+
+Terminal 2 must export the same value before expanding it into the client
+header:
+
+```bash
+export KNOXX_MCP_LOOPBACK_TOKEN=some-long-local-token
 claude mcp add --transport http knoxx-dev http://127.0.0.1:8000/mcp \
   --header "Authorization: Bearer ${KNOXX_MCP_LOOPBACK_TOKEN}"
 ```
@@ -146,17 +155,16 @@ and that `target=clj` evaluates the caller's code verbatim instead.
 **Discord** (`discord_identity_e2e.cljs`) answers the question "Gateway not
 started" never could: does a call go out *as the actor the token was issued
 for*? Knoxx reaches Discord two ways, and they resolve identity differently —
-which is the finding this file exists to pin down:
+which is the identity boundary this file pins down:
 
 - **REST** (`discord.list.servers` and friends) is actor-scoped. The test
   asserts the outbound request hits `/users/@me/guilds` carrying
   `Authorization: Bot <the seeded actor's token>`, that no other identity
   reached Discord, and that the same tool under an actor owning no credential
   is refused *before* any request goes out.
-- **The gateway** (`discord.voice.*`) is not. It calls `(dg/gateway-manager)`
-  with no arguments — the process-wide default — so a voice call speaks as
-  whichever bot that manager was started with, regardless of the token's actor.
-  Asserted as it stands, three ways, so the claim cannot rot quietly.
+- **The gateway** (`discord.voice.*`) selects the actor-owned manager from the
+  request-local scope. When that actor owns no manager, it refuses even if a
+  process-wide default exists; the default must never speak for the caller.
 
 ### What the harness substitutes, and what it does not
 
@@ -185,9 +193,8 @@ context when one carries `:get-actor-credential!`, the same seam
    `inputSchema`, a description. A tool that arrives with no schema is present
    and unusable, and nothing logs an error when that happens.
 2. **Every fixture-covered tool accepts its arguments and runs.** A JSON-RPC
-   error fails the suite — the server refused or threw. A *tool-level* error
-   does not: the tool ran and reported a problem, which is a legitimate answer
-   when the thing it needs is not configured here.
+   error fails the suite. A *tool-level* error also fails unless that fixture
+   names the exact reviewed dependency message the harness cannot satisfy.
 3. **A credential-backed tool reaches the wire with the seeded credential.**
    `bluesky_profile` must resolve `e2e_actor`'s credential and put it on an
    outbound request.
@@ -230,7 +237,7 @@ on that host, which is a legitimate answer.
 
 Three read-only tools are probed by default, each proving a different
 subsystem end to end: `semantic_query` the corpus data plane, `events_status`
-the events runtime, and `discord_list_servers` that the `deploy_verifier`
+the events runtime, and `discord_list_servers` that the `system_admin`
 actor's credential still resolves. No writes — a deploy gate must not publish
 anything.
 

@@ -131,8 +131,12 @@
 (defn translation-enabled? [c]
   (get-in-contract c [:source/translation :enabled?] #(config/translation-agent-enabled?)))
 
-(defn translation-model [c]
-  (get-in-contract c [:source/translation :model] #(config/translation-model)))
+;; `translation-model` is deliberately absent. Translation model selection is
+;; owned by Knoxx resources and read through GET /api/translations/config by
+;; kms-ingestion.translation.worker/resolve-translation-model. A per-source
+;; contract override with an env fallback was a dormant second authority: it had
+;; no production caller, but it would have silently won over the resource graph
+;; the moment anything used it.
 
 (defn translation-poll-ms [c]
   (get-in-contract c [:source/translation :poll-ms] #(config/translation-poll-ms)))

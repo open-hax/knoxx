@@ -6,16 +6,15 @@
    that matters: does a Discord call go out *as the actor the token was issued
    for*, carrying that actor's credential and no other?
 
-   Knoxx reaches Discord two different ways, and they resolve identity
-   differently. Both are covered here, because the difference is not obvious
-   from either call site:
+   Knoxx reaches Discord two different ways. Both must resolve the actor carried
+   by the MCP token, because a process-wide fallback can make one tenant's bot
+   speak for another:
 
      REST    — discord.list.servers and friends call discord-token!, which
                resolves the *current actor's* discord_bot credential through
                the actor scope the MCP token established.
-     Gateway — the voice tools call (dg/gateway-manager) with no arguments,
-               which is the process-wide default manager, not an actor-owned
-               one. That is asserted below as it stands."
+     Gateway — the voice tools select the manager owned by the actor in the
+               request-local scope and refuse when that actor owns none."
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
             [knoxx.backend.domain.discord.gateway :as gateway]
@@ -101,7 +100,8 @@
   (let [started (await (harness/start!))]
     (try
       (await
-       (discord-double/with-gateway!
+       (discord-double/with-actor-gateway!
+         "e2e_actor"
          {:identity-token harness/discord-bot-token
           :bot-user-id "e2e-bot-user"
           :guild-id "e2e-guild"
@@ -140,19 +140,10 @@
                      (str "joinVoice got the wrong channel: " (pr-str (first joins))))))))))
       (finally (await (harness/stop! started))))))
 
-(deftest ^:async voice-tools-use-the-default-manager-not-an-actor-owned-one-test
-  ;; Recorded because it is load-bearing and surprising, and it is the sharpest
-  ;; identity statement this file makes.
-  ;;
-  ;; The REST tools above are actor-scoped: discord-token! resolves *this
-  ;; actor's* credential, and an actor owning none is refused. The voice tools
-  ;; are not. They call (dg/gateway-manager) with no arguments, which is the
-  ;; process-wide default — so a voice call speaks as whichever bot the default
-  ;; manager was started with, regardless of the actor the MCP token carries.
-  ;;
-  ;; Asserted three ways so the claim cannot rot quietly: the actor-owned
-  ;; registry stays empty, the actor owns no Discord credential in this run,
-  ;; and the join still lands on the default manager anyway.
+(deftest ^:async voice-tools-refuse-the-default-manager-for-an-actor-test
+  ;; The actor has no actor-owned gateway in this run. A process-wide default is
+  ;; deliberately present: reaching it would prove an identity leak rather than
+  ;; merely an unavailable dependency.
   (let [started (await (harness/start!
                         ;; No credentials at all. A REST tool refuses under this
                         ;; context; a voice tool does not.
@@ -167,12 +158,15 @@
                  outcome (mcp/call-outcome
                           (await (mcp/call-tool! client "discord_voice_join"
                                                  {:channel_id "shared-channel"})))]
-             (is (= :ok (:status outcome))
-                 (str "voice join failed: " (:detail outcome)))
-             (is (some #(= :join-voice (:method %)) ((:calls double)))
-                 "the default manager did not receive the join")
+             (is (= :tool-error (:status outcome))
+                 (str "an actor with no gateway must be refused: " outcome))
+             (is (str/includes? (str (:detail outcome)) "Gateway not started")
+                 (str "the refusal should explain the missing actor gateway: "
+                      (:detail outcome)))
+             (is (empty? ((:calls double)))
+                 (str "the actor-scoped call reached the process-wide gateway: "
+                      (pr-str ((:calls double)))))
              (is (empty? (gateway/gateway-managers))
-                 (str "an actor-owned gateway manager exists, so voice tools may "
-                      "now be actor-scoped — which would change which bot speaks "
-                      "in a channel: " (pr-str (keys (gateway/gateway-managers)))))))))
+                 (str "the test should not synthesize an actor gateway: "
+                      (pr-str (keys (gateway/gateway-managers)))))))))
       (finally (await (harness/stop! started))))))

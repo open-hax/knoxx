@@ -5,7 +5,7 @@
    compile-time neighbour of the schema it mirrors instead of a JSON string
    nobody checks.
 
-   Exactly one of these keys says what the sweep does with a tool:
+   Exactly one of these keys says what the suite does with a tool:
 
      :args   — call it with these arguments. Cheap and idempotent.
      :needs  — a live handle no fixture can invent (a channel id, a sandbox
@@ -19,6 +19,10 @@
                cannot: sandbox and nREPL calls only mean anything as a chain
                threading state the previous call returned, and the Discord
                tools are worth asserting on identity rather than on returning.
+
+   An :args fixture may additionally declare :allowed-error, an exact message
+   substring for a dependency failure the harness intentionally cannot satisfy.
+   Anything broader would turn a new handler defect into a green sweep.
 
    :write marks a tool that mutates or publishes; the sweep skips those.
 
@@ -64,7 +68,7 @@
    "contract_write"    {:absent librarian-only}
 
    ;; ── credential-backed: discord ───────────────────────────────────────────
-   "discord_list_servers"     {:args {} :covered-by "discord-identity-e2e"}
+   "discord_list_servers"     {:covered-by "discord-identity-e2e"}
    "discord_list_channels"    {:args {}}
    "discord_guilds"           {:args {}}
    "discord_channels"         {:needs "a guild id"}
@@ -177,8 +181,26 @@
                   (and (contains? fixture :args)
                        (not (:needs fixture))
                        (not (:absent fixture))
+                       (not (:covered-by fixture))
                        (or include-writes? (not (:write fixture))))))
         fixtures))
+
+(defn allowed-tool-error?
+  "True only when `detail` contains this fixture's reviewed dependency error."
+  [tool-name detail]
+  (when-let [expected (some-> (get fixtures tool-name) :allowed-error)]
+    (str/includes? (str detail) (str expected))))
+
+(defn disposition-faults
+  "Fixture entries that name more or fewer than one execution disposition."
+  []
+  (->> fixtures
+       (keep (fn [[tool-name fixture]]
+               (let [present (filter #(contains? fixture %)
+                                     [:args :needs :absent :covered-by])]
+                 (when-not (= 1 (count present))
+                   [tool-name (vec present)]))))
+       (into (sorted-map))))
 
 (defn covered-elsewhere
   "Tool name -> the e2e namespace that exercises it beyond the sweep."

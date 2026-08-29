@@ -23,3 +23,35 @@
     (let [result (await (policy-db/list-actor-credentials! #js {} "discord_bot"))]
       (is (map? result) "result is a CLJS map")
       (is (vector? (:credentials result)) "credentials is a vector"))))
+
+(deftest ^:async bootstrap-local-password-projection-test
+  (let [captured* (atom nil)
+        bootstrap {:user {:id "user-admin" :email "admin@example.com"}}
+        org {:id "org-open-hax"}]
+    (await (policy-db/ensure-bootstrap-local-password!
+            #js {} org bootstrap {:bootstrapSystemAdminPassword "dev-password"}
+            {:deactivate-credential! (fn [& _]
+                                       (js/Promise.resolve nil))
+             :encode-password (fn [value] {:encoded value})
+             :upsert-credential! (fn [_db user-id org-id provider payload]
+                                   (reset! captured* [user-id org-id provider payload])
+                                   (js/Promise.resolve nil))}))
+    (is (= ["user-admin" "org-open-hax" "local"
+            {:kind "password"
+             :account-identifier "admin@example.com"
+             :secret-json {:encoded "dev-password"}
+             :status "active"}]
+           @captured*))))
+
+(deftest ^:async blank-bootstrap-local-password-revokes-credential-test
+  (let [captured* (atom nil)]
+    (await (policy-db/ensure-bootstrap-local-password!
+            #js {} {:id "org"} {:user {:id "user"}} {:bootstrapSystemAdminPassword ""}
+            {:deactivate-credential! (fn [_db user-id org-id provider kind]
+                                       (reset! captured* [user-id org-id provider kind])
+                                       (js/Promise.resolve nil))
+             :encode-password identity
+             :upsert-credential! (fn [& _]
+                                   (is false "blank password must not be upserted")
+                                   (js/Promise.resolve nil))}))
+    (is (= ["user" "org" "local" "password"] @captured*))))

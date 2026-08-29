@@ -17,17 +17,39 @@
   []
   (models/enrich-config (runtime-config/cfg)))
 
+(defn disabled?
+  "True when this process is forbidden from running event runtimes.
+
+   Read here rather than at each call site on purpose. There are five ways to
+   reach `start!` — `infra.core/start!`, the background-services boot step, the
+   `POST /api/admin/config/events/runtime/start` route, the deprecated
+   `trigger-runner` facade, and the hot-reload `after-load` hook — and a guard
+   placed at one of them is a guard the other four walk past. The promise the
+   flag makes is about the process, so it is enforced where the process state
+   actually changes."
+  ([] (disabled? (cfg)))
+  ([config] (true? (:event-runtimes-disabled? config))))
+
 (defn start!
   ([]
    (start! (cfg)))
   ([config]
-   (when-not @running?*
-     (reset! running?* true)
-     (trigger-runtime/start! config)
-     (schedule-runtime/start! config)
-     (errors/observe-promise! :event-runtime/source-start
-                              {}
-                              (source-runtime/start! config)))))
+   (cond
+     (disabled? config)
+     (do (js/console.warn
+          "[event-runtimes] refusing to start — KNOXX_DISABLE_EVENT_RUNTIMES is set")
+         :disabled)
+
+     @running?* :already-running
+
+     :else
+     (do (reset! running?* true)
+         (trigger-runtime/start! config)
+         (schedule-runtime/start! config)
+         (errors/observe-promise! :event-runtime/source-start
+                                  {}
+                                  (source-runtime/start! config))
+         :started))))
 
 (defn stop!
   []
@@ -37,12 +59,22 @@
   (reset! running?* false))
 
 (defn reload!
+  "Stop and restart the event runtimes, reporting what actually happened.
+
+   Refuses outright when the process is flagged. Returning a hardcoded
+   `{:ok true}` here was how the reset route came to report success while
+   `start!` had declined to arm anything — the outcome was computed correctly
+   one level down and then discarded. It also short-circuits before `stop!`,
+   because a reload that cannot start must not tear down first."
   ([]
    (reload! (cfg)))
   ([config]
-   (stop!)
-   (start! config)
-   (js/Promise.resolve {:ok true :action "reload"})))
+   (if (disabled? config)
+     (do (js/console.warn
+          "[event-runtimes] refusing to reload — KNOXX_DISABLE_EVENT_RUNTIMES is set")
+         (js/Promise.resolve {:ok false :action "reload" :status :disabled}))
+     (do (stop!)
+         (js/Promise.resolve {:ok true :action "reload" :status (start! config)})))))
 
 (defn debounced-reload!
   []

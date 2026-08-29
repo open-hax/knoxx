@@ -1,0 +1,24 @@
+;; Knoxx-owned translation pipeline configuration.
+;;
+;; This replaces the legacy `/v1/translations/config` endpoint as the authority
+;; for translation model and review policy. Both the review UI and the JVM
+;; ingestion worker resolve from this resource through
+;; `/api/translations/config`, so neither can reinterpret model precedence for
+;; itself.
+;;
+;; `:translation/model` is a catalog model id spelled exactly as
+;; `contracts/models/*.edn` spells it — a plain string, because real ids contain
+;; `/`, `:` and `.` and are not keyword-safe. It is validated against the model
+;; catalog on every read and write; an id absent from the catalog fails before a
+;; worker attempts a translation.
+;;
+;; Per-org overrides live in a manifest namespaced `orgs.<org-id>` with
+;; `:policy/id :translation-pipeline`, and merge onto this default before
+;; catalog validation.
+{:namespace :knoxx.translation
+ :resources
+ [{:policy/id :pipeline-default
+   :contract/doc "Authoritative translation pipeline configuration for Knoxx."
+   :translation/model "glm-5"
+   :translation/source-locale :en
+   :translation/default-review :required}]}

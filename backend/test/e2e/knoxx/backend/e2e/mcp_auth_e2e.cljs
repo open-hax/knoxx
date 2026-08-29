@@ -73,7 +73,7 @@
 
 (defn- shipped-contract
   []
-  (method-config/contract-for {:contracts-dir "contracts"} method-config/mcp-surface))
+  (method-config/contract-for {:contracts-dir "../contracts"} method-config/mcp-surface))
 
 (defn- shipped-loopback-method
   []
@@ -133,12 +133,12 @@
              "require-loopback is the only thing standing between this method "
              "and the public internet"))))
 
-(deftest shipped-grant-names-the-verifier-actor-test
+(deftest shipped-grant-names-the-bootstrap-actor-test
   ;; Without an actor the gate cannot reach credential-backed tools, which is
   ;; most of the surface it exists to verify.
   (let [grant (law/grant-of (shipped-loopback-method))]
     (is (some? grant) "the shipped loopback method grants nothing")
-    (is (= "deploy_verifier" (:actor-id grant))
-        (str "the deploy gate runs as deploy_verifier; changing this changes "
+    (is (= "system_admin" (:actor-id grant))
+        (str "the deploy gate runs as the shipped bootstrap actor; changing this changes "
              "which Discord and Bluesky accounts a verification run touches"))
     (is (= :all (:tools grant)))))

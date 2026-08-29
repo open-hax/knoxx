@@ -117,24 +117,60 @@
        :requests (fn [] @requests*)
        :stop! (fn [] (js/Promise. (fn [resolve _] (.close server (fn [] (resolve nil))))))})))
 
-(defn ^:async with-nrepl!
-  "Run `f` with the double listening and KNOXX_NREPL_* pointed at it.
-
-   The env vars are restored afterwards so a later test cannot inherit a port
-   that has stopped listening."
-  [opts f]
+(defn ^:async with-nrepl-address!
+  "Run `f` with both nREPL address variables set, then restore both exactly."
+  [host port f]
   (let [previous-host (aget js/process.env "KNOXX_NREPL_HOST")
-        previous-port (aget js/process.env "KNOXX_NREPL_PORT")
-        server (await (start! opts))]
+        previous-port (aget js/process.env "KNOXX_NREPL_PORT")]
     (try
-      (aset js/process.env "KNOXX_NREPL_HOST" "127.0.0.1")
-      (aset js/process.env "KNOXX_NREPL_PORT" (str (:port server)))
-      (await (f server))
+      (aset js/process.env "KNOXX_NREPL_HOST" (str host))
+      (aset js/process.env "KNOXX_NREPL_PORT" (str port))
+      (await (f))
       (finally
         (if previous-host
           (aset js/process.env "KNOXX_NREPL_HOST" previous-host)
           (js-delete js/process.env "KNOXX_NREPL_HOST"))
         (if previous-port
           (aset js/process.env "KNOXX_NREPL_PORT" previous-port)
-          (js-delete js/process.env "KNOXX_NREPL_PORT"))
+          (js-delete js/process.env "KNOXX_NREPL_PORT"))))))
+
+(defn- listen-ephemeral!
+  [server]
+  (js/Promise.
+   (fn [resolve reject]
+     (.once server "error" reject)
+     (.listen server 0 "127.0.0.1" (fn [] (resolve nil))))))
+
+(defn- close-server!
+  [server]
+  (js/Promise.
+   (fn [resolve reject]
+     (.once server "error" reject)
+     (.close server (fn [] (resolve nil))))))
+
+(defn- ^:async unused-loopback-port!
+  "Ask the kernel for a free loopback port, close it, and return that port."
+  []
+  (let [server (.createServer net)]
+    (await (listen-ephemeral! server))
+    (let [port (aget (.address server) "port")]
+      (await (close-server! server))
+      port)))
+
+(defn ^:async with-unreachable-nrepl!
+  "Run `f` with host and a kernel-selected, now-unbound port configured."
+  [f]
+  (let [port (await (unused-loopback-port!))]
+    (await (with-nrepl-address! "127.0.0.1" port f))))
+
+(defn ^:async with-nrepl!
+  "Run `f` with the double listening and KNOXX_NREPL_* pointed at it.
+
+   The env vars are restored afterwards so a later test cannot inherit a port
+   that has stopped listening."
+  [opts f]
+  (let [server (await (start! opts))]
+    (try
+      (await (with-nrepl-address! "127.0.0.1" (:port server) #(f server)))
+      (finally
         (await ((:stop! server)))))))

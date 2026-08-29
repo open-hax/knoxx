@@ -1,5 +1,6 @@
 (ns knoxx.backend.law.contracts
   (:require [knoxx.backend.domain.actor.scope :as actor-scope]
+            [knoxx.backend.law.publication :as publication]
             [malli.core :as m]
             [malli.error :as me]))
 
@@ -455,6 +456,9 @@
     (contains? value :schedule/id) "schedules"
     (contains? value :source-mode/id) "source_modes"
     (contains? value :runtime-feature/id) "runtime_features"
+    (contains? value :document/id) "documents"
+    (contains? value :garden/id) "gardens"
+    (contains? value :publication/id) "publications"
     :else nil))
 
 (defn- infer-contract-class
@@ -490,6 +494,9 @@
     "stores" StoreContract
     "sub_agents" SubAgentContract
     "cms" CmsContract
+    "documents" publication/Document
+    "gardens" publication/Garden
+    "publications" publication/PublicationIntentResource
     AgentContract))
 
 (defn- collect-humanized-errors

@@ -1,115 +1,104 @@
 (ns knoxx.frontend.pages.gardens.page-interaction-test
-  "Port of src/pages/GardensPage.test.tsx to the node :test build —
-  create-garden flow and delete-with-inline-confirmation flow, via jsdom +
-  @testing-library/react against the gardens page (no router/auth deps).
-  The api namespace is mocked by set!-ing its vars; the POST payload
-  itself is covered by build-save-request unit tests."
   (:require [cljs.test :refer [deftest is async use-fixtures]]
+            [clojure.string :as str]
             ["@testing-library/react" :as rtl]
             [helix.core :refer [$]]
             [knoxx.frontend.pages.gardens.api :as api]
             [knoxx.frontend.pages.gardens.view :refer [gardens-page]]))
 
-;; jsdom globals come from the :test build's :prepend-js (they must exist
-;; before react-dom's module load — see shadow-cljs.edn).
+(def deployment
+  {:site-url "https://open-hax.promethean.rest"
+   :gardens [{:id "open-hax/promethean" :title "Open Hax Promethean"
+              :status "active" :locales ["en" "es" "fr" "de" "ja"]
+              :placements [{:id "open-hax/home-en" :locale "en" :path "/"
+                            :state "published"
+                            :url "https://open-hax.promethean.rest/"}]}]})
 
-(def fork-garden
-  {:garden_id "fork-garden"
-   :title "Fork Garden"
-   :description "Existing garden"
-   :status "active"
-   :theme "monokai"
-   :target_languages ["es"]
-   :auto_translate true})
-
-(def list-results (atom []))
-(def list-calls (atom 0))
-(def save-calls (atom []))
-(def delete-calls (atom []))
-
-(def ^:private real-list api/list-gardens)
-(def ^:private real-save api/save-garden)
-(def ^:private real-delete api/delete-garden)
+(def load-calls (atom 0))
+(def ^:private real-load api/load-deployment!)
 
 (use-fixtures :each
   {:before (fn []
-             (reset! list-calls 0)
-             (reset! save-calls [])
-             (reset! delete-calls [])
-             (set! api/list-gardens
+             (reset! load-calls 0)
+             (set! api/load-deployment!
                    (fn []
-                     (swap! list-calls inc)
-                     (js/Promise.resolve {:ok true
-                                          :count (count @list-results)
-                                          :gardens @list-results})))
-             (set! api/save-garden
-                   (fn [req]
-                     (swap! save-calls conj req)
-                     (js/Promise.resolve {:ok true})))
-             (set! api/delete-garden
-                   (fn [id]
-                     (swap! delete-calls conj id)
-                     (js/Promise.resolve {:ok true}))))
+                     (swap! load-calls inc)
+                     (js/Promise.resolve deployment))))
    :after (fn []
             (rtl/cleanup)
-            (set! api/list-gardens real-list)
-            (set! api/save-garden real-save)
-            (set! api/delete-garden real-delete))})
+            (set! api/load-deployment! real-load))})
 
-(defn- wait-until [msg pred]
-  (rtl/waitFor (fn [] (when-not (pred) (throw (js/Error. (str "still waiting: " msg)))))))
+(defn- wait-until [message pred]
+  (rtl/waitFor
+   (fn []
+     (when-not (pred)
+       (throw (js/Error. (str "still waiting: " message)))))))
 
-(defn- by-role-name [^js r role nm]
-  (.getByRole r role #js {:name nm}))
-
-(deftest creates-garden-and-refreshes
-  (reset! list-results [])
+(deftest reviews-deployed-contract-and-opens-public-site
   (async done
-    (let [r (rtl/render ($ gardens-page))]
-      (-> (wait-until "initial load" #(pos? @list-calls))
-          (.then (fn []
-                   (.click rtl/fireEvent (by-role-name r "button" "+ New Garden"))
-                   (.change rtl/fireEvent (.getByPlaceholderText r "my-garden-id")
-                            #js {:target #js {:value "new-garden"}})
-                   (.change rtl/fireEvent (.getByPlaceholderText r "My Garden")
-                            #js {:target #js {:value "New Garden"}})
-                   (.change rtl/fireEvent (.getByPlaceholderText r "Brief description of this garden")
-                            #js {:target #js {:value "A test garden"}})
-                   (.click rtl/fireEvent (by-role-name r "button" "Español"))
-                   (.click rtl/fireEvent (by-role-name r "button" "Create Garden"))
-                   (wait-until "success notice"
-                               #(some? (.queryByText r "Garden \"New Garden\" created successfully")))))
-          (.then (fn []
-                   (let [{:keys [url method body]} (first @save-calls)]
-                     (is (= "/api/openplanner/v1/gardens" url))
-                     (is (= "POST" method))
-                     (is (= {:garden_id "new-garden"
-                             :title "New Garden"
-                             :description "A test garden"
-                             :theme "monokai"
-                             :target_languages ["es"]
-                             :auto_translate true}
-                            body)))
-                   (is (= 2 @list-calls) "list reloaded after create")
-                   (done)))
+    (let [rendered (rtl/render ($ gardens-page))]
+      (-> (wait-until "Garden contract rendered"
+                      #(some? (.queryByText rendered "Open Hax Promethean")))
+          (.then
+           (fn []
+             (is (= 1 @load-calls))
+             (is (some? (.queryByText rendered "Contract locale catalog")))
+             (is (some? (.queryByText rendered "Publication placements")))
+             (let [website-link (.getByRole rendered "link" #js {:name "Open website ↗"})
+                   page-link (.getByRole rendered "link" #js {:name "Open published page ↗"})]
+               (is (= "https://open-hax.promethean.rest" (.getAttribute website-link "href")))
+               (is (= "https://open-hax.promethean.rest/" (.getAttribute page-link "href"))))
+             (is (nil? (.queryByRole rendered "button" #js {:name "+ New Garden"})))
+             (is (nil? (.queryByRole rendered "button" #js {:name "Delete"})))
+             (is (not (str/includes? (.-textContent (.-container rendered)) "Theme")))
+             (done)))
           (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
 
-(deftest delete-requires-inline-confirmation
-  (reset! list-results [fork-garden])
+;; ── publishing ─────────────────────────────────────────────────────────────
+;;
+;; These render the page and assert on what a reviewer can actually click.
+;; The first version of this feature wired the handler, the API call and the
+;; receipt summary, and never rendered a button — every unit test passed and
+;; the build was clean, because passing unused props to a `defnc` is silent.
+;; Only a render assertion catches that, so it is the one this feature keeps.
+
+(deftest publish-button-is-rendered-for-a-published-placement
   (async done
-    (let [r (rtl/render ($ gardens-page))]
-      (-> (wait-until "garden rendered" #(some? (.queryByText r "Fork Garden")))
+    (let [rendered (rtl/render ($ gardens-page))]
+      (-> (wait-until "placement rendered"
+                      #(some? (.queryByText rendered "Open Hax Promethean")))
           (.then (fn []
-                   (.click rtl/fireEvent (by-role-name r "button" "Delete"))
-                   (is (= [] @delete-calls) "no DELETE before confirmation")
-                   (wait-until "confirm visible"
-                               #(some? (.queryByText r "Confirm Delete")))))
-          (.then (fn []
-                   (.click rtl/fireEvent (by-role-name r "button" "Confirm Delete"))
-                   (wait-until "deleted notice"
-                               #(some? (.queryByText r "Garden \"fork-garden\" deleted")))))
-          (.then (fn []
-                   (is (= ["fork-garden"] @delete-calls))
-                   (is (= 2 @list-calls) "list reloaded after delete")
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+                   (is (some? (.queryByText rendered "Publish"))
+                       "a placement whose contract asks to be published offers a publish action")))
+          (.finally done)))))
+
+(deftest publish-calls-reconcile-and-reports-the-receipt
+  (async done
+    (let [calls (atom [])
+          real-reconcile api/reconcile-publication!]
+      (set! api/reconcile-publication!
+            (fn [publication-id]
+              (swap! calls conj publication-id)
+              (js/Promise.resolve {:type "publication/materialized"})))
+      (let [rendered (rtl/render ($ gardens-page))]
+        (-> (wait-until "placement rendered"
+                        #(some? (.queryByText rendered "Open Hax Promethean")))
+            (.then (fn []
+                     (rtl/fireEvent.click (.getByText rendered "Publish"))
+                     (wait-until "receipt reported"
+                                 #(some? (.queryByText
+                                          rendered
+                                          (fn [content _]
+                                            (str/includes? (str content) "Published.")))))))
+            (.then (fn []
+                     (is (= ["open-hax/home-en"] @calls)
+                         "reconciliation is demanded for the placement that was clicked")))
+            ;; A rejected wait must FAIL, not skip the assertions and let
+            ;; `finally` report a pass. Without this the test is vacuous
+            ;; whenever the thing it checks stops happening, which is exactly
+            ;; when it needs to speak up.
+            (.catch (fn [err]
+                      (is false (str "publish flow did not complete: " err))))
+            (.finally (fn []
+                        (set! api/reconcile-publication! real-reconcile)
+                        (done))))))))

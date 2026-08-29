@@ -108,6 +108,16 @@
             docs (js->clj (await (.toArray cursor)) :keywordize-keys true)]
         (is (= 1 (count docs)) "only one credential doc")))))
 
+(deftest ^:async deactivate-actor-credential-test
+  (testing "deactivation makes a previously active credential unavailable"
+    (let [db (mock-db)]
+      (await (creds/upsert-actor-credential!
+              db "u1" "o1" "local"
+              {:kind "password" :secret-json {:hash "secret"} :status "active"}))
+      (await (creds/deactivate-actor-credential! db "u1" "o1" "local" "password"))
+      (is (nil? (await (creds/get-credential-by-user-org-provider-kind!
+                        db "u1" "o1" "local" "password")))))))
+
 (deftest ^:async credential-doc->row-test
   (testing "credential-doc->row renames credential_id to :id and drops Mongo fields"
     (let [r (creds/credential-doc->row {:credential_id "c1" :_id "x" :user_id "u1"

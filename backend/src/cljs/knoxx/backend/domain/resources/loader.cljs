@@ -13,11 +13,14 @@
    :agent "agents"
    :capability "capabilities"
    :cms "cms"
+   :document "documents"
+   :garden "gardens"
    :generator "generators"
    :ingest-source "ingest_sources"
    :model "models"
    :model-family "model_families"
    :policy "policies"
+   :publication "publications"
    :role "roles"
    :rule "rules"
    :runtime-feature "runtime_features"
@@ -53,12 +56,15 @@
     ("agent" "agents" "agent-spec" "agent-specs" "contract" "contracts") :agent
     ("cap" "caps" "capability" "capabilities") :capability
     ("cms" "cms-config" "cms-configs" "cms-block-registry" "cms-template-registry" "cms-templates") :cms
+    ("document" "documents") :document
+    ("garden" "gardens") :garden
     ("generator" "generators") :generator
     ("ingest-source" "ingest-sources" "ingest_source" "ingest_sources") :ingest-source
     ("model" "models") :model
     ("model-family" "model-families" "model_family" "model_families") :model-family
     ("pipeline" "pipelines") :pipeline
     ("policy" "policies") :policy
+    ("publication" "publications") :publication
     ("role" "roles") :role
     ("rule" "rules") :rule
     ("runtime-feature" "runtime-features" "runtime_feature" "runtime_features" "runtime") :runtime-feature
@@ -77,9 +83,16 @@
   (get resource-kind->class (normalize-resource-kind resource-kind)))
 
 (defn- resource-kind-from-class
+  "The resource kind a contract class names, or nil when it names none.
+
+   A record rejected before its identity could be read carries no class, and
+   `(keyword (str nil))` would render that absence as the empty keyword — a
+   kind that matches nothing yet is not nil, so callers could not tell
+   \"unknown kind\" from \"no kind\". Absence stays absent."
   [class-name]
-  (or (get class->resource-kind class-name)
-      (keyword (str/replace (str class-name) #"_" "-"))))
+  (when-let [class-name (some-> class-name str str/trim not-empty)]
+    (or (get class->resource-kind class-name)
+        (keyword (str/replace class-name #"_" "-")))))
 
 (defn resource-record
   [record]
@@ -106,10 +119,17 @@
   [config]
   (mapv resource-record (await (contract-loader/load-all-contracts! config))))
 
+(defn ^:async load-all-resource-records!
+  "Every resource record without `[kind id]` dedup, for callers that must
+   detect a colliding canonical identity instead of silently inheriting
+   whichever file the filesystem enumerated first."
+  [config]
+  (mapv resource-record (await (contract-loader/load-all-contract-records! config))))
+
 (defn resource-record-sync
   [config resource-kind resource-id]
   (let [class-name (resource-class resource-kind)
-        wanted-id (some-> resource-id str str/trim not-empty)]
+        wanted-id (some-> resource-id contract-loader/qualified-keyword->str str/trim not-empty)]
     (some (fn [record]
             (when (and (= class-name (:resource/class record))
                        (= wanted-id (:resource/id record)))
@@ -154,7 +174,12 @@
   ([config resource-id]
    (resource-file-path config :agent resource-id))
   ([config resource-kind resource-id]
-   (contract-loader/contract-file-path config (resource-class resource-kind) resource-id)))
+   (or (some-> (resource-record-sync config resource-kind resource-id)
+               :resource/file-path)
+       (contract-loader/contract-file-path
+        config
+        (resource-class resource-kind)
+        resource-id))))
 
 (defn write-edn-file!
   [file-path edn-text]

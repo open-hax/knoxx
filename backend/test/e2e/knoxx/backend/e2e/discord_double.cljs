@@ -3,9 +3,9 @@
 
    \"Gateway not started\" is a true answer and a useless one: it says the tool
    refused before doing anything, which tells us nothing about whether it would
-   drive the gateway correctly, or as whom. This double is installed through
-   domain.discord.gateway/set-manager! — the same setter bootstrap uses — so
-   the tools reach it by the ordinary path and every call is recorded."
+   drive the gateway correctly, or as whom. This double can be installed as an
+   actor-owned manager or as the legacy default, so identity selection itself
+   is observable rather than assumed."
   (:require [knoxx.backend.domain.discord.gateway :as gateway]))
 
 (defn- record!
@@ -77,3 +77,14 @@
       (await (f double))
       (finally
         (gateway/set-manager! previous)))))
+
+(defn ^:async with-actor-gateway!
+  "Run `f` with a recording manager owned by exactly `actor-id`."
+  [actor-id opts f]
+  (let [previous (gateway/gateway-manager actor-id)
+        double   (manager opts)]
+    (try
+      (gateway/set-actor-manager! actor-id (:object double))
+      (await (f double))
+      (finally
+        (gateway/set-actor-manager! actor-id previous)))))

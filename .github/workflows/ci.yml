@@ -46,9 +46,13 @@ jobs:
           # (class file version 65).
           java-version: "21"
 
-      - name: Install clj-kondo
+      - name: Setup Clojure CLI
         uses: DeLaGuardo/setup-clojure@13
         with:
+          # backend/shadow-cljs.edn runs in :deps mode, so shadow-cljs resolves
+          # its classpath (including the katamorph Git dependency) through
+          # tools.deps and needs the clojure CLI on PATH.
+          cli: latest
           clj-kondo: latest
 
       - uses: pnpm/action-setup@v4
@@ -67,11 +71,9 @@ jobs:
 
       - name: Build linked OpenPlanner SDK
         run: |
-          # Knoxx currently resolves these linked sources through sibling paths:
+          # Knoxx currently resolves this linked source through a sibling path:
           # backend/package.json -> ../../openplanner/packages/openplanner-sdk
-          # backend/shadow-cljs.edn -> ../../contract-runtime/src/cljs
           ln -sfn "$GITHUB_WORKSPACE/_deps/openplanner" "$GITHUB_WORKSPACE/../openplanner"
-          ln -sfn "$GITHUB_WORKSPACE/_deps/openplanner/packages/contract-runtime" "$GITHUB_WORKSPACE/../contract-runtime"
           pnpm -C _deps/openplanner --filter @open-hax/openplanner-sdk... install --frozen-lockfile
           pnpm -C _deps/openplanner --filter @open-hax/openplanner-sdk... run build
 

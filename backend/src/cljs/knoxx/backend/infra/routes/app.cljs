@@ -14,6 +14,12 @@
             [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-role-slugs ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.infra.routes.resources :as resource-routes]
+            [knoxx.backend.infra.routes.publication-reconcile :as reconcile-routes]
+            [knoxx.backend.extern.fastify.publications :as publication-routes]
+            [knoxx.backend.extern.fastify.translation-config :as translation-config-routes]
+            [knoxx.backend.extern.fastify.translation-dispatch :as translation-dispatch-routes]
+            [knoxx.backend.extern.fastify.translation-review :as translation-review-routes]
+            [knoxx.backend.extern.fastify.cms-publication :as cms-publication-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
@@ -1517,6 +1523,34 @@
                                           :ensure-permission! ensure-permission!
                                           :session-guard session-guard})))
 
+(defn- register-publication-surface-routes!
+  "The contract-owned publication surface: the resource projection, the CMS
+   editor's view of it, and translation configuration. None of these is gated on
+   a hosted publishing backend being reachable — resolving desired state with
+   that backend absent is the whole point."
+  [app runtime config]
+  (let [helpers {:route! route!
+                 :json-response! json-response!
+                 :with-request-context! with-request-context!
+                 :ensure-permission! ensure-permission!}]
+    ;; Fastify interop is owned by each extern adapter, which authorizes before
+    ;; touching the filesystem-backed projection.
+    (publication-routes/register-publication-routes!
+     app runtime config (select-keys helpers [:with-request-context!
+                                              :ensure-permission!]))
+    (cms-publication-routes/register-cms-publication-routes! app runtime config helpers)
+    (reconcile-routes/register-publication-reconcile-routes!
+     app runtime config (select-keys helpers [:with-request-context!
+                                              :ensure-permission!]))
+    (translation-config-routes/register-translation-config-routes!
+     app runtime config helpers)
+    (translation-dispatch-routes/register-translation-dispatch-routes!
+     app runtime config (select-keys helpers [:with-request-context!
+                                              :ensure-permission!]))
+    (translation-review-routes/register-translation-review-routes!
+     app runtime config (select-keys helpers [:with-request-context!
+                                              :ensure-permission!]))))
+
 (defn- register-resource-and-media-routes!
   [app runtime config]
   (resource-routes/register-resource-routes! app runtime config
@@ -1525,6 +1559,7 @@
                                               :error-response! error-response!
                                               :with-request-context! with-request-context!
                                               :ensure-permission! ensure-permission!})
+  (register-publication-surface-routes! app runtime config)
   (model-routes/register-model-routes! app runtime config)
   (voice-routes/register-voice-routes! app runtime config
                                        {:route! route!

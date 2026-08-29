@@ -4,7 +4,8 @@
 
 Knoxx supports **GitHub OAuth** login with **cookie-backed sessions** stored in Redis. The system includes:
 
-- **Admin seed**: The `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL` user is automatically created as a system admin on first boot
+- **Admin seed**: The `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL` user is automatically created as a system admin on every boot
+- **Repeatable local admin login**: `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD` idempotently provisions that admin's local password credential
 - **Invite system**: Admins can create invite codes that auto-provision users with org memberships
 - **GitHub OAuth**: "Continue with GitHub" button on the login page
 - **Cookie sessions**: Secure, HttpOnly, SameSite cookies with Redis-backed session storage
@@ -57,6 +58,7 @@ journalctl --user -u knoxx-tunnel -f    # Follow logs
 | `KNOXX_SESSION_TTL_SECONDS` | No | `86400` | Session cookie lifetime (24h default) |
 | `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL` | Yes | `system-admin@open-hax.local` | Email of the auto-seeded system admin |
 | `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME` | No | `Knoxx System Admin` | Display name for the bootstrap admin |
+| `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD` | For local admin login | - | Password for the bootstrap admin; keep it in the uncommitted host environment |
 | `KNOXX_POLICY_DATABASE_URL` | Yes | - | PostgreSQL connection string |
 | `REDIS_URL` | Yes | `redis://127.0.0.1:6379` | Redis for session storage |
 | `GMAIL_APP_EMAIL` | For invite emails | - | Gmail address for sending invite emails |
@@ -99,6 +101,26 @@ A user can log in if they pass **any** of these checks:
 3. **Invite holder**: Has a pending invite (redeemed during login)
 
 If none match, the GitHub callback redirects to `/login?error=not_whitelisted` where the user can enter an invite code.
+
+## Repeatable local administrator
+
+For a development instance that needs a browser-login administrator without
+GitHub OAuth, define the identity and secret in the host environment:
+
+```bash
+KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL=developer@example.com
+KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME="Development Administrator"
+KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD=replace-with-a-long-random-secret
+```
+
+On every backend start Knoxx ensures this user belongs to the primary org,
+replaces its role assignment with `system-admin`, assigns the `system_admin`
+actor, and upserts a scrypt password credential. Changing the environment
+password and restarting the development backend rotates the login password.
+Removing the password setting and restarting revokes the previously provisioned
+local credential.
+Ordinary `/signup` users remain `basic-user`; this bootstrap does not weaken
+self-signup or infer admin rights from arbitrary email/password logins.
 
 ## Setting Up GitHub OAuth
 

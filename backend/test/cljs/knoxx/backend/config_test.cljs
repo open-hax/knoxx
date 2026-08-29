@@ -64,3 +64,38 @@
               "KNOXX_OPENPLANNER_PROJECT" "openplanner-project"}
     (fn []
       (is (= "openplanner-project" (:openplanner-mcp-project (config/cfg)))))))
+
+(deftest publication-site-url-is-deployment-configuration
+  (with-env! {"KNOXX_PUBLICATION_SITE_URL" nil
+              "KNOXX_PUBLICATION_CONTENT_ROOT" nil}
+    (fn []
+      (is (= "http://localhost:4173" (:publication-site-url (config/cfg))))
+      (is (nil? (:publication-content-root (config/cfg))))))
+  (with-env! {"KNOXX_PUBLICATION_SITE_URL" "https://open-hax.promethean.rest"
+              "KNOXX_PUBLICATION_CONTENT_ROOT" "/srv/website-content"}
+    (fn []
+      (is (= "https://open-hax.promethean.rest"
+             (:publication-site-url (config/cfg))))
+      (is (= "/srv/website-content" (:publication-content-root (config/cfg)))))))
+
+;; ── Event-runtime kill switch ──────────────────────────────────────────────
+
+(deftest event-runtimes-disabled-defaults-to-off
+  (testing "unset means event runtimes run, which is the production behavior"
+    (with-env! {"KNOXX_DISABLE_EVENT_RUNTIMES" nil}
+      (fn [] (is (false? (:event-runtimes-disabled? (config/cfg))))))))
+
+(deftest event-runtimes-disabled-needs-an-explicit-affirmative
+  (testing "only an explicit affirmative disables them"
+    (doseq [value ["1" "true" "TRUE" "yes" "on"]]
+      (with-env! {"KNOXX_DISABLE_EVENT_RUNTIMES" value}
+        (fn [] (is (true? (:event-runtimes-disabled? (config/cfg)))
+                   (str value " should disable"))))))
+  (testing "and anything else leaves them running"
+    ;; A flag that silences schedules, triggers and Discord must never be
+    ;; switchable by accident: a typo, a blank, or the string "false" all have
+    ;; to fail safe toward running.
+    (doseq [value ["" " " "false" "0" "no" "off" "disabled" "ture"]]
+      (with-env! {"KNOXX_DISABLE_EVENT_RUNTIMES" value}
+        (fn [] (is (false? (:event-runtimes-disabled? (config/cfg)))
+                   (str (pr-str value) " must NOT disable")))))))

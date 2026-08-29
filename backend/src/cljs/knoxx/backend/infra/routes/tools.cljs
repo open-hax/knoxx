@@ -356,8 +356,14 @@
                         (assoc live-config :event-control body))]
       (swap! runtime-state/config* (fn [c] (assoc (or c config) :event-control next-control)))
       (control-config/persist-event-control! next-control)
-      (event-runtime/reload! live-config)
-      (json-response! reply 200 (assoc (events-control-response config) :ok true)))
+      ;; `:ok true` refers to persisting the control config, which did happen.
+      ;; The reload is a side effect and can be refused on a flagged process, so
+      ;; its outcome is reported rather than absorbed — otherwise the response
+      ;; implies the runtime picked up the change when it did not.
+      (let [reload (await (event-runtime/reload! live-config))]
+        (json-response! reply 200 (assoc (events-control-response config)
+                                         :ok true
+                                         :reload reload))))
     (catch :default err
       (error-response! reply err))))
 
@@ -414,8 +420,17 @@
   "POST" "/api/admin/config/events/runtime/start"
   [session-guard]
   (ensure-permission! ctx "org.events.control")
-  (event-runtime/start! config)
-  (json-response! reply 200 (assoc (events-control-response config) :ok true :action "started")))
+  ;; `start!` refuses when the process is flagged, so reporting ok/started
+  ;; unconditionally would tell an operator the runtime came up when nothing
+  ;; did. Answer 409 instead: the request is well-formed, the process state
+  ;; forbids it.
+  (if (= :disabled (event-runtime/start! config))
+    (json-response! reply 409
+                    (assoc (events-control-response config)
+                           :ok false
+                           :action "refused"
+                           :reason "KNOXX_DISABLE_EVENT_RUNTIMES is set on this process"))
+    (json-response! reply 200 (assoc (events-control-response config) :ok true :action "started"))))
 
 (defroute register-events-runtime-reset-route!
   []
@@ -424,12 +439,22 @@
   (try
     (ensure-permission! ctx "org.events.control")
     (try
+      ;; Same contract as the start route: a disabled process must not report a
+      ;; successful reset. `reload!` declines and says so; this surfaces it
+      ;; rather than merging :ok true over the top of a refusal.
       (let [summary (await (event-runtime/reset-runtime! config))]
-        (json-response! reply 200
-                        (merge (events-control-response config)
-                               {:ok true
-                                :action "reset"
-                                :reset summary})))
+        (if (= :disabled (:status summary))
+          (json-response! reply 409
+                          (merge (events-control-response config)
+                                 {:ok false
+                                  :action "refused"
+                                  :reason "KNOXX_DISABLE_EVENT_RUNTIMES is set on this process"
+                                  :reset summary}))
+          (json-response! reply 200
+                          (merge (events-control-response config)
+                                 {:ok true
+                                  :action "reset"
+                                  :reset summary}))))
       (catch :default err
         (error-response! reply err)))
     (catch :default err

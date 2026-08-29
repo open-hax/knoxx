@@ -14,15 +14,20 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.contracts.loader :as contracts]
             [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.extern.node-env :as node-env]
             [knoxx.backend.law.auth-methods :as law]))
 
 (def mcp-surface :mcp)
 
 (def ^:private mcp-contract-id "mcp_http")
 
-(defn- env
-  [k]
-  (some-> (aget js/process.env k) str str/trim not-empty))
+(def ^:private env
+  "Read through the extern adapter that owns `js/process.env`.
+
+   Direct `aget` on `js/process.env` is interop, and the style guide keeps
+   interop inside `extern.*`. `extern.node-env/variable` returns a CLJS scalar,
+   so nothing here has to know the environment is a JavaScript object."
+  node-env/variable)
 
 (defn- production?
   []
@@ -31,10 +36,9 @@
 (defn contract-for
   "The authentication contract for `surface`, or nil.
 
-   A missing or unreadable contract is nil rather than a throw: law refuses on
-   nil, so the surface falls back to OAuth-only. Losing the ability to serve
-   /mcp because a contract file was mid-edit would be a worse failure than
-   ignoring it."
+   A missing or unreadable contract is nil rather than a throw. Law refuses
+   every method on nil, so a damaged authority file fails the surface closed
+   instead of silently restoring a method the contract may have disabled."
   [config surface]
   (when (= mcp-surface surface)
     (try
@@ -92,12 +96,12 @@
   (let [granted (if (= :all (:tools grant))
                   (vec available-tool-names)
                   (filterv (set available-tool-names) (:tools grant)))]
-    (clj->js (cond-> {:accessToken "authentication-contract"
-                      :clientId    "knoxx-authentication-contract"
-                      :userEmail   (:user-email grant)
-                      :tools       granted}
-               (:org-slug grant) (assoc :orgSlug (:org-slug grant))
-               (:actor-id grant) (assoc :actorId (:actor-id grant))))))
+    (cond-> {:accessToken "authentication-contract"
+             :clientId    "knoxx-authentication-contract"
+             :userEmail   (:user-email grant)
+             :tools       granted}
+      (:org-slug grant) (assoc :orgSlug (:org-slug grant))
+      (:actor-id grant) (assoc :actorId (:actor-id grant)))))
 
 (defn announce!
   "Log once, at startup, whenever a surface accepts anything but OAuth.

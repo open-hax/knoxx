@@ -35,8 +35,8 @@
   ;; off-box can present this token even if it learned it.
   ;;
   ;; It is not an authorization bypass. The grant below is intersected with
-  ;; what the resolved membership can reach, so a tool deploy_verifier's roles
-  ;; deny stays denied.
+  ;; what the resolved membership can reach, so anything the resolved
+  ;; system_admin membership's roles deny stays denied.
   {:auth-method/id :trusted-loopback
    :auth-method/enabled true
    :auth-method/doc
@@ -48,8 +48,9 @@
    :auth-method/min-token-length 16
    :auth-method/grants
    {:grant/user-email "system-admin@open-hax.local"
-    ;; The actor verification runs as. Naming one is what lets the gate reach
+    ;; The actor verification runs as. Naming the shipped bootstrap actor lets
+    ;; the gate reach
     ;; credential-backed tools at all; leaving it out would make every Discord
     ;; and Bluesky check refuse for want of an actor.
-    :grant/actor-id "deploy_verifier"
+    :grant/actor-id "system_admin"
     :grant/tools :all}}]}
