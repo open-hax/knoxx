@@ -127,19 +127,25 @@ missing-target, and cyclic relations fail validation without appending.
   overwritten to manufacture satisfaction.
 
 A conflict set has a canonical identity derived from the server-authenticated organization,
-exact case/rubric/artifact versions, obligation/exclusivity group, and sorted conflicting
-effective `{judgment-head-id, head-version}` pairs. Equal receipt ids/evidence members are
-identity-neutral because they do not change an effective head generation. The organization is
-part of both conflict-set identity and the unique decision slot; caller-supplied scope never
-participates. The rubric declares allowed resolutions plus adjudicator roles and
-distinct-principal quorum. Every allowed adjudication resolution declares the same required
-closed completion effect as an ordinary judgment value: `:satisfies` or `:keeps-pending`; there
-is no default, and built-in `:defer` is always `:keeps-pending`. Proposal admission derives and
-binds the exact rubric version, resolution value, and declared effect, rejecting a missing or
-mismatched effect. Adjudicator proposal receipts are immutable evidence but do not
+exact case/rubric/artifact versions, the sorted affected obligation ids and exclusivity group,
+and sorted conflicting effective `{judgment-head-id, head-version}` pairs. Equal receipt
+ids/evidence members are identity-neutral because they do not change an effective head
+generation. The organization is part of both conflict-set identity and the unique decision slot;
+caller-supplied scope never
+participates. The rubric declares allowed resolution descriptors plus adjudicator roles and
+distinct-principal quorum. Every allowed resolution descriptor carries its exact resolution
+value and a complete ordered `obligation-effects` specification keyed by every affected
+obligation id. Each entry requires `:satisfies` or `:keeps-pending`; there is no inferred default
+from the resolution's name. In a proposal, every `:satisfies` entry also selects exactly one
+conflicting effective `{judgment-head-id, head-version}` for that same obligation, while a
+`:keeps-pending` entry forbids a selected head. Built-in `:defer` and
+`:request-more-evidence` resolutions must keep every affected obligation pending. Adjudicator
+proposal admission derives and binds the exact rubric version, resolution value, total effect
+map, and selections. Its immutable receipt is evidence but does not
 directly satisfy the case. Quorum folds one server-derived `AdjudicationProposalHead` per exact
 organization, conflict-set identity, authenticated principal, and adjudicator role. Equal
-canonical proposals under distinct receipt ids join one head generation and count once. A
+canonical proposals—same resolution plus the same total obligation-effect map and selected head
+generations—under distinct receipt ids join one head generation and count once. A
 changed resolution must explicitly supersede the current proposal head id/version; the atomic
 compare admits exactly one concurrent successor and rejects cross-organization, cross-conflict,
 cross-principal, cross-role, stale, or cyclic edges while retaining every receipt as history.
@@ -147,19 +153,23 @@ Only current proposal heads are quorum-eligible.
 
 Once compatible current heads reach quorum, a domain operation atomically verifies those named
 heads are still current and creates one `AdjudicationDecisionReceipt` in that organization's
-unique slot for the conflict-set identity, naming the resolution, rubric version, declared
-completion effect, exact effective judgment-head generations, exact proposal-head generations,
-and quorum-member proposal receipt ids.
+unique slot for the conflict-set identity, naming the resolution, exact rubric version, complete
+ordered obligation effects and selected terminal head generations, exact effective
+judgment-head generations, exact proposal-head generations, and quorum-member proposal receipt
+ids. Admission rejects missing/extra obligations, a descriptor-effect mismatch, a selection for
+the wrong obligation, a non-conflicting/stale selected head, or a selected head on a
+`:keeps-pending` entry rather than letting a receipt reinterpret the rubric.
 An opposite decision racing for the empty slot yields exactly one winner and one
 `:evaluation/conflict`; an equal retry is unchanged. Later incompatible proposals cannot change
 the admitted decision, and the fold never selects an adjudication by timestamp or array order.
-The pure fold applies the receipt-bound effect: `:satisfies` discharges the named conflict's
-obligation/exclusivity group, while `:keeps-pending` resolves that conflict into an explicit
-missing/pending obligation with its decision reason/evidence and can never satisfy the case.
-Advancing an underlying judgment head creates a new conflict generation; the old decision and
-effect cannot resolve it.
-Appending equal evidence after finalization leaves the same conflict identity/decision. A real
-head advance creates a new conflict generation that the old decision cannot resolve.
+Appending equal evidence after finalization leaves the same conflict identity/decision. The
+status fold removes that exact conflict generation from unresolved conflict sets. A
+`:satisfies` entry supplies its named terminal determination only for that obligation, while a
+`:keeps-pending` entry leaves that obligation in `:missing-obligations` with its decision
+reason/evidence. The fold applies the complete ordered map independently, so an exclusivity group
+spanning several obligations cannot ambiguously satisfy one, all, or an arbitrary member. Any
+pending entry therefore prevents `:satisfied`. A real head advance creates a new conflict
+generation that the old decision cannot resolve.
 
 ## TDD plan
 
@@ -211,15 +221,24 @@ head advance creates a new conflict generation that the old decision cannot reso
     current generation or retries; equal duplicate proposals never add another quorum member.
     Append an equal duplicate judgment after finalization and prove the existing decision still
     applies with no second slot; advancing a conflicting head produces a new unresolved set.
+    Finalize one terminal single-obligation resolution declared `:satisfies`, select its current
+    conflicting head generation, and prove it satisfies only that obligation. Finalize
+    `:request-more-evidence` declared `:keeps-pending` and prove the conflict is resolved but the
+    obligation remains reported as pending with the decision evidence. For an exclusivity group
+    spanning obligations A and B, apply a total map that satisfies A from one named current head
+    and keeps B pending; prove A is satisfied and B remains missing. Missing/extra obligation
+    entries, receipt/descriptor effect mismatch, cross-obligation/stale selection, or a selected
+    head on a pending entry fails validation without creating a decision.
 15. A fixture with one missing obligation plus an unrelated exclusive conflict returns
     `:needs-adjudication` and reports both the conflict set and missing obligation. Resolving
     only the conflict transitions it to `:pending`; satisfying the remaining obligation then
     transitions it to `:satisfied`.
-16. Two otherwise identical rubrics give an adjudication resolution `:satisfies` and
-    `:keeps-pending` respectively. Their version-bound decisions deterministically fold to
-    `:satisfied` and `:pending` when no other work remains; a missing/mismatched effect is invalid,
-    and `:defer` cannot be declared satisfying. The pending decision remains discoverable until
-    an underlying judgment-head advance creates a new generation.
+16. Two otherwise identical rubrics give an adjudication resolution total effect maps whose only
+    obligation is `:satisfies` and `:keeps-pending` respectively. Their version-bound decisions
+    deterministically fold to `:satisfied` and `:pending` when no other work remains; a
+    missing/extra obligation or mismatched effect is invalid, and `:defer` cannot declare any
+    obligation satisfying. The pending decision remains discoverable until an underlying
+    judgment-head advance creates a new generation.
 
 ## Done when
 
@@ -238,6 +257,6 @@ head advance creates a new conflict generation that the old decision cannot reso
 - Adjudication conflict and decision identities are scoped by server-authenticated organization.
 - Adjudication quorum counts only one current proposal head per authenticated principal/role;
   proposal revision races cannot finalize from withdrawn or mixed generations.
-- Every versioned adjudication resolution has an explicit receipt-bound completion effect, so
-  terminal and nonterminal decisions fold identically in every provider.
+- Every adjudication resolution has a rubric-versioned, total per-obligation effect map;
+  nonterminal decisions and multi-obligation conflict groups cannot manufacture satisfaction.
 - No UI layout, publication state, or provider implementation is encoded in the core.

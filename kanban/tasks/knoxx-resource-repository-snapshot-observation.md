@@ -34,30 +34,39 @@ identity and exactly one provider-neutral selector: `:current`, or an exact reta
 resource version from a validated immutable reference, including the root/version/path
 provenance required by the repository's canonical reference-error law. Bare identities normalize
 only to `:current`; a resolver may not silently turn a pinned coordinate into a current read.
+The set deduplicates equal coordinates, not identities: one identity may appear as current and/or
+at multiple exact versions when a valid closure pins distinct revisions. Results and
+authorization entries are keyed by the complete selector/version/provenance coordinate, never by
+identity alone.
 The operation returns a typed result containing a `ResourceObservation` and the exact composite
 `RepositoryOperationReceipt` that authorized it. The observation contains:
 
 - the canonical ordered coordinate set;
 - for each `:current` coordinate, either its complete canonical authority record and
-  resource-scoped version, or an authoritative absence entry for that exact identity;
+  resource-scoped version or an authoritative absence entry for that exact identity;
 - for each exact-version coordinate, that byte-identical retained authority record and public
   version—never the identity's newer current revision;
 - the repository contract/schema version; and
 - an immutable observation identity over the repository contract/schema version plus only
   those ordered coordinates and results.
 
-An unavailable exact version fails with the repository contract's canonical
-`:resource/invalid-reference` / `:referenced-version-absent` result (or the same
-non-enumerating authorization denial for a forbidden identity). It is not an absence witness.
-No missing, denied, malformed, or selector/version-mismatched coordinate returns a partial
-observation or operation receipt.
+After validating coordinate shapes, authorize the entire canonical coordinate set before any
+identity/version lookup. Any denied member returns the provider-neutral batch-level
+`{:error/type :authorization/forbidden :error/reason :resource-observation-denied}` without member
+identity/position, version, existence, partial observation, or receipt. Only when every member is
+authorized may an unavailable exact version return the repository's canonical
+`:resource/invalid-reference` / `:referenced-version-absent` result using that coordinate's
+validated root/version/path provenance. The canonical first missing coordinate determines the
+error; it exposes no current/actual version, payload, closure, or sibling result and returns no
+observation or receipt. A current coordinate may still return authoritative absence. The
+provider cannot replace a pinned miss with current or turn it into an absence entry. No missing,
+denied, malformed, or selector/version-mismatched coordinate returns partial authority.
 
 The operation receipt follows `knoxx-cms-contract-validation`: it binds the authenticated
 principal, effective scope/delegation, `observe-many` operation and required capability, the
 exact canonical ordered coordinate set, the returned observation identity, and an ordered
 authorization entry with the server-owned `authorization-policy-version` used for every
-requested coordinate/identity. It is immutable historical evidence, not a reusable read
-capability.
+requested coordinate. It is immutable historical evidence, not a reusable read capability.
 Policy versions and the receipt are deliberately outside semantic observation identity:
 changing only authorization policy cannot pretend resource state changed, while every new
 operation still reauthorizes before repository access and emits current policy evidence.
@@ -68,14 +77,16 @@ part of that state even when it is no longer current. The observation identity i
 the requested results are unchanged: internal manifest generations and unrelated resource
 writes cannot rotate it. Updating a `:current` coordinate or changing one current identity from
 absent to present changes the next observation; advancing current state does not rotate an
-observation that requested only an unchanged exact historical version.
+observation that requested only an unchanged exact historical version. Selecting another exact
+version changes the coordinate and observation.
 Changing the repository contract/schema version also changes observation identity even when
 all requested resource values remain equal; consumers never interpret one identity under two
 repository contracts.
 
-The operation authorizes every requested coordinate/identity under the server-authenticated
-actor before disclosing any existence, version, or partial result. Existing and missing foreign
-identities produce the same non-enumerating denial, and a denied request returns no observation.
+The operation authorizes every requested coordinate under the server-authenticated actor before
+disclosing any existence, current/retained version, or partial result. Existing and missing
+foreign identities and requested versions produce the same non-enumerating denial, and a denied
+request returns no observation.
 
 The fake and file/EDN providers implement the same operation on the same repository authority
 used by `resolve one`, list/query, history, and writes. The file provider may use a
@@ -95,7 +106,9 @@ generation as semantic resource versions.
    is either authoritative absence or the new present revision at the operation's linearization
    point, never a fabricated/mixed entry.
 4. An unrelated resource write preserves the observation identity and every requested public
-   version; updating a requested identity changes the next observation.
+   version. Updating a current-coordinate identity changes the next observation; advancing the
+   current revision behind a retained exact-version coordinate does not, while requesting the new
+   exact version does.
 5. Existing/missing cross-tenant identities in any requested position deny before any partial
    observation or version/existence disclosure. Permitted and denied global identities follow
    server-owned read policy.
@@ -117,6 +130,15 @@ generation as semantic resource versions.
     current to P3 leaves the exact-P1 result stable. Missing P1 produces the canonical
     referenced-version error with no partial observation/receipt, and current optional absence
     remains distinguishable from unavailable pinned history.
+11. Request retained P1 and P2 coordinates for the same identity in one batch and return both
+    exact records keyed by their complete coordinates. Collapsing them by identity, selecting
+    one by order, or treating either as the current-coordinate result fails compatibility.
+12. Run the same mixed batches with an unauthorized coordinate and with one or several authorized
+    missing exact versions. Any denial wins before lookup and is byte-for-byte non-enumerating;
+    a fully authorized batch returns the exact canonical `:referenced-version-absent` data from
+    the validated provenance of its first missing coordinate. Fake/file results match exactly,
+    request reordering cannot reveal a denied member, and no failure emits an observation,
+    operation receipt, or partial result.
 
 ## Non-goals
 
@@ -132,9 +154,14 @@ generation as semantic resource versions.
 - One provider-neutral `observe-many` contract returns only repository states that existed.
 - Current versions, retained exact versions, and current-only absence observations are
   mechanically attributable to one immutable observation.
+- Exact-version coordinates resolve retained revisions without floating to current, so a pinned
+  reference closure cannot be silently reinterpreted after a target update.
 - Authorization fails closed without partial results or existence signals.
+- Authorization denial precedes exact-version absence; authorized missing revisions have one
+  canonical error shape and deterministic coordinate ordering across providers.
 - Every successful observation carries its exact composite operation receipt and ordered
-  authorization-policy versions without making those policy versions semantic resource state.
+  per-coordinate authorization-policy versions without making those policy versions semantic
+  resource state.
 - Unrelated writes cannot rotate scoped observation identity.
 - Fake and real file/EDN providers pass the same cross-process compatibility suite.
 - #275 can consume the observation without sequential reads or a translation-only repository

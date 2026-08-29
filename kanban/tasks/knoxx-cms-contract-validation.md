@@ -57,16 +57,27 @@ scope or required capability in the same write it is trying to authorize.
 Server-owned capability policy is authorization authority, not resource content. Changing that
 policy does **not** rotate an otherwise unchanged resource version or reference-closure digest.
 Every authorized repository operation nevertheless emits a `RepositoryOperationReceipt`
-binding the authenticated principal, effective scope, operation/capability, canonical resource
-identity, any exact public version selected by that operation, and the exact server-owned
-`authorization-policy-version` used for the decision.
+binding the authenticated principal, effective scope, operation, and a canonical ordered entry
+for every authority decision that admitted the complete result. The root entry always binds its
+canonical identity, capability, and server-owned `authorization-policy-version`. A read/resolve
+root also binds its requested `:current` or exact-version selector and the exact public version
+returned when present. A create/write/replace root instead binds the normalized submitted
+`expected-version` precondition—including its explicit absence—and the accepted result version.
+A direct operation with no reference closure has only that root entry. A write that validates a
+pinned closure or a resolve that returns one binds the root first and then every direct/transitive
+target in deterministic closure order; each target entry binds
+`{resource/coordinate, capability, authorization-policy-version}` with its exact public version,
+validated root/version/path reference provenance, and exact server-owned read-policy version.
+Equal policy versions do not permit an entry to be omitted, and root authorization never stands
+in for target authorization.
+
 For a provider-neutral operation over multiple resource operation coordinates, the same atomic
-receipt instead binds the canonical ordered coordinate set plus an ordered authorization entry
-of `{resource-coordinate, capability, authorization-policy-version}` for every member. An
-identity-only request is the `:current` coordinate; an exact-version request also binds its
-validated selector/version/reference provenance, so current and retained reads cannot substitute
-for one another. The receipt is emitted only with the complete successful result; there is no
-partial receipt whose allowed subset can be replayed as authority for the batch.
+receipt also binds the complete canonical ordered coordinate set and its ordered authorization
+entries. A current coordinate binds the canonical identity and `:current` selector. An
+exact-version coordinate also binds its public version and validated root/version/path reference
+provenance, so current and retained reads—or two versions of the same identity—cannot collapse,
+reorder, or substitute for one another. The receipt is emitted only with the complete successful
+result; there is no partial receipt whose allowed subset can be replayed as authority.
 
 Historical operation receipts remain verifiable evidence of what was authorized then, but they
 are not reusable capabilities. Every new read/write/resolve reauthorizes against current policy
@@ -163,6 +174,29 @@ target. After referenced resource B advances from B1 to B2, resolving the old A 
 returns B1. Consuming B2 requires a new A revision whose canonical reference explicitly pins
 B2.
 
+Batch observation preserves the same rule. A current observation coordinate resolves the
+revision current at the operation's linearization point or returns authoritative absence; an
+exact-version coordinate resolves that retained revision and never falls forward to current.
+After coordinate-shape validation, the provider authorizes the complete canonical coordinate
+set before looking up any identity or version. If any member is unauthorized, the whole batch
+returns exactly `{:error/type :authorization/forbidden :error/reason
+:resource-observation-denied}`, without a member identity/position, requested/actual version,
+existence fact, partial observation, or operation receipt. Providers cannot let request order
+reveal which member failed.
+
+Only after every coordinate is authorized does the provider resolve the batch at one
+linearization point. A permitted current coordinate may return authoritative absence. A
+permitted exact-version coordinate whose requested revision is unavailable fails the whole batch
+with the existing canonical reference error
+`{:error/type :resource/invalid-reference :error/reason :referenced-version-absent
+:resource/id <root-id> :reference/path <path> :reference/id <target-id>
+:reference/version <target-version>}` from its validated coordinate provenance and no observation
+or operation receipt. If several coordinates are unavailable, the canonical first coordinate
+determines the error. It exposes no current/actual version, payload, closure, or sibling result.
+Authorization denial takes precedence over this authorized absence, so existing and missing
+foreign revisions remain indistinguishable while authorized callers receive one deterministic
+exact-version contract.
+
 Compatibility tests must assert the complete conflict data above, not only that an
 exception occurred. They must also re-read after every duplicate or conflict and prove
 that no authority changed. Include both the absent-resource/non-nil-precondition case and
@@ -178,10 +212,15 @@ without changing authority. In separate fixtures, make an organization-A root re
 an existing and a missing organization-B target, and place the foreign edge one hop deeper.
 Every write/resolve attempt must produce the same non-enumerating denial and reveal no closure
 facts. Exercise permitted and denied global targets through their server-owned read policy too.
-Change that policy from allowed V1 to denied V2 without changing the resource: assert the
-resource version/closure stays byte-identical, the V1 operation receipt remains historically
-verifiable but grants no current access, and a V2 attempt fails with a V2-attributable
-non-enumerating result and no mutation.
+Change a direct or transitive target policy from allowed T1 to allowed T2 without changing any
+resource: assert the root/target versions and closure digest stay byte-identical while the new
+operation receipt rotates only that target's ordered policy entry. Dropping, reordering, or
+substituting a target entry fails verification. For read/resolve, changing the root identity,
+selector, or returned version invalidates the receipt; for create/write/replace, changing the root
+identity, normalized expected-version precondition, or accepted result version does likewise.
+Change T2 to denied T3 and prove the T1/T2 receipts remain historically verifiable but grant no
+current access; the T3 attempt returns
+the same non-enumerating denial with no operation receipt or mutation.
 
 Run the same semantic suite against:
 

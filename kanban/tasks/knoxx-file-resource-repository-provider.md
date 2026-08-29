@@ -25,7 +25,14 @@ files while consumers depend only on a repository boundary.
 - Keep these operations on the same repository authority extended by
   `knoxx-resource-repository-snapshot-observation` (#282). Its `observe-many` operation must
   reuse the fake/file providers and their public versions/authorization rather than wrapping
-  sequential resolves in a translation-specific adapter.
+  sequential resolves in a translation-specific adapter. It accepts current coordinates and
+  exact-version coordinates; an exact-version coordinate reads the retained immutable revision
+  and can never substitute the resource's newer current revision. Fake and file providers share
+  one authorization-first failure precedence: any denied coordinate returns the batch-level
+  `:resource-observation-denied` error; only a fully authorized batch may return the canonical
+  `:resource/invalid-reference` / `:referenced-version-absent` error for its first missing exact
+  coordinate, using that coordinate's validated root/version/path provenance and matching
+  exact-version `resolve one`. Neither failure emits a partial observation or receipt.
 - Reuse the existing namespace/resource EDN contract shape rather than introducing a
   second content language.
 - Keep filesystem/Git path details inside the provider implementation.
@@ -65,11 +72,22 @@ files while consumers depend only on a repository boundary.
   floating current values. Resolve the complete transitive closure in deterministic order,
   return its digest, retain older targets after updates, and reject missing pinned versions or
   cycles with the provider-neutral invalid-reference data before modifying authority.
+- Prove batch observation can combine current coordinates with retained exact-version
+  coordinates under one repository operation. Advancing a referenced resource from P1 to P2
+  while a selected record still pins P1 must continue returning P1; only a new selected-record
+  revision that pins P2 may move the observed closure. When a closure legitimately contains P1
+  and P2 for the same identity, keep both results keyed by their complete coordinates rather
+  than collapsing them by identity.
 - Authorize every direct/transitive reference target under the authenticated actor context
   before checking its existence/version: tenant targets must match the actor's organization and
   global targets must pass server-owned read policy. Root authorization never delegates target
   access. Existing/missing foreign targets return the same non-enumerating denial on write and
   resolve, expose no closure/version facts, and leave root/current/history authority unchanged.
+- On successful write-time validation or read-time closure resolution, return one operation
+  receipt whose deterministic authorization entries bind the root and every direct/transitive
+  exact target coordinate, capability, reference provenance, and policy version. Rotating only a
+  target's allow-policy version rotates that entry/receipt without rotating resource versions or
+  the closure digest; a denied target emits no receipt.
 - Preserve enough version/provenance information for downstream publication,
   transduction, and evaluation consumers to bind to immutable revisions where required.
 - Prove the boundary using an in-memory/fake provider plus the real file provider.
@@ -113,6 +131,11 @@ to this same provider-compatibility boundary.
 - Direct and transitive foreign-reference fixtures (both existing and missing) are denied
   before lookup with identical observable results; permitted/denied global reference targets
   follow server-owned read policy and no denial leaks closure/version facts.
+- Direct and transitive allowed target fixtures return complete root-plus-closure authorization
+  entries. Altering a read/resolve root identity, selector, or returned version; altering a
+  create/write/replace root identity, expected-version precondition, or accepted result version;
+  target-only policy rotation; target entry omission/reordering/substitution; and later denial
+  exercise the same receipt laws as the provider-neutral contract.
 - Cross-process race and injected-crash tests observe only complete old/new manifests and
   never acknowledge a write before its resource revision and closure can be re-read.
 - No consumer needs to know a resource came from disk in order to use it.

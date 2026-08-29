@@ -73,7 +73,8 @@ The resolved artifact contains:
   id), immutable source identity/revision, and canonical operation;
 - the repository contract/schema version and snapshot observation identity;
 - the final composite `RepositoryOperationReceipt` identity/digest and its ordered
-  per-resource `authorization-policy-version` bindings for the exact observation;
+  per-coordinate `authorization-policy-version` bindings for the exact observation, preserving
+  distinct requested versions of the same resource identity;
 - exact canonical identity and resource-scoped version of the global default;
 - exact canonical identity and resource-scoped version of the optional organization override;
 - exact canonical identity/resource version of the selected model-catalog entry plus the
@@ -98,28 +99,35 @@ observes the two current config coordinates and gives that immutable observation
 resolver to derive only the selected model/catalog identity: today's config value is an ID, not a
 versioned resource reference. The next pass observes the config coordinates again plus that model
 identity as `:current`. Only the returned model authority record and public version may derive its
-validated exact provider-policy reference coordinates. The facade repeats until the selected
-model identity and its required canonical policy-coordinate set are stable, then obtains one final
-`observe-many` result containing both current config coordinates, the selected model as
+validated exact provider-policy reference coordinates. Each newly observed exact revision may
+introduce another pinned reference frontier, so the facade repeats until the selected model
+identity and current version are unchanged, the complete transitive closure contributes no new
+or changed coordinate, and every parent still names the exact observed child revision.
+
+The final `observe-many` contains both current config coordinates, the selected model as
 `:current`, and its complete exact-version policy closure. Translation-config law verifies that
-the final config still selects that model and the final model record still names exactly those
-pinned dependencies before the pure domain resolver consumes the admitted typed result. A config
-selector or model dependency change restarts the full sequence; the final observation's returned
-model version is the artifact's selected-model revision. No step fabricates that version or reads
-the model outside `observe-many`. An unavailable pinned version fails with the canonical
-referenced-version error and produces no artifact, attestation, admission, or provider call; it
-is never replaced by that identity's current revision or treated as optional absence. Only the
-final single observation is attested. An unrelated catalog entry is excluded and cannot rotate
-the artifact.
+the final config still selects that model, the final model record still names the direct pinned
+dependencies, and every transitive parent still names its observed child before the pure domain
+resolver consumes the admitted typed result. A config selector, current model, direct reference,
+or transitively discovered coordinate change restarts the full sequence. The final observation's
+returned model version is the artifact's selected-model revision; no step fabricates that version
+or reads the model outside `observe-many`. Advancing current policy from P1 to P2 cannot move a
+reference pinned to P1. An unavailable pinned version fails with the canonical reference error
+and produces no artifact, attestation, admission, or provider call; it is never replaced by
+current or treated as optional absence. Only the final single observation is attested. An
+unrelated catalog entry is excluded and cannot rotate the artifact.
 
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
 bytes. It binds the complete composite attempt identity, authenticated actor/origin
 organization, effective organization plus delegation evidence, repository contract/schema
 version, snapshot/observation identity, the exact final `RepositoryOperationReceipt` and every
-ordered authorization-policy version, every present resource version, the absent-override
-witness, selected model-catalog revision/provider-policy closure, resolution-policy/schema
-version, and artifact digest. Admission rejects a receipt for another principal, effective
+ordered per-coordinate authorization-policy-version binding, every present resource version,
+the absent-override witness, selected model-catalog revision/provider-policy closure,
+resolution-policy/schema version, and artifact digest. The authorization entries are keyed and
+digested by complete selector/version/reference-provenance coordinate, so P1 and P2 of one
+identity cannot collapse, reorder, or substitute each other. Admission rejects a receipt for
+another principal, effective
 scope, capability, requested coordinate set, observation identity, or provisional fixed-point
 read. Validation verifies the attestation and immutable receipt evidence without re-reading
 current config. A later override creation therefore does not invalidate an
@@ -200,18 +208,27 @@ The publication-free namespace closure from #273 remains an invariant.
    system administrator's explicit delegated target succeeds and remains bound with actor
    evidence.
 3. Updating either contributor or the repository contract/schema version changes the artifact;
-   updating the selected model/provider policy also changes it; updating an unrelated resource
-   or unselected catalog entry does not. Rotate only authorization policy V1 allow to V2 allow:
+   updating the selected catalog revision or changing its pinned provider-policy reference also
+   changes it. Advancing the provider policy from P1 to P2 while the selected catalog still pins
+   P1 leaves the artifact on P1; updating an unrelated resource or unselected catalog entry does
+   not change it. Rotate only authorization policy V1 allow to V2 allow:
    semantic resource/observation identity remains stable while the exact final operation
    receipt/policy bindings and new-attempt artifact rotate. V2 deny admits no new artifact;
-   replaying the V1 receipt or substituting another actor/scope/coordinate-set receipt fails.
+   replaying the V1 receipt or substituting another actor/scope/coordinate-set receipt fails. When
+   one closure contains P1 and P2 coordinates for the same identity, dropping, reordering, or
+   substituting either coordinate's authorization entry fails attestation/admission.
 4. Resolve with no override, create one, then persist a candidate: its receipt retains and
    verifies the originally attested absence without re-reading current config. Updating a
    present contributor exercises the same race law. Deterministic fake/file barriers prove the
    observation is a complete before-state or after-state, never a torn pair from sequential
    reads. Race a config selector change, selected catalog update, and provider-policy reference
    update during fixed-point expansion; the admitted artifact names one final coexistent closure
-   or retries, never a mixed catalog decision.
+   or retries, never a mixed catalog decision. With catalog C1 pinned to policy P1, advance the
+   policy's current revision to P2 between passes and prove the final exact-version coordinate
+   still returns P1. Extend the fixture to C1 -> P1 -> Q1, advance Q's current revision to Q2,
+   and prove recursive discovery observes Q1 rather than stopping at P1 or floating to Q2. Only
+   catalog C2 or a newly selected pinned parent explicitly naming P2/Q2 may produce that closure;
+   any direct or transitive coordinate-set change restarts the bounded fixed-point pass.
 5. Cross-tenant, fabricated, stale, missing, value/revision-mismatched, unsigned, and
    signature/receipt-replayed artifacts all fail before provider invocation and append no
    candidate/history. A caller-computed digest plus a forged absent marker is insufficient.
@@ -276,8 +293,9 @@ The publication-free namespace closure from #273 remains an invariant.
   policy coordinates; final recheck yields one coherent model/policy closure without fabricated
   versions, current-policy substitution, or pinned-version absence witnesses.
 - The artifact and attestation carry the exact final repository operation receipt and ordered
-  authorization-policy versions; policy rotation reauthorizes new attempts without rotating
-  semantic resource/observation versions, and historical receipts never become capabilities.
+  per-coordinate authorization-policy versions, including multiple exact versions of one
+  identity; policy rotation reauthorizes new attempts without rotating semantic
+  resource/observation versions, and historical receipts never become capabilities.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
   while idempotent retries of the same composite attempt retain their exact artifact and
   cross-group reuse of a raw id remains independent.
