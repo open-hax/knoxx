@@ -36,10 +36,9 @@
 (defn contract-for
   "The authentication contract for `surface`, or nil.
 
-   A missing or unreadable contract is nil rather than a throw: law refuses on
-   nil, so the surface falls back to OAuth-only. Losing the ability to serve
-   /mcp because a contract file was mid-edit would be a worse failure than
-   ignoring it."
+   A missing or unreadable contract is nil rather than a throw. Law refuses
+   every method on nil, so a damaged authority file fails the surface closed
+   instead of silently restoring a method the contract may have disabled."
   [config surface]
   (when (= mcp-surface surface)
     (try
@@ -97,12 +96,12 @@
   (let [granted (if (= :all (:tools grant))
                   (vec available-tool-names)
                   (filterv (set available-tool-names) (:tools grant)))]
-    (clj->js (cond-> {:accessToken "authentication-contract"
-                      :clientId    "knoxx-authentication-contract"
-                      :userEmail   (:user-email grant)
-                      :tools       granted}
-               (:org-slug grant) (assoc :orgSlug (:org-slug grant))
-               (:actor-id grant) (assoc :actorId (:actor-id grant))))))
+    (cond-> {:accessToken "authentication-contract"
+             :clientId    "knoxx-authentication-contract"
+             :userEmail   (:user-email grant)
+             :tools       granted}
+      (:org-slug grant) (assoc :orgSlug (:org-slug grant))
+      (:actor-id grant) (assoc :actorId (:actor-id grant)))))
 
 (defn announce!
   "Log once, at startup, whenever a surface accepts anything but OAuth.

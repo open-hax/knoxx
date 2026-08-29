@@ -1040,6 +1040,21 @@
      (get @actor-managers* id)
      @manager*)))
 
+(defn set-actor-manager!
+  "Store `manager` for exactly one actor, or remove it when manager is nil.
+
+   The actor id is mandatory even for removal. That keeps a blank actor from
+   becoming an alias for the legacy/default manager, which would turn an
+   actor-scoped caller into a process-scoped one."
+  [actor-id manager]
+  (let [actor-id (some-> actor-id str str/trim not-empty)]
+    (when-not actor-id
+      (throw (js/Error. "actor id is required for Discord actor gateway")))
+    (if (nil? manager)
+      (swap! actor-managers* dissoc actor-id)
+      (swap! actor-managers* assoc actor-id manager))
+    manager))
+
 (defn gateway-managers
   "Returns a map of actor-id to actor-owned Discord gateway managers."
   []
@@ -1084,7 +1099,7 @@
       (throw (js/Error. "actor id is required for Discord actor gateway")))
     (or (get @actor-managers* actor-id)
         (let [manager (createDiscordGatewayManager #js {:log js/console :setDefault false})]
-          (swap! actor-managers* assoc actor-id manager)
+          (set-actor-manager! actor-id manager)
           manager))))
 
 (defn ^:async start-actor-gateway!
