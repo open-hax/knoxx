@@ -30,8 +30,10 @@ identity. `create-segment!` reads the existing row, computes `modified?`, and ov
 when the content differs.
 
 This is why `save_translation` is declared `destructiveHint: true` in
-`law.mcp-tool-annotations` — an accurate description of today's behavior, and a hint that
-should become `false` when this card lands.
+`law.mcp-tool-annotations` — an accurate description of today's behavior. Append-only event
+history does not by itself make the hint false: this operation still advances/replaces the
+mutable current projection. Retain the hint while the tool may overwrite that state; only a
+separate operation that cannot change or remove any current authority can claim `false`.
 
 ## Scope
 
@@ -51,7 +53,8 @@ should become `false` when this card lands.
   request.
 - Migrate existing segment rows into an initial event per segment, preserving
   `created_at`/`updated_at` as best-known historical evidence.
-- Update `save_translation`'s annotation to non-destructive once it is true.
+- Keep `save_translation`'s annotation honest: it remains destructive while the operation
+  advances the current projection, even though attempt history is append-only.
 
 ## Contract obligations
 
@@ -146,4 +149,6 @@ land a migration that leaves that endpoint erroring.
   event can be admitted.
 - An evaluation receipt can bind to a candidate that remains addressable after a newer
   translation exists.
-- `save_translation` is honestly non-destructive, with the MCP annotation updated.
+- `save_translation` retains `destructiveHint: true` while it can replace current projection
+  state; an annotation regression test prevents append-only history from being mistaken for a
+  non-destructive public operation.

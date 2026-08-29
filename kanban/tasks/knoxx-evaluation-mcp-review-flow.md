@@ -53,9 +53,10 @@ or probe another organization's receipt. Tool results expose the caller id plus 
 scope without accepting a client override.
 
 When an SME changes its own prior judgment, the tool also carries the explicit
-`supersedes_receipt_id` selected from evidence already returned for that authenticated
-principal. The handler cannot infer supersession from time/content or supersede another
-principal's receipt. It returns the new immutable receipt and the updated pure case status.
+obligation-scoped `{obligation_id, prior_receipt_id, prior_judgment_id}` supersession entries
+selected from evidence already returned for that authenticated principal. The handler cannot
+infer supersession from time/content, supersede another principal/obligation, or partially
+apply a multi-entry correction. It returns the new immutable receipt and updated pure status.
 
 For the translation fixture the agent must be able to show source text, candidate text,
 locale/terminology/context, collect the SME's correction or approval, and leave evidence
@@ -103,10 +104,11 @@ repository/receipt store:
    caller-stable `receipt_id` returns the original receipt, changed reuse conflicts, and two
    distinct ids with equal evaluation content persist as two intentional evaluations.
 8. A new candidate revision does not inherit the old receipt.
-   A same-principal correction explicitly supersedes the current matching receipt and changes
-   the one effective vote while retaining history. Missing/cross-principal/stale-version or
-   competing supersession fails without append; two unlinked conflicting values remain
-   `:needs-adjudication`.
+   A same-principal correction explicitly supersedes current matching judgment leaves and
+   changes only those obligation votes while retaining history and unrelated judgments in the
+   prior receipt. Missing/cross-principal/cross-obligation/stale-version or competing
+   supersession fails without append; two unlinked conflicting values remain
+   `:needs-adjudication`. Multi-obligation supersession admission is atomic.
 9. The pure status fold keeps incomplete multi-judgment or multi-role sets `:pending`, reports
    exclusive conflicting receipts as `:needs-adjudication`, and returns `:satisfied` only for
    a complete non-conflicting set bound to the exact case, rubric, and artifact versions. An
@@ -118,6 +120,9 @@ repository/receipt store:
    finalizations cannot both satisfy the case.
 10. Only `:satisfied` advances to the next pending case; `:pending` and
     `:needs-adjudication` remain visible work.
+    The canonical `:defer` decision has `:keeps-pending` completion effect, contributes no
+    satisfaction quorum, and remains discoverable with its reason/evidence rather than being
+    silently advanced or stranded.
 11. The authenticated organization discovers only its cases. Cross-tenant direct fetches and
     writes return the same non-enumerating `:authorization/forbidden` result and persist
     nothing. A client-supplied tenant, reviewer identity, or reviewer role cannot override the

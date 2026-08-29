@@ -44,6 +44,12 @@ explicit compatibility/exclusivity group; and the roles allowed to adjudicate th
 The generic status fold consumes those fields directly rather than inferring completion from
 the number of receipts or from UI workflow state.
 
+Every allowed value declares a required completion effect: `:satisfies` or `:keeps-pending`;
+there is no default. The built-in `:defer` value is always `:keeps-pending`, never evidence that
+an obligation is satisfied. Its receipt remains durable and the case remains discoverable as
+pending work (with the defer reason/evidence); only a later satisfying judgment or valid
+supersession can advance it.
+
 Quorum is counted per obligation and required role over **distinct authenticated principal
 identities**, using the immutable principal/role facts recorded on admitted receipts. Multiple
 receipt ids or revisions from one principal contribute at most one vote to that obligation-role
@@ -51,14 +57,17 @@ requirement; a replacement/correction may change that principal's effective judg
 cannot manufacture another reviewer. A principal may satisfy a different required role only
 when its authenticated role facts and the rubric's role-overlap policy explicitly allow it.
 
-A changed vote is another immutable receipt with an explicit `supersedes-receipt-id`. The
-target must be the current unsuperseded receipt for the same organization, case/rubric/artifact
-versions, obligation, authenticated principal, and reviewer role. Admission atomically advances
-that principal/obligation/role head: two concurrent successors cannot both win. The status fold
-uses the one unsuperseded leaf and retains every ancestor as history; it never chooses by wall
-clock. Multiple receipts without a valid supersession relation remain coexisting evidence and
-conflicting exclusive values yield `:needs-adjudication`. Cross-principal, cross-version,
-already-superseded, missing-target, and cyclic relations fail validation without appending.
+A changed vote is another immutable receipt with obligation-scoped supersession entries of
+`{obligation-id, prior-receipt-id, prior-judgment-id}`. Each target must be the current
+unsuperseded judgment for the same organization, case/rubric/artifact versions, obligation,
+authenticated principal, and reviewer role. Admission validates and advances every named
+principal/obligation/role head atomically or appends nothing: two concurrent successors cannot
+both win. The status fold uses the one unsuperseded judgment leaf per obligation and retains
+every receipt/ancestor as history; correcting obligation A does not suppress unrelated judgment
+B carried by the same prior receipt. It never chooses by wall clock. Multiple judgments without
+a valid supersession relation remain coexisting evidence and conflicting exclusive values yield
+`:needs-adjudication`. Cross-principal, cross-obligation, cross-version, already-superseded,
+missing-target, and cyclic relations fail validation without appending.
 
 ## Laws
 
@@ -110,11 +119,15 @@ the admitted decision, and the fold never selects an adjudication by timestamp o
 11. Two descriptors with different role/quorum and exclusivity rules fold identically in the
     pure law and every adapter; missing descriptor fields fail validation rather than
     defaulting to satisfied.
+    An allowed value without completion effect fails validation; `:defer` keeps the case
+    pending/discoverable and cannot contribute satisfaction quorum.
 12. Repeated receipts from one principal leave a two-reviewer quorum `:pending`; adding a
     second authenticated principal satisfies it, while spoofed reviewer ids never count.
 13. An approve receipt followed by a valid same-principal reject supersession retains both but
     folds one effective reject vote. Without the relation it needs adjudication; concurrent
     successors admit exactly one, and cross-principal/version/cyclic supersession is rejected.
+    In a two-obligation receipt, superseding only obligation A preserves the original effective
+    judgment for B; a multi-edge correction is all-or-nothing.
 14. Opposite adjudicator proposals for one canonical conflict set remain
     `:needs-adjudication` until a compatible distinct-principal quorum exists. Race opposite
     decision finalizations and prove exactly one immutable decision wins, the other conflicts,
