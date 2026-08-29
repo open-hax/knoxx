@@ -36,13 +36,24 @@ The resolved artifact contains:
 - exact canonical identity and resource-scoped version of the global default;
 - exact canonical identity and resource-scoped version of the optional organization override;
 - a resolution-policy/schema version; and
-- a deterministic artifact identity/digest over the ordered contributing facts.
+- a deterministic artifact identity/digest over the ordered contributing facts; and
+- a trusted immutable resolution attestation covering the entire artifact, including absence.
 
 Resource versions come from the provider-neutral repository contract and its retained
-revisions, never file mtimes, manifest hashes, current re-reads, or caller input. Global-only
-resolution has an explicit absent-override value, not a fabricated revision. Unrelated
-resource writes cannot rotate the artifact. The existing `resolved-config!` contract and its
-consumers change atomically so there is still one configuration boundary.
+revisions, never file mtimes, manifest hashes, current re-reads, or caller input. Resolution
+observes the global and organization-override identities in one consistent repository snapshot.
+When the override is absent, the artifact carries a trusted absence witness for its exact
+canonical identity and that snapshot, not a caller-computable marker.
+
+The existing boundary mints an opaque `ResolvedConfigAttestation` using server-held signing/MAC
+authority or an equivalent append-only receipt store outside caller-controlled bytes. It binds
+the authenticated organization, snapshot/observation identity, every present resource version,
+the absent-override witness, policy/schema version, and artifact digest. Validation verifies
+that authority without re-reading current config. A later override creation therefore does not
+invalidate an already-started attempt, while merely omitting an existing override or recomputing
+the digest cannot fabricate a valid artifact. Unrelated resource writes cannot rotate the
+artifact. The existing `resolved-config!` contract and its consumers change atomically so there
+is still one configuration boundary.
 
 Provider selection receives this artifact and durable attempt/candidate evidence carries it
 unchanged. A configuration update after resolution creates a different future artifact but
@@ -54,15 +65,17 @@ The publication-free namespace closure from #273 remains an invariant.
 
 ## TDD / proof
 
-1. Global-only resolution returns the exact global revision, explicit no-override marker, and
-   a byte-stable artifact identity.
+1. Global-only resolution returns the exact global revision, snapshot-bound absence witness for
+   the override identity, byte-stable artifact identity, and trusted attestation.
 2. Global plus organization override resolution names both ordered revisions and binds to the
    authenticated organization.
 3. Updating either contributor changes the artifact; updating an unrelated resource does not.
-4. Resolve, change config, then persist a candidate: its receipt retains the originally
-   resolved artifact and never re-reads current config for provenance.
-5. Cross-tenant, fabricated, stale, missing, and value/revision-mismatched artifacts all fail
-   before provider invocation and append no candidate/history.
+4. Resolve with no override, create one, then persist a candidate: its receipt retains and
+   verifies the originally attested absence without re-reading current config. Updating a
+   present contributor exercises the same race law.
+5. Cross-tenant, fabricated, stale, missing, value/revision-mismatched, unsigned, and
+   signature/receipt-replayed artifacts all fail before provider invocation and append no
+   candidate/history. A caller-computed digest plus a forged absent marker is insufficient.
 6. Existing consumers, backend compile, unit/integration tests, and MCP E2E pass with every
    publication-owned namespace absent from the config boundary closure.
 
@@ -76,7 +89,8 @@ The publication-free namespace closure from #273 remains an invariant.
 ## Done when
 
 - One existing production boundary returns an authenticated, versioned resolved artifact.
-- Global and optional override revisions are mechanically attributable and immutable.
+- Global and optional override revisions—or trusted snapshot-bound absence—are mechanically
+  attributable and immutable.
 - Provider invocation and durable evidence carry the identical artifact end to end.
 - Config races and cross-tenant/fabricated artifacts fail closed with the negative proofs above.
 - Publication-free closure, backend compile/tests, and MCP E2E pass.

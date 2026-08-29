@@ -44,7 +44,9 @@ Every receipt-write tool input includes a required caller/workflow-stable `recei
 handler validates and passes that identity unchanged to atomic receipt admission; it cannot
 mint a new id per call, substitute a transport tool-call id, or derive identity from receipt
 content. Organization/reviewer facts remain server-derived. Distinct receipt ids with
-canonically equal evaluations remain distinct historical evaluations.
+canonically equal evaluations remain distinct historical evaluations but join one
+server-derived principal/role/obligation judgment head and contribute one vote. Tool results
+return that `judgment_head_id` and current `head_version`; neither is caller-selected.
 
 The durable receipt identity is the server-composed `{org-id, receipt-id}` pair, where
 `org-id` comes only from authenticated actor context. The store's uniqueness and comparison
@@ -53,10 +55,12 @@ or probe another organization's receipt. Tool results expose the caller id plus 
 scope without accepting a client override.
 
 When an SME changes its own prior judgment, the tool also carries the explicit
-obligation-scoped `{obligation_id, prior_receipt_id, prior_judgment_id}` supersession entries
-selected from evidence already returned for that authenticated principal. The handler cannot
-infer supersession from time/content, supersede another principal/obligation, or partially
-apply a multi-entry correction. It returns the new immutable receipt and updated pure status.
+obligation-scoped `{obligation_id, judgment_head_id, expected_head_version}` supersession
+entries selected from evidence already returned for that authenticated principal. The handler
+cannot infer supersession from time/content, supersede another principal/obligation, or
+partially apply a multi-entry correction. Equal duplicate admission and changed supersession
+are linearized through that one head slot. It returns the new immutable receipt, new head
+version, and updated pure status.
 
 For the translation fixture the agent must be able to show source text, candidate text,
 locale/terminology/context, collect the SME's correction or approval, and leave evidence
@@ -102,12 +106,16 @@ repository/receipt store:
    idempotently.
    Exercise the real MCP schema/handler with a commit-then-lost-response retry: the same
    caller-stable `receipt_id` returns the original receipt, changed reuse conflicts, and two
-   distinct ids with equal evaluation content persist as two intentional evaluations.
+   distinct ids with equal evaluation content persist as two intentional receipts joined to
+   one effective head/vote. Append duplicate approve receipts, then supersede the returned
+   head/version with reject; both approvals become history and neither remains effective.
+   Race the duplicate with the successor and prove the old generation cannot reopen.
 8. A new candidate revision does not inherit the old receipt.
-   A same-principal correction explicitly supersedes current matching judgment leaves and
+   A same-principal correction explicitly supersedes current matching judgment-head slots and
    changes only those obligation votes while retaining history and unrelated judgments in the
    prior receipt. Missing/cross-principal/cross-obligation/stale-version or competing
-   supersession fails without append; two unlinked conflicting values remain
+   supersession fails without append; a same-principal changed value without the current head
+   id/version is rejected, while two distinct principals' conflicting values remain
    `:needs-adjudication`. Multi-obligation supersession admission is atomic.
 9. The pure status fold keeps incomplete multi-judgment or multi-role sets `:pending`, reports
    exclusive conflicting receipts as `:needs-adjudication`, and returns `:satisfied` only for
@@ -115,24 +123,27 @@ repository/receipt store:
    authorized adjudication receipt names the conflicting receipts rather than replacing them.
    The fixture includes explicit obligation ids, allowed values, role/quorum rules,
    exclusivity groups, and adjudicator roles so no adapter invents completion defaults.
-   Competing adjudicator proposals use the canonical conflict-set identity and distinct
-   principal quorum; the actual decision is one atomically admitted receipt, so opposite
-   finalizations cannot both satisfy the case.
+   Competing adjudicator proposals use the server-authenticated-organization-scoped canonical
+   conflict-set identity and distinct-principal quorum; the actual decision is one atomically
+   admitted receipt in that organization's slot, so opposite finalizations cannot both satisfy
+   the case.
 10. Only `:satisfied` advances to the next pending case; `:pending` and
     `:needs-adjudication` remain visible work.
     The canonical `:defer` decision has `:keeps-pending` completion effect, contributes no
     satisfaction quorum, and remains discoverable with its reason/evidence rather than being
     silently advanced or stranded. A same-principal satisfying follow-up must name the defer
-    judgment in an obligation-scoped supersession edge; the unlinked form is rejected with no
-    append. Another principal's satisfying value does not conflict with defer and counts only
-    as the rubric's quorum allows.
+    judgment head/version in an obligation-scoped supersession edge; the unlinked form is
+    rejected with no append. Another principal's satisfying value does not conflict with defer
+    and counts only as the rubric's quorum allows.
 11. The authenticated organization discovers only its cases. Cross-tenant direct fetches and
     writes return the same non-enumerating `:authorization/forbidden` result and persist
     nothing. A client-supplied tenant, reviewer identity, or reviewer role cannot override the
     authenticated principal, including when it names a real SME in the same organization.
     The two-organization fixture reuses the exact same `receipt_id` in both organizations and
     proves two independent receipts, idempotent retries, and no existence/conflict signal
-    crosses the composite identity boundary.
+    crosses the composite identity boundary. It also reuses the same case/rubric/artifact,
+    conflicting receipt, and proposal ids; conflict-set identities, quorum, and decision slots
+    remain independent because server-derived organization is part of their identity.
 12. The entire proof runs with the translation review frontend absent.
 
 ## Done when
@@ -145,6 +156,8 @@ repository/receipt store:
   admission and canonical-payload comparison are atomic.
 - Caller-stable receipt identity survives the real MCP boundary and response loss; store-only
   idempotency tests do not satisfy this card.
+- Equal same-principal receipts remain distinct history but share one effective head; a later
+  correction atomically retires the whole prior generation.
 - Discovery, artifact reads, and receipt writes are tenant-owned, and durable reviewer facts
   come from the authenticated actor rather than client assertions.
 - Case advancement consumes the pure version-bound satisfaction/adjudication fold and cannot

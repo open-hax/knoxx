@@ -66,17 +66,30 @@ requirement; a replacement/correction may change that principal's effective judg
 cannot manufacture another reviewer. A principal may satisfy a different required role only
 when its authenticated role facts and the rubric's role-overlap policy explicitly allow it.
 
+The server derives one `judgment-head-id` from `{org-id, case/rubric/artifact versions,
+obligation-id, authenticated-principal-id, reviewer-role}`; receipt id and judgment value are
+not head identity. Its linearizable slot holds a `head-version`, the current canonical judgment
+value/effect, and every immutable receipt/judgment id that attests that equal value. A distinct
+receipt id with a canonically equal judgment appends intentional evidence and joins the current
+head generation, but creates no second leaf or vote. Equal-duplicate admission and a changed
+successor serialize through this same slot, so a late old-value receipt cannot resurrect an
+earlier generation. Head equality compares the effective value/completion effect at the exact
+version-bound obligation; different rationale/evidence remains distinct receipt history but
+cannot multiply that principal's vote.
+
 A changed vote is another immutable receipt with obligation-scoped supersession entries of
-`{obligation-id, prior-receipt-id, prior-judgment-id}`. Each target must be the current
-unsuperseded judgment for the same organization, case/rubric/artifact versions, obligation,
-authenticated principal, and reviewer role. Admission validates and advances every named
-principal/obligation/role head atomically or appends nothing: two concurrent successors cannot
-both win. The status fold uses the one unsuperseded judgment leaf per obligation and retains
-every receipt/ancestor as history; correcting obligation A does not suppress unrelated judgment
-B carried by the same prior receipt. It never chooses by wall clock. A satisfying value after a
-same-principal `:keeps-pending` head is rejected without a valid supersession relation; other
-independently admitted judgments remain coexisting evidence, and conflicting exclusive values
-yield
+`{obligation-id, judgment-head-id, expected-head-version}`. Each target must be the current
+head for the same organization, case/rubric/artifact versions, obligation, authenticated
+principal, and reviewer role. Admission validates and advances every named
+principal/obligation/role slot atomically or appends nothing: two concurrent successors cannot
+both win. Advancing one slot makes every equal receipt in its prior generation an immutable
+ancestor, so correcting once cannot leave a duplicate old vote effective. The status fold uses
+the one head leaf per obligation and retains every receipt/ancestor as history; correcting
+obligation A does not suppress unrelated judgment B carried by the same prior receipt. It never
+chooses by wall clock. Any changed same-principal value, including one after a
+`:keeps-pending` head, is rejected without a valid head/version supersession. Independently
+admitted judgments from distinct principals remain coexisting evidence, and conflicting
+exclusive values yield
 `:needs-adjudication`. Cross-principal, cross-obligation, cross-version, already-superseded,
 missing-target, and cyclic relations fail validation without appending.
 
@@ -102,12 +115,15 @@ missing-target, and cyclic relations fail validation without appending.
   identities and is produced only by a reviewer role authorized by the rubric; history is not
   overwritten to manufacture satisfaction.
 
-A conflict set has a canonical identity derived from the exact case/rubric/artifact versions,
-obligation/exclusivity group, and sorted conflicting receipt ids. The rubric declares allowed
-resolutions plus adjudicator roles and distinct-principal quorum. Adjudicator proposal receipts
-are immutable evidence but do not directly satisfy the case. Once compatible proposals reach
-quorum, a domain operation atomically creates one `AdjudicationDecisionReceipt` in the unique
-slot for that conflict-set identity, naming the resolution and exact quorum-member receipt ids.
+A conflict set has a canonical identity derived from the server-authenticated organization,
+exact case/rubric/artifact versions, obligation/exclusivity group, and sorted conflicting
+receipt ids. The organization is part of both conflict-set identity and the unique decision
+slot; caller-supplied scope never participates. The rubric declares allowed resolutions plus
+adjudicator roles and distinct-principal quorum. Adjudicator proposal receipts are immutable
+evidence but do not directly satisfy the case. Once compatible proposals reach quorum, a
+domain operation atomically creates one `AdjudicationDecisionReceipt` in that organization's
+unique slot for the conflict-set identity, naming the resolution and exact quorum-member
+receipt ids.
 An opposite decision racing for the empty slot yields exactly one winner and one
 `:evaluation/conflict`; an equal retry is unchanged. Later incompatible proposals cannot change
 the admitted decision, and the fold never selects an adjudication by timestamp or array order.
@@ -135,17 +151,23 @@ the admitted decision, and the fold never selects an adjudication by timestamp o
     defer-then-approve succeeds only with an explicit supersession edge and then uses the
     approve leaf; the unlinked form is rejected without append. A different principal's
     satisfying value does not conflict with the defer and is evaluated normally under quorum.
-12. Repeated receipts from one principal leave a two-reviewer quorum `:pending`; adding a
-    second authenticated principal satisfies it, while spoofed reviewer ids never count.
+12. Repeated receipts from one principal leave a two-reviewer quorum `:pending`; equal
+    judgments under distinct receipt ids join one server-derived head and count once. A later
+    reject advances that one head and leaves no duplicate approve effective. Race the equal
+    duplicate with the changed successor so an old generation cannot reopen. Adding a second
+    authenticated principal satisfies quorum, while spoofed reviewer ids never count.
 13. An approve receipt followed by a valid same-principal reject supersession retains both but
-    folds one effective reject vote. Without the relation it needs adjudication; concurrent
-    successors admit exactly one, and cross-principal/version/cyclic supersession is rejected.
+    folds one effective reject vote. Without the current head id/version relation it is rejected;
+    concurrent successors admit exactly one, and cross-principal/version/cyclic supersession is
+    rejected.
     In a two-obligation receipt, superseding only obligation A preserves the original effective
     judgment for B; a multi-edge correction is all-or-nothing.
 14. Opposite adjudicator proposals for one canonical conflict set remain
     `:needs-adjudication` until a compatible distinct-principal quorum exists. Race opposite
     decision finalizations and prove exactly one immutable decision wins, the other conflicts,
-    and every provider folds the same case status with all proposal evidence retained.
+    and every provider folds the same case status with all proposal evidence retained. Two
+    organizations reuse every case/rubric/artifact/receipt id and still receive independent
+    conflict-set identities, proposal quorums, and decision slots with no existence signal.
 
 ## Done when
 
@@ -153,6 +175,9 @@ the admitted decision, and the fold never selects an adjudication by timestamp o
   with the same generic core contracts.
 - The contracts are pure and runtime-independent.
 - Immutable version binding makes stale approvals/corrections mechanically detectable.
+- Equal same-principal receipts share one effective head generation, and a correction cannot
+  leave duplicate old votes effective.
 - The pure completion fold prevents partial, disputed, or stale receipt sets from advancing a
   case.
+- Adjudication conflict and decision identities are scoped by server-authenticated organization.
 - No UI layout, publication state, or provider implementation is encoded in the core.
