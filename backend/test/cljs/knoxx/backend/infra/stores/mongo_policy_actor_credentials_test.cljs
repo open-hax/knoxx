@@ -86,6 +86,24 @@
                        (js/Promise.resolve #js {})))
        :createIndex (fn [& _] (js/Promise.resolve "ok"))})
 
+(defn- mock-lock-collection [docs]
+  #js {:updateOne
+       (fn [query update opts]
+         (let [id (.-_id query)
+               set-doc (js->clj (.-$set update) :keywordize-keys true)
+               set-on-insert (js->clj (.-$setOnInsert update) :keywordize-keys true)
+               matched? (boolean (some #(= id (:_id %)) @docs))]
+           (if matched?
+             (swap! docs
+                    (fn [values]
+                      (mapv #(if (= id (:_id %)) (merge % set-doc) %) values)))
+             (when (and opts (.-upsert opts))
+               (swap! docs conj (merge {:_id id} set-on-insert))))
+           (js/Promise.resolve #js {:matchedCount (if matched? 1 0)})))
+       :find
+       (fn [_query]
+         #js {:toArray (fn [] (js/Promise.resolve (clj->js @docs)))})})
+
 (defn- mock-db []
   (let [collections (atom {})]
     #js {:collection (fn [name]
@@ -93,7 +111,9 @@
                                       (let [d (atom [])]
                                         (swap! collections assoc name d)
                                         d))]
-                         (mock-collection docs)))}))
+                         (if (= name "knoxx_policy_reconciliation_locks")
+                           (mock-lock-collection docs)
+                           (mock-collection docs))))}))
 
 (defn- immediate-transaction! [f]
   (let [session #js {:withTransaction (fn [callback _options] (callback))
@@ -276,7 +296,7 @@
         db #js {:collection (fn [name]
                               (if (= name "knoxx_actor_credentials")
                                 credentials
-                                (mock-collection locks*)))}
+                                (mock-lock-collection locks*)))}
         with-transaction! (^:async fn [f]
                             (let [before @credentials*]
                               (try
