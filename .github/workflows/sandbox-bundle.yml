@@ -38,10 +38,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
-      OUT: ${{ runner.temp }}/sandbox-export
-      DEPS_OUT: ${{ runner.temp }}/sandbox-deps
+      OUT: ${{ github.workspace }}/../sandbox-export
+      DEPS_OUT: ${{ github.workspace }}/../sandbox-deps
       CLOJURE_TOOLS_VERSION: "1.12.5.1654"
+      CLOJURE_TOOLS_SHA256: dc86cc56bc372fcef07bd87f44693eeb4b61cf5f44347883878364d03b5fb342
       BABASHKA_VERSION: "1.13.219"
+      BABASHKA_SHA256: 9ac1fe988d7001625b30ef3e3307e67f8545505a7cb49a4aa179f578115a3e09
       CONTRACTS_DIR: ${{ github.workspace }}/contracts
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
 
@@ -119,6 +121,8 @@ jobs:
 
       - name: Collect generated outputs and portable toolchains
         if: always()
+        env:
+          VALIDATION_OUTCOME: ${{ steps.validate.outcome }}
         shell: bash
         run: |
           set -euo pipefail
@@ -137,12 +141,16 @@ jobs:
           if [[ -n "${PNPM_HOME:-}" && -d "$PNPM_HOME" ]]; then
             tar -czf "$OUT/toolchain/pnpm-home.tar.gz" -C "$(dirname "$PNPM_HOME")" "$(basename "$PNPM_HOME")"
           fi
+          clojure_archive="$OUT/toolchain/clojure-tools-${CLOJURE_TOOLS_VERSION}.tar.gz"
+          babashka_archive="$OUT/toolchain/babashka-${BABASHKA_VERSION}-linux-amd64-static.tar.gz"
           curl -fsSL \
             "https://download.clojure.org/install/clojure-tools-${CLOJURE_TOOLS_VERSION}.tar.gz" \
-            -o "$OUT/toolchain/clojure-tools-${CLOJURE_TOOLS_VERSION}.tar.gz"
+            -o "$clojure_archive"
+          printf '%s  %s\n' "$CLOJURE_TOOLS_SHA256" "$clojure_archive" | sha256sum --check --strict
           curl -fsSL \
             "https://github.com/babashka/babashka/releases/download/v${BABASHKA_VERSION}/babashka-${BABASHKA_VERSION}-linux-amd64-static.tar.gz" \
-            -o "$OUT/toolchain/babashka-${BABASHKA_VERSION}-linux-amd64-static.tar.gz"
+            -o "$babashka_archive"
+          printf '%s  %s\n' "$BABASHKA_SHA256" "$babashka_archive" | sha256sum --check --strict
 
           for file in package.json pnpm-lock.yaml pnpm-workspace.yaml deps.edn shadow-cljs.edn; do
             [[ -f "$file" ]] && cp "$file" "$OUT/metadata/$file"
@@ -154,18 +162,23 @@ jobs:
             command -v clojure >/dev/null 2>&1 && clojure -Sdescribe || true
           } > "$OUT/metadata/tool-versions.txt" 2>&1
 
-          cat > "$OUT/manifest.json" <<EOF
-          {
-            "sandbox_bundle_version": 1,
-            "repository": "${GITHUB_REPOSITORY}",
-            "revision": "${GITHUB_SHA}",
-            "ref": "${GITHUB_REF}",
-            "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "validation": "${{ steps.validate.outcome }}",
-            "entrypoint": "pnpm -C backend run test:coverage",
-            "network_required_after_restore": false
-          }
-          EOF
+          generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg revision "$GITHUB_SHA" \
+            --arg ref "$GITHUB_REF" \
+            --arg generated_at "$generated_at" \
+            --arg validation "$VALIDATION_OUTCOME" \
+            '{
+              sandbox_bundle_version: 1,
+              repository: $repository,
+              revision: $revision,
+              ref: $ref,
+              generated_at: $generated_at,
+              validation: $validation,
+              entrypoint: "pnpm -C backend run test:coverage",
+              network_required_after_restore: true
+            }' > "$OUT/manifest.json"
           (cd "$OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
 
       - name: Package optional dependency cache
@@ -192,7 +205,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: knoxx-sandbox-${{ github.sha }}
-          path: ${{ runner.temp }}/sandbox-export
+          path: ${{ env.OUT }}
           if-no-files-found: error
           retention-days: 30
 
@@ -201,7 +214,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: knoxx-sandbox-deps-${{ github.sha }}
-          path: ${{ runner.temp }}/sandbox-deps
+          path: ${{ env.DEPS_OUT }}
           if-no-files-found: error
           retention-days: 7
 
