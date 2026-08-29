@@ -58,12 +58,15 @@ Server-owned capability policy is authorization authority, not resource content.
 policy does **not** rotate an otherwise unchanged resource version or reference-closure digest.
 Every authorized repository operation nevertheless emits a `RepositoryOperationReceipt`
 binding the authenticated principal, effective scope, operation/capability, canonical resource
-identity, and exact server-owned `authorization-policy-version` used for the decision.
-For a provider-neutral operation over multiple identities, the same atomic receipt instead
-binds the canonical ordered identity set plus an ordered authorization entry of
-`{resource-identity, capability, authorization-policy-version}` for every member. It is emitted
-only with the complete successful result; there is no partial receipt whose allowed subset can
-be replayed as authority for the batch.
+identity, any exact public version selected by that operation, and the exact server-owned
+`authorization-policy-version` used for the decision.
+For a provider-neutral operation over multiple resource operation coordinates, the same atomic
+receipt instead binds the canonical ordered coordinate set plus an ordered authorization entry
+of `{resource-coordinate, capability, authorization-policy-version}` for every member. An
+identity-only request is the `:current` coordinate; an exact-version request also binds its
+validated selector/version/reference provenance, so current and retained reads cannot substitute
+for one another. The receipt is emitted only with the complete successful result; there is no
+partial receipt whose allowed subset can be replayed as authority for the batch.
 
 Historical operation receipts remain verifiable evidence of what was authorized then, but they
 are not reusable capabilities. Every new read/write/resolve reauthorizes against current policy
@@ -226,7 +229,8 @@ Do not require a browser page to prove repository health.
   version on operation receipts; historical receipts remain evidence and never authorize a
   later operation.
 - Single-resource and multi-resource operation receipts bind every authorization decision and
-  cannot drop, reorder, or substitute an identity/policy entry without failing verification.
+  cannot drop, reorder, or substitute an identity/selector/version/policy coordinate without
+  failing verification.
 - Resolution exposes an immutable version-pinned transitive reference closure; target updates,
   missing revisions, and cycles cannot silently change an older root revision's meaning.
 - Every direct/transitive reference target is independently authorized before lookup; foreign

@@ -132,7 +132,11 @@ effective `{judgment-head-id, head-version}` pairs. Equal receipt ids/evidence m
 identity-neutral because they do not change an effective head generation. The organization is
 part of both conflict-set identity and the unique decision slot; caller-supplied scope never
 participates. The rubric declares allowed resolutions plus adjudicator roles and
-distinct-principal quorum. Adjudicator proposal receipts are immutable evidence but do not
+distinct-principal quorum. Every allowed adjudication resolution declares the same required
+closed completion effect as an ordinary judgment value: `:satisfies` or `:keeps-pending`; there
+is no default, and built-in `:defer` is always `:keeps-pending`. Proposal admission derives and
+binds the exact rubric version, resolution value, and declared effect, rejecting a missing or
+mismatched effect. Adjudicator proposal receipts are immutable evidence but do not
 directly satisfy the case. Quorum folds one server-derived `AdjudicationProposalHead` per exact
 organization, conflict-set identity, authenticated principal, and adjudicator role. Equal
 canonical proposals under distinct receipt ids join one head generation and count once. A
@@ -143,11 +147,17 @@ Only current proposal heads are quorum-eligible.
 
 Once compatible current heads reach quorum, a domain operation atomically verifies those named
 heads are still current and creates one `AdjudicationDecisionReceipt` in that organization's
-unique slot for the conflict-set identity, naming the resolution, exact effective judgment-head
-generations, exact proposal-head generations, and quorum-member proposal receipt ids.
+unique slot for the conflict-set identity, naming the resolution, rubric version, declared
+completion effect, exact effective judgment-head generations, exact proposal-head generations,
+and quorum-member proposal receipt ids.
 An opposite decision racing for the empty slot yields exactly one winner and one
 `:evaluation/conflict`; an equal retry is unchanged. Later incompatible proposals cannot change
 the admitted decision, and the fold never selects an adjudication by timestamp or array order.
+The pure fold applies the receipt-bound effect: `:satisfies` discharges the named conflict's
+obligation/exclusivity group, while `:keeps-pending` resolves that conflict into an explicit
+missing/pending obligation with its decision reason/evidence and can never satisfy the case.
+Advancing an underlying judgment head creates a new conflict generation; the old decision and
+effect cannot resolve it.
 Appending equal evidence after finalization leaves the same conflict identity/decision. A real
 head advance creates a new conflict generation that the old decision cannot resolve.
 
@@ -205,6 +215,11 @@ head advance creates a new conflict generation that the old decision cannot reso
     `:needs-adjudication` and reports both the conflict set and missing obligation. Resolving
     only the conflict transitions it to `:pending`; satisfying the remaining obligation then
     transitions it to `:satisfied`.
+16. Two otherwise identical rubrics give an adjudication resolution `:satisfies` and
+    `:keeps-pending` respectively. Their version-bound decisions deterministically fold to
+    `:satisfied` and `:pending` when no other work remains; a missing/mismatched effect is invalid,
+    and `:defer` cannot be declared satisfying. The pending decision remains discoverable until
+    an underlying judgment-head advance creates a new generation.
 
 ## Done when
 
@@ -223,4 +238,6 @@ head advance creates a new conflict generation that the old decision cannot reso
 - Adjudication conflict and decision identities are scoped by server-authenticated organization.
 - Adjudication quorum counts only one current proposal head per authenticated principal/role;
   proposal revision races cannot finalize from withdrawn or mixed generations.
+- Every versioned adjudication resolution has an explicit receipt-bound completion effect, so
+  terminal and nonterminal decisions fold identically in every provider.
 - No UI layout, publication state, or provider implementation is encoded in the core.

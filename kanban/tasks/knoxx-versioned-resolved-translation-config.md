@@ -84,22 +84,28 @@ The resolved artifact contains:
 
 Resource versions come from the provider-neutral repository contract and its retained
 revisions, never file mtimes, manifest hashes, current re-reads, or caller input. Resolution
-uses #282's `observe-many` operation for the global and organization-override identities,
+uses #282's `observe-many` operation with provider-neutral coordinates—`:current` for the global
+and organization-override identities and exact retained versions for version-pinned references—
 rather than composing sequential single-resource reads. The returned observation has one
-linearization point and one scoped identity over every present version and exact absence entry.
+linearization point and one scoped identity over every requested coordinate, present version,
+and permitted current-only absence entry.
 When the override is absent, the artifact carries that repository-authoritative absence for its
 exact canonical identity, not a caller-computable marker.
 
-The selected model identity is data-dependent, so the effectful facade reaches one final
+The selected model coordinate is data-dependent, so the effectful facade reaches one final
 fixed-point observation without pretending sequential reads are atomic. It provisionally
-observes the two config identities, gives that immutable observation to the pure resolver to
-derive the selected catalog identity, observes the expanded identity set, gives the new
-observation back to the resolver to derive referenced provider-policy identities, and repeats
-until the required canonical set is stable. The facade then obtains one final `observe-many`
+observes the two current config coordinates and gives that immutable observation to the pure
+resolver to derive the selected catalog identity plus required retained version. It observes the
+expanded coordinate set, gives the new observation back to the resolver to derive every
+referenced provider-policy identity plus pinned version, and repeats until the required canonical
+coordinate set is stable. The facade then obtains one final `observe-many`
 result containing the unchanged config resources, selected model, and complete pinned policy
 closure. Translation-config law validates that final observation and the pure domain resolver
-resolves only the admitted typed result. Any changed selector or reference restarts effectful
-sequencing; only the final single observation is attested. An unrelated catalog entry is
+resolves only the admitted typed result. An unavailable pinned version fails with the canonical
+referenced-version error and produces no artifact, attestation, admission, or provider call; it
+is never replaced by that identity's current revision or treated as optional absence. Any changed
+selector or reference restarts effectful sequencing; only the final single observation is attested.
+An unrelated catalog entry is
 excluded and cannot rotate the artifact.
 
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
@@ -110,7 +116,7 @@ version, snapshot/observation identity, the exact final `RepositoryOperationRece
 ordered authorization-policy version, every present resource version, the absent-override
 witness, selected model-catalog revision/provider-policy closure, resolution-policy/schema
 version, and artifact digest. Admission rejects a receipt for another principal, effective
-scope, capability, requested identity set, observation identity, or provisional fixed-point
+scope, capability, requested coordinate set, observation identity, or provisional fixed-point
 read. Validation verifies the attestation and immutable receipt evidence without re-reading
 current config. A later override creation therefore does not invalidate an
 already-started attempt, while merely omitting an existing override or recomputing the digest
@@ -122,7 +128,7 @@ Fixed-point sequencing is bounded by a server-owned `ObservationRetryPolicy`: a 
 of complete observation passes, a monotonic server deadline, and cancellation checked before
 and after every repository observation. Clients cannot extend the budget or supply its clock.
 Each selector or policy-reference change consumes a pass and restarts from the canonical config
-identity set. If the set never stabilizes before any limit, the facade returns the stable typed
+coordinate set. If the set never stabilizes before any limit, the facade returns the stable typed
 error `{:error/type :translation-config/unstable-observation :error/reason
 :retry-budget-exhausted :observation/attempt-count <bounded-count>}`; cancellation uses the same
 error type with `:error/reason :cancelled`. Neither result exposes resource values or presence,
@@ -194,7 +200,7 @@ The publication-free namespace closure from #273 remains an invariant.
    or unselected catalog entry does not. Rotate only authorization policy V1 allow to V2 allow:
    semantic resource/observation identity remains stable while the exact final operation
    receipt/policy bindings and new-attempt artifact rotate. V2 deny admits no new artifact;
-   replaying the V1 receipt or substituting another actor/scope/request-set receipt fails.
+   replaying the V1 receipt or substituting another actor/scope/coordinate-set receipt fails.
 4. Resolve with no override, create one, then persist a candidate: its receipt retains and
    verifies the originally attested absence without re-reading current config. Updating a
    present contributor exercises the same race law. Deterministic fake/file barriers prove the
@@ -235,6 +241,11 @@ The publication-free namespace closure from #273 remains an invariant.
     error and creates no artifact, attestation, attempt admission, or provider call. Cancellation
     at each observation boundary has the same fail-closed proof; a closure that stabilizes on the
     last permitted pass succeeds normally.
+11. A selected catalog revision pins provider policy P1, then that policy's current revision
+    advances through P2 and P3. The final mixed-coordinate observation and artifact retain P1
+    exactly without substituting current state or exhausting retry. An unavailable pinned P1
+    returns the canonical referenced-version error and creates no partial observation, artifact,
+    attestation, admission, or provider call.
 
 ## Non-goals
 
@@ -255,6 +266,8 @@ The publication-free namespace closure from #273 remains an invariant.
 - Resolution consumes one #282 `observe-many` result; fake/file race proofs admit no torn
   combination from sequential reads, and repository schema-version rotation changes observation
   plus artifact identity.
+- Version-pinned catalog/policy coordinates resolve retained revisions even after current state
+  advances; current substitution and pinned-version absence witnesses are impossible.
 - The artifact and attestation carry the exact final repository operation receipt and ordered
   authorization-policy versions; policy rotation reauthorizes new attempts without rotating
   semantic resource/observation versions, and historical receipts never become capabilities.
