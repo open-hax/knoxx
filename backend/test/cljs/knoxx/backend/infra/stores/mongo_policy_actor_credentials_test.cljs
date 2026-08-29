@@ -183,6 +183,41 @@
       (is (nil? (await (creds/get-credential-by-user-org-provider-kind!
                         db "u1" "o1" "local" "password")))))))
 
+(deftest ^:async find-active-bootstrap-local-password-selects-marker-test
+  (let [db (mock-db)]
+    (await (creds/upsert-actor-credential!
+            db "u1" "ordinary-org" "local"
+            {:kind "password"
+             :account-identifier "admin@example.com"
+             :secret-json {:hash "ordinary"}
+             :status "active"}))
+    (await (creds/upsert-actor-credential!
+            db "u1" "bootstrap-org" "local"
+            {:kind "password"
+             :account-identifier "admin@example.com"
+             :secret-json {:hash "bootstrap" :bootstrap-system-admin true}
+             :status "active"}))
+    (is (= "bootstrap-org"
+           (:org_id
+            (await (creds/find-active-bootstrap-local-password!
+                    db "u1" "ADMIN@EXAMPLE.COM")))))))
+
+(deftest ^:async find-active-bootstrap-local-password-rejects-duplicates-test
+  (let [db (mock-db)]
+    (doseq [org-id ["org-a" "org-b"]]
+      (await (creds/upsert-actor-credential!
+              db "u1" org-id "local"
+              {:kind "password"
+               :account-identifier "admin@example.com"
+               :secret-json {:hash org-id :bootstrap-system-admin true}
+               :status "active"})))
+    (try
+      (await (creds/find-active-bootstrap-local-password!
+              db "u1" "admin@example.com"))
+      (is false "duplicate active bootstrap passwords must fail closed")
+      (catch js/Error err
+        (is (re-find #"multiple active bootstrap" (.-message err)))))))
+
 (deftest ^:async reconcile-bootstrap-local-password-serializes-and-replaces-test
   (let [db (mock-db)
         transaction-count* (atom 0)

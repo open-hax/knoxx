@@ -88,6 +88,24 @@
       (is (str/includes? (str (:detail ran)) "private")
           (str "sandbox metadata privacy probe omitted its marker: " (:detail ran))))))
 
+(defn- ^:async assert-host-workspace-private!
+  [client sandbox-id]
+  (testing "the bind mount belongs only to the configured container identity"
+    (let [ran (await (call! client "sandbox_container_exec"
+                            {:sandbox_id sandbox-id
+                             :command (str "actual=$(stat -c '%a:%u:%g' .); "
+                                           "expected=700:$(id -u):$(id -g); "
+                                           "if [ \"$actual\" = \"$expected\" ]; "
+                                           "then printf 'private-owner=%s\\n' \"$actual\"; "
+                                           "else printf 'expected=%s actual=%s\\n' \"$expected\" \"$actual\" >&2; exit 23; fi")
+                             :timeout_ms 30000}))]
+      (is (= :ok (:status ran))
+          (str "sandbox_container_exec failed: " (:detail ran)))
+      (is (str/includes? (str (:detail ran)) "Sandbox exec exit=0")
+          (str "sandbox host workspace was not private: " (:detail ran)))
+      (is (str/includes? (str (:detail ran)) "private-owner=700:")
+          (str "sandbox ownership probe omitted its marker: " (:detail ran))))))
+
 (defn- ^:async assert-internal-command-errors!
   [client sandbox-id]
   (testing "a failed Knoxx-owned read is a tool error"
@@ -205,6 +223,7 @@
   (when-let [sandbox-id (await (create-sandbox! client id*))]
     (await (assert-live! client sandbox-id))
     (await (assert-metadata-private! client sandbox-id))
+    (await (assert-host-workspace-private! client sandbox-id))
     (await (assert-internal-command-errors! client sandbox-id))
     (await (assert-file-roundtrip! client sandbox-id))
     (await (assert-exec! client sandbox-id))

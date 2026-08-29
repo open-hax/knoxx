@@ -13,6 +13,9 @@
 (def ^:private sandbox-id-pattern
   #"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 
+(def ^:private sandbox-user-pattern
+  #"[1-9][0-9]*:(?:0|[1-9][0-9]*)")
+
 (defn require-sandbox-id
   "Return one canonical server-issued sandbox UUID, or fail before it can
    influence a Docker name or host filesystem path."
@@ -27,6 +30,25 @@
   "The host-only metadata filename for a validated sandbox id."
   [sandbox-id]
   (str (require-sandbox-id sandbox-id) ".json"))
+
+(defn sandbox-user-for-effective-identity
+  "Return the effective non-root POSIX `uid:gid` for one sandbox.
+
+   A bind-mounted workspace can remain private at mode 0700 only when the
+   container and Knoxx host process use the same owner.  An explicit configured
+   user is therefore an assertion, not an override: drift fails before either
+   a host path or a container can be created."
+  [configured-user effective-uid effective-gid]
+  (let [effective-user (str effective-uid ":" effective-gid)
+        configured-user (some-> configured-user str str/trim not-empty)]
+    (when-not (boolean (re-matches sandbox-user-pattern effective-user))
+      (throw (ex-info "sandbox host identity must be one non-root numeric uid:gid"
+                      {:sandbox/effective-user effective-user})))
+    (when (and configured-user (not= configured-user effective-user))
+      (throw (ex-info "configured sandbox user must match the effective host uid:gid"
+                      {:sandbox/configured-user configured-user
+                       :sandbox/effective-user effective-user})))
+    effective-user))
 
 (defn exact-git-safe-directory
   "Return one exact absolute sandbox workdir that Git may trust.

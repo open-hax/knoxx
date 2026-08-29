@@ -129,6 +129,10 @@ rotation and revocation share one global bootstrap lock and retire managed
 identities across former primary organizations. Retirement and replacement are
 committed as one Mongo transaction, so a failed replacement leaves the prior
 administrator credential active even when the primary organization changes.
+Local-password login follows the sole active marked bootstrap credential to its
+exact organization membership instead of independently re-reading the primary
+organization. Concurrent primary-organization and credential rotations therefore
+cannot strand the accepted password; duplicate active markers fail closed.
 
 Knoxx validates Mongo topology before policy seeding and fails closed before
 registering routes or binding the HTTP listener when Mongo is a standalone

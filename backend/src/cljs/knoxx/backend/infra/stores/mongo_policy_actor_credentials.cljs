@@ -238,13 +238,27 @@
   ([user-id org-id provider kind]
    (get-credential-by-user-org-provider-kind! (mongo-client/get-db) user-id org-id provider kind))
   ([db user-id org-id provider kind]
-   (credential-doc->row
-    (keywordize (await (.findOne (credentials-coll db)
-                                 #js {"user_id" (str user-id)
-                                      "org_id" (str org-id)
-                                      "provider" (str provider)
-                                      "kind" (str kind)
-                                      "status" "active"}))))))
+    (credential-doc->row
+     (keywordize (await (.findOne (credentials-coll db)
+                                  #js {"user_id" (str user-id)
+                                       "org_id" (str org-id)
+                                       "provider" (str provider)
+                                       "kind" (str kind)
+                                       "status" "active"}))))))
+
+(defn ^:async find-active-bootstrap-local-password!
+  "Return the sole active marked bootstrap password for `user-id` and account.
+
+   The marker distinguishes the environment-owned bootstrap credential from
+   ordinary local passwords. Multiple active markers are a security invariant
+   violation and fail closed instead of choosing an organization by query
+   order."
+  [db user-id account-identifier]
+  (let [query (bootstrap-law/active-bootstrap-login-query
+               user-id account-identifier)
+        matches (await (extern-mongo/find-docs! (credentials-coll db) query))]
+    (some-> (bootstrap-law/sole-active-bootstrap-credential matches)
+            credential-doc->row)))
 
 ;; ---------------------------------------------------------------------------
 ;; Write operations — mirrors sql_adapter upsert-actor-credential!

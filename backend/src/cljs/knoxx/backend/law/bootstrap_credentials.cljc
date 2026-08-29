@@ -31,3 +31,28 @@
            :$or [{:secret_json.bootstrap-system-admin true}]}
     (seq account-identifiers)
     (update :$or conj {:account_identifier {:$in (vec account-identifiers)}})))
+
+(defn active-bootstrap-login-query
+  "The exact marked credential query for one resolved user and login account."
+  [user-id account-identifier]
+  {:user_id (str user-id)
+   :provider "local"
+   :kind "password"
+   :account_identifier (some-> account-identifier str str/trim str/lower-case)
+   :status "active"
+   :secret_json.bootstrap-system-admin true})
+
+(defn sole-active-bootstrap-credential
+  "Return zero or one active bootstrap credential; reject invariant drift."
+  [credentials]
+  (case (count credentials)
+    0 nil
+    1 (first credentials)
+    (throw (ex-info "multiple active bootstrap local passwords found; refusing login"
+                    {:bootstrap/active-credential-count (count credentials)}))))
+
+(defn local-password-membership-query
+  "Scope bootstrap login to its credential org; preserve ordinary fallback."
+  [normalized-email bootstrap-credential]
+  (cond-> {:user-email normalized-email :active-only true}
+    bootstrap-credential (assoc :org-id (:org_id bootstrap-credential))))

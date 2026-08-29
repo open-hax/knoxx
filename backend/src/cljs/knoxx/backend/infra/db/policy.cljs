@@ -26,6 +26,7 @@
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.domain.contracts.loader :as contracts-loader]
             [knoxx.backend.domain.contracts.roles :as contracts-roles]
+            [knoxx.backend.law.bootstrap-credentials :as bootstrap-law]
             [knoxx.backend.infra.db.actors :as policy-actors]
             [knoxx.backend.domain.policy.protocol :as policy]
             [knoxx.backend.infra.registry.tools :as tool-registry]
@@ -1022,28 +1023,44 @@
     :else (js->clj value :keywordize-keys true)))
 
 (defn ^:async local-password-auth-record!
-  "Resolve the active user + default-first active membership for a local
-   password login, plus the active local/password credential. Composes the
-   directory + actor-credentials twins; preserves the PG return shape. Returns
-   nil when no active user/membership matches."
-  [_pool email]
-  (when-let [normalized (normalize-email email)]
-    (let [db (await (db!))
-          user (await (mongo-directory/find-user-by-email! db normalized))]
-      (when (and user (= "active" (:status user)))
-        (when-let [row (await (mongo-directory/find-membership-row-by-email-and-org!
-                               db {:user-email normalized :active-only true}))]
-          (when (and (= "active" (:user_status row)) (= "active" (:status row)))
-            (let [cred (await (mongo-actor-creds/get-credential-by-user-org-provider-kind!
-                               db (:user_id row) (:org_id row) "local" "password"))]
-              {:user-id (:user_id row)
-               :email (:email row)
-               :display-name (:display_name row)
-               :membership-id (:id row)
-               :org-id (:org_id row)
-               :org-slug (:org_slug row)
-               :actor-id (:actor_id row)
-               :secret-json (secret-json->clj (:secret_json cred))})))))))
+  "Resolve an active local-password authentication record.
+
+   A marked bootstrap credential owns its organization choice, so concurrent
+   primary-org updates cannot strand the committed password behind a different
+   default membership. Ordinary users without that marker retain the existing
+   default-first / primary-org membership selection."
+  ([_pool email]
+   (local-password-auth-record!
+    _pool email
+    {:get-db! db!
+     :find-user! mongo-directory/find-user-by-email!
+     :find-membership! mongo-directory/find-membership-row-by-email-and-org!
+     :find-bootstrap-credential! mongo-actor-creds/find-active-bootstrap-local-password!
+     :get-membership-credential! mongo-actor-creds/get-credential-by-user-org-provider-kind!}))
+  ([_pool email {:keys [get-db! find-user! find-membership!
+                        find-bootstrap-credential! get-membership-credential!]}]
+   (when-let [normalized (normalize-email email)]
+     (let [db (await (get-db!))
+           user (await (find-user! db normalized))]
+       (when (and user (= "active" (:status user)))
+         (let [bootstrap-credential
+               (await (find-bootstrap-credential! db (:id user) normalized))
+               membership-query (bootstrap-law/local-password-membership-query
+                                 normalized bootstrap-credential)]
+           (when-let [row (await (find-membership! db membership-query))]
+             (when (and (= "active" (:user_status row)) (= "active" (:status row)))
+               (let [credential (or bootstrap-credential
+                                    (await (get-membership-credential!
+                                            db (:user_id row) (:org_id row)
+                                            "local" "password")))]
+                 {:user-id (:user_id row)
+                  :email (:email row)
+                  :display-name (:display_name row)
+                  :membership-id (:id row)
+                  :org-id (:org_id row)
+                  :org-slug (:org_slug row)
+                  :actor-id (:actor_id row)
+                  :secret-json (secret-json->clj (:secret_json credential))})))))))))
 
 (defn ^:async list-memberships!
   [pool {:keys [org-id]}]

@@ -88,3 +88,81 @@
             ["system-admin@open-hax.local" "pi@open-hax.local" "old@example.com"]
             :secret-json {:hash "encoded" :bootstrap-system-admin true}}
            @captured*))))
+
+(deftest ^:async bootstrap-login-follows-active-credential-after-opposite-primary-completion-test
+  (let [membership-query* (atom nil)
+        result (await
+                (policy-db/local-password-auth-record!
+                 nil "ADMIN@EXAMPLE.COM"
+                 {:get-db! (fn [] (js/Promise.resolve :db))
+                  :find-user! (fn [_db email]
+                                (is (= "admin@example.com" email))
+                                (js/Promise.resolve {:id "user-admin" :status "active"}))
+                  ;; Credential convergence committed org A last, while the
+                  ;; independent primary-org update committed org B last.
+                  :find-bootstrap-credential!
+                  (fn [_db user-id account]
+                    (is (= ["user-admin" "admin@example.com"] [user-id account]))
+                    (js/Promise.resolve {:user_id user-id
+                                         :org_id "org-a"
+                                         :secret_json {:hash "active-a"
+                                                       :bootstrap-system-admin true}}))
+                  :find-membership!
+                  (fn [_db query]
+                    (reset! membership-query* query)
+                    (js/Promise.resolve {:id "membership-a"
+                                         :user_id "user-admin"
+                                         :user_status "active"
+                                         :status "active"
+                                         :email "admin@example.com"
+                                         :display_name "Admin"
+                                         :org_id "org-a"
+                                         :org_slug "former-primary-a"
+                                         :actor_id "system_admin"}))
+                  :get-membership-credential!
+                  (fn [& _]
+                    (is false "the default/primary org B credential must not be selected")
+                    (js/Promise.resolve nil))}))]
+    (is (= {:user-id "user-admin"
+            :email "admin@example.com"
+            :display-name "Admin"
+            :membership-id "membership-a"
+            :org-id "org-a"
+            :org-slug "former-primary-a"
+            :actor-id "system_admin"
+            :secret-json {:hash "active-a" :bootstrap-system-admin true}}
+           result))
+    (is (= {:user-email "admin@example.com"
+            :active-only true
+            :org-id "org-a"}
+           @membership-query*)
+        "login scopes membership selection to the committed active credential")))
+
+(deftest ^:async ordinary-local-login-keeps-default-membership-selection-test
+  (let [membership-query* (atom nil)
+        result (await
+                (policy-db/local-password-auth-record!
+                 nil "worker@example.com"
+                 {:get-db! (fn [] (js/Promise.resolve :db))
+                  :find-user! (fn [& _]
+                                (js/Promise.resolve {:id "worker" :status "active"}))
+                  :find-bootstrap-credential! (fn [& _] (js/Promise.resolve nil))
+                  :find-membership!
+                  (fn [_db query]
+                    (reset! membership-query* query)
+                    (js/Promise.resolve {:id "membership-primary"
+                                         :user_id "worker"
+                                         :user_status "active"
+                                         :status "active"
+                                         :email "worker@example.com"
+                                         :display_name "Worker"
+                                         :org_id "org-primary"
+                                         :org_slug "primary"
+                                         :actor_id "worker"}))
+                  :get-membership-credential!
+                  (fn [& _]
+                    (js/Promise.resolve {:secret_json {:hash "ordinary"}}))}))]
+    (is (= {:user-email "worker@example.com" :active-only true}
+           @membership-query*))
+    (is (= "org-primary" (:org-id result)))
+    (is (= {:hash "ordinary"} (:secret-json result)))))

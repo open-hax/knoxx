@@ -44,6 +44,40 @@
                    (sandbox-law/exact-git-safe-directory workdir))
           (str "expected rejection for " (pr-str workdir))))))
 
+(deftest sandbox-user-for-effective-identity-law-test
+  (testing "an absent or exact configuration binds Docker to the host owner"
+    (is (= "1001:127"
+           (sandbox-law/sandbox-user-for-effective-identity nil 1001 127)))
+    (is (= "1001:127"
+           (sandbox-law/sandbox-user-for-effective-identity "1001:127" 1001 127))))
+
+  (testing "root and non-canonical effective identities fail closed"
+    (doseq [[uid gid] [[0 0]
+                       [0 1000]
+                       [nil 1000]
+                       ["agent" 1000]
+                       [1000 nil]
+                       [1000 "staff"]]]
+      (is (thrown? js/Error
+                   (sandbox-law/sandbox-user-for-effective-identity nil uid gid))
+          (str "expected rejection for effective identity " (pr-str [uid gid])))))
+
+  (testing "an explicit malformed or divergent Docker user fails closed"
+    (doseq [configured ["1001"
+                        "agent"
+                        "0:0"
+                        "01001:127"
+                        "1001:0127"
+                        "1000:127"
+                        "1001:128"]]
+      (is (thrown? js/Error
+                   (sandbox-law/sandbox-user-for-effective-identity configured 1001 127))
+          (str "expected rejection for configured identity " (pr-str configured)))))
+
+  (testing "blank configuration is the same as an absent override"
+    (is (= "1001:127"
+           (sandbox-law/sandbox-user-for-effective-identity "  " 1001 127)))))
+
 (deftest internal-command-failure-law-test
   (testing "successful structured results pass through the classifier"
     (is (nil? (sandbox-law/internal-command-failure
