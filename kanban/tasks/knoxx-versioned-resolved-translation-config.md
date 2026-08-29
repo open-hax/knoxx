@@ -177,10 +177,12 @@ derives the same canonical `AttemptIdentity` used by
 `knoxx-translations-event-sourced`: the full
 `{:org-id :document-id :segment-index :target-lang}` grouping key, where `:org-id` is the
 server-derived effective organization, plus the caller-stable
-`attempt_id`. The initiating dispatch/workflow accepts or creates and durably pins that id with
-the exact grouping/source/request facts before it starts a provider or model session. An agent
-session receives the pin through authenticated server context; a later `save_translation` call
-only echoes and validates it and cannot become the identity minting boundary. The facade may
+`attempt_id`. The initiating attempt workflow accepts or creates and durably pins that id with
+the exact grouping/source/request facts before it starts a provider or model session. Publication
+dispatch and ordinary-chat preflight use distinct provider-neutral attempt-claim variants but the
+same atomic admission law; an unbound chat turn does not receive `save_translation`. An admitted
+agent session receives the pin through authenticated server context; a later `save_translation`
+call only echoes and validates it and cannot become the identity minting boundary. The facade may
 perform authenticated observations and mint a candidate artifact
 before durable admission, but those values are not an attempt reservation and cannot authorize
 provider invocation. It then atomically unique-inserts/compares one complete
@@ -293,6 +295,11 @@ The publication-free namespace closure from #273 remains an invariant.
     non-enumerating denial with no artifact, attestation, admission, or provider call. Repeating a
     denied frontier fingerprint is terminal, and alternating obsolete frontiers exhausts the
     existing bounded retry policy rather than looping or silently dropping coordinates.
+13. Exercise attempt admission through both a publication dispatch claim and an ordinary-chat
+    interactive claim. Each complete request installs the same canonical config admission before
+    its model turn and a lost-response retry returns that exact artifact. An incomplete interactive
+    target exposes no `save_translation` tool and creates no attempt claim, artifact, admission,
+    or provider call; neither path may reinterpret the other claim type or mint at save time.
 
 ## Non-goals
 
@@ -323,6 +330,8 @@ The publication-free namespace closure from #273 remains an invariant.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
   while idempotent retries of the same composite attempt retain their exact artifact and
   cross-group reuse of a raw id remains independent.
+- Publication-dispatch and ordinary-chat initiators share that admission law without making a
+  publication dispatch claim mandatory for an admitted interactive translation.
 - Attempt admission installs identity, canonical request/source facts, and the complete attested
   artifact atomically; crash/race proofs expose no stranded reservation, unattached invocation
   authority, or loser-selected artifact.

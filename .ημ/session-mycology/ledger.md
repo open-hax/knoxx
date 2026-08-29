@@ -17,3 +17,13 @@
   spore: none
   receipt-refs: 2026-08-29T21:36:27.217Z
   note: A denied speculative closure needs bounded minimal rebootstrap, while canonical head identity must govern every proposal revision.
+
+- ts: 2026-08-29T21:57:44.970Z
+  session: codex/knoxx238-repair
+  task: Close exact-head receipt, interactive-save, and adjudication-selection blockers
+  p-efficiency: 0.70
+  p-friction: 0.78
+  p-skill-candidate: 0.63
+  spore: none
+  receipt-refs: 2026-08-29T21:57:44.970Z
+  note: Coupled board contracts must share one provider-neutral initiation law; a review-local fix is incomplete when its owning config or integration card still encodes the rejected dispatch-only frame.

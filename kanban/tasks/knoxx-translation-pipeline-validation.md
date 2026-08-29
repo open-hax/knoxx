@@ -93,18 +93,23 @@ Explicitly **out of scope here**:
 8. Provider-returned tenant/source identity drift is rejected, while the successful
    candidate receipt preserves the exact config/policy revision, canonical request
    parameters, provider/model identity, and raw-result evidence digest.
-9. The initiating dispatch accepts or creates a workflow-stable `attempt_id`, persists it with
-   exact server-derived organization/document/segment/target/source facts, and completes config
-   admission before the real provider/model session starts. The authenticated session pins that
-   id, and the real `save_translation` schema/handler must echo and validate it rather than minting
-   one after provider work. A commit-then-timeout retry of one composite is idempotent; changed
+9. Every agent context that exposes `save_translation` begins through a provider-neutral attempt
+   initiator that accepts or creates a workflow-stable `attempt_id`, persists it with exact
+   server-derived organization/document/segment/target/source facts, and completes config
+   admission before the real provider/model session starts. Publication dispatch uses its durable
+   dispatch claim; ordinary chat uses an interactive attempt claim installed by pre-turn
+   hydration and requires no publication claim. The authenticated session pins the resulting id,
+   and the real `save_translation` schema/handler must echo and validate it rather than minting one
+   after provider work. A commit-then-timeout retry of one composite is idempotent; changed
    same-composite reuse conflicts; one raw id reused across segments/targets remains independent;
    and distinct ids with equal content create distinct attempts. Store-only tests are insufficient
    for this proof. Inject config-admission crashes after observation, after attestation minting,
    before complete install, and after install/before response: pre-install crashes start no
    provider, post-install retry returns the installed artifact, and equal concurrent losers cannot
    return a different resolved snapshot. Crash between dispatch-claim persistence and admission;
-   recovery reuses the pinned id and starts one session only after admission. A
+   recovery reuses the pinned id and starts one session only after admission. A complete ordinary
+   chat request follows the same law and saves without a dispatch claim; an incomplete target
+   withholds the tool from that turn and starts no translation-bound provider/model session. A
    missing/mismatched tool echo appends no candidate.
 10. Real GET/PATCH config routes derive scope only from a verified session or configured API
     key. A valid organization-A session plus headers naming an existing organization-B
@@ -128,8 +133,9 @@ Explicitly **out of scope here**:
 - The config boundary atomically installs a complete attempt/artifact record; injected crashes
   and equal races cannot strand a reservation or let provider/event admission consume a losing
   candidate artifact.
-- Agent dispatch persists and pins the same composite attempt identity before provider/session
-  start; `save_translation` can validate that identity but cannot create or reinterpret it.
+- Publication dispatch and ordinary-chat preflight each persist and pin the same composite
+  attempt identity before provider/session start; `save_translation` validates that identity but
+  cannot create or reinterpret it, and interactive saves do not require a publication claim.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - The public save boundary preserves caller idempotency identity end to end instead of minting
   per-call ids or collapsing intentional equal-content attempts.

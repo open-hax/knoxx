@@ -64,9 +64,12 @@ denied, malformed, or selector/version-mismatched coordinate returns partial aut
 
 The operation receipt follows `knoxx-cms-contract-validation`: it binds the authenticated
 principal, effective scope/delegation, `observe-many` operation and required capability, the
-exact canonical ordered coordinate set, the returned observation identity, and an ordered
-authorization entry with the server-owned `authorization-policy-version` used for every
-requested coordinate. It is immutable historical evidence, not a reusable read capability.
+exact canonical ordered coordinate set, the returned observation identity, and one authorization
+entry per complete coordinate in that same canonical order. Every entry binds the canonical
+identity and selector, exact returned public version or authoritative current absence, validated
+root/version/path provenance for an exact selector, required capability, and the server-owned
+`authorization-policy-version` applied to that coordinate. It is immutable historical evidence,
+not a reusable read capability.
 Policy versions and the receipt are deliberately outside semantic observation identity:
 changing only authorization policy cannot pretend resource state changed, while every new
 operation still reauthorizes before repository access and emits current policy evidence.
@@ -119,11 +122,15 @@ generation as semantic resource versions.
    branching on provider identity.
 8. Keeping resources equal while changing the repository contract/schema version rotates the
    observation identity, and the dependent config artifact/attestation names the new version.
-9. With unchanged resources, policy V1 allow then V2 allow preserves resource versions and
-   observation identity but emits a different operation receipt with V2 bindings. V2 deny
-   returns no observation; replaying V1 or substituting a receipt from another principal,
-   effective scope, capability, requested coordinate set, or observation is rejected. The final
-   fixed-point consumer cannot attest a provisional smaller-set receipt.
+9. In one unchanged mixed batch, give two complete coordinates distinct allow-policy versions,
+   then rotate only the second coordinate's policy. Resource versions and observation identity
+   remain stable; exactly the second ordered authorization entry and composite receipt rotate.
+   Omitting, reordering, or substituting either entry—or changing its identity, selector, exact
+   returned version/current absence, validated reference provenance, capability, or policy
+   version—fails verification. A later denial returns no observation; replaying an earlier allow
+   receipt or a receipt from another principal, effective scope, requested coordinate set, or
+   observation is rejected. The final fixed-point consumer cannot attest a provisional
+   smaller-set receipt.
 10. Observe a current selected-model/catalog revision that pins policy P1 while that policy
     identity is current at P2. One mixed-coordinate observation returns the current model and
     retained P1 exactly; it never substitutes P2 or exhausts a stable closure. Updating policy

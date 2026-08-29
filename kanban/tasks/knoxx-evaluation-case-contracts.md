@@ -136,9 +136,12 @@ participates. The rubric declares allowed resolution descriptors plus adjudicato
 distinct-principal quorum. Every allowed resolution descriptor carries its exact resolution
 value and a complete ordered `obligation-effects` specification keyed by every affected
 obligation id. Each entry requires `:satisfies` or `:keeps-pending`; there is no inferred default
-from the resolution's name. In a proposal, every `:satisfies` entry also selects exactly one
-conflicting effective `{judgment-head-id, head-version}` for that same obligation, while a
-`:keeps-pending` entry forbids a selected head. Built-in `:defer` and
+from the resolution's name. Every `:satisfies` entry also declares a non-empty canonical set of
+permitted selected determination values from that obligation's rubric descriptor. In a proposal,
+the entry selects exactly one conflicting effective `{judgment-head-id, head-version}` for that
+same obligation, and that head's canonical determination value must be in the declared set;
+matching the obligation and conflict set alone is insufficient. A `:keeps-pending` entry forbids
+both a selected head and permitted-selection values. Built-in `:defer` and
 `:request-more-evidence` resolutions must keep every affected obligation pending. Adjudicator
 proposal admission derives and binds the exact rubric version, resolution value, total effect
 map, and selections. Its immutable receipt is evidence but does not
@@ -159,8 +162,9 @@ unique slot for the conflict-set identity, naming the resolution, exact rubric v
 ordered obligation effects and selected terminal head generations, exact effective
 judgment-head generations, exact proposal-head generations, and quorum-member proposal receipt
 ids. Admission rejects missing/extra obligations, a descriptor-effect mismatch, a selection for
-the wrong obligation, a non-conflicting/stale selected head, or a selected head on a
-`:keeps-pending` entry rather than letting a receipt reinterpret the rubric.
+the wrong obligation, a non-conflicting/stale selected head, a selected determination value that
+the resolution descriptor does not permit, or a selected head on a `:keeps-pending` entry rather
+than letting a receipt reinterpret the rubric.
 An opposite decision racing for the empty slot yields exactly one winner and one
 `:evaluation/conflict`; an equal retry is unchanged. Later incompatible proposals cannot change
 the admitted decision, and the fold never selects an adjudication by timestamp or array order.
@@ -245,6 +249,12 @@ generation that the old decision cannot resolve.
     missing/extra obligation or mismatched effect is invalid, and `:defer` cannot declare any
     obligation satisfying. The pending decision remains discoverable until an underlying
     judgment-head advance creates a new generation.
+17. A directional descriptor `:uphold-approval` permits only the `:approved` determination for
+    its satisfied obligation. Selecting the current conflicting `:rejected` head is rejected even
+    though its obligation and conflict-set generation match; selecting the current approved head
+    succeeds. The mirrored `:uphold-rejection` fixture proves the opposite mapping, and a missing
+    or empty permitted-value set fails rubric validation instead of inferring meaning from the
+    resolution name.
 
 ## Done when
 
@@ -265,4 +275,6 @@ generation that the old decision cannot resolve.
   proposal revision races cannot finalize from withdrawn or mixed generations.
 - Every adjudication resolution has a rubric-versioned, total per-obligation effect map;
   nonterminal decisions and multi-obligation conflict groups cannot manufacture satisfaction.
+- A directional resolution can select only determination values explicitly permitted by its
+  rubric descriptor; its label cannot make an opposite conflicting head authoritative.
 - No UI layout, publication state, or provider implementation is encoded in the core.

@@ -89,13 +89,18 @@ config record and the later produced-candidate event are distinct lifecycle fact
 may partially install or reinterpret the shared identity.
 
 The initiating translation operation owns `attempt_id` before any provider or model session
-starts. In the agent path, dispatch accepts a workflow-stable idempotency key or mints a
-server-stable value, persists it with the durable dispatch claim and exact grouping/source/request
-facts, and completes the matching `AttemptConfigAdmission` before emitting or starting the
-session. The authenticated session/tool context pins that stored id; a dispatch that cannot yet
-name the exact grouping key must split or defer the work rather than start an unbound provider.
-Non-agent workflows establish the same admission before their provider call. A crash after the
-dispatch claim is stored but before config admission leaves that claim retryable and starts no
+starts. Every context that exposes `save_translation` first installs one provider-neutral
+`TranslationAttemptClaim` with the exact grouping/source/request facts and matching
+`AttemptConfigAdmission`, then pins both in authenticated session/tool context. Publication
+dispatch accepts a workflow-stable idempotency key or mints a server-stable value and uses its
+durable dispatch claim as that attempt claim. Ordinary authenticated chat/tool translation uses
+an interactive attempt claim created by the same pre-turn initiator; it does not require or
+fabricate a publication dispatch claim. If an interactive request cannot yet name the exact
+grouping/source/request facts, the unbound turn does not receive `save_translation`; an explicit
+translation-start action gathers those facts and launches a bound follow-up turn instead. No
+already-running unbound turn may generate a candidate and synthesize admission at save time.
+Non-agent workflows establish the same admission before their provider call. A crash after any
+attempt claim is stored but before config admission leaves that claim retryable and starts no
 session; recovery reuses its pinned id and completes or retrieves the admission before emitting.
 
 The production `save_translation` MCP input schema exposes that required stable `attempt_id` so
@@ -225,6 +230,11 @@ land a migration that leaves that endpoint erroring.
   Missing/mismatched echoes, session creation before admission, or save-time id generation fail
   the proof and append no candidate. A dispatch-claim/admission split failure retries the pinned
   id and starts exactly one session only after admission completes.
+- The real ordinary-chat boundary proves the same law without a publication dispatch: a complete
+  interactive translation request installs and pins its interactive attempt claim/config
+  admission before the model turn, exposes `save_translation`, and survives a lost-response retry.
+  An incomplete target withholds the tool and starts no translation turn; the handler neither
+  demands a publication claim nor fabricates an admission after candidate generation.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
 - During partial migration, per-key authority routes reads/writes to exactly one source; crash
