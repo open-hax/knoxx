@@ -37,9 +37,12 @@ reconstruct provenance after the provider call.
 
 ### One authority, two typed operations
 
-One pure effective-config resolver owns repository reads, global/organization precedence,
-catalog validation, and wire/domain codecs. The existing translation-config facade exposes two
-explicit operations over it:
+The existing translation-config facade owns every effectful repository operation: it invokes
+`observe-many`, sequences data-dependent fixed-point expansion/retry, and passes each immutable
+`ResourceObservation` to one pure effective-config resolver. That resolver performs no I/O; it
+owns only deterministic global/organization precedence, catalog/reference derivation and
+validation, plus wire/domain codecs. The facade exposes two explicit operations over that one
+resolver:
 
 1. **Inspect effective config** — the existing authenticated
    `GET /api/translations/config`/`config-response!` use case accepts only trusted
@@ -51,10 +54,10 @@ explicit operations over it:
    `ResolvedConfigArtifact` below.
 
 The two output types are not interchangeable: provider invocation rejects an
-`EffectiveConfigView`, even when its values equal the current artifact. Both operations call
-the same resolver and, at one repository snapshot, return identical effective values. This is
-one authority with two use cases, not a second adapter, precedence implementation, or config
-store.
+`EffectiveConfigView`, even when its values equal the current artifact. Both operations use the
+same effectful observation facade and pure resolver and, at one repository snapshot, return
+identical effective values. This is one authority with two use cases, not a second adapter,
+precedence implementation, orchestration path, or config store.
 
 ### Attempt-admitted artifact
 
@@ -82,14 +85,16 @@ linearization point and one scoped identity over every present version and exact
 When the override is absent, the artifact carries that repository-authoritative absence for its
 exact canonical identity, not a caller-computable marker.
 
-The selected model identity is data-dependent, so resolution reaches one final fixed-point
-observation without pretending sequential reads are atomic. It provisionally observes the two
-config identities, derives the selected catalog identity, observes that expanded identity set,
-derives any referenced provider-policy identities, and repeats until the required canonical set
-is stable. It then performs/validates one final `observe-many` result containing the unchanged
-config resources, selected model, and complete pinned policy closure. Any changed selector or
-reference restarts resolution; only that final single observation is attested. An unrelated
-catalog entry is excluded and cannot rotate the artifact.
+The selected model identity is data-dependent, so the effectful facade reaches one final
+fixed-point observation without pretending sequential reads are atomic. It provisionally
+observes the two config identities, gives that immutable observation to the pure resolver to
+derive the selected catalog identity, observes the expanded identity set, gives the new
+observation back to the resolver to derive referenced provider-policy identities, and repeats
+until the required canonical set is stable. The facade then obtains one final `observe-many`
+result containing the unchanged config resources, selected model, and complete pinned policy
+closure; the pure resolver validates and resolves only that result. Any changed selector or
+reference restarts effectful sequencing; only the final single observation is attested. An
+unrelated catalog entry is excluded and cannot rotate the artifact.
 
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
@@ -164,6 +169,10 @@ The publication-free namespace closure from #273 remains an invariant.
    invocation fails before any side effect. A valid organization-A session plus identity
    headers naming a real organization-B membership cannot read B; header-only, expired, and
    forged-session requests reach no repository operation and reveal no config existence/value.
+8. A namespace/source guard keeps the pure resolver free of infra/store/extern imports and
+   Promise or repository calls. Pure table tests feed immutable `ResourceObservation` values
+   directly; facade integration tests prove `observe-many` sequencing, fixed-point retry, and
+   both typed operations without a second effectful orchestration path.
 
 ## Non-goals
 
@@ -176,7 +185,8 @@ The publication-free namespace closure from #273 remains an invariant.
 ## Done when
 
 - One existing production facade preserves read-only inspection and admits an authenticated,
-  versioned artifact through separate, non-interchangeable operations over one resolver.
+  versioned artifact through separate, non-interchangeable operations over one pure resolver;
+  the facade alone owns observation I/O and fixed-point sequencing.
 - Global and optional override revisions—or trusted snapshot-bound absence—are mechanically
   attributable and immutable together with the selected model-catalog/provider-policy closure.
 - Resolution consumes one #282 `observe-many` result; fake/file race proofs admit no torn
