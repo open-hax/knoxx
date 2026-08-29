@@ -145,10 +145,12 @@ map, and selections. Its immutable receipt is evidence but does not
 directly satisfy the case. Quorum folds one server-derived `AdjudicationProposalHead` per exact
 organization, conflict-set identity, authenticated principal, and adjudicator role. Equal
 canonical proposals—same resolution plus the same total obligation-effect map and selected head
-generations—under distinct receipt ids join one head generation and count once. A
-changed resolution must explicitly supersede the current proposal head id/version; the atomic
-compare admits exactly one concurrent successor and rejects cross-organization, cross-conflict,
-cross-principal, cross-role, stale, or cyclic edges while retaining every receipt as history.
+generations—under distinct receipt ids join one head generation and count once. A canonically
+different admitted proposal—whether its resolution, total obligation-effect map, or any selected
+head generation differs—must explicitly supersede the current proposal head id/version. The
+atomic compare admits exactly one concurrent successor and rejects cross-organization,
+cross-conflict, cross-principal, cross-role, stale, or cyclic edges while retaining every receipt
+as history.
 Only current proposal heads are quorum-eligible.
 
 Once compatible current heads reach quorum, a domain operation atomically verifies those named
@@ -219,6 +221,10 @@ generation that the old decision cannot resolve.
     the old accept heads cannot authorize a decision, while the current reject heads can. Race
     one supersession with finalization and prove the decision transaction either names the still
     current generation or retries; equal duplicate proposals never add another quorum member.
+    Keep one principal's resolution and total effect map equal while changing only a selected
+    conflicting head generation: the unlinked proposal is rejected, while a valid current-head
+    supersession withdraws the old selection from quorum. Race two such selection-only successors
+    and prove exactly one becomes current; the losing and superseded selections cannot finalize.
     Append an equal duplicate judgment after finalization and prove the existing decision still
     applies with no second slot; advancing a conflicting head produces a new unresolved set.
     Finalize one terminal single-obligation resolution declared `:satisfies`, select its current

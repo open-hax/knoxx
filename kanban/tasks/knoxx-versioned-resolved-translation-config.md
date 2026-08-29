@@ -117,6 +117,21 @@ and produces no artifact, attestation, admission, or provider call; it is never 
 current or treated as optional absence. Only the final single observation is attested. An
 unrelated catalog entry is excluded and cannot rotate the artifact.
 
+An authorization denial from an expanded **provisional** frontier cannot reveal which coordinate
+failed and cannot be treated as absence, but it also cannot permanently retain a speculative
+coordinate that current config/model authority no longer selects. Within the same server-owned
+retry budget, the facade discards that entire failed frontier and reboots from only the canonical
+current config coordinates, then reobserves the newly selected model as `:current` and derives a
+fresh exact closure. A denial during either minimal current pass is terminal. The facade records
+the canonical fingerprint of each denied expanded frontier; deriving the same frontier again is
+terminal with exactly `{:error/type :authorization/forbidden :error/reason
+:resource-observation-denied}` rather than retrying or dropping a still-selected member. Only a
+different freshly derived frontier may be attempted. If it retains the denied member it denies
+again and terminates under the same bounded rule; if current authority has removed that obsolete
+coordinate, the new complete frontier may stabilize normally. No failed pass emits a partial
+observation/receipt or externally visible intermediate error, and no rebootstrap reuses prior
+authorization evidence.
+
 The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
 bytes. It binds the complete composite attempt identity, authenticated actor/origin
@@ -139,9 +154,10 @@ the read-only operation on the same configuration boundary.
 Fixed-point sequencing is bounded by a server-owned `ObservationRetryPolicy`: a maximum number
 of complete observation passes, a monotonic server deadline, and cancellation checked before
 and after every repository observation. Clients cannot extend the budget or supply its clock.
-Each selector or policy-reference change consumes a pass and restarts from the canonical config
-coordinate set. If the set never stabilizes before any limit, the facade returns the stable typed
-error `{:error/type :translation-config/unstable-observation :error/reason
+Each selector or policy-reference change, denied expanded frontier, and rebootstrap consumes a
+pass and restarts from the canonical config coordinate set. If the set never stabilizes before
+any limit, the facade returns the stable typed error
+`{:error/type :translation-config/unstable-observation :error/reason
 :retry-budget-exhausted :observation/attempt-count <bounded-count>}`; cancellation uses the same
 error type with `:error/reason :cancelled`. Neither result exposes resource values or presence,
 mints a `ResolvedConfigArtifact`/attestation, installs attempt admission, or invokes a provider.
@@ -269,6 +285,14 @@ The publication-free namespace closure from #273 remains an invariant.
     pins P2: the final result is either coherent M1/P1 or M2/P2, never M2/P1. An unavailable pinned
     version returns the canonical referenced-version error and creates no partial observation,
     artifact, attestation, admission, or provider call.
+12. Start an expanded pass from M1 -> P1 -> Q1, then make Q1 read policy deny while current model
+    changes to M2 -> P2 with no Q1 edge. The denied old frontier yields no partial evidence; one
+    bounded minimal rebootstrap observes M2, derives the different P2 frontier, and may succeed.
+    Controls where current authority still derives M1/P1/Q1, where the replacement closure still
+    contains Q1, or where a minimal config/model coordinate denies all return the identical
+    non-enumerating denial with no artifact, attestation, admission, or provider call. Repeating a
+    denied frontier fingerprint is terminal, and alternating obsolete frontiers exhausts the
+    existing bounded retry policy rather than looping or silently dropping coordinates.
 
 ## Non-goals
 
