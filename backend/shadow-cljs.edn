@@ -128,6 +128,30 @@
    {:output-feature-set :es-next,
     :macros {:knoxx.backend.macros true},
     :infer-externs false}},
+  ;; End-to-end suite. Boots a real Fastify app on an ephemeral port and drives
+  ;; it over HTTP. Namespaces end in -e2e rather than -test so the unit builds,
+  ;; whose ns-regex is "-test$", cannot pick them up: a suite that opens sockets
+  ;; must be something you choose to run, and the file suffix should say so.
+  :e2e
+  {:target :node-test,
+   :output-to "target/e2e/e2e.cjs",
+   ;; :ns-regexp, singular and a string. shadow ignores an unknown :ns-regex
+   ;; key silently and falls back to its "-test$" default, which is why the
+   ;; unit builds in this file run every test namespace regardless of the
+   ;; pattern they name.
+   :ns-regexp "knoxx\\.backend\\.e2e\\..*-e2e$",
+   :autorun true,
+   :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
+                                                  :file "test/js/eta_mu_cli_test_stub.cjs"}
+                          "@open-hax/openplanner-sdk" {:target :file
+                                                       :file "test/js/openplanner_sdk_test_stub.mjs"}}},
+   :compiler-options
+   {:output-feature-set :es-next,
+    :optimizations :none,
+    :source-map true,
+    :infer-externs false,
+    :macros {:knoxx.backend.macros true}}},
+
   :test-ci
   {:target :node-test,
    :output-to "target/test/test-ci.cjs",

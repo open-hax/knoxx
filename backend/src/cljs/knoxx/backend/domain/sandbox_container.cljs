@@ -4,9 +4,11 @@
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.extern.node-fs :as extern-node-fs]
+            [knoxx.backend.extern.node-os :as extern-node-os]
+            [knoxx.backend.law.sandbox :as sandbox-law]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
-            ["node:fs/promises" :as fs]
             ["node:path" :as path]
             ["node:util" :refer [promisify]]))
 
@@ -14,6 +16,9 @@
 
 (def ^:private sandbox-label-prefix "openhax.knoxx.sandbox")
 (def ^:private sandbox-max-buffer-bytes (* 2 1024 1024))
+(def ^:private private-sandbox-directory-mode
+  "Decimal 0700: only Knoxx's effective non-root uid can access sandbox state."
+  448)
 
 (def create-params
   [:map
@@ -59,35 +64,23 @@
   [^js node-path & parts]
   (.apply (aget node-path "resolve") node-path (into-array parts)))
 
-(defn- fs-mkdir!
-  [^js node-fs path opts]
-  (.mkdir node-fs path opts))
-
-(defn- fs-read-file!
-  ([^js node-fs path]
-   (.readFile node-fs path))
-  ([^js node-fs path encoding]
-   (.readFile node-fs path encoding)))
-
-(defn- fs-write-file!
-  ([^js node-fs path content]
-   (.writeFile node-fs path content))
-  ([^js node-fs path content encoding]
-   (.writeFile node-fs path content encoding)))
-
 (defn- docker-bin
   [config]
   (or (:sandbox-docker-bin config) "docker"))
 
 (defn- sandbox-container-name
   [sandbox-id]
-  (str "knoxx-sandbox-" sandbox-id))
+  (str "knoxx-sandbox-" (sandbox-law/require-sandbox-id sandbox-id)))
 
-(declare sandbox-host-dir)
+(defn- sandbox-metadata-root
+  [_runtime config]
+  (path-resolve path (:sandbox-root-dir config) ".metadata"))
 
 (defn- sandbox-metadata-path
   [runtime config sandbox-id]
-  (path-resolve path (sandbox-host-dir runtime config sandbox-id) ".knoxx-sandbox.json"))
+  (path-resolve path
+                (sandbox-metadata-root runtime config)
+                (sandbox-law/sandbox-metadata-filename sandbox-id)))
 
 (defn- sandbox-build-context
   [_runtime config]
@@ -99,7 +92,9 @@
 
 (defn- sandbox-host-dir
   [_runtime config sandbox-id]
-  (path-resolve path (:sandbox-root-dir config) sandbox-id))
+  (path-resolve path
+                (:sandbox-root-dir config)
+                (sandbox-law/require-sandbox-id sandbox-id)))
 
 (defn- sandbox-workdir
   [config]
@@ -107,7 +102,11 @@
 
 (defn- sandbox-user
   [config]
-  (or (:sandbox-user config) "1000:1000"))
+  (let [{:keys [uid gid]} (extern-node-os/effective-posix-identity!)]
+    (sandbox-law/sandbox-user-for-effective-identity
+     (:sandbox-user config)
+     uid
+     gid)))
 
 (defn- clamp-ttl-seconds
   [config ttl-seconds]
@@ -147,31 +146,42 @@
   [_runtime config args opts]
   (exec-file-result! exec-file-async (docker-bin config) args opts))
 
+(defn- require-internal-command-success!
+  [operation result]
+  (if-let [failure (sandbox-law/internal-command-failure operation result)]
+    (throw (ex-info (:message failure) {:sandbox/internal-command failure}))
+    result))
+
 (defn- ^:async sandbox-metadata!
   [runtime config sandbox-id]
-  (let [metadata-path (sandbox-metadata-path runtime config sandbox-id)]
-    (try
-      (let [text (await (fs-read-file! fs metadata-path "utf8"))]
-        (js->clj (.parse js/JSON (str text)) :keywordize-keys true))
-      (catch :default _ nil))))
+  (await (extern-node-fs/read-sandbox-metadata!
+          (sandbox-metadata-path runtime config sandbox-id))))
 
 (defn- ^:async write-sandbox-metadata!
   [runtime config sandbox-id metadata]
-  (let [metadata-path (sandbox-metadata-path runtime config sandbox-id)]
-    (await (fs-write-file! fs metadata-path (.stringify js/JSON (clj->js metadata) nil 2) "utf8"))
-    metadata))
+  (let [metadata-root (sandbox-metadata-root runtime config)
+        metadata-path (sandbox-metadata-path runtime config sandbox-id)]
+    (await (extern-node-fs/write-sandbox-metadata!
+            metadata-root
+            metadata-path
+            private-sandbox-directory-mode
+            metadata))))
 
 (defn- ^:async refresh-sandbox-ttl!
-  [runtime config sandbox-id]
+  [runtime config sandbox-id inspected]
   (let [metadata (await (sandbox-metadata! runtime config sandbox-id))
         created-at-ms (or (:createdAtMs metadata)
                           (when-let [created-at (:createdAt metadata)]
                             (.parse js/Date (str created-at)))
+                          (when-let [created-at (:createdAt inspected)]
+                            (.parse js/Date (str created-at)))
                           (.now js/Date))
         max-ttl-seconds (clamp-ttl-seconds config (:sandbox-max-ttl-seconds config))
         max-expires-at (or (:maxExpiresAt metadata)
+                           (:expiresAt inspected)
                            (+ created-at-ms (* 1000 max-ttl-seconds)))
-        ttl-seconds (clamp-ttl-seconds config (:ttlSeconds metadata))
+        ttl-seconds (clamp-ttl-seconds config (or (:ttlSeconds metadata)
+                                                  (:ttlSeconds inspected)))
         requested-expires-at (+ (.now js/Date) (* 1000 ttl-seconds))
         expires-at (min requested-expires-at max-expires-at)]
     (await (write-sandbox-metadata! runtime config sandbox-id (merge metadata {:createdAtMs created-at-ms
@@ -232,13 +242,13 @@
 (defn- ^:async sandbox-destroy!
   [runtime config sandbox-id]
   (let [host-dir (sandbox-host-dir runtime config sandbox-id)
+        metadata-path (sandbox-metadata-path runtime config sandbox-id)
         container-name (sandbox-container-name sandbox-id)]
     (try
       (await (docker-command! runtime config ["rm" "-f" container-name] {:timeout 30000}))
       (catch :default _ nil))
-    (try
-      (await (.rm fs host-dir #js {:recursive true :force true}))
-      (catch :default _ nil))
+    (await (extern-node-fs/remove-sandbox-metadata! metadata-path))
+    (await (extern-node-fs/remove-sandbox-directory! host-dir))
     {:sandboxId sandbox-id
      :containerName container-name
      :destroyed true
@@ -252,10 +262,64 @@
     (if (and (pos? (:expiresAt info)) (> (.now js/Date) (:expiresAt info)))
       (do (await (sandbox-destroy! runtime config sandbox-id))
           (throw (js/Error. (str "Sandbox expired and was destroyed: " sandbox-id))))
-      (let [metadata (await (refresh-sandbox-ttl! runtime config sandbox-id))]
+      (let [metadata (await (refresh-sandbox-ttl! runtime config sandbox-id info))]
         (assoc info
                :expiresAt (:expiresAt metadata)
                :ttlSeconds (max 0 (int (/ (- (:expiresAt metadata) (.now js/Date)) 1000))))))))
+
+(defn- ^:async prepare-sandbox-state!
+  [runtime config sandbox-id host-dir metadata]
+  (await (extern-node-fs/ensure-private-sandbox-directory!
+          (:sandbox-root-dir config)
+          private-sandbox-directory-mode))
+  (await (extern-node-fs/ensure-private-sandbox-directory!
+          host-dir
+          private-sandbox-directory-mode))
+  (await (write-sandbox-metadata! runtime config sandbox-id metadata)))
+
+(defn- sandbox-run-args
+  [{:keys [container-name user workdir expires-at host-dir image keepalive-cmd sandbox-id]}]
+  ["run" "-d" "--rm"
+   "--name" container-name
+   "--user" user
+   "--workdir" workdir
+   "-e" (str "HOME=" workdir)
+   "--label" (str sandbox-label-prefix "=true")
+   "--label" (str sandbox-label-prefix ".id=" sandbox-id)
+   "--label" (str sandbox-label-prefix ".expiresAt=" expires-at)
+   "-v" (str host-dir ":" workdir)
+   image
+   "sh" "-lc" keepalive-cmd])
+
+(defn- ^:async start-sandbox-container!
+  [runtime config context]
+  (let [{:keys [ok stderr error]}
+        (await (docker-command! runtime config (sandbox-run-args context)
+                                {:timeout 180000}))]
+    (when-not ok
+      (throw (js/Error. (str "docker run failed: " (or error stderr)))))
+    (await (ensure-live-sandbox! runtime config (:sandbox-id context)))))
+
+(defn- sandbox-start-context
+  [sandbox-id container-name user workdir expires-at host-dir image]
+  {:sandbox-id sandbox-id
+   :container-name container-name
+   :user user
+   :workdir workdir
+   :expires-at expires-at
+   :host-dir host-dir
+   :image image
+   :keepalive-cmd "trap 'exit 0' TERM INT; while true; do sleep 3600; done"})
+
+(defn- initial-sandbox-metadata
+  [sandbox-id image created-at-ms max-expires-at ttl expires-at]
+  {:sandboxId sandbox-id
+   :image image
+   :createdAtMs created-at-ms
+   :maxExpiresAt max-expires-at
+   :ttlSeconds ttl
+   :createdAt (.toISOString (js/Date.))
+   :expiresAt expires-at})
 
 (defn ^:async sandbox-create!
   [runtime config {:keys [ttl-seconds image]}]
@@ -268,36 +332,20 @@
         host-dir (sandbox-host-dir runtime config sandbox-id)
         container-name (sandbox-container-name sandbox-id)
         workdir (sandbox-workdir config)
+        user (sandbox-user config)
         image (or (some-> image str str/trim not-empty)
                   (:sandbox-image config))
-        keepalive-cmd "trap 'exit 0' TERM INT; while true; do sleep 3600; done"]
+        context (sandbox-start-context sandbox-id container-name user workdir
+                                       expires-at host-dir image)
+        metadata (initial-sandbox-metadata sandbox-id image created-at-ms
+                                           max-expires-at ttl expires-at)]
     (await (ensure-sandbox-image! runtime config image))
-    (await (fs-mkdir! fs host-dir #js {:recursive true}))
-    (let [{:keys [ok stderr error]} (await (docker-command!
-                                            runtime
-                                            config
-                                            ["run" "-d" "--rm"
-                                             "--name" container-name
-                                             "--user" (sandbox-user config)
-                                             "--workdir" workdir
-                                             "-e" (str "HOME=" workdir)
-                                             "--label" (str sandbox-label-prefix "=true")
-                                             "--label" (str sandbox-label-prefix ".id=" sandbox-id)
-                                             "--label" (str sandbox-label-prefix ".expiresAt=" expires-at)
-                                             "-v" (str host-dir ":" workdir)
-                                             image
-                                             "sh" "-lc" keepalive-cmd]
-                                            {:timeout 180000}))]
-      (when-not ok
-        (throw (js/Error. (str "docker run failed: " (or error stderr)))))
-      (await (write-sandbox-metadata! runtime config sandbox-id {:sandboxId sandbox-id
-                                                                 :image image
-                                                                 :createdAtMs created-at-ms
-                                                                 :maxExpiresAt max-expires-at
-                                                                 :ttlSeconds ttl
-                                                                 :createdAt (.toISOString (js/Date.))
-                                                                 :expiresAt expires-at}))
-      (await (ensure-live-sandbox! runtime config sandbox-id)))))
+    (try
+      (await (prepare-sandbox-state! runtime config sandbox-id host-dir metadata))
+      (await (start-sandbox-container! runtime config context))
+      (catch :default err
+        (await (sandbox-destroy! runtime config sandbox-id))
+        (throw err)))))
 
 (defn- ^:async sandbox-exec!
   [runtime config sandbox-id command timeout-ms]
@@ -362,7 +410,9 @@
         max-chars (max 200 (min 20000 (or (aget params "max_chars") 6000)))
         command (str "cat " (shell-single-quote path))]
     (maybe-tool-update! on-update (str "Reading sandbox file " path "…"))
-    (let [result (await (sandbox-exec! runtime config sandbox-id command 60000))
+    (let [result (require-internal-command-success!
+                  "sandbox read"
+                  (await (sandbox-exec! runtime config sandbox-id command 60000)))
           [content _] (clip-text (:stdout result) max-chars)]
       (tool-text-result
        (str "Sandbox file " path "\n\n" content)
@@ -378,7 +428,9 @@
                      (shell-single-quote encoded)
                      " | base64 -d > " (shell-single-quote path))]
     (maybe-tool-update! on-update (str "Writing sandbox file " path "…"))
-    (let [result (await (sandbox-exec! runtime config sandbox-id command 60000))]
+    (let [result (require-internal-command-success!
+                  "sandbox write"
+                  (await (sandbox-exec! runtime config sandbox-id command 60000)))]
       (tool-text-result
        (str "Wrote sandbox file " path)
        (assoc result :path path :bytes (count content))))))
@@ -387,15 +439,20 @@
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
         message (or (aget params "message") "sandbox update")
+        safe-directory (sandbox-law/exact-git-safe-directory (sandbox-workdir config))
+        git-command (str "git -c safe.directory=" (shell-single-quote safe-directory))
         command (str "if [ ! -d .git ]; then git init -q .; fi && "
-                     "git config user.email sandbox@knoxx.local && "
-                     "git config user.name 'Knoxx Sandbox' && "
-                     "git add -A && "
-                     "if git diff --cached --quiet; then echo 'No staged changes to commit'; "
-                     "else git commit -m " (shell-single-quote message) "; fi && "
-                     "git status --short --branch")]
+                     git-command " config user.email sandbox@knoxx.local && "
+                     git-command " config user.name 'Knoxx Sandbox' && "
+                     git-command " add -A && "
+                     "if " git-command " diff --cached --quiet; "
+                     "then echo 'No staged changes to commit'; "
+                     "else " git-command " commit -m " (shell-single-quote message) "; fi && "
+                     git-command " status --short --branch")]
     (maybe-tool-update! on-update (str "Committing sandbox workspace for " sandbox-id "…"))
-    (let [result (await (sandbox-exec! runtime config sandbox-id command 120000))]
+    (let [result (require-internal-command-success!
+                  "sandbox commit"
+                  (await (sandbox-exec! runtime config sandbox-id command 120000)))]
       (tool-text-result
        (str "Sandbox commit exit=" (:exitCode result)
             (when-not (str/blank? (:stdout result))

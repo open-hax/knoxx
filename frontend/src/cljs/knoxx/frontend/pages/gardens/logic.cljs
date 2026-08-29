@@ -48,45 +48,34 @@
                  vec)})
          gardens)})
 
+(defn- noop-summary
+  "Distinguish convergence from a reasoned refusal to publish."
+  [reason]
+  (case reason
+    "publication-not-public"
+    "Not published: the contract does not ask for this to be public."
+    "garden-not-active"
+    "Not published: the garden is not active."
+    nil "Already published at this revision; nothing changed."
+    (str "Nothing was done: " reason ".")))
+
+(defn- blocked-summary [blockers]
+  (str "Blocked: "
+       (if-let [values (seq blockers)]
+         (str/join ", " values)
+         "the plan is not admissible")))
+
 (defn receipt-summary
-  "One line describing what a reconciliation receipt says happened.
-
-   Matched against the FULL wire value, not its name. `send-result!` encodes
-   keyword values through `shape.resource-identity/encode-wire-values`, which
-   renders them `namespace/name` precisely so identity survives JSON — while
-   `clj->js` strips the namespace from map KEYS, which is why the key is
-   `:type` and the value is \"publication/materialized\". Matching on the name
-   alone would collapse distinct namespaces onto one branch, which is the thing
-   that encoding exists to prevent.
-
-   A receipt with no recognized type reports as recorded rather than as
-   success: the reconciler emits a receipt for a blocked or failed plan too,
-   and calling those success would be the UI lying on the reconciler's behalf."
+  "Describe one full namespaced receipt wire type without inventing success."
   [receipt]
   (case (:type receipt)
     "publication/materialized" "Published."
-    ;; A noop has three quite different causes and the receipt says which in
-    ;; `:reason`. Reporting them all as "already published" told a reviewer
-    ;; their content was live when the planner had actually refused to publish
-    ;; it — an archived garden and a converged route read identically.
-    ;; `converge` emits its noop with NO reason, so absence means genuinely
-    ;; converged and is the only case that may say so.
-    "publication/noop"
-    (case (:reason receipt)
-      "publication-not-public"
-      "Not published: the contract does not ask for this to be public."
-      "garden-not-active"
-      "Not published: the garden is not active."
-      nil "Already published at this revision; nothing changed."
-      (str "Nothing was done: " (:reason receipt) "."))
+    "publication/noop" (noop-summary (:reason receipt))
     "publication/removed" "Withdrawn from publication."
-    "publication/blocked" (str "Blocked: "
-                               (if-let [bs (seq (:blockers receipt))]
-                                 (str/join ", " bs)
-                                 "the plan is not admissible"))
+    "publication/blocked" (blocked-summary (:blockers receipt))
     "publication/failed" "Reconciliation failed; see the receipt journal."
     (str "Reconciliation recorded"
-         (when-let [t (:type receipt)] (str ": " t))
+         (when-let [receipt-type (:type receipt)] (str ": " receipt-type))
          ".")))
 
 (defn placement-published?

@@ -1,5 +1,5 @@
 (ns knoxx.frontend.pages.gardens.page-interaction-test
-  (:require [cljs.test :refer [deftest is async use-fixtures]]
+  (:require [cljs.test :refer [deftest is use-fixtures]]
             [clojure.string :as str]
             ["@testing-library/react" :as rtl]
             [helix.core :refer [$]]
@@ -40,108 +40,93 @@
      (when-not (pred)
        (throw (js/Error. (str "still waiting: " message)))))))
 
-(deftest reviews-deployed-contract-and-opens-public-site
-  (async done
-    (let [rendered (rtl/render ($ gardens-page))]
-      (-> (wait-until "Garden contract rendered"
-                      #(some? (.queryByText rendered "Open Hax Promethean")))
-          (.then
-           (fn []
-             (is (= 1 @load-calls))
-             (is (some? (.queryByText rendered "Contract locale catalog")))
-             (is (some? (.queryByText rendered "Publication placements")))
-             (let [website-link (.getByRole rendered "link" #js {:name "Open website ↗"})
-                   page-link (first (.getAllByRole rendered "link" #js {:name "Open published page ↗"}))]
-               (is (= "https://open-hax.promethean.rest" (.getAttribute website-link "href")))
-               (is (= "https://open-hax.promethean.rest/" (.getAttribute page-link "href"))))
-             (is (nil? (.queryByRole rendered "button" #js {:name "+ New Garden"})))
-             (is (nil? (.queryByRole rendered "button" #js {:name "Delete"})))
-             (is (not (str/includes? (.-textContent (.-container rendered)) "Theme")))
-             (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+(deftest ^:async reviews-deployed-contract-and-opens-public-site
+  (let [rendered (rtl/render ($ gardens-page))]
+    (await (wait-until "Garden contract rendered"
+                       #(some? (.queryByText rendered "Open Hax Promethean"))))
+    (is (= 1 @load-calls))
+    (is (some? (.queryByText rendered "Contract locale catalog")))
+    (is (some? (.queryByText rendered "Publication placements")))
+    (let [website-link (.getByRole rendered "link" #js {:name "Open website ↗"})
+          page-link (first (.getAllByRole
+                            rendered "link" #js {:name "Open published page ↗"}))]
+      (is (= "https://open-hax.promethean.rest"
+             (.getAttribute website-link "href")))
+      (is (= "https://open-hax.promethean.rest/"
+             (.getAttribute page-link "href"))))
+    (is (nil? (.queryByRole rendered "button" #js {:name "+ New Garden"})))
+    (is (nil? (.queryByRole rendered "button" #js {:name "Delete"})))
+    (is (not (str/includes? (.-textContent (.-container rendered)) "Theme")))))
 
-;; ── publishing ─────────────────────────────────────────────────────────────
-;;
-;; These render the page and assert on what a reviewer can actually click.
-;; The first version of this feature wired the handler, the API call and the
-;; receipt summary, and never rendered a button — every unit test passed and
-;; the build was clean, because passing unused props to a `defnc` is silent.
-;; Only a render assertion catches that, so it is the one this feature keeps.
+;; These tests render what a reviewer can click. A handler-only test is
+;; vacuous when the control itself disappears.
 
-(deftest publish-button-is-rendered-for-a-published-placement
-  (async done
-    (let [rendered (rtl/render ($ gardens-page))]
-      (-> (wait-until "placement rendered"
-                      #(some? (.queryByText rendered "Open Hax Promethean")))
-          (.then (fn []
-                   (is (= 2 (count (.getAllByText rendered "Publish")))
-                       "every placement whose contract asks to be published offers
-                        a publish action; the archived one does not")))
-          (.finally done)))))
+(deftest ^:async publish-button-is-rendered-for-a-published-placement
+  (let [rendered (rtl/render ($ gardens-page))]
+    (await (wait-until "placement rendered"
+                       #(some? (.queryByText rendered "Open Hax Promethean"))))
+    (is (= 2 (count (.getAllByText rendered "Publish")))
+        "published placements expose actions; the archived placement does not")))
 
-(deftest publish-calls-reconcile-and-reports-the-receipt
-  (async done
-    (let [calls (atom [])
-          real-reconcile api/reconcile-publication!]
-      (set! api/reconcile-publication!
-            (fn [publication-id]
-              (swap! calls conj publication-id)
-              (js/Promise.resolve {:type "publication/materialized"})))
+(deftest ^:async publish-calls-reconcile-and-reports-the-receipt
+  (let [calls (atom [])
+        real-reconcile api/reconcile-publication!]
+    (set! api/reconcile-publication!
+          (fn [publication-id]
+            (swap! calls conj publication-id)
+            (js/Promise.resolve {:type "publication/materialized"})))
+    (try
       (let [rendered (rtl/render ($ gardens-page))]
-        (-> (wait-until "placement rendered"
-                        #(some? (.queryByText rendered "Open Hax Promethean")))
-            (.then (fn []
-                     (rtl/fireEvent.click (first (.getAllByText rendered "Publish")))
-                     (wait-until "receipt reported"
-                                 #(some? (.queryByText
-                                          rendered
-                                          (fn [content _]
-                                            (str/includes? (str content) "Published.")))))))
-            (.then (fn []
-                     (is (= ["open-hax/home-en"] @calls)
-                         "reconciliation is demanded for the placement that was clicked")))
-            ;; A rejected wait must FAIL, not skip the assertions and let
-            ;; `finally` report a pass. Without this the test is vacuous
-            ;; whenever the thing it checks stops happening, which is exactly
-            ;; when it needs to speak up.
-            (.catch (fn [err]
-                      (is false (str "publish flow did not complete: " err))))
-            (.finally (fn []
-                        (set! api/reconcile-publication! real-reconcile)
-                        (done))))))))
+        (await (wait-until "placement rendered"
+                           #(some? (.queryByText rendered "Open Hax Promethean"))))
+        (rtl/fireEvent.click (first (.getAllByText rendered "Publish")))
+        (await (wait-until
+                "receipt reported"
+                #(some? (.queryByText
+                         rendered
+                         (fn [content _]
+                           (str/includes? (str content) "Published."))))))
+        (is (= ["open-hax/home-en"] @calls)
+            "reconciliation targets the placement the reviewer clicked"))
+      (finally
+        (set! api/reconcile-publication! real-reconcile)))))
 
-(deftest publish-all-runs-every-publishable-placement-in-order
-  (async done
-    (let [calls (atom [])
-          real-reconcile api/reconcile-publication!]
-      ;; Resolve on a microtask so a concurrent implementation would interleave
-      ;; and produce a different order than the listed one.
-      (set! api/reconcile-publication!
-            (fn [publication-id]
-              (-> (js/Promise.resolve nil)
-                  (.then (fn [_]
-                           (swap! calls conj publication-id)
-                           (if (= publication-id "open-hax/home-es")
-                             {:type "publication/blocked"
-                              :blockers ["translation-missing"]}
-                             {:type "publication/materialized"}))))))
+(deftest ^:async publish-all-runs-every-publishable-placement-in-order
+  (let [calls (atom [])
+        in-flight (atom 0)
+        max-in-flight (atom 0)
+        real-reconcile api/reconcile-publication!]
+    (set! api/reconcile-publication!
+          (^:async fn [publication-id]
+            (let [active (swap! in-flight inc)]
+              (swap! max-in-flight max active)
+              (try
+                (await (js/Promise.resolve nil))
+                (swap! calls conj publication-id)
+                (if (= publication-id "open-hax/home-es")
+                  {:type "publication/blocked"
+                   :blockers ["translation-missing"]}
+                  {:type "publication/materialized"})
+                (finally
+                  (swap! in-flight dec))))))
+    (try
       (let [rendered (rtl/render ($ gardens-page))]
-        (-> (wait-until "garden rendered"
-                        #(some? (.queryByText rendered "Open Hax Promethean")))
-            (.then (fn []
-                     (is (some? (.queryByText rendered "Publish all (2)"))
-                         "archived placements are not offered for publication")
-                     (rtl/fireEvent.click (.getByText rendered "Publish all (2)"))
-                     (wait-until "run summary reported"
-                                 #(some? (.queryByText
-                                          rendered
-                                          (fn [content _]
-                                            (str/includes? (str content) "1 published")))))))
-            (.then (fn []
-                     (is (= ["open-hax/home-en" "open-hax/home-es"] @calls)
-                         "sequential and in listed order — every publish renames
-                          the same manifest, and concurrent renames lose one")))
-            (.catch (fn [err] (is false (str "publish-all did not complete: " err))))
-            (.finally (fn []
-                        (set! api/reconcile-publication! real-reconcile)
-                        (done))))))))
+        (await (wait-until "garden rendered"
+                           #(some? (.queryByText rendered "Open Hax Promethean"))))
+        (is (some? (.queryByText rendered "Publish all (2)"))
+            "archived placements are not offered for publication")
+        (rtl/fireEvent.click (.getByText rendered "Publish all (2)"))
+        (await (wait-until
+                "complete run summary reported"
+                #(some? (.queryByText
+                         rendered
+                         (fn [content _]
+                           (and (str/includes? (str content) "1 published")
+                                (str/includes? (str content) "1 blocked")
+                                (str/includes? (str content) "(2 attempted)")))))))
+        (is (= ["open-hax/home-en" "open-hax/home-es"] @calls)
+            "every publish executes in the listed order")
+        (is (= 1 @max-in-flight)
+            "one shared-manifest reconciliation is in flight at a time"))
+      (finally
+        (set! api/reconcile-publication! real-reconcile)))))

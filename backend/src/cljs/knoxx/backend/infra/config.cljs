@@ -177,7 +177,9 @@
   []
   {:sandbox-docker-bin (env "KNOXX_SANDBOX_DOCKER_BIN" "docker")
    :sandbox-image (env "KNOXX_SANDBOX_IMAGE" "knoxx-sandbox:latest")
-   :sandbox-user (env "DOCKER_USER" "1000:1000")
+   ;; When unset, the sandbox runtime derives the current effective uid:gid.
+   ;; An explicit value is a fail-closed assertion that must match that owner.
+   :sandbox-user (env "DOCKER_USER" nil)
    :sandbox-workdir (env "KNOXX_SANDBOX_WORKDIR" "/workspace")
    :sandbox-root-dir (env "KNOXX_SANDBOX_ROOT_DIR" "/tmp/knoxx-agent/sandboxes")
    :sandbox-dockerfile (env "KNOXX_SANDBOX_DOCKERFILE" "docker/sandbox/Dockerfile")

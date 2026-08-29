@@ -78,6 +78,14 @@
              (:publication-site-url (config/cfg))))
       (is (= "/srv/website-content" (:publication-content-root (config/cfg)))))))
 
+(deftest sandbox-user-is-an-optional-host-identity-assertion
+  (testing "the runtime derives the effective uid:gid when no assertion exists"
+    (with-env! {"DOCKER_USER" nil}
+      (fn [] (is (nil? (:sandbox-user (config/cfg)))))))
+  (testing "an explicit identity remains available for fail-closed comparison"
+    (with-env! {"DOCKER_USER" "1000:1000"}
+      (fn [] (is (= "1000:1000" (:sandbox-user (config/cfg))))))))
+
 ;; ── Event-runtime kill switch ──────────────────────────────────────────────
 
 (deftest event-runtimes-disabled-defaults-to-off
