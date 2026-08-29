@@ -23,6 +23,8 @@ NEW_EMAIL="bootstrap-new-${RUN_ID}@open-hax.local"
 OLD_PASSWORD="Verify-old-${RUN_ID}!"
 NEW_PASSWORD="Verify-new-${RUN_ID}!"
 SESSION_SECRET="knoxx-bootstrap-verifier-session-secret-${RUN_ID}"
+FORMER_ORG_SLUG="bootstrap-former-${RUN_ID}"
+CURRENT_ORG_SLUG="bootstrap-current-${RUN_ID}"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -116,6 +118,7 @@ trap 'trap - EXIT; cleanup 143' TERM
 
 start_server() {
   local database="$1" email="$2" password="$3" previous_emails="$4" label="$5"
+  local primary_org_slug="${6:-$CURRENT_ORG_SLUG}"
   stop_server
   SERVER_PORT="$(free_port)"
   SERVER_LOG="${EVIDENCE_DIR}/${label}.log"
@@ -133,6 +136,7 @@ start_server() {
       KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME="Bootstrap verification administrator" \
       KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD="$password" \
       KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PREVIOUS_EMAILS="$previous_emails" \
+      KNOXX_PRIMARY_ORG_SLUG="$primary_org_slug" \
       KNOXX_LOCAL_PASSWORD_AUTH_ENABLED=true \
       KNOXX_SESSION_SECRET="$SESSION_SECRET" \
       KNOXX_DISABLE_EVENT_RUNTIMES=true \
@@ -281,7 +285,7 @@ fi
   || die "reviewed build did not produce ${SERVER_ENTRY}"
 
 printf '\nRotation and revocation\n'
-start_server "$ROTATION_DB" "$OLD_EMAIL" "$OLD_PASSWORD" "" seed-old
+start_server "$ROTATION_DB" "$OLD_EMAIL" "$OLD_PASSWORD" "" seed-old "$FORMER_ORG_SLUG"
 if wait_for_ready "prior credential bootstrap"; then
   expect_login old-before-rotation "$OLD_EMAIL" "$OLD_PASSWORD" 200
   expect_count "prior credential is active before rotation" "$ROTATION_DB" \
@@ -289,18 +293,18 @@ if wait_for_ready "prior credential bootstrap"; then
 fi
 stop_server
 
-start_server "$ROTATION_DB" "$NEW_EMAIL" "$NEW_PASSWORD" "$OLD_EMAIL" rotate
+start_server "$ROTATION_DB" "$NEW_EMAIL" "$NEW_PASSWORD" "$OLD_EMAIL" rotate "$CURRENT_ORG_SLUG"
 if wait_for_ready "rotated credential bootstrap"; then
   expect_login old-after-rotation "$OLD_EMAIL" "$OLD_PASSWORD" 401
   expect_login new-after-rotation "$NEW_EMAIL" "$NEW_PASSWORD" 200
-  expect_count "prior credential is inactive after rotation" "$ROTATION_DB" \
+  expect_count "prior credential in the former primary org is inactive after rotation" "$ROTATION_DB" \
     "{account_identifier:'${OLD_EMAIL}',status:'active'}" 0
   expect_count "replacement credential is active after rotation" "$ROTATION_DB" \
     "{account_identifier:'${NEW_EMAIL}',status:'active'}" 1
 fi
 stop_server
 
-start_server "$ROTATION_DB" "$NEW_EMAIL" "" "$OLD_EMAIL" revoke
+start_server "$ROTATION_DB" "$NEW_EMAIL" "" "$OLD_EMAIL" revoke "$CURRENT_ORG_SLUG"
 if wait_for_ready "blank-password revocation bootstrap"; then
   expect_login old-after-revocation "$OLD_EMAIL" "$OLD_PASSWORD" 401
   expect_login new-after-revocation "$NEW_EMAIL" "$NEW_PASSWORD" 401
@@ -310,7 +314,7 @@ fi
 stop_server
 
 printf '\nReplacement failure rollback\n'
-start_server "$FAILURE_DB" "$OLD_EMAIL" "$OLD_PASSWORD" "" failure-seed-old
+start_server "$FAILURE_DB" "$OLD_EMAIL" "$OLD_PASSWORD" "" failure-seed-old "$FORMER_ORG_SLUG"
 if wait_for_ready "rollback fixture bootstrap"; then
   expect_login old-before-failure "$OLD_EMAIL" "$OLD_PASSWORD" 200
 fi
@@ -330,7 +334,7 @@ else
   fail "install replacement-failure fixture validator"
 fi
 
-start_server "$FAILURE_DB" "$NEW_EMAIL" "$NEW_PASSWORD" "$OLD_EMAIL" replacement-failure
+start_server "$FAILURE_DB" "$NEW_EMAIL" "$NEW_PASSWORD" "$OLD_EMAIL" replacement-failure "$CURRENT_ORG_SLUG"
 expect_startup_failure "replacement failure"
 expect_count "failed replacement rolls the prior deactivation back" "$FAILURE_DB" \
   "{account_identifier:'${OLD_EMAIL}',status:'active'}" 1

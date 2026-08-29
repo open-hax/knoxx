@@ -30,6 +30,7 @@
     [knoxx.backend.extern.mongo :as extern-mongo]
     [knoxx.backend.infra.mongo-client :as mongo-client]
     [knoxx.backend.infra.system-instance :as system-instance]
+    [knoxx.backend.law.bootstrap-credentials :as bootstrap-law]
     [knoxx.backend.law.mongo :as mongo-law]))
 
 (def ACTOR_CREDENTIALS_COLLECTION "knoxx_actor_credentials")
@@ -311,24 +312,6 @@
                                        "system_instance_id" (system-instance/current-id)}}))
    nil))
 
-(defn- canonical-account-identifiers
-  [account-identifiers]
-  (->> account-identifiers
-       (map #(some-> % str str/trim str/lower-case))
-       (remove str/blank?)
-       distinct
-       vec))
-
-(defn- managed-bootstrap-query
-  [org-id account-identifiers]
-  (cond-> {:org_id org-id
-           :provider "local"
-           :kind "password"
-           :status "active"
-           :$or [{:secret_json.bootstrap-system-admin true}]}
-    (seq account-identifiers)
-    (update :$or conj {:account_identifier {:$in account-identifiers}})))
-
 (defn- bootstrap-reconciliation-context
   [{:keys [user-id org-id account-identifier
            previous-account-identifiers secret-json]}]
@@ -341,16 +324,12 @@
       (throw (js/Error. "org-id is required before bootstrap credential reconciliation")))
     (when-not (mongo-law/valid-identifier? current-account)
       (throw (js/Error. "account-identifier is required before bootstrap credential reconciliation")))
-    (let [previous-accounts (canonical-account-identifiers previous-account-identifiers)]
-      {:current-id current-id
-       :current-org current-org
-       :current-account current-account
-       :managed-accounts (cond-> previous-accounts
-                           (nil? secret-json) (conj current-account))
-       :secret-json secret-json})))
-
-(defn- reconciliation-lock-id [org-id]
-  (str "bootstrap-system-admin-local-password:" org-id))
+    {:current-id current-id
+     :current-org current-org
+     :current-account current-account
+     :managed-accounts (bootstrap-law/managed-account-identifiers
+                        current-account previous-account-identifiers)
+     :secret-json secret-json}))
 
 (defn- ^:async ensure-reconciliation-lock!
   "Create the intrinsic-unique lock before entering a transaction.
@@ -358,12 +337,12 @@
    Concurrent first-use upserts can race on `_id`; the loser may receive a
    duplicate-key error after the winner commits, which still proves the lock
    exists and is safe to use."
-  [db org-id]
+  [db]
   (let [now-ms (extern-mongo/current-epoch-ms)]
     (try
       (await (extern-mongo/update-one!
               (extern-mongo/collection db RECONCILIATION_LOCKS_COLLECTION)
-              {:_id (reconciliation-lock-id org-id)}
+              {:_id bootstrap-law/global-reconciliation-lock-id}
               {:$setOnInsert {:created_at now-ms}}
               {:upsert true
                :write-concern "majority"
@@ -373,27 +352,16 @@
           (throw err))))))
 
 (defn- ^:async lock-reconciliation!
-  [update-one! locks org-id now-ms]
+  [update-one! locks now-ms]
   (let [result (await (update-one!
                        locks
-                       {:_id (reconciliation-lock-id org-id)}
+                       {:_id bootstrap-law/global-reconciliation-lock-id}
                        {:$set {:updated_at now-ms
                                :system_instance_id (system-instance/current-id)}}
                        {:bson-date-fields #{:updated_at}}))]
     (when-not (= 1 (:matched-count result))
       (throw (js/Error. "bootstrap reconciliation lock disappeared before transaction")))
     result))
-
-(defn- ^:async deactivate-managed-credentials!
-  [update-many! credentials managed-query current-id now-ms]
-  (await (update-many!
-          credentials
-          (assoc managed-query :user_id {:$ne current-id})
-          {:$set {:status "inactive"
-                  :updated_at now-ms
-                  :system_instance_id (system-instance/current-id)}}
-          {:case-insensitive? true
-           :bson-date-fields #{:updated_at}})))
 
 (defn- ^:async upsert-bootstrap-credential!
   [update-one! credentials
@@ -426,17 +394,20 @@
            :bson-date-fields #{:updated_at}})))
 
 (defn- ^:async reconcile-bootstrap-transaction!
-  [db {:keys [current-id current-org managed-accounts secret-json] :as context}
+  [db {:keys [managed-accounts secret-json] :as context}
    {:keys [update-one! update-many!]}]
   (let [credentials (credentials-coll db)
         locks (extern-mongo/collection db RECONCILIATION_LOCKS_COLLECTION)
         now-ms (extern-mongo/current-epoch-ms)
-        managed-query (managed-bootstrap-query current-org managed-accounts)]
-    (await (lock-reconciliation! update-one! locks current-org now-ms))
+        managed-query (bootstrap-law/managed-active-password-query managed-accounts)]
+    (await (lock-reconciliation! update-one! locks now-ms))
     (if (some? secret-json)
       (do
-        (await (deactivate-managed-credentials!
-                update-many! credentials managed-query current-id now-ms))
+        ;; Retire every managed identity first, including an existing current
+        ;; tuple. The following upsert reactivates only the requested tuple in
+        ;; the same transaction; a failed upsert rolls the retirement back.
+        (await (revoke-managed-credentials!
+                update-many! credentials managed-query now-ms))
         (await (upsert-bootstrap-credential!
                 update-one! credentials context now-ms)))
       (await (revoke-managed-credentials!
@@ -446,11 +417,14 @@
 (defn ^:async reconcile-bootstrap-local-password!
   "Atomically replace or revoke the bootstrap system-admin password.
 
-   Every reconciliation transaction first writes the same per-org lock
-   document. Mongo write-conflict retries therefore serialize two processes
-   that start with different bootstrap identities. Deactivation and replacement
-   then commit together: an upsert failure rolls the deactivation back, and no
-   observer can see the intermediate zero-credential state.
+   Every reconciliation transaction first writes one global bootstrap lock.
+   Local-password login is organization-unscoped, so reconciliation must also
+   be global: it retires marked credentials and explicitly named current/prior
+   identities across former primary organizations, then reactivates only the
+   requested current tuple. Mongo write-conflict retries serialize processes
+   even when their configured primary organizations differ. Deactivation and
+   replacement commit together: an upsert failure rolls every retirement back,
+   and no observer can see the intermediate zero-credential state.
 
    Credentials written before the bootstrap marker are selected only through
    explicit account identifiers owned by the credential itself, so later actor
@@ -460,9 +434,8 @@
   ([db opts]
    (reconcile-bootstrap-local-password! db opts mongo-client/with-transaction!))
   ([db opts with-transaction!]
-   (let [{:keys [current-org] :as context}
-         (bootstrap-reconciliation-context opts)]
-     (await (ensure-reconciliation-lock! db current-org))
+   (let [context (bootstrap-reconciliation-context opts)]
+     (await (ensure-reconciliation-lock! db))
      (await
       (with-transaction!
         (^:async fn [transaction]

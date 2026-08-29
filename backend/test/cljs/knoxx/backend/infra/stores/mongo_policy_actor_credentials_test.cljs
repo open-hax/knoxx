@@ -201,31 +201,32 @@
                                 (finally
                                   (@release* nil)))))]
     (await (creds/upsert-actor-credential!
-            db "old-user" "org" "local"
+            db "old-user" "former-org" "local"
             {:kind "password"
              :account-identifier "old@example.com"
              :secret-json {:hash "old" :bootstrap-system-admin true}
              :status "active"}))
     (await (creds/upsert-actor-credential!
-            db "legacy-user" "org" "local"
+            db "legacy-user" "former-org" "local"
             {:kind "password"
              :account-identifier "PI@OPEN-HAX.LOCAL"
              :secret-json {:hash "legacy"}
              :status "active"}))
     ;; Simultaneous processes with different configured identities enter the
-    ;; same per-org transaction lane and converge to one active credential.
+    ;; one global transaction lane and converge to one active credential even
+    ;; while the configured primary organization changes.
     (await
      (js/Promise.all
       #js [(creds/reconcile-bootstrap-local-password!
             db {:user-id "current-user"
-                :org-id "org"
+                :org-id "current-org"
                 :account-identifier "Current@Example.com"
                 :previous-account-identifiers ["PI@OPEN-HAX.LOCAL"]
                 :secret-json {:hash "current" :bootstrap-system-admin true}}
             with-transaction!)
            (creds/reconcile-bootstrap-local-password!
             db {:user-id "next-user"
-                :org-id "org"
+                :org-id "current-org"
                 :account-identifier "next@example.com"
                 :previous-account-identifiers ["current@example.com"]
                 :secret-json {:hash "next" :bootstrap-system-admin true}}
@@ -233,7 +234,7 @@
     (let [credentials (js->clj
                        (await (.toArray
                                (.find (.collection db "knoxx_actor_credentials")
-                                      #js {:org_id "org"})))
+                                      #js {})))
                        :keywordize-keys true)
           active (filterv #(= "active" (:status %)) credentials)
           locks (js->clj
@@ -245,8 +246,11 @@
       (is (= ["next-user"] (mapv :user_id active)))
       (is (= {:hash "next" :bootstrap-system-admin true}
              (:secret_json (first active))))
-      (is (= 1 (count locks)) "both identities share one intrinsic-unique lock")
-      (is (= "bootstrap-system-admin-local-password:org" (:_id (first locks)))))))
+      (is (every? #(= "inactive" (:status %))
+                  (filterv #(= "former-org" (:org_id %)) credentials))
+          "managed credentials in the former primary org are retired")
+      (is (= 1 (count locks)) "all organizations share one intrinsic-unique lock")
+      (is (= "bootstrap-system-admin-local-password" (:_id (first locks)))))))
 
 (deftest ^:async reconcile-bootstrap-local-password-aborts-without-lock-test
   (let [credentials-mutated?* (atom false)
@@ -282,7 +286,7 @@
 
 (deftest ^:async reconcile-bootstrap-local-password-rolls-back-before-lockout-test
   (let [credentials* (atom [{:user_id "old-user"
-                             :org_id "org"
+                             :org_id "former-org"
                              :provider "local"
                              :kind "password"
                              :account_identifier "old@example.com"
@@ -310,7 +314,7 @@
     (try
       (await (creds/reconcile-bootstrap-local-password!
               db {:user-id "current-user"
-                  :org-id "org"
+                  :org-id "current-org"
                   :account-identifier "current@example.com"
                   :previous-account-identifiers ["old@example.com"]
                   :secret-json {:hash "current" :bootstrap-system-admin true}}

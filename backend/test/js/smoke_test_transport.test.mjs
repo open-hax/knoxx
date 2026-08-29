@@ -185,6 +185,7 @@ test("bootstrap verifier tracks the Node server process directly", () => {
 
   assert.match(startServer, /^\s+exec env \\$/m);
   assert.doesNotMatch(startServer, /^\s+env \\$/m);
+  assert.match(startServer, /^\s+KNOXX_PRIMARY_ORG_SLUG="\$primary_org_slug" \\$/m);
   assert.match(startServer, /^\s+node "\$SERVER_ENTRY"$/m);
 });
 

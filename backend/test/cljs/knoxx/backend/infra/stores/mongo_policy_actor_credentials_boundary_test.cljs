@@ -41,6 +41,23 @@
             with-transaction!))
     (is (instance? js/Date @ensure-created-at*)
         "the non-transactional lock upsert receives a boundary-owned BSON Date")
+    (is (= {:_id "bootstrap-system-admin-local-password"}
+           (:query (first @operations*)))
+        "every primary organization serializes through the same lock")
+    (is (= {:provider "local"
+            :kind "password"
+            :status "active"
+            :$or [{:secret_json.bootstrap-system-admin true}
+                  {:account_identifier {:$in ["old@example.com"
+                                               "current@example.com"]}}]}
+           (:query (second @operations*)))
+        "retirement is account-managed and intentionally not org-scoped")
+    (is (= {:user_id "current-user"
+            :org_id "org"
+            :provider "local"
+            :kind "password"}
+           (:query (nth @operations* 2)))
+        "only the replacement upsert is scoped to the current tuple")
     (let [instants (for [{:keys [update]} @operations*
                          [_ assignments] update
                          [field value] assignments

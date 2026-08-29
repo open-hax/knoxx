@@ -36,16 +36,20 @@ password policy, event runtimes disabled, and an isolated database name.
 
 The run demonstrates four externally distinguishable states:
 
-1. A prior bootstrap email/password authenticates through
-   `POST /api/auth/local/login` and has one active Mongo credential.
-2. Restarting with a new email/password plus the prior email revokes the old
-   login, admits the replacement login, and leaves exactly one replacement.
+1. A prior bootstrap email/password in a generated former primary organization
+   authenticates through `POST /api/auth/local/login` and has one active Mongo
+   credential.
+2. Restarting with both a new primary organization and a new email/password
+   plus the prior email revokes the former-organization login, admits the
+   replacement login, and leaves exactly one replacement.
 3. Restarting with a blank password refuses both managed logins and leaves no
    active managed bootstrap credential.
-4. In a second database, a collection validator rejects only the replacement
-   credential. Knoxx exits nonzero without binding `/health`; Mongo then shows
-   the prior credential still active and no active replacement. That is the
-   rollback invariant—deactivation never commits by itself.
+4. In a second database, the prior credential is again seeded in the former
+   organization and a collection validator rejects only the replacement in the
+   new organization. Knoxx exits nonzero without binding `/health`; Mongo then
+   shows the prior credential still active and no active replacement. That is
+   the cross-organization rollback invariant—retirement never commits by
+   itself.
 
 The archived source, build output, HTTP bodies, and server logs live only in a
 private temporary directory for the duration of the run. On success, failure,

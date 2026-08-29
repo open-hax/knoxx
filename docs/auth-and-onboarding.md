@@ -124,9 +124,11 @@ in `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PREVIOUS_EMAILS` for the first restart so
 credentials created before Knoxx recorded bootstrap markers are also revoked.
 The documented default `system-admin@open-hax.local` is included automatically.
 Later rotations use the durable marker, and retaining the previous-email list is
-safe and idempotent. Rotation and revocation are serialized per organization
-and committed as one Mongo replica-set transaction, so a failed replacement
-leaves the prior administrator credential active.
+safe and idempotent. Because local-password login is not organization-scoped,
+rotation and revocation share one global bootstrap lock and retire managed
+identities across former primary organizations. Retirement and replacement are
+committed as one Mongo transaction, so a failed replacement leaves the prior
+administrator credential active even when the primary organization changes.
 
 Knoxx validates Mongo topology before policy seeding and fails closed before
 registering routes or binding the HTTP listener when Mongo is a standalone
