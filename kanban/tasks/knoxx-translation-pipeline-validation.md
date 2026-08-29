@@ -88,10 +88,12 @@ Explicitly **out of scope here**:
 8. Provider-returned tenant/source identity drift is rejected, while the successful
    candidate receipt preserves the exact config/policy revision, canonical request
    parameters, provider/model identity, and raw-result evidence digest.
-9. The real `save_translation` MCP schema and handler carry a caller-stable `attempt_id` to
-   event admission and return it with the ordinal. A commit-then-timeout retry with the same id
-   is idempotent; changed reuse conflicts; distinct ids with equal content create distinct
-   attempts. Store-only tests are insufficient for this proof.
+9. The real `save_translation` MCP schema and handler carry a caller-stable `attempt_id`, while
+   server-derived organization/document/segment/target coordinates form the identical composite
+   identity at config and event admission. A commit-then-timeout retry of one composite is
+   idempotent; changed same-composite reuse conflicts; one raw id reused across segments/targets
+   remains independent; and distinct ids with equal content create distinct attempts. Store-only
+   tests are insufficient for this proof.
 
 ## Done when
 
@@ -106,6 +108,8 @@ Explicitly **out of scope here**:
 - The resolved-config artifact carries both contributing resource revisions and its
   deterministic identity through provider invocation and durable attempt evidence; a later
   config change cannot rewrite which policy selected the candidate.
+- The real boundary proves config reservation and event history agree on one composite attempt
+  identity, including cross-segment/target raw-id reuse and same-composite conflict behavior.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - The public save boundary preserves caller idempotency identity end to end instead of minting
   per-call ids or collapsing intentional equal-content attempts.
