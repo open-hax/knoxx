@@ -44,8 +44,9 @@ outcome and error shape:
 
 - creating an absent identity with no expected version returns `:created` and an opaque,
   immutable version token;
-- retrying the same identity and canonically equal payload returns `:unchanged`, the
-  existing resource, and the same version without another write;
+- retrying the same identity and canonically equal payload with either no expected version
+  or the current version returns `:unchanged`, the existing resource, and the same version
+  without another write;
 - creating the same identity with a different payload returns
   `{:error/type :resource/conflict :error/reason :identity-exists
   :resource/id <identity> :expected-version nil :actual-version <version>}`;
@@ -54,13 +55,16 @@ outcome and error shape:
 - replacing with a stale or unknown version returns
   `{:error/type :resource/conflict :error/reason :stale-version
   :resource/id <identity> :expected-version <expected> :actual-version <actual>}` and
-  leaves bytes, semantic payload, provenance, and version unchanged;
+  leaves bytes, semantic payload, provenance, and version unchanged. This precondition
+  check takes precedence over payload equality: a stale expected version returns
+  `:stale-version` even when the proposed payload equals the current resource;
 - replacing with the current version and an equal payload returns `:unchanged` with the
   same version.
 
 Compatibility tests must assert the complete conflict data above, not only that an
 exception occurred. They must also re-read after every duplicate or conflict and prove
-that no authority changed.
+that no authority changed. Include the stale-version/equal-payload case so every provider
+implements the same precedence rule.
 
 Run the same semantic suite against:
 
