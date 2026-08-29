@@ -46,6 +46,12 @@ mint a new id per call, substitute a transport tool-call id, or derive identity 
 content. Organization/reviewer facts remain server-derived. Distinct receipt ids with
 canonically equal evaluations remain distinct historical evaluations.
 
+The durable receipt identity is the server-composed `{org-id, receipt-id}` pair, where
+`org-id` comes only from authenticated actor context. The store's uniqueness and comparison
+boundary uses that composite key; a caller-chosen id is never global and cannot collide with
+or probe another organization's receipt. Tool results expose the caller id plus its authorized
+scope without accepting a client override.
+
 When an SME changes its own prior judgment, the tool also carries the explicit
 `supersedes_receipt_id` selected from evidence already returned for that authenticated
 principal. The handler cannot infer supersession from time/content or supersede another
@@ -107,12 +113,18 @@ repository/receipt store:
    authorized adjudication receipt names the conflicting receipts rather than replacing them.
    The fixture includes explicit obligation ids, allowed values, role/quorum rules,
    exclusivity groups, and adjudicator roles so no adapter invents completion defaults.
+   Competing adjudicator proposals use the canonical conflict-set identity and distinct
+   principal quorum; the actual decision is one atomically admitted receipt, so opposite
+   finalizations cannot both satisfy the case.
 10. Only `:satisfied` advances to the next pending case; `:pending` and
     `:needs-adjudication` remain visible work.
 11. The authenticated organization discovers only its cases. Cross-tenant direct fetches and
     writes return the same non-enumerating `:authorization/forbidden` result and persist
     nothing. A client-supplied tenant, reviewer identity, or reviewer role cannot override the
     authenticated principal, including when it names a real SME in the same organization.
+    The two-organization fixture reuses the exact same `receipt_id` in both organizations and
+    proves two independent receipts, idempotent retries, and no existence/conflict signal
+    crosses the composite identity boundary.
 12. The entire proof runs with the translation review frontend absent.
 
 ## Done when

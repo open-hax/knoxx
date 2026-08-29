@@ -82,6 +82,16 @@ already-superseded, missing-target, and cyclic relations fail validation without
   identities and is produced only by a reviewer role authorized by the rubric; history is not
   overwritten to manufacture satisfaction.
 
+A conflict set has a canonical identity derived from the exact case/rubric/artifact versions,
+obligation/exclusivity group, and sorted conflicting receipt ids. The rubric declares allowed
+resolutions plus adjudicator roles and distinct-principal quorum. Adjudicator proposal receipts
+are immutable evidence but do not directly satisfy the case. Once compatible proposals reach
+quorum, a domain operation atomically creates one `AdjudicationDecisionReceipt` in the unique
+slot for that conflict-set identity, naming the resolution and exact quorum-member receipt ids.
+An opposite decision racing for the empty slot yields exactly one winner and one
+`:evaluation/conflict`; an equal retry is unchanged. Later incompatible proposals cannot change
+the admitted decision, and the fold never selects an adjudication by timestamp or array order.
+
 ## TDD plan
 
 1. Minimal one-artifact classification case validates.
@@ -105,6 +115,10 @@ already-superseded, missing-target, and cyclic relations fail validation without
 13. An approve receipt followed by a valid same-principal reject supersession retains both but
     folds one effective reject vote. Without the relation it needs adjudication; concurrent
     successors admit exactly one, and cross-principal/version/cyclic supersession is rejected.
+14. Opposite adjudicator proposals for one canonical conflict set remain
+    `:needs-adjudication` until a compatible distinct-principal quorum exists. Race opposite
+    decision finalizations and prove exactly one immutable decision wins, the other conflicts,
+    and every provider folds the same case status with all proposal evidence retained.
 
 ## Done when
 

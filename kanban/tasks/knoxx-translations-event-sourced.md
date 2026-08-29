@@ -99,12 +99,15 @@ current state. If append succeeds but projection update fails, the durable event
 authoritative and an idempotent replay/recovery step advances the projection from its
 checkpoint without appending another attempt.
 
-Legacy migration derives a deterministic initial event id from the complete grouping key and
-the legacy row's immutable source/candidate revision facts. Re-running migration returns the
-equal existing event; a changed row reusing that derived identity stops with the normal
-`:attempt-id-reused` conflict for operator reconciliation. Migration writes the event before
-the projection, resumes from durable checkpoints, and keeps the existing read endpoint
-available until every migrated grouping key can be served from the new projection.
+Legacy migration derives a deterministic initial event id only from stable legacy row identity
+and the complete grouping coordinates, never from mutable source/candidate values or revision
+facts. The canonical migrated event payload contains that observed mutable snapshot. Re-running
+migration returns the equal existing event; a row changed after a partial migration therefore
+reuses the same derived id with a different canonical payload and stops with the normal
+`:attempt-id-reused` conflict for operator reconciliation instead of appending a second initial
+event. Migration writes the event before the projection, resumes from durable checkpoints, and
+keeps the existing read endpoint available until every migrated grouping key can be served from
+the new projection.
 
 ## Boundary rules
 
@@ -138,7 +141,9 @@ land a migration that leaves that endpoint erroring.
   delivery cannot regress current state, and replay/recovery is byte-equivalent and
   idempotent after an injected append/projection split failure.
 - Running legacy migration twice appends no duplicates; changed legacy authority at a reused
-  deterministic migration identity conflicts instead of being silently replaced.
+  stable row/grouping-derived migration identity conflicts instead of being silently replaced.
+  A partial-run fixture mutates the legacy payload before restart and proves no second initial
+  event can be admitted.
 - An evaluation receipt can bind to a candidate that remains addressable after a newer
   translation exists.
 - `save_translation` is honestly non-destructive, with the MCP annotation updated.
