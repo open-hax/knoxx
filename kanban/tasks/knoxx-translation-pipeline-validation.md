@@ -93,15 +93,19 @@ Explicitly **out of scope here**:
 8. Provider-returned tenant/source identity drift is rejected, while the successful
    candidate receipt preserves the exact config/policy revision, canonical request
    parameters, provider/model identity, and raw-result evidence digest.
-9. The real `save_translation` MCP schema and handler carry a caller-stable `attempt_id`, while
-   server-derived organization/document/segment/target coordinates form the identical composite
-   identity at config and event admission. A commit-then-timeout retry of one composite is
-   idempotent; changed same-composite reuse conflicts; one raw id reused across segments/targets
-   remains independent; and distinct ids with equal content create distinct attempts. Store-only
-   tests are insufficient for this proof. Inject config-admission crashes after observation,
-   after attestation minting, before complete install, and after install/before response:
-   pre-install crashes leave no reservation or provider call, post-install retry returns the
-   installed artifact, and equal concurrent losers cannot return a different resolved snapshot.
+9. The initiating dispatch accepts or creates a workflow-stable `attempt_id`, persists it with
+   exact server-derived organization/document/segment/target/source facts, and completes config
+   admission before the real provider/model session starts. The authenticated session pins that
+   id, and the real `save_translation` schema/handler must echo and validate it rather than minting
+   one after provider work. A commit-then-timeout retry of one composite is idempotent; changed
+   same-composite reuse conflicts; one raw id reused across segments/targets remains independent;
+   and distinct ids with equal content create distinct attempts. Store-only tests are insufficient
+   for this proof. Inject config-admission crashes after observation, after attestation minting,
+   before complete install, and after install/before response: pre-install crashes start no
+   provider, post-install retry returns the installed artifact, and equal concurrent losers cannot
+   return a different resolved snapshot. Crash between dispatch-claim persistence and admission;
+   recovery reuses the pinned id and starts one session only after admission. A
+   missing/mismatched tool echo appends no candidate.
 10. Real GET/PATCH config routes derive scope only from a verified session or configured API
     key. A valid organization-A session plus headers naming an existing organization-B
     membership cannot read B, and a header-only request reaches no repository operation.
@@ -124,6 +128,8 @@ Explicitly **out of scope here**:
 - The config boundary atomically installs a complete attempt/artifact record; injected crashes
   and equal races cannot strand a reservation or let provider/event admission consume a losing
   candidate artifact.
+- Agent dispatch persists and pins the same composite attempt identity before provider/session
+  start; `save_translation` can validate that identity but cannot create or reinterpret it.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - The public save boundary preserves caller idempotency identity end to end instead of minting
   per-call ids or collapsing intentional equal-content attempts.

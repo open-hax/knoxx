@@ -133,10 +133,18 @@ identity-neutral because they do not change an effective head generation. The or
 part of both conflict-set identity and the unique decision slot; caller-supplied scope never
 participates. The rubric declares allowed resolutions plus adjudicator roles and
 distinct-principal quorum. Adjudicator proposal receipts are immutable evidence but do not
-directly satisfy the case. Once compatible proposals reach quorum, a domain operation
-atomically creates one `AdjudicationDecisionReceipt` in that organization's unique slot for the
-conflict-set identity, naming the resolution, exact effective head generations, and exact
-quorum-member proposal receipt ids.
+directly satisfy the case. Quorum folds one server-derived `AdjudicationProposalHead` per exact
+organization, conflict-set identity, authenticated principal, and adjudicator role. Equal
+canonical proposals under distinct receipt ids join one head generation and count once. A
+changed resolution must explicitly supersede the current proposal head id/version; the atomic
+compare admits exactly one concurrent successor and rejects cross-organization, cross-conflict,
+cross-principal, cross-role, stale, or cyclic edges while retaining every receipt as history.
+Only current proposal heads are quorum-eligible.
+
+Once compatible current heads reach quorum, a domain operation atomically verifies those named
+heads are still current and creates one `AdjudicationDecisionReceipt` in that organization's
+unique slot for the conflict-set identity, naming the resolution, exact effective judgment-head
+generations, exact proposal-head generations, and quorum-member proposal receipt ids.
 An opposite decision racing for the empty slot yields exactly one winner and one
 `:evaluation/conflict`; an equal retry is unchanged. Later incompatible proposals cannot change
 the admitted decision, and the fold never selects an adjudication by timestamp or array order.
@@ -187,6 +195,10 @@ head advance creates a new conflict generation that the old decision cannot reso
     and every provider folds the same case status with all proposal evidence retained. Two
     organizations reuse every case/rubric/artifact/receipt id and still receive independent
     conflict-set identities, proposal quorums, and decision slots with no existence signal.
+    Have two principals propose accept and then each supersede with reject before finalization:
+    the old accept heads cannot authorize a decision, while the current reject heads can. Race
+    one supersession with finalization and prove the decision transaction either names the still
+    current generation or retries; equal duplicate proposals never add another quorum member.
     Append an equal duplicate judgment after finalization and prove the existing decision still
     applies with no second slot; advancing a conflicting head produces a new unresolved set.
 15. A fixture with one missing obligation plus an unrelated exclusive conflict returns
@@ -209,4 +221,6 @@ head advance creates a new conflict generation that the old decision cannot reso
 - Mixed conflict/incomplete cases use one precedence law without hiding either conflict or
   pending-work details.
 - Adjudication conflict and decision identities are scoped by server-authenticated organization.
+- Adjudication quorum counts only one current proposal head per authenticated principal/role;
+  proposal revision races cannot finalize from withdrawn or mixed generations.
 - No UI layout, publication state, or provider implementation is encoded in the core.

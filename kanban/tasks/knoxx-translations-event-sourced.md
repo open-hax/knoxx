@@ -88,13 +88,25 @@ A crash before config install leaves no reservation; a crash after install reuse
 config record and the later produced-candidate event are distinct lifecycle facts, but neither
 may partially install or reinterpret the shared identity.
 
-The production `save_translation` MCP input schema exposes a required stable `attempt_id`
-(idempotency key) created by the initiating workflow/caller and reused after timeout or lost
-response. The tool handler validates it, passes it unchanged through the domain/save boundary,
-and returns it with the admitted event/ordinal; it may not discard the value, mint a replacement
-per invocation, substitute the transport `_tool-call-id`, or derive identity from content.
-Organization scope remains server-derived and combines with this value at event admission.
-Distinct attempt ids with byte-equivalent content intentionally remain distinct attempts.
+The initiating translation operation owns `attempt_id` before any provider or model session
+starts. In the agent path, dispatch accepts a workflow-stable idempotency key or mints a
+server-stable value, persists it with the durable dispatch claim and exact grouping/source/request
+facts, and completes the matching `AttemptConfigAdmission` before emitting or starting the
+session. The authenticated session/tool context pins that stored id; a dispatch that cannot yet
+name the exact grouping key must split or defer the work rather than start an unbound provider.
+Non-agent workflows establish the same admission before their provider call. A crash after the
+dispatch claim is stored but before config admission leaves that claim retryable and starts no
+session; recovery reuses its pinned id and completes or retrieves the admission before emitting.
+
+The production `save_translation` MCP input schema exposes that required stable `attempt_id` so
+the session echoes the pre-existing value after timeout or lost response. The tool handler
+compares it with the authenticated session pin and installed config admission, passes the stored
+value unchanged through the domain/save boundary, and returns it with the admitted event/ordinal.
+Missing or different input is rejected and appends no candidate; the handler may not discard the
+value, mint a replacement per invocation, substitute the transport `_tool-call-id`, or derive
+identity from content. Organization scope remains server-derived and combines with this value at
+event admission. Distinct attempt ids with byte-equivalent content intentionally remain distinct
+attempts.
 
 ### Canonical attempt event
 
@@ -208,6 +220,11 @@ land a migration that leaves that endpoint erroring.
 - Config-install crash/race fixtures prove no bare reservation can strand the later event:
   pre-install retry may resolve anew, post-install retry reuses the exact artifact, and the
   canonical event accepts only that installed artifact identity/attestation.
+- The real agent-dispatch boundary durably pins the attempt id and complete config admission
+  before session/provider start, then the real tool schema/handler accepts only that same id.
+  Missing/mismatched echoes, session creation before admission, or save-time id generation fail
+  the proof and append no candidate. A dispatch-claim/admission split failure retries the pinned
+  id and starts exactly one session only after admission completes.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
 - During partial migration, per-key authority routes reads/writes to exactly one source; crash

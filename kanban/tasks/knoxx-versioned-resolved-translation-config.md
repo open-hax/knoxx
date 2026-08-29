@@ -143,7 +143,11 @@ derives the same canonical `AttemptIdentity` used by
 `knoxx-translations-event-sourced`: the full
 `{:org-id :document-id :segment-index :target-lang}` grouping key, where `:org-id` is the
 server-derived effective organization, plus the caller-stable
-`attempt_id`. The facade may perform authenticated observations and mint a candidate artifact
+`attempt_id`. The initiating dispatch/workflow accepts or creates and durably pins that id with
+the exact grouping/source/request facts before it starts a provider or model session. An agent
+session receives the pin through authenticated server context; a later `save_translation` call
+only echoes and validates it and cannot become the identity minting boundary. The facade may
+perform authenticated observations and mint a candidate artifact
 before durable admission, but those values are not an attempt reservation and cannot authorize
 provider invocation. It then atomically unique-inserts/compares one complete
 `AttemptConfigAdmission` containing the composite identity, immutable source/canonical request
