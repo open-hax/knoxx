@@ -68,10 +68,12 @@ Explicitly **out of scope here**:
 
 1. A source artifact with a concrete revision reaches the provider unchanged in identity.
 2. Provider selection/config resolves through Knoxx-owned
-   `knoxx.backend.infra.routes.translation-config/resolved-config!`, or an injected
-   resolved-config artifact produced by that existing boundary, without loading
-   publication code. After both prerequisites above, the proof succeeds with every
-   publication-owned law, runtime/orchestration, route, store, and resource namespace absent
+   `knoxx.backend.infra.routes.translation-config/admit-resolved-config-for-attempt!`, the
+   attempt operation added to the existing facade by #275, or an injected artifact produced by
+   that operation, without loading publication code. The read-only `EffectiveConfigView` from
+   the GET route is explicitly rejected here. After both prerequisites above, the proof succeeds
+   with every publication-owned law, runtime/orchestration, route, store, and resource namespace
+   absent
    while still exercising the active configuration authority. The resolved artifact is bound
    to the same authenticated organization and immutable global plus optional organization
    override config/policy revisions as the source; a

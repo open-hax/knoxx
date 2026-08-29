@@ -25,10 +25,33 @@ organization override have been merged, their resource revisions disappear. A ca
 therefore name the values it used but cannot prove which immutable policy revisions selected
 its provider.
 
-Evolve the existing boundary to emit one authenticated, immutable artifact. Do not add a
-parallel configuration authority or reconstruct provenance after the provider call.
+Evolve the existing facade to preserve its read-only consumer and emit one authenticated,
+immutable artifact for provider invocation. Do not add a parallel configuration authority or
+reconstruct provenance after the provider call.
 
 ## Contract
+
+### One authority, two typed operations
+
+One pure effective-config resolver owns repository reads, global/organization precedence,
+catalog validation, and wire/domain codecs. The existing translation-config facade exposes two
+explicit operations over it:
+
+1. **Inspect effective config** — the existing authenticated
+   `GET /api/translations/config`/`config-response!` use case accepts organization context only
+   and returns a typed `EffectiveConfigView`. It performs no attempt reservation or write and
+   carries no provider-invocation authority.
+2. **Admit config for attempt** — `admit-resolved-config-for-attempt!` requires the
+   server-admitted attempt/source/operation context and returns the attested
+   `ResolvedConfigArtifact` below.
+
+The two output types are not interchangeable: provider invocation rejects an
+`EffectiveConfigView`, even when its values equal the current artifact. Both operations call
+the same resolver and, at one repository snapshot, return identical effective values. This is
+one authority with two use cases, not a second adapter, precedence implementation, or config
+store.
+
+### Attempt-admitted artifact
 
 The resolved artifact contains:
 
@@ -47,15 +70,16 @@ observes the global and organization-override identities in one consistent repos
 When the override is absent, the artifact carries a trusted absence witness for its exact
 canonical identity and that snapshot, not a caller-computable marker.
 
-The existing boundary mints an opaque `ResolvedConfigAttestation` using server-held signing/MAC
-authority or an equivalent append-only receipt store outside caller-controlled bytes. It binds
+The attempt-admission operation mints an opaque `ResolvedConfigAttestation` using server-held
+signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
+bytes. It binds
 the authenticated organization, snapshot/observation identity, every present resource version,
 the absent-override witness, policy/schema version, and artifact digest. Validation verifies
 that authority without re-reading current config. A later override creation therefore does not
 invalidate an already-started attempt, while merely omitting an existing override or recomputing
 the digest cannot fabricate a valid artifact. Unrelated resource writes cannot rotate the
-artifact. The existing `resolved-config!` contract and its consumers change atomically so there
-is still one configuration boundary.
+artifact. Attempt consumers change atomically to use the admitted operation; inspection
+consumers retain the read-only operation on the same configuration boundary.
 
 There is no free-floating reusable attestation. Before provider invocation, the server
 atomically admits/reserves the caller-stable `attempt_id` for the authenticated organization,
@@ -94,21 +118,29 @@ The publication-free namespace closure from #273 remains an invariant.
    returns the identical artifact, while changed reuse conflicts.
 6. Existing consumers, backend compile, unit/integration tests, and MCP E2E pass with every
    publication-owned namespace absent from the config boundary closure.
+7. The real authenticated GET route resolves global/override precedence without an attempt id,
+   creates no attempt/attestation record, and returns the expected wire view. At the same fake
+   repository snapshot its values equal the attempt artifact, but passing that view to provider
+   invocation fails before any side effect.
 
 ## Non-goals
 
 - Choosing provider/model policy or changing configuration precedence.
 - Implementing the resource repository contract in this card.
-- Adding a second resolved-config adapter or shadow configuration store.
+- Adding a second resolver/precedence implementation, adapter authority, or shadow config
+  store; the read-only view and admitted artifact must share one resolver.
 - Owning translation attempt history, evaluation, publication, or representation.
 
 ## Done when
 
-- One existing production boundary returns an authenticated, versioned resolved artifact.
+- One existing production facade preserves read-only inspection and admits an authenticated,
+  versioned artifact through separate, non-interchangeable operations over one resolver.
 - Global and optional override revisions—or trusted snapshot-bound absence—are mechanically
   attributable and immutable.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
   while idempotent retries of the same source/operation/attempt retain their exact artifact.
 - Provider invocation and durable evidence carry the identical artifact end to end.
 - Config races and cross-tenant/fabricated artifacts fail closed with the negative proofs above.
+- The existing GET route has a route-level no-attempt/no-write proof and cannot mint invocation
+  authority.
 - Publication-free closure, backend compile/tests, and MCP E2E pass.

@@ -37,8 +37,10 @@ honestly until the complete namespace closure is repaired.
   do not replace the loader with a translation-only shadow implementation.
 - Update `law.translation-config`, `domain.translation-config`, and their callers without
   creating a second resolved-config adapter.
-- Retain `knoxx.backend.infra.routes.translation-config/resolved-config!` as the one existing
-  Knoxx-owned integration boundary.
+- Retain `knoxx.backend.infra.routes.translation-config` as the one existing Knoxx-owned
+  integration facade and its current resolver as the one configuration authority. #275 may add
+  typed read-only and attempt-admission operations to that facade, but not a second resolver or
+  adapter authority.
 - Preserve valid/invalid configuration outcomes and exact error data.
 - Add a transitive namespace-closure regression from each of `law.translation-config`,
   `domain.translation-config`, and `infra.routes.translation-config`. Every publication-owned
@@ -52,8 +54,8 @@ honestly until the complete namespace closure is repaired.
 3. Neutralize the scalar/locale/validation ownership and prove exact behavior parity.
 4. Decouple the shared resource-loader graph without bypassing the existing adapter or
    weakening validation of non-translation resource kinds.
-5. Compile and exercise the existing `infra.routes.translation-config/resolved-config!`
-   adapter with every publication-owned namespace/source unavailable.
+5. Compile and exercise the existing `infra.routes.translation-config` facade and resolver with
+   every publication-owned namespace/source unavailable.
 6. Run the full resource/contract loader and backend suites so the neutral registry cannot
    silently stop validating publication resources in normal deployments.
 
@@ -73,7 +75,7 @@ honestly until the complete namespace closure is repaired.
 - The complete transitive namespace closure from all three entry points contains no
   publication-owned namespace.
 - Valid/invalid behavior and error data match the captured contract.
-- The existing `resolved-config!` adapter succeeds with publication entirely absent.
+- The existing translation-config facade and resolver succeed with publication entirely absent.
 - Normal full-loader behavior still validates publication resources.
 - The namespace regression, unit/integration tests, backend compile, and backend suite pass.
 - `knoxx-versioned-resolved-translation-config` can evolve the adapter without an implicit
