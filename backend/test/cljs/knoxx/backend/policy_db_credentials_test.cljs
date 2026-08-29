@@ -9,6 +9,16 @@
   (testing "list-actor-credentials! is a public function"
     (is (fn? policy-db/list-actor-credentials!))))
 
+(deftest ^:async policy-db-initialization-failure-propagates-test
+  (let [failure (js/Error. "fatal policy initialization")]
+    (with-redefs [policy-db/initialise-policy-db!
+                  (fn [_] (js/Promise.reject failure))]
+      (try
+        (await (policy-db/create-policy-db {}))
+        (is false "security-critical policy initialization must reject")
+        (catch :default err
+          (is (identical? failure err)))))))
+
 (deftest ^:async list-actor-credentials-rejects-blank-provider
   (testing "rejects with an error when provider is blank"
     (let [mock-pool #js {:query (fn [_s _p] (js/Promise.resolve #js {:rows #js [] :rowCount 0}))}]

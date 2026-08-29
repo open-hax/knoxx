@@ -71,6 +71,11 @@
   []
   @mongo-client*)
 
+(defn ^:async require-transaction-capable-topology!
+  "Validate that `db` can uphold Knoxx's atomic Mongo transaction contract."
+  [db]
+  (await (extern-mongo/require-transaction-capable-topology! db)))
+
 (defn ^:async with-transaction!
   "Run `f` through the CLJS-first Mongo transaction boundary."
   ([f]

@@ -21,6 +21,38 @@
   [db collection-name]
   (.collection db collection-name))
 
+(defn- hello->topology
+  [hello]
+  (let [set-name (some-> (aget hello "setName") str)
+        message (some-> (aget hello "msg") str)]
+    (cond
+      (and set-name (not-empty set-name))
+      {:kind :replica-set :set-name set-name}
+
+      (= "isdbgrid" message)
+      {:kind :sharded-cluster}
+
+      :else
+      {:kind :standalone})))
+
+(defn ^:async require-transaction-capable-topology!
+  "Require the native database handle to support multi-document transactions.
+
+   The native `hello` response is decoded here and only a CLJS topology map or
+   a typed exception crosses the boundary. A standalone deployment is refused:
+   bootstrap credential replacement has no safe non-transactional equivalent."
+  [db]
+  (when-not db
+    (throw (js/Error. "Mongo database handle is required for topology validation")))
+  (let [hello (await (.command db #js {:hello 1}))
+        topology (hello->topology hello)]
+    (when-not (law-mongo/transaction-capable-topology? topology)
+      (throw (ex-info
+              "MongoDB deployment must be a replica set or sharded cluster"
+              {:mongo/topology (:kind topology)
+               :mongo/transaction-capable false})))
+    topology))
+
 (defn ^:async insert-one!
   "Insert one CLJS document into a native collection handle. Returns the doc."
   [collection-handle doc]
@@ -53,13 +85,19 @@
            err))
 
 (defn- remember-transaction-operation! [err operation]
-  (when (object? err)
-    (.set transaction-operation-by-error err operation))
+  ;; MongoError inherits from js/Error, but CLJS's `object?` predicate does
+  ;; not consistently classify host Error subclasses across optimized Node
+  ;; builds. Let WeakMap perform the host-value check and leave an unusual
+  ;; primitive rejection unannotated instead of replacing the native error.
+  (try
+    (.set transaction-operation-by-error err operation)
+    (catch :default _ nil))
   err)
 
 (defn- remembered-transaction-operation [err]
-  (when (object? err)
-    (.get transaction-operation-by-error err)))
+  (try
+    (.get transaction-operation-by-error err)
+    (catch :default _ nil)))
 
 (defn- assert-mutation! [query update]
   (when-not (law-mongo/valid-mutation-query? query)

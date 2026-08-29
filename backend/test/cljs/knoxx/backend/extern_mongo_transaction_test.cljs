@@ -2,6 +2,34 @@
   (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.extern.mongo :as extern-mongo]))
 
+(deftest ^:async transaction-topology-boundary-test
+  (let [commands* (atom [])
+        replica-db
+        #js {:command (fn [command]
+                        (swap! commands* conj
+                               (js->clj command :keywordize-keys true))
+                        (js/Promise.resolve #js {:setName "rs0"}))}
+        sharded-db
+        #js {:command (fn [_]
+                        (js/Promise.resolve #js {:msg "isdbgrid"}))}
+        standalone-db
+        #js {:command (fn [_]
+                        (js/Promise.resolve #js {:isWritablePrimary true}))}]
+    (is (= {:kind :replica-set :set-name "rs0"}
+           (await (extern-mongo/require-transaction-capable-topology!
+                   replica-db))))
+    (is (= [{:hello 1}] @commands*))
+    (is (= {:kind :sharded-cluster}
+           (await (extern-mongo/require-transaction-capable-topology!
+                   sharded-db))))
+    (try
+      (await (extern-mongo/require-transaction-capable-topology!
+              standalone-db))
+      (is false "a standalone Mongo deployment must be rejected")
+      (catch :default err
+        (is (= :standalone (:mongo/topology (ex-data err))))
+        (is (false? (:mongo/transaction-capable (ex-data err))))))))
+
 (deftest ^:async transaction-boundary-hides-native-session-test
   (let [events* (atom [])
         session
@@ -134,6 +162,33 @@
     (is (= 1 (:matched-count result)))
     (is @closed?* "the retried transaction still closes its session")))
 
+(deftest ^:async transaction-boundary-translates-native-write-error-after-driver-test
+  (let [closed?* (atom false)
+        native-error (js/Error. "simulated write failure")
+        collection #js {:updateOne (fn [& _]
+                                     (js/Promise.reject native-error))}
+        session #js {:withTransaction (fn [callback _options] (callback))
+                     :endSession (fn []
+                                   (reset! closed?* true)
+                                   (js/Promise.resolve nil))}
+        client #js {:startSession (fn [] session)}]
+    (try
+      (await
+       (extern-mongo/with-transaction!
+        client
+        (^:async fn [{:keys [update-one!]}]
+          (await (update-one!
+                  collection
+                  {:credential_id "credential"}
+                  {:$set {:status "active"}}
+                  {})))))
+      (is false "the failed native write must reject the transaction")
+      (catch :default err
+        (is (= "Mongo updateOne failed" (.-message err)))
+        (is (identical? native-error (ex-cause err))
+            "translation retains the original native Mongo error")))
+    (is @closed?* "the failed transaction still closes its session")))
+
 (deftest ^:async mutation-boundary-rejects-unsafe-shapes-test
   (let [calls* (atom 0)
         collection
@@ -157,7 +212,7 @@
       (await (extern-mongo/update-one!
               collection
               {:credential_id "credential"}
-              {:$unset {:status true}}
+              {:$rename {:status :old_status}}
               {}))
       (is false "an unapproved mutation operator must be rejected")
       (catch js/Error err

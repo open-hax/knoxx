@@ -204,29 +204,84 @@
   [runtime app cfg log]
   (start-mongo-persistence! runtime app cfg log))
 
+(defn- listening-deps
+  []
+  {:remember-app! lifecycle/remember-app!
+   :install-shutdown! graceful-shutdown/install!
+   :notify-ready! notify-ready!
+   :start-persistence! start-session-persistence!})
+
 (defn- handle-app-listening!
-  [runtime app cfg]
-  (lifecycle/remember-app! app)
-  (graceful-shutdown/install! app cfg)
+  [runtime app cfg {:keys [remember-app! install-shutdown! notify-ready!
+                           start-persistence!]}]
+  (remember-app! app)
+  (install-shutdown! app cfg)
   (notify-ready!)
   (let [^js log (.-log app)]
     (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
-    (start-session-persistence! runtime app cfg log)
+    (start-persistence! runtime app cfg log)
     app))
 
+(defn- http-start-deps
+  []
+  {:remember-runtime-context! runtime-state/remember-context!
+   :create-app! http-server/create-app!
+   :ensure-json-parser! http-server/ensure-json-empty-body-parser!
+   :add-debug-hook! add-request-debug-hook!
+   :register-default-plugins! http-server/register-default-plugins!
+   :register-ws-routes! register-ws-routes-plugin!
+   :add-session-hook! add-session-hook!
+   :register-http-routes! register-http-routes!
+   :listen! http-server/listen!
+   :listening (listening-deps)})
+
 (defn ^:async start-http!
-  "Create a fresh Fastify app and bind HTTP routes around durable runtime state."
-  [runtime cfg policy-context cookie-hook?]
-  (runtime-state/remember-context! runtime cfg policy-context)
-  (let [app (http-server/create-app!)]
-    (http-server/ensure-json-empty-body-parser! app)
-    (add-request-debug-hook! app)
-    (await (http-server/register-default-plugins! app))
-    (await (register-ws-routes-plugin! runtime app))
-    (await (add-session-hook! app policy-context cookie-hook?))
-    (await (register-http-routes! runtime app cfg policy-context))
-    (await (http-server/listen! app (:host cfg) (:port cfg)))
-    (handle-app-listening! runtime app cfg)))
+  "Create a fresh Fastify app and bind HTTP routes around durable runtime state.
+
+   A CLJS policy context is a composition precondition. The dependency arity
+   makes the route/listen/readiness ordering directly testable without opening
+   a socket."
+  ([runtime cfg policy-context cookie-hook?]
+   (await (start-http! runtime cfg policy-context cookie-hook?
+                       (http-start-deps))))
+  ([runtime cfg policy-context cookie-hook?
+    {:keys [remember-runtime-context! create-app! ensure-json-parser!
+            add-debug-hook! register-default-plugins! register-ws-routes!
+            add-session-hook! register-http-routes! listen! listening]}]
+   (when-not (map? policy-context)
+     (throw (js/Error. "Knoxx policy context is required before HTTP composition")))
+   (remember-runtime-context! runtime cfg policy-context)
+   (let [app (create-app!)]
+     (ensure-json-parser! app)
+     (add-debug-hook! app)
+     (await (register-default-plugins! app))
+     (await (register-ws-routes! runtime app))
+     (await (add-session-hook! app policy-context cookie-hook?))
+     (await (register-http-routes! runtime app cfg policy-context))
+     (await (listen! app (:host cfg) (:port cfg)))
+     (handle-app-listening! runtime app cfg listening))))
+
+(defn ^:async start-policy-http!
+  "Create the policy context before allowing HTTP composition to begin.
+
+   Both rejection and an unexpected nil result leave `start-http!` untouched;
+   callers receive the failure and decide how to terminate the process."
+  ([cfg cookie-hook? options]
+   (await (start-policy-http!
+           cfg cookie-hook? options
+           {:create-policy-context! policy-db/create-policy-db
+            :remember-lifecycle-context! lifecycle/remember-context!
+            :start-http! start-http!
+            :runtime-factory (fn [] #js {})})))
+  ([cfg cookie-hook? options
+    {:keys [create-policy-context! remember-lifecycle-context! start-http!
+            runtime-factory]}]
+   (let [policy-context (await (create-policy-context! options))]
+     (when-not (map? policy-context)
+       (throw (js/Error. "Knoxx policy DB returned no usable policy context")))
+     (let [runtime (runtime-factory)]
+       (remember-lifecycle-context! runtime cfg policy-context cookie-hook?)
+       (await (start-http! runtime cfg policy-context cookie-hook?))))))
 
 (defn ^:async bootstrap!
   "Main entrypoint called by shadow-cljs."
@@ -242,10 +297,7 @@
     (graph-policy-registry/init!)
 
     (try
-      (let [policy-context (await (policy-db/create-policy-db (policy-options)))
-            runtime #js {}]
-        (lifecycle/remember-context! runtime cfg policy-context cookie-hook?)
-        (await (start-http! runtime cfg policy-context cookie-hook?)))
+      (await (start-policy-http! cfg cookie-hook? (policy-options)))
       (catch :default err
         (.error js/console "Knoxx policy DB failed to initialize" err)
         (js/process.exit 1)))))

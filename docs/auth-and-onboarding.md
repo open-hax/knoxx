@@ -128,6 +128,12 @@ safe and idempotent. Rotation and revocation are serialized per organization
 and committed as one Mongo replica-set transaction, so a failed replacement
 leaves the prior administrator credential active.
 
+Knoxx validates Mongo topology before policy seeding and fails closed before
+registering routes or binding the HTTP listener when Mongo is a standalone
+server. A single-node replica set is sufficient for local development. Run the
+[live rotation, revocation, and rollback proof](verification/bootstrap-credential-rotation.md)
+against the exact built revision before deployment.
+
 Ordinary `/signup` users remain `basic-user`; this bootstrap does not weaken
 self-signup or infer admin rights from arbitrary email/password logins.
 

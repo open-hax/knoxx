@@ -1495,6 +1495,7 @@
   (let [db (await (ensure-mongo-policy-db!))]
     (when-not db
       (throw (js/Error. "Mongo policy store unavailable")))
+    (await (mongo-client/require-transaction-capable-topology! db))
     (let [primary-org (await (ensure-primary-org! nil opts))]
       (await (sync-contract-role-projections! nil))
       (let [bootstrap (await (ensure-bootstrap-user! nil primary-org opts))]
@@ -1505,17 +1506,15 @@
         (policy-context-map primary-org bootstrap)))))
 
 (defn ^:async create-policy-db
-  "Initialise the Mongo-backed policy DB. Returns Promise<CLJS policy context |
-   nil>; nil only when Mongo is unavailable."
+  "Initialise the Mongo-backed policy DB and return a CLJS policy context.
+
+   Security-critical initialization failures propagate. Bootstrap must never
+   compose protected routes around a nil policy context."
   [options]
   (let [opts (if (map? options)
                options
                (js->clj options :keywordize-keys true))]
-    (try
-      (await (initialise-policy-db! opts))
-      (catch :default err
-        (.error js/console "[policy-db] Mongo policy DB init failed:" (.-message err))
-        nil))))
+    (await (initialise-policy-db! opts))))
 
 (defn- bootstrap-allowlist-emails [opts]
   (->> (split-bootstrap-values (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts) ""))

@@ -49,6 +49,17 @@
    select every normally persisted document."
   [:and string? [:fn {:error/message "must be nonblank"} (complement str/blank?)]])
 
+(def TransactionTopology
+  "A Mongo deployment topology that supports multi-document transactions.
+
+   Standalone servers are intentionally absent. Bootstrap credential rotation
+   deactivates an old credential and installs its replacement as one fact; a
+   topology that cannot commit both writes atomically cannot satisfy that
+   contract."
+  [:map
+   [:kind [:enum :replica-set :sharded-cluster]]
+   [:set-name {:optional true} NonBlankIdentifier]])
+
 (defn- field-name? [field]
   (and (keyword? field)
        (not (str/starts-with? (name field) "$"))))
@@ -127,6 +138,11 @@
   "Whether value is a nonblank canonical identifier."
   [value]
   (m/validate NonBlankIdentifier value))
+
+(defn transaction-capable-topology?
+  "Whether a decoded Mongo hello result names a transaction-capable topology."
+  [topology]
+  (m/validate TransactionTopology topology))
 
 (defn valid-mutation-query?
   "Whether query is safe for the generic update boundary."
