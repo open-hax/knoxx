@@ -93,8 +93,17 @@ provider or model session starts. That claim binds a non-empty, canonically orde
 provider-neutral `TranslationAttemptClaim` members: exactly one member for every complete
 segment/target composite the bound turn may save. Each member owns its stable `attempt_id`, exact
 grouping/source/request facts, and matching `AttemptConfigAdmission`; duplicate composites are
-invalid. The authenticated session/tool context pins the turn-claim identity/digest and complete
-member map, and the session starts only after every member has a complete config admission.
+invalid. The turn claim also binds one immutable `TranslationTurnExecutionSnapshot` and canonical
+`provider-session-config-digest` covering the exact provider/model identity, config/policy
+resource revisions, and normalized session parameters used by the one model session. Member
+source and request facts may differ, but every member config admission names that same snapshot
+and execution digest. Identity binding is one-way: the snapshot names a stable `turn_id` plus the
+canonical member-set digest, and the final turn-claim digest names the snapshot digest; neither
+digest is defined in terms of itself. If preflight derives different execution digests, it
+partitions the members into separate turn claims before any model session rather than mixing
+provenance. The authenticated session/tool context pins the turn-claim identity/digest, execution
+snapshot, and complete member map, and the session starts only after every member has a complete
+matching config admission.
 
 Publication dispatch accepts a workflow-stable idempotency key or mints a server-stable value;
 its durable dispatch claim owns the turn claim and stores the stable per-member attempt ids.
@@ -107,8 +116,10 @@ after the model turn starts; translating another segment requires a newly admitt
 No already-running unbound turn may generate a candidate and synthesize admission at save time.
 Non-agent workflows establish the same per-attempt admission before their provider call. A crash
 after the turn claim or only some member admissions are stored leaves the exact collection
-retryable and starts no session; recovery reuses every pinned id and completes or retrieves all
-member admissions before emitting.
+retryable and starts no session; recovery reuses every pinned id and the exact turn execution
+snapshot, then completes or retrieves all member admissions before emitting. It never resolves a
+missing member against newer current config. If a member can no longer admit from the claimed
+snapshot, the turn remains non-runnable; a new snapshot requires a new turn claim.
 
 The production `save_translation` MCP input schema exposes the required stable `attempt_id` on
 every call so the session echoes the pre-existing member value after timeout or lost response.
@@ -120,8 +131,10 @@ saving one member never consumes or authorizes another. Missing or different inp
 composite, or a claim-set change is rejected and appends no candidate. The handler may not discard
 the value, mint a replacement per invocation, substitute the transport `_tool-call-id`, or derive
 identity from content. Organization scope remains server-derived and combines with this value at
-event admission. Distinct attempt ids with byte-equivalent content intentionally remain distinct
-attempts.
+event admission. Every saved member event carries its member artifact plus the same turn execution
+snapshot/digest as the authenticated provider session; a mixed or substituted digest conflicts
+and appends nothing. Distinct attempt ids with byte-equivalent content intentionally remain
+distinct attempts.
 
 ### Canonical attempt event
 
@@ -131,6 +144,7 @@ Define one versioned `CanonicalAttemptEvent` before storage. Its compared/digest
 - authenticated actor and effective/delegated organization evidence;
 - immutable source artifact identity, revision, media/locale facts, and digest;
 - candidate artifact identity, canonical content/media facts, and digest;
+- the exact turn-claim and execution-snapshot identities/digests;
 - the exact resolved-config artifact identity/attestation;
 - provider, model, provider-config/policy versions, and normalized request parameters; and
 - provenance plus raw-result evidence digest.
@@ -249,6 +263,12 @@ land a migration that leaves that endpoint erroring.
   member after turn start also fails and appends nothing. An incomplete target withholds the tool
   and starts no translation turn; the handler neither demands a publication claim nor fabricates
   an admission after candidate generation.
+- A deterministic barrier admits segment A from turn execution snapshot V1, advances current
+  provider/model config to V2 before segment B admission, and proves B still derives from the
+  turn-bound V1 snapshot before one V1 model session starts. Substituting a V2 member artifact,
+  changing normalized session parameters, or claiming two legitimately different execution
+  digests starts no session and appends no event; the latter case is partitioned into separately
+  admitted turns. Crash recovery after only A is admitted reuses V1 rather than mixing current V2.
 - Current-state reads remain compatible from a caller's perspective while deriving from
   history.
 - During partial migration, per-key authority routes reads/writes to exactly one source; crash

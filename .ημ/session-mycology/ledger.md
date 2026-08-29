@@ -37,3 +37,13 @@
   spore: none
   receipt-refs: 2026-08-29T22:17:14.159Z
   note: A tool-capable turn needs one immutable pre-admitted member collection; per-call attempt identity alone cannot authorize repeated segment saves.
+
+- ts: 2026-08-29T22:33:16.004Z
+  session: codex/knoxx238-repair
+  task: Repair mixed configuration provenance across one multi-segment turn
+  p-efficiency: 0.71
+  p-friction: 0.72
+  p-skill-candidate: 0.61
+  spore: none
+  receipt-refs: 2026-08-29T22:33:16.004Z
+  note: Per-member identity is insufficient for one model turn; truthful provenance also needs one shared immutable provider-session configuration digest.

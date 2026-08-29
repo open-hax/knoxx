@@ -100,19 +100,28 @@ Explicitly **out of scope here**:
    Every member completes config admission before the real provider/model session starts.
    Publication dispatch uses its durable turn claim; ordinary chat uses an interactive turn claim
    installed by pre-turn hydration and requires no publication claim. The authenticated session
-   pins the claim identity/digest and complete member map, and each real `save_translation`
-   invocation must select, echo, and validate its member rather than minting or adding one after
-   provider work. One bound session pre-admits at least two segments and saves them in either
-   order; both receive their own config artifacts and events. Omitting a member, mutating the set,
-   or using a missing/mismatched echo appends no candidate. A commit-then-timeout retry of one
-   composite is idempotent; changed same-composite reuse conflicts; one raw id reused across
-   segments/targets remains independent; and distinct ids with equal content create distinct
-   attempts. Store-only tests are insufficient for this proof. Inject config-admission crashes
-   after observation, after attestation minting, before complete install, between member installs,
-   and after the final install/before response: incomplete collections start no session,
-   post-install retry returns every installed winner, and equal concurrent losers cannot return a
-   different resolved snapshot. Crash between turn-claim persistence and member admission;
-   recovery reuses every pinned id and starts one session only after the collection is complete. A
+   pins the claim identity/digest, one immutable `TranslationTurnExecutionSnapshot`, and the
+   complete member map. Every member artifact names that same semantic
+   provider/model/config/provider-policy snapshot and `provider-session-config-digest`;
+   member-specific request facts and authorization-operation receipts cannot change the model
+   session configuration. An authorization denial still blocks the entire turn before session
+   start. Each real `save_translation` invocation selects, echoes, and
+   validates its member rather than minting or adding one after provider work. One bound session
+   pre-admits at least two segments and saves them in either order; both receive their own member
+   artifacts/events but truthful provenance for the same configured model session. Omitting a
+   member, mutating the set, mixing execution digests, or using a missing/mismatched echo appends
+   no candidate. A commit-then-timeout retry of one composite is idempotent; changed same-composite
+   reuse conflicts; one raw id reused across segments/targets remains independent; and distinct
+   ids with equal content create distinct attempts. Store-only tests are insufficient for this
+   proof. Inject config-admission crashes after observation, after attestation minting, before
+   complete install, between member installs, and after the final install/before response:
+   incomplete or mixed-snapshot collections start no session, post-install retry returns every
+   installed winner from the turn snapshot, and equal concurrent losers cannot return a different
+   artifact. Advance current provider/model config between two member installs: recovery derives
+   the second member from the pinned turn snapshot rather than mixing current config. A genuinely
+   different execution digest is partitioned into a separately claimed/configured turn. Crash
+   between turn-claim persistence and member admission; recovery reuses every pinned id and the
+   exact snapshot and starts one session only after the collection is coherent and complete. A
    complete ordinary chat request follows the same law and saves without a dispatch claim; an
    incomplete target withholds the tool from that turn and starts no translation-bound
    provider/model session.
@@ -139,9 +148,10 @@ Explicitly **out of scope here**:
   and equal races cannot strand a reservation or let provider/event admission consume a losing
   candidate artifact.
 - Publication dispatch and ordinary-chat preflight each persist an immutable turn claim and pin
-  every allowed composite attempt identity before provider/session start; `save_translation`
-  validates one pre-admitted member per call but cannot create, consume, or reinterpret another,
-  and interactive multi-segment saves do not require a publication claim.
+  every allowed composite attempt identity plus one coherent provider-session config snapshot
+  before provider/session start; `save_translation` validates one pre-admitted member per call but
+  cannot create, consume, reinterpret, or reconfigure another, and interactive multi-segment saves
+  do not require a publication claim.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
 - The public save boundary preserves caller idempotency identity end to end instead of minting
   per-call ids or collapsing intentional equal-content attempts.
