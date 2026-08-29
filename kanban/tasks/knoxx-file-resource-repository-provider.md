@@ -33,9 +33,12 @@ files while consumers depend only on a repository boundary.
   version is not current is a `:stale-version` conflict. Both conflicts return the canonical
   `:resource/conflict` error data and leave the file, payload, provenance, and version
   unchanged.
-- Make the expected-version decision and durable write one atomic, linearizable operation.
-  If two replacements race from the same version, exactly one may return `:updated`; the
-  loser must observe the new actual version, return `:stale-version`, and change no bytes.
+- Make the identity-existence/expected-version decision and durable write one atomic,
+  linearizable operation. If two different creates race for one absent identity, exactly one
+  returns `:created` and the loser returns `:identity-exists`; equal concurrent creates store
+  once and the retry is `:unchanged`. If two replacements race from the same version, exactly
+  one may return `:updated`; the loser must observe the new actual version, return
+  `:stale-version`, and change no bytes.
 - Preserve concurrent writes to different resource identities that share one namespace
   manifest. Use atomic sibling preservation or manifest-level compare-and-swap/retry so a
   read-modify-write cycle cannot silently erase another resource's accepted update.
@@ -65,7 +68,9 @@ layout.
   re-read through the same repository contract.
 - Fake and file providers return identical outcomes for create, equal retry, valid
   compare-and-swap replace, identity collision, and stale replace.
-- A same-identity concurrent replacement case proves exactly one update wins and one returns
-  `:stale-version`; a different-identity concurrent case proves both accepted sibling writes
-  survive and can be re-read from the shared namespace manifest.
+- Same-identity concurrent create cases prove changed payloads yield one `:created` plus one
+  `:identity-exists`, while equal payloads store once and return one `:unchanged`. A concurrent
+  replacement case proves exactly one update wins and one returns `:stale-version`; a
+  different-identity concurrent case proves both accepted sibling writes survive and can be
+  re-read from the shared namespace manifest.
 - No consumer needs to know a resource came from disk in order to use it.

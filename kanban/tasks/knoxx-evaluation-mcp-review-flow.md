@@ -67,9 +67,14 @@ Use one deterministic translation segment fixture and a fake repository/receipt 
    identity/role, case identity/version, rubric identity/version, source/candidate artifact
    identity/version, judgment, correction, decision, provenance, and evidence. Read-back
    returns the original immutable receipt unchanged and no second receipt is appended.
-7. A new candidate revision does not inherit the old receipt.
-8. The final query reports the case satisfied and returns the next pending case.
-9. The entire proof runs with the translation review frontend absent.
+7. Receipt admission is one atomic unique-insert/compare operation, not a read followed by an
+   append. Race two different canonical payloads for the same absent receipt identity: exactly
+   one persists and the other returns `:evaluation/conflict`; read-back returns exactly the
+   winner. Race two equal payloads: one receipt persists and both callers observe it
+   idempotently.
+8. A new candidate revision does not inherit the old receipt.
+9. The final query reports the case satisfied and returns the next pending case.
+10. The entire proof runs with the translation review frontend absent.
 
 ## Done when
 
@@ -77,5 +82,7 @@ Use one deterministic translation segment fixture and a fake repository/receipt 
   capability surface and explicit SME judgments.
 - Durable output is expressed through the generic evaluation contracts.
 - Translation-specific context is preserved without appearing in the generic core law.
+- Concurrent receipt retries cannot create two authorities for one identity; unique
+  admission and canonical-payload comparison are atomic.
 - The same MCP/domain operations could be presented later by Angular, Helix, CLI, or
   another agent without changing the stored evaluation semantics.

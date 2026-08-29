@@ -66,11 +66,15 @@ outcome and error shape:
 - replacing with the current version and an equal payload returns `:unchanged` with the
   same version.
 
-The expected-version check and durable write are one atomic, linearizable operation, not a
-separate read followed by an unconditional write. When two changed payloads concurrently
-replace the same resource from version V, exactly one request returns `:updated`; the other
-returns the canonical `:stale-version` conflict with the winner's version as
-`:actual-version`, and the winning payload remains authoritative.
+The identity-existence/expected-version decision and durable write are one atomic,
+linearizable operation, not a separate read followed by an unconditional write. When two
+different payloads concurrently create the same absent identity with no expected version,
+exactly one request returns `:created`; the other returns the canonical `:identity-exists`
+conflict with the winner's version, and the winner remains authoritative. Concurrent equal
+creates store one resource and the retry returns `:unchanged`. When two changed payloads
+concurrently replace the same resource from version V, exactly one request returns
+`:updated`; the other returns the canonical `:stale-version` conflict with the winner's
+version as `:actual-version`, and the winning payload remains authoritative.
 
 Providers that store multiple resource identities in one physical manifest must also
 preserve accepted sibling writes. Two concurrent writes to different identities in the same
@@ -83,7 +87,8 @@ Compatibility tests must assert the complete conflict data above, not only that 
 exception occurred. They must also re-read after every duplicate or conflict and prove
 that no authority changed. Include both the absent-resource/non-nil-precondition case and
 the stale-version/equal-payload case so every provider implements the same precedence
-rules. Include a same-identity concurrent replacement case where one request updates and one
+rules. Include different-payload and equal-payload concurrent create cases for one absent
+identity, a same-identity concurrent replacement case where one request updates and one
 returns `:stale-version`, plus a different-identity concurrent write case where both siblings
 survive in a shared manifest.
 
@@ -121,6 +126,8 @@ Do not require a browser page to prove repository health.
   preserve the prior resource or absence.
 - Concurrent compare-and-swap replacement is linearizable, and concurrent accepted writes
   to sibling identities cannot lose either resource through a shared-manifest race.
+- Concurrent creates for one absent identity store one authoritative resource: a changed
+  loser conflicts and an equal retry is unchanged.
 - Production verification exercises the configured repository boundary unconditionally,
   rather than skipping because OpenPlanner REST is absent.
 - No test defines "CMS correctness" as the continued existence of legacy OpenPlanner

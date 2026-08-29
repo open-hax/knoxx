@@ -63,7 +63,7 @@ Settle these before migration:
 | source artifact identity | the candidate must remain bound to the exact input it transformed |
 | segment/candidate grouping key | exactly `(org_id, document_id, segment_index, target_lang)` for event grouping and every projection read/write |
 | ordering rule | concurrent candidates must fold deterministically; wall clock is not enough |
-| retry behavior | choose append-at-least-once + dedup or exactly-once and prove it |
+| retry behavior | equal canonical events for one attempt identity return the existing event; any payload difference conflicts and preserves the original |
 | projection recovery | define what happens when append succeeds but projection update fails |
 
 An attempt identity is the composite grouping key plus its immutable attempt/event id;
@@ -71,6 +71,17 @@ source revision and candidate identity remain immutable facts on that event. Tes
 use the same document and segment index across two organizations and across two target
 languages, then prove their histories, deduplication, candidates, and current projections
 never merge.
+
+Attempt admission is one atomic unique-insert/compare operation on that composite identity,
+not a read followed by an append. A retry whose complete canonical validated event equals the
+stored event returns the original event without another append. Any difference—including the
+source revision, candidate identity/content, provider/model identity, parameters, provenance,
+or evidence—returns
+`{:error/type :translation/conflict :error/reason :attempt-id-reused
+:attempt/id <attempt-id> :event/grouping-key <grouping-key>}`, leaves the original event and
+projection authoritative, and appends nothing. When different events race for one attempt
+identity, exactly one is stored and the other returns that conflict; equal concurrent retries
+store one event and both callers observe it.
 
 ## Boundary rules
 
@@ -89,7 +100,9 @@ land a migration that leaves that endpoint erroring.
 ## Done when
 
 - Saving/retranslating the same logical segment preserves every distinct candidate attempt.
-- Retrying the same attempt id does not duplicate it.
+- Retrying the same attempt id with an equal canonical event is idempotent; any payload
+  difference conflicts with the original event preserved. Concurrent equal and conflicting
+  retries prove the unique-insert/compare operation is atomic and only one event exists.
 - Cross-organization and cross-target-language fixtures with otherwise identical document
   and segment coordinates remain isolated in both append history and current projection.
 - Current-state reads remain compatible from a caller's perspective while deriving from
