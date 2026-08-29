@@ -81,6 +81,10 @@ Explicitly **out of scope here**:
 8. Provider-returned tenant/source identity drift is rejected, while the successful
    candidate receipt preserves the exact config/policy revision, canonical request
    parameters, provider/model identity, and raw-result evidence digest.
+9. The real `save_translation` MCP schema and handler carry a caller-stable `attempt_id` to
+   event admission and return it with the ordinal. A commit-then-timeout retry with the same id
+   is idempotent; changed reuse conflicts; distinct ids with equal content create distinct
+   attempts. Store-only tests are insufficient for this proof.
 
 ## Done when
 
@@ -92,6 +96,8 @@ Explicitly **out of scope here**:
   configuration boundary when the publication subsystem is absent; a namespace dependency
   check fails if translation config regains a publication-law/runtime dependency.
 - Candidate history/read projection semantics agree with `knoxx-translations-event-sourced`.
+- The public save boundary preserves caller idempotency identity end to end instead of minting
+  per-call ids or collapsing intentional equal-content attempts.
 - The history proof injects append-success/projection-failure and out-of-order delivery,
   verifies monotonic per-key ordinals, then proves idempotent byte-equivalent replay and
   migration restart.

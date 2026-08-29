@@ -72,6 +72,14 @@ use the same document and segment index across two organizations and across two 
 languages, then prove their histories, deduplication, candidates, and current projections
 never merge.
 
+The production `save_translation` MCP input schema exposes a required stable `attempt_id`
+(idempotency key) created by the initiating workflow/caller and reused after timeout or lost
+response. The tool handler validates it, passes it unchanged through the domain/save boundary,
+and returns it with the admitted event/ordinal; it may not discard the value, mint a replacement
+per invocation, substitute the transport `_tool-call-id`, or derive identity from content.
+Organization scope remains server-derived and combines with this value at event admission.
+Distinct attempt ids with byte-equivalent content intentionally remain distinct attempts.
+
 Attempt admission is one atomic unique-insert/compare operation on that composite identity,
 not a read followed by an append. A retry whose complete canonical validated event equals the
 stored event returns the original event without another append. Any difference—including the
@@ -118,6 +126,10 @@ land a migration that leaves that endpoint erroring.
 - Retrying the same attempt id with an equal canonical event is idempotent; any payload
   difference conflicts with the original event preserved. Concurrent equal and conflicting
   retries prove the unique-insert/compare operation is atomic and only one event exists.
+- Real-boundary MCP tests simulate a lost response after commit, retry `save_translation` with
+  the same `attempt_id`, and observe the same single event/ordinal. Reusing that id with changed
+  content conflicts, while two distinct ids with equal content preserve two intentional
+  attempts. The schema/handler proof fails if the id is absent, regenerated, or discarded.
 - Cross-organization and cross-target-language fixtures with otherwise identical document
   and segment coordinates remain isolated in both append history and current projection.
 - Current-state reads remain compatible from a caller's perspective while deriving from
