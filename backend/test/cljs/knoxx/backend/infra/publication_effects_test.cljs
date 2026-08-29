@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.publication-effects-test
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
+            [knoxx.backend.domain.publication-receipts :as receipts]
             [knoxx.backend.infra.publication-effects :as effects]
             [knoxx.backend.law.publication-receipts :as law]
             ["node:fs" :as node-fs]
@@ -58,8 +59,10 @@
    replaces the logical materialization rather than leaving both routes public."
   [routes op swallow-response?]
   (let [desired-path (get-in op [:intent :publication/path])
-        materialization {:materialized/revision (:concrete-revision op)
-                         :materialized/path desired-path}]
+        materialization (receipts/canonical-materialization
+                         {:materialized/revision (:concrete-revision op)
+                          :materialized/path desired-path
+                          :materialized/title (get-in op [:intent :document/title])})]
     (swap! routes (fn [current]
                     (-> current
                         (dissoc (get-in op [:previous :materialized/path]))
@@ -111,6 +114,11 @@
       (is (not= base (effects/publish-idempotency-key :other/target intent "probe-revision"))))
     (testing "concrete revision"
       (is (not= base (effects/publish-idempotency-key :fake/target intent "other-revision"))))
+    (testing "canonical title"
+      (is (not= base (effects/publish-idempotency-key
+                      :fake/target (assoc intent :document/title "Probe") "probe-revision")))
+      (is (= base (effects/publish-idempotency-key
+                   :fake/target (assoc intent :document/title "   ") "probe-revision"))))
     (doseq [[label field value] [["publication id" :publication/id :knoxx.docs/other]
                                  ["garden" :publication/garden :knoxx.docs/other-garden]
                                  ["locale" :publication/locale :fr]
@@ -190,6 +198,22 @@
     (is (= 1 (count @routes)) "exactly one materialization")
     (is (= 1 (count (filter #(= :publish! (first %)) @calls)))
         "the adapter was asked to publish once, not twice")))
+
+(deftest ^:async title-backfill-is-a-distinct-publication
+  (let [{:keys [store]} (fake-store)
+        {:keys [target routes calls]} (fake-target {})
+        _ (await (effects/execute-plan! store target {} publish-plan artifact))
+        titled-intent (assoc intent :document/title "Probe")
+        titled-plan (assoc publish-plan
+                           :intent titled-intent
+                           :desired {:materialized/revision "probe-revision"
+                                     :materialized/path "/probe"
+                                     :materialized/title "Probe"})
+        receipt (await (effects/execute-plan! store target {} titled-plan artifact))]
+    (is (= "Probe" (:materialized/title receipt)))
+    (is (= "Probe" (get-in @routes ["/probe" :materialized/title])))
+    (is (= 2 (count (filter #(= :publish! (first %)) @calls)))
+        "a prior titleless success must not suppress title backfill")))
 
 (deftest ^:async ambiguous-response-replay-is-safe
   (testing "the first attempt records the artifact but the caller never learns —

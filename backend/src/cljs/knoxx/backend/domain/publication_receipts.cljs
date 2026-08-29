@@ -12,7 +12,8 @@
   analysis and deploy verification: it additionally pins which publication, on
   which adapter, under which key, so a receipt is explainable without joining it
   back to anything."
-  (:require [knoxx.backend.law.publication :as publication]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.law.publication :as publication]))
 
 (def ConcreteRevision
   "A materialization receipt records what actually shipped, so a selector token
@@ -48,6 +49,19 @@
    would swallow any later rename."
   [:materialized/revision :materialized/path :materialized/title])
 
+(defn canonical-title
+  "Canonical materialized title, or nil when the value carries no title."
+  [title]
+  (when-not (str/blank? title)
+    title))
+
+(defn canonical-materialization
+  "Select convergence fields and spell a missing or blank title as absence."
+  [materialization]
+  (cond-> (select-keys materialization drift-keys)
+    (nil? (canonical-title (:materialized/title materialization)))
+    (dissoc :materialized/title)))
+
 (defn materialized?
   [receipt]
   (= :publication/materialized (:receipt/type receipt)))
@@ -79,9 +93,8 @@
    quietly claim nothing is public and republish over whatever is."
   [receipt]
   (when (materialized? receipt)
-    (publication/assert-valid! :publication/observation
-                               Observation
-                               (select-keys receipt drift-keys))))
+    (->> (canonical-materialization receipt)
+         (publication/assert-valid! :publication/observation Observation))))
 
 (defn observed-for
   "Observation for one publication id, from a collection of receipts. Later

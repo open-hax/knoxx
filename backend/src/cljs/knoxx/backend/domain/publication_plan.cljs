@@ -21,8 +21,7 @@
      explicitly non-public converges — is the fail-open shape #229 removed from
      `admissible-publication?`, and it would let a `nil`, misspelt, or
      still-string-encoded state become a public effect."
-  (:require [clojure.string :as str]
-            [knoxx.backend.domain.publication-gate :as gate]
+  (:require [knoxx.backend.domain.publication-gate :as gate]
             [knoxx.backend.domain.publication-receipts :as receipts]
             [knoxx.backend.law.publication :as law]))
 
@@ -38,22 +37,17 @@
 
 (defn desired-materialization
   [intent revision]
-  (cond-> {:materialized/revision revision
-           :materialized/path (:publication/path intent)}
-    ;; Omitted rather than nil when the document has no usable title, so that
-    ;; desired and observed agree by ABSENCE for a titleless route instead of
-    ;; drifting forever against a key one side spells and the other does not.
-    ;; `law.publication-manifest/route-for-artifact` omits it on the same
-    ;; condition, so the two cannot disagree about what "no title" looks like.
-    (not (str/blank? (:document/title intent)))
-    (assoc :materialized/title (:document/title intent))))
+  (receipts/canonical-materialization
+   {:materialized/revision revision
+    :materialized/path (:publication/path intent)
+    :materialized/title (:document/title intent)}))
 
 (defn- observed-materialization
   "Compared against `desired-materialization` using the key set named by
-   `receipts/drift-keys`, so the planner and the receipt projection cannot
-   diverge on what convergence means."
+  `receipts/drift-keys`, so the planner and the receipt projection cannot
+  diverge on what convergence means."
   [observed]
-  (select-keys observed receipts/drift-keys))
+  (receipts/canonical-materialization observed))
 
 (defn- takedown
   "Removal when something is materialized, otherwise nothing to do. Never

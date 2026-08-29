@@ -17,6 +17,7 @@
   `PublicationArtifact` docstring records why, and a test pins it."
   (:require [clojure.string :as str]
             [malli.core :as m]
+            [knoxx.backend.domain.publication-receipts :as receipts]
             [knoxx.backend.law.publication-receipts :as law]))
 
 ;; ── Protocols ──────────────────────────────────────────────────────────────
@@ -74,11 +75,21 @@
                     {:publication/id (:publication/id intent)
                      :concrete-revision concrete-revision})))
   (->> (conj (mapv #(pr-str (get intent %)) key-dimensions)
+             (pr-str (receipts/canonical-title (:document/title intent)))
              (pr-str adapter-id)
              (pr-str concrete-revision))
        (str/join "|")))
 
 ;; ── Replay-safe publish ────────────────────────────────────────────────────
+
+(defn- requested-materialization
+  "Canonical materialization the current operation is authorized to create."
+  [op]
+  (receipts/canonical-materialization
+   (or (:desired op)
+       {:materialized/revision (:concrete-revision op)
+        :materialized/path (get-in op [:intent :publication/path])
+        :materialized/title (get-in op [:intent :document/title])})))
 
 (defn- ^:async reconcile-in-flight!
   "A claimed-but-never-completed key means the previous attempt's outcome is
@@ -87,22 +98,13 @@
    return it; if not, the claim is abandoned so the retry can proceed."
   [store target ctx op]
   (let [idempotency-key (:idempotency/key op)
-        observed (await (observe! target ctx (:intent op)))]
-    (if (and observed
-             (= (:materialized/revision observed) (:concrete-revision op))
-             (= (:materialized/path observed) (get-in op [:intent :publication/path])))
+        observed (some-> (await (observe! target ctx (:intent op)))
+                         receipts/canonical-materialization)]
+    (if (= observed (requested-materialization op))
       (let [receipt (law/assert-receipt!
-                     (cond-> {:receipt/type :publication/materialized
-                              :materialized/revision (:materialized/revision observed)
-                              :materialized/path (:materialized/path observed)
-                              :idempotency/key idempotency-key}
-                       ;; Carried so a receipt-derived observation reports the
-                       ;; same key set the manifest-derived one does. Omitted
-                       ;; when absent, matching how the planner spells "no
-                       ;; title" — otherwise every receipt-based comparison
-                       ;; would drift against a key only one side has.
-                       (some? (:materialized/title observed))
-                       (assoc :materialized/title (:materialized/title observed))))]
+                     (assoc observed
+                            :receipt/type :publication/materialized
+                            :idempotency/key idempotency-key))]
         (complete! store idempotency-key receipt)
         receipt)
       (do (release! store idempotency-key)
@@ -114,13 +116,13 @@
    `assert-receipt!` checks only the shape, so a structurally valid receipt
    naming the wrong path, revision, or key passed and was recorded as `:done`
    under the requested key — after which every replay reported convergence for an
-   artifact that may never have been materialized. An adapter is replaceable, so
-   its agreement with the request is checked rather than assumed."
+  artifact that may never have been materialized. An adapter is replaceable, so
+  its agreement with the request is checked rather than assumed."
   [op receipt]
-  (let [expected {:idempotency/key (:idempotency/key op)
-                  :materialized/revision (:concrete-revision op)
-                  :materialized/path (get-in op [:intent :publication/path])}
-        actual (select-keys receipt (keys expected))]
+  (let [expected (assoc (requested-materialization op)
+                        :idempotency/key (:idempotency/key op))
+        actual (assoc (receipts/canonical-materialization receipt)
+                      :idempotency/key (:idempotency/key receipt))]
     (when-not (= expected actual)
       (throw (ex-info "adapter receipt does not describe the requested materialization"
                       {:expected expected :actual actual})))
@@ -174,6 +176,7 @@
                                                  concrete-revision)]
     (await (publish-once! store target ctx
                           {:intent intent
+                           :desired (:desired plan)
                            :artifact checked
                            :previous (:previous plan)
                            :concrete-revision concrete-revision

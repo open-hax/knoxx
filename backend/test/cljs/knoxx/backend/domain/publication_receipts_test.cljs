@@ -102,6 +102,12 @@
                 observed)
           "a titled document over an untitled route must not read as converged"))))
 
+(deftest blank-materialized-title-projects-as-absence
+  (doseq [title [nil "" "   "]]
+    (is (= {:materialized/revision "abc123" :materialized/path "/docs/demo"}
+           (receipts/observed-materialization
+            (assoc materialized :materialized/title title))))))
+
 (deftest observed-for-tracks-the-latest-receipt
   (let [removal {:receipt/type :publication/removed
                  :publication/id :knoxx.docs/probe-es
@@ -136,4 +142,3 @@
            (set (keys (receipts/observed-materialization
                        (assoc materialized :materialized/title "Probe")))))
         "and a titled one projects all of them")))
-
