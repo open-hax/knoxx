@@ -39,10 +39,13 @@ reconstruct provenance after the provider call.
 
 The existing translation-config facade owns every effectful repository operation: it invokes
 `observe-many`, sequences data-dependent fixed-point expansion/retry, and passes each immutable
-`ResourceObservation` to one pure effective-config resolver. That resolver performs no I/O; it
-owns only deterministic global/organization precedence, catalog/reference derivation and
-validation, plus wire/domain codecs. The facade exposes two explicit operations over that one
-resolver:
+`ResourceObservation` through explicit translation-config law validation to one pure domain
+resolver. The domain resolver performs no I/O, validation, or structure conversion; it owns
+only deterministic global/organization precedence and catalog/reference selection. Pure
+`shape.translation-config` morphisms own wire/domain structure conversion, while
+`law.translation-config` owns schemas, invariants, and boundary admissibility. Those shape and
+law namespaces add no configuration authority. The facade exposes two explicit operations over
+that one domain resolver:
 
 1. **Inspect effective config** — the existing authenticated
    `GET /api/translations/config`/`config-response!` use case accepts only trusted
@@ -69,6 +72,8 @@ The resolved artifact contains:
 - the server-admitted composite attempt identity (event grouping key plus caller-stable attempt
   id), immutable source identity/revision, and canonical operation;
 - the repository contract/schema version and snapshot observation identity;
+- the final composite `RepositoryOperationReceipt` identity/digest and its ordered
+  per-resource `authorization-policy-version` bindings for the exact observation;
 - exact canonical identity and resource-scoped version of the global default;
 - exact canonical identity and resource-scoped version of the optional organization override;
 - exact canonical identity/resource version of the selected model-catalog entry plus the
@@ -100,14 +105,25 @@ The attempt-admission operation mints an opaque `ResolvedConfigAttestation` usin
 signing/MAC authority or an equivalent append-only receipt store outside caller-controlled
 bytes. It binds the complete composite attempt identity, authenticated actor/origin
 organization, effective organization plus delegation evidence, repository contract/schema
-version, snapshot/observation identity, every present resource version, the absent-override
+version, snapshot/observation identity, the exact final `RepositoryOperationReceipt` and every
+ordered authorization-policy version, every present resource version, the absent-override
 witness, selected model-catalog revision/provider-policy closure, resolution-policy/schema
-version, and artifact digest. Validation verifies that authority without re-reading current
-config. A later override creation therefore does not invalidate an
+version, and artifact digest. Admission rejects a receipt for another principal, effective
+scope, capability, requested identity set, observation identity, or provisional fixed-point
+read. Validation verifies the attestation and immutable receipt evidence without re-reading
+current config. A later override creation therefore does not invalidate an
 already-started attempt, while merely omitting an existing override or recomputing the digest
 cannot fabricate a valid artifact. Unrelated resource writes cannot rotate the artifact.
 Attempt consumers change atomically to use the admitted operation; inspection consumers retain
 the read-only operation on the same configuration boundary.
+
+Authorization policy remains separate from semantic repository observation identity. If policy
+V1 allows the final observation and V2 later allows the same unchanged resources, the resource
+versions and observation identity remain stable but the new operation receipt, resolved
+artifact, and attestation bind V2 and therefore rotate. If V2 denies, no new artifact is
+admitted and the V1 receipt cannot be replayed as authority. An idempotent retry of the already
+admitted composite attempt retains its original V1 artifact as historical evidence rather than
+performing a new read under V2.
 
 There is no free-floating reusable attestation. Before provider invocation, the server
 derives the same canonical `AttemptIdentity` used by
@@ -146,7 +162,10 @@ The publication-free namespace closure from #273 remains an invariant.
    evidence.
 3. Updating either contributor or the repository contract/schema version changes the artifact;
    updating the selected model/provider policy also changes it; updating an unrelated resource
-   or unselected catalog entry does not.
+   or unselected catalog entry does not. Rotate only authorization policy V1 allow to V2 allow:
+   semantic resource/observation identity remains stable while the exact final operation
+   receipt/policy bindings and new-attempt artifact rotate. V2 deny admits no new artifact;
+   replaying the V1 receipt or substituting another actor/scope/request-set receipt fails.
 4. Resolve with no override, create one, then persist a candidate: its receipt retains and
    verifies the originally attested absence without re-reading current config. Updating a
    present contributor exercises the same race law. Deterministic fake/file barriers prove the
@@ -169,10 +188,13 @@ The publication-free namespace closure from #273 remains an invariant.
    invocation fails before any side effect. A valid organization-A session plus identity
    headers naming a real organization-B membership cannot read B; header-only, expired, and
    forged-session requests reach no repository operation and reveal no config existence/value.
-8. A namespace/source guard keeps the pure resolver free of infra/store/extern imports and
-   Promise or repository calls. Pure table tests feed immutable `ResourceObservation` values
-   directly; facade integration tests prove `observe-many` sequencing, fixed-point retry, and
-   both typed operations without a second effectful orchestration path.
+8. Namespace/source guards keep the domain resolver free of law/shape/infra/store/extern
+   imports, validators, codecs, Promise use, and repository calls; keep `law.*` free of I/O;
+   and keep `shape.*` pure, domain-agnostic, and limited to structure morphisms. Domain table
+   tests receive already validated typed observations, law tests decide admissibility, shape
+   round trips prove structure only, and facade integration tests prove `observe-many`
+   sequencing, fixed-point retry, receipt binding, and both typed operations without a second
+   effectful orchestration path.
 
 ## Non-goals
 
@@ -185,13 +207,17 @@ The publication-free namespace closure from #273 remains an invariant.
 ## Done when
 
 - One existing production facade preserves read-only inspection and admits an authenticated,
-  versioned artifact through separate, non-interchangeable operations over one pure resolver;
-  the facade alone owns observation I/O and fixed-point sequencing.
+  versioned artifact through separate, non-interchangeable operations over one pure domain
+  resolver; the facade alone owns observation I/O and fixed-point sequencing, `law.*` owns
+  validation, and `shape.*` owns wire/domain morphisms.
 - Global and optional override revisions—or trusted snapshot-bound absence—are mechanically
   attributable and immutable together with the selected model-catalog/provider-policy closure.
 - Resolution consumes one #282 `observe-many` result; fake/file race proofs admit no torn
   combination from sequential reads, and repository schema-version rotation changes observation
   plus artifact identity.
+- The artifact and attestation carry the exact final repository operation receipt and ordered
+  authorization-policy versions; policy rotation reauthorizes new attempts without rotating
+  semantic resource/observation versions, and historical receipts never become capabilities.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
   while idempotent retries of the same composite attempt retain their exact artifact and
   cross-group reuse of a raw id remains independent.

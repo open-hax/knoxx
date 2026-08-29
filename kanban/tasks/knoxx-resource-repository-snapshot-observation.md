@@ -29,7 +29,8 @@ implementation.
 ## Contract
 
 Add one `observe-many` operation over authenticated actor context and a non-empty canonical
-set of resource identities. It returns a typed `ResourceObservation` containing:
+set of resource identities. It returns a typed result containing a `ResourceObservation` and
+the exact composite `RepositoryOperationReceipt` that authorized it. The observation contains:
 
 - the canonical ordered identity set;
 - for each identity, either its complete canonical authority record and resource-scoped
@@ -37,6 +38,15 @@ set of resource identities. It returns a typed `ResourceObservation` containing:
 - the repository contract/schema version; and
 - an immutable observation identity over the repository contract/schema version plus only
   those ordered identities and results.
+
+The operation receipt follows `knoxx-cms-contract-validation`: it binds the authenticated
+principal, effective scope/delegation, `observe-many` operation and required capability, the
+exact canonical ordered identity set, the returned observation identity, and an ordered
+authorization entry with the server-owned `authorization-policy-version` used for every
+requested identity. It is immutable historical evidence, not a reusable read capability.
+Policy versions and the receipt are deliberately outside semantic observation identity:
+changing only authorization policy cannot pretend resource state changed, while every new
+operation still reauthorizes before repository access and emits current policy evidence.
 
 The provider linearizes all requested reads at one repository state. A returned combination
 must therefore have existed, even when writers race the operation. The observation identity is
@@ -79,6 +89,11 @@ generation as semantic resource versions.
    branching on provider identity.
 8. Keeping resources equal while changing the repository contract/schema version rotates the
    observation identity, and the dependent config artifact/attestation names the new version.
+9. With unchanged resources, policy V1 allow then V2 allow preserves resource versions and
+   observation identity but emits a different operation receipt with V2 bindings. V2 deny
+   returns no observation; replaying V1 or substituting a receipt from another principal,
+   effective scope, capability, requested identity set, or observation is rejected. The final
+   fixed-point consumer cannot attest a provisional smaller-set receipt.
 
 ## Non-goals
 
@@ -95,6 +110,8 @@ generation as semantic resource versions.
 - Present versions and exact absence observations are mechanically attributable to one
   immutable observation.
 - Authorization fails closed without partial results or existence signals.
+- Every successful observation carries its exact composite operation receipt and ordered
+  authorization-policy versions without making those policy versions semantic resource state.
 - Unrelated writes cannot rotate scoped observation identity.
 - Fake and real file/EDN providers pass the same cross-process compatibility suite.
 - #275 can consume the observation without sequential reads or a translation-only repository
