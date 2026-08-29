@@ -46,6 +46,11 @@ mint a new id per call, substitute a transport tool-call id, or derive identity 
 content. Organization/reviewer facts remain server-derived. Distinct receipt ids with
 canonically equal evaluations remain distinct historical evaluations.
 
+When an SME changes its own prior judgment, the tool also carries the explicit
+`supersedes_receipt_id` selected from evidence already returned for that authenticated
+principal. The handler cannot infer supersession from time/content or supersede another
+principal's receipt. It returns the new immutable receipt and the updated pure case status.
+
 For the translation fixture the agent must be able to show source text, candidate text,
 locale/terminology/context, collect the SME's correction or approval, and leave evidence
 that publication law can later query.
@@ -92,6 +97,10 @@ repository/receipt store:
    caller-stable `receipt_id` returns the original receipt, changed reuse conflicts, and two
    distinct ids with equal evaluation content persist as two intentional evaluations.
 8. A new candidate revision does not inherit the old receipt.
+   A same-principal correction explicitly supersedes the current matching receipt and changes
+   the one effective vote while retaining history. Missing/cross-principal/stale-version or
+   competing supersession fails without append; two unlinked conflicting values remain
+   `:needs-adjudication`.
 9. The pure status fold keeps incomplete multi-judgment or multi-role sets `:pending`, reports
    exclusive conflicting receipts as `:needs-adjudication`, and returns `:satisfied` only for
    a complete non-conflicting set bound to the exact case, rubric, and artifact versions. An

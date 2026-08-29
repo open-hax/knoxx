@@ -44,6 +44,14 @@ remain isolated across resolve, list, write, reference closure, and version hist
 cross-tenant identity returns a non-enumerating `:authorization/forbidden` result before the
 provider reveals existence or mutates authority.
 
+An explicit `:global` identity does not grant global write authority. Global resources carry
+server-owned read/write capability policy outside caller-controlled payload/provenance, and
+adapters authorize it from the authenticated principal before repository access. The existing
+global translation configuration requires `platform.translations.manage` for mutation; an
+organization administrator without that platform capability may consume the global default
+when its read policy permits but cannot create, replace, or delete it. A client cannot change
+scope or required capability in the same write it is trying to authorize.
+
 ### Provider-neutral conflict contract
 
 Every write/replace request carries a canonical resource identity, a canonical authority
@@ -169,6 +177,9 @@ Do not require a browser page to prove repository health.
   resource-scoped version through a shared-manifest race.
 - Concurrent creates for one absent identity store one authoritative resource: a changed
   loser conflicts and an equal retry is unchanged.
+- An organization administrator cannot mutate an explicitly global translation configuration;
+  a principal with `platform.translations.manage` can, and denied attempts return the same
+  non-enumerating authorization result without rotating payload, provenance, or version.
 - Resolution exposes an immutable version-pinned transitive reference closure; target updates,
   missing revisions, and cycles cannot silently change an older root revision's meaning.
 - Production verification exercises the configured repository boundary unconditionally,

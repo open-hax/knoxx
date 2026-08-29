@@ -51,6 +51,15 @@ requirement; a replacement/correction may change that principal's effective judg
 cannot manufacture another reviewer. A principal may satisfy a different required role only
 when its authenticated role facts and the rubric's role-overlap policy explicitly allow it.
 
+A changed vote is another immutable receipt with an explicit `supersedes-receipt-id`. The
+target must be the current unsuperseded receipt for the same organization, case/rubric/artifact
+versions, obligation, authenticated principal, and reviewer role. Admission atomically advances
+that principal/obligation/role head: two concurrent successors cannot both win. The status fold
+uses the one unsuperseded leaf and retains every ancestor as history; it never chooses by wall
+clock. Multiple receipts without a valid supersession relation remain coexisting evidence and
+conflicting exclusive values yield `:needs-adjudication`. Cross-principal, cross-version,
+already-superseded, missing-target, and cyclic relations fail validation without appending.
+
 ## Laws
 
 - Artifact roles are semantic, not layout coordinates (`:source` / `:candidate`, never
@@ -93,6 +102,9 @@ when its authenticated role facts and the rubric's role-overlap policy explicitl
     defaulting to satisfied.
 12. Repeated receipts from one principal leave a two-reviewer quorum `:pending`; adding a
     second authenticated principal satisfies it, while spoofed reviewer ids never count.
+13. An approve receipt followed by a valid same-principal reject supersession retains both but
+    folds one effective reject vote. Without the relation it needs adjudication; concurrent
+    successors admit exactly one, and cross-principal/version/cyclic supersession is rejected.
 
 ## Done when
 

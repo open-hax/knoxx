@@ -28,6 +28,10 @@ files while consumers depend only on a repository boundary.
 - Treat organization scope as part of every tenant-owned canonical identity. File paths may
   partition scopes internally, but adapters derive scope from authenticated actor context and
   neither list nor resolve may fall back across scopes.
+- Keep global-resource authorization policy outside editable resource bytes and file paths.
+  The adapter checks authenticated platform capabilities before calling write/replace; the
+  global translation config specifically requires `platform.translations.manage`, and a tenant
+  administrator cannot self-promote by submitting a global identity or altered policy field.
 - Validate writes before they become repository authority.
 - Implement the conflict contract from `knoxx-cms-contract-validation`: equality compares the
   complete canonical authority record (validated payload plus domain provenance, excluding
@@ -81,6 +85,8 @@ layout.
 - Same-name resources in two organization scopes remain isolated for list, resolve, writes,
   history, and reference closure; authenticated adapters reject cross-tenant access without
   revealing whether the target exists.
+- Global translation-config tests distinguish permitted reads from platform-only writes and
+  prove a denied tenant-admin mutation leaves bytes, provenance, and version unchanged.
 - Canonical resource identities and validation behavior are provider-independent.
 - File-backed resources can be edited through a narrow write operation and immediately
   re-read through the same repository contract.
