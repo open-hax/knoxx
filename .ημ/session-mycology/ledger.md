@@ -197,3 +197,13 @@
   spore: none
   receipt-refs: 2026-08-30T02:15:58.767Z
   note: Credential precedence must cover collisions, not only identity-header override; admit one credential kind or fail before principal resolution without fallback.
+
+- ts: 2026-08-30T02:21:28.436Z
+  session: codex/knoxx-board-reconcile
+  task: Close the MCP open-map unknown-key validation seam
+  p-efficiency: 0.91
+  p-friction: 0.33
+  p-skill-candidate: 0.42
+  spore: none
+  receipt-refs: 2026-08-30T02:21:28.436Z
+  note: Schema-optional absence and open-map acceptance are separate concerns; reject unknown spellings before database access while preserving the named optional-field resolution law.
