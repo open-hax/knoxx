@@ -211,6 +211,13 @@ plus the same turn execution snapshot/digest as the authenticated provider sessi
 substituted digest conflicts and appends nothing. Distinct attempt ids with byte-equivalent content
 intentionally remain distinct attempts.
 
+Until the existing OpenPlanner sink keys rows by the complete `SegmentCoordinate`, the Knoxx
+delegated adapter also reserves its actual narrower
+`LegacyProjectionKey = (org_id, document_id, segment_index, target_lang)`. That reservation binds
+exactly one complete coordinate. A different project, garden, source language/revision, or source
+span that aliases the same legacy key conflicts before a new ledger claim or remote invocation;
+retranslations of the one bound complete coordinate remain serialized by attempt ordinal.
+
 ### Canonical attempt event
 
 Define one versioned `CanonicalAttemptEvent` before storage. Its compared/digested fields are:

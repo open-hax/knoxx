@@ -337,3 +337,13 @@
   spore: none
   receipt-refs: 2026-08-30T20:36:12.756Z
   note: Server ownership does not authorize repository access. Mint a sender-constrained proposal-selection capability only after carrier/source-manifest admission, restrict it to model selection plus source read, and keep the later bound config capability distinct.
+
+- ts: 2026-08-30T20:45:57.138Z
+  session: codex/knoxx-board-reconcile
+  task: Align legacy proposal order and downstream projection locking
+  p-efficiency: 0.92
+  p-friction: 0.41
+  p-skill-candidate: 0.46
+  spore: none
+  receipt-refs: 2026-08-30T20:45:57.138Z
+  note: Legacy jobs cannot admit coordinates before model-selected segmentation; use the same source/proposal/translation-manifest sequence as batches. Local serialization must key the real downstream row and reject distinct complete coordinates that would alias it.

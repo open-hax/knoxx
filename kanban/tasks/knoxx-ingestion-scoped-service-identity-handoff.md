@@ -86,10 +86,12 @@ and sole-writer rules.
    widen the admitted translation manifest.
 6. Admit the legacy single-job carrier separately through the same broker. Under the service API key
    alone, the broker resolves `/translations/jobs/next` output through the existing OpenPlanner
-   adapter, then installs one Knoxx-owned job manifest, its explicit service-principal permission,
-   current Knoxx authority epoch, organization, admitted complete segment coordinates, and allowed
-   job operations. It mints a job-scoped capability or
-   returns a typed non-effect. Membership is absent from the job request, capability, and derived
+   adapter, verifies its explicit service-principal permission and organization, and installs a
+   Knoxx-owned job `SourceManifest` plus current authority epoch without inventing segment
+   coordinates. It then follows the same `ProposalSelectionCapability` → `SegmentationProposal` →
+   validated `TranslationManifest` sequence as a batch. Only that translation manifest contains the
+   complete coordinates and permits minting the distinct bound job capability. Any stage may return
+   a typed non-effect. Membership is absent from the job request, capabilities, and derived
    context; a membership-bearing job is rejected as the wrong carrier type. The job needs no
    fabricated member identity, and ambiguous, unowned, cross-organization, or epoch-stale work never
    launches. The Knoxx authority store owns processing, complete, and failed transitions and projects
@@ -211,9 +213,14 @@ and sole-writer rules.
     One local transaction validates active carrier state, manifest, epoch, full
     `AttemptEffectIdentity`, and canonical retry equality; appends the immutable attempt event; claims
     its logical effect exactly once; and enqueues the existing `save-openplanner-segment!` call. A
-    Knoxx-owned `ProjectionDispatchLease` serializes projection intents by complete
-    `SegmentCoordinate`, persists the intended attempt ordinal plus canonical projection-payload
-    digest, and permits at most one remote invocation for that intent. The existing OpenPlanner sink
+    Knoxx-owned `ProjectionDispatchLease` serializes projection intents by the actual existing
+    downstream `LegacyProjectionKey = (org_id, document_id, segment_index, target_lang)`, persists
+    the bound complete `SegmentCoordinate`, intended attempt ordinal, and canonical projection-
+    payload digest, and permits at most one remote invocation for that intent. The store enforces one
+    complete coordinate per legacy key: a different project, garden, source language/revision, or
+    source span that aliases an occupied `LegacyProjectionKey` returns `ProjectionKeyCollision`
+    before either new claim or remote invocation. Retranslations of the same complete coordinate may
+    serialize normally. The existing OpenPlanner sink
     is not a causal/idempotency authority: it stores neither attempt/effect identity nor the lease.
     Therefore an acknowledged response records the immutable local receipt, while a lost or ambiguous
     response never causes automatic redispatch. While the coordinate lease blocks later projection
@@ -347,6 +354,9 @@ and sole-writer rules.
     turn, persists canonical source bytes once, and leaves logical segmentation behavior unchanged.
     Change the config version/model between proposal and admission and prove preflight discards the
     proposal and restarts instead of launching a mixed-snapshot bound turn.
+    Run the same sequence for the membershipless legacy-job carrier: job admission installs only its
+    `SourceManifest` and epoch, and no complete coordinate or bound job capability exists before the
+    proposal is validated into a `TranslationManifest`.
 11. Exercise a completion/revocation race at agent start, before the first effect, and during an
     in-flight `save_translation`, plus a completion-versus-revocation race on one expected epoch.
     Exactly one terminal CAS wins; the authoritative transition invalidates the epoch-bound fence and
@@ -411,6 +421,9 @@ and sole-writer rules.
     exact canonical projection read-back records the first receipt. Return a non-matching or
     permanently unprovable read-back and prove `AmbiguousProjectionOutcome` blocks completion and
     later same-coordinate projection dispatch without fabricating a receipt or overwriting state.
+    Then vary only project, garden, source language/revision, or source span while preserving the
+    actual OpenPlanner `(org_id, document_id, segment_index, target_lang)` key; prove the Knoxx
+    reservation returns `ProjectionKeyCollision` before a second claim or remote invocation.
 
 ## Non-goals
 
@@ -434,7 +447,8 @@ the one Knoxx-owned manifest+epoch CAS and outbox gateway over the existing Open
 which produces zero post-transition dispatches without erasing immutable
 translation/publication evidence. The proposal phase preserves model-selected logical splits, and
 the projection adapter never treats a coordinate-only upsert as causal/idempotency evidence: an
-ambiguous response is reconciled under a per-coordinate lease or fails closed. The required happy
+ambiguous response is reconciled under the actual downstream-key lease or fails closed, and two
+complete coordinates cannot alias one legacy projection key. The required happy
 paths remain compatible.
 Issue #283 preserves typed member-key behavior and read-only delegated config, and #2 can reject the legacy
 collision without breaking either worker. Board PR #286 remains planning-only proof, not delivery of
