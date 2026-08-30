@@ -128,6 +128,9 @@ eventual rejection and cannot complete until that projected child is green.
   `openplanner-proxy-handler!` and `register-ingestion-service-proxy-route!`, plus
   `register-openplanner-proxy-routes!` and its dedicated `GET /api/openplanner/v1/sessions` call to
   `openplanner-client/sessions!`, plus
+  the separately registered `infra/routes/app.cljs` handlers under `/api/data/op/*`,
+  `/api/data/mongo/list`, `/api/data/mongo/query`, and
+  `/api/data/jobs/build-semantic-edges`, plus
   `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs`. Include every Knoxx route that
   accepts inbound data or headers and then calls a downstream service with Knoxx-held credentials;
   record which headers are constructed locally, copied, or forwarded.
@@ -223,6 +226,11 @@ eventual rejection and cannot complete until that projected child is green.
    headers through representative read and protected mutation routes. Before authorization, the
    downstream call count remains zero and no protected mutation occurs; where an unauthenticated
    read is deliberately public, its captured outbound request contains no spoofed identity.
+   Run the same no-context and identity-header-only probes directly against every active
+   `/api/data/op/*`, `/api/data/mongo/{list,query}`, and
+   `/api/data/jobs/build-semantic-edges` registration in `infra/routes/app.cljs`; each must reject
+   before `openplanner-client` can attach the server bearer credential, with zero downstream reads,
+   queries, jobs, or mutations.
 11. A direct `GET /api/openplanner/v1/sessions` negative probe has no valid Knoxx credential and may
    include conflicting identity headers. The `openplanner-client/sessions!` call count remains zero,
    no session rows or enrichment data are disclosed, and the canonical protected-request failure is

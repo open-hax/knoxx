@@ -347,3 +347,13 @@
   spore: none
   receipt-refs: 2026-08-30T20:45:57.138Z
   note: Legacy jobs cannot admit coordinates before model-selected segmentation; use the same source/proposal/translation-manifest sequence as batches. Local serialization must key the real downstream row and reject distinct complete coordinates that would alias it.
+
+- ts: 2026-08-30T20:55:41.087Z
+  session: codex/knoxx-board-reconcile
+  task: Cover hidden bearer proxies and truthful legacy unknowns
+  p-efficiency: 0.90
+  p-friction: 0.47
+  p-skill-candidate: 0.49
+  spore: none
+  receipt-refs: 2026-08-30T20:55:41.087Z
+  note: Route-family inventories must include separately registered bearer-backed handlers, not only named proxy modules. Legacy source history that cannot be proven must remain explicitly unknown and servable, never be attributed to current content.

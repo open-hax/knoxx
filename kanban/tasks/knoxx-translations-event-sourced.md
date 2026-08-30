@@ -265,10 +265,19 @@ store/collection namespace and persisted legacy-row primary key. It is independe
 `SegmentCoordinate`, candidate values, and every coordinate inferred during migration. The event
 store installs a unique index on `LegacyMigrationIdentity`; the deterministic initial attempt/event
 id is derived from that identity in a fixed migration namespace, and the canonical migrated event
-retains both identities. Before cutover migration resolves project, garden, source language, source
-revision, and authoritative source span/slice from the source authority; missing or ambiguous
-coordinates stop for operator reconciliation rather than collapsing into the legacy short key.
-The canonical migrated event payload contains that observed snapshot.
+retains both identities. Migration first attempts to resolve project, garden, source language,
+source revision, and authoritative source span/slice from historical source authority. When that
+history proves the facts, the migrated event uses the normal verified `SegmentCoordinate`. When a
+legacy row's persisted `source_text` cannot be attributed to one historical revision/span, migration
+instead uses the explicit tagged `LegacyUnknownSourceCoordinate`, containing
+`LegacyMigrationIdentity`, the digest of the row's persisted source text, recorded locale/project/
+garden fields, and reason `:historical-source-unavailable`. It never substitutes the current source
+revision or fabricates a span. This migration-only variant is a distinct grouping key, remains
+servable in the new projection, and is ineligible for provenance-sensitive evaluation, training,
+publication, or a new append. A later verified retranslation creates a normal
+`SegmentCoordinate`/attempt while preserving the unknown-provenance initial event as separate
+history. Ambiguous competing historical matches still stop for operator reconciliation. The
+canonical migrated event payload contains whichever tagged source snapshot was actually observed.
 
 Migration admission atomically unique-inserts or compares by `LegacyMigrationIdentity` before
 normal `AttemptIdentity` admission. An equal retry returns the stored initial event. If any derived
@@ -397,6 +406,11 @@ land a migration that leaves that endpoint erroring.
   before restart; every retry resolves the same persisted migration slot, conflicts against its
   stored coordinate/payload snapshot, and proves one initial event remains without a second event or
   projection advance.
+- Legacy rows with no historical revision/span fixture migrate once under
+  `LegacyUnknownSourceCoordinate`, remain readable after `:events` cutover, and expose the persisted
+  source-text digest plus `:historical-source-unavailable` without naming the current revision.
+  Provenance-sensitive evaluation/training/publication and appending a new attempt to that unknown
+  grouping key fail closed; a later verified retranslation uses a separate normal coordinate.
 - Migration fixtures seed two legacy rows that collide under
   `(org_id, document_id, segment_index, target_lang)` but differ by project, garden, source locale,
   source revision, or source span. The complete-coordinate migration preserves both, installs the
