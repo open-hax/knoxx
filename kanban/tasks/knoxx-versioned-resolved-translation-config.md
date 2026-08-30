@@ -3,7 +3,7 @@ uuid: "knoxx-versioned-resolved-translation-config"
 title: "Emit immutable provenance from the resolved translation config boundary"
 status: incoming
 priority: P1
-labels: ["tasks", "5sp", "has-parent", "translations", "transduction", "config", "provenance"]
+labels: tasks, 5sp, has-parent, translations, transduction, config, provenance
 created_at: "2026-08-29T18:22:35Z"
 points: 5
 category: tasks

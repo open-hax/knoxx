@@ -3,7 +3,7 @@ uuid: "knoxx-translation-config-trusted-auth-context"
 title: "Bind translation-config scope to trusted authentication context"
 status: incoming
 priority: P1
-labels: ["tasks", "5sp", "has-parent", "translations", "config", "security", "auth"]
+labels: tasks, 5sp, has-parent, translations, config, security, auth
 created_at: "2026-08-29T19:24:51Z"
 points: 5
 category: tasks

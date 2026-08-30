@@ -147,3 +147,13 @@
   spore: none
   receipt-refs: 2026-08-30T00:57:53.346Z
   note: An installed logical decision is already-linearized history and must be compared and returned before current-head or quorum derivation; only an empty slot evaluates current evidence, while later head advancement forms a distinct unresolved conflict generation.
+
+- ts: 2026-08-30T01:31:59.372Z
+  session: codex/knoxx-board-reconcile
+  task: Reconcile live Knoxx issues to one canonical board owner each
+  p-efficiency: 0.84
+  p-friction: 0.43
+  p-skill-candidate: 0.46
+  spore: none
+  receipt-refs: 2026-08-30T01:31:59.372Z
+  note: A zero-inbox pass must distinguish ownership drift from tracker expansion; close only a proven semantic and UUID duplicate, adopt distinct follow-ups, and inventory broader projector migration debt without manufacturing issues.
