@@ -74,7 +74,9 @@
    [:document_id {:optional true :description "Document ID being translated. Omit to use the document this session is pinned to."} :string]
    [:garden_id {:optional true :description "Garden ID"} :string]
    [:project {:optional true :description "Project name"} :string]
-   [:segment_index {:optional true :description "0-based segment index. 0 for a whole-document translation."} :int]])
+   [:segment_index {:optional true :description "Exact 0-based split index supplied by a split-backed session."} :int]
+   [:split_id {:optional true :description "Exact server-issued source split identity."} :string]
+   [:attempt_id {:optional true :description "Exact server-issued candidate attempt identity."} :string]])
 
 (def create-file-params
   [:map
@@ -319,7 +321,9 @@
    :document_id (policy-value params policies "document_id" :document_id :document-id)
    :garden_id (policy-value params policies "garden_id" :garden_id :garden-id)
    :org_id (policy-value params policies "org_id" :org_id :org-id)
-   :segment_index (aget params "segment_index")})
+   :segment_index (aget params "segment_index")
+   :split_id (aget params "split_id")
+   :attempt_id (aget params "attempt_id")})
 
 (defn- ^:async save-publication-translation!
   "Record one translated publication document as Knoxx-owned evidence.
@@ -332,13 +336,19 @@
   (maybe-tool-update! on-update "Recording translated publication document…")
   (let [pair (publication-translation-pair params policies)
         result (await (translation-agent/save-pair! config policies pair))
-        receipt (:translation/receipt result)]
-    (tool-text-result
-     (str "Recorded translation of " (:document_id pair)
-          " into " (:target_lang pair)
-          " as revision " (:translation/revision receipt)
-          ". It is now awaiting human approval before it can be published.")
-     receipt)))
+        receipt (:translation/receipt result)
+        progress (:translation/progress result)]
+    (if receipt
+      (tool-text-result
+       (str "Recorded all translation splits for " (:document_id pair)
+            " into " (:target_lang pair)
+            " as revision " (:translation/revision receipt)
+            ". It is now awaiting split review before it can be published.")
+       receipt)
+      (tool-text-result
+       (str "Recorded translation split " (:completed progress) " of "
+            (:total progress) ". Continue with the remaining server-issued splits.")
+       progress))))
 
 (defn make-save-translation-execute [auth-context]
   (^:async fn [_runtime config _tool-call-id params a b c]
@@ -408,8 +418,8 @@
            "Submit a translated source/translation pair for the document this session was started to translate."
            "Save each translation you produce."
            ["Call save_translation for each segment you translate."
-            "Include the source_text, translated_text, language codes, document_id, and segment_index."
-            "When this session was started to translate a published document, submit the COMPLETE localized document in one call with segment_index 0; the reply names the revision a human will review."
+            "For a split-backed publication session, echo each supplied split_id, attempt_id, segment_index, and exact source_text; submit one translated_text per split."
+            "Do not invent, merge, renumber, or omit server-issued split boundaries; the final accepted split completes the candidate revision a human will review."
             "Omit document_id, garden_id, source_lang and target_lang to accept the document and locale this session was pinned to; supplying a different one is refused."]
            translation-params
            (make-save-translation-execute auth-context)))

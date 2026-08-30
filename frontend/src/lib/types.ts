@@ -670,6 +670,8 @@ export interface TranslationLabelPayload {
   terminology: TranslationTerminology;
   risk: TranslationRisk;
   overall: TranslationOverall;
+  project?: string;
+  garden_id?: string;
   corrected_text?: string;
   editor_notes?: string;
 }
@@ -732,6 +734,8 @@ export interface TranslationBatchSummary {
 
 export interface TranslationDocumentReviewPayload {
   overall: "approve" | "needs_edit" | "reject";
+  project?: string;
+  garden_id?: string;
   editor_notes?: string;
   segment_overrides?: Record<string, {
     overall: "approve" | "needs_edit" | "reject";

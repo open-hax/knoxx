@@ -12,15 +12,18 @@
   coordinated change to another repository for no gain. See
   `infra.routes.translation` for where that report is resolved."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.contracts.resolve :as contracts-resolve]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.routes.translation-dispatch :as facade]
-            [knoxx.backend.infra.stores.translation-evidence-registry :as registry]
+            [knoxx.backend.infra.stores.translation-evidence-registry :as evidence-registry]
+            [knoxx.backend.infra.stores.translation-split-registry :as split-registry]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as publication-law]
+            [knoxx.backend.law.translation-split :as split-law]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
 
 (def dispatch-permission
@@ -38,22 +41,30 @@
    an empty decoded map, which is a valid request to translate the entire
    corpus. The typo silently became the most expensive operation this route has.
 
-   So the body is checked first. `:document` is optional — absence is how an
-   operator asks for a whole-corpus sweep — and when present it must be a
-   non-blank string."
-  [:map {:closed true}
-   [:document {:optional true} [:and :string [:fn {:error/message "a named document may not be blank"}
-                                              #(seq (str/trim %))]]]])
+   So the body is checked first. A document selects all of its publication
+   relations; a publication selects exactly one inventory row; absence of both
+   asks for a whole-corpus sweep. The two selectors are mutually exclusive so a
+   caller never has to guess which one wins."
+  [:and
+   [:map {:closed true}
+    [:document {:optional true} [:and :string [:fn {:error/message "a named document may not be blank"}
+                                               #(seq (str/trim %))]]]
+    [:publication {:optional true} [:and :string [:fn {:error/message "a named publication may not be blank"}
+                                                  #(seq (str/trim %))]]]]
+   [:fn {:error/message "dispatch may select a document or publication, not both"}
+    #(not (and (contains? % :document) (contains? % :publication)))]])
 
 (def DecodedRequest
   "Contract for the data this adapter hands inward, after decoding.
 
-   `:document` is optional and, when present, must be a qualified keyword. Not
-   `[:maybe ...]`: a nil document is not a way of saying 'all documents', it is a
-   caller that meant to name one and sent nothing. Absence is the only way to ask
-   for a whole-corpus sweep."
-  [:map {:closed true}
-   [:document {:optional true} :qualified-keyword]])
+   Either selector is optional and, when present, must be a qualified keyword.
+   Not `[:maybe ...]`: nil is not a way of saying 'all', it is a caller that
+   meant to name one and sent nothing. Absence is the only whole-corpus form."
+  [:and
+   [:map {:closed true}
+    [:document {:optional true} :qualified-keyword]
+    [:publication {:optional true} :qualified-keyword]]
+   [:fn #(not (and (contains? % :document) (contains? % :publication)))]])
 
 (defn decode-request
   "Validate the native request body, then project it onto what the facade reads.
@@ -72,7 +83,10 @@
      DecodedRequest
      (cond-> {}
        (contains? body :document)
-       (assoc :document (resource-identity/decode-keyword (:document body)))))))
+       (assoc :document (resource-identity/decode-keyword (:document body)))
+
+       (contains? body :publication)
+       (assoc :publication (resource-identity/decode-keyword (:publication body)))))))
 
 (defn- scope
   "The acting principal's dispatch scope, plus the project batches are filed in.
@@ -100,34 +114,72 @@
       (some-> (:session-project-name config) str not-empty)
       (assoc :project (str (:session-project-name config))))))
 
+(def translation-agent-id
+  "The contract the publication translation trigger executes."
+  "publication_translator")
+
+(defn- translation-execution
+  "Snapshot the exact resolved agent policy the opted-in trigger must execute."
+  [config dependencies]
+  (let [resolve-contract (or (:resolve-agent-contract dependencies)
+                             contracts-resolve/resolve-agent-contract)
+        resolved (or (resolve-contract config translation-agent-id)
+                     (throw (ex-info "publication translation agent is unavailable"
+                                     {:status 503
+                                      :code "translation_agent_unavailable"})))]
+    (split-law/execution-snapshot
+     crypto/sha256-hex
+     {:agent-id translation-agent-id
+      :model (:model resolved)
+      :thinking (:thinking-level resolved)
+      :system-prompt (:system-prompt resolved)
+      :tool-ids (:tool-ids resolved)})))
+
 (defn- ^:async dispatch!
-  [config ctx decoded]
-  (if-let [evidence-store (registry/current)]
-    (facade/dispatch-translations!
+  [config ctx decoded dependencies]
+  (let [evidence-store (or (:evidence-store dependencies)
+                           (evidence-registry/current))
+        split-store (or (:split-store dependencies)
+                        (split-registry/current))
+        dispatch-translations! (or (:dispatch-translations! dependencies)
+                                   facade/dispatch-translations!)]
+    (when-not evidence-store
+      (throw (ex-info "translation evidence persistence is not configured"
+                      {:status 503
+                       :code "translation_evidence_unavailable"})))
+    (when-not split-store
+      (throw (ex-info "translation split persistence is not configured"
+                      {:status 503
+                       :code "translation_split_persistence_unavailable"})))
+    (dispatch-translations!
      config
-     {:evidence-store evidence-store
-      :client (openplanner-client/client config)
-      :clock (fn [] (.toISOString (js/Date.)))
+     (merge dependencies
+            {:evidence-store evidence-store
+             :split-store split-store
+             :translation-execution (or (:translation-execution dependencies)
+                                        (translation-execution config dependencies))
+             :client (or (:client dependencies)
+                         (openplanner-client/client config))
+             :clock (or (:clock dependencies)
+                        (fn [] (.toISOString (js/Date.))))
       ;; A dispatch pass can recover a completion it finds already finished, and
       ;; that recovery goes through the same source-drift check as the worker's
       ;; own report. Without the observer here, recovery would have no way to
       ;; verify what it was about to record.
-      :observe-source-revision (facade/source-revision-observer! config)
+             :observe-source-revision
+             (or (:observe-source-revision dependencies)
+                 (facade/source-revision-observer! config))
       ;; The agent runner's two dependencies, assembled here rather than inside
       ;; the facade — and not merely for the usual injectability reason. The
       ;; event dispatcher's own require closure reaches the agent tool surface,
       ;; which reaches the contract-backed `save_translation` sink, which reaches
       ;; the facade: required from there this would be a cycle. Nothing requires
       ;; this adapter, so the boundary is where it can be named.
-      :emit! (fn [event] (event-dispatch/dispatch! config event))
-      :digest-hex crypto/sha256-hex}
+             :emit! (or (:emit! dependencies)
+                        (fn [event] (event-dispatch/dispatch! config event)))
+             :digest-hex (or (:digest-hex dependencies) crypto/sha256-hex)})
      (scope config ctx)
-     (:document decoded))
-    ;; No durable store means a dispatch whose revision binding would be lost.
-    ;; Refusing is the only honest answer — see the registry's docstring.
-    (throw (ex-info "translation evidence persistence is not configured"
-                    {:status 503
-                     :code "translation_evidence_unavailable"}))))
+     decoded)))
 
 (defn- error-status
   "A status the error already carries wins; a contract violation is a 400,
@@ -154,24 +206,29 @@
         (fastify/send-json! reply status (error-body/error-body err status))))))
 
 (defn register-translation-dispatch-routes!
-  [app runtime config handlers]
-  (fastify/route!
-   app
-   {:method "POST"
-    :url "/api/publications/translations/dispatch"
-    :handler
-    (^:async fn [request reply]
-      (await
-       ((:with-request-context! handlers) runtime request reply
-        (^:async fn [ctx]
-          (await
-           (send-result!
-            reply
-            (fn []
-              ;; Authorize first, and unconditionally. `with-request-context!`
-              ;; hands down a nil context when the policy database is disabled,
-              ;; and reading that as permission would let an anonymous caller
-              ;; enqueue translation work on a shared worker.
-              ((:ensure-permission! handlers) ctx dispatch-permission)
-              (dispatch! config ctx (decode-request request)))))))))})
-  nil)
+  "Register the route with optional registration-scoped dependencies.
+
+   Production uses the four-argument form. Tests and alternate compositions may
+   supply stable CLJS dependencies in the fifth argument; the registered handler
+   closes over them, so concurrent async requests never mutate global Vars."
+  ([app runtime config handlers]
+   (register-translation-dispatch-routes! app runtime config handlers {}))
+  ([app runtime config handlers dependencies]
+   (fastify/route!
+    app
+    {:method "POST"
+     :url "/api/publications/translations/dispatch"
+     :handler
+     (^:async fn [request reply]
+       (await
+        ((:with-request-context! handlers) runtime request reply
+         (^:async fn [ctx]
+           (await
+            (send-result!
+             reply
+             (fn []
+               ;; Authorization is unconditional; a nil context is not access.
+               ((:ensure-permission! handlers) ctx dispatch-permission)
+               (dispatch! config ctx (decode-request request)
+                          dependencies))))))))})
+   nil))

@@ -129,6 +129,11 @@ reproduce the file — the open design question already recorded on
 `segment_index` is refused with instructions rather than silently joined. The
 OpenPlanner segment path is untouched and still segments.
 
+**Superseded for the restored workflow:** `knoxx-translation-split-memory-feedback` makes the
+split manifest and its ordered members part of the pre-provider claim, so order and exact
+composition are no longer guessed from independent tool calls. The current whole-file-only
+`segment_index 0` behavior remains historical implementation evidence, not the target contract.
+
 ### The authored locale fallback is still shipped
 
 `infra.publication-contract-content` predates any producer and turns authored

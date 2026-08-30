@@ -12,6 +12,7 @@
    :translation/locale :es
    :translation/source-revision "sha256-abc123def456"
    :translation/revision "sha256-abc123def456+es@batch-7"
+   :translation/content-digest "sha256-target-content"
    :translation/dispatch-key "key-1"
    :translation/org-id "org-1"
    :translation/at "2026-08-22T09:00:00.000Z"})
@@ -117,7 +118,46 @@
                    :translation/source-revision :translation/revision
                    :translation/dispatch-key :translation/at]]
       (is (thrown? js/Error (law/assert-receipt! (dissoc receipt field)))
-          (str "missing " field " was accepted")))))
+          (str "missing " field " was accepted"))))
+
+  (testing "historical receipts without split lineage remain readable"
+    (is (= receipt (law/assert-receipt! receipt))))
+
+  (testing "split-backed receipts require the entire immutable lineage"
+    (let [lineage {:translation/split-manifest-id "manifest-1"
+                   :translation/candidate-claim-id "claim-1"
+                   :translation/candidate-set-id "set-1"
+                   :translation/candidate-set-digest "sha256-set"
+                   :translation/split-count 3
+                   :translation/split-turn-admitted-at
+                   "2026-08-22T08:00:00.000Z"}
+          split-backed (merge receipt lineage)]
+      (is (= split-backed (law/assert-receipt! split-backed)))
+      (doseq [field (keys lineage)]
+        (is (thrown? js/Error
+                     (law/assert-receipt! (dissoc split-backed field)))
+            (str "partial lineage missing " field " was accepted")))
+      (is (thrown? js/Error
+                   (law/assert-receipt!
+                    (assoc split-backed :translation/split-count 0)))
+          "an empty manifest cannot produce a completed split receipt")
+      (is (thrown? js/Error
+                   (law/assert-receipt!
+                    (assoc split-backed :translation/split-review-order
+                           [["2026-08-22T09:00:00.000Z" "review-1"]])))
+          "review coordinates must cover every manifest split")
+      (testing "legacy two-coordinate rollout rows remain readable"
+        (is (law/assert-receipt!
+             (assoc split-backed :translation/split-review-order
+                    [[nil nil]
+                     ["2026-08-22T09:00:00.000Z" "review-1"]
+                     ["2026-08-22T09:01:00.000Z" "review-2"]]))))
+      (testing "new projections retain the operation rank used by composition"
+        (is (law/assert-receipt!
+             (assoc split-backed :translation/split-review-order
+                    [[nil nil nil]
+                     ["2026-08-22T09:00:00.000Z" "bulk-a:split:1" "review-z"]
+                     ["2026-08-22T09:01:00.000Z" "bulk-b:split:2" "review-a"]])))))))
 
 (deftest supersedes-is-a-total-order
   (let [older (assoc receipt :translation/at "2026-08-22T09:00:00.000Z")
@@ -140,4 +180,92 @@
         (is (not (law/supersedes? tie-a tie-b)))))
 
     (testing "identical receipts do not supersede each other"
-      (is (not (law/supersedes? older older))))))
+      (is (not (law/supersedes? older older))))
+
+    (testing "review order wins inside one set, independent of request wall time"
+      (let [base (merge older
+                        {:translation/candidate-set-id "set-1"
+                         :translation/split-turn-admitted-at
+                         "2026-08-22T08:00:00.000Z"})
+            earlier-review (assoc base
+                                  :translation/at "2026-08-22T12:00:00.000Z"
+                                  :translation/split-review-order [[nil nil]])
+            later-review (assoc base
+                                :translation/at "2026-08-22T11:00:00.000Z"
+                                :translation/split-review-order
+                                [["2026-08-22T10:00:00.000Z" "review-2"]])]
+        (is (law/supersedes? later-review earlier-review))
+        (is (not (law/supersedes? earlier-review later-review)))))
+
+    (testing "same-millisecond projection order follows operation before receipt id"
+      ;; Deliberately oppose the coordinates: group B has the lexically smaller
+      ;; receipt id. Composition chooses B by operation id, and completed evidence
+      ;; must choose that same projection rather than the hash-shaped review id.
+      (let [base (merge older
+                        {:translation/candidate-set-id "set-1"
+                         :translation/split-turn-admitted-at
+                         "2026-08-22T08:00:00.000Z"})
+            group-a (assoc base
+                           :translation/revision "projection-a"
+                           :translation/split-review-order
+                           [["2026-08-22T10:00:00.000Z"
+                             "bulk-group-a:split:1" "review-z"]])
+            group-b (assoc base
+                           :translation/revision "projection-b"
+                           :translation/split-review-order
+                           [["2026-08-22T10:00:00.000Z"
+                             "bulk-group-b:split:1" "review-a"]])]
+        (is (law/supersedes? group-b group-a))
+        (is (not (law/supersedes? group-a group-b)))))
+
+    (testing "a fresh candidate run wins over a delayed review of the old set"
+      (let [old-reviewed (merge newer
+                                {:translation/candidate-set-id "set-old"
+                                 :translation/split-turn-admitted-at
+                                 "2026-08-22T08:00:00.000Z"
+                                 :translation/split-review-order
+                                 [["2026-08-22T12:00:00.000Z" "review-old"]]})
+            fresh-raw (merge older
+                             {:translation/candidate-set-id "set-new"
+                              :translation/split-turn-admitted-at
+                              "2026-08-22T09:00:00.000Z"})]
+        (is (law/supersedes? fresh-raw old-reviewed))
+        (is (not (law/supersedes? old-reviewed fresh-raw)))))
+
+    (testing "legacy and split receipts cannot form a comparison cycle"
+      (let [old-reviewed (merge receipt
+                                {:translation/revision "rev-a"
+                                 :translation/at "2026-08-22T20:00:00.000Z"
+                                 :translation/candidate-set-id "set-old"
+                                 :translation/split-turn-admitted-at
+                                 "2026-08-22T08:00:00.000Z"})
+            legacy (assoc receipt
+                          :translation/revision "rev-b"
+                          :translation/at "2026-08-22T15:00:00.000Z")
+            fresh-raw (merge receipt
+                             {:translation/revision "rev-c"
+                              :translation/at "2026-08-22T10:00:00.000Z"
+                              :translation/candidate-set-id "set-new"
+                              :translation/split-turn-admitted-at
+                              "2026-08-22T09:00:00.000Z"})
+            values [old-reviewed legacy fresh-raw]]
+        (doseq [a values b values c values]
+          (when (and (law/supersedes? a b)
+                     (law/supersedes? b c))
+            (is (law/supersedes? a c)
+                (str "non-transitive order: "
+                     (mapv law/receipt-order-key [a b c])))))))
+
+    (testing "same-millisecond split generations have a stable set tiebreak"
+      (let [base (merge receipt
+                        {:translation/at "2026-08-22T12:00:00.000Z"
+                         :translation/split-turn-admitted-at
+                         "2026-08-22T08:00:00.000Z"})
+            set-a (assoc base
+                         :translation/candidate-set-id "set-a"
+                         :translation/split-review-order
+                         [["2026-08-22T13:00:00.000Z" "review-z"]])
+            set-b (assoc base
+                         :translation/candidate-set-id "set-b")]
+        (is (law/supersedes? set-b set-a))
+        (is (not (law/supersedes? set-a set-b)))))))

@@ -1,33 +1,34 @@
 ---
 uuid: "knoxx-translation-review-chat-panel"
-title: "Present translation evaluation cases in the 3-pane review UI"
-status: icebox
-priority: P3
-labels: ["tasks", "3sp", "has-parent", "evaluation", "review", "frontend", "translations"]
+title: "Restore the 3-pane document and split translation review UI"
+status: accepted
+priority: P0
+labels: ["tasks", "8sp", "has-parent", "regression", "evaluation", "review", "frontend", "translations", "memory", "cms"]
 created_at: "2026-05-30T00:00:00Z"
-points: 3
+points: 8
 category: tasks
 ---
 
-# Present translation evaluation cases in the 3-pane review UI
+# Restore the 3-pane document and split translation review UI
 
 > Parent epic: `knoxx-evaluation-review-system`
-> Deferred behind: `knoxx-evaluation-case-contracts`, `knoxx-evaluation-mcp-review-flow`
+> Product anchor: `knowledge-ops-translation-document-review-v2`
 
 ## Purpose
 
-Keep the useful translation comparison/reviewer experience as a **presentation adapter**
-over the generic evaluation model, not as the place where translation-review semantics
-live.
+Restore the document-first, split-level translation workflow as the primary human surface
+over the resource CMS. The UI remains a presentation adapter, but it is now a critical-path
+acceptance surface: the translation workflow is not complete when only a headless client can
+perform it.
 
-The previous version of this card made `TranslationReviewPage` and `AgentChatPanel` the
-next architectural step. That is intentionally deferred: first prove that an AI can walk
-an SME through the same review from case to durable receipt using contracts + MCP alone.
+The historical UI and its data shape are the target. Resource-backed candidates must carry
+real persisted splits, so the UI can write durable review evidence rather than display
+synthetic read-only paragraphs.
 
-## Eventual scope
+## Scope
 
-- Present one generic evaluation case using the translation adapter's source, candidate,
-  terminology/context, rubric, and existing judgments.
+- Present one canonical translation review case using the translation adapter's source,
+  candidate, terminology/context, rubric, and existing judgments.
 - Use artifact roles to choose the side-by-side comparison layout; do not persist
   `left/right` as semantic identity.
 - Keep the agent chat panel as one interaction surface over the same domain operations the
@@ -36,25 +37,36 @@ an SME through the same review from case to durable receipt using contracts + MC
   capability/domain operations rather than frontend-only review logic.
 - Record corrections/judgments through the evaluation write boundary and immediately
   render the resulting receipt/state projection.
+- List all resource-derived work states and expose dispatch/retry from the same page.
+- Preserve the document-level fast path while allowing granular split correction/rejection.
+- Show whether the effective reviewed text differs from the original machine candidate and
+  which revision publication will consume.
+- Demonstrate that an approved correction is available as context to a later translation run.
 
 ## Boundary rules
 
 - No review law exists only in React/Helix/TypeScript state.
-- The frontend does not own candidate identity, approval truth, or training labels.
-- Translation is one adapter/domain specialization of the generic evaluation case.
+- The frontend does not own candidate identity, approval truth, translation memory, or
+  training labels.
+- Translation's candidate-bound receipt is the P0 semantic authority; the generic evaluation
+  contract may adapt it without changing its identity or delaying the restored workflow.
 - Client teams may replace this UI (for example with Angular) without changing stored
   evaluation semantics or MCP behavior.
 
-## Why iceboxed now
+## Sequencing
 
-The frontend is intentionally not the critical path. Reopen this card once the generic
-evaluation contracts and the headless SME review proof work end to end; at that point the
-UI is an ergonomic projection over a model already proven without it.
+Build the translation-specific vertical slice around its canonical case/receipt operations.
+Adapt those operations to the generic evaluation contract when that contract is available; it is
+not a predecessor for this P0 repair. Do not put semantic review law into component state.
 
-## Done when eventually resumed
+## Done when
 
-- The UI consumes the generic evaluation case/receipt API rather than bespoke mutable
-  translation review state.
+- The UI consumes canonical translation case/receipt operations rather than bespoke mutable
+  translation review state; the generic evaluation adapter can consume the same operations.
 - The same translation case can be completed through MCP or this UI with equivalent
   durable receipts.
 - Replacing the frontend implementation does not require changing evaluation contracts.
+- Agent-produced resource translations expose real split ids and all historical review fields;
+  no `contract_content` read-only branch suppresses review actions.
+- A browser tour proves dispatch, correction, rejection, approval, memory retrieval, and
+  publication against seeded resource-backed documents.

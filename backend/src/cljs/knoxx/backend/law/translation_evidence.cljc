@@ -146,24 +146,68 @@
     (nil? b) true
     :else (pos? (compare a b))))
 
+(defn- normalized-review-order
+  "Make optional review coordinates homogeneously comparable.
+
+   New projections carry `[recorded-at operation-id review-id]`, exactly matching
+   effective-review selection. Already-persisted rollout rows may carry the old
+   `[recorded-at review-id]` pair; it remains readable and receives an empty
+   operation rank. Missing receipts are represented by all nils.
+
+   Normalizing each nil to the empty string avoids relying on a host runtime's
+   ordering between nil and strings while preserving the intended rule that a
+   real review sorts after a missing one."
+  [receipt]
+  (mapv (fn [coordinate]
+          (let [[recorded-at second third] coordinate
+                [operation-id review-id]
+                (if (= 3 (count coordinate))
+                  [second third]
+                  [nil second])]
+            [(or recorded-at "")
+             (or operation-id "")
+             (or review-id "")]))
+        (or (:translation/split-review-order receipt) [])))
+
+(defn receipt-order-key
+  "One context-free total-order key for current-translation selection.
+
+   The key must be computed from one receipt at a time. A pair-sensitive
+   comparator is not transitive when legacy, raw split, and reviewed split
+   receipts coexist: A can beat B, B beat C, and C beat A. A single
+   lexicographic key makes that cycle impossible.
+
+   Split work is ordered by turn admission rather than review wall time, so a
+   delayed review of an older candidate set cannot resurrect it. Within one
+   admitted generation the candidate-set id is considered before review state;
+   this keeps two same-millisecond generations deterministic. Within one set,
+   the manifest-order review vector makes every projection sort after its raw
+   receipt and later review state sort after earlier state. Historical receipts
+   have neither coordinate and retain their completion-time ordering."
+  [receipt]
+  (let [candidate-set-id (:translation/candidate-set-id receipt)
+        split-backed? (some? candidate-set-id)]
+    [(or (:translation/split-turn-admitted-at receipt)
+         (:translation/at receipt))
+     (if split-backed? 1 0)
+     (or candidate-set-id "")
+     (normalized-review-order receipt)
+     (:translation/at receipt)
+     (:translation/revision receipt)
+     (or (:translation/content-digest receipt) "")
+     (:translation/dispatch-key receipt)]))
+
 (defn supersedes?
   "Whether `candidate` should replace `incumbent` as the current translation.
 
-   A total order, which is the whole point. Later instant wins; on an exact tie
-   the greater output revision wins. The tiebreak is arbitrary but deterministic,
-   and deterministic is the property that matters: two stores returning the same
-   receipts in different orders must reach the same answer, and a strict
-   comparison would instead have kept whichever arrived first.
-
-   Nil incumbent is superseded by anything, so this doubles as the empty-index
-   case."
+   Comparison is a strict lexicographic order over `receipt-order-key`. Because
+   each key depends only on its own receipt, the relation is transitive and
+   independent of store return order. Nil incumbent is superseded by anything,
+   so this also covers the empty-index case."
   [candidate incumbent]
-  (cond
-    (nil? incumbent) true
-    (not= (:translation/at candidate) (:translation/at incumbent))
-    (later-instant? (:translation/at candidate) (:translation/at incumbent))
-    :else (pos? (compare (:translation/revision candidate)
-                         (:translation/revision incumbent)))))
+  (or (nil? incumbent)
+      (pos? (compare (receipt-order-key candidate)
+                     (receipt-order-key incumbent)))))
 
 (defn assert-valid!
   "Return `value` when it satisfies `schema`; otherwise throw a named contract
@@ -213,10 +257,58 @@
     [:translation/locale locale/Locale]
     [:translation/source-revision ConcreteRevision]
     [:translation/revision ConcreteRevision]
+    ;; Optional only so historical receipts remain readable. A candidate must
+    ;; carry this digest before current bytes can be shown, approved, or
+    ;; published; absence is history, not content authority.
+    [:translation/content-digest {:optional true} NonBlankString]
     [:translation/dispatch-key NonBlankString]
+    ;; Optional only for receipts written before dispatch attempts had their own
+    ;; immutable identity. New receipts carry it so evidence readers can hide a
+    ;; receipt until that exact attempt is durably completed.
+    [:translation/dispatch-attempt-id {:optional true} NonBlankString]
     [:translation/org-id NonBlankString]
     [:translation/project {:optional true} [:maybe NonBlankString]]
+    ;; Optional as a group so receipts written before split-backed translation
+    ;; remain readable. A split-backed receipt must carry the complete lineage:
+    ;; a partial chain cannot authenticate which candidate set supplied the
+    ;; published bytes.
+    [:translation/split-manifest-id {:optional true} NonBlankString]
+    [:translation/candidate-claim-id {:optional true} NonBlankString]
+    [:translation/candidate-set-id {:optional true} NonBlankString]
+    [:translation/candidate-set-digest {:optional true} NonBlankString]
+    [:translation/split-count {:optional true} [:int {:min 1}]]
+    ;; The admission clock orders distinct candidate sets independently of when
+    ;; a delayed human review happens to be submitted.
+    [:translation/split-turn-admitted-at {:optional true} Instant]
+    ;; Deterministic current-review coordinates in manifest order. New writers
+    ;; emit [recorded-at operation-id review-id]. The pair alternative preserves
+    ;; rollout readability for already-written [recorded-at review-id] rows.
+    ;; Present only on derived projections, never the initial raw receipt.
+    [:translation/split-review-order
+     {:optional true}
+     [:vector
+      [:or
+       [:tuple [:maybe Instant] [:maybe NonBlankString]]
+       [:tuple [:maybe Instant] [:maybe NonBlankString]
+        [:maybe NonBlankString]]]]]
     [:translation/at Instant]]
+   [:fn {:error/message "translation split lineage must be wholly absent or complete"}
+    (fn [receipt]
+      (let [lineage-keys [:translation/split-manifest-id
+                          :translation/candidate-claim-id
+                          :translation/candidate-set-id
+                          :translation/candidate-set-digest
+                          :translation/split-count
+                          :translation/split-turn-admitted-at]
+            present-count (count (filter #(contains? receipt %) lineage-keys))]
+        (or (zero? present-count)
+            (= (count lineage-keys) present-count))))]
+   [:fn {:error/message "split review order requires complete lineage and one coordinate per split"}
+    (fn [receipt]
+      (if-let [order (:translation/split-review-order receipt)]
+        (and (contains? receipt :translation/candidate-set-id)
+             (= (:translation/split-count receipt) (count order)))
+        true))]
    [:fn {:error/message "a translation receipt's target locale must differ from its source locale"}
     ;; A receipt claiming a translation from `:en` to `:en` is not evidence of
     ;; anything: `publication-gate/translation-required?` decides translation is
@@ -234,6 +326,16 @@
    already applies across the effect boundary."
   [receipt]
   (assert-valid! :translation/receipt CompletedTranslationReceipt receipt))
+
+(defn content-bound?
+  "Whether a receipt names the digest of the target bytes it proves.
+
+   The digest is optional in the schema solely so pre-binding ledger rows stay
+   readable during rollout. Such rows are history, not current translation
+   evidence: they cannot authenticate content, be reviewed, or authorize a
+   publication."
+  [receipt]
+  (nonblank-string? (:translation/content-digest receipt)))
 
 ;; ── Approval ───────────────────────────────────────────────────────────────
 
@@ -307,9 +409,15 @@
    [:review/state [:= :approved]]
    [:review/document :qualified-keyword]
    [:review/garden :qualified-keyword]
+   ;; Optional only so pre-migration approvals remain readable as history.
+   ;; `approval-current?` deliberately refuses one that lacks this coordinate.
+   [:review/source-locale {:optional true} locale/Locale]
    [:review/locale locale/Locale]
    [:review/revision ConcreteRevision]
    [:review/translation-revision ConcreteRevision]
+   ;; Optional only so pre-migration approvals remain readable as history.
+   ;; `approval-current?` requires it before authorizing any current bytes.
+   [:review/content-digest {:optional true} NonBlankString]
    [:review/org-id NonBlankString]
    [:review/project {:optional true} [:maybe NonBlankString]]
    [:review/principal Principal]
@@ -322,6 +430,7 @@
    than by re-deriving the classification from a message string, and so a new
    refusal cannot be introduced without appearing here."
   #{:translation-receipt-missing
+    :translation-content-unbound
     :translation-document-mismatch
     :translation-garden-mismatch
     :translation-locale-mismatch
@@ -348,6 +457,32 @@
   [approval]
   (assert-valid! :translation-review/approval Approval approval))
 
+(def ^:private approval-coordinate-checks
+  "Ordered receipt/request comparisons for whole-output approval.
+
+   Garden remains explicit even though the facade normally looks the receipt up
+   by garden: this law is a reusable boundary, and approving a garden mismatch
+   would admit bytes nobody read. Output revision remains last so a more useful
+   coordinate mismatch wins when more than one field disagrees."
+  [[:translation/document :review/document :translation-document-mismatch]
+   [:translation/garden :review/garden :translation-garden-mismatch]
+   [:translation/locale :review/locale :translation-locale-mismatch]
+   [:translation/source-revision :review/revision
+    :translation-source-revision-mismatch]
+   [:translation/revision :review/translation-revision
+    :translation-revision-mismatch]])
+
+(defn- approval-coordinate-refusal
+  [request receipt]
+  (some (fn [[receipt-key request-key refusal-type]]
+          (let [requested (get request request-key)
+                recorded (get receipt receipt-key)]
+            (when (not= recorded requested)
+              {:refusal/type refusal-type
+               :refusal/requested requested
+               :refusal/recorded recorded})))
+        approval-coordinate-checks))
+
 (defn approval-refusal
   "Why `request` may not be approved against `receipt`, or nil when it may.
 
@@ -368,36 +503,12 @@
                                               :review/locale
                                               :review/revision])}
 
-    (not= (:translation/document receipt) (:review/document request))
-    {:refusal/type :translation-document-mismatch
-     :refusal/requested (:review/document request)
-     :refusal/recorded (:translation/document receipt)}
+    (not (content-bound? receipt))
+    {:refusal/type :translation-content-unbound
+     :refusal/recorded (:translation/revision receipt)}
 
-    (not= (:translation/garden receipt) (:review/garden request))
-    ;; Unreachable through the facade, which looks the receipt up by garden —
-    ;; and checked anyway, because this contract is also what a second caller
-    ;; would be validated against, and a garden mismatch is the one that admits
-    ;; bytes nobody read.
-    {:refusal/type :translation-garden-mismatch
-     :refusal/requested (:review/garden request)
-     :refusal/recorded (:translation/garden receipt)}
-
-    (not= (:translation/locale receipt) (:review/locale request))
-    {:refusal/type :translation-locale-mismatch
-     :refusal/requested (:review/locale request)
-     :refusal/recorded (:translation/locale receipt)}
-
-    (not= (:translation/source-revision receipt) (:review/revision request))
-    {:refusal/type :translation-source-revision-mismatch
-     :refusal/requested (:review/revision request)
-     :refusal/recorded (:translation/source-revision receipt)}
-
-    (not= (:translation/revision receipt) (:review/translation-revision request))
-    ;; The caller named a produced output that is not the current one. Accepting
-    ;; it would record review evidence for bytes the store no longer describes.
-    {:refusal/type :translation-revision-mismatch
-     :refusal/requested (:review/translation-revision request)
-     :refusal/recorded (:translation/revision receipt)}))
+    :else
+    (approval-coordinate-refusal request receipt)))
 
 (defn approve
   "Build immutable approval evidence from a validated request, the completed
@@ -413,12 +524,16 @@
    (cond-> {:review/state :approved
             :review/document (:translation/document receipt)
             :review/garden (:translation/garden receipt)
+            :review/source-locale (:translation/source-locale receipt)
             :review/locale (:translation/locale receipt)
             :review/revision (:translation/source-revision receipt)
             :review/translation-revision (:translation/revision receipt)
             :review/org-id (:translation/org-id receipt)
             :review/principal principal
             :review/at at}
+     (some? (:translation/content-digest receipt))
+     (assoc :review/content-digest (:translation/content-digest receipt))
+
      (some? (:translation/project receipt))
      (assoc :review/project (:translation/project receipt)))))
 
@@ -453,6 +568,16 @@
    translation's approval stops satisfying the new revision."
   [approval receipt]
   (and (some? receipt)
+       ;; Historical approvals did not carry source locale. They remain valid
+       ;; stored history, but cannot authorize current bytes: equal source and
+       ;; output revisions across a later source-locale change are possible,
+       ;; especially for authored content, and absence is not proof of equality.
+       (some? (:review/source-locale approval))
+       (= (:review/source-locale approval)
+          (:translation/source-locale receipt))
+       (some? (:review/content-digest approval))
+       (= (:review/content-digest approval)
+          (:translation/content-digest receipt))
        (= (:review/translation-revision approval)
           (:translation/revision receipt))
        true))

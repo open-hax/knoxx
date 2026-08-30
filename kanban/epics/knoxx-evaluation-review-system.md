@@ -1,9 +1,9 @@
 ---
 uuid: "knoxx-evaluation-review-system"
 title: "Evaluation and review — artifacts, rubrics, judgments, and receipts"
-status: incoming
-priority: P1
-labels: ["epics", "evaluation", "review", "sme", "agents", "contracts"]
+status: accepted
+priority: P0
+labels: ["epics", "evaluation", "review", "sme", "agents", "contracts", "translations", "memory", "regression"]
 created_at: "2026-08-13T00:00:00Z"
 points: 0
 category: epics
@@ -45,7 +45,7 @@ Suggested vocabulary:
 Artifact roles are semantic (`:source`, `:candidate`, `:reference`, `:evidence`, ...),
 not layout positions such as `:left` and `:right`.
 
-## First concrete instance
+## First concrete instance and product constraint
 
 Translation SME review remains the reference workflow:
 
@@ -63,11 +63,22 @@ agent task input + agent output + rubric
         -> labels/correction/decision + receipt
 ```
 
+The translation instance is not merely a disposable fixture. Its existing document-first,
+split-level UI and data shape are the product acceptance surface. Generic contracts may lift
+the durable semantics, but must preserve real ordered translation splits, corrected examples as
+future translation memory, document-level fast paths, and the complete human workflow over the
+resource CMS.
+
 ## Children
 
 - `knoxx-evaluation-case-contracts` — define the generic case/artifact/rubric/judgment/receipt laws.
 - `knoxx-evaluation-mcp-review-flow` — prove a headless AI-guided SME review from pending case to durable receipt and next case.
-- `knoxx-translation-review-chat-panel` — UI adapter only; keep out of the critical path until the contract/MCP workflow is proven.
+- `knowledge-ops-translation-document-review-v2` — reopened P0 regression card and canonical
+  translation product contract.
+- `knoxx-translation-split-memory-feedback` — P0 durable split/candidate authority and the
+  correction-to-later-translation feedback loop.
+- `knoxx-translation-review-chat-panel` — P0 UI adapter and mandatory end-to-end acceptance
+  surface, developed against the same receipt operations as MCP.
 - Future: translation-specific adapter mapping current segment/review data onto the generic evaluation model.
 - Future: training/export projections derived from evaluation receipts rather than owned by the review UI.
 
@@ -82,7 +93,8 @@ the general model that can later supply those receipt facts.
 
 ## Non-goals
 
-- Rebuilding the current translation UI before the headless contract is proven.
+- Treating a headless proof as completion while resource-backed translations remain read-only
+  or invisible in the human workflow.
 - Encoding workflow phases such as `in_review` as durable semantic truth when they can be derived.
 - Making model-training export the primary storage model.
 - Requiring every evaluation to compare exactly two artifacts.
@@ -93,3 +105,7 @@ the general model that can later supply those receipt facts.
 - Translation SME review can map onto that core without losing translation-specific context.
 - An MCP/agent flow can enumerate work, explain a case, collect the SME judgment, persist a receipt, and advance without a dedicated UI.
 - Evaluation receipts can be projected into labels/training/evaluation datasets without those projections becoming the authority.
+- Approved corrected translation splits are retrievable as scoped translation memory by a later
+  translation attempt, while rejected/stale candidates are excluded from positive memory.
+- The restored three-pane UI completes the same revision-bound workflow end to end over the
+  resource CMS.

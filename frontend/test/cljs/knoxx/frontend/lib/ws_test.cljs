@@ -11,21 +11,22 @@
 (defn- make-mock-websocket []
   (let [ctor (fn mock-ws [url]
                (this-as this
-                 (set! (.-url this) url)
-                 (set! (.-readyState this) 0)
-                 (set! (.-listeners this) #js {})
-                 (set! (.-sent this) #js [])
-                 (set! (.-closed this) false)
-                 (set! (.-addEventListener this)
-                       (fn [event-name handler]
-                         (aset (.-listeners this) event-name handler)))
-                 (set! (.-send this) (fn [data] (.push (.-sent this) data)))
-                 (set! (.-close this)
-                       (fn []
-                         (set! (.-closed this) true)
-                         (set! (.-readyState this) 3)))
-                 (swap! sockets conj this)
-                 this))]
+                 (let [^js socket this]
+                   (set! (.-url socket) url)
+                   (set! (.-readyState socket) 0)
+                   (set! (.-listeners socket) #js {})
+                   (set! (.-sent socket) #js [])
+                   (set! (.-closed socket) false)
+                   (set! (.-addEventListener socket)
+                         (fn [event-name handler]
+                           (aset (.-listeners socket) event-name handler)))
+                   (set! (.-send socket) (fn [data] (.push (.-sent socket) data)))
+                   (set! (.-close socket)
+                         (fn []
+                           (set! (.-closed socket) true)
+                           (set! (.-readyState socket) 3)))
+                   (swap! sockets conj socket)
+                   socket)))]
     (set! (.-OPEN ctor) 1)
     (set! (.-CLOSED ctor) 3)
     ctor))

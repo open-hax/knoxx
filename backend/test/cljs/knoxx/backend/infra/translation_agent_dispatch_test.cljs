@@ -2,8 +2,10 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.translation-agent-dispatch :as dispatch]
             [knoxx.backend.infra.translation-evidence-store :as store]
+            [knoxx.backend.infra.translation-split-store :as split-store]
             [knoxx.backend.law.translation-agent :as agent-law]
-            [knoxx.backend.law.translation-dispatch :as dispatch-law]))
+            [knoxx.backend.law.translation-dispatch :as dispatch-law]
+            [knoxx.backend.law.translation-split :as split-law]))
 
 (def ^:private work
   {:document :open-hax.documents/promethean
@@ -25,8 +27,19 @@
 
 (defn- deps
   "Dispatch dependencies over a recording emitter."
-  [evidence-store emitted & {:keys [emit-result throw-on-emit]}]
+  [evidence-store emitted & {:keys [emit-result throw-on-emit translation-store]
+                             :or {translation-store
+                                  (split-store/memory-store digest-hex)}}]
   {:evidence-store evidence-store
+   :split-store translation-store
+   :translation-execution
+   (split-law/execution-snapshot
+    digest-hex
+    {:agent-id "publication_translator"
+     :model "gemma4:31b"
+     :thinking :medium
+     :system-prompt "Translate the admitted source splits."
+     :tool-ids ["save_translation"]})
    :clock (constantly "2026-08-26T16:00:00.000Z")
    :digest-hex digest-hex
    :emit! (fn [event]
@@ -38,8 +51,11 @@
 
 (deftest ^:async claimed-work-binds-its-run-before-the-event-is-emitted
   (let [evidence-store (store/memory-store)
+        translation-store (split-store/memory-store digest-hex)
         emitted (atom [])
-        result (await (dispatch/dispatch-work! (deps evidence-store emitted)
+        result (await (dispatch/dispatch-work!
+                       (deps evidence-store emitted
+                             :translation-store translation-store)
                                                work context source))
         record (:dispatch/record result)
         event (first @emitted)]
@@ -62,8 +78,19 @@
     (testing "the event carries the pin, so the action forwards one it never builds"
       (is (agent-law/contract-backed?
            (get-in event [:event/payload :resource-policies])))
+      (is (agent-law/split-backed?
+           (get-in event [:event/payload :resource-policies])))
       (is (= (:dispatch/key record)
              (get-in event [:event/payload :resource-policies :dispatch_key]))))
+
+    (testing "the full turn exists before the event can name it"
+      (let [turn (await (split-store/turn-for-run!
+                         translation-store (:translation/run-id result)))]
+        (is (= (:translation-turn/id turn)
+               (get-in event [:event/payload :turn-id])))
+        (is (= (count (get-in turn [:translation-turn/manifest
+                                    :split-manifest/splits]))
+               (get-in event [:event/payload :split-count])))))
 
     (testing "the output revision is derivable from the bound claim"
       ;; Without the binding this throws, which is what would make a fast

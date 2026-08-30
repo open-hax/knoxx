@@ -31,7 +31,8 @@
   and `bind-dispatch-batch!` racing `resolve-dispatch!` would clobber whichever
   field the loser had just written. Updating disjoint columns cannot.
 
-  Translation receipts have no mutable half at all: they are append-only facts."
+  Translation receipts have no mutable half at all: each stable identity is an
+  immutable fact, atomically admitted once."
   (:require [clojure.edn :as edn]
             [knoxx.backend.extern.mongo :as extern-mongo]
             [knoxx.backend.infra.translation-evidence-store :as store]
@@ -46,7 +47,7 @@
   "knoxx_translation_dispatches")
 
 (def RECEIPTS_COLLECTION
-  "Collection holding completed-translation receipts. Append-only."
+  "Collection holding immutable completed-translation receipts."
   "knoxx_translation_receipts")
 
 (def APPROVALS_COLLECTION
@@ -83,6 +84,15 @@
     (await (extern-mongo/ensure-index! dispatches [[:dispatch_key 1]] {:unique true}))
     ;; The join `dispatch-for-batch-document!` performs.
     (await (extern-mongo/ensure-index! dispatches [[:batch_id 1] [:document_wire_id 1]] {}))
+    ;; One immutable receipt per exact resource/source/output/dispatch identity.
+    ;; Sparse admits historical rows that predate `receipt_key`. It guarantees
+    ;; uniqueness among new writers, but cannot serialize a mixed deployment in
+    ;; which an old writer inserts an unkeyed row concurrently. Read and claim
+    ;; paths therefore collapse compatible legacy/keyed duplicates and fail
+    ;; closed on disagreement; full first-write atomicity starts only after old
+    ;; writers are drained and historical rows are backfilled.
+    (await (extern-mongo/ensure-index! receipts [[:receipt_key 1]]
+                                       {:unique true :sparse true}))
     (await (extern-mongo/ensure-index! receipts [[:dispatch_key 1]] {}))
     (await (extern-mongo/ensure-index! receipts
                                        [[:document 1] [:garden 1] [:locale 1]
@@ -96,14 +106,6 @@
     true))
 
 ;; ── Codecs ─────────────────────────────────────────────────────────────────
-
-(def ^:private mutable-dispatch-keys
-  "The dispatch fields held as columns rather than in the EDN blob.
-
-   Named once and used by both the encoder and the decoder, so a field cannot be
-   written as a column and then read back out of the blob — which would make it
-   permanently stale."
-  [:dispatch/outcome :dispatch/batch-id :dispatch/detail])
 
 (def ^:private outcome-by-wire
   "Decode table for the outcome column.
@@ -123,7 +125,7 @@
 (defn- encode-dispatch
   "One dispatch record as the document to insert."
   [record]
-  (let [immutable (apply dissoc record mutable-dispatch-keys)]
+  (let [immutable (dispatch-law/attempt-binding record)]
     (cond-> {:dispatch_key (:dispatch/key record)
              :document_wire_id (:dispatch/document-wire-id record)
              :outcome (get wire-by-outcome (:dispatch/outcome record))
@@ -178,11 +180,20 @@
   {:org_id org-id
    :project (scope-value project)})
 
+(defn- receipt-key
+  "The unique-index value for one completed translation.
+
+   Derived from the shared store identity so memory and Mongo cannot disagree
+   about what is an equal retry. `pr-str` preserves keyword namespaces."
+  [receipt]
+  (pr-str (store/receipt-identity receipt)))
+
 (defn- encode-receipt
   "One translation receipt as the document to insert. Wholly immutable, so the
    EDN blob is the whole record and the columns are purely for querying."
   [receipt]
-  {:dispatch_key (:translation/dispatch-key receipt)
+  {:receipt_key (receipt-key receipt)
+   :dispatch_key (:translation/dispatch-key receipt)
    :document (pr-str (:translation/document receipt))
    :garden (pr-str (:translation/garden receipt))
    :locale (name (:translation/locale receipt))
@@ -208,45 +219,116 @@
                                           {:dispatch_key dispatch-key
                                            :limit 1})))))
 
-(defn- ^:async update-in-flight!
-  "Apply `changes` to the claim for `dispatch-key`, but only while it is still
-   in flight, and return the updated record or nil.
+(defn- attempt-query
+  "Mongo equality coordinates for one exact immutable dispatch attempt."
+  [record]
+  {:dispatch_key (:dispatch/key record)
+   :binding_edn (pr-str (dispatch-law/attempt-binding record))})
 
-   The `outcome` predicate is part of the *query*, which is what makes this
-   compare-and-set rather than read-then-write. Two callers racing to resolve
-   one claim both issue the same conditional update; the first matches, and the
-   second's query no longer does, so it reports nil instead of overwriting a
-   terminal outcome with another one."
-  [db dispatch-key changes]
+(defn- completion-owner
+  "Stable store-private owner for one immutable dispatch attempt."
+  [record]
+  (pr-str (dispatch-law/attempt-binding record)))
+
+(defn- ^:async update-in-flight!
+  "Apply `changes` to `expected-record`, but only while that exact attempt is
+   active and no completion owns it. Return `updated-record` or nil.
+
+   Both the accepted outcome and immutable binding are query predicates. The
+   latter prevents ABA: a delayed attempt A cannot settle replacement B merely
+   because B deliberately reuses the same logical dispatch key. The absent
+   completion owner prevents a racing failure from invalidating an attempt after
+   receipt persistence has begun."
+  [db expected-record changes updated-record]
   (let [accepted (get wire-by-outcome :dispatch/accepted)
         {:keys [matched-count]}
         (await (extern-mongo/update-one! (dispatches-coll db)
-                                         {:dispatch_key dispatch-key
-                                          :outcome accepted}
+                                         (assoc (attempt-query expected-record)
+                                                :outcome accepted
+                                                :completion_owner {:$exists false})
                                          {"$set" changes}))]
     (when (and (number? matched-count) (pos? matched-count))
-      (await (find-dispatch! db dispatch-key)))))
+      ;; Re-read to include a disjoint batch binding that may have landed just
+      ;; before this update. Never return a replacement attempt if one raced the
+      ;; read: the known updated value is safer than attributing B to A.
+      (let [current (await (find-dispatch! db (:dispatch/key expected-record)))]
+        (if (and current (dispatch-law/same-attempt? current expected-record))
+          current
+          (dispatch-law/assert-record! updated-record))))))
 
-(defn- ^:async replace-retriable!
-  "Replace a failed or rejected claim with a fresh attempt, or report nil.
+(defn- ^:async claim-completion!
+  "Acquire or idempotently resume completion ownership for one exact attempt."
+  [db expected-record]
+  (let [accepted (get wire-by-outcome :dispatch/accepted)
+        owner (completion-owner expected-record)
+        query (assoc (attempt-query expected-record)
+                     :outcome accepted
+                     :$or [{:completion_owner {:$exists false}}
+                           {:completion_owner owner}])
+        {:keys [matched-count]}
+        (await (extern-mongo/update-one! (dispatches-coll db)
+                                         query
+                                         {"$set" {:completion_owner owner}}))]
+    (if (and (number? matched-count) (pos? matched-count))
+      expected-record
+      ;; Equal callbacks can both read accepted before one finishes. Confirm an
+      ;; already-completed same attempt so the delayed equal callback remains an
+      ;; idempotent receipt replay; never admit a replacement attempt.
+      (let [current (await (find-dispatch! db (:dispatch/key expected-record)))]
+        (when (and (= :dispatch/completed (:dispatch/outcome current))
+                   (dispatch-law/same-attempt? current expected-record))
+          current)))))
+
+(defn- ^:async finish-completion!
+  "Finish an exact completion-owned attempt after its receipt is durable."
+  [db expected-record detail]
+  (let [owner (completion-owner expected-record)
+        completed (cond-> (assoc expected-record
+                                 :dispatch/outcome :dispatch/completed)
+                    (some? detail) (assoc :dispatch/detail detail))
+        changes (cond-> {:outcome (get wire-by-outcome :dispatch/completed)}
+                  (some? detail) (assoc :detail detail))
+        {:keys [matched-count]}
+        (await (extern-mongo/update-one!
+                (dispatches-coll db)
+                (assoc (attempt-query expected-record)
+                       :outcome (get wire-by-outcome :dispatch/accepted)
+                       :completion_owner owner)
+                {"$set" changes
+                 "$unset" {:completion_owner ""}}))]
+    (if (and (number? matched-count) (pos? matched-count))
+      (dispatch-law/assert-record! completed)
+      ;; Two equal callbacks may finish concurrently. The loser still confirms
+      ;; that this same attempt, rather than a replacement, is now completed.
+      (let [current (await (find-dispatch! db (:dispatch/key expected-record)))]
+        (when (and (= :dispatch/completed (:dispatch/outcome current))
+                   (dispatch-law/same-attempt? current expected-record))
+          current)))))
+
+(defn- ^:async replace-claim!
+  "Replace an admitted claim with a fresh attempt, or report nil.
 
    Compare-and-set on the outcome we just read. The query names that exact
    outcome, so if another pass replaced or resolved the claim in between, this
    update matches nothing and the caller re-reads instead of overwriting a live
-   attempt.
+   attempt. Admission is decided before this call by
+   `law.translation-dispatch/replaceable-claim?`: ordinarily only failed or
+   rejected claims qualify, with explicit candidate-unavailable recovery as the
+   exception for completed or duplicate candidate-terminal claims.
 
    The previous attempt's `batch_id` and `detail` are unset, not merely left. A
    stale batch id would let the old batch's completion report resolve the new
    attempt, minting a receipt for a translation this attempt never produced."
-  [db record observed-outcome]
+  [db record observed-record]
   (let [{:keys [matched-count]}
         (await (extern-mongo/update-one!
                 (dispatches-coll db)
-                {:dispatch_key (:dispatch/key record)
-                 :outcome (get wire-by-outcome observed-outcome)}
+                (assoc (attempt-query observed-record)
+                       :outcome (get wire-by-outcome
+                                     (:dispatch/outcome observed-record)))
                 {"$set" {:outcome (get wire-by-outcome :dispatch/accepted)
                          :binding_edn (:binding_edn (encode-dispatch record))}
-                 "$unset" {:batch_id "" :detail ""}}))]
+                 "$unset" {:batch_id "" :detail "" :completion_owner ""}}))]
     (when (and (number? matched-count) (pos? matched-count))
       record)))
 
@@ -291,8 +373,8 @@
    learn the key was taken — which is why `setup-indexes!` describes that index
    as the claim rather than as a performance choice.
 
-   A retriable existing claim is replaced rather than reported settled. See
-   `law.translation-dispatch/retriable-outcomes`."
+   A replaceable existing claim is replaced rather than reported settled. See
+   `law.translation-dispatch/replaceable-claim?`."
   [db record]
   (let [{:keys [inserted?]}
         (await (extern-mongo/insert-one-unique! (dispatches-coll db)
@@ -305,8 +387,8 @@
           (= :dispatch/accepted outcome)
           {:reservation/status :in-flight :record existing}
 
-          (dispatch-law/retriable? outcome)
-          (if-let [replaced (await (replace-retriable! db record outcome))]
+          (dispatch-law/replaceable-claim? record existing)
+          (if-let [replaced (await (replace-claim! db record existing))]
             {:reservation/status :reserved :record replaced}
             (await (reread-claim! db (:dispatch/key record))))
 
@@ -377,18 +459,83 @@
                                           {:batch_id batch-id
                                            :limit 1})))))
 
-(defn- ^:async append-receipt!
+(defn- ^:async find-receipt!
+  [db unique-key]
+  (decode-receipt
+   (first (await (extern-mongo/find-docs! (receipts-coll db)
+                                          {:receipt_key unique-key
+                                           :limit 1})))))
+
+(defn- ^:async find-existing-receipt!
+  "Find a matching identity, including a row written before `receipt_key`.
+
+   The dispatch key and scope use existing indexes to bound the legacy scan;
+   the authoritative EDN is then checked against the complete shared identity.
+   If historical retries already produced duplicates, their comparable receipt
+   timestamps select the first fact deterministically."
   [db receipt]
-  (await (extern-mongo/insert-one! (receipts-coll db) (encode-receipt receipt)))
-  receipt)
+  (let [query (assoc (scope-query {:org-id (:translation/org-id receipt)
+                                  :project (:translation/project receipt)})
+                     :dispatch_key (:translation/dispatch-key receipt))
+        identity (store/receipt-identity receipt)]
+    (->> (await (extern-mongo/find-docs! (receipts-coll db) query))
+         (map decode-receipt)
+         (filter #(= identity (store/receipt-identity %)))
+         store/collapse-receipts!
+         first)))
+
+(defn- ^:async read-claimed-receipt!
+  "Read the receipt a unique-index refusal says exists, once more if needed."
+  [db receipt]
+  (let [unique-key (receipt-key receipt)]
+    (or (await (find-receipt! db unique-key))
+        (await (find-receipt! db unique-key))
+        (throw (ex-info "completed translation receipt exists but cannot be read"
+                        {:cause :transient-store-inconsistency
+                         :translation/receipt-identity
+                         (store/receipt-identity receipt)})))))
+
+(defn- ^:async claim-receipt!
+  "Atomically admit `receipt`, returning the first equal fact on replay."
+  [db receipt]
+  (if-let [existing (await (find-existing-receipt! db receipt))]
+    (store/first-receipt-or-conflict! existing receipt)
+    (let [{:keys [inserted?]}
+          (await (extern-mongo/insert-one-unique! (receipts-coll db)
+                                                 (encode-receipt receipt)))]
+      (if inserted?
+        receipt
+        (store/first-receipt-or-conflict!
+         (await (read-claimed-receipt! db receipt))
+         receipt)))))
+
+(defn- ^:async visible-receipt!
+  "Return `receipt` only when its attempt has fully settled."
+  [db receipt]
+  (if (:translation/dispatch-attempt-id receipt)
+    (when (store/receipt-visible-for-dispatch?
+           receipt
+           (await (find-dispatch! db (:translation/dispatch-key receipt))))
+      receipt)
+    receipt))
 
 (defn- ^:async read-receipts!
-  "Every receipt in `scope`. Order-insensitive by contract:
-   `domain.translation-evidence` resolves a re-translated revision by comparing
-   timestamps, so no sort is required of the query."
+  "Every dispatch-admitted receipt in `scope`. Order-insensitive by contract:
+   `domain.translation-evidence` resolves a re-translated revision with the
+   evidence law's context-free total order, so no sort is required of the query.
+
+   New attempt-bound receipts are joined to the current dispatch before they
+   cross the store boundary. A receipt written just before a crash remains
+   private until the same attempt finishes; historical receipts without an
+   attempt id retain compatibility."
   [db scope]
-  (mapv decode-receipt
-        (await (extern-mongo/find-docs! (receipts-coll db) (scope-query scope)))))
+  (let [receipts (mapv decode-receipt
+                       (await (extern-mongo/find-docs!
+                               (receipts-coll db) (scope-query scope))))
+        visible-promises (mapv #(visible-receipt! db %) receipts)
+        visible (await (js/Promise.all (to-array visible-promises)))]
+    (store/collapse-receipts!
+     (into [] (remove nil?) (array-seq visible)))))
 
 (defn create-store
   "A durable `ITranslationEvidenceStore` bound to `db`."
@@ -397,16 +544,27 @@
     (reserve-dispatch! [_ record]
       (claim-dispatch! db (dispatch-law/assert-record! record)))
 
-    (resolve-dispatch! [_ dispatch-key outcome detail]
-      (let [wire (get wire-by-outcome outcome)]
-        (when (nil? wire)
-          (throw (ex-info "unknown translation dispatch outcome" {:outcome outcome})))
-        (update-in-flight! db dispatch-key
+    (resolve-dispatch! [_ expected-record outcome detail]
+      (let [checked-outcome (store/assert-ordinary-resolution-outcome! outcome)
+            wire (get wire-by-outcome checked-outcome)
+            checked (dispatch-law/assert-record! expected-record)
+            updated (cond-> (assoc checked :dispatch/outcome checked-outcome)
+                      (some? detail) (assoc :dispatch/detail detail))]
+        (update-in-flight! db checked
                            (cond-> {:outcome wire}
-                             (some? detail) (assoc :detail detail)))))
+                             (some? detail) (assoc :detail detail))
+                           updated)))
 
-    (bind-dispatch-batch! [_ dispatch-key batch-id]
-      (update-in-flight! db dispatch-key {:batch_id batch-id}))
+    (bind-dispatch-batch! [_ expected-record batch-id]
+      (let [checked (dispatch-law/assert-record! expected-record)]
+        (update-in-flight! db checked {:batch_id batch-id}
+                           (assoc checked :dispatch/batch-id batch-id))))
+
+    (claim-dispatch-completion! [_ expected-record]
+      (claim-completion! db (dispatch-law/assert-record! expected-record)))
+
+    (finish-dispatch-completion! [_ expected-record detail]
+      (finish-completion! db (dispatch-law/assert-record! expected-record) detail))
 
     (dispatch-for-key! [_ dispatch-key]
       (find-dispatch! db dispatch-key))
@@ -418,7 +576,7 @@
       (find-batch-only-dispatch! db batch-id))
 
     (record-translation! [_ receipt]
-      (append-receipt! db (evidence-law/assert-receipt! receipt)))
+      (claim-receipt! db (evidence-law/assert-receipt! receipt)))
 
     (completed-translations! [_ scope]
       (read-receipts! db scope))

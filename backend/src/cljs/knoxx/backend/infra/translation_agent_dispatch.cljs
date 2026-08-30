@@ -25,9 +25,14 @@
   no equivalent read here, so a claim whose session died mid-run stays in flight
   and needs an operator. That is a real gap and it is recorded rather than
   papered over — see `known-gap` below."
-  (:require [knoxx.backend.infra.translation-evidence-store :as store]
+  (:require [knoxx.backend.domain.node.crypto :as crypto]
+            [knoxx.backend.domain.translation-evidence :as evidence-domain]
+            [knoxx.backend.infra.translation-evidence-store :as store]
+            [knoxx.backend.infra.translation-split-store :as split-store]
             [knoxx.backend.law.translation-agent :as agent-law]
-            [knoxx.backend.law.translation-dispatch :as law]))
+            [knoxx.backend.law.translation-dispatch :as law]
+            [knoxx.backend.law.translation-source-split :as source-split]
+            [knoxx.backend.law.translation-split :as split-law]))
 
 (def known-gap
   "The recovery an agent-dispatched claim does not have.
@@ -56,6 +61,107 @@
   [run-id]
   (str "translation-needed-" run-id))
 
+(defn- manifest-input
+  "Map one authenticated dispatch and its exact bytes onto split authority."
+  [record source-content]
+  (cond-> {:org-id (:dispatch/org-id record)
+           :garden (:dispatch/garden record)
+           :document (:dispatch/document record)
+           :source-locale (:dispatch/source-locale record)
+           :target-locale (:dispatch/locale record)
+           :source-revision (:dispatch/revision record)
+           :source-text source-content
+           :source-parts (source-split/source-parts source-content)}
+    (some? (:dispatch/project record))
+    (assoc :project (:dispatch/project record))))
+
+(defn- memory-scope
+  "Select prior approved examples without admitting another tenant or locale."
+  [manifest current-candidate-set-ids]
+  (cond-> {:org-id (:split-manifest/org-id manifest)
+           :garden (:split-manifest/garden manifest)
+           :source-locale (:split-manifest/source-locale manifest)
+           :target-locale (:split-manifest/target-locale manifest)
+           :exclude-manifest-id (:split-manifest/id manifest)
+           :current-candidate-set-ids current-candidate-set-ids
+           :limit 12}
+    (some? (:split-manifest/project manifest))
+    (assoc :project (:split-manifest/project manifest))))
+
+(defn- ^:async current-candidate-set-ids!
+  "Resolve the exact split generations that may supply positive memory.
+
+   Completed receipt selection is the same total order used by publication and
+   review inventory. Each split receipt is then point-joined to its current
+   completed dispatch attempt a second time. The store already performs this
+   visibility join, but repeating it here makes the memory boundary fail closed
+   when a replaceable store returns a stale snapshot or ignores its contract.
+   Historical receipts without attempt identity can remain publication history;
+   they cannot authorize the newer split-memory feature."
+  [evidence-store manifest]
+  (let [scope {:org-id (:split-manifest/org-id manifest)
+               :project (:split-manifest/project manifest)}
+        receipts (await (store/completed-translations! evidence-store scope))
+        current (evidence-domain/current-receipts receipts)]
+    (loop [remaining (seq current)
+           candidate-set-ids #{}]
+      (if-let [receipt (first remaining)]
+        (let [candidate-set-id (:translation/candidate-set-id receipt)
+              attempt-id (:translation/dispatch-attempt-id receipt)]
+          (if (and candidate-set-id attempt-id)
+            (let [record (await (store/dispatch-for-key!
+                                 evidence-store
+                                 (:translation/dispatch-key receipt)))]
+              (recur (next remaining)
+                     (cond-> candidate-set-ids
+                       (store/receipt-visible-for-dispatch? receipt record)
+                       (conj candidate-set-id))))
+            (recur (next remaining) candidate-set-ids)))
+        candidate-set-ids))))
+
+(defn- ^:async pinned-memory!
+  "Read future-translation memory once and preserve failure as turn evidence."
+  [evidence-store translation-store manifest]
+  (try
+    (let [current-candidate-set-ids
+          (await (current-candidate-set-ids! evidence-store manifest))
+          examples (await (split-store/applicable-memory!
+                           translation-store
+                           (memory-scope manifest current-candidate-set-ids)))]
+      (split-law/memory-snapshot {:status (if (seq examples) :found :empty)
+                                  :examples examples}))
+    (catch :default err
+      (split-law/memory-snapshot
+       {:status :failed
+        :examples []
+        :error (or (some-> (ex-message err) str not-empty)
+                   "translation memory retrieval failed")}))))
+
+(defn- ^:async admit-translation-turn!
+  "Persist the complete turn aggregate before any provider event is emitted."
+  [{:keys [evidence-store split-store digest-hex translation-execution]}
+   record source-content]
+  (when-not split-store
+    (throw (ex-info "translation split persistence is not configured"
+                    {:dispatch/key (:dispatch/key record)})))
+  (let [manifest (split-law/split-manifest
+                  digest-hex (manifest-input record source-content))
+        claim (split-law/candidate-claim digest-hex manifest
+                                         (law/output-revision record))
+        memory (await (pinned-memory! evidence-store split-store manifest))
+        execution (split-law/assert-execution-integrity!
+                   digest-hex translation-execution)
+        turn (split-law/translation-turn-admission
+              digest-hex
+              {:dispatch-key (:dispatch/key record)
+               :run-id (:dispatch/batch-id record)
+               :admitted-at (:dispatch/at record)
+               :manifest manifest
+               :candidate-claim claim
+               :execution execution
+               :memory memory})]
+    (await (split-store/admit-turn! split-store turn))))
+
 (defn- ^:async start-run!
   "Bind the run id to a freshly reserved claim, then announce the work.
 
@@ -72,22 +178,20 @@
    existed and was recoverable by its persisted dispatch key, so proceeding kept
    real work. Here nothing has happened yet, so declining costs nothing and
    emitting anyway would start an agent whose output has nowhere to land."
-  [{:keys [evidence-store emit! digest-hex]} record source-content]
+  [{:keys [evidence-store emit! digest-hex] :as deps} record source-content]
   (let [run-id (agent-law/run-id record digest-hex)
-        bound (await (store/bind-dispatch-batch! evidence-store
-                                                 (:dispatch/key record)
-                                                 run-id))]
+        bound (await (store/bind-dispatch-batch! evidence-store record run-id))]
     (if-not bound
       {:dispatch/outcome :dispatch/failed
        :dispatch/record (or (await (store/resolve-dispatch!
-                                    evidence-store (:dispatch/key record)
+                                    evidence-store record
                                     :dispatch/failed
                                     "the run id could not be bound to the claim"))
                             record)
        :dispatch/detail "the run id could not be bound to the claim"}
       (try
-        (let [event (assoc (agent-law/translation-needed-event
-                            bound run-id source-content)
+        (let [turn (await (admit-translation-turn! deps bound source-content))
+              event (assoc (agent-law/translation-needed-event bound turn)
                            :event/id (event-id run-id))
               dispatched (await (emit! event))]
           (cond-> {:dispatch/outcome :dispatch/accepted
@@ -106,7 +210,7 @@
                            "the translation event could not be dispatched")]
             {:dispatch/outcome :dispatch/failed
              :dispatch/record (or (await (store/resolve-dispatch!
-                                          evidence-store (:dispatch/key record)
+                                          evidence-store bound
                                           :dispatch/failed detail))
                                   bound)
              :dispatch/detail detail}))))))
@@ -134,7 +238,6 @@
 
    `digest-hex` is the hash `law.translation-agent/run-id` mints with, injected
    so the law stays free of a runtime dependency.
-
    `source-content` is the document's bytes at the dispatched revision, read by
    the caller. Passed in rather than read here because the caller has already
    read them to compute the digest the claim is keyed by — reading again would be
@@ -148,7 +251,10 @@
                                     (if pin-refusal
                                       law/unreachable-outcome
                                       :dispatch/accepted)
-                                    (clock))]
+                                    (clock)
+                                    :attempt-id (crypto/random-uuid)
+                                    :recovery-reason
+                                    (:dispatch/recovery-reason context))]
     (if pin-refusal
       {:dispatch/outcome law/unreachable-outcome
        :dispatch/record record

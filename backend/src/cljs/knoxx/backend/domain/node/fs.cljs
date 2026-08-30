@@ -7,7 +7,7 @@
 
 (ns knoxx.backend.domain.node.fs
   (:refer-clojure :exclude [exists?])
-  (:require [clojure.string :as str]
+  (:require ["node:crypto"       :as node-crypto]
             ["node:fs"           :as node-fs]
             ["node:fs/promises"  :as fs]
             ["node:path"         :as path]))
@@ -164,6 +164,49 @@
       (if (= "EEXIST" (.-code err))
         false
         (throw err)))))
+
+(declare unlink-sync!)
+
+(defn- fsync-file-sync!
+  [p]
+  (let [fd (.openSync node-fs (str p) "r")]
+    (try
+      (.fsyncSync node-fs fd)
+      (finally
+        (.closeSync node-fs fd)))))
+
+(defn- link-file-exclusive-sync!
+  [from to]
+  (try
+    (.linkSync node-fs (str from) (str to))
+    true
+    (catch :default err
+      (if (= "EEXIST" (.-code err))
+        false
+        (throw err)))))
+
+(defn install-file-exclusive-sync!
+  "Crash-safely install complete UTF-8 `content` at an absent final path.
+
+   The payload is first written and fsynced under a unique sibling name, then a
+   hard link atomically claims `p` without overwriting an incumbent. A crash or
+   ENOSPC during the write can therefore leave only disposable temp debris,
+   never a torn final file that poisons every immutable retry. A crash after the
+   link leaves a complete final inode (and at worst an extra sibling link).
+
+   Returns true when this call installed the final path and false when another
+   writer already owns it. Any other error is propagated. Temp cleanup is best
+   effort only for absence; real cleanup failures are surfaced."
+  [p content]
+  (let [final-path (str p)
+        temp-path (str final-path ".tmp-" (.randomUUID node-crypto))]
+    (try
+      (.writeFileSync node-fs temp-path (str content)
+                      #js {:flag "wx" :encoding "utf8"})
+      (fsync-file-sync! temp-path)
+      (link-file-exclusive-sync! temp-path final-path)
+      (finally
+        (unlink-sync! temp-path)))))
 
 (defn write-file-sync!
   "Synchronously write `content` to `p` as UTF-8, creating or overwriting."

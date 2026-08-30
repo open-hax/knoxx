@@ -133,6 +133,41 @@
                   (get-in ctx [:event :event/payload :resource-policies]))]
     (or declared carried)))
 
+(defn- execution-snapshot-from-event?
+  "Whether this trigger requires its resolved agent policy to match the event."
+  [action]
+  (boolean
+   (or (get-in action [:action/with :execution-snapshot-from-event])
+       (get-in action [:action/with :executionSnapshotFromEvent]))))
+
+(defn- resolved-execution
+  "Project resolved agent policy into the portable snapshot comparison shape."
+  [agent-id resolved]
+  {:translation-execution/agent-id agent-id
+   :translation-execution/model (:model resolved)
+   :translation-execution/thinking (some-> (:thinking-level resolved) name)
+   :translation-execution/system-prompt (:system-prompt resolved)
+   :translation-execution/tool-ids (vec (:tool-ids resolved))})
+
+(defn event-execution-refusal
+  "Describe contract drift between an event snapshot and resolved agent policy."
+  [event agent-id resolved]
+  (let [snapshot (get-in event [:event/payload :execution])
+        expected (resolved-execution agent-id resolved)
+        actual (some-> snapshot (dissoc :translation-execution/digest))]
+    (when-not (= expected actual)
+      {:refusal/type :agent-execution-drift
+       :refusal/expected expected
+       :refusal/actual actual})))
+
+(defn- assert-event-execution!
+  "Refuse an opted-in event before spawn when executable policy has drifted."
+  [event agent-id resolved]
+  (when-let [refusal (event-execution-refusal event agent-id resolved)]
+    (throw (ex-info "event execution snapshot does not match resolved agent policy"
+                    refusal)))
+  (get-in event [:event/payload :execution]))
+
 (defn- actor-id
   [ctx resolved]
   (or (nonblank (:actor/id ctx))
@@ -248,6 +283,8 @@
         task-input (action-task-input action trigger resolved)
         resource-policies (action-resource-policies ctx action)
         rendered-message (render-start-message trigger event task-input (:trigger-id ids))]
+    (when (execution-snapshot-from-event? action)
+      (assert-event-execution! event agent-id resolved))
     (when (:deprecated-agent-task-fallback? task-input)
       (errors/log-warning!
        :action/start-agent-session.deprecated-agent-task-prompt

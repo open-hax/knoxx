@@ -55,7 +55,7 @@ storage is not publication, and concrete layout/rendering is not content authori
 | Capability epic | First bounded cards | Owns |
 |---|---|---|
 | **`knoxx-transduction-provider-pipeline`** (P1) | `knoxx-translation-transduction-boundary`, `knoxx-translation-config-publication-dependency-removal`, `knoxx-translation-config-trusted-auth-context`, `knoxx-versioned-resolved-translation-config`, `knoxx-translation-pipeline-validation`, `knoxx-translations-event-sourced` | Typed candidate generation, trusted scope, provider policy, immutable attempts, and provenance. |
-| **`knoxx-evaluation-review-system`** (P1) | `knoxx-evaluation-case-contracts`, `knoxx-evaluation-mcp-review-flow`; UI adapter deferred | Rubrics, SME judgments/corrections, adjudication, and durable evaluation receipts. |
+| **`knoxx-evaluation-review-system`** (P0) | Reopened `knowledge-ops-translation-document-review-v2`, `knoxx-translation-split-memory-feedback`, `knoxx-evaluation-case-contracts`, `knoxx-evaluation-mcp-review-flow`, and `knoxx-translation-review-chat-panel`; headless and UI paths share receipts | Real persisted translation splits, rubrics, SME judgments/corrections, translation memory, and durable evaluation receipts over the resource CMS. |
 | **`knoxx-resource-repository-cms`** (P2) | `knoxx-cms-contract-validation`, `knoxx-file-resource-repository-provider`, `knoxx-resource-repository-snapshot-observation` | Provider-neutral resource identity, validation, versioned CRUD, and atomic observations. |
 | **`knoxx-representation-output-boundary`** (P3) | `knoxx-react-ssr-representation-provider` | Conversion of resolved semantic/view artifacts into HTML, React, Markdown, PDF, or other concrete forms. |
 
