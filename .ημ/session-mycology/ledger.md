@@ -107,3 +107,13 @@
   spore: none
   receipt-refs: 2026-08-30T00:03:25.829Z
   note: Historical observation evidence cannot authorize a later commit; current authorization and policy rotation need one linearization fence, and adjudication must bind effective judgment-head generations rather than duplicate raw receipt ids.
+
+- ts: 2026-08-30T00:18:11.391Z
+  session: codex/knoxx238-repair
+  task: Order installed retry comparison before current reauthorization
+  p-efficiency: 0.81
+  p-friction: 0.57
+  p-skill-candidate: 0.58
+  spore: none
+  receipt-refs: 2026-08-30T00:18:11.391Z
+  note: A lost response cannot strand a turn that already linearized under allow; compare the installed slot first, reauthorize only an empty slot, and let a later denial block new authority without rewriting admitted history.

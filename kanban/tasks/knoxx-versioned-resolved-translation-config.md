@@ -232,7 +232,15 @@ map entries are not reservations and cannot authorize provider invocation.
 One atomic unique-insert/compare operation, `TranslationTurnConfigAdmission`, authorizes and
 installs the final turn claim, execution snapshot, complete ordered member-admission map, and one
 immutable `TranslationTurnAdmissionReceipt`. It targets that organization-scoped admission slot.
-At that slot's linearization point, a fresh server-owned
+Its installed-slot comparison precedes any new `observe-many` or current reauthorization on every
+initiation/retry. A canonically equal installed record is the already-linearized result and returns
+unchanged before any new current authorization; changed same-slot stable facts conflict before any
+repository or policy observation.
+Only an empty slot proceeds through a fresh `observe-many`, complete candidate construction, and
+the final atomic compare/install. If a concurrent winner appears between the early comparison and
+final install, the final comparison applies the same equal-return-or-conflict rule.
+
+At the empty slot's final linearization point, a fresh server-owned
 `authorize-translation-turn-admission` operation evaluates the authenticated principal and
 effective scope/delegation against the required turn-admission capability and the exact canonical
 resource-coordinate set from the complete observation. The earlier `observe-many` receipt remains
@@ -263,23 +271,27 @@ attempt. The atomic turn install is every member's shared durable freshness boun
 
 A crash or injected failure before that atomic commit leaves no persisted turn claim, execution
 snapshot, member admission, or provider/session side effect. Retry may reuse only the initiator's
-stable turn/member ids; it must perform a fresh `observe-many` authorization/config observation
-and build a new complete candidate turn. Retry equality is evaluated over the effective
-organization, stable turn id, authenticated principal/effective delegation/required capability,
-claim variant and its complete stable variant-specific initiator facts, and complete caller-stable
-canonical member/source/request facts. The freshly observed candidate execution digest is
-server-derived, cannot be supplied by the caller, and is excluded from retry equality; it is
-discarded when those stable facts match an installed record.
-The earlier operation receipt remains audit history and
-cannot authorize the retry. A current denial returns no admission; an allow-to-allow policy or
-semantic config rotation is reflected by the fresh
-whole-turn observation. A crash after commit but before response returns the exact complete
-record on retry. Concurrent callers with equal stable facts, including the same claim variant and
+stable turn/member ids. It first performs the installed-slot comparison. An empty slot must then
+perform a fresh `observe-many` authorization/config observation and build a new complete candidate
+turn. Retry equality is evaluated over the effective organization, stable turn id, authenticated
+principal/effective delegation/required capability, claim variant and its complete stable
+variant-specific initiator facts, and complete caller-stable canonical member/source/request facts.
+The freshly observed candidate execution digest is server-derived, cannot be supplied by
+the caller, and is excluded from retry equality; it is discarded when those stable facts match an
+installed record.
+
+The earlier operation receipt remains audit history and cannot authorize an empty-slot retry. A
+current denial on an empty slot installs nothing; an allow-to-allow policy or semantic config
+rotation is reflected by the fresh whole-turn observation. A crash after commit but before
+response returns the exact complete record on an equal retry before any new current authorization.
+That installed readback relies on the installed record, not the earlier receipt. A postcommit
+policy denial cannot invalidate or rewrite the installed result; it blocks only a new empty-slot
+admission. Concurrent callers with equal stable facts, including the same claim variant and
 variant-specific initiator facts, may build different unattached candidate turns whose execution
 digests straddle a semantic config change, but exactly one whole record wins; every loser discards
 its candidates and returns the installed winner. Reusing the same organization-scoped slot with a
 changed authenticated initiator, claim variant, variant-specific initiator facts,
-source/request facts, or turn membership conflicts.
+source/request facts, or turn membership conflicts before repository or policy observation.
 After installation, substituting the installed execution digest in a final claim, authenticated
 session, member artifact, or save also conflicts. A genuinely different execution configuration
 requires an explicit new initiation with a stable `turn_id` and separately admitted turn; the
@@ -353,6 +365,11 @@ The publication-free namespace closure from #273 remains an invariant.
    admission and prove the only outcomes are a complete turn under then-current allow followed by
    revocation, or a denial with no record/session. There is no turn commit after a denial already
    linearized, and replaying the old receipt cannot select a third outcome.
+   Commit a turn under allow, lose the response, rotate policy to deny, and make an equal retry.
+   Installed-slot comparison precedes reauthorization, so the retry returns the exact committed
+   record. This postcommit retry starts no second provider/session and does not use the old receipt
+   as authority. A changed same-slot retry still conflicts before policy observation, while a
+   genuinely new empty-slot turn under the denial installs nothing.
    Race callers with equal stable initiator facts whose observations straddle a config change:
    authenticated initiator, claim variant, stable variant-specific initiator facts, and
    member/source/request facts are the retry projection; the

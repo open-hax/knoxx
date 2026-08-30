@@ -124,17 +124,21 @@ Explicitly **out of scope here**:
    ids with equal content create distinct attempts. Store-only tests are insufficient for this
    proof. Inject failures after observation, after attestation minting, while staging each member,
    immediately before atomic commit, and after commit/before response. Every precommit failure
-   exposes no claim, snapshot, member admission, or session; retry reuses only stable initiator ids
-   and must perform a fresh authorized whole-turn observation. The earlier receipt is audit
-   evidence, never retry authority. A postcommit retry returns the exact complete turn, and equal
-   concurrent losers cannot return a different candidate. A config-straddling equal loser with the
-   same claim variant and variant-specific initiator facts excludes its server-derived candidate
-   execution digest from retry equality, discards it, and returns the installed winner;
+   exposes no claim, snapshot, member admission, or session. Retry first compares the
+   organization/turn installed-slot using stable initiator/member facts; an empty slot performs a
+   fresh authorized whole-turn observation, an equal installed slot returns the exact record, and
+   changed facts conflict before policy observation. The earlier receipt is audit evidence, never
+   retry authority. A postcommit retry returns the exact complete turn, and equal concurrent losers
+   cannot return a different candidate. A config-straddling equal loser with the same claim variant
+   and variant-specific initiator facts excludes its server-derived candidate execution digest
+   from retry equality, discards it, and returns the installed winner;
    substituting the installed digest after admission conflicts. Advance current
    provider/model config and rotate authorization policy allow-to-allow or allow-to-deny at each
-   barrier: outcomes are a
-   complete authorized old turn, a freshly observed complete new turn, or no turn on denial—never
-   mixed members or an old-receipt install. A multi-digest preflight returns one canonical
+   barrier: outcomes are a complete authorized old turn, a freshly observed complete new turn, or
+   no new empty-slot turn on denial—never mixed members or an old-receipt install. Commit under
+   allow, lose the response, then rotate to deny: an equal retry returns the exact installed winner
+   before reauthorization and starts no second provider/session, while a new empty-slot turn remains
+   denied. A multi-digest preflight returns one canonical
    non-authorizing `:translation/turn-partition-required` plan and leaves no claim, snapshot, member
    admission, receipt, provider call, or session. It never mints child ids or partially installs a
    group. A lost-response retry recomputes current advice from zero durable partition state; each

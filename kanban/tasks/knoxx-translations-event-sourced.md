@@ -127,18 +127,21 @@ not receive `save_translation`; an explicit translation-start action gathers the
 bound follow-up turn instead. A claimed member collection cannot be expanded, removed, or reinterpreted
 after the model turn starts; translating another segment requires a newly admitted follow-up turn.
 No already-running unbound turn may generate a candidate and synthesize admission at save time.
-Non-agent workflows establish the same per-attempt admission before their provider call. A crash
-before the atomic turn admission leaves no persisted turn claim, execution snapshot, member
-admission, or session. Recovery reuses only the initiator's stable turn/member ids and must perform
-a fresh authorized config observation before attempting the complete atomic install. A crash
-after commit returns the one complete stored turn on retry. The observation receipt is historical
-evidence for that one operation and is never reused to install a member later. The server-derived
-candidate execution digest is excluded from retry equality: callers with the same stable
-organization/turn, authenticated initiator, claim variant, variant-specific initiator facts, and
-member/source/request facts return the installed whole-turn winner even when their unattached
-observations straddle a config change. Changed
-stable facts conflict, and a different execution configuration uses a new turn id rather than
-replacing the installed digest.
+Non-agent workflows establish the same per-attempt admission before their provider call. Recovery
+uses the server-derived organization/turn slot and compares any installed record against the
+caller's stable initiator/member facts before a new config observation or reauthorization. An equal
+installed turn returns unchanged; changed stable facts conflict. Only an empty installed-slot
+comparison may perform the fresh authorized config observation and complete atomic install. A
+crash before that admission leaves no persisted turn claim, execution snapshot, member admission,
+or session, so recovery of that empty slot observes afresh. A crash after commit returns the one
+complete stored turn on retry even if a postcommit policy denial linearizes before that retry; the
+installed allow decision is not retroactively rewritten and the retry starts no second session.
+The observation receipt is historical evidence for that one operation and is never reused to
+install a member later. The server-derived candidate execution digest is excluded from retry equality:
+callers with the same stable organization/turn, authenticated initiator, claim variant,
+variant-specific initiator facts, and member/source/request facts return the installed whole-turn
+winner even when their unattached observations straddle a config change. A different execution
+configuration uses a new turn id rather than replacing the installed digest.
 
 The production `save_translation` MCP input schema exposes the required stable `attempt_id` on
 every call so the session echoes the pre-existing member value after timeout or lost response.
