@@ -407,3 +407,13 @@
   spore: none
   receipt-refs: 2026-08-30T21:22:36.323Z
   note: A sampled route inventory is not a closed security proof; derive probes from registered handlers that can reach server credentials. Bootstrap context requires closed typed evidence for signup, password, invite, and OAuth paths, never public identity-header reuse.
+
+- ts: 2026-08-30T21:27:11.163Z
+  session: codex/knoxx-board-reconcile
+  task: Separate proposal and bound credentials and make unknown provenance upgradeable
+  p-efficiency: 0.91
+  p-friction: 0.39
+  p-skill-candidate: 0.47
+  spore: none
+  receipt-refs: 2026-08-30T21:27:11.163Z
+  note: Pre-segmentation authority cannot bind coordinates that do not exist. Unknown provenance needs one explicit atomic upgrade, not an unreachable promise. The generated credential-route inventory now also names the current Proxx bearer family for auditability.

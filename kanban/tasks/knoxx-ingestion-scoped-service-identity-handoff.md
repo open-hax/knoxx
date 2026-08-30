@@ -308,11 +308,14 @@ and sole-writer rules.
    remains non-authorizing.
 3. Exercise capability issuance with an authorized service principal and a current active
    batch/membership/organization tuple, then with an admitted legacy single-job manifest from
-   `/translations/jobs/next`. Capture each credential and prove its decoded/validated claims bind
-   carrier type, complete immutable coordinate set, authoritative manifest id/digest, Knoxx-owned
-   batch or job authority epoch, audience, operations, expiry, and nonce. The batch variant binds
-   its admitted membership; the legacy-job variant proves membership absent and explicit
-   service-principal job permission.
+   `/translations/jobs/next`. Capture the pre-segmentation `ProposalSelectionCapability` and prove
+   it binds only the verified carrier tuple, authoritative `SourceManifest` id/digest, Knoxx-owned
+   batch or job authority epoch, proposal operations, audience, expiry, nonce, and workload sender;
+   it contains no invented segment coordinate or model-selected span. After validated
+   `TranslationManifest` admission, separately capture the bound translation capability and prove
+   that it additionally binds the complete immutable coordinate set and permitted translation
+   operations. The batch variants bind admitted membership; the legacy-job variants prove
+   membership absent and explicit service-principal job permission.
 4. Send an arbitrary membership with a valid service key; a swapped batch, membership, or
    organization; and an expired, replayed, forged, or cross-route capability. Every variant fails
    before policy lookup, segment read, agent start, or audio effect, with no administrator fallback.

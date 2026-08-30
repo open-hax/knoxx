@@ -144,6 +144,8 @@ eventual rejection and cannot complete until that projected child is green.
   every `infra/routes/memory.cljs` `/api/memory/*` registration that can read or mutate
   OpenPlanner-backed session rows, including session list/detail and title status/backfill/import,
   plus
+  `infra/routes/models.cljs` `GET /api/proxx/models`, `POST /api/proxx/chat`, `GET /api/models`,
+  and every other Proxx bearer-backed health/observability registration, plus
   `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs`. Include every Knoxx route that
   accepts inbound data or headers and then calls a downstream service with Knoxx-held credentials;
   record which headers are constructed locally, copied, or forwarded.
@@ -271,6 +273,10 @@ eventual rejection and cannot complete until that projected child is green.
    zero OpenPlanner session-row reads, title jobs, imports, or mutations. The gate derives this
    inventory from registered handlers and their server-credential call graph, then fails if any
    credential-reachable route lacks a direct negative probe.
+   Direct no-context probes cover every Proxx bearer-backed registration, including
+   `GET /api/proxx/models`, `POST /api/proxx/chat`, and `GET /api/models`; each rejects before
+   `proxx-client/headers-for` can attach the server token, with zero paid chat, model, health, or
+   observability calls.
 11. A direct `GET /api/openplanner/v1/sessions` negative probe has no valid Knoxx credential and may
    include conflicting identity headers. The `openplanner-client/sessions!` call count remains zero,
    no session rows or enrichment data are disclosed, and the canonical protected-request failure is

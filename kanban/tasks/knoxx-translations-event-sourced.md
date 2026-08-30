@@ -275,8 +275,9 @@ garden fields, and reason `:historical-source-unavailable`. It never substitutes
 revision or fabricates a span. This migration-only variant is a distinct grouping key, remains
 servable in the new projection, and is ineligible for provenance-sensitive evaluation, training,
 publication, or a new append. A later verified retranslation creates a normal
-`SegmentCoordinate`/attempt while preserving the unknown-provenance initial event as separate
-history. Ambiguous competing historical matches still stop for operator reconciliation. The
+`SegmentCoordinate`/attempt through the explicit atomic upgrade below while preserving the
+unknown-provenance initial event as separately addressable history. Ambiguous competing historical
+matches still stop for operator reconciliation. The
 canonical migrated event payload contains whichever tagged source snapshot was actually observed.
 
 Migration admission atomically unique-inserts or compares by `LegacyMigrationIdentity` before
@@ -298,6 +299,17 @@ CAS the event/projection is staged evidence, not read authority. Once `:events`,
 projection only and never fall back to or dual-write the legacy row. A distinct complete coordinate
 that resolves to an already bound `LegacyAuthorityKey` returns a typed migration-coordinate
 conflict before coordinate-specific admission, cutover, or writes.
+
+The sole coordinate-alias exception is an explicit `UnknownProvenanceUpgrade` for the currently
+bound `LegacyUnknownSourceCoordinate`. Under the same `LegacyAuthorityKey` fence, one atomic CAS
+must compare the exact unknown coordinate, persisted source-text digest, current marker/version,
+and a stable verified-retranslation attempt id; validate the normal `SegmentCoordinate` and its
+authoritative source manifest; append the new normal event/projection; and move the marker's bound
+coordinate/current projection to that verified coordinate. The unknown migrated event remains
+immutable and separately readable in history. An equal retry returns the stored upgrade receipt;
+a changed target, stale marker, competing upgrade, or ordinary coordinate alias conflicts before
+any append, projection, or marker change. There is no fallback, delete, or in-place rewrite of the
+unknown event.
 
 Marker absence is a bootstrap pre-state, not a third authority value. Every first read,
 migration, or save derives and acquires the same legacy-authority migration/admission fence before
@@ -418,8 +430,11 @@ land a migration that leaves that endpoint erroring.
 - Legacy rows with no historical revision/span fixture migrate once under
   `LegacyUnknownSourceCoordinate`, remain readable after `:events` cutover, and expose the persisted
   source-text digest plus `:historical-source-unavailable` without naming the current revision.
-  Provenance-sensitive evaluation/training/publication and appending a new attempt to that unknown
-  grouping key fail closed; a later verified retranslation uses a separate normal coordinate.
+  Provenance-sensitive evaluation/training/publication and appending an ordinary attempt to that
+  unknown grouping key fail closed. A later verified retranslation uses
+  `UnknownProvenanceUpgrade`: race equal and changed upgrade attempts, prove exactly one atomic
+  normal coordinate/current projection wins, equal retry is idempotent, and the unknown event
+  remains separately readable without becoming provenance authority.
 - Migration fixtures address one legacy row concurrently through two complete coordinates that
   differ by project, garden, source locale, source revision, or source span. Both resolve the same
   `LegacyAuthorityKey`; exactly one coordinate binding wins, and the other receives the typed
