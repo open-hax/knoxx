@@ -13,39 +13,22 @@ Knoxx supports **GitHub OAuth** login with **cookie-backed sessions** stored in 
 ## Architecture
 
 ```
-Browser → Caddy (ussy.promethean.rest, HTTPS :443, auto-TLS)
-              ├── /api/* → SSH tunnel :8443 → laptop:8000 (Fastify backend)
-              └── /*     → SSH tunnel :8444 → laptop:5173 (Vite dev server)
+Browser → Caddy on the declared DigitalOcean host
+              ├── /api/* and /ws/* → knoxx-backend:8000
+              └── /*               → knoxx-frontend:80
 
-Laptop (dev machine):
-  Fastify (:8000)
-    ├── onRequest hook: cookie → x-knoxx-* headers
-    ├── /api/auth/* routes (JS module)
-    └── /api/* routes (CLJS, uses x-knoxx-* headers)
-  Vite (:5173)
-    └── React SPA
-  nginx (:80, localhost only)
-    └── Dev access fallback
+knoxx-backend
+  ├── onRequest hook: cookie → x-knoxx-* headers
+  ├── /api/auth/* routes
+  └── /api/* routes (CLJS, uses x-knoxx-* headers)
 ```
 
 The key design: the CLJS backend uses `x-knoxx-user-email` and `x-knoxx-org-slug` headers for auth. The `onRequest` hook reads the session cookie from Redis and injects these headers before the CLJS routes execute. This means all existing CLJS auth logic works unchanged.
 
-## Infrastructure: SSH Tunnel
-
-The dev laptop connects to `ussy.promethean.rest` via an autossh tunnel that persists across disconnects:
-
-- **Local systemd service**: `~/.config/systemd/user/knoxx-tunnel.service`
-- **ussy:8443** → laptop:8000 (backend API)
-- **ussy:8444** → laptop:5173 (Vite frontend)
-- **Caddy on ussy** routes `knoxx.promethean.rest` to these tunnel ports
-- **ussy sshd** has `GatewayPorts clientspecified` to allow 0.0.0.0 binding
-
-Tunnel management:
-```bash
-systemctl --user status knoxx-tunnel    # Check status
-systemctl --user restart knoxx-tunnel   # Restart
-journalctl --user -u knoxx-tunnel -f    # Follow logs
-```
+Production host placement, pinned SSH trust, Caddy routing, image builds, and
+live verification are owned by `open-hax/services`. Local development runs the
+backend and frontend directly; it is not exposed by mutating production ingress
+or creating a production tunnel.
 
 ## Environment Variables
 
@@ -152,11 +135,14 @@ self-signup or infer admin rights from arbitrary email/password logins.
 
 ## Production URL
 
-- **DNS**: `knoxx.promethean.rest` → A record `104.130.31.129` (ussy.promethean.rest public IP)
-- **TLS**: Caddy on ussy auto-provisions Let's Encrypt certificates via ACME HTTP-01 challenge
-- **Caddy config**: `/home/error/devel/services/proxx/Caddyfile` on ussy (knoxx.promethean.rest block)
-- **Tunnel**: `~/.config/systemd/user/knoxx-tunnel.service` (autossh, restarts automatically)
-- **Local dev**: `http://localhost` via nginx (:80) for direct laptop access
+- **DNS**: `knoxx.promethean.rest` resolves to the host declared by
+  `open-hax/services/digitalocean/hosts/production.yaml`.
+- **TLS and routing**: the Services-owned Caddy definition routes the frontend,
+  API, WebSocket, and health surfaces to the Knoxx Compose project.
+- **Deployment**: a reviewed Services pull request carrying `deploy` at merge
+  time builds and deploys Knoxx from its reviewed `main` revision.
+- **Local development**: use the local Vite and Fastify endpoints; it is a
+  separate runtime from production.
 
 ## Frontend
 
@@ -166,44 +152,5 @@ The `AuthBoundary` component wraps the entire app:
 - If authenticated → renders children with `useAuth()` hook available
 - `UserMenu` component in the header shows user info + sign out button
 
-## Caddyfile on ussy
-
-The knoxx block in `/home/error/devel/services/proxx/Caddyfile`:
-
-```
-knoxx.promethean.rest {
-  encode gzip zstd
-
-  header {
-    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-  }
-
-  # API and WebSocket routes → backend (port 8000 via tunnel)
-  handle /api/ingestion/ws/* {
-    reverse_proxy 172.18.0.1:8443
-  }
-  handle /api/ingestion/* {
-    reverse_proxy 172.18.0.1:8443
-  }
-  handle /api/* {
-    reverse_proxy 172.18.0.1:8443
-  }
-  handle /ws/* {
-    reverse_proxy 172.18.0.1:8443
-  }
-  handle /health {
-    reverse_proxy 172.18.0.1:8443
-  }
-
-  # Everything else → Vite frontend (port 5173 via tunnel)
-  handle {
-    reverse_proxy 172.18.0.1:8444
-  }
-}
-```
-
-After editing, copy into container and reload:
-```bash
-docker cp /home/error/devel/services/proxx/Caddyfile <container>:/etc/caddy/Caddyfile.new
-docker exec <container> caddy reload --config /etc/caddy/Caddyfile.new --adapter caddyfile
-```
+The concrete host inventory and Caddyfile intentionally live in Services so
+Knoxx documentation cannot become a second deployment implementation.

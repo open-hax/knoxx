@@ -1,9 +1,31 @@
-name: Deploy Production
+name: Production Release Preflight
+
+# Application validation stays with Knoxx. Production deployment is centrally
+# authorized by a reviewed open-hax/services PR carrying the `deploy` label and
+# runs only through the DigitalOcean stack workflow. This workflow intentionally
+# contains no deployment job.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Knoxx ref to validate
+        required: false
+        default: main
+        type: string
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Knoxx ref to validate for a centralized deployment
+        required: false
+        default: main
+        type: string
+    outputs:
+      source_sha:
+        description: Immutable Knoxx commit that passed the preflight
+        value: ${{ jobs.production-preflight.outputs.source_sha }}
 
 permissions:
   contents: read
@@ -14,7 +36,7 @@ env:
   PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
 
 concurrency:
-  group: knoxx-production
+  group: knoxx-production-preflight
   cancel-in-progress: false
 
 jobs:
@@ -22,9 +44,19 @@ jobs:
     name: production-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
+        with:
+          repository: open-hax/knoxx
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+
+      - name: Record validated source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -74,14 +106,3 @@ jobs:
 
       - name: Frontend build
         run: pnpm -C frontend run build
-
-  deploy-production:
-    name: deploy-production
-    needs: production-preflight
-    uses: open-hax/services/.github/workflows/deploy-promethean.yml@main
-    with:
-      environment: production
-      service: knoxx
-      source_repository: ${{ github.repository }}
-      source_ref: ${{ github.sha }}
-    secrets: inherit

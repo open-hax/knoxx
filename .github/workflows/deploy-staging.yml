@@ -1,4 +1,8 @@
-name: Deploy Staging
+name: Staging Release Preflight
+
+# The retired VPS lane had a shared staging slot. Keep the application gate,
+# but do not imply that a passing run deploys anything. Production deployment
+# is centralized in open-hax/services on the declared DigitalOcean host.
 
 on:
   push:
@@ -14,7 +18,7 @@ env:
   PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
 
 concurrency:
-  group: knoxx-staging
+  group: knoxx-staging-preflight
   cancel-in-progress: true
 
 jobs:
@@ -74,14 +78,3 @@ jobs:
 
       - name: Frontend build
         run: pnpm -C frontend run build
-
-  deploy-staging:
-    name: deploy-staging
-    needs: staging-preflight
-    uses: open-hax/services/.github/workflows/deploy-promethean.yml@main
-    with:
-      environment: staging
-      service: knoxx
-      source_repository: ${{ github.repository }}
-      source_ref: ${{ github.sha }}
-    secrets: inherit
