@@ -56,7 +56,7 @@ identity fallback.
 
 - Making raw browser identity headers trustworthy.
 - Replacing server-side session/API-key authentication.
-- Solving every protected-route nil-context bypass; #9 owns the reusable fail-closed route guard.
+- Solving every protected-route nil-context bypass; #175 owns the reusable fail-closed route guard.
 
 ## Done when
 

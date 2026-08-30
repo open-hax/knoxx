@@ -157,3 +157,13 @@
   spore: none
   receipt-refs: 2026-08-30T01:31:59.372Z
   note: A zero-inbox pass must distinguish ownership drift from tracker expansion; close only a proven semantic and UUID duplicate, adopt distinct follow-ups, and inventory broader projector migration debt without manufacturing issues.
+
+- ts: 2026-08-30T01:39:28.074Z
+  session: codex/knoxx-board-reconcile
+  task: Repair the stale duplicate-issue ownership reference
+  p-efficiency: 0.91
+  p-friction: 0.29
+  p-skill-candidate: 0.39
+  spore: none
+  receipt-refs: 2026-08-30T01:39:28.074Z
+  note: A duplicate closure must update every active ownership statement, not only the primary link; historical references can remain only when explicitly labeled as duplicate audit context.
