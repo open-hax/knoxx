@@ -27,6 +27,13 @@ with a misspelled optional key such as `membershipID` can therefore lose its int
 binding and continue into email-based policy resolution as though `membershipId` were deliberately
 absent.
 
+The OAuth writer is wider than the current law shape in one legitimate way:
+`persist-access-token!` adds `createdAt` and `expiresAt` to every token-data record, and
+`list-tokens-for-membership!` returns that token data to the management UI. The Mongo envelope
+separately owns TTL liveness. Closing the shared schema must classify and validate these two
+metadata fields instead of rejecting every newly minted OAuth token or silently deleting listing
+data.
+
 Do not recreate those pieces. The remaining OAuth branch still crosses the boundary differently:
 `infra.stores.mongo-mcp-oauth/get-token!` serializes its CLJS token data back to a JSON string,
 `infra.routes.mcp/load-token-record!` parses that string into a native object, and downstream
@@ -52,9 +59,14 @@ silently become `nil`.
 4. Reject every unknown token-record key at the shared validation boundary before any policy
    lookup, actor selection, or tool registration. The exact allowed-key set is the fields declared
    by `TokenRecord`; a near-miss spelling is malformed input, not optional-field absence.
-5. Convert `resolve-token-context!`, actor scoping, tool granting, token listing, and every other
+5. Declare `createdAt` and `expiresAt` in the existing named `TokenRecord` as the only optional
+   persistence metadata. This is a typed allowed-key extension, not a wildcard for other
+   persistence keys and not a second representation.
+6. Preserve the validated pair in token-listing output. Authentication and policy consumers ignore
+   it; the Mongo envelope's TTL check remains the credential-liveness authority.
+7. Convert `resolve-token-context!`, actor scoping, tool granting, token listing, and every other
    token-record consumer to keyword access and CLJS collections.
-6. Remove token-record-specific `^js`, `aget`, `array-seq`, and route-local `js/JSON` assumptions.
+8. Remove token-record-specific `^js`, `aget`, `array-seq`, and route-local `js/JSON` assumptions.
    If an actual MCP or Mongo native API still needs a JavaScript value, convert once in its owning
    extern adapter; if `extern.mcp-token/native-record` becomes unused, retire it with its tests
    rather than preserve a dead conversion.
@@ -71,8 +83,15 @@ silently become `nil`.
 - Absent `membershipId` resolves only by the required `userEmail` plus `orgSlug` when supplied,
   using the canonical policy resolver. That path must yield a single active membership or fail
   closed. It is never entered because an unknown or misspelled membership key was discarded.
-- A malformed or legacy OAuth token row fails closed before policy lookup, actor selection, or
-  tool registration.
+- For persistence metadata, either both are absent or both are valid ISO-8601 instants and
+  `expiresAt` is later than `createdAt`. The OAuth writer emits both. A valid legacy or
+  trusted-loopback record with neither remains admissible because the Mongo envelope already owns
+  stored-token liveness; one timestamp, a malformed timestamp, or an unknown key fails before
+  policy lookup.
+- The timestamp pair never participates in identity or authorization. Token listing retains both
+  timestamps when present, while authentication consumes only the validated authority fields.
+- Any other malformed or legacy OAuth token row fails closed before policy lookup, actor selection,
+  or tool registration.
 - Tool order and allow/deny semantics remain unchanged.
 - No second token-record representation or branch-specific consumer is introduced.
 - Ordinary domain/law/shape/infra namespaces receive only CLJS maps, vectors, and scalars.
@@ -86,14 +105,17 @@ silently become `nil`.
 3. RED-prove a `membershipID` near miss currently passes the open map. GREEN-prove it fails at the
    shared boundary and `db-policy/resolve-context!` is never called; cover every unknown key in
    both OAuth and trusted-loopback producers.
-4. Exercise context resolution, actor reassignment refusal, tool intersection, token listing, and
+4. Prove a newly persisted OAuth row passes the closed contract with both timestamps, a valid
+   legacy or trusted-loopback record with neither timestamp remains compatible, one timestamp or
+   malformed timestamp fails before policy lookup, and token listing retains both timestamps.
+5. Exercise context resolution, actor reassignment refusal, tool intersection, token listing, and
    malformed/legacy OAuth rows through the real OAuth producer.
-5. Exercise the trusted-loopback producer through the same consumers and prove both branches have
+6. Exercise the trusted-loopback producer through the same consumers and prove both branches have
    byte-equivalent field semantics without an early native conversion, including legitimate
    absent optional identity fields and malformed present optional fields.
-6. Add a focused source/namespace regression forbidding token-record raw interop and JSON
+7. Add a focused source/namespace regression forbidding token-record raw interop and JSON
    round-tripping in ordinary infra namespaces.
-7. Run focused MCP/auth/store tests, the full backend suite, server compile, and strict
+8. Run focused MCP/auth/store tests, the full backend suite, server compile, and strict
    changed-surface clj-kondo with zero warnings.
 
 ## Non-goals
@@ -107,5 +129,6 @@ silently become `nil`.
 
 Both token producers and all consumers use the existing validated CLJS-map contract, OAuth token
 persistence no longer JSON-round-trips the record through ordinary infra code, any necessary
-JavaScript conversion exists only at an owning extern boundary, and both real MCP authentication
+JavaScript conversion exists only at an owning extern boundary, timestamp metadata remains typed
+and listing-compatible without becoming authentication authority, and both real MCP authentication
 paths pass the same regression suite.

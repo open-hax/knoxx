@@ -207,3 +207,13 @@
   spore: none
   receipt-refs: 2026-08-30T02:21:28.436Z
   note: Schema-optional absence and open-map acceptance are separate concerns; reject unknown spellings before database access while preserving the named optional-field resolution law.
+
+- ts: 2026-08-30T02:31:29.859Z
+  session: codex/knoxx-board-reconcile
+  task: Reconcile closed token keys with persisted timestamp metadata
+  p-efficiency: 0.90
+  p-friction: 0.36
+  p-skill-candidate: 0.44
+  spore: none
+  receipt-refs: 2026-08-30T02:31:29.859Z
+  note: Closing a schema requires inventorying every legitimate producer field; persistence timestamps need a typed paired contract and listing compatibility without becoming authentication authority.
