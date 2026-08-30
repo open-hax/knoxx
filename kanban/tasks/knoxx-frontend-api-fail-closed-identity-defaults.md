@@ -3,8 +3,8 @@ uuid: knoxx-frontend-api-fail-closed-identity-defaults
 title: Fail closed instead of trusting browser-supplied API identity
 status: incoming
 priority: P1
-points: 5
-labels: tasks, 5sp, frontend, backend, security, auth
+points: 8
+labels: tasks, 8sp, frontend, backend, security, auth
 created_at: 2026-08-30T01:19:13.727Z
 category: tasks
 ---
@@ -61,6 +61,22 @@ input; `source-ingest-request!` can create a downstream job. The two list routes
 session data even without a downstream credential. These six admin endpoints therefore need an
 explicit caller authorization fence before either local observation or system-authorized KMS work.
 
+Internal Knoxx self-calls expose the same collision from the other direction.
+`infra.clients.knoxx-control/headers-for` attaches the hard-coded
+`system-admin@open-hax.local` identity and, when configured, an `X-API-Key`; its event, actor, and
+Discord voice callers use that client for protected control-plane and ingestion operations. Once
+the server admits exactly one credential authority, the current pair is either rejected as an
+API-key/identity collision or preserves a fixed administrator escape hatch. A repaired self-client
+must authenticate with one server-verifiable credential and let the server derive its configured
+principal.
+
+`extern.agent-turn-media/auth-header-map` presents a second internal handoff: it converts an
+already-resolved auth context back into ordinary `x-knoxx-*` wire headers for local Knoxx media
+fetches made by `fetch-data-url-with-fetch!` through `infra.agent.turn/fetch-media-data-url!`.
+Rejecting public identity headers without addressing that path breaks legitimate authenticated
+self-fetches; exempting indistinguishable headers reopens spoofing. The internal handoff therefore
+needs a named server-owned boundary rather than a special case for the public header names.
+
 ## Scope
 
 - Inventory both central request families and every direct `buildKnoxxAuthHeaders` consumer:
@@ -72,6 +88,20 @@ explicit caller authorization fence before either local observation or system-au
   context. Client-supplied identity headers must be rejected or stripped before context
   resolution; any internal identity handoff must be distinguishable from untrusted wire input and
   derived from an already-verified session or API key.
+- Inventory `infra.clients.knoxx-control/headers-for` and its event, actor, and Discord voice
+  callers. Protected control requests send the configured API key without any `x-knoxx-*` identity
+  header; the server derives that credential's principal only from `KNOXX_API_KEY_USER_EMAIL` and
+  the canonical membership resolver. Remove the hard-coded self-client administrator identity.
+- Missing, malformed, or identity-less production API-key configuration fails before any protected
+  self-request or effect. Deliberately public internal reads may remain credentialless only under
+  the same non-authorizing public-read rule as an external caller; no fixed identity is a fallback.
+- Inventory `extern.agent-turn-media/auth-header-map`, `fetch-data-url-with-fetch!`, and
+  `infra.agent.turn/fetch-media-data-url!`. A local authenticated media self-fetch must not
+  serialize verified context back into indistinguishable public `x-knoxx-*` headers. Perform the
+  operation directly under the admitted context or use a named server-owned internal fetch adapter
+  whose credential or capability is bound to the already-verified context and accepted only on the
+  loopback/internal boundary. External media URLs receive no Knoxx credential, capability, or
+  identity header.
 - Complete a credentialed service proxy inventory, beginning with
   `backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs` functions
   `openplanner-proxy-handler!` and `register-ingestion-service-proxy-route!`, plus
@@ -148,34 +178,44 @@ explicit caller authorization fence before either local observation or system-au
    malformed credential. Every session-cookie/API-key collision fails before context resolution,
    policy lookup, or protected effect; removing one credential restores that credential's normal
    authenticated behavior without fallback from a rejected collision.
-7. Direct unauthenticated OpenPlanner wildcard and `/api/ingestion/*` probes send malicious identity
+7. Add self-control and local-media negative probes for absent/malformed credentials, missing API-key
+   identity configuration, fabricated identity headers, and an unverified context. Downstream
+   request and protected-effect counts remain zero; no fixed administrator fallback is attempted.
+8. Valid self-control calls contain one configured API key and no identity header, resolve the
+   `KNOXX_API_KEY_USER_EMAIL` principal at the server, and preserve normal event, actor, Discord
+   voice, and admitted ingestion behavior without a credential collision.
+9. Valid local media self-fetches preserve the already-verified principal through the named
+   internal boundary without public identity headers. External media URLs receive no Knoxx
+   credential, capability, or identity header, and an unverified local protected fetch fails before
+   network or file disclosure.
+10. Direct unauthenticated OpenPlanner wildcard and `/api/ingestion/*` probes send malicious identity
    headers through representative read and protected mutation routes. Before authorization, the
    downstream call count remains zero and no protected mutation occurs; where an unauthenticated
    read is deliberately public, its captured outbound request contains no spoofed identity.
-8. A direct `GET /api/openplanner/v1/sessions` negative probe has no valid Knoxx credential and may
+11. A direct `GET /api/openplanner/v1/sessions` negative probe has no valid Knoxx credential and may
    include conflicting identity headers. The `openplanner-client/sessions!` call count remains zero,
    no session rows or enrichment data are disclosed, and the canonical protected-request failure is
    returned before the server bearer credential can be used.
-9. Add direct unauthenticated and identity-header-only probes across all six admin routes in
+12. Add direct unauthenticated and identity-header-only probes across all six admin routes in
    `/api/admin/eta-mu-sessions{,/status,/ingest}` and
    `/api/admin/opencode-sessions{,/status,/ingest}`. Local list/status and downstream fetch/job call
    counts remain zero; no session data, source/job data, or mutation result is disclosed.
-10. Valid administrator session and API-key probes can perform each admitted admin operation;
+13. Valid administrator session and API-key probes can perform each admitted admin operation;
     authenticated non-admin is denied before local/downstream work, and conflicting client identity
     headers cannot override the credential-derived administrator. Capture the KMS request to prove
     any internal system identity is added only after that authorization fence.
-11. Valid session and API-key probes for the dedicated sessions route and the wildcard/ingestion
-   proxy routes derive any required downstream identity from verified context. Conflicting client
-   identity headers cannot override that principal, and the fake downstream captures neither the
-   conflicting value nor a fabricated system actor. Exercise OpenPlanner's server-credential
-   attachment and ingestion's former clone-all-headers path.
-12. Mutable storage values and caller-supplied identity headers cannot change the principal
-   observed by protected real-server probes through one TypeScript surface and one CLJS surface.
-13. A missing/expired session on a protected browser request reaches one canonical
+14. Valid session and API-key probes for the dedicated sessions route and the wildcard/ingestion
+    proxy routes derive any required downstream identity from verified context. Conflicting client
+    identity headers cannot override that principal, and the fake downstream captures neither the
+    conflicting value nor a fabricated system actor. Exercise OpenPlanner's server-credential
+    attachment and ingestion's former clone-all-headers path.
+15. Mutable storage values and caller-supplied identity headers cannot change the principal
+    observed by protected real-server probes through one TypeScript surface and one CLJS surface.
+16. A missing/expired session on a protected browser request reaches one canonical
     401/reauthentication UI path; it never retries as a default administrator.
-14. An authorized credential-derived session still performs GET/mutation requests from both helper
+17. An authorized credential-derived session still performs GET/mutation requests from both helper
     families with the same payload, non-identity headers, credential inclusion, and error behavior.
-15. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
+18. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
     server compile, and strict changed-surface lint pass with zero warnings; real-server negative
     probes confirm zero protected effect across both the direct auth and service-proxy boundaries.
 
@@ -194,4 +234,5 @@ The server derives context only from verified credentials, no Knoxx-owned servic
 client-selected identity or combines it with a server credential, generated assets are rebuilt
 from the repaired sources, protected unauthenticated requests fail closed through the canonical
 server/UI path, deliberately public reads remain compatible without acquiring identity authority,
-and authorized credential-derived requests remain compatible.
+internal self-calls neither collide credentials nor round-trip verified context into public identity
+headers, and authorized credential-derived requests remain compatible.

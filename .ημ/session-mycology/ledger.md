@@ -257,3 +257,23 @@
   spore: none
   receipt-refs: 2026-08-30T03:33:48.114Z
   note: Registration-table inventory must include local observations and service-authorized mutations; fixed downstream identity is safe only after a verified caller permission fence and cannot substitute for it.
+
+- ts: 2026-08-30T03:46:27.613Z
+  session: codex/knoxx-board-reconcile
+  task: Preserve optional absence through slugless OAuth issuance
+  p-efficiency: 0.92
+  p-friction: 0.31
+  p-skill-candidate: 0.41
+  spore: none
+  receipt-refs: 2026-08-30T03:46:27.613Z
+  note: A closed consumer schema is incompatible unless its legitimate writers preserve optional absence; slugless consent must omit orgSlug through code and token issuance rather than mint a blank value the boundary correctly rejects.
+
+- ts: 2026-08-30T03:46:27.616Z
+  session: codex/knoxx-board-reconcile
+  task: Distinguish verified internal identity handoffs from public wire headers
+  p-efficiency: 0.90
+  p-friction: 0.36
+  p-skill-candidate: 0.44
+  spore: none
+  receipt-refs: 2026-08-30T03:46:27.613Z
+  note: Removing trust from public identity headers requires repairing self-clients that currently emit them; use one server-verifiable API key for control calls and a named context-bound internal media adapter instead of preserving a fixed administrator or indistinguishable loopback exception.

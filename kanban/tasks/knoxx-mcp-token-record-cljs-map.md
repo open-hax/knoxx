@@ -34,6 +34,13 @@ separately owns TTL liveness. Closing the shared schema must classify and valida
 metadata fields instead of rejecting every newly minted OAuth token or silently deleting listing
 data.
 
+The OAuth consent writer has a second legitimate compatibility edge. `authorization-code-payload`
+allows a membership with no organization slug but currently materializes that absence as
+`:orgSlug ""`; `persist-access-token!` copies the blank value into the access-token record. A
+closed `TokenRecord` that correctly rejects a present blank optional value would therefore reject
+the newly issued token. Optional-field absence must stay absent through both OAuth writers instead
+of becoming a malformed present value.
+
 Do not recreate those pieces. The remaining OAuth branch still crosses the boundary differently:
 `infra.stores.mongo-mcp-oauth/get-token!` serializes its CLJS token data back to a JSON string,
 `infra.routes.mcp/load-token-record!` parses that string into a native object, and downstream
@@ -51,22 +58,27 @@ silently become `nil`.
    boundary as the already-landed baseline. Tighten that named schema or its validator in place;
    introduce no replacement schema, no parallel closed schema, and no parallel adapter.
 2. Make the OAuth token persistence API accept and return CLJS token maps instead of JSON strings.
-   Keep Mongo driver/native encoding in the named extern boundary that owns it, and leave OAuth
-   client and authorization-code representations outside this token-record slice.
-3. Make `load-token-record!` validate the OAuth map with `TokenRecord`, and make
+   Keep Mongo driver/native encoding in the named extern boundary that owns it. OAuth client
+   records remain outside this token-record slice; authorization-code fields copied into a token
+   are normalized only to preserve the shared token-record law.
+3. Normalize token-bound optional identity fields at both OAuth writers. `authorization-code-payload`
+   and `persist-access-token!` omit a missing or blank `orgSlug` from the authorization code and
+   access-token maps instead of materializing absence as a present blank value. Apply the same
+   absence law to every other optional field copied into a token.
+4. Make `load-token-record!` validate the OAuth map with `TokenRecord`, and make
    `resolve-post-token-record!` return a validated CLJS map for both OAuth and trusted-loopback
    authentication.
-4. Reject every unknown token-record key at the shared validation boundary before any policy
+5. Reject every unknown token-record key at the shared validation boundary before any policy
    lookup, actor selection, or tool registration. The exact allowed-key set is the fields declared
    by `TokenRecord`; a near-miss spelling is malformed input, not optional-field absence.
-5. Declare `createdAt` and `expiresAt` in the existing named `TokenRecord` as the only optional
+6. Declare `createdAt` and `expiresAt` in the existing named `TokenRecord` as the only optional
    persistence metadata. This is a typed allowed-key extension, not a wildcard for other
    persistence keys and not a second representation.
-6. Preserve the validated pair in token-listing output. Authentication and policy consumers ignore
+7. Preserve the validated pair in token-listing output. Authentication and policy consumers ignore
    it; the Mongo envelope's TTL check remains the credential-liveness authority.
-7. Convert `resolve-token-context!`, actor scoping, tool granting, token listing, and every other
+8. Convert `resolve-token-context!`, actor scoping, tool granting, token listing, and every other
    token-record consumer to keyword access and CLJS collections.
-8. Remove token-record-specific `^js`, `aget`, `array-seq`, and route-local `js/JSON` assumptions.
+9. Remove token-record-specific `^js`, `aget`, `array-seq`, and route-local `js/JSON` assumptions.
    If an actual MCP or Mongo native API still needs a JavaScript value, convert once in its owning
    extern adapter; if `extern.mcp-token/native-record` becomes unused, retire it with its tests
    rather than preserve a dead conversion.
@@ -78,8 +90,9 @@ silently become `nil`.
 - Missing or malformed required `accessToken`, `clientId`, `userEmail`, or `tools` fields fail at
   the boundary with the canonical authentication error. Absent optional `membershipId`,
   `orgSlug`, or `actorId` fields remain valid exactly as the existing schema and
-  `grant->token-record` require; when an optional field is present, a blank or wrong-typed value
-  fails validation. No field typo silently narrows authority.
+  `grant->token-record` require. The OAuth writer omits a missing or blank `orgSlug` from both its
+  authorization code and access-token maps; when any optional field is present, a blank or
+  wrong-typed value fails validation. No field typo silently narrows authority.
 - Absent `membershipId` resolves only by the required `userEmail` plus `orgSlug` when supplied,
   using the canonical policy resolver. That path must yield a single active membership or fail
   closed. It is never entered because an unknown or misspelled membership key was discarded.
@@ -108,14 +121,18 @@ silently become `nil`.
 4. Prove a newly persisted OAuth row passes the closed contract with both timestamps, a valid
    legacy or trusted-loopback record with neither timestamp remains compatible, one timestamp or
    malformed timestamp fails before policy lookup, and token listing retains both timestamps.
-5. Exercise context resolution, actor reassignment refusal, tool intersection, token listing, and
+5. RED-prove slugless OAuth consent currently materializes a blank `orgSlug`. GREEN-prove a
+   slugless OAuth consent round trip from authorization code through access token omits that field,
+   passes the closed `TokenRecord`, and reaches context resolution, tool intersection, token listing,
+   and revocation without widening identity or authority.
+6. Exercise context resolution, actor reassignment refusal, tool intersection, token listing, and
    malformed/legacy OAuth rows through the real OAuth producer.
-6. Exercise the trusted-loopback producer through the same consumers and prove both branches have
+7. Exercise the trusted-loopback producer through the same consumers and prove both branches have
    byte-equivalent field semantics without an early native conversion, including legitimate
    absent optional identity fields and malformed present optional fields.
-7. Add a focused source/namespace regression forbidding token-record raw interop and JSON
+8. Add a focused source/namespace regression forbidding token-record raw interop and JSON
    round-tripping in ordinary infra namespaces.
-8. Run focused MCP/auth/store tests, the full backend suite, server compile, and strict
+9. Run focused MCP/auth/store tests, the full backend suite, server compile, and strict
    changed-surface clj-kondo with zero warnings.
 
 ## Non-goals
@@ -130,5 +147,5 @@ silently become `nil`.
 Both token producers and all consumers use the existing validated CLJS-map contract, OAuth token
 persistence no longer JSON-round-trips the record through ordinary infra code, any necessary
 JavaScript conversion exists only at an owning extern boundary, timestamp metadata remains typed
-and listing-compatible without becoming authentication authority, and both real MCP authentication
-paths pass the same regression suite.
+and listing-compatible without becoming authentication authority, slugless OAuth issuance keeps
+optional absence absent, and both real MCP authentication paths pass the same regression suite.
