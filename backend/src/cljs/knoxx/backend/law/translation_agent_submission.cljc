@@ -38,7 +38,9 @@
    [:document_id {:optional true} [:maybe :string]]
    [:garden_id {:optional true} [:maybe :string]]
    [:org_id {:optional true} [:maybe :string]]
-   [:segment_index {:optional true} :any]])
+   [:segment_index {:optional true} :any]
+   [:split_id {:optional true} [:maybe :string]]
+   [:attempt_id {:optional true} [:maybe :string]]])
 
 (def pair-refusal-types
   "Every reason a submitted pair may not become translation content.
@@ -53,7 +55,15 @@
     :pair-org-mismatch
     :pair-translation-missing
     :pair-translation-untranslated
-    :pair-segmented-document})
+    :pair-turn-mismatch
+    :pair-segment-index-missing
+    :pair-segment-index-mismatch
+    :pair-split-id-missing
+    :pair-split-id-mismatch
+    :pair-attempt-id-missing
+    :pair-attempt-id-mismatch
+    :pair-source-text-mismatch
+    :pair-candidate-conflict})
 
 (def PairRefusal
   "A typed refusal carrying both sides, so a caller can see which was stale."
@@ -99,23 +109,14 @@
         (mismatch :org_id :org_id :pair-org-mismatch))))
 
 (defn- content-refusal
-  "Refusal because of what the pair contains rather than what it claims to be.
+  "Refusal because of translated content rather than claimed identity.
 
-   The segmentation refusal is a deliberate narrowing, not an oversight. A
-   contract-backed document's unit of content is a file, and the digest the
-   whole publication chain keys on — `infra.publication-source-revision`'s
-   `content-revision` — is a digest of that file. Accepting numbered segments
-   here would require reassembling them into one file, and concatenation order
-   is not guaranteed to reproduce it: that is the open design question already
-   recorded on `knoxx-translation-work-dispatch`, and inventing an answer to it
-   inside a tool handler is how a wrong answer becomes load-bearing.
-
-   So a segmented submission is refused with a message that tells the agent what
-   to do instead. The OpenPlanner segment path is untouched and still segments."
+   Source segmentation is decided by the admitted turn, not by this generic
+   content check. `split-pair-refusal` separately requires the submitted index,
+   split id, attempt id, and exact source bytes to name one server-owned split."
   [pair]
   (let [source (text (:source_text pair))
-        translated (text (:translated_text pair))
-        index (:segment_index pair)]
+        translated (text (:translated_text pair))]
     (cond
       (empty? translated)
       {:refusal/type :pair-translation-missing}
@@ -124,14 +125,7 @@
            (prose-like? source)
            (= source translated))
       {:refusal/type :pair-translation-untranslated
-       :refusal/actual (subs translated 0 (min 80 (count translated)))}
-
-      (and (some? index)
-           (not= 0 index)
-           (not= "0" (str index)))
-      {:refusal/type :pair-segmented-document
-       :refusal/expected 0
-       :refusal/actual index})))
+       :refusal/actual (subs translated 0 (min 80 (count translated)))})))
 
 (defn pair-refusal
   "Why `pair` may not become translation content for `policies`, or nil.
@@ -145,6 +139,83 @@
   [policies pair]
   (or (identity-refusal policies pair)
       (content-refusal pair)))
+
+(defn- turn-binding
+  "Return comparable atomic authority coordinates from one admitted turn."
+  [turn]
+  [(:translation-turn/id turn)
+   (get-in turn [:translation-turn/manifest :split-manifest/id])
+   (get-in turn [:translation-turn/candidate-claim :candidate-claim/id])
+   (:translation-turn/run-id turn)
+   (:translation-turn/dispatch-key turn)])
+
+(defn- policy-turn-binding
+  "Return the atomic authority coordinates carried by session policy."
+  [policies]
+  [(:translation_turn_id policies)
+   (:split_manifest_id policies)
+   (:candidate_claim_id policies)
+   (:run_id policies)
+   (:dispatch_key policies)])
+
+(defn- split-at-index
+  "Resolve source and claim members only when their admitted ordinals agree."
+  [turn index]
+  (let [splits (get-in turn [:translation-turn/manifest :split-manifest/splits])
+        members (get-in turn [:translation-turn/candidate-claim
+                              :candidate-claim/members])
+        source-split (when (and (integer? index) (<= 0 index) (< index (count splits)))
+                       (nth splits index))
+        claim-member (when source-split (nth members index nil))]
+    (when (and source-split
+               claim-member
+               (= index (:split/index source-split)
+                  (:candidate-claim-member/split-index claim-member)))
+      [source-split claim-member])))
+
+(defn split-pair-refusal
+  "Why a submitted pair cannot become a member of this exact admitted turn."
+  [turn policies pair]
+  (let [index (:segment_index pair)
+        [source-split claim-member] (split-at-index turn index)
+        submitted-split (text (:split_id pair))
+        submitted-attempt (text (:attempt_id pair))]
+    (cond
+      (not= (turn-binding turn) (policy-turn-binding policies))
+      {:refusal/type :pair-turn-mismatch
+       :refusal/expected (turn-binding turn)
+       :refusal/actual (policy-turn-binding policies)}
+
+      (nil? index)
+      {:refusal/type :pair-segment-index-missing}
+
+      (nil? source-split)
+      {:refusal/type :pair-segment-index-mismatch
+       :refusal/expected (mapv :split/index
+                               (get-in turn [:translation-turn/manifest
+                                             :split-manifest/splits]))
+       :refusal/actual index}
+
+      (empty? submitted-split)
+      {:refusal/type :pair-split-id-missing}
+
+      (not= submitted-split (:split/id source-split))
+      {:refusal/type :pair-split-id-mismatch
+       :refusal/expected (:split/id source-split)
+       :refusal/actual submitted-split}
+
+      (empty? submitted-attempt)
+      {:refusal/type :pair-attempt-id-missing}
+
+      (not= submitted-attempt (:candidate-claim-member/attempt-id claim-member))
+      {:refusal/type :pair-attempt-id-mismatch
+       :refusal/expected (:candidate-claim-member/attempt-id claim-member)
+       :refusal/actual submitted-attempt}
+
+      (not= (:source_text pair) (:split/source-text source-split))
+      {:refusal/type :pair-source-text-mismatch
+       :refusal/expected (:split/source-text source-split)
+       :refusal/actual (:source_text pair)})))
 
 (def refusal-messages
   "What the agent is told, per refusal type.
@@ -166,9 +237,24 @@
    "translated_text is required and must not be blank"
    :pair-translation-untranslated
    "translated_text matches source_text; provide an actual translation"
-   :pair-segmented-document
-   (str "this document is published as a whole file, so submit the complete"
-        " localized document in one save_translation call with segment_index 0")})
+   :pair-turn-mismatch
+   "this submission is not bound to the atomic translation turn carried by the session"
+   :pair-segment-index-missing
+   "segment_index is required and must echo one server-issued split"
+   :pair-segment-index-mismatch
+   "segment_index does not name a split admitted for this translation turn"
+   :pair-split-id-missing
+   "split_id is required and must echo the server-issued source split identity"
+   :pair-split-id-mismatch
+   "split_id does not match the source split at this segment_index"
+   :pair-attempt-id-missing
+   "attempt_id is required and must echo the server-issued candidate attempt"
+   :pair-attempt-id-mismatch
+   "attempt_id does not match the candidate attempt admitted for this split"
+   :pair-source-text-mismatch
+   "source_text must exactly equal the server-issued source split bytes"
+   :pair-candidate-conflict
+   "this split attempt already recorded different translated bytes; reuse the original bytes or start a new translation run"})
 
 (defn refusal-message
   "The sentence a refusal becomes at the tool boundary."

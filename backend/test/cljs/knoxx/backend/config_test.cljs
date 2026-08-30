@@ -65,6 +65,17 @@
     (fn []
       (is (= "openplanner-project" (:openplanner-mcp-project (config/cfg)))))))
 
+(deftest cfg-session-project-name-uses-a-nonblank-override
+  (testing "unset and blank values retain the safe session-project default"
+    (doseq [value [nil "" " "]]
+      (with-env! {"KNOXX_SESSION_PROJECT_NAME" value}
+        (fn []
+          (is (= "knoxx-session" (:session-project-name (config/cfg))))))))
+  (testing "an explicit nonblank deployment value wins"
+    (with-env! {"KNOXX_SESSION_PROJECT_NAME" "review-stage"}
+      (fn []
+        (is (= "review-stage" (:session-project-name (config/cfg))))))))
+
 (deftest publication-site-url-is-deployment-configuration
   (with-env! {"KNOXX_PUBLICATION_SITE_URL" nil
               "KNOXX_PUBLICATION_CONTENT_ROOT" nil}

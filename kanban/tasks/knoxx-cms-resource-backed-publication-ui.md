@@ -20,6 +20,15 @@ Stop `CmsPage` from treating OpenPlanner garden rows and `metadata.garden_public
 
 This cutover happens only after `knoxx-openplanner-publication-state-migration` has imported the existing topology and conflicts have been resolved.
 
+## Translation integration boundary
+
+The CMS owns document/publication intent, not translation splits, candidate corrections, or
+review truth. The reopened `knoxx-translation-review-chat-panel` P0 card owns displaying
+translation/review state and linking from CMS resources to the restored `/translations`
+workspace. This is an integration boundary, not additional Definition of Done for this existing
+review-stage CMS-intent card. Neither surface may synthesize split rows or replace the translation
+workspace with a whole-file approval control.
+
 ## Current coupling to remove
 
 - garden discovery through `/api/openplanner/v1/gardens`;
@@ -286,11 +295,10 @@ Test namespaces:
 
 Wire contracts first — the review thread's regression leads:
 
-1. `state-patch-accepts-clj->js-body` — the exact body the frontend produces,
-   `{:state "published"}`, passes `PublicationStatePatchJson` and decodes to
-   `{:publication/state :published}`. Assert by round-tripping through
-   `clj->js` + `js->clj :keywordize-keys true` rather than hand-writing the map,
-   so the test fails if the helper's serialization changes.
+1. `state-patch-accepts-wire-body` — the decoded JSON body
+   `{:state "published"}` passes `PublicationStatePatchJson` and decodes to
+   `{:publication/state :published}`. Keep raw JS interop in the owning HTTP
+   adapter; the cross-boundary serialization proof belongs to test 3 below.
 2. `state-patch-rejects-qualified-wire-key` — a body carrying
    `:publication/state` fails the wire contract.
 3. `frontend-publish-request-matches-backend-contract` — the body built by

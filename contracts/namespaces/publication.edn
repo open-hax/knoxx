@@ -36,6 +36,7 @@
     ;; that opt in are affected; an emitter cannot widen an agent's resource
     ;; scope through a trigger that did not ask.
     :resource-policies-from-event true
+    :execution-snapshot-from-event true
 
     :task
     "A publication intent needs this document translated.
@@ -48,9 +49,11 @@ Your session is already pinned to the document, garden, source language and
 target language this translation is for. Omit those parameters; supplying a
 different value is refused rather than honored.
 
-Submit once, with the complete translated document and segment_index 0. The
-reply names the revision a human reviewer will approve. Nothing reaches the
-public site until a person approves that exact revision."}
+Call save_translation exactly once for every server-issued split. Echo each
+split_id, attempt_id, and segment_index exactly as the event gives them. Do not
+invent, merge, or omit boundaries. The final call completes one candidate set a
+human can review split by split; nothing reaches the public site until every
+effective split is approved."}
 
    :trigger/context
    {:reason "a publication intent needs a translated revision"}

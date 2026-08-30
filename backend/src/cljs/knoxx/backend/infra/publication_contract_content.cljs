@@ -70,6 +70,7 @@
        :translation/locale (:publication/locale intent)
        :translation/source-revision source-revision
        :translation/revision output-revision
+       :translation/content-digest output-revision
        :translation/dispatch-key
        (str "authored-content:"
             (:org-id scope) ":" (or (:project scope) "_") ":"
@@ -114,6 +115,7 @@
   [left right]
   (= (select-keys left [:translation/document
                         :translation/garden
+                        :translation/source-locale
                         :translation/locale
                         :translation/source-revision
                         :translation/revision
@@ -121,11 +123,54 @@
                         :translation/project])
      (select-keys right [:translation/document
                          :translation/garden
+                         :translation/source-locale
                          :translation/locale
                          :translation/source-revision
                          :translation/revision
                          :translation/org-id
                          :translation/project])))
+
+(defn- authored-receipt?
+  "Whether a receipt came from this authored-content adapter."
+  [receipt]
+  (str/starts-with? (:translation/dispatch-key receipt) "authored-content:"))
+
+(defn authored-relation
+  "The exact authored work relation, excluding the output that may change."
+  [receipt]
+  ((juxt :translation/org-id
+         :translation/project
+         :translation/document
+         :translation/garden
+         :translation/source-locale
+         :translation/locale
+         :translation/source-revision)
+   receipt))
+
+(defn current-authored-receipts
+  "Replace stale authored history with the files observed in this snapshot.
+
+   Agent/worker receipts remain untouched and can still supersede authored
+   fallback by timestamp. Without this normalization, every authored receipt
+   shares the epoch timestamp and the lexicographic tie-break can select an old
+   digest after the localized file changes.
+
+   `desired-work` is the resource-owned outer relation. Its authored rows are
+   retired even when the locale file disappeared or its declaration was
+   removed, because absence from `current-authored` is meaningful in precisely
+   those cases. The two-argument form remains for callers that only need to
+   replace files they actually observed."
+  ([receipts current-authored]
+   (current-authored-receipts receipts current-authored current-authored))
+  ([receipts current-authored desired-work]
+   (let [retired-relations (into (set (map authored-relation current-authored))
+                                 (map authored-relation)
+                                 desired-work)]
+     (into (vec (remove #(and (authored-receipt? %)
+                              (contains? retired-relations
+                                         (authored-relation %)))
+                        receipts))
+           current-authored))))
 
 (defn ^:async ensure-receipts!
   "Discover authored translations into the durable evidence ledger.

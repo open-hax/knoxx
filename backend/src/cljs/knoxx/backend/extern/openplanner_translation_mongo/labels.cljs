@@ -104,6 +104,16 @@
                       (await (graph-memory/upsert-graph-memory!
                               collection-map segment corrected-text))))))
 
+(defn- review-selector
+  "Select the exact row the scoped review card displayed."
+  [segment-id org-id request]
+  (let [selector #js {"_id" (common/object-id! segment-id "segment")
+                      "org_id" org-id
+                      "project" (:project request)
+                      ;; Nil is an exact legacy coordinate, never a wildcard.
+                      "garden_id" (:garden_id request)}]
+    selector))
+
 (defn ^:async label-segment!
   "Label one tenant-scoped segment; returns a top-level label_id and new status."
   [segment-id payload]
@@ -113,8 +123,7 @@
                                         (or payload {}))
         org-id (common/required-org-id! (:org_id request))
         collection-map (common/collections (await (common/db!)))
-        selector #js {"_id" (common/object-id! segment-id "segment")
-                      "org_id" org-id}
+        selector (review-selector segment-id org-id request)
         segment (await (.findOne (:segments collection-map) selector))]
     (when-not segment
       (throw (js/Error. "Segment not found")))

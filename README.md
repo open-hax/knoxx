@@ -441,6 +441,10 @@ KNOXX_SKIP_PRE_PUSH=1 git push
 
 GPL-3.0-or-later; see `LICENSE`.
 
-## Testing deploys
+## Deployment ownership
 
-Adding the `testing` label to an eligible PR deploys the PR head to the shared staging slot via the open-hax/services Promethean deploy module (`.github/workflows/deploy-testing.yml`).
+Knoxx owns application validation and portable packaging. Production image
+builds, host placement, deployment, and live verification are owned by the
+DigitalOcean stack in `open-hax/services`. A reviewed Services pull request
+carrying `deploy` at merge time authorizes that stack; Knoxx pull-request labels
+do not deploy a shared staging slot.

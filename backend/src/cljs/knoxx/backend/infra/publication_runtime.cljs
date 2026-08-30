@@ -8,6 +8,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.node.fs :as fs]
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
+            [knoxx.backend.domain.translation-review-inventory :as review-inventory]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-reconciler :as reconciler]
@@ -15,9 +16,12 @@
             [knoxx.backend.infra.publication-target-registry :as registry]
             [knoxx.backend.infra.publication-target-static-site :as static-site]
             [knoxx.backend.infra.translation-agent-content :as agent-content]
+            [knoxx.backend.infra.translation-content-integrity :as content-integrity]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.routes.translation-dispatch :as translation]
             [knoxx.backend.infra.stores.translation-evidence-registry :as evidence-registry]
+            [knoxx.backend.infra.stores.translation-split-registry :as split-registry]
+            [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-identity :as identity]))
 
@@ -46,6 +50,12 @@
                                                  document)))
           (str/split #"\n\s*\n")))
 
+(defn- authenticated-blocks
+  "Split only bytes authenticated by the exact receipt the gate admitted."
+  [receipt content]
+  (when (content-integrity/authenticated-content? receipt content)
+    (str/split content #"\n\s*\n")))
+
 (defn- ^:async translated-blocks!
   "The localized blocks for one intent, from the strongest source that has them.
 
@@ -67,20 +77,30 @@
      a transport before its content has moved is how a live site loses pages."
   [client scope roots document intent receipt content-root]
   (if-some [submitted (await (agent-content/content-for-receipt! content-root receipt))]
-    (str/split submitted #"\n\s*\n")
+    (authenticated-blocks receipt submitted)
     (if-some [authored (await
                         (contract-content/localized-content!
                          (document-root roots document)
                          document
                          (:publication/locale intent)))]
-      (str/split authored #"\n\s*\n")
+      (if-some [blocks (authenticated-blocks receipt authored)]
+        blocks
+        ;; A localized file exists but is not the candidate the receipt names.
+        ;; Do not fall through and serve a weaker source under that approval.
+        nil)
       (let [response (await
                       (openplanner-client/translation-document!
                        client
                        (identity/encode-keyword (:publication/document intent))
                        (name (:publication/locale intent))
-                       {:org_id (:org-id scope)}))]
-        (mapv :translated_text (:segments response))))))
+                       {:org_id (:org-id scope)
+                        :project (:project scope)
+                        :garden_id (identity/encode-keyword
+                                    (:publication/garden intent))}))]
+        (authenticated-blocks receipt
+                              (str/join "\n\n"
+                                        (map :translated_text
+                                             (:segments response))))))))
 
 (defn artifact-source
   "The artifact one admitted intent renders to, at one concrete revision.
@@ -145,10 +165,26 @@
         roots (translation/document-source-roots config records)
         source-revisions (await (source-revision/source-revisions!
                                  config documents roots))
-        _ (await (contract-content/ensure-receipts!
-                  evidence-store index roots scope source-revisions))
+        authored (await (contract-content/ensure-receipts!
+                         evidence-store index roots scope source-revisions))
+        desired-work (mapv #(assoc %
+                                   :translation/org-id (:org-id scope)
+                                   :translation/project (:project scope))
+                           (review-inventory/desired-work index source-revisions))
         {:keys [evidence facts]} (await (translation/gate-evidence!
-                                         config evidence-store scope documents roots))
+                                         config evidence-store scope documents roots
+                                         {:source-revisions source-revisions
+                                          :current-authored authored
+                                          :desired-work desired-work
+                                          :authenticate-content? true
+                                          ;; A split rejection is durable before
+                                          ;; its projection. Publication must
+                                          ;; join current history and fail closed
+                                          ;; during that crash window rather than
+                                          ;; trust an older whole-file approval.
+                                          :enforce-split-review-readiness? true
+                                          :split-store (split-registry/current)
+                                          :digest-hex crypto/sha256-hex}))
         root (:publication-content-root config)
         target {:publication-target/id target-id
                 :publication-target/kind :publication-target/static-site

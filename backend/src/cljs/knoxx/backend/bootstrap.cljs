@@ -8,6 +8,7 @@
      dump for the whole backend."
   (:require [clojure.string :as str]
             [knoxx.backend.contract-runtime-deps :as contract-runtime-deps]
+            [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.infra.agent.resume :as agent-resume]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.clients.openplanner-mongo]
@@ -29,9 +30,11 @@
              [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp-oauth]
              [knoxx.backend.infra.stores.mongo-rate-limits :as mongo-rate-limits]
              [knoxx.backend.infra.stores.mongo-translation-evidence :as mongo-translation-evidence]
+             [knoxx.backend.infra.stores.mongo-translation-split :as mongo-translation-split]
              [knoxx.backend.infra.stores.session-flush :as session-flush]
              [knoxx.backend.infra.stores.session-store-registry :as store-registry]
              [knoxx.backend.infra.stores.translation-evidence-registry :as translation-evidence-registry]
+             [knoxx.backend.infra.stores.translation-split-registry :as translation-split-registry]
             [knoxx.backend.infra.routes.auth :as auth-routes]
             [knoxx.backend.infra.routes.mcp :as mcp-http]
             [knoxx.backend.infra.routes.tools.proxy :as proxy-routes]
@@ -157,6 +160,17 @@
       (.warn log "Translation evidence store unavailable; dispatch and approval routes will answer 503" err)
       nil)))
 
+(defn- ^:async start-translation-splits!
+  "Publish the durable split store only after every immutable index exists."
+  [db log]
+  (try
+    (await (mongo-translation-split/setup-indexes! db))
+    (reset! translation-split-registry/store*
+            (mongo-translation-split/create-store db crypto/sha256-hex))
+    (catch :default err
+      (.warn log "Translation split store unavailable; split dispatch and review routes will answer 503" err)
+      nil)))
+
 (defn- ^:async start-mongo-indexes!
   "Create every collection's indexes, then publish the stores that need them.
 
@@ -177,6 +191,9 @@
   ;; Translation dispatch bindings and completed-translation evidence. Its own
   ;; failures stay its own — see the function.
   (await (start-translation-evidence! db log))
+  ;; Atomic turn admission, split candidates, and review memory. Kept isolated
+  ;; so an incompatible new index cannot take established persistence down.
+  (await (start-translation-splits! db log))
   ;; ensure-indexes! (not setup-indexes!): it catches index
   ;; failures so a bad index spec can never crash-loop the
   ;; process from this fire-and-forget bootstrap path.

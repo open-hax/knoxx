@@ -88,14 +88,11 @@
                                                 :source_text "Knoxx"
                                                 :translated_text "Knoxx")))))
 
-  (testing "a numbered segment is refused with instructions, not silently reassembled"
-    ;; A contract-backed document's unit is a file, and the digest the whole
-    ;; chain keys on is a digest of that file; concatenation order is not
-    ;; guaranteed to reproduce it.
-    (let [refusal (law/pair-refusal policies (assoc pair :segment_index 3))]
-      (is (= :pair-segmented-document (:refusal/type refusal)))
-      (is (= 0 (:refusal/expected refusal)))
-      (is (= 3 (:refusal/actual refusal))))))
+  (testing "the generic content law leaves numbered split authority to the turn law"
+    ;; `split-pair-refusal` validates this ordinal against the persisted atomic
+    ;; turn. Treating every non-zero index as invalid here recreated the old
+    ;; whole-document path and made real server splits impossible to submit.
+    (is (nil? (law/pair-refusal policies (assoc pair :segment_index 3))))))
 
 (deftest every-refusal-type-can-tell-the-agent-what-to-do
   (testing "no refusal type is missing a message"
