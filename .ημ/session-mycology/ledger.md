@@ -97,3 +97,13 @@
   spore: none
   receipt-refs: 2026-08-29T23:50:03.925Z
   note: Durable decisions should bind effective head generations, not arbitrary duplicate receipt ids; server-derived candidate support stays outside retry equality until one proof is installed.
+
+- ts: 2026-08-30T00:03:25.829Z
+  session: codex/knoxx238-repair
+  task: Fence current turn authorization and canonicalize judgment evidence
+  p-efficiency: 0.77
+  p-friction: 0.66
+  p-skill-candidate: 0.61
+  spore: none
+  receipt-refs: 2026-08-30T00:03:25.829Z
+  note: Historical observation evidence cannot authorize a later commit; current authorization and policy rotation need one linearization fence, and adjudication must bind effective judgment-head generations rather than duplicate raw receipt ids.

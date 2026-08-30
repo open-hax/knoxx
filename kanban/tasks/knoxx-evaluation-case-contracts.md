@@ -122,16 +122,19 @@ missing-target, and cyclic relations fail validation without appending.
   `:satisfied` only when every requested obligation is met. The result also carries
   deterministic `:conflict-sets` and `:missing-obligations` details, so conflict precedence
   never hides pending work. Receipts for another case, rubric, or artifact version never count.
-- Adjudication is another immutable, version-bound receipt that names the conflicting receipt
-  identities and is produced only by a reviewer role authorized by the rubric; history is not
-  overwritten to manufacture satisfaction.
+- Adjudication is another immutable, version-bound receipt whose server-derived conflict evidence
+  names the exact canonical conflicting effective
+  `{judgment-head-id, head-version}` generations—not raw judgment receipt identities—and is
+  produced only by a reviewer role authorized by the rubric; history is not overwritten to
+  manufacture satisfaction.
 
 A conflict set has a canonical identity derived from the server-authenticated organization,
 exact case/rubric/artifact versions, the sorted affected obligation ids and exclusivity group,
-and sorted conflicting effective `{judgment-head-id, head-version}` pairs. Equal receipt
-ids/evidence members are identity-neutral because they do not change an effective head
-generation. The organization is part of both conflict-set identity and the unique decision slot;
-caller-supplied scope never
+and sorted conflicting effective `{judgment-head-id, head-version}` pairs. Equal receipts under
+distinct raw judgment receipt ids remain immutable history under one effective head generation.
+Raw equal judgment receipt ids are identity-neutral and excluded from the conflict-set identity,
+adjudication proposal receipt, decision payload, and supporting proof. The organization is part of
+both conflict-set identity and the unique decision slot; caller-supplied scope never
 participates. The rubric declares allowed resolution descriptors plus adjudicator roles and
 distinct-principal quorum. Every allowed resolution descriptor carries its exact resolution
 value and a complete ordered `obligation-effects` specification keyed by every affected
@@ -144,7 +147,9 @@ matching the obligation and conflict set alone is insufficient. A `:keeps-pendin
 both a selected head and permitted-selection values. Built-in `:defer` and
 `:request-more-evidence` resolutions must keep every affected obligation pending. Adjudicator
 proposal admission derives and binds the exact rubric version, resolution value, total effect
-map, and selections. Its immutable receipt is evidence but does not
+map, and selections. At its atomic head admission it rederives the exact current effective
+judgment-head generations named by the conflict set and selections; a caller cannot supply or
+select raw judgment receipt identities. Its immutable receipt is evidence but does not
 directly satisfy the case. Quorum folds one server-derived `AdjudicationProposalHead` per exact
 organization, conflict-set identity, authenticated principal, and adjudicator role. Equal
 canonical proposals—same resolution plus the same total obligation-effect map and selected head
@@ -241,6 +246,10 @@ generation that the old decision cannot resolve.
     after losing the winning response: the lost-response retry returns the exact installed
     decision even if its uninstalled candidate support set observed additional compatible equal
     evidence; the installed supporting-head proof remains unchanged.
+    Race decision finalizers while an equal duplicate raw judgment receipt joins the same current
+    judgment-head generation. Conflict-set identity, proposal selections, decision payload, and
+    supporting proof remain byte-equal and contain no raw judgment receipt id; a lost-response
+    retry still returns the exact installed decision.
     Keep one principal's resolution and total effect map equal while changing only a selected
     conflicting head generation: the unlinked proposal is rejected, while a valid current-head
     supersession withdraws the old selection from quorum. Race two such selection-only successors
@@ -290,8 +299,9 @@ generation that the old decision cannot resolve.
 - Adjudication quorum counts only one current proposal head per authenticated principal/role;
   proposal revision races cannot finalize from withdrawn or mixed generations.
 - Decision finalization derives one canonical supporting proposal-head proof at its atomic
-  linearization; equal receipt ids cannot perturb decision identity, and equal concurrent or
-  lost-response finalizers return the exact installed decision.
+  linearization; equal proposal or judgment receipt ids cannot perturb conflict, proposal, or
+  decision identity, and equal concurrent or lost-response finalizers return the exact installed
+  decision.
 - Every adjudication resolution has a rubric-versioned, total per-obligation effect map;
   nonterminal decisions and multi-obligation conflict groups cannot manufacture satisfaction.
 - A directional resolution can select only determination values explicitly permitted by its

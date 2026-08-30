@@ -232,19 +232,34 @@ map entries are not reservations and cannot authorize provider invocation.
 One atomic unique-insert/compare operation, `TranslationTurnConfigAdmission`, authorizes and
 installs the final turn claim, execution snapshot, complete ordered member-admission map, and one
 immutable `TranslationTurnAdmissionReceipt`. It targets that organization-scoped admission slot.
-The receipt binds the authenticated principal,
-effective scope/delegation, required capability, stable turn id, claim variant and
-variant-specific initiator facts, canonical member-set digest, execution snapshot/digest, every
-ordered member artifact, and the exact authorization-policy
-evidence used at the operation's linearization point. Nothing is externally visible until the
+At that slot's linearization point, a fresh server-owned
+`authorize-translation-turn-admission` operation evaluates the authenticated principal and
+effective scope/delegation against the required turn-admission capability and the exact canonical
+resource-coordinate set from the complete observation. The earlier `observe-many` receipt remains
+historical provenance and never satisfies or authorizes this admission operation.
+
+Authorization-policy rotation and admission take the same serializable
+`TranslationTurnAdmissionAuthority` fence (or one equivalent co-located transaction). The current
+allow decision, authorization-policy version, unique-slot compare, and whole-record install
+linearize before that fence releases. A rotation ordered first returns the canonical denial and
+installs nothing; an admission ordered first commits under the then-current allow and records its
+exact authorization-policy evidence. Later revocation cannot rewrite that admitted history, but no
+ordering may commit a turn after a denial already linearized. Implementations cannot approximate
+this contract with an unfenced check followed by an independent insert.
+
+The receipt binds the authenticated principal, effective scope/delegation, required capability,
+stable turn id, claim variant and variant-specific initiator facts, canonical member-set digest,
+execution snapshot/digest, every ordered member artifact, and the exact authorization-policy
+evidence used at the operation's linearization point. That evidence comes from the fresh fenced
+operation, not from the observation receipt. Nothing is externally visible until the
 whole map commits; there is no partial member, pre-artifact, or `:pending` turn reservation. The
 agent session starts only from that complete admitted record. It receives the turn claim,
 snapshot, and member map through authenticated server context; each later `save_translation` call
 only selects, echoes, and validates one member and cannot become an identity-minting,
 collection-expansion, configuration-selection, or reauthorization boundary. Raw attempt ids are
-not globally unique: the same value under a different segment or target-language grouping is a
-distinct embedded attempt. The atomic turn install is every member's shared durable freshness
-boundary.
+not globally unique:
+the same value under a different segment or target-language grouping is a distinct embedded
+attempt. The atomic turn install is every member's shared durable freshness boundary.
 
 A crash or injected failure before that atomic commit leaves no persisted turn claim, execution
 snapshot, member admission, or provider/session side effect. Retry may reuse only the initiator's
@@ -332,6 +347,12 @@ The publication-free namespace closure from #273 remains an invariant.
    atomic turn install, while staging each member, and after install/before response. Every
    pre-install crash leaves no claim, snapshot, member admission, or provider side effect and
    retry must freshly observe/authorize; the post-install retry returns the exact complete turn.
+   Place a deterministic barrier after the final `observe-many` result and before admission
+   reauthorization, rotate policy from allow to deny, and prove the admission installs nothing
+   even when the earlier observation receipt said allow. Race rotation against the fenced
+   admission and prove the only outcomes are a complete turn under then-current allow followed by
+   revocation, or a denial with no record/session. There is no turn commit after a denial already
+   linearized, and replaying the old receipt cannot select a third outcome.
    Race callers with equal stable initiator facts whose observations straddle a config change:
    authenticated initiator, claim variant, stable variant-specific initiator facts, and
    member/source/request facts are the retry projection; the
