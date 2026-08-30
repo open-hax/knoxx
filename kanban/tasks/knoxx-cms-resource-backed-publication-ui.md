@@ -20,6 +20,15 @@ Stop `CmsPage` from treating OpenPlanner garden rows and `metadata.garden_public
 
 This cutover happens only after `knoxx-openplanner-publication-state-migration` has imported the existing topology and conflicts have been resolved.
 
+## Translation integration boundary
+
+The CMS owns document/publication intent, not translation splits, candidate corrections, or
+review truth. The reopened `knoxx-translation-review-chat-panel` P0 card owns displaying
+translation/review state and linking from CMS resources to the restored `/translations`
+workspace. This is an integration boundary, not additional Definition of Done for this existing
+review-stage CMS-intent card. Neither surface may synthesize split rows or replace the translation
+workspace with a whole-file approval control.
+
 ## Current coupling to remove
 
 - garden discovery through `/api/openplanner/v1/gardens`;

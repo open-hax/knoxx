@@ -49,6 +49,14 @@ The existing translation receipt and publication gate contracts.
   the gate for another.
 - Tests prove approval alone invokes no publication adapter effect.
 
+## P0 split-backed follow-up
+
+`knoxx-translation-split-memory-feedback` reopens the next approval binding: split-backed
+resource approval must name the exact split manifest, effective candidate-set digest, and
+deterministically composed target revision reviewed in the translation workspace. A changed
+correction or member invalidates the old approval. That criterion belongs to the P0 follow-up and
+does not rewrite the completed revision-specific scope being reviewed on this card.
+
 ## Card premise corrections
 
 1. **"records an approval against translation identity, target locale, and
@@ -103,3 +111,7 @@ which `[document garden locale]` currently has a completed translation and at
 which pair of revisions. The UI has `garden_id` but no notion of either
 revision, and the approval contract requires both. That belongs to the UI card
 together with the endpoint it reads.
+
+That follow-up is now P0 under `knowledge-ops-translation-document-review-v2` and
+`knoxx-translation-split-memory-feedback`; the older document-review actions must feed the same
+revision-bound evidence rather than remain a separate approval universe.
