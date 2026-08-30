@@ -287,3 +287,13 @@
   spore: none
   receipt-refs: 2026-08-30T04:05:33.941Z
   note: API-key collision rejection needs a full emitter inventory; preserve translation batch membership as a policy-admitted, tuple-bound delegation capability while audio uses only its server-mapped service principal.
+
+- ts: 2026-08-30T04:21:25.264Z
+  session: codex/knoxx-board-reconcile
+  task: Bind delegated ingestion authority through spawned effects and exact replay
+  p-efficiency: 0.92
+  p-friction: 0.33
+  p-skill-candidate: 0.43
+  spore: none
+  receipt-refs: 2026-08-30T04:21:25.264Z
+  note: Request admission is not enough for asynchronous tools; carry an immutable authorization lease into each effect fence, and make a sender-constrained per-request proof atomically idempotent for exact same-route replay.

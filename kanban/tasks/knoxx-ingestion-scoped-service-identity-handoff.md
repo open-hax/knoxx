@@ -56,19 +56,39 @@ not deliver the broader delegation runtime.
    resolves one active membership in the requested organization, confirms the current batch tuple
    through an authoritative batch adapter, and either refuses or mints a short-lived capability.
 6. The delegation capability binds the service principal, batch id, membership id, organization id,
-   allowed routes or operations, expiry, and nonce. It is audience-bound to Knoxx and cannot be
-   widened by request body, query, or header data.
-7. Subsequent batch work uses that capability as its sole credential: never API key plus capability
-   and never capability plus identity header. The capability resolver rechecks expiry, audience,
-   operation, batch state, and active membership before deriving request context.
-8. Define explicit completion and replay behavior. A capability becomes unusable after expiry,
-   batch completion, revocation, or its permitted call budget; a captured nonce cannot be replayed
-   for another batch, membership, organization, route, or worker.
-9. Preserve legacy batches only when the broker can resolve their configured service principal to a
+   allowed routes or operations, expiry, and nonce. It is audience-bound to Knoxx,
+   sender-constrained to the ingestion deployment's workload signing key by public-key thumbprint,
+   and cannot be widened by request body, query, or header data. It is not a reusable bearer.
+7. Subsequent batch work uses that capability authority as its sole credential: never API key plus
+   capability and never capability plus identity header. Each call carries a fresh per-request proof
+   over the HTTP method, canonical route, body digest, capability id, timestamp, sequence, and unique
+   proof id. The proof demonstrates possession of the bound workload key; it is part of the one
+   delegated credential authority, not a second principal or permission source.
+8. The capability resolver rechecks expiry, audience, operation, batch state, and active membership
+   before deriving request context. It atomically consumes each `(capability id, sequence, proof id)`
+   and records an idempotency receipt. Valid sequential calls use fresh proofs. An exact retry or
+   concurrent same-route replay receives the cached receipt or a typed non-effect and causes no
+   duplicate protected effect; a proof from another sender or for different request material fails.
+9. Bind the spawned agent run to the admitted authority after `/api/knoxx/direct/start`. Server-owned
+   launch code attaches an immutable authority envelope containing capability id, service principal,
+   batch id, membership id, organization id, allowed operations, and an authorization-lease id to the
+   run. Agent/model input cannot supply, replace, or widen that envelope, and the run cannot inherit
+   ambient tool authority.
+10. Recheck the envelope before every protected effect that outlives the request. In particular, a
+    named `save_translation` boundary validates the authorization lease, active membership, current
+    batch tuple, operation, expiry, completion, revocation, and a server-issued effect fence before
+    any translation write. The fence is verified again at commit so an in-flight effect cannot write
+    after the authoritative terminal transition.
+11. Define explicit completion, cancellation, and replay behavior. Batch completion, revocation, or
+    capability expiry atomically closes the authorization lease, invalidates outstanding effect
+    fences, and cancels pending and active runs. Cancellation is defense in depth; even if execution
+    continues briefly, every subsequent translation write returns a terminal non-effect. No captured
+    capability, request proof, run id, or agent tool call can revive or widen the lease.
+12. Preserve legacy batches only when the broker can resolve their configured service principal to a
    single explicitly delegable active membership. Ambiguous, cross-organization, or unresolved
    legacy work stays queued or fails with a typed non-effect result; it never falls back to system
    administrator.
-10. Run a whole-repository identity-emitter scan over production sources, tests, generated assets,
+13. Run a whole-repository identity-emitter scan over production sources, tests, generated assets,
     scripts, and operator docs. Update `scripts/verify-publication-tour.sh` and other fixtures that
     currently authenticate with public identity headers; retain such headers only in clearly named
     malicious-header probes.
@@ -82,13 +102,20 @@ not deliver the broader delegation runtime.
 - Delegation requires explicit delegation permission, one active membership, the matching
   organization, and a current batch confirmed by the authoritative adapter.
 - No request contains more than one credential authority. Broker requests use only the API key;
-  delegated work uses only the issued capability.
+  delegated work uses only the issued sender-constrained capability and its per-request possession
+  proof as one composite credential authority.
 - Public `x-knoxx-*` headers are always untrusted and never distinguish an internal worker.
 - A capability grants only its bound tuple and operations. Unknown fields, blank identifiers,
   malformed claims, tuple changes, and missing issuer/audience metadata fail closed.
 - Translation and audio retain their existing domain behavior, ordering, payloads, polling, and
   error handling after the authority transport changes.
 - No fixed service identity, API key, or capability becomes ambient system-administrator authority.
+- Arbitrary membership, tuple substitution, forged sender proof, and other confused-deputy
+  negatives produce zero protected effects and no administrator fallback.
+- Spawned runs and internal tool effects receive authority only from their immutable server-owned
+  envelope. The agent, prompt, payload, and tool arguments cannot select or widen that authority.
+- The terminal batch/revocation transition and each protected effect commit share an authoritative
+  fence: an effect committed before the transition may stand, but zero post-transition writes occur.
 
 ## TDD / proof
 
@@ -117,6 +144,19 @@ not deliver the broader delegation runtime.
 9. Run focused ingestion translation/audio tests, focused backend credential/capability tests, both
    relevant full suites, real-server probes, compile/typecheck, and strict changed-surface lint with
    zero warnings.
+10. Capture the spawned agent run after admission and prove its immutable authority envelope binds
+    the complete tuple and capability id. Attempt to alter the batch, membership, organization,
+    operation, lease, or effect fence through agent input and `save_translation` arguments; every
+    variant fails at the named `save_translation` boundary before a write.
+11. Exercise a completion/revocation race at agent start, before the first effect, and during an
+    in-flight `save_translation`. The authoritative transition invalidates the lease/fence and
+    cancels pending and active work; there are zero post-transition writes, even when cancellation
+    delivery is delayed. A pre-transition committed write remains exactly once and is auditable.
+12. Capture a valid sender-constrained proof and run an exact same-route replay before and after the
+    legitimate call, plus concurrent duplicates. The server atomically admits at most one execution,
+    returns the same cached receipt or typed non-effect to retries, and produces no duplicate
+    protected effect. Valid translation config, segment, start, and polling sequences use fresh
+    proofs and retain normal behavior.
 
 ## Non-goals
 
@@ -130,6 +170,7 @@ not deliver the broader delegation runtime.
 
 Translation and audio ingestion send no public identity headers, each protected request has exactly
 one server-verifiable authority, audio runs as its service principal, translation batch authority
-comes only from a narrowly bound policy-admitted capability, all confused-deputy and replay probes
-produce zero protected effects, the required happy paths remain compatible, and #2 can reject the
-legacy collision without breaking either worker.
+comes only from a narrowly bound policy-admitted sender-constrained capability, exact retries cannot
+duplicate an effect, spawned runs remain tuple-bound through every asynchronous write, completion or
+revocation produces zero post-transition writes, the required happy paths remain compatible, and #2
+can reject the legacy collision without breaking either worker.
