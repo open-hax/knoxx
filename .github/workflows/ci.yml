@@ -21,6 +21,21 @@ env:
   OPENPLANNER_REF: main
 
 jobs:
+  deployment-boundary:
+    name: deployment-boundary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Knoxx
+        uses: actions/checkout@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Reject retired deployment authority
+        run: |
+          node scripts/check-deployment-boundary.mjs --self-test
+          node scripts/check-deployment-boundary.mjs
+
   knoxx:
     name: knoxx (backend + frontend)
     runs-on: ubuntu-latest
