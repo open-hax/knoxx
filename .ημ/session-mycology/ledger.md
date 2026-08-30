@@ -277,3 +277,13 @@
   spore: none
   receipt-refs: 2026-08-30T03:46:27.613Z
   note: Removing trust from public identity headers requires repairing self-clients that currently emit them; use one server-verifiable API key for control calls and a named context-bound internal media adapter instead of preserving a fixed administrator or indistinguishable loopback exception.
+
+- ts: 2026-08-30T04:05:33.941Z
+  session: codex/knoxx-board-reconcile
+  task: Project the ingestion service-delegation dependency without claiming its runtime
+  p-efficiency: 0.91
+  p-friction: 0.34
+  p-skill-candidate: 0.42
+  spore: none
+  receipt-refs: 2026-08-30T04:05:33.941Z
+  note: API-key collision rejection needs a full emitter inventory; preserve translation batch membership as a policy-admitted, tuple-bound delegation capability while audio uses only its server-mapped service principal.

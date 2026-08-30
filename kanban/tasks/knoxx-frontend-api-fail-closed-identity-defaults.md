@@ -14,6 +14,7 @@ category: tasks
 > GitHub issue: [#2](https://github.com/open-hax/knoxx/issues/2)
 > Complements: `knoxx-tenant-fail-closed-route-guard` (#175; duplicate intake #9 is closed) and
 > `knoxx-translation-config-trusted-auth-context` (#283)
+> Required child: `knoxx-ingestion-scoped-service-identity-handoff` (#287)
 
 ## Signal
 
@@ -77,6 +78,15 @@ Rejecting public identity headers without addressing that path breaks legitimate
 self-fetches; exempting indistinguishable headers reopens spoofing. The internal handoff therefore
 needs a named server-owned boundary rather than a special case for the public header names.
 
+A whole-repository emitter scan also finds two JVM machine clients outside the backend tree.
+`ingestion/src/kms_ingestion/translation/worker.clj` and
+`ingestion/src/kms_ingestion/drivers/audio.clj` both send an API key with
+`x-knoxx-user-email`; the translation worker can add batch-specific
+`x-knoxx-membership-id`. Rejecting the collision immediately would break both workers, while
+dropping the batch header without a replacement would erase legitimate per-batch membership
+semantics. Required child #287 owns the scoped service/delegation migration. This card owns the
+eventual rejection and cannot complete until that projected child is green.
+
 ## Scope
 
 - Inventory both central request families and every direct `buildKnoxxAuthHeaders` consumer:
@@ -102,6 +112,11 @@ needs a named server-owned boundary rather than a special case for the public he
   whose credential or capability is bound to the already-verified context and accepted only on the
   loopback/internal boundary. External media URLs receive no Knoxx credential, capability, or
   identity header.
+- Treat `knoxx-ingestion-scoped-service-identity-handoff` (#287) as a blocking implementation
+  dependency. #287 inventories both JVM `knoxx-headers` producers, removes the ambient
+  `KNOXX_USER_EMAIL` identity default, moves audio to its server-mapped service principal, and
+  replaces translation's batch-membership header with a policy-admitted scoped capability. This
+  card rejects the legacy API-key/identity combination only with that compatibility path in place.
 - Complete a credentialed service proxy inventory, beginning with
   `backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs` functions
   `openplanner-proxy-handler!` and `register-ingestion-service-proxy-route!`, plus
@@ -218,6 +233,9 @@ needs a named server-owned boundary rather than a special case for the public he
 18. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
     server compile, and strict changed-surface lint pass with zero warnings; real-server negative
     probes confirm zero protected effect across both the direct auth and service-proxy boundaries.
+19. Before this card is done, run #287's real cross-process worker contract. Legacy ingestion
+    API-key/identity combinations fail before context or effect, while the replacement translation
+    and audio paths preserve their admitted authority and behavior with one credential per request.
 
 ## Non-goals
 
@@ -235,4 +253,5 @@ client-selected identity or combines it with a server credential, generated asse
 from the repaired sources, protected unauthenticated requests fail closed through the canonical
 server/UI path, deliberately public reads remain compatible without acquiring identity authority,
 internal self-calls neither collide credentials nor round-trip verified context into public identity
-headers, and authorized credential-derived requests remain compatible.
+headers, required child #287 has removed the ingestion collision without losing batch membership
+semantics, and authorized credential-derived requests remain compatible.
