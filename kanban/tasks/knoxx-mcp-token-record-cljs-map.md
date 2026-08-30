@@ -13,56 +13,80 @@ category: tasks
 
 > GitHub issue: [#258](https://github.com/open-hax/knoxx/issues/258)
 
-## Problem
+## Live baseline and remaining gap
 
-`infra.auth.method-config/grant->token-record` creates a JavaScript object from an ordinary
-`infra.*` namespace. The OAuth path in `infra.routes.mcp/load-token-record!` is a second producer,
-and downstream MCP authentication, actor scoping, and tool granting consume both branches with
-`aget`, `array-seq`, and `^js` hints. Converting one producer alone would leave the two branches
-with incompatible shapes and make the boundary less safe.
+The issue's authentication-contract premise is stale because part of the boundary repair has
+already landed:
 
-This violates the repository rule that raw JavaScript interop is born, decoded, encoded,
-sequenced, or mutated only in `knoxx.backend.extern.*`. It also makes a misspelled token field
+- `infra.auth.method-config/grant->token-record` returns a keyword-keyed CLJS map;
+- `law.mcp-token/TokenRecord` is the explicit shared schema; and
+- `extern.mcp-token/native-record` validates before any necessary native conversion.
+
+Do not recreate those pieces. The remaining OAuth branch still crosses the boundary differently:
+`infra.stores.mongo-mcp-oauth/get-token!` serializes its CLJS token data back to a JSON string,
+`infra.routes.mcp/load-token-record!` parses that string into a native object, and downstream
+context resolution, actor scoping, and tool granting read the result with `aget`, `array-seq`, and
+`^js` assumptions. The trusted-loopback branch is also converted to native early only to satisfy
+those consumers.
+
+The two producers therefore have a shared contract on paper but not one in-memory representation
+through the route. OAuth rows bypass `TokenRecord` validation, and a misspelled field can still
 silently become `nil`.
 
 ## Scope
 
-1. Define one explicit token-record contract/schema with keyword keys.
-2. Make both `grant->token-record` and `load-token-record!` return the same validated CLJS map.
-3. Convert `resolve-post-token-record!`, `resolve-token-context!`, actor scoping, and tool granting
-   to consume that map without raw-object inspection.
-4. Remove obsolete `^js`, `aget`, and `array-seq` assumptions from the ordinary infra route.
-5. If the MCP transport requires a JavaScript object, perform the final conversion only in the
-   named extern adapter that owns that transport.
+1. Preserve `grant->token-record`, `TokenRecord`, and the existing extern validation boundary as
+   the already-landed baseline; introduce no replacement schema or parallel adapter.
+2. Make the OAuth token persistence API accept and return CLJS token maps instead of JSON strings.
+   Keep Mongo driver/native encoding in the named extern boundary that owns it, and leave OAuth
+   client and authorization-code representations outside this token-record slice.
+3. Make `load-token-record!` validate the OAuth map with `TokenRecord`, and make
+   `resolve-post-token-record!` return a validated CLJS map for both OAuth and trusted-loopback
+   authentication.
+4. Convert `resolve-token-context!`, actor scoping, tool granting, token listing, and every other
+   token-record consumer to keyword access and CLJS collections.
+5. Remove token-record-specific `^js`, `aget`, `array-seq`, and route-local `js/JSON` assumptions.
+   If an actual MCP or Mongo native API still needs a JavaScript value, convert once in its owning
+   extern adapter; if `extern.mcp-token/native-record` becomes unused, retire it with its tests
+   rather than preserve a dead conversion.
 
 ## Contract / invariants
 
-- Authentication-contract and OAuth-store producers validate against one shape.
+- Authentication-contract and OAuth-store producers validate against the existing
+  `law.mcp-token/TokenRecord` shape.
 - Missing or malformed membership, actor, organization, email, or tool fields fail at the
   boundary with the canonical authentication error; no field typo silently narrows authority.
+- A malformed or legacy OAuth token row fails closed before policy lookup, actor selection, or
+  tool registration.
 - Tool order and allow/deny semantics remain unchanged.
 - No second token-record representation or branch-specific consumer is introduced.
 - Ordinary domain/law/shape/infra namespaces receive only CLJS maps, vectors, and scalars.
 
 ## TDD / proof
 
-1. Capture both producer outputs and every consumer-visible field before the refactor.
-2. Make the shared shape test fail independently for a malformed auth-contract grant and OAuth
-   store row.
-3. Exercise authentication, actor scoping, and tool granting through both producer branches.
-4. Add a source/namespace regression forbidding token-record raw interop outside its extern
-   adapter.
-5. Run focused MCP/auth tests, the full backend suite, server compile, and strict changed-surface
-   clj-kondo with zero warnings.
+1. Retain the existing tests proving `grant->token-record` is a map and the existing schema/native
+   adapter refuses malformed authorization data.
+2. RED-prove that the OAuth store/load branch currently returns a native object and bypasses the
+   shared schema; GREEN-prove it returns the same CLJS shape as the authentication-contract branch.
+3. Exercise context resolution, actor reassignment refusal, tool intersection, token listing, and
+   malformed/legacy OAuth rows through the real OAuth producer.
+4. Exercise the trusted-loopback producer through the same consumers and prove both branches have
+   byte-equivalent field semantics without an early native conversion.
+5. Add a focused source/namespace regression forbidding token-record raw interop and JSON
+   round-tripping in ordinary infra namespaces.
+6. Run focused MCP/auth/store tests, the full backend suite, server compile, and strict
+   changed-surface clj-kondo with zero warnings.
 
 ## Non-goals
 
-- Redesigning OAuth storage or grant policy.
+- Recreating the already-landed grant map, `TokenRecord` schema, or native adapter.
+- Redesigning OAuth client/code storage, grant policy, or credential lifetime.
 - Changing token lifetime, authorization semantics, or the MCP wire protocol.
 - Converting only one producer or adding an adapter that hides two in-memory shapes.
 
 ## Done when
 
-Both token producers and all consumers use one validated CLJS map, any necessary JavaScript
-conversion exists only at the owning extern boundary, and both real MCP authentication paths pass
-the same regression suite.
+Both token producers and all consumers use the existing validated CLJS-map contract, OAuth token
+persistence no longer JSON-round-trips the record through ordinary infra code, any necessary
+JavaScript conversion exists only at an owning extern boundary, and both real MCP authentication
+paths pass the same regression suite.

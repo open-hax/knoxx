@@ -3,8 +3,8 @@ uuid: knoxx-frontend-api-fail-closed-identity-defaults
 title: Fail closed instead of injecting frontend API identity defaults
 status: incoming
 priority: P1
-points: 2
-labels: tasks, 2sp, frontend, security, auth
+points: 3
+labels: tasks, 3sp, frontend, security, auth
 created_at: 2026-08-30T01:19:13.727Z
 category: tasks
 ---
@@ -19,47 +19,66 @@ category: tasks
 
 The original shared frontend request helper injected a privileged
 `system-admin@open-hax.local` / `open-hax` identity when browser storage was empty or unavailable.
-The helper has since moved to `frontend/src/lib/api/core.ts` and now combines mutable storage with
-optional `VITE_KNOXX_DEV_*` defaults. This card reconciles the live boundary: a production request
-must never acquire authentication authority from a hard-coded, build-time, or mutable-browser
-identity fallback.
+That TypeScript path now lives at `frontend/src/lib/api/core.ts` and combines mutable storage with
+optional `VITE_KNOXX_DEV_*` defaults, but it is not the only active path.
+
+`frontend/src/cljs/knoxx/frontend/lib/api.cljs` independently reads the same storage keys and
+emits the same identity headers for documents, gardens, mail, publication, settings, and
+translations. The admin surface also exposes `getKnoxxAuthIdentity` / `setKnoxxAuthIdentity` as an
+"Apply actor" form, and generated bridge assets contain the TypeScript helper. A production
+request must never acquire authentication authority from any hard-coded, build-time, or
+mutable-browser identity fallback.
 
 ## Scope
 
-- Remove implicit privileged identity defaults from the production shared request path.
-- Stop treating `knoxx_user_email`, `knoxx_org_slug`, or caller-set identity headers as proof of
-  authentication for protected APIs. Credential/session cookies or an explicitly authenticated
-  API-key mechanism remain the authority.
+- Inventory both central request families and every direct `buildKnoxxAuthHeaders` consumer:
+  `frontend/src/lib/api/core.ts`, `frontend/src/cljs/knoxx/frontend/lib/api.cljs`, their TypeScript
+  and CLJS callers, and the generated bridge rebuilt from source.
+- Remove storage-derived, build-time-default, and caller-supplied identity-header injection from
+  production frontend requests. `knoxx_user_email`, `knoxx_org_slug`, and `x-knoxx-*` identity
+  headers are not browser authentication authority. Credential-derived session cookies remain the
+  browser authority; an explicitly authenticated API-key mechanism remains a non-browser option.
+- Remove or redesign the admin "Apply actor" storage form so it cannot switch the authenticated
+  principal. If organization/context selection remains, the server must admit it under the
+  current credential rather than trusting mutable browser identity.
 - If a deliberately supported local-development identity seam remains, isolate it behind an
-  unmistakable development-only build/runtime guard that cannot enter a production bundle or
-  production request.
+  authenticated server-side login/session mechanism and an unmistakable development-only guard
+  that cannot enter a production bundle or production request.
 - When no verified authentication is available, send no fabricated identity headers, surface the
   server's canonical 401/reauthentication state, and perform no privileged retry or fallback.
 - Preserve caller-supplied non-identity headers, request bodies, credential inclusion, and normal
   authorized-session behavior.
+- Rebuild generated frontend assets from the repaired sources; do not hand-edit compiled bridge
+  output.
 
 ## TDD / proof
 
-1. Empty, unavailable, throwing, and malformed browser storage cannot produce user/organization
-   identity headers or a privileged request fallback.
-2. Production builds ignore or reject configured `VITE_KNOXX_DEV_*` identity defaults.
-3. Mutable storage values and caller-supplied identity headers cannot change the authenticated
-   principal observed by a protected real-server route.
-4. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
+1. RED-prove both the TypeScript and CLJS helpers currently turn mutable storage into identity
+   headers; invert both suites so empty, populated, unavailable, throwing, and malformed storage
+   can never produce those headers or a privileged fallback.
+2. Production builds ignore or reject configured `VITE_KNOXX_DEV_*` identity defaults, and the
+   rebuilt production assets contain no request-time storage/default identity injector.
+3. The admin surface cannot change the authenticated principal by editing local storage or
+   submitting the former "Apply actor" form.
+4. Mutable storage values and caller-supplied identity headers cannot change the principal
+   observed by protected real-server probes through one TypeScript surface and one CLJS surface.
+5. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
    as a default administrator.
-5. An authorized credential-derived session still performs GET/mutation requests with the same
-   payload and error behavior.
-6. Frontend unit/integration tests, production build, and strict changed-surface lint pass with
-   zero warnings; a real-server negative probe confirms no protected effect.
+6. An authorized credential-derived session still performs GET/mutation requests from both helper
+   families with the same payload, non-identity headers, credential inclusion, and error behavior.
+7. TypeScript tests, the full frontend CLJS suite, production build, and strict changed-surface
+   lint pass with zero warnings; real-server negative probes confirm zero protected effect.
 
 ## Non-goals
 
 - Making raw browser identity headers trustworthy.
 - Replacing server-side session/API-key authentication.
 - Solving every protected-route nil-context bypass; #175 owns the reusable fail-closed route guard.
+- Treating the generated bridge as source or hand-editing compiled assets.
 
 ## Done when
 
-No production frontend request can synthesize a privileged Knoxx identity from defaults or
-mutable browser storage, unauthenticated requests fail closed through the canonical server/UI
-path, and authorized credential-derived requests remain compatible.
+Neither production request family nor the admin identity UI can synthesize or switch a privileged
+Knoxx principal from defaults, caller headers, or mutable browser storage; generated assets are
+rebuilt from those repaired sources, unauthenticated requests fail closed through the canonical
+server/UI path, and authorized credential-derived requests remain compatible.

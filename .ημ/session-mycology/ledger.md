@@ -167,3 +167,13 @@
   spore: none
   receipt-refs: 2026-08-30T01:39:28.074Z
   note: A duplicate closure must update every active ownership statement, not only the primary link; historical references can remain only when explicitly labeled as duplicate audit context.
+
+- ts: 2026-08-30T01:51:27.304Z
+  session: codex/knoxx-board-reconcile
+  task: Rebase two projected follow-ups on the live implementation inventory
+  p-efficiency: 0.88
+  p-friction: 0.38
+  p-skill-candidate: 0.44
+  spore: none
+  receipt-refs: 2026-08-30T01:51:27.304Z
+  note: An adopted issue is not planning-ready until its premise is checked against the live tree; preserve partial repairs, name every active producer and consumer, and re-estimate when the real surface is wider.
