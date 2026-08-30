@@ -48,6 +48,12 @@ the service. Direct frontend callers exercise read and mutation routes through b
 fixing only the three authentication resolvers would still allow browser-selected identity to
 cross a Knoxx-owned service boundary with stronger server authority.
 
+There is also a dedicated `GET /api/openplanner/v1/sessions` registration inside
+`register-openplanner-proxy-routes!`. It bypasses `openplanner-proxy-handler!` and calls
+`openplanner-client/sessions!`, which still attaches Knoxx's server-held OpenPlanner credential.
+That session listing is a separate credential-required boundary, not a deliberately public read
+that the wildcard handler's tests can cover implicitly.
+
 ## Scope
 
 - Inventory both central request families and every direct `buildKnoxxAuthHeaders` consumer:
@@ -62,6 +68,8 @@ cross a Knoxx-owned service boundary with stronger server authority.
 - Complete a credentialed service proxy inventory, beginning with
   `backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs` functions
   `openplanner-proxy-handler!` and `register-ingestion-service-proxy-route!`, plus
+  `register-openplanner-proxy-routes!` and its dedicated `GET /api/openplanner/v1/sessions` call to
+  `openplanner-client/sessions!`, plus
   `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs`. Include every Knoxx route that
   accepts inbound data or headers and then calls a downstream service with Knoxx-held credentials;
   record which headers are constructed locally, copied, or forwarded.
@@ -71,6 +79,9 @@ cross a Knoxx-owned service boundary with stronger server authority.
   identity, rederive it from the verified server request context and pass it through a named
   internal service adapter; never reuse client bytes or let an absent context become a system
   actor.
+- The dedicated OpenPlanner sessions listing is credential-required: require a verified Knoxx
+  request context before any downstream call. The server-held bearer credential cannot make this
+  session inventory anonymously readable or serve as caller authentication.
 - Inventory direct frontend callers of `/api/openplanner/*` and `/api/ingestion/*`, including
   write-capable CMS, labels, review, garden, workspace, and ingestion flows and
   `frontend/src/test/ui-backend-surface-matrix.ts`. Cover the listed GET, POST, PUT, PATCH, and
@@ -122,23 +133,28 @@ cross a Knoxx-owned service boundary with stronger server authority.
    malformed credential. Every session-cookie/API-key collision fails before context resolution,
    policy lookup, or protected effect; removing one credential restores that credential's normal
    authenticated behavior without fallback from a rejected collision.
-7. Direct unauthenticated `/api/openplanner/*` and `/api/ingestion/*` probes send malicious identity
+7. Direct unauthenticated OpenPlanner wildcard and `/api/ingestion/*` probes send malicious identity
    headers through representative read and protected mutation routes. Before authorization, the
    downstream call count remains zero and no protected mutation occurs; where an unauthenticated
    read is deliberately public, its captured outbound request contains no spoofed identity.
-8. Valid session and API-key proxy probes derive any required downstream identity from the verified
-   context. Conflicting client identity headers cannot override that principal, and the fake
-   downstream captures neither the conflicting value nor a fabricated system actor. Exercise
-   OpenPlanner's server-credential attachment and ingestion's former clone-all-headers path.
-9. Mutable storage values and caller-supplied identity headers cannot change the principal
+8. A direct `GET /api/openplanner/v1/sessions` negative probe has no valid Knoxx credential and may
+   include conflicting identity headers. The `openplanner-client/sessions!` call count remains zero,
+   no session rows or enrichment data are disclosed, and the canonical protected-request failure is
+   returned before the server bearer credential can be used.
+9. Valid session and API-key probes for the dedicated sessions route and the wildcard/ingestion
+   proxy routes derive any required downstream identity from verified context. Conflicting client
+   identity headers cannot override that principal, and the fake downstream captures neither the
+   conflicting value nor a fabricated system actor. Exercise OpenPlanner's server-credential
+   attachment and ingestion's former clone-all-headers path.
+10. Mutable storage values and caller-supplied identity headers cannot change the principal
    observed by protected real-server probes through one TypeScript surface and one CLJS surface.
-10. A missing/expired session on a protected browser request reaches one canonical
+11. A missing/expired session on a protected browser request reaches one canonical
     401/reauthentication UI path; it never retries as a default administrator.
-11. An authorized credential-derived session still performs GET/mutation requests from both helper
-   families with the same payload, non-identity headers, credential inclusion, and error behavior.
-12. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
-   server compile, and strict changed-surface lint pass with zero warnings; real-server negative
-   probes confirm zero protected effect across both the direct auth and service-proxy boundaries.
+12. An authorized credential-derived session still performs GET/mutation requests from both helper
+    families with the same payload, non-identity headers, credential inclusion, and error behavior.
+13. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
+    server compile, and strict changed-surface lint pass with zero warnings; real-server negative
+    probes confirm zero protected effect across both the direct auth and service-proxy boundaries.
 
 ## Non-goals
 

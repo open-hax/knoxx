@@ -237,3 +237,13 @@
   spore: none
   receipt-refs: 2026-08-30T03:18:10.949Z
   note: Fail-closed authentication must name its protected boundary; an intentionally public read stays non-authorizing when it forwards no client identity and cannot borrow a downstream service credential.
+
+- ts: 2026-08-30T03:28:29.984Z
+  session: codex/knoxx-board-reconcile
+  task: Guard the dedicated OpenPlanner sessions listing
+  p-efficiency: 0.90
+  p-friction: 0.35
+  p-skill-candidate: 0.43
+  spore: none
+  receipt-refs: 2026-08-30T03:28:29.984Z
+  note: Wildcard proxy hardening does not cover a more-specific route registered first; inventory each credential-attaching handler and prove its downstream call is unreachable without verified caller context.
