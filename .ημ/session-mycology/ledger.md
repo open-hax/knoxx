@@ -137,3 +137,13 @@
   spore: none
   receipt-refs: 2026-08-30T00:48:53.766Z
   note: Adapter proofs must carry the same canonical evidence law as the domain contract; effective head generations determine adjudication identity, while equal raw receipts remain history and cannot perturb a decision.
+
+- ts: 2026-08-30T00:57:53.346Z
+  session: codex/knoxx238-repair
+  task: Order installed MCP decision retries before evidence rederivation
+  p-efficiency: 0.87
+  p-friction: 0.45
+  p-skill-candidate: 0.49
+  spore: none
+  receipt-refs: 2026-08-30T00:57:53.346Z
+  note: An installed logical decision is already-linearized history and must be compared and returned before current-head or quorum derivation; only an empty slot evaluates current evidence, while later head advancement forms a distinct unresolved conflict generation.

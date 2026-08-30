@@ -133,8 +133,16 @@ repository/receipt store:
    judgment receipts remain immutable history rather than being replaced or selected as decision
    identity. An MCP adjudication request names only logical conflict-set, resolution, proposal,
    and selection facts; it cannot supply raw judgment receipt identity or conflict evidence. The
-   server derives organization and rederives the current effective judgment-head generations at
-   proposal/decision admission, rejecting stale or substituted generations without persistence.
+   server derives organization. Proposal admission rederives the current effective judgment-head
+   generations before accepting evidence. Decision finalization performs an internal
+   installed-decision-slot comparison for that organization and conflict-set identity, using only
+   the caller-stable logical decision facts, before rederiving current heads or quorum. A
+   canonically equal installed logical decision returns the exact installed decision unchanged
+   without current-head or quorum rederivation. A different installed logical decision returns a
+   conflict without replacement. Only an empty decision slot rederives the current effective
+   judgment-head generations and proposal-head quorum, rejects stale or substituted generations,
+   and atomically installs a valid decision. Uninstalled candidate head/support evidence remains
+   outside retry equality.
    The fixture includes explicit obligation ids, allowed values, role/quorum rules,
    exclusivity groups, and adjudicator roles so no adapter invents completion defaults.
    Competing adjudicator proposals use the server-authenticated-organization-scoped canonical
@@ -147,6 +155,11 @@ repository/receipt store:
    decision payload, and supporting proof remain byte-equal and contain no raw judgment receipt id;
    the duplicate remains immutable history under the same effective head generation, and an exact
    lost-response retry returns the installed decision unchanged.
+   Commit a decision, lose its response, advance a conflicting judgment head, and make an equal
+   retry for the original conflict generation. The retry returns the exact installed decision and
+   creates no second decision slot. That installed historical decision resolves only its named
+   historical conflict generation; the head advance remains a new unresolved conflict generation
+   in `:needs-adjudication` visible work.
    A mixed fixture with a missing obligation plus an unrelated exclusive conflict returns
    `:needs-adjudication` together with both `:conflict-sets` and `:missing-obligations`;
    after resolving only the conflict it becomes `:pending`, not `:satisfied`. MCP discovery
