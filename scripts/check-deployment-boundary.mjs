@@ -18,6 +18,14 @@ const rules = [
   ["legacy runtime root", /\/home\/error(?:\/|\b)/],
   ["unverified SSH policy", /StrictHostKeyChecking\s*(?:=|\s)\s*(?:accept-new|no)\b/i],
   ["unverified SSH host-key discovery", /\bssh-keyscan\b/],
+  [
+    "legacy SSH host default",
+    /(?:DEPLOY_HOST|STAGING_HOST|TESTING_HOST|PRODUCTION_HOST|PROMETHEAN_SSH_HOST)[^\n]{0,200}(?:knoxx|proxx|ussy)[^\n]{0,80}\.promethean\.rest/,
+  ],
+  [
+    "legacy SSH user default",
+    /(?:DEPLOY_USER|STAGING_SSH_USER|TESTING_SSH_USER|PRODUCTION_SSH_USER|PROMETHEAN_SSH_USER)[^\n]{0,200}\berror\b/,
+  ],
 ];
 
 async function exists(relativePath) {
@@ -63,6 +71,8 @@ function selfTest() {
     "runtimeRoot: /home/error/devel/services/knoxx",
     "StrictHostKeyChecking=no",
     "ssh-keyscan -H host.example",
+    "DEPLOY_HOST: knoxx.promethean.rest",
+    "DEPLOY_USER: error",
   ];
   const safe = [
     "PROXX_PUBLIC_HOST=proxx.promethean.rest",
