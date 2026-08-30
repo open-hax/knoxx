@@ -417,3 +417,13 @@
   spore: none
   receipt-refs: 2026-08-30T21:27:11.163Z
   note: Pre-segmentation authority cannot bind coordinates that do not exist. Unknown provenance needs one explicit atomic upgrade, not an unreachable promise. The generated credential-route inventory now also names the current Proxx bearer family for auditability.
+
+- ts: 2026-08-30T21:32:39.711Z
+  session: codex/knoxx-board-reconcile
+  task: Make migration fencing local in REST mode and allow verified projection successors
+  p-efficiency: 0.90
+  p-friction: 0.41
+  p-skill-candidate: 0.49
+  spore: none
+  receipt-refs: 2026-08-30T21:32:39.711Z
+  note: Generated remote ids cannot fence absent rows. Seal a natural-key inventory under a legacy-writer cutover barrier, then decide locally. A narrow current-row sink needs an explicit manifest-proven version transition so verified source successors can advance without admitting unrelated aliases.

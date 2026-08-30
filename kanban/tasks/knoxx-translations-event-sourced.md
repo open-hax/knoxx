@@ -214,9 +214,15 @@ intentionally remain distinct attempts.
 Until the existing OpenPlanner sink keys rows by the complete `SegmentCoordinate`, the Knoxx
 delegated adapter also reserves its actual narrower
 `LegacyProjectionKey = (org_id, document_id, segment_index, target_lang)`. That reservation binds
-exactly one complete coordinate. A different project, garden, source language/revision, or source
-span that aliases the same legacy key conflicts before a new ledger claim or remote invocation;
-retranslations of the one bound complete coordinate remain serialized by attempt ordinal.
+one current complete coordinate and a lease version. A different project, garden, source language,
+or unrelated lineage that aliases the same legacy key conflicts before a new ledger claim or remote
+invocation; retranslations of the bound coordinate remain serialized by attempt ordinal. A verified
+new source revision advances only through `ProjectionVersionTransition`: under the same lease, an
+atomic compare-and-swap exact-matches the prior coordinate/version, a server-admitted
+`SourceManifest` successor relation, and the new coordinate's authoritative span/slice, then moves
+the binding to the successor coordinate and enqueues its projection intent exactly once. The prior
+event/projection history remains immutable. Concurrent or stale transitions, same-revision span
+aliases, and successor claims without manifest lineage conflict before dispatch.
 
 ### Canonical attempt event
 
@@ -261,7 +267,10 @@ authoritative and an idempotent replay/recovery step advances the projection fro
 checkpoint without appending another attempt.
 
 Legacy migration first persists a `LegacyMigrationIdentity` derived only from the immutable legacy
-store/collection namespace and persisted legacy-row primary key. It is independent of
+store/collection namespace and the persisted natural
+`LegacyRowKey = (org_id, document_id, segment_index, target_lang)`. This key is available from a
+legacy record and from a prospective save before any Mongo-generated id or remote REST row exists;
+it is computed from raw legacy-key fields, not from a newly derived coordinate object. It is independent of
 `SegmentCoordinate`, candidate values, and every coordinate inferred during migration. The event
 store installs a unique index on `LegacyMigrationIdentity`; the deterministic initial attempt/event
 id is derived from that identity in a fixed migration namespace, and the canonical migrated event
@@ -289,10 +298,10 @@ projection, resumes from durable checkpoints, and keeps the existing read endpoi
 every migrated grouping key can be served from the new projection.
 
 Partial migration uses one server-owned, compare-and-swap `MigrationAuthority` marker per
-`LegacyAuthorityKey = (immutable legacy store/collection namespace, persisted legacy-row primary
-key)`, not per new grouping key. For an existing row this is the same persisted row identity used
-by `LegacyMigrationIdentity`; an absent-row bootstrap deterministically reserves the potential
-legacy primary-key slot. The marker stores `:legacy` or `:events` plus the one bound complete tagged
+`LegacyAuthorityKey = (immutable legacy store/collection namespace, LegacyRowKey)`, not per new
+grouping key or generated database id. For an existing row this is the same natural row identity
+used by `LegacyMigrationIdentity`; an absent-row bootstrap reserves the same locally computable
+natural-key slot. The marker stores `:legacy` or `:events` plus the one bound complete tagged
 coordinate. While `:legacy`, reads use the legacy row. Migration writes and verifies the
 deterministic initial event and projection first, then atomically advances the marker; before that
 CAS the event/projection is staged evidence, not read authority. Once `:events`, reads use the
@@ -311,10 +320,21 @@ a changed target, stale marker, competing upgrade, or ordinary coordinate alias 
 any append, projection, or marker change. There is no fallback, delete, or in-place rewrite of the
 unknown event.
 
-Marker absence is a bootstrap pre-state, not a third authority value. Every first read,
+Before either storage mode enables event-sourced saves, an operator-owned cutover barrier stops or
+routes every legacy writer through Knoxx, reads the legacy store through the existing adapter, and
+persists a sealed `LegacyKeySnapshot` containing snapshot id/digest plus every `LegacyRowKey` and
+row digest. REST mode never infers remote absence and direct-Mongo mode does not depend on a
+generated `_id`; both decide presence or absence only against that sealed local snapshot. If the
+freeze, complete inventory, digest verification, or exclusive-writer handoff cannot be proven,
+Knoxx returns `MigrationAuthorityUninitialized` before accepting an event or calling the legacy
+sink. No new OpenPlanner endpoint, cross-repository transaction, or coordinated OpenPlanner code
+change is required.
+
+Marker absence is a bootstrap pre-state, not a third authority value. After the sealed cutover
+barrier, every first read,
 migration, or save derives and acquires the same legacy-authority migration/admission fence before
 any coordinate grouping-key fence, then tests marker absence
-and legacy-row existence in one transactionally consistent decision. When a legacy row exists,
+and snapshot membership in one local transactionally consistent decision. When the snapshot names a legacy row,
 one compare-and-swap claims `:legacy`, binds its `LegacyMigrationIdentity` to exactly one complete
 tagged coordinate, and gives that migration path cutover authority. When no legacy row exists, a
 first save uses one atomic store transaction to compare both facts as still absent, bind the
@@ -324,10 +344,11 @@ state is visible. A read or migration that
 finds no row may establish an empty `:events` authority, after which a save uses normal event
 admission.
 
-Concurrent first save and migration retry the whole fenced decision after a failed compare. A
-migration that claims an existing legacy row completes that deterministic initial event before
-the save is appended; a first save that wins the verified no-legacy transaction leaves migration
-to observe `:events` and do nothing. A crash before either atomic bootstrap changes nothing; a
+Concurrent first save and migration retry the whole locally fenced decision after a failed compare.
+A migration for a key present in the sealed snapshot completes that deterministic initial event
+before the save is appended; a first save for a snapshot-absent key establishes `:events` and leaves
+migration to do nothing. No remote legacy row can be created after snapshot sealing. A crash before
+either atomic bootstrap changes nothing; a
 crash after it exposes the complete chosen authority and, for a saving caller, its admitted event
 and projection. Thus no candidate waits on a marker that nobody owns, disappears between legacy
 discovery and cutover, or is written to both authorities.
@@ -418,6 +439,10 @@ land a migration that leaves that endpoint erroring.
   `:events` together with its first saved event/projection. Two concurrent first saves and a
   first save racing legacy discovery prove one bootstrap authority, normal attempt-id conflict
   or ordering law for the candidates, no indefinite block, and no lost or dual-written save.
+- REST and direct-Mongo fixtures seal the same `LegacyKeySnapshot`, then prove a present and absent
+  natural key resolve to identical local fences without using a remote/generated row id. Attempts
+  before sealing or after a simulated unfreezed legacy writer fail with
+  `MigrationAuthorityUninitialized` and zero event or downstream writes.
 - Concurrent distinct attempts receive unique per-key ordinals; out-of-order projection
   delivery cannot regress current state, and replay/recovery is byte-equivalent and
   idempotent after an injected append/projection split failure.
@@ -439,6 +464,11 @@ land a migration that leaves that endpoint erroring.
   differ by project, garden, source locale, source revision, or source span. Both resolve the same
   `LegacyAuthorityKey`; exactly one coordinate binding wins, and the other receives the typed
   migration-coordinate conflict before a second marker, cutover, event, projection, or write.
+- Projection fixtures admit a manifest-declared successor source revision for the same immutable
+  project/garden/document/source-language/segment/target lineage and prove one
+  `ProjectionVersionTransition` advances the legacy-key binding and downstream current row while
+  preserving prior history. Stale/concurrent successors, same-revision span aliases, and a changed
+  project, garden, or source language conflict before dispatch.
 - An evaluation receipt can bind to a candidate that remains addressable after a newer
   translation exists.
 - `save_translation` retains `destructiveHint: true` while it can replace current projection

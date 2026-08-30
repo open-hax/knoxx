@@ -217,10 +217,12 @@ and sole-writer rules.
     downstream `LegacyProjectionKey = (org_id, document_id, segment_index, target_lang)`, persists
     the bound complete `SegmentCoordinate`, intended attempt ordinal, and canonical projection-
     payload digest, and permits at most one remote invocation for that intent. The store enforces one
-    complete coordinate per legacy key: a different project, garden, source language/revision, or
-    source span that aliases an occupied `LegacyProjectionKey` returns `ProjectionKeyCollision`
-    before either new claim or remote invocation. Retranslations of the same complete coordinate may
-    serialize normally. The existing OpenPlanner sink
+    current complete coordinate plus lease version per legacy key. A different project, garden,
+    source language, unrelated lineage, or same-revision span alias returns `ProjectionKeyCollision`
+    before either new claim or remote invocation. A server-admitted successor `SourceManifest` may
+    use `ProjectionVersionTransition` to CAS the exact prior coordinate/version to the new source
+    revision and authoritative span/slice, preserving history and enqueueing the successor intent
+    once. Retranslations of the same complete coordinate may serialize normally. The existing OpenPlanner sink
     is not a causal/idempotency authority: it stores neither attempt/effect identity nor the lease.
     Therefore an acknowledged response records the immutable local receipt, while a lost or ambiguous
     response never causes automatic redispatch. While the coordinate lease blocks later projection
@@ -424,9 +426,12 @@ and sole-writer rules.
     exact canonical projection read-back records the first receipt. Return a non-matching or
     permanently unprovable read-back and prove `AmbiguousProjectionOutcome` blocks completion and
     later same-coordinate projection dispatch without fabricating a receipt or overwriting state.
-    Then vary only project, garden, source language/revision, or source span while preserving the
-    actual OpenPlanner `(org_id, document_id, segment_index, target_lang)` key; prove the Knoxx
-    reservation returns `ProjectionKeyCollision` before a second claim or remote invocation.
+    Then vary project, garden, source language, unrelated lineage, or a span within the same source
+    revision while preserving the actual OpenPlanner `(org_id, document_id, segment_index,
+    target_lang)` key; prove the Knoxx reservation returns `ProjectionKeyCollision` before a second
+    claim or remote invocation. Separately admit a server-proven successor source manifest and race
+    two `ProjectionVersionTransition` requests: exactly one moves the binding and dispatches once,
+    the stale loser conflicts, and prior event history remains addressable.
 
 ## Non-goals
 
