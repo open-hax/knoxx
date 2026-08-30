@@ -38,6 +38,16 @@ policy context resolution before checking an API key or cookie. A direct client 
 produce a non-nil spoofed context even after every frontend helper is repaired; #175's nil-context
 guard cannot constrain authority that was synthesized before the route guard.
 
+The same identity bytes also cross credentialed service proxies. In
+`backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs`,
+`openplanner-proxy-handler!` copies `x-knoxx-user-email` and `x-knoxx-org-slug` from the request,
+then `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs` merges those values into an
+outbound request carrying Knoxx's server-held OpenPlanner bearer credential. The ingestion path in
+`register-ingestion-service-proxy-route!` clones the complete inbound header object before calling
+the service. Direct frontend callers exercise read and mutation routes through both boundaries, so
+fixing only the three authentication resolvers would still allow browser-selected identity to
+cross a Knoxx-owned service boundary with stronger server authority.
+
 ## Scope
 
 - Inventory both central request families and every direct `buildKnoxxAuthHeaders` consumer:
@@ -49,6 +59,22 @@ guard cannot constrain authority that was synthesized before the route guard.
   context. Client-supplied identity headers must be rejected or stripped before context
   resolution; any internal identity handoff must be distinguishable from untrusted wire input and
   derived from an already-verified session or API key.
+- Complete a credentialed service proxy inventory, beginning with
+  `backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs` functions
+  `openplanner-proxy-handler!` and `register-ingestion-service-proxy-route!`, plus
+  `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs`. Include every Knoxx route that
+  accepts inbound data or headers and then calls a downstream service with Knoxx-held credentials;
+  record which headers are constructed locally, copied, or forwarded.
+- At every such proxy boundary, drop every inbound `x-knoxx-*` identity header before constructing
+  the outbound request. Knoxx's server-held OpenPlanner bearer credential and any other service
+  credential must not amplify untrusted identity. If the downstream protocol genuinely requires
+  identity, rederive it from the verified server request context and pass it through a named
+  internal service adapter; never reuse client bytes or let an absent context become a system
+  actor.
+- Inventory direct frontend callers of `/api/openplanner/*` and `/api/ingestion/*`, including
+  write-capable CMS, labels, review, garden, workspace, and ingestion flows and
+  `frontend/src/test/ui-backend-surface-matrix.ts`. Cover the listed GET, POST, PUT, PATCH, and
+  DELETE proxy routes rather than proving only a harmless read.
 - Remove storage-derived, build-time-default, and caller-supplied identity-header injection from
   production frontend requests. `knoxx_user_email`, `knoxx_org_slug`, and `x-knoxx-*` identity
   headers are not browser authentication authority. Credential-derived session cookies remain the
@@ -93,15 +119,23 @@ guard cannot constrain authority that was synthesized before the route guard.
    malformed credential. Every session-cookie/API-key collision fails before context resolution,
    policy lookup, or protected effect; removing one credential restores that credential's normal
    authenticated behavior without fallback from a rejected collision.
-7. Mutable storage values and caller-supplied identity headers cannot change the principal
+7. Direct unauthenticated `/api/openplanner/*` and `/api/ingestion/*` probes send malicious identity
+   headers through representative read and protected mutation routes. Before authorization, the
+   downstream call count remains zero and no protected mutation occurs; where an unauthenticated
+   read is deliberately public, its captured outbound request contains no spoofed identity.
+8. Valid session and API-key proxy probes derive any required downstream identity from the verified
+   context. Conflicting client identity headers cannot override that principal, and the fake
+   downstream captures neither the conflicting value nor a fabricated system actor. Exercise
+   OpenPlanner's server-credential attachment and ingestion's former clone-all-headers path.
+9. Mutable storage values and caller-supplied identity headers cannot change the principal
    observed by protected real-server probes through one TypeScript surface and one CLJS surface.
-8. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
+10. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
    as a default administrator.
-9. An authorized credential-derived session still performs GET/mutation requests from both helper
+11. An authorized credential-derived session still performs GET/mutation requests from both helper
    families with the same payload, non-identity headers, credential inclusion, and error behavior.
-10. TypeScript tests, the full frontend CLJS suite, focused backend auth tests, production build,
+12. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
    server compile, and strict changed-surface lint pass with zero warnings; real-server negative
-   probes confirm zero protected effect.
+   probes confirm zero protected effect across both the direct auth and service-proxy boundaries.
 
 ## Non-goals
 
@@ -114,6 +148,7 @@ guard cannot constrain authority that was synthesized before the route guard.
 
 Neither production request family, the admin identity UI, nor direct wire input can synthesize or
 switch a privileged Knoxx principal from defaults, caller headers, or mutable browser storage.
-The server derives context only from verified credentials, generated assets are rebuilt from the
-repaired sources, unauthenticated requests fail closed through the canonical server/UI path, and
-authorized credential-derived requests remain compatible.
+The server derives context only from verified credentials, no Knoxx-owned service proxy forwards
+client-selected identity or combines it with a server credential, generated assets are rebuilt
+from the repaired sources, unauthenticated requests fail closed through the canonical server/UI
+path, and authorized credential-derived requests remain compatible.

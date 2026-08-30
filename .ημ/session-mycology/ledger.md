@@ -217,3 +217,13 @@
   spore: none
   receipt-refs: 2026-08-30T02:31:29.859Z
   note: Closing a schema requires inventorying every legitimate producer field; persistence timestamps need a typed paired contract and listing compatibility without becoming authentication authority.
+
+- ts: 2026-08-30T02:43:38.329Z
+  session: codex/knoxx-board-reconcile
+  task: Remove identity amplification across credentialed service proxies
+  p-efficiency: 0.89
+  p-friction: 0.37
+  p-skill-candidate: 0.45
+  spore: none
+  receipt-refs: 2026-08-30T02:43:38.329Z
+  note: Repairing ingress authentication is incomplete while a downstream proxy combines client-selected identity with server authority; sanitize the whole identity family and rederive only from verified context at every credentialed hop.
