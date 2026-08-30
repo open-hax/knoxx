@@ -128,7 +128,13 @@ repository/receipt store:
 9. The pure status fold keeps incomplete multi-judgment or multi-role sets `:pending`, reports
    exclusive conflicting receipts as `:needs-adjudication`, and returns `:satisfied` only for
    a complete non-conflicting set bound to the exact case, rubric, and artifact versions. An
-   authorized adjudication receipt names the conflicting receipts rather than replacing them.
+   authorized adjudication receipt names the exact canonical conflicting effective
+   `{judgment-head-id, head-version}` generations and never raw judgment receipt ids. The raw
+   judgment receipts remain immutable history rather than being replaced or selected as decision
+   identity. An MCP adjudication request names only logical conflict-set, resolution, proposal,
+   and selection facts; it cannot supply raw judgment receipt identity or conflict evidence. The
+   server derives organization and rederives the current effective judgment-head generations at
+   proposal/decision admission, rejecting stale or substituted generations without persistence.
    The fixture includes explicit obligation ids, allowed values, role/quorum rules,
    exclusivity groups, and adjudicator roles so no adapter invents completion defaults.
    Competing adjudicator proposals use the server-authenticated-organization-scoped canonical
@@ -137,6 +143,10 @@ repository/receipt store:
    decision is one atomically admitted receipt in that organization's slot, so opposite
    finalizations cannot both satisfy the case. Appending equal evidence after finalization
    preserves that slot/decision; advancing a head creates a new unresolved conflict generation.
+   Race one equal duplicate raw judgment receipt with finalization. The conflict-set identity,
+   decision payload, and supporting proof remain byte-equal and contain no raw judgment receipt id;
+   the duplicate remains immutable history under the same effective head generation, and an exact
+   lost-response retry returns the installed decision unchanged.
    A mixed fixture with a missing obligation plus an unrelated exclusive conflict returns
    `:needs-adjudication` together with both `:conflict-sets` and `:missing-obligations`;
    after resolving only the conflict it becomes `:pending`, not `:satisfied`. MCP discovery

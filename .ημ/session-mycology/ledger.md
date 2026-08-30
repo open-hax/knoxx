@@ -127,3 +127,13 @@
   spore: none
   receipt-refs: 2026-08-30T00:36:50.409Z
   note: Historical equal retry readback can remain installed-first without exposing occupancy; collapse empty and mismatched outcomes behind one current slot-authorization boundary and disclose only a redacted conflict to an authorized caller.
+
+- ts: 2026-08-30T00:48:53.766Z
+  session: codex/knoxx238-repair
+  task: Bind MCP adjudication to effective judgment heads
+  p-efficiency: 0.86
+  p-friction: 0.47
+  p-skill-candidate: 0.51
+  spore: none
+  receipt-refs: 2026-08-30T00:48:53.766Z
+  note: Adapter proofs must carry the same canonical evidence law as the domain contract; effective head generations determine adjudication identity, while equal raw receipts remain history and cannot perturb a decision.
