@@ -1,11 +1,13 @@
 (ns knoxx.backend.infra.translation-agent-sink-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.translation-agent-content :as content]
-            [knoxx.backend.infra.translation-content-integrity :as content-integrity]
             [knoxx.backend.infra.translation-agent-sink :as sink]
-            [knoxx.backend.infra.translation-evidence-store :as store]
+            [knoxx.backend.infra.translation-evidence-store :as evidence-store]
+            [knoxx.backend.infra.translation-split-store :as split-store]
             [knoxx.backend.law.translation-agent :as agent-law]
-            [knoxx.backend.law.translation-dispatch :as dispatch-law]))
+            [knoxx.backend.law.translation-dispatch :as dispatch-law]
+            [knoxx.backend.law.translation-source-split :as source-split]
+            [knoxx.backend.law.translation-split :as split-law]))
 
 (def ^:private work
   {:document :open-hax.documents/promethean
@@ -18,214 +20,230 @@
    :dispatch/document-wire-id "open-hax.documents/promethean"
    :dispatch/source-locale :en
    :dispatch/org-id "open-hax"
+   :dispatch/project "promethean"
    :dispatch/membership-id "member-1"
-   ;; Supplied by `infra.translation-dispatch/dispatch-context` in production.
-   ;; Without it every completion is refused as `:source-unverifiable` — the
-   ;; drift guard compares digest to digest, never digest to pinned revision.
    :dispatch/source-digest "sha256-abc123"})
 
 (def ^:private at "2026-08-26T16:00:00.000Z")
 (def ^:private run-id "translation-run-abc")
+(def ^:private source "# Open Hax\n\nA garden for tools.\n")
+(def ^:private translations ["# Offenes Hax\n\n" "Ein Garten für Werkzeuge.\n"])
 
-(def ^:private source "Open Hax is a garden for tools, research, art, and systems.")
-(def ^:private translated "Open Hax ist ein Garten für Werkzeuge, Forschung, Kunst und Systeme.")
+(defn- digest-hex [value] (str "h" (hash value)))
 
-(defn- ^:async claim!
-  "A reserved, run-bound claim — the state a translation session starts in.
+(defn- turn
+  [record]
+  (let [manifest (split-law/split-manifest
+                  digest-hex
+                  {:org-id "open-hax"
+                   :project "promethean"
+                   :garden :open-hax.gardens/promethean
+                   :document :open-hax.documents/promethean
+                   :source-locale :en
+                   :target-locale :de
+                   :source-revision (:revision work)
+                   :source-text source
+                   :source-parts (source-split/source-parts source)})
+        claim (split-law/candidate-claim digest-hex manifest
+                                         (dispatch-law/output-revision record))]
+    (split-law/translation-turn-admission
+     digest-hex
+     {:dispatch-key (:dispatch/key record)
+      :run-id run-id
+      :admitted-at at
+      :manifest manifest
+      :candidate-claim claim
+      :execution (split-law/execution-snapshot
+                  digest-hex
+                  {:agent-id "publication_translator"
+                   :model "model"
+                   :thinking :medium
+                   :system-prompt "Translate every admitted split."
+                   :tool-ids ["save_translation"]})
+      :memory (split-law/memory-snapshot {:status :empty :examples []})})))
 
-   Both steps, in this order, because that order is the composition's whole
-   point: `infra.translation-agent-dispatch` binds the run id before the event
-   is emitted so a fast submission can still be joined."
-  [evidence-store]
-  (let [record (dispatch-law/dispatch-record work context :dispatch/accepted at)]
-    (await (store/reserve-dispatch! evidence-store record))
-    (await (store/bind-dispatch-batch! evidence-store (:dispatch/key record) run-id))))
+(defn- ^:async admitted!
+  []
+  (let [evidence (evidence-store/memory-store)
+        splits (split-store/memory-store digest-hex)
+        record (dispatch-law/dispatch-record work context :dispatch/accepted at
+                                             :attempt-id "dispatch-attempt-1")]
+    (await (evidence-store/reserve-dispatch! evidence record))
+    (let [bound (await (evidence-store/bind-dispatch-batch!
+                        evidence record run-id))
+          admitted-turn (turn bound)]
+      (await (split-store/admit-turn! splits admitted-turn))
+      {:evidence evidence :splits splits :record bound :turn admitted-turn})))
 
 (defn- deps
-  "Sink dependencies whose source-revision observer agrees with the claim."
-  [root evidence-store]
+  [root {:keys [evidence splits]}]
   {:content-root root
-   :evidence-store evidence-store
+   :evidence-store evidence
+   :split-store splits
+   :digest-hex digest-hex
    :clock (constantly "2026-08-26T16:05:00.000Z")
-   :observe-source-revision (fn [_record] (js/Promise.resolve (:revision work)))})
+   :observe-source-revision (fn [_] (js/Promise.resolve "sha256-abc123"))})
 
 (defn- pair
-  [& {:as overrides}]
-  (merge {:source_text source
-          :translated_text translated
-          :segment_index 0}
-         overrides))
+  [admitted-turn index & {:as overrides}]
+  (let [source-member (get-in admitted-turn
+                              [:translation-turn/manifest
+                               :split-manifest/splits index])
+        claim-member (get-in admitted-turn
+                             [:translation-turn/candidate-claim
+                              :candidate-claim/members index])]
+    (merge {:source_text (:split/source-text source-member)
+            :translated_text (nth translations index)
+            :segment_index index
+            :split_id (:split/id source-member)
+            :attempt_id (:candidate-claim-member/attempt-id claim-member)}
+           overrides)))
 
-(deftest ^:async a-submitted-pair-becomes-a-receipt-and-readable-content
-  (let [root "/tmp/knoxx-translation-agent-sink-test/accepted"
-        evidence-store (store/memory-store)
-        bound (await (claim! evidence-store))
-        policies (agent-law/session-policies bound run-id)
-        result (await (sink/submit-pair! (deps root evidence-store) policies (pair)))
-        receipt (:translation/receipt result)]
+(deftest ^:async split-submissions-stay-partial-until-exact-coverage
+  (let [{:keys [turn record evidence] :as state} (await (admitted!))
+        root "/tmp/knoxx-translation-agent-sink-test/coverage"
+        policies (agent-law/session-policies record turn)
+        first-result (await (sink/submit-pair! (deps root state) policies
+                                               (pair turn 0)))]
+    (testing "one durable split is progress, never a whole-document receipt"
+      (is (= {:completed 1 :total 2}
+             (select-keys (:translation/progress first-result)
+                          [:completed :total])))
+      (is (nil? (:translation/receipt first-result)))
+      (is (empty? (await (evidence-store/completed-translations!
+                          evidence {:org-id "open-hax" :project "promethean"})))))
 
-    (testing "the submission produced translation evidence, not a refusal"
-      (is (nil? (:translation/refusal result)))
-      (is (some? receipt)))
+    (let [result (await (sink/submit-pair! (deps root state) policies
+                                           (pair turn 1)))
+          receipt (:translation/receipt result)
+          candidate-set (await (split-store/candidate-set-for-turn!
+                                (:splits state) (:translation-turn/id turn)))]
+      (testing "exact coverage creates one lineage-bound raw candidate receipt"
+        (is (some? receipt))
+        (is (= (:candidate-set/id candidate-set)
+               (:translation/candidate-set-id receipt)))
+        (is (= (:candidate-set/digest candidate-set)
+               (:translation/candidate-set-digest receipt)))
+        (is (= 2 (:translation/split-count receipt)))
+        (is (= :dispatch/completed
+               (:dispatch/outcome
+                (await (evidence-store/dispatch-for-key!
+                        evidence (:dispatch/key record)))))))
 
-    (testing "the receipt's identity comes from the claim, never from the submission"
-      (is (= :open-hax.documents/promethean (:translation/document receipt)))
-      (is (= :open-hax.gardens/promethean (:translation/garden receipt)))
-      (is (= :de (:translation/locale receipt)))
-      (is (= :en (:translation/source-locale receipt)))
-      (is (= "sha256-abc123" (:translation/source-revision receipt)))
-      (is (= "open-hax" (:translation/org-id receipt)))
-      (is (= (content-integrity/content-digest translated)
-             (:translation/content-digest receipt))))
-
-    (testing "the output revision names the producing run, so a re-run supersedes it"
-      (is (= (dispatch-law/output-revision bound) (:translation/revision receipt)))
-      (is (not= (:translation/source-revision receipt)
-                (:translation/revision receipt))))
-
-    (testing "the bytes are readable back through the receipt that attests to them"
-      (is (= translated (await (content/content-for-receipt! root receipt)))))
-
-    (testing "another run's receipt cannot read these bytes"
-      ;; The guard that stops a second run's output being served under the first
-      ;; run's approval.
-      (is (nil? (await (content/content-for-receipt!
-                        root
-                        (assoc receipt :translation/revision
-                               "sha256-abc123+de@another-run"))))))
-
-    (testing "a receipt disagreeing about the document cannot read them either"
-      (is (nil? (await (content/content-for-receipt!
-                        root
-                        (assoc receipt :translation/document :other/doc))))))
-
-    (testing "the claim is settled, so a later pass reports duplicate rather than re-running"
-      (is (= :dispatch/completed
-             (:dispatch/outcome (await (store/dispatch-for-key!
-                                        evidence-store (:dispatch/key bound)))))))
-
-    (testing "a repeated changed submission cannot replace approved candidate bytes"
-      (let [repeat-result (await (sink/submit-pair!
-                                  (deps root evidence-store) policies
-                                  (pair :translated_text "Geänderte Bytes.")))]
-        (is (= :dispatch-already-resolved
-               (get-in repeat-result [:translation/refusal :refusal/type])))
-        (is (= translated
+      (testing "content is composed in manifest order, not arrival order"
+        (is (= (apply str translations)
                (await (content/content-for-receipt! root receipt))))))))
 
-(deftest ^:async one-output-revision-is-immutable-even-before-claim-settlement
-  (let [root "/tmp/knoxx-translation-agent-sink-test/immutable"
-        evidence-store (store/memory-store)
-        bound (await (claim! evidence-store))
-        revision (dispatch-law/output-revision bound)
-        _ (await (content/write! root bound revision translated))
-        error (try
-                (await (content/write! root bound revision "Andere Bytes."))
-                nil
-                (catch :default err err))]
-    (is (some? error))
-    (is (re-find #"already contains different bytes" (ex-message error)))))
+(deftest ^:async out-of-order-splits-compose-in-server-order
+  (let [{:keys [turn record] :as state} (await (admitted!))
+        root "/tmp/knoxx-translation-agent-sink-test/order"
+        policies (agent-law/session-policies record turn)]
+    (is (= 1 (get-in (await (sink/submit-pair! (deps root state) policies
+                                               (pair turn 1)))
+                     [:translation/progress :completed])))
+    (let [receipt (:translation/receipt
+                   (await (sink/submit-pair! (deps root state) policies
+                                             (pair turn 0))))]
+      (is (= (apply str translations)
+             (await (content/content-for-receipt! root receipt)))))))
 
-(deftest ^:async a-pair-with-nothing-to-join-is-refused-and-the-claim-survives
-  (let [root "/tmp/knoxx-translation-agent-sink-test/unjoinable"
-        evidence-store (store/memory-store)
-        bound (await (claim! evidence-store))
-        policies (agent-law/session-policies bound run-id)]
+(deftest ^:async persisted-turn-must-match-the-complete-dispatch-relation
+  (let [evidence (evidence-store/memory-store)
+        splits (split-store/memory-store digest-hex)
+        mismatched-context (dissoc context :dispatch/project)
+        record (dispatch-law/dispatch-record work mismatched-context
+                                             :dispatch/accepted at
+                                             :attempt-id "dispatch-attempt-mismatch")]
+    (await (evidence-store/reserve-dispatch! evidence record))
+    (let [bound (await (evidence-store/bind-dispatch-batch!
+                        evidence record run-id))
+          ;; `turn` deliberately keeps the project that the dispatch lacks.
+          admitted-turn (turn bound)]
+      (await (split-store/admit-turn! splits admitted-turn))
+      (let [result (await
+                    (sink/submit-pair!
+                     (deps "/tmp/knoxx-translation-agent-sink-test/binding"
+                           {:evidence evidence :splits splits})
+                     (agent-law/session-policies bound admitted-turn)
+                     (pair admitted-turn 0)))]
+        (is (= :translation-turn-mismatch
+               (get-in result [:translation/refusal :refusal/type])))
+        (is (empty? (await (split-store/candidate-splits-for-turn!
+                            splits (:translation-turn/id admitted-turn)))))))))
 
-    (testing "a run id no claim is bound to is refused"
-      (is (= :dispatch-record-missing
-             (:refusal/type
-              (:translation/refusal
-               (await (sink/submit-pair! (deps root evidence-store)
-                                         (assoc policies :run_id "translation-run-nobody")
-                                         (pair))))))))
+(deftest ^:async immutable-attempts-and-terminal-replays-are-idempotent
+  (let [{:keys [turn record evidence] :as state} (await (admitted!))
+        root "/tmp/knoxx-translation-agent-sink-test/replay"
+        policies (agent-law/session-policies record turn)]
+    (await (sink/submit-pair! (deps root state) policies (pair turn 0)))
+    (let [first-result (await (sink/submit-pair! (deps root state) policies
+                                                 (pair turn 1)))
+          replay (await (sink/submit-pair! (deps root state) policies
+                                           (pair turn 1)))
+          changed (await (sink/submit-pair!
+                          (deps root state) policies
+                          (pair turn 1 :translated_text "Andere Bytes.\n")))
+          receipts (await (evidence-store/completed-translations!
+                           evidence {:org-id "open-hax" :project "promethean"}))
+          stored-after-refusal
+          (await (content/content-for-receipt!
+                  root (:translation/receipt first-result)))]
+      (is (= (:translation/receipt first-result) (:translation/receipt replay)))
+      (is (= 1 (count receipts)))
+      (is (= :pair-candidate-conflict
+             (get-in changed [:translation/refusal :refusal/type])))
+      (is (= (apply str translations) stored-after-refusal)
+          "a refused changed replay leaves the first materialized bytes intact"))))
 
-    (testing "a dispatch key disagreeing with the claim the run id found is refused"
-      ;; Defence in depth: the run id is derived from the key, so disagreement
-      ;; means a store returned a record it was not asked for, or a trigger built
-      ;; its overlay from one claim and its run id from another.
-      (is (= :worker-batch-mismatch
-             (:refusal/type
-              (:translation/refusal
-               (await (sink/submit-pair! (deps root evidence-store)
-                                         (assoc policies :dispatch_key "some|other|key")
-                                         (pair))))))))
-
-    (testing "no refusal settled the claim, so a corrected submission still lands"
-      (is (= :dispatch/accepted
-             (:dispatch/outcome (await (store/dispatch-for-key!
-                                        evidence-store (:dispatch/key bound))))))
-      (is (some? (:translation/receipt
-                  (await (sink/submit-pair! (deps root evidence-store)
-                                            policies
-                                            (pair)))))))))
-
-(deftest ^:async an-unusable-pair-is-refused-before-the-claim-is-read
-  (let [root "/tmp/knoxx-translation-agent-sink-test/unusable"
-        evidence-store (store/memory-store)
-        bound (await (claim! evidence-store))
-        policies (agent-law/session-policies bound run-id)]
-
-    (testing "a blank translation is refused"
-      (is (= :pair-translation-missing
-             (:refusal/type
-              (:translation/refusal
-               (await (sink/submit-pair! (deps root evidence-store) policies
-                                         (pair :translated_text ""))))))))
-
-    (testing "prose echoed back untranslated is refused"
-      (is (= :pair-translation-untranslated
-             (:refusal/type
-              (:translation/refusal
-               (await (sink/submit-pair! (deps root evidence-store) policies
-                                         (pair :translated_text source))))))))
-
-    (testing "a numbered segment is refused for a whole-file document"
-      (is (= :pair-segmented-document
-             (:refusal/type
-              (:translation/refusal
-               (await (sink/submit-pair! (deps root evidence-store) policies
-                                         (pair :segment_index 2))))))))
-
-    (testing "a submission about another document is refused"
-      (is (= :pair-document-mismatch
-             (:refusal/type
-              (:translation/refusal
-               (await (sink/submit-pair! (deps root evidence-store) policies
-                                         (pair :document_id "other/doc"))))))))
-
-    (testing "the claim is untouched by all of them"
-      (is (= :dispatch/accepted
-             (:dispatch/outcome (await (store/dispatch-for-key!
-                                        evidence-store (:dispatch/key bound)))))))))
+(deftest ^:async split-authority-is-checked-before-any-candidate-is-written
+  (let [{:keys [turn record splits] :as state} (await (admitted!))
+        policies (agent-law/session-policies record turn)
+        root "/tmp/knoxx-translation-agent-sink-test/refused"]
+    (doseq [[bad expected]
+            [[(pair turn 0 :split_id "translation-split-forged")
+              :pair-split-id-mismatch]
+             [(pair turn 0 :attempt_id "translation-attempt-forged")
+              :pair-attempt-id-mismatch]
+             [(pair turn 0 :source_text "similar, but not exact")
+              :pair-source-text-mismatch]]]
+      (is (= expected
+             (get-in (await (sink/submit-pair! (deps root state) policies bad))
+                     [:translation/refusal :refusal/type]))))
+    (is (empty? (await (split-store/candidate-splits-for-turn!
+                        splits (:translation-turn/id turn)))))))
 
 (deftest ^:async a-completion-whose-source-moved-mints-no-receipt
-  (let [root "/tmp/knoxx-translation-agent-sink-test/drifted"
-        evidence-store (store/memory-store)
-        bound (await (claim! evidence-store))
-        policies (agent-law/session-policies bound run-id)
-        moved (assoc (deps root evidence-store)
-                     :observe-source-revision
-                     (fn [_record] (js/Promise.resolve "sha256-something-else")))
-        result (await (sink/submit-pair! moved policies (pair)))]
-
-    (testing "the drift guard refuses rather than attesting to bytes nobody translated"
-      (is (nil? (:translation/receipt result)))
+  (let [{:keys [turn record evidence] :as state} (await (admitted!))
+        root "/tmp/knoxx-translation-agent-sink-test/drifted"
+        policies (agent-law/session-policies record turn)
+        moved (assoc (deps root state) :observe-source-revision
+                     (fn [_] (js/Promise.resolve "sha256-moved")))]
+    (await (sink/submit-pair! moved policies (pair turn 0)))
+    (let [result (await (sink/submit-pair! moved policies (pair turn 1)))]
       (is (= :source-moved-since-dispatch
-             (:refusal/type (:translation/refusal result)))))
-
-    (testing "the claim is terminal, because retrying this exact revision cannot succeed"
+             (get-in result [:translation/refusal :refusal/type])))
+      (is (empty? (await (evidence-store/completed-translations!
+                          evidence {:org-id "open-hax" :project "promethean"}))))
       (is (= dispatch-law/unreachable-outcome
-             (:dispatch/outcome (await (store/dispatch-for-key!
-                                        evidence-store (:dispatch/key bound)))))))))
+             (:dispatch/outcome
+              (await (evidence-store/dispatch-for-key!
+                      evidence (:dispatch/key record)))))))))
 
-(deftest ^:async a-refusal-becomes-an-error-an-agent-can-act-on
-  (testing "a pair refusal becomes the sentence the law wrote for it"
-    (let [error (sink/refusal-error {:refusal/type :pair-segmented-document})]
-      (is (= (agent-law/nonblank-string? (ex-message error)) true))
-      (is (re-find #"one save_translation call" (ex-message error)))))
+(deftest ^:async an-unusable-pair-is-refused-before-the-turn-is-read
+  (let [{:keys [turn record splits] :as state} (await (admitted!))
+        policies (agent-law/session-policies record turn)
+        root "/tmp/knoxx-translation-agent-sink-test/unusable"
+        result (await (sink/submit-pair!
+                       (deps root state) policies
+                       (pair turn 0 :translated_text "")))]
+    (is (= :pair-translation-missing
+           (get-in result [:translation/refusal :refusal/type])))
+    (is (empty? (await (split-store/candidate-splits-for-turn!
+                        splits (:translation-turn/id turn)))))))
 
-  (testing "a dispatch-layer refusal says it is a misconfiguration, not the agent's fault"
-    (let [error (sink/refusal-error {:refusal/type :dispatch-record-missing})]
-      (is (re-find #"not bound to a live publication" (ex-message error)))
-      (is (= :dispatch-record-missing (:refusal/type (ex-data error)))))))
+(deftest a-refusal-becomes-an-error-an-agent-can-act-on
+  (let [error (sink/refusal-error {:refusal/type :pair-split-id-mismatch})]
+    (is (re-find #"split_id" (ex-message error)))
+    (is (= :pair-split-id-mismatch (:refusal/type (ex-data error)))))
+  (let [error (sink/refusal-error {:refusal/type :translation-turn-missing})]
+    (is (re-find #"not bound to a live publication" (ex-message error)))))

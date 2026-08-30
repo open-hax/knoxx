@@ -121,7 +121,7 @@
         path (entry-path content-root output-revision)
         encoded (pr-str value)]
     (await (fs/mkdir! (store-dir content-root)))
-    (if (fs/write-file-exclusive-sync! path encoded)
+    (if (fs/install-file-exclusive-sync! path encoded)
       value
       (let [existing (await (fs/read-file-or-nil! path))]
         (if (= encoded existing)

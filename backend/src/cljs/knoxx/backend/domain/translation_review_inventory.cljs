@@ -102,18 +102,6 @@
   [scope work]
   (some-> (dispatch-key-input scope work) dispatch-law/dispatch-key))
 
-(defn- index-receipts
-  "Current receipt per exact work relation, independent of store order."
-  [receipts]
-  (reduce (fn [index receipt]
-            (let [checked (evidence-law/assert-receipt! receipt)
-                  relation (work-key checked)]
-              (if (evidence-law/supersedes? checked (get index relation))
-                (assoc index relation checked)
-                index)))
-          {}
-          receipts))
-
 (defn- dispatch-rank
   [record]
   [(:dispatch/at record)
@@ -253,7 +241,8 @@
   Values are ready for the existing recursive wire encoder: semantic enum and
   action values remain keywords here and become strings only at the HTTP edge."
   [work receipts approvals dispatches]
-  (let [receipts-by-work (index-receipts receipts)
+  (let [receipts-by-work
+        (translation-evidence/current-receipts-by-work receipts)
         desired-relations (set (map work-key work))
         desired-receipts (into []
                                (keep #(get receipts-by-work %))

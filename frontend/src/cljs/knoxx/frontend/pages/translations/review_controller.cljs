@@ -1,7 +1,8 @@
 (ns knoxx.frontend.pages.translations.review-controller
   "Generation-guarded async orchestration for the translation review page."
   (:require [knoxx.frontend.pages.translations.api :as api]
-            [knoxx.frontend.pages.translations.logic :as logic]))
+            [knoxx.frontend.pages.translations.logic :as logic]
+            [knoxx.frontend.pages.translations.split-review :as split-review]))
 
 (defn- next-load-id!
   [^js load-seq]
@@ -37,7 +38,7 @@
     (set-documents! documents)
     (preserve-current-selection! documents set-selected!)))
 
-(defn- load-legacy-projection!
+(defn- ^:async load-legacy-projection!
   [reviews-response project target-lang load-seq load-id setters]
   (let [all-reviews (:reviews reviews-response)
         reviews (cond->> all-reviews
@@ -45,44 +46,65 @@
         effective-project (logic/effective-project reviews-response project)]
     (if (and effective-project (not= effective-project project))
       ((:set-project! setters) effective-project)
-      (-> (api/list-documents {:project effective-project
-                               :target-lang target-lang})
-          (.then (fn [documents-response]
-                   (when (current-load? load-seq load-id)
-                     (install-projection! documents-response reviews setters))))))))
+      (try
+        (let [documents-response
+              (await (api/list-documents {:project effective-project
+                                          :target-lang target-lang}))]
+          (when (current-load? load-seq load-id)
+            (install-projection! documents-response reviews setters)))
+        (catch :default err
+          (if (seq reviews)
+            ;; OpenPlanner rows are compatibility enrichment once the resource
+            ;; inventory exists. Their outage must not erase the CMS-owned work
+            ;; list or make the new review flow unavailable.
+            (when (current-load? load-seq load-id)
+              (install-projection! {:documents []} reviews setters))
+            ;; With no resource work, legacy documents are still the only
+            ;; inventory. Preserve the established visible failure instead of
+            ;; turning an unavailable legacy service into an empty list.
+            (throw err)))))))
+
+(defn- ^:async load-documents-generation!
+  [project target-lang load-seq load-id
+   {:keys [set-loading! set-error! set-documents!] :as setters}]
+  (try
+    (let [reviews-response (await (api/list-publication-reviews))]
+      (when (current-load? load-seq load-id)
+        (await (load-legacy-projection!
+                reviews-response project target-lang load-seq load-id setters))))
+    (catch :default err
+      (when (current-load? load-seq load-id)
+        (set-error! (or (.-message err) (str err)))
+        (set-documents! [])))
+    (finally
+      (when (current-load? load-seq load-id)
+        (set-loading! false)))))
 
 (defn load-documents!
   "Load resource work first, then its project-scoped legacy compatibility rows."
   [project target-lang load-seq
-   {:keys [set-loading! set-error! set-documents!] :as setters}]
+   {:keys [set-loading! set-error!] :as setters}]
   (let [load-id (next-load-id! load-seq)]
     (set-loading! true)
     (set-error! nil)
-    (-> (api/list-publication-reviews)
-        (.then (fn [reviews-response]
-                 (when (current-load? load-seq load-id)
-                   (load-legacy-projection! reviews-response project target-lang
-                                            load-seq load-id setters))))
-        (.catch (fn [^js err]
-                  (when (current-load? load-seq load-id)
-                    (set-error! (or (.-message err) (str err)))
-                    (set-documents! []))))
-        (.finally (fn []
-                    (when (current-load? load-seq load-id)
-                      (set-loading! false)))))
+    (load-documents-generation! project target-lang load-seq load-id setters)
     load-id))
+
+(defn- ^:async load-manifest-generation!
+  [project load-seq load-id set-manifest!]
+  (try
+    (let [manifest (await (api/get-manifest project))]
+      (when (current-load? load-seq load-id)
+        (set-manifest! manifest)))
+    (catch :default _
+      (when (current-load? load-seq load-id)
+        (set-manifest! nil)))))
 
 (defn load-manifest!
   "Load a project manifest without allowing an older project to win."
   [project load-seq set-manifest!]
   (let [load-id (next-load-id! load-seq)]
-    (-> (api/get-manifest project)
-        (.then (fn [manifest]
-                 (when (current-load? load-seq load-id)
-                   (set-manifest! manifest))))
-        (.catch (fn [_]
-                  (when (current-load? load-seq load-id)
-                    (set-manifest! nil)))))
+    (load-manifest-generation! project load-seq load-id set-manifest!)
     load-id))
 
 (defn- empty-work-detail
@@ -100,6 +122,9 @@
     (logic/blocked-resource-candidate? selected)
     (js/Promise.resolve (empty-work-detail selected))
 
+    (split-review/review selected)
+    (js/Promise.resolve (split-review/detail selected))
+
     (:contract_content selected)
     (js/Promise.resolve (logic/authored-detail selected))
 
@@ -110,23 +135,28 @@
     :else
     (js/Promise.resolve (empty-work-detail selected))))
 
+(defn- ^:async load-detail-generation!
+  [selected project load-seq load-id
+   {:keys [set-detail-loading! set-detail! set-seg-idx! set-form! set-error!]}]
+  (try
+    (let [detail (await (detail-request selected project))]
+      (when (current-load? load-seq load-id)
+        (set-detail! detail)
+        (set-seg-idx! nil)
+        (set-form! logic/default-label)))
+    (catch :default err
+      (when (current-load? load-seq load-id)
+        (set-error! (or (.-message err) (str err)))
+        (set-detail! nil)))
+    (finally
+      (when (current-load? load-seq load-id)
+        (set-detail-loading! false)))))
+
 (defn load-detail!
   "Load only the newest selection's detail; never substitute legacy bytes."
   [selected project load-seq
-   {:keys [set-detail-loading! set-detail! set-seg-idx! set-form! set-error!]}]
+   {:keys [set-detail-loading!] :as setters}]
   (let [load-id (next-load-id! load-seq)]
     (set-detail-loading! true)
-    (-> (detail-request selected project)
-        (.then (fn [detail]
-                 (when (current-load? load-seq load-id)
-                   (set-detail! detail)
-                   (set-seg-idx! nil)
-                   (set-form! logic/default-label))))
-        (.catch (fn [^js err]
-                  (when (current-load? load-seq load-id)
-                    (set-error! (or (.-message err) (str err)))
-                    (set-detail! nil))))
-        (.finally (fn []
-                    (when (current-load? load-seq load-id)
-                      (set-detail-loading! false)))))
+    (load-detail-generation! selected project load-seq load-id setters)
     load-id))

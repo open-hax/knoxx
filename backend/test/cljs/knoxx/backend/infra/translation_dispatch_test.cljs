@@ -123,6 +123,42 @@
             (constantly (js/Promise.resolve
                          (or source-revision dispatched-revision)))}}))
 
+(defn- completion-fault-store
+  "Delegate to `inner`, throwing once at one completion phase."
+  [inner fail-on]
+  (let [failed? (atom false)
+        maybe-fail! (fn [phase]
+                      (when (and (= fail-on phase)
+                                 (compare-and-set! failed? false true))
+                        (throw (ex-info (str "simulated crash at " (name phase))
+                                        {:phase phase}))))]
+    (reify store/ITranslationEvidenceStore
+      (reserve-dispatch! [_ record] (store/reserve-dispatch! inner record))
+      (resolve-dispatch! [_ record outcome detail]
+        (store/resolve-dispatch! inner record outcome detail))
+      (bind-dispatch-batch! [_ record batch-id]
+        (store/bind-dispatch-batch! inner record batch-id))
+      (claim-dispatch-completion! [_ record]
+        (store/claim-dispatch-completion! inner record))
+      (finish-dispatch-completion! [_ record detail]
+        (maybe-fail! :before-finish)
+        (store/finish-dispatch-completion! inner record detail))
+      (dispatch-for-key! [_ dispatch-key]
+        (store/dispatch-for-key! inner dispatch-key))
+      (dispatch-for-batch-document! [_ batch-id document-wire-id]
+        (store/dispatch-for-batch-document! inner batch-id document-wire-id))
+      (dispatch-for-batch! [_ batch-id]
+        (store/dispatch-for-batch! inner batch-id))
+      (record-translation! [_ receipt]
+        (maybe-fail! :before-receipt)
+        (store/record-translation! inner receipt))
+      (completed-translations! [_ requested-scope]
+        (store/completed-translations! inner requested-scope))
+      (record-approval! [_ approval]
+        (store/record-approval! inner approval))
+      (approvals! [_ requested-scope]
+        (store/approvals! inner requested-scope)))))
+
 (defn- work []
   (:action/with (dispatch/derived-work intent facts)))
 
@@ -256,7 +292,9 @@
                              (await (dispatch/fail-batch! deps "batch-99" "boom")))))))))
 
 (deftest ^:async a-completed-report-becomes-evidence-the-gate-recognizes
-  (let [{:keys [deps]} (fixture)
+  (let [{base-deps :deps} (fixture)
+        deps (assoc base-deps :translation-content-digest
+                    "sha256-target-content")
         _ (await (dispatch/dispatch-work! deps (work) (context)))
         resolved (await (dispatch/resolve-batch-report!
                          deps
@@ -292,6 +330,89 @@
                (:refusal/type (:translation/refusal again))))
         (is (= 1 (count (await (store/completed-translations!
                                 (:evidence-store deps) evidence-scope)))))))))
+
+(deftest ^:async completion-crashes-resume-without-exposing-provisional-evidence
+  (doseq [fail-on [:before-receipt :before-finish]]
+    (let [{base-deps :deps} (fixture)
+          inner (store/memory-store)
+          evidence-store (completion-fault-store inner fail-on)
+          deps (assoc base-deps :evidence-store evidence-store)
+          dispatched (await (dispatch/dispatch-work! deps (work) (context)))
+          report {:status "complete"
+                  :batch_id "batch-1"
+                  :completed_document "knoxx.docs/probe"}
+          first-error (try
+                        (await (dispatch/resolve-batch-report! deps report))
+                        nil
+                        (catch :default error error))
+          after-crash (await (store/dispatch-for-key!
+                              evidence-store
+                              (:dispatch/key (:dispatch/record dispatched))))]
+      (testing (str fail-on " leaves a resumable accepted claim")
+        (is (some? first-error))
+        (is (= fail-on (:phase (ex-data first-error))))
+        (is (= :dispatch/accepted (:dispatch/outcome after-crash))))
+
+      (testing (str fail-on " exposes no receipt to a production evidence snapshot")
+        ;; `:before-finish` has already inserted the immutable receipt. It must
+        ;; remain provisional until this exact attempt is durably completed.
+        (is (empty? (await (store/completed-translations!
+                            evidence-store evidence-scope)))))
+
+      (let [recovered (await (dispatch/resolve-batch-report! deps report))
+            receipts (await (store/completed-translations!
+                             evidence-store evidence-scope))]
+        (testing (str fail-on " retries the same owner and completes exactly once")
+          (is (= :dispatch/completed
+                 (:dispatch/outcome (:dispatch/record recovered))))
+          (is (= 1 (count receipts)))
+          (is (= (:dispatch/attempt-id (:dispatch/record recovered))
+                 (:translation/dispatch-attempt-id (first receipts)))))))))
+
+(deftest ^:async a-stale-completion-cannot-settle-a-replacement-attempt
+  (let [{base-deps :deps} (fixture)
+        observer-entered-resolve (atom nil)
+        observer-entered (js/Promise.
+                          (fn [resolve _reject]
+                            (reset! observer-entered-resolve resolve)))
+        source-release (atom nil)
+        source-result (js/Promise.
+                       (fn [resolve _reject]
+                         (reset! source-release resolve)))
+        deps (assoc base-deps
+                    :observe-source-revision
+                    (fn [_]
+                      (@observer-entered-resolve true)
+                      source-result))
+        dispatched (await (dispatch/dispatch-work! deps (work) (context)))
+        completion (dispatch/resolve-batch-report!
+                    deps {:status "complete"
+                          :batch_id "batch-1"
+                          :completed_document "knoxx.docs/probe"})
+        _ (await observer-entered)
+        failed (await (dispatch/fail-batch-document!
+                       deps "batch-1" "knoxx.docs/probe" "provider failed"))
+        replacement (-> (:dispatch/record dispatched)
+                        (assoc :dispatch/attempt-id "replacement-attempt-b"
+                               :dispatch/outcome :dispatch/accepted)
+                        (dissoc :dispatch/batch-id :dispatch/detail))
+        replaced (await (store/reserve-dispatch!
+                         (:evidence-store deps) replacement))
+        _ (@source-release dispatched-revision)
+        late-completion (await completion)]
+    (testing "failure settles A and replacement B is admitted while A is paused"
+      (is (= :dispatch/failed (:dispatch/outcome (:dispatch/record failed))))
+      (is (= :reserved (:reservation/status replaced)))
+      (is (= :dispatch-already-resolved
+             (:refusal/type (:translation/refusal late-completion)))))
+
+    (testing "the delayed A loses before receipt persistence or settlement of B"
+      (is (empty? (await (store/completed-translations!
+                          (:evidence-store deps) evidence-scope))))
+      (is (= replacement
+             (await (store/dispatch-for-key!
+                     (:evidence-store deps)
+                     (:dispatch/key replacement))))))))
 
 (deftest ^:async stale-and-mismatched-answers-cannot-satisfy-the-gate
   (let [{:keys [deps]} (fixture)
@@ -484,7 +605,8 @@
       (let [stored (await (store/dispatch-for-key!
                            (:evidence-store deps)
                            (:dispatch/key (law/dispatch-record
-                                           (work) (context) :dispatch/accepted (clock)))))]
+                                           (work) (context) :dispatch/accepted (clock)
+                                           :attempt-id "dispatch-attempt-key-only"))))]
         (is (= :dispatch/unreachable (:dispatch/outcome stored)))
         (is (not (law/retriable? (:dispatch/outcome stored))))))))
 
@@ -855,12 +977,18 @@
                             (if (<= (swap! attempts inc) 2)
                               (throw (ex-info "write failed" {}))
                               (store/bind-dispatch-batch! inner k b)))
+                          (claim-dispatch-completion! [_ r]
+                            (store/claim-dispatch-completion! inner r))
+                          (finish-dispatch-completion! [_ r d]
+                            (store/finish-dispatch-completion! inner r d))
                           (dispatch-for-key! [_ k] (store/dispatch-for-key! inner k))
                           (dispatch-for-batch-document! [_ b d]
                             (store/dispatch-for-batch-document! inner b d))
                           (dispatch-for-batch! [_ b] (store/dispatch-for-batch! inner b))
                           (record-translation! [_ r] (store/record-translation! inner r))
-                          (completed-translations! [_ s] (store/completed-translations! inner s))))
+                          (completed-translations! [_ s] (store/completed-translations! inner s))
+                          (record-approval! [_ a] (store/record-approval! inner a))
+                          (approvals! [_ s] (store/approvals! inner s))))
         batches (atom [])
         deps {:evidence-store failing-store
               :client (fake-client

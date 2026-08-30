@@ -25,6 +25,20 @@
    :revision "source-sha" :translation_revision "translation-sha"
    :translated_at "2026-08-26T10:00:00.000Z" :approved false})
 
+(def resource-split-review
+  {:candidate_set_id "candidate-set/doc-1-es"
+   :manifest_id "manifest/doc-1-es"
+   :status "partial-review"
+   :splits [{:split_id "split/doc-1/0" :split_index 0
+             :source_text "Hello world" :candidate_text "Hola mundo"
+             :review_status "in-review"
+             :adequacy "adequate" :fluency "good"
+             :terminology "minor_errors" :risk "sensitive"
+             :editor_notes "Confirm product terminology"}
+            {:split_id "split/doc-1/1" :split_index 1
+             :source_text "Bye" :candidate_text "Adiós"
+             :review_status "approved"}]})
+
 (def doc-detail
   {:document {:title "Doc One" :source_lang "en"}
    :summary {:total_segments 2 :approved 1 :overall_status "partial_review"}
@@ -45,6 +59,8 @@
    :list-publication-reviews api/list-publication-reviews
    :dispatch-publication api/dispatch-publication-translation
    :approve-publication api/approve-publication-translation
+   :split-review api/submit-publication-split-review
+   :bulk-review api/submit-publication-bulk-review
    :reconcile-publication api/reconcile-publication
    :label api/submit-label :manifest api/get-manifest :sft api/sft-export
    :config api/pipeline-config :update-config api/update-pipeline-config
@@ -80,6 +96,14 @@
                    (fn [payload]
                      (record! :publication-approval payload)
                      (js/Promise.resolve {:approved true :status "recorded"})))
+             (set! api/submit-publication-split-review
+                   (fn [payload]
+                     (record! :publication-split-review payload)
+                     (js/Promise.resolve {:status "recorded"})))
+             (set! api/submit-publication-bulk-review
+                   (fn [payload]
+                     (record! :publication-bulk-review payload)
+                     (js/Promise.resolve {:status "recorded"})))
              (set! api/reconcile-publication
                    (fn [publication-id]
                      (record! :reconcile publication-id)
@@ -125,6 +149,8 @@
             (set! api/list-publication-reviews (:list-publication-reviews originals))
             (set! api/dispatch-publication-translation (:dispatch-publication originals))
             (set! api/approve-publication-translation (:approve-publication originals))
+            (set! api/submit-publication-split-review (:split-review originals))
+            (set! api/submit-publication-bulk-review (:bulk-review originals))
             (set! api/reconcile-publication (:reconcile-publication originals))
             (set! api/review-document (:review originals))
             (set! api/submit-label (:label originals))
@@ -151,6 +177,19 @@
   (-> (wait-until "doc list" #(some? (.queryByText r "Doc One")))
       (.then (fn [] (.click rtl/fireEvent (.getByText r "Doc One"))
                (wait-until "detail" #(some? (.queryByText r "Hola mundo")))))))
+
+(defn- install-resource-split-inventory!
+  [inventory]
+  (set! api/list-publication-reviews
+        (fn []
+          (record! :publication-reviews true)
+          (js/Promise.resolve {:project "devel" :reviews @inventory}))))
+
+(defn- resource-review-row
+  [aggregate]
+  (assoc publication-review
+         :work_state "ready"
+         :split_review aggregate))
 
 (deftest loads-documents-and-detail-on-selection
   (async done
@@ -276,6 +315,173 @@
                        "both the document and review panes explain the closed gate")
                    (done)))
           (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+
+(deftest ^:async resource-split-corrected-approval-posts-and-unlocks-whole-output
+  (let [inventory (atom [(resource-review-row resource-split-review)])]
+    (install-resource-split-inventory! inventory)
+    (set! api/submit-publication-split-review
+          (fn [payload]
+            (record! :publication-split-review payload)
+            (swap! inventory update-in [0 :split_review :splits 0]
+                   assoc
+                   :review_status (:status payload)
+                   :corrected_text (:corrected_text payload))
+            (js/Promise.resolve {:status "recorded"})))
+    (let [r (rtl/render ($ translation-review-page))]
+      (await (select-first-document r))
+      (let [whole-button
+            (.getByRole r "button" #js {:name "Approve whole output"})]
+        (is (.-disabled whole-button)
+            "whole-output approval waits for every split"))
+      (.click rtl/fireEvent (.getByText r "Hola mundo"))
+      (await
+       (wait-until "resource split editor"
+                   #(some? (.queryByRole r "button" #js {:name "Approve split"}))))
+      (is (some? (.queryByRole r "button" #js {:name "Submit review"}))
+          "the split can remain explicitly in review")
+      (is (= "adequate" (.-value (.getByLabelText r "adequacy"))))
+      (is (= "good" (.-value (.getByLabelText r "fluency"))))
+      (is (= "minor_errors" (.-value (.getByLabelText r "terminology"))))
+      (is (= "sensitive" (.-value (.getByLabelText r "risk"))))
+      (is (= "Confirm product terminology"
+             (.-value (.getByLabelText r "Editor notes")))
+          "the latest granular review hydrates the resource split card")
+      (.change rtl/fireEvent
+               (.getByLabelText r "adequacy")
+               #js {:target #js {:value "excellent"}})
+      (.change rtl/fireEvent
+               (.getByLabelText r "Corrected translation")
+               #js {:target #js {:value "  Hola, mundo corregido.  "}})
+      (.change rtl/fireEvent
+               (.getByLabelText r "Editor notes")
+               #js {:target #js {:value "  Approved after terminology pass.  "}})
+      (.click rtl/fireEvent (.getByRole r "button" #js {:name "Approve split"}))
+      (await
+       (wait-until "approved notice"
+                   #(some? (.queryByText r "Split 0 approved."))))
+      (is (= [{:candidate_set_id "candidate-set/doc-1-es"
+               :split_id "split/doc-1/0"
+               :status "approved"
+               :adequacy "excellent"
+               :fluency "good"
+               :terminology "minor_errors"
+               :risk "sensitive"
+               :corrected_text "  Hola, mundo corregido.  "
+               :editor_notes "Approved after terminology pass."}]
+             (:publication-split-review @calls)))
+      (await
+       (wait-until "all-split progress" #(seq (.queryAllByText r "2/2"))))
+      (is (not (.-disabled
+                (.getByRole r "button" #js {:name "Approve whole output"})))
+          "whole-output action becomes available only after 2/2")
+      (is (empty? (:get @calls))
+          "resource splits never fall through to legacy Mongo detail"))))
+
+(deftest ^:async resource-split-skip-advances-without-writing-review-evidence
+  (let [inventory (atom [(resource-review-row resource-split-review)])]
+    (install-resource-split-inventory! inventory)
+    (let [r (rtl/render ($ translation-review-page))]
+      (await (select-first-document r))
+      (.click rtl/fireEvent (.getByText r "Hola mundo"))
+      (await
+       (wait-until "first resource split"
+                   #(some? (.queryByText r "Split 0"))))
+      (.click rtl/fireEvent (.getByRole r "button" #js {:name "Skip"}))
+      (await
+       (wait-until "next resource split"
+                   #(some? (.queryByText r "Split 1"))))
+      (is (empty? (:publication-split-review @calls))
+          "Skip changes only local selection")
+      (is (empty? (:publication-bulk-review @calls))
+          "Skip never substitutes a bulk verdict")
+      (is (.-disabled (.getByRole r "button" #js {:name "Skip"}))
+          "the final split does not wrap back to the beginning"))))
+
+(deftest ^:async resource-document-review-fast-path-posts-one-candidate-set
+  (let [inventory (atom [(resource-review-row resource-split-review)])]
+    (install-resource-split-inventory! inventory)
+    (set! api/submit-publication-bulk-review
+          (fn [payload]
+            (record! :publication-bulk-review payload)
+            (swap! inventory update-in [0 :split_review :splits]
+                   #(mapv (fn [split]
+                            (assoc split :review_status (:status payload)))
+                          %))
+            (js/Promise.resolve {:status "recorded"})))
+    (let [r (rtl/render ($ translation-review-page))]
+      (await (select-first-document r))
+      (doseq [action ["Approve All" "Needs Edit" "Reject All"]]
+        (is (some? (.queryByRole r "button" #js {:name action}))))
+      (is (some? (.queryByRole r "button"
+                               #js {:name "Approve whole output"}))
+          "publication approval remains a separate, gated action")
+      (.click rtl/fireEvent (.getByText r "Hola mundo"))
+      (await
+       (wait-until "resource evaluation form"
+                   #(some? (.queryByLabelText r "fluency"))))
+      (.change rtl/fireEvent
+               (.getByLabelText r "fluency")
+               #js {:target #js {:value "poor"}})
+      (.change rtl/fireEvent
+               (.getByLabelText r "Corrected translation")
+               #js {:target #js {:value "Must remain split-local"}})
+      (.change rtl/fireEvent
+               (.getByLabelText r "Editor notes")
+               #js {:target #js {:value "  Apply to every persisted split.  "}})
+      (.click rtl/fireEvent (.getByRole r "button" #js {:name "Needs Edit"}))
+      (await
+       (wait-until "bulk review notice"
+                   #(some? (.queryByText r "All splits in-review."))))
+      (is (= [{:candidate_set_id "candidate-set/doc-1-es"
+               :status "in-review"
+               :adequacy "adequate"
+               :fluency "poor"
+               :terminology "minor_errors"
+               :risk "sensitive"
+               :editor_notes "Apply to every persisted split."}]
+             (:publication-bulk-review @calls))
+          "the server owns split enumeration and document scope cannot carry a correction")
+      (is (empty? (:publication-split-review @calls))))))
+
+(deftest ^:async resource-split-rejection-is-granular-and-relocks-whole-output
+  (let [approved-aggregate
+        (update resource-split-review :splits
+                #(mapv (fn [split] (assoc split :review_status "approved")) %))
+        inventory (atom [(resource-review-row approved-aggregate)])]
+    (install-resource-split-inventory! inventory)
+    (set! api/submit-publication-split-review
+          (fn [payload]
+            (record! :publication-split-review payload)
+            (swap! inventory update-in [0 :split_review :splits 0]
+                   assoc :review_status (:status payload))
+            (js/Promise.resolve {:status "recorded"})))
+    (let [r (rtl/render ($ translation-review-page))]
+      (await (select-first-document r))
+      (is (not (.-disabled
+                (.getByRole r "button" #js {:name "Approve whole output"}))))
+      (.click rtl/fireEvent (.getByText r "Hola mundo"))
+      (await
+       (wait-until "reject control"
+                   #(some? (.queryByRole r "button" #js {:name "Reject split"}))))
+      (.click rtl/fireEvent (.getByRole r "button" #js {:name "Reject split"}))
+      (await
+       (wait-until "rejected notice"
+                   #(some? (.queryByText r "Split 0 rejected."))))
+      (is (= [{:candidate_set_id "candidate-set/doc-1-es"
+               :split_id "split/doc-1/0"
+               :status "rejected"
+               :adequacy "adequate"
+               :fluency "good"
+               :terminology "minor_errors"
+               :risk "sensitive"
+               :editor_notes "Confirm product terminology"}]
+             (:publication-split-review @calls)))
+      (await
+       (wait-until "partial review projection"
+                   #(seq (.queryAllByText r "1/2"))))
+      (is (.-disabled
+           (.getByRole r "button" #js {:name "Approve whole output"}))
+          "a rejected split relocks whole-output approval"))))
 
 (deftest segment-label-submit-posts-payload-and-reloads
   (async done
@@ -406,7 +612,9 @@
                        :document "docs/ready" :garden "gardens/sonic"
                        :source_locale "en" :locale "es" :title "Ready Doc"
                        :revision "ready-source" :translation_revision "ready-target"
-                       :work_state "ready" :reviewable true :approved false
+                       :work_state "ready" :contract_candidate true
+                       :reviewable true :hydration_state "displayable"
+                       :approved false
                        :allowed_actions []}])]
       (set! api/list-publication-reviews
             (fn []
@@ -425,6 +633,17 @@
                             (some? (.queryByText r "Failed Doc"))
                             (some? (.queryByText r "Ready Doc"))))
           (.then (fn []
+                   (.click rtl/fireEvent (.getByText r "Ready Doc"))
+                   (wait-until
+                    "receipt-shaped candidate without authenticated bytes"
+                    #(some? (.queryByText
+                             r "Translation candidate content unavailable")))))
+          (.then (fn []
+                   (is (nil? (.queryByRole
+                              r "button" #js {:name "Approve for publication"}))
+                       "a receipt and reviewable flag cannot authorize approval without authenticated content_source bytes")
+                   (is (empty? (:get @calls))
+                       "no legacy worker document exists and none is fetched as substitute content")
                    (.click rtl/fireEvent (.getByText r "Missing Doc"))
                    (wait-until "candidate-less detail"
                                #(some? (.queryByText r "No translation candidate yet")))))
@@ -499,6 +718,39 @@
                    (is (some? (.queryByRole r "button" #js {:name "Approve All"})))
                    (done)))
           (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+
+(deftest ^:async unmatched-gardenless-worker-row-remains-in-legacy-compatibility
+  (set! api/list-publication-reviews
+        (fn []
+          (record! :publication-reviews true)
+          (js/Promise.resolve {:project "knoxx-session" :reviews []})))
+  (set! api/list-documents
+        (fn [params]
+          (record! :list params)
+          (js/Promise.resolve
+           {:documents [{:document_id "docs/gardenless-worker"
+                         :target_lang "es" :source_lang "en"
+                         :project "knoxx-session" :title "Gardenless Worker"
+                         :total_segments 2 :approved 1
+                         :overall_status "partial_review"}]
+            :total 1})))
+  (let [r (rtl/render ($ translation-review-page))]
+    (await
+     (wait-until "gardenless compatibility row"
+                 #(some? (.queryByText r "Gardenless Worker"))))
+    (.click rtl/fireEvent (.getByText r "Gardenless Worker"))
+    (await
+     (wait-until "gardenless legacy detail"
+                 #(some? (.queryByText r "Hola mundo"))))
+    (is (= {:project "knoxx-session"}
+           (nth (last (:get @calls)) 2))
+        "omitted garden remains one exact compatibility coordinate")
+    (is (some? (.queryByRole r "button" #js {:name "Approve All"})))
+    (is (some? (.queryByRole r "button" #js {:name "Needs Edit"})))
+    (is (some? (.queryByRole r "button" #js {:name "Reject All"})))
+    (is (nil? (.queryByRole r "button"
+                            #js {:name "Approve for publication"}))
+        "worker evidence restores legacy review, never whole-publication approval")))
 
 (deftest moved-source-candidate-fails-closed-in-both-review-panes
   (async done

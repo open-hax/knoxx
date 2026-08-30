@@ -47,6 +47,18 @@
 (defn list-publication-reviews []
   (api/request "/api/publications/translations/reviews"))
 
+(defn ^:async submit-publication-split-review
+  "Record one candidate-set-bound split verdict for the authenticated reviewer."
+  [payload]
+  (await (api/request "/api/publications/translations/reviews"
+                      {:method "POST" :body payload})))
+
+(defn ^:async submit-publication-bulk-review
+  "Apply one evaluation and verdict to every persisted split in a candidate set."
+  [payload]
+  (await (api/request "/api/publications/translations/reviews/bulk"
+                      {:method "POST" :body payload})))
+
 (defn dispatch-publication-translation
   "Ask Knoxx to dispatch exactly the resource work row the reviewer selected.
 

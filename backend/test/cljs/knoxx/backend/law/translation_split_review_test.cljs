@@ -1,5 +1,6 @@
 (ns knoxx.backend.law.translation-split-review-test
   (:require [cljs.test :as t]
+            [clojure.string :as str]
             [knoxx.backend.law.translation-split :as split]
             [knoxx.backend.law.translation-split-fixture :as fixture]))
 
@@ -80,6 +81,16 @@
                #"invalid review-recorded-at"
                (fixture/review-receipt
                 manifest candidate-set split-id fixture/principal invalid-at request)))))
+
+    (t/testing "any authenticated durable principal coordinate is sufficient"
+      (doseq [principal [{:principal/user-id "reviewer-1"}
+                         {:principal/user-email "reviewer@example.test"}
+                         {:principal/membership-id "membership-1"}]]
+        (t/is (= principal
+                 (:review/principal
+                  (fixture/review-receipt
+                   manifest candidate-set split-id principal
+                   fixture/recorded-at request))))))
 
     (t/testing "map insertion order and explicit nil optionals cannot change identity"
       (let [reversed-request (into (array-map) (reverse (seq request)))
@@ -175,8 +186,8 @@
                         manifest candidate-set split-id fixture/principal
                         fixture/recorded-at
                         (nonapproval-request "reject" "tie-operation-b"))
-        expected (if (pos? (compare (:review/id first-receipt)
-                                    (:review/id second-receipt)))
+        expected (if (pos? (compare (:review/operation-id first-receipt)
+                                    (:review/operation-id second-receipt)))
                    first-receipt
                    second-receipt)]
     (t/is (= expected
@@ -187,6 +198,72 @@
              (split/effective-review-receipt
               fixture/digest manifest candidate-set split-id
               [second-receipt first-receipt])))))
+
+(defn- bulk-group-order-digest
+  "Make receipt-id order disagree across splits while preserving integrity."
+  [value]
+  (let [text (str value)]
+    (cond
+      (str/includes? text "bulk-group-a/split-000") "zz-receipt-a-000"
+      (str/includes? text "bulk-group-b/split-000") "aa-receipt-b-000"
+      (str/includes? text "bulk-group-a/split-001") "aa-receipt-a-001"
+      (str/includes? text "bulk-group-b/split-001") "zz-receipt-b-001"
+      :else (fixture/digest value))))
+
+(t/deftest exact-time-bulk-operation-groups-win-consistently-across-splits
+  (let [manifest (split/split-manifest
+                  bulk-group-order-digest
+                  (assoc fixture/coordinates
+                         :source-text fixture/source
+                         :source-parts fixture/source-parts))
+        claim (split/candidate-claim bulk-group-order-digest manifest
+                                     "candidate-revision-bulk-order")
+        candidates (mapv split/candidate-split
+                         (repeat bulk-group-order-digest)
+                         (:candidate-claim/members claim)
+                         ["# Empieza aqui\n\n"
+                          "Primer parrafo.\n\n"
+                          "  Segundo parrafo.\n"])
+        candidate-set (split/complete-candidate-set
+                       bulk-group-order-digest manifest claim candidates)
+        [split-0 split-1] (mapv :split/id
+                                (take 2 (:split-manifest/splits manifest)))
+        at "2026-08-30T12:00:00.000Z"
+        approve-request (fn [operation-id]
+                          (fixture/review-request
+                           {:review/operation-id operation-id
+                            :review/overall "approve"}))
+        reject-request (fn [operation-id]
+                         (nonapproval-request "reject" operation-id))
+        receipt-for (fn [split-id operation-id request]
+                      (split/review-receipt
+                       bulk-group-order-digest manifest candidate-set split-id
+                       fixture/principal at (request operation-id)))
+        group-a-0 (receipt-for split-0 "bulk-group-a/split-000"
+                               approve-request)
+        group-b-0 (receipt-for split-0 "bulk-group-b/split-000"
+                               reject-request)
+        group-a-1 (receipt-for split-1 "bulk-group-a/split-001"
+                               approve-request)
+        group-b-1 (receipt-for split-1 "bulk-group-b/split-001"
+                               reject-request)]
+    (t/testing "receipt ids alone would select different bulk groups"
+      (t/is (pos? (compare (:review/id group-a-0) (:review/id group-b-0))))
+      (t/is (neg? (compare (:review/id group-a-1) (:review/id group-b-1)))))
+
+    (t/testing "the lexically later operation group wins every split"
+      (doseq [[split-id group-a group-b histories]
+              [[split-0 group-a-0 group-b-0
+                [[group-a-0 group-b-0] [group-b-0 group-a-0]]]
+               [split-1 group-a-1 group-b-1
+                [[group-b-1 group-a-1] [group-a-1 group-b-1]]]]
+              history histories]
+        (t/is (= group-b
+                 (split/effective-review-receipt
+                  bulk-group-order-digest manifest candidate-set split-id
+                  history)))
+        (t/is (pos? (compare (:review/operation-id group-b)
+                             (:review/operation-id group-a))))))))
 
 (t/deftest tampered-or-stale-evidence-cannot-donate-memory
   (let [{:keys [manifest candidate-claim candidate-set split-id]} (review-context)

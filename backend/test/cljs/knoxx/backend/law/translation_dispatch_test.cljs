@@ -20,9 +20,11 @@
 (def ^:private at "2026-08-22T09:00:00.000Z")
 
 (defn- record
-  [& {:keys [outcome batch-id recovery-reason]
-      :or {outcome :dispatch/accepted}}]
+  [& {:keys [outcome attempt-id batch-id recovery-reason]
+      :or {outcome :dispatch/accepted
+           attempt-id "dispatch-attempt-1"}}]
   (law/dispatch-record work context outcome at
+                       :attempt-id attempt-id
                        :batch-id batch-id
                        :recovery-reason recovery-reason))
 
@@ -111,12 +113,36 @@
     (is (= "batch-7" (:dispatch/batch-id (record :batch-id "batch-7")))))
 
   (testing "an unknown outcome cannot be recorded"
-    (is (thrown? js/Error (law/dispatch-record work context :dispatch/invented at)))))
+    (is (thrown? js/Error (law/dispatch-record work context :dispatch/invented at
+                                               :attempt-id "dispatch-attempt-1"))))
+
+  (testing "new attempts require identity while historical rows stay readable"
+    (is (thrown? js/Error
+                 (law/dispatch-record work context :dispatch/accepted at)))
+    (is (= (:dispatch/key (record))
+           (:dispatch/key (law/assert-record!
+                           (dissoc (record) :dispatch/attempt-id)))))))
+
+(deftest dispatch-attempt-identity-is-independent-of-wall-clock-time
+  (let [first-attempt (record :attempt-id "dispatch-attempt-a")
+        second-attempt (record :attempt-id "dispatch-attempt-b")]
+    (testing "same key and same millisecond are still different attempts"
+      (is (not (law/same-attempt? first-attempt second-attempt))))
+
+    (testing "outcome, batch, and detail are mutable coordinates of one attempt"
+      (is (law/same-attempt?
+           first-attempt
+           (assoc first-attempt
+                  :dispatch/outcome :dispatch/failed
+                  :dispatch/batch-id "batch-7"
+                  :dispatch/detail "provider failed"))))))
 
 (deftest completed-claim-recovery-is-explicit-and-narrow
   (let [completed (record :outcome :dispatch/completed :batch-id "batch-old")
-        ordinary (record)
-        recovery (record :recovery-reason :candidate-unavailable)]
+        accepted (record :attempt-id "dispatch-attempt-accepted")
+        ordinary (record :attempt-id "dispatch-attempt-ordinary")
+        recovery (record :attempt-id "dispatch-attempt-recovery"
+                         :recovery-reason :candidate-unavailable)]
     (testing "the closed recovery vocabulary is validated on the record"
       (is (= :candidate-unavailable (:dispatch/recovery-reason recovery)))
       (is (thrown? js/Error
@@ -125,6 +151,10 @@
     (testing "an ordinary completed claim remains terminal"
       (is (law/terminal? :dispatch/completed))
       (is (not (law/replaceable-claim? ordinary completed))))
+
+    (testing "an accepted in-flight claim is never replaceable"
+      (is (not (law/replaceable-claim? ordinary accepted)))
+      (is (not (law/replaceable-claim? recovery accepted))))
 
     (testing "the explicit candidate-unavailable proposal may reopen candidate-terminal claims"
       (is (law/replaceable-claim? recovery completed))
@@ -214,7 +244,9 @@
       (is (= :en (:translation/source-locale receipt)))
       (is (= :es (:translation/locale receipt)))
       (is (= "sha256-abc123def456" (:translation/source-revision receipt)))
-      (is (= (:dispatch/key accepted) (:translation/dispatch-key receipt))))
+      (is (= (:dispatch/key accepted) (:translation/dispatch-key receipt)))
+      (is (= (:dispatch/attempt-id accepted)
+             (:translation/dispatch-attempt-id receipt))))
 
     (testing "a worker-supplied selector output revision is refused"
       (is (thrown? js/Error (law/translation-receipt accepted "source/current" at))))

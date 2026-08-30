@@ -160,13 +160,25 @@
     checked))
 
 (defn- review-supersedes?
-  "Define a total order: later instant, then lexically greater receipt id."
+  "Define a total order: instant, operation id, then receipt id.
+
+  Operation identity precedes per-receipt identity so one document-level review
+  group wins consistently across every split when the server clock has only
+  millisecond precision. Receipt id remains the final deterministic tie-breaker
+  for otherwise equal coordinates."
   [candidate incumbent]
-  (or (nil? incumbent)
-      (evidence/later-instant? (:review/recorded-at candidate)
-                               (:review/recorded-at incumbent))
-      (and (= (:review/recorded-at candidate) (:review/recorded-at incumbent))
-           (pos? (compare (:review/id candidate) (:review/id incumbent))))))
+  (let [candidate-at (:review/recorded-at candidate)
+        incumbent-at (:review/recorded-at incumbent)
+        operation-order (when incumbent
+                          (compare (:review/operation-id candidate)
+                                   (:review/operation-id incumbent)))]
+    (or (nil? incumbent)
+        (evidence/later-instant? candidate-at incumbent-at)
+        (and (= candidate-at incumbent-at)
+             (or (pos? operation-order)
+                 (and (zero? operation-order)
+                      (pos? (compare (:review/id candidate)
+                                     (:review/id incumbent)))))))))
 
 (defn- unique-history
   "Dedupe equal retries and refuse changed evidence behind one receipt id."

@@ -46,15 +46,35 @@
 
      Implementations must contain no `await` between reading the key and
      claiming it.")
-  (resolve-dispatch! [store dispatch-key outcome detail]
-    "Move an in-flight claim to a terminal `outcome`. Returns a Promise of the
-     updated record, or nil when no in-flight claim held that key — so a caller
-     can tell 'resolved it' from 'somebody else already did'.
+  (resolve-dispatch! [store expected-record outcome detail]
+    "Move the exact in-flight attempt named by `expected-record` to a terminal
+     `outcome`. Returns a Promise of the updated record, or nil when that attempt
+     is no longer active — so a delayed attempt cannot resolve a replacement
+     that intentionally reuses the same logical dispatch key.
 
-     `detail` is free-text evidence for a human and never a decision input.")
-  (bind-dispatch-batch! [store dispatch-key batch-id]
-    "Record the batch id the worker assigned to an accepted claim. Returns a
-     Promise of the updated record, or nil when no in-flight claim held the key.")
+     `detail` is free-text evidence for a human and never a decision input.
+     A completion owner blocks this transition: once receipt persistence starts,
+     a racing failure may no longer invalidate the attempt that earned it.")
+  (bind-dispatch-batch! [store expected-record batch-id]
+    "Record the batch id the worker assigned to the exact accepted attempt.
+     Returns a Promise of the updated record, or nil when that attempt is no
+     longer active. A key-only compare is forbidden because a delayed bind from
+     an earlier attempt could otherwise attach its batch to a replacement.")
+  (claim-dispatch-completion! [store expected-record]
+    "Claim exclusive completion ownership for the exact accepted attempt.
+
+     Returns a Promise of that attempt when the claim is acquired or already
+     belongs to the same attempt, else nil. While held, ordinary resolve and bind
+     transitions must fail. This is the first phase of receipt-before-completed
+     settlement: a loser learns it lost before it can expose a receipt, while a
+     crash leaves an idempotently resumable claim rather than a completed record
+     with no receipt.")
+  (finish-dispatch-completion! [store expected-record detail]
+    "After the receipt is durable, move its exact completion-owned attempt to
+     `:dispatch/completed` and release the owner.
+
+     Returns the completed record. An equal retry may receive the already-
+     completed same attempt; a stale or different attempt receives nil.")
   (dispatch-for-key! [store dispatch-key]
     "The dispatch record for `dispatch-key`, or nil. Returns a Promise.")
   (dispatch-for-batch-document! [store batch-id document-wire-id]
@@ -74,7 +94,13 @@
      alone identifies the binding. Without this lookup a batch-level failure
      could never be resolved and its claim would sit in flight forever.")
   (record-translation! [store receipt]
-    "Append completed translation evidence. Returns a Promise of the receipt.")
+    "Record immutable completed-translation evidence at most once per stable
+     receipt identity.
+
+     A first write returns the receipt. An equal retry may carry a newly sampled
+     `:translation/at`; it returns the first stored receipt so that retry timing
+     cannot rewrite historical ordering. A retry that changes any other fact at
+     the same identity is an immutable-receipt conflict and must fail.")
   (completed-translations! [store scope]
     "Completed translation receipts within `scope`. Returns a Promise.
 
@@ -120,6 +146,19 @@
 
 ;; ── Validation helpers ─────────────────────────────────────────────────────
 
+(defn assert-ordinary-resolution-outcome!
+  "Validate an outcome written outside the receipt-backed completion protocol.
+
+   `:dispatch/completed` is deliberately excluded: only
+   `finish-dispatch-completion!`, after a durable receipt, may create that state."
+  [outcome]
+  (when (or (not (contains? dispatch-law/outcomes outcome))
+            (= :dispatch/accepted outcome)
+            (= :dispatch/completed outcome))
+    (throw (ex-info "invalid ordinary translation dispatch resolution"
+                    {:dispatch/outcome outcome})))
+  outcome)
+
 (defn- checked-reservation
   "Validate the record inside a reservation answer.
 
@@ -161,6 +200,7 @@
       (nil? existing)
       (-> current
           (assoc-in [:dispatches dispatch-key] record)
+          (update :completion-owners dissoc dispatch-key)
           (assoc :answer {:reservation/status :reserved :record record}))
 
       (in-flight? existing)
@@ -169,24 +209,96 @@
       (dispatch-law/replaceable-claim? record existing)
       (-> current
           (assoc-in [:dispatches dispatch-key] record)
+          (update :completion-owners dissoc dispatch-key)
           (assoc :answer {:reservation/status :reserved :record record}))
 
       :else
       (assoc current :answer {:reservation/status :done :record existing}))))
 
+(defn- completion-owner
+  "Stable store-private owner for one immutable dispatch attempt."
+  [record]
+  (pr-str (dispatch-law/attempt-binding record)))
+
+(defn- exact-active-attempt?
+  [current expected-record]
+  (let [existing (get-in current [:dispatches (:dispatch/key expected-record)])]
+    (and existing
+         (in-flight? existing)
+         (dispatch-law/same-attempt? existing expected-record))))
+
 (defn- update-in-flight-state
-  "Apply `f` to an in-flight claim, or answer nil when there is not one.
+  "Apply `f` to the exact active attempt, or answer nil when it moved.
 
    Refusing to touch a terminal record is the compare-and-set the Mongo
    implementation expresses as a query predicate: whoever resolves the claim
-   first wins, and the loser learns it lost instead of overwriting an outcome."
-  [current dispatch-key f]
-  (let [existing (get-in current [:dispatches dispatch-key])]
-    (if (and existing (in-flight? existing))
+   first wins, and the loser learns it lost instead of overwriting an outcome.
+   The completion-owner predicate closes the success-vs-failure window: once
+   receipt persistence has begun, only the completion finisher may move it."
+  [current expected-record f]
+  (let [dispatch-key (:dispatch/key expected-record)
+        existing (get-in current [:dispatches dispatch-key])]
+    (if (and (exact-active-attempt? current expected-record)
+             (nil? (get-in current [:completion-owners dispatch-key])))
       (let [updated (f existing)]
         (-> current
             (assoc-in [:dispatches dispatch-key] updated)
             (assoc :answer updated)))
+      (assoc current :answer nil))))
+
+(defn- claim-completion-in-state
+  "Acquire, or idempotently resume, completion for one exact attempt."
+  [current expected-record]
+  (let [dispatch-key (:dispatch/key expected-record)
+        existing (get-in current [:dispatches dispatch-key])
+        owner (completion-owner expected-record)
+        held-by (get-in current [:completion-owners dispatch-key])]
+    (cond
+      ;; An equal callback can read accepted just before another equal callback
+      ;; finishes. Treat that post-read/pre-claim schedule as an idempotent claim,
+      ;; not a nondeterministic already-resolved refusal.
+      (and existing
+           (= :dispatch/completed (:dispatch/outcome existing))
+           (dispatch-law/same-attempt? existing expected-record))
+      (assoc current :answer existing)
+
+      (not (exact-active-attempt? current expected-record))
+      (assoc current :answer nil)
+
+      (or (nil? held-by) (= owner held-by))
+      (-> current
+          (assoc-in [:completion-owners dispatch-key] owner)
+          (assoc :answer (get-in current [:dispatches dispatch-key])))
+
+      :else
+      (assoc current :answer nil))))
+
+(defn- finish-completion-in-state
+  "Complete the exact attempt after its receipt is durable.
+
+   An already-completed equal attempt is an idempotent finish: two equal
+   callbacks may both persist the same receipt, but only one changes the claim."
+  [current expected-record detail]
+  (let [dispatch-key (:dispatch/key expected-record)
+        existing (get-in current [:dispatches dispatch-key])
+        owner (completion-owner expected-record)
+        held-by (get-in current [:completion-owners dispatch-key])]
+    (cond
+      (and existing
+           (= :dispatch/completed (:dispatch/outcome existing))
+           (dispatch-law/same-attempt? existing expected-record))
+      (assoc current :answer existing)
+
+      (and (exact-active-attempt? current expected-record)
+           (= owner held-by))
+      (let [updated (cond-> (assoc existing :dispatch/outcome :dispatch/completed)
+                      (some? detail) (assoc :dispatch/detail detail))]
+        (-> current
+            (assoc-in [:dispatches dispatch-key] updated)
+            (update :completion-owners dissoc dispatch-key)
+            (assoc :answer updated)))
+
+      :else
       (assoc current :answer nil))))
 
 (defn- resolved-answer
@@ -202,6 +314,109 @@
   [receipt {:keys [org-id project]}]
   (and (= org-id (:translation/org-id receipt))
        (= project (:translation/project receipt))))
+
+(defn receipt-visible-for-dispatch?
+  "Whether `receipt` is admissible as completed evidence beside `record`.
+
+   Historical receipts have no attempt coordinate and retain their existing
+   compatibility behavior. A newly written receipt is invisible until the
+   current dispatch row is completed by that exact immutable attempt. This keeps
+   the receipt-before-completed crash window recoverable without letting the
+   gate, review inventory, or publication listing consume provisional evidence."
+  [receipt record]
+  (if-let [attempt-id (:translation/dispatch-attempt-id receipt)]
+    (and record
+         (= :dispatch/completed (:dispatch/outcome record))
+         (= (:translation/dispatch-key receipt) (:dispatch/key record))
+         (= attempt-id (:dispatch/attempt-id record)))
+    true))
+
+(defn- visible-memory-receipt?
+  [state receipt]
+  (receipt-visible-for-dispatch?
+   receipt
+   (get-in state [:dispatches (:translation/dispatch-key receipt)])))
+
+(defn receipt-identity
+  "The durable identity at most one completed receipt may occupy.
+
+   Every exact coordinate is included even where the dispatch key currently
+   derives from some of them. That makes the persistence law explicit and keeps
+   a future dispatch-key encoding change from collapsing different resource,
+   source, or output facts. Content digest and split lineage are deliberately
+   not identity: changing either at these same coordinates is a conflict, not a
+   second completion. `:translation/at` is retry metadata and is also excluded
+   so the first recorded timestamp wins."
+  [receipt]
+  [(:translation/org-id receipt)
+   (:translation/project receipt)
+   (:translation/garden receipt)
+   (:translation/document receipt)
+   (:translation/source-locale receipt)
+   (:translation/locale receipt)
+   (:translation/source-revision receipt)
+   (:translation/revision receipt)
+   (:translation/dispatch-key receipt)])
+
+(defn receipt-replay?
+  "Whether `attempted` repeats `existing` without changing an immutable fact.
+
+   A caller retrying after an uncertain response naturally samples a later
+   timestamp. Ignoring only that field makes the retry idempotent while still
+   refusing changed target bytes, tenant scope, or split lineage."
+  [existing attempted]
+  (= (dissoc existing :translation/at)
+     (dissoc attempted :translation/at)))
+
+(defn legacy-compatible-receipt-replay?
+  "Whether one pre-attempt receipt and one attempt-bound receipt state one fact.
+
+   This is a bounded rolling-deploy exception, not the ordinary replay law.
+   Exactly one side must lack the attempt coordinate and every historical fact
+   besides retry time must agree. Two attempt-bound receipts with different
+   attempt ids remain a conflict at the same stable identity."
+  [left right]
+  (let [left-bound? (contains? left :translation/dispatch-attempt-id)
+        right-bound? (contains? right :translation/dispatch-attempt-id)]
+    (and (not= left-bound? right-bound?)
+         (= (dissoc left :translation/at :translation/dispatch-attempt-id)
+            (dissoc right :translation/at :translation/dispatch-attempt-id)))))
+
+(defn first-receipt-or-conflict!
+  "Return `existing` for an equal or legacy-compatible retry.
+
+   The compatibility branch lets a new writer settle against the same receipt
+   inserted by an old binary during a rolling deployment. It never masks a
+   changed content, lineage, resource, or pair of concrete attempt identities."
+  [existing attempted]
+  (if (or (receipt-replay? existing attempted)
+          (legacy-compatible-receipt-replay? existing attempted))
+    existing
+    (throw (ex-info "conflicting completed translation receipt"
+                    {:cause :translation-receipt-conflict
+                     :translation/receipt-identity
+                     (receipt-identity attempted)
+                     :existing existing
+                     :attempted attempted}))))
+
+(defn collapse-receipts!
+  "Collapse duplicate receipt identities, failing closed on disagreement.
+
+   Historical unkeyed rows can coexist with a keyed row when old and new
+   binaries write concurrently under a sparse unique index. Equal facts reduce
+   to the earliest asserted timestamp, with the full printed fact as a stable
+   tie-break. A changed fact throws instead of letting store return order choose
+   which translation the gate or review inventory consumes."
+  [receipts]
+  (->> receipts
+       (group-by receipt-identity)
+       (sort-by (comp pr-str key))
+       (mapv (fn [[_ duplicates]]
+               (let [[first-receipt & rest-receipts]
+                     (sort-by (juxt :translation/at pr-str) duplicates)]
+                 (doseq [receipt rest-receipts]
+                   (first-receipt-or-conflict! first-receipt receipt))
+                 first-receipt)))))
 
 (defn approval-in-scope?
   "Whether `approval` belongs to `scope`. See `receipt-in-scope?`."
@@ -251,8 +466,8 @@
 
 (defn- resolve-outcome-in-state
   "Set an in-flight claim's outcome, and its detail when one is given."
-  [current dispatch-key outcome detail]
-  (update-in-flight-state current dispatch-key
+  [current expected-record outcome detail]
+  (update-in-flight-state current expected-record
                           (fn [record]
                             (cond-> (assoc record :dispatch/outcome outcome)
                               (some? detail) (assoc :dispatch/detail detail)))))
@@ -273,9 +488,82 @@
                first)
           dispatch-law/assert-record!))
 
-(defn- append-receipt-in-state
+(defn- record-receipt-in-state
+  "Claim one immutable receipt identity, or return the first equal fact.
+
+   The decision and write happen in the same `swap!`, so two callers cannot
+   both observe absence. Throwing from the transition leaves the atom unchanged."
   [current receipt]
-  (update current :receipts conj receipt))
+  (let [identity (receipt-identity receipt)]
+    (if-let [existing (get-in current [:receipts identity])]
+      (assoc current :answer (first-receipt-or-conflict! existing receipt))
+      (-> current
+          (assoc-in [:receipts identity] receipt)
+          (assoc :answer receipt)))))
+
+(defn- reserve-memory!
+  [state record]
+  (js/Promise.resolve
+   (checked-reservation
+    (:answer (swap! state reserve-in-state
+                    (dispatch-law/assert-record! record))))))
+
+(defn- resolve-memory!
+  [state expected-record outcome detail]
+  (let [checked-outcome (assert-ordinary-resolution-outcome! outcome)]
+    (js/Promise.resolve
+     (resolved-answer (swap! state resolve-outcome-in-state
+                             (dispatch-law/assert-record! expected-record)
+                             checked-outcome detail)))))
+
+(defn- bind-memory!
+  [state expected-record batch-id]
+  (js/Promise.resolve
+   (resolved-answer (swap! state update-in-flight-state
+                           (dispatch-law/assert-record! expected-record)
+                           #(assoc % :dispatch/batch-id batch-id)))))
+
+(defn- claim-memory-completion!
+  [state expected-record]
+  (js/Promise.resolve
+   (resolved-answer (swap! state claim-completion-in-state
+                           (dispatch-law/assert-record! expected-record)))))
+
+(defn- finish-memory-completion!
+  [state expected-record detail]
+  (js/Promise.resolve
+   (resolved-answer (swap! state finish-completion-in-state
+                           (dispatch-law/assert-record! expected-record)
+                           detail))))
+
+(defn- record-memory-receipt!
+  [state receipt]
+  (let [checked (evidence-law/assert-receipt! receipt)]
+    (js/Promise.resolve
+     (:answer (swap! state record-receipt-in-state checked)))))
+
+(defn- memory-receipts
+  [state scope]
+  (let [snapshot @state]
+    (js/Promise.resolve
+     (into [] (comp (map evidence-law/assert-receipt!)
+                    (filter #(receipt-in-scope? % scope))
+                    (filter #(visible-memory-receipt? snapshot %)))
+           (vals (:receipts snapshot))))))
+
+(defn- record-memory-approval!
+  [state approval]
+  (let [checked (evidence-law/assert-approval! approval)]
+    (js/Promise.resolve
+     (:answer (swap! state record-approval-in-state
+                     (approval-identity checked) checked)))))
+
+(defn- memory-approvals
+  [state scope]
+  (js/Promise.resolve
+   (into [] (comp (map evidence-law/assert-approval!)
+                  (filter #(approval-in-scope? % scope)))
+         (vals (:approvals @state)))))
 
 (defn memory-store
   "An `ITranslationEvidenceStore` over one atom.
@@ -284,23 +572,25 @@
    durable store: a binding lost on restart can never be joined to the worker's
    answer, so the translation would complete and no receipt would ever exist."
   []
-  (let [state (atom {:dispatches {} :receipts [] :approvals {}})]
+  (let [state (atom {:dispatches {}
+                     :completion-owners {}
+                     :receipts {}
+                     :approvals {}})]
     (reify ITranslationEvidenceStore
       (reserve-dispatch! [_ record]
-        (js/Promise.resolve
-         (checked-reservation
-          (:answer (swap! state reserve-in-state
-                          (dispatch-law/assert-record! record))))))
+        (reserve-memory! state record))
 
-      (resolve-dispatch! [_ dispatch-key outcome detail]
-        (js/Promise.resolve
-         (resolved-answer (swap! state resolve-outcome-in-state
-                                 dispatch-key outcome detail))))
+      (resolve-dispatch! [_ expected-record outcome detail]
+        (resolve-memory! state expected-record outcome detail))
 
-      (bind-dispatch-batch! [_ dispatch-key batch-id]
-        (js/Promise.resolve
-         (resolved-answer (swap! state update-in-flight-state dispatch-key
-                                 #(assoc % :dispatch/batch-id batch-id)))))
+      (bind-dispatch-batch! [_ expected-record batch-id]
+        (bind-memory! state expected-record batch-id))
+
+      (claim-dispatch-completion! [_ expected-record]
+        (claim-memory-completion! state expected-record))
+
+      (finish-dispatch-completion! [_ expected-record detail]
+        (finish-memory-completion! state expected-record detail))
 
       (dispatch-for-key! [_ dispatch-key]
         (js/Promise.resolve (read-dispatch @state dispatch-key)))
@@ -312,24 +602,13 @@
         (js/Promise.resolve (read-batch-only-dispatch @state batch-id)))
 
       (record-translation! [_ receipt]
-        (let [checked (evidence-law/assert-receipt! receipt)]
-          (swap! state append-receipt-in-state checked)
-          (js/Promise.resolve checked)))
+        (record-memory-receipt! state receipt))
 
       (completed-translations! [_ scope]
-        (js/Promise.resolve
-         (into [] (comp (map evidence-law/assert-receipt!)
-                        (filter #(receipt-in-scope? % scope)))
-               (:receipts @state))))
+        (memory-receipts state scope))
 
       (record-approval! [_ approval]
-        (let [checked (evidence-law/assert-approval! approval)]
-          (js/Promise.resolve
-           (:answer (swap! state record-approval-in-state
-                           (approval-identity checked) checked)))))
+        (record-memory-approval! state approval))
 
       (approvals! [_ scope]
-        (js/Promise.resolve
-         (into [] (comp (map evidence-law/assert-approval!)
-                        (filter #(approval-in-scope? % scope)))
-               (vals (:approvals @state))))))))
+        (memory-approvals state scope)))))

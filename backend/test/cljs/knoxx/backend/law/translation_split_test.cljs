@@ -65,6 +65,24 @@
                    :source-text fixture/source
                    :source-parts fixture/source-parts))))))
 
+(t/deftest qualified-manifest-coordinates-are-canonical-input
+  (let [unqualified (fixture/manifest)
+        qualified-input
+        (-> fixture/coordinates
+            (dissoc :org-id :project :garden :document :source-locale
+                    :target-locale :source-revision)
+            (assoc :split-manifest/org-id (:org-id fixture/coordinates)
+                   :split-manifest/project (:project fixture/coordinates)
+                   :split-manifest/garden (:garden fixture/coordinates)
+                   :split-manifest/document (:document fixture/coordinates)
+                   :split-manifest/source-locale (:source-locale fixture/coordinates)
+                   :split-manifest/target-locale (:target-locale fixture/coordinates)
+                   :split-manifest/source-revision
+                   (:source-revision fixture/coordinates)
+                   :source-text fixture/source
+                   :source-parts fixture/source-parts))]
+    (t/is (= unqualified (split/split-manifest fixture/digest qualified-input)))))
+
 (t/deftest candidate-attempts-come-from-the-pre-provider-claim
   (let [value (fixture/manifest)
         candidate-claim (fixture/claim value)

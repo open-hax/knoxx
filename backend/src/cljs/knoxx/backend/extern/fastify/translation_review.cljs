@@ -4,9 +4,11 @@
   Native request and reply handles are born and die here; the facade receives
   decoded CLJS data and returns CLJS data.
 
-  `POST /api/publications/translations/approvals` records that the authenticated
-  principal accepted one translated revision. Three properties are enforced here
-  rather than below, because this is where an untrusted caller meets the system:
+  `POST /api/publications/translations/approvals` records whole-output approval;
+  `POST /api/publications/translations/reviews` appends candidate-bound split
+  review evidence; its `/bulk` sibling applies one evaluation to every member
+  of the persisted candidate set. Three properties are enforced here rather
+  than below, because this is where an untrusted caller meets the system:
 
   1. **The principal comes from the auth context, never from the body.** The
      request contract is closed and carries no principal field, so a caller
@@ -18,6 +20,7 @@
      would let an anonymous caller manufacture the review evidence a publication
      gate is waiting on."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.translation-review-inventory :as inventory]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
@@ -31,8 +34,11 @@
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
             [knoxx.backend.infra.stores.translation-evidence-registry :as registry]
+            [knoxx.backend.infra.stores.translation-split-registry :as split-registry]
+            [knoxx.backend.infra.translation-split-projection :as split-projection]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.translation-evidence :as law]
+            [knoxx.backend.law.translation-split-schema :as split-schema]
             [knoxx.backend.shape.resource-identity :as resource-identity]
             [promesa.core :as p]))
 
@@ -93,6 +99,43 @@
    [:translation_revision [:and :string [:fn {:error/message "translation_revision must not be blank"}
                                          #(seq (str/trim %))]]]])
 
+(def ^:private NonBlankWireString
+  [:and :string [:fn {:error/message "value must not be blank"}
+                 #(seq (str/trim %))]])
+
+(def ^:private ReviewEvaluationFields
+  "Optional score and note fields shared by single and candidate-set review."
+  [[:adequacy {:optional true} split-schema/QualityRating]
+   [:fluency {:optional true} split-schema/QualityRating]
+   [:terminology {:optional true} split-schema/TerminologyRating]
+   [:risk {:optional true} split-schema/RiskRating]
+   [:editor_notes {:optional true} [:maybe NonBlankWireString]]])
+
+(def SplitReviewBody
+  "Closed candidate-bound split review request accepted from the UI.
+
+  The historical score fields remain optional so older callers can submit only
+  a verdict and correction; the facade supplies the historical defaults. Scope,
+  principal, timestamp, immutable candidate coordinates, and operation identity
+  are intentionally not legal body fields."
+  (into [:map {:closed true}
+         [:candidate_set_id NonBlankWireString]
+         [:split_id NonBlankWireString]
+         [:status [:enum "in-review" "approved" "rejected"]]
+         [:corrected_text {:optional true} [:maybe NonBlankWireString]]]
+        ReviewEvaluationFields))
+
+(def BulkSplitReviewBody
+  "Closed document fast-path body.
+
+  Split ids and corrected text are intentionally absent. The server enumerates
+  the exact persisted manifest, and a document-wide action must never copy one
+  split's correction into every other split."
+  (into [:map {:closed true}
+         [:candidate_set_id NonBlankWireString]
+         [:status [:enum "in-review" "approved" "rejected"]]]
+        ReviewEvaluationFields))
+
 (defn decode-request
   "Validate the native body, then project it onto the approval request.
 
@@ -112,6 +155,44 @@
       :review/locale (resource-identity/decode-keyword (:locale body))
       :review/revision (:revision body)
       :review/translation-revision (:translation_revision body)})))
+
+(defn- decoded-review-facts
+  [body]
+  (cond-> {:split-review/candidate-set-id (:candidate_set_id body)
+           :split-review/status (keyword (:status body))}
+    (contains? body :adequacy)
+    (assoc :review/adequacy (:adequacy body))
+
+    (contains? body :fluency)
+    (assoc :review/fluency (:fluency body))
+
+    (contains? body :terminology)
+    (assoc :review/terminology (:terminology body))
+
+    (contains? body :risk)
+    (assoc :review/risk (:risk body))
+
+    (some? (:editor_notes body))
+    (assoc :review/editor-notes (:editor_notes body))))
+
+(defn decode-split-review-request
+  "Validate one closed split body and project reviewer-controlled facts."
+  [request]
+  (let [body (law/assert-valid!
+              :translation-split-review/body SplitReviewBody
+              (fastify/request-body request))]
+    (cond-> (assoc (decoded-review-facts body)
+                   :split-review/split-id (:split_id body))
+      (some? (:corrected_text body))
+      (assoc :split-review/corrected-text (:corrected_text body)))))
+
+(defn decode-bulk-split-review-request
+  "Validate a document fast path without accepting client-owned membership."
+  [request]
+  (-> (law/assert-valid!
+       :translation-bulk-split-review/body BulkSplitReviewBody
+       (fastify/request-body request))
+      decoded-review-facts))
 
 (defn principal-of
   "The acting principal, from the auth context only.
@@ -151,28 +232,48 @@
      :project (some-> (:session-project-name config) str not-empty)
      :principal (principal-of ctx)}))
 
+(defn- required-evidence-store!
+  [dependencies]
+  (or (:evidence-store dependencies)
+      (registry/current)
+      (throw (ex-info "translation evidence persistence is not configured"
+                      {:status 503
+                       :code "translation_evidence_unavailable"}))))
+
+(defn- required-split-store!
+  [dependencies]
+  (or (:split-store dependencies)
+      (split-registry/current)
+      (throw (ex-info "translation split evidence persistence is not configured"
+                      {:status 503
+                       :code "translation_split_evidence_unavailable"}))))
+
 (defn- ^:async ensure-contract-receipts!
-  [config evidence-store scope]
-  (let [records (await (publications/resource-records! config))
-        index (publications/publication-index records)
+  [config evidence-store scope dependencies]
+  (let [load-records! (or (:resource-records! dependencies)
+                          publications/resource-records!)
+        build-index (or (:publication-index dependencies)
+                        publications/publication-index)
+        source-roots (or (:document-source-roots dependencies)
+                         translation-dispatch/document-source-roots)
+        load-revisions! (or (:source-revisions! dependencies)
+                            source-revision/source-revisions!)
+        ensure-receipts! (or (:ensure-contract-receipts! dependencies)
+                             contract-content/ensure-receipts!)
+        records (await (load-records! config))
+        index (build-index records)
         documents (vec (vals (:documents index)))
-        roots (translation-dispatch/document-source-roots config records)
-        revisions (await (source-revision/source-revisions!
-                          config documents roots))
+        roots (source-roots config records)
+        revisions (await (load-revisions! config documents roots))
         work (mapv #(assoc %
                            :translation/org-id (:org-id scope)
                            :translation/project (:project scope))
                    (inventory/desired-work index revisions))
-        authored (await (contract-content/ensure-receipts!
+        authored (await (ensure-receipts!
                          evidence-store index roots scope revisions))]
     {:index index
      :roots roots
-     ;; The inventory resolves every desired `:source/current` relation from
-     ;; this same snapshot.  Discarding the map here forced the old read path to
-     ;; start from completed receipts, because a missing candidate otherwise had
-     ;; no concrete revision to put on the wire.  That inverted authority: one
-     ;; receipt yielded one row even when the resource graph declared eighteen
-     ;; pieces of translation work.
+     ;; Missing candidates still need concrete revisions on inventory rows.
      :source-revisions revisions
      :work work
      :authored authored}))
@@ -184,13 +285,15 @@
   declared locale file retires its old receipt instead of leaving a ready row
   nobody can inspect. Agent receipts then have to resolve to their exact
   digest-bound content entry."
-  [config evidence-store scope {:keys [index roots work authored]}]
-  (let [stored (await (evidence-store-api/completed-translations!
+  [config evidence-store scope {:keys [index roots work authored]} dependencies]
+  (let [authenticate-receipts! (or (:authenticate-receipts! dependencies)
+                                   candidate-content/authenticated-receipts!)
+        stored (await (evidence-store-api/completed-translations!
                        evidence-store (select-keys scope [:org-id :project])))
         normalized (contract-content/current-authored-receipts
                     stored authored work)
         desired-relations (set (map inventory/work-key work))]
-    (await (candidate-content/authenticated-receipts!
+    (await (authenticate-receipts!
             (:publication-content-root config)
             roots
             (:documents index)
@@ -231,19 +334,25 @@
 
 (defn- ^:async contract-candidate-content!
   "Load candidate columns and independently digest the source bytes read now."
-  [config roots document locale authored? receipt]
-  (let [root (get roots (:document/id document))
-        source (await (contract-content/source-content! root document))
+  [config roots document locale authored? receipt dependencies]
+  (let [load-source! (or (:source-content! dependencies)
+                         contract-content/source-content!)
+        load-localized! (or (:localized-content! dependencies)
+                            contract-content/localized-content!)
+        load-agent! (or (:agent-content! dependencies)
+                        agent-content/content-for-receipt!)
+        authenticated-content? (or (:authenticated-content? dependencies)
+                                   content-integrity/authenticated-content?)
+        root (get roots (:document/id document))
+        source (await (load-source! root document))
         translated (if authored?
-                     (await (contract-content/localized-content!
-                             root document locale))
-                     (await (agent-content/content-for-receipt!
+                     (await (load-localized! root document locale))
+                     (await (load-agent!
                              (:publication-content-root config) receipt)))]
     {:source source
      :source-revision (source-revision/content-revision source)
      :translated translated
-     :translated-current? (content-integrity/authenticated-content?
-                           receipt translated)
+     :translated-current? (authenticated-content? receipt translated)
      :content-source (if authored? :authored-contract :agent)}))
 
 (defn- displayable-content?
@@ -283,7 +392,7 @@
    Precedence mirrors publication rendering: receipt-bound agent content, then
    authored locale content. `:content_source` preserves that distinction, and
    `:reviewable` is reduced to false whenever either display column is missing."
-  [config index roots authored-relations receipts-by-relation review]
+  [config index roots authored-relations receipts-by-relation review dependencies]
   (let [document (get-in index [:documents (:document review)])]
     (if (or (nil? document)
             (not (:candidate_present review)))
@@ -298,7 +407,7 @@
             receipt (get receipts-by-relation relation)
             content (await (contract-candidate-content!
                             config roots document (:locale review)
-                            authored? receipt))]
+                            authored? receipt dependencies))]
         ;; Resource ownership stays explicit even when bytes are missing, so
         ;; the client cannot fall through to a same-named legacy Mongo row.
         (hydrated-contract-review review document content)))))
@@ -332,10 +441,48 @@
                       :translation/project (:project scope))
               (inventory/desired-work index source-revisions))))
 
+(defn- split-receipt?
+  [receipt]
+  (some? (:translation/candidate-set-id receipt)))
+
+(defn- ^:async require-current-ready-split!
+  "Refresh split composition and require the approval's receipt to stay current."
+  ([config evidence-store receipt]
+   (require-current-ready-split! config evidence-store receipt {}))
+  ([config evidence-store receipt dependencies]
+   (if-not (split-receipt? receipt)
+     receipt
+     (let [translation-split-store (required-split-store! dependencies)
+          project-output! (or (:project-reviewed-output! dependencies)
+                              split-projection/project-reviewed-output!)
+          projected (await
+                     (project-output!
+                      {:split-store translation-split-store
+                       :evidence-store evidence-store
+                       :content-root (:publication-content-root config)
+                       :digest-hex (or (:digest-hex dependencies)
+                                       crypto/sha256-hex)
+                       :clock (or (:clock dependencies)
+                                  (fn [] (.toISOString (js/Date.))))}
+                      (:translation/candidate-set-id receipt)))
+          current (:translation/receipt projected)]
+      (when-not (= :ready (:translation/review-status projected))
+        (throw (ex-info "every translation split must be approved first"
+                        {:status 409
+                         :code "translation_split_review_incomplete"})))
+      (when-not (= receipt current)
+        (throw (ex-info "translation review projection changed before approval"
+                        {:status 409
+                         :code "translation_candidate_content_moved"})))
+       current))))
+
 (defn- ^:async authorize-resource-approval!
   "Require declared resource work and both exact display columns before write."
-  [config {:keys [index roots source-revisions authored]} _request receipt]
-  (let [work (matching-resource-work index source-revisions receipt)]
+  [config evidence-store {:keys [index roots source-revisions authored]}
+   dependencies _request receipt]
+  (let [receipt (await (require-current-ready-split!
+                        config evidence-store receipt dependencies))
+        work (matching-resource-work index source-revisions receipt)]
     (when-not work
       (throw (ex-info "translation candidate is not declared resource work"
                       {:status 409
@@ -345,7 +492,7 @@
                                (receipt-relation receipt))
           content (await (contract-candidate-content!
                           config roots document (:translation/locale work)
-                          authored? receipt))]
+                          authored? receipt dependencies))]
       (when-not (and (displayable-content? (:source content))
                      (= (:translation/source-revision receipt)
                         (:source-revision content))
@@ -356,68 +503,99 @@
                          :code "translation_candidate_content_unavailable"})))
       true)))
 
+(defn- approval-dependencies
+  [config dependencies evidence-store contract-snapshot requested-work receipts]
+  {:evidence-store evidence-store
+   :clock (or (:clock dependencies) (fn [] (.toISOString (js/Date.))))
+   :receipt-admissible?
+   (fn [receipt]
+     (and requested-work
+          (= (inventory/work-key requested-work)
+             (inventory/work-key receipt))))
+   :receipts-snapshot receipts
+   :authorize-approval!
+   (partial authorize-resource-approval! config evidence-store
+            contract-snapshot dependencies)})
+
 (defn- ^:async approve!
-  [config ctx decoded]
-  (if-let [evidence-store (registry/current)]
-    (let [scope (review-scope config ctx)
-          contract-snapshot (await (ensure-contract-receipts!
-                                    config evidence-store scope))
-          receipts (await (authenticated-contract-receipts!
-                           config evidence-store scope contract-snapshot))
-          requested-work (matching-request-work
-                          (:index contract-snapshot)
-                          (:source-revisions contract-snapshot)
-                          scope
-                          decoded)]
-      (facade/approve-translation!
-       {:evidence-store evidence-store
-        :clock (fn [] (.toISOString (js/Date.)))
-        ;; The request cannot supply source locale. Resolve it from current
-        ;; resource work before receipts are indexed, or an A→B locale history
-        ;; with equal revisions can make the wrong receipt win the 4-D index.
-        :receipt-admissible?
-        (fn [receipt]
-          (and requested-work
-               (= (inventory/work-key requested-work)
-                  (inventory/work-key receipt))))
-        :receipts-snapshot receipts
-        :authorize-approval!
-        (partial authorize-resource-approval! config contract-snapshot)}
-       scope
-       decoded))
-    ;; Approval evidence that does not survive a restart is worse than none: the
-    ;; gate would admit a publication today and block it tomorrow.
-    (throw (ex-info "translation evidence persistence is not configured"
-                    {:status 503
-                    :code "translation_evidence_unavailable"}))))
+  [config ctx decoded dependencies]
+  (let [evidence-store (required-evidence-store! dependencies)
+        scope (review-scope config ctx)
+        snapshot (await (ensure-contract-receipts!
+                         config evidence-store scope dependencies))
+        receipts (await (authenticated-contract-receipts!
+                         config evidence-store scope snapshot dependencies))
+        approve-translation! (or (:approve-translation! dependencies)
+                                 facade/approve-translation!)
+        requested-work (matching-request-work
+                        (:index snapshot) (:source-revisions snapshot)
+                        scope decoded)]
+    (approve-translation!
+     (approval-dependencies config dependencies evidence-store snapshot
+                            requested-work receipts)
+     scope decoded)))
 
 (defn- ^:async reviewable!
-  [config ctx]
-  (if-let [evidence-store (registry/current)]
-    (let [scope (review-scope config ctx)
-          {:keys [index roots source-revisions authored] :as contract-snapshot}
-          (await (ensure-contract-receipts! config evidence-store scope))
-          completed (await (authenticated-contract-receipts!
-                            config evidence-store scope contract-snapshot))
-          result (await
-                  (facade/reviewable-translations!
-                   {:evidence-store evidence-store
-                    :publication-index index
-                    :source-revisions source-revisions
-                    :receipts-snapshot completed}
-                   scope))
-          receipts-by-relation (into {} (map (juxt receipt-relation identity)) completed)
-          authored-relations (into #{} (map receipt-relation) authored)
-          reviews (await
-                   (p/all
-                    (mapv #(hydrate-review! config index roots
-                                            authored-relations receipts-by-relation %)
-                          (:reviews result))))]
-      {:project (:project result)
-       :reviews (vec reviews)})
-    (throw (ex-info "translation evidence persistence is not configured"
-                    {:status 503
-                     :code "translation_evidence_unavailable"}))))
+  [config ctx dependencies]
+  (let [evidence-store (required-evidence-store! dependencies)
+        translation-split-store (required-split-store! dependencies)
+        scope (review-scope config ctx)
+        reviewable-translations! (or (:reviewable-translations! dependencies)
+                                     facade/reviewable-translations!)
+        {:keys [index roots source-revisions authored] :as contract-snapshot}
+        (await (ensure-contract-receipts! config evidence-store scope dependencies))
+        completed (await (authenticated-contract-receipts!
+                          config evidence-store scope contract-snapshot dependencies))
+        result (await
+                (reviewable-translations!
+                 {:evidence-store evidence-store
+                  :split-store translation-split-store
+                  :digest-hex (or (:digest-hex dependencies) crypto/sha256-hex)
+                  :publication-index index
+                  :source-revisions source-revisions
+                  :receipts-snapshot completed}
+                 scope))
+        receipts-by-relation (into {} (map (juxt receipt-relation identity)) completed)
+        authored-relations (into #{} (map receipt-relation) authored)
+        reviews (await
+                 (p/all
+                  (mapv #(hydrate-review! config index roots
+                                          authored-relations receipts-by-relation
+                                          % dependencies)
+                        (:reviews result))))]
+    {:project (:project result)
+     :reviews (vec reviews)}))
+
+(defn- review-mutation-dependencies
+  [config dependencies]
+  (let [evidence-store (required-evidence-store! dependencies)
+        translation-split-store (required-split-store! dependencies)]
+    {:split-store translation-split-store
+     :evidence-store evidence-store
+     :content-root (:publication-content-root config)
+     :digest-hex (or (:digest-hex dependencies) crypto/sha256-hex)
+     :clock (or (:clock dependencies)
+                (fn [] (.toISOString (js/Date.))))}))
+
+(defn- ^:async review-mutation!
+  [config ctx decoded dependencies operation-key default-operation]
+  (let [operation (or (get dependencies operation-key) default-operation)]
+    (await
+     (operation
+      (review-mutation-dependencies config dependencies)
+      (review-scope config ctx)
+      decoded))))
+
+(defn- ^:async split-review!
+  [config ctx decoded dependencies]
+  (await (review-mutation! config ctx decoded dependencies
+                           :record-split-review! facade/record-split-review!)))
+
+(defn- ^:async bulk-split-review!
+  [config ctx decoded dependencies]
+  (await (review-mutation! config ctx decoded dependencies
+                           :record-candidate-set-review!
+                           facade/record-candidate-set-review!)))
 
 (defn response-for
   "Status and body for one facade result.
@@ -438,6 +616,28 @@
      :body {:approved true
             :status (:approval/status result)
             :approval (:approval result)}}))
+
+(defn split-review-response-for
+  "Status/body for an appended split review and its refreshed output."
+  [result]
+  {:status (if (= :recorded (:split-review/status result)) 201 200)
+   :body {:reviewed true
+          :status (:split-review/status result)
+          :review_status (:split-review/current-status result)
+          :review (:split-review/receipt result)
+          :translation_receipt
+          (:split-review/current-translation-receipt result)}})
+
+(defn bulk-split-review-response-for
+  "Status/body for one candidate-set-wide review mutation."
+  [result]
+  {:status (if (= :recorded (:split-review/status result)) 201 200)
+   :body {:reviewed true
+          :status (:split-review/status result)
+          :review_status (:split-review/current-status result)
+          :reviews (:split-review/receipts result)
+          :translation_receipt
+          (:split-review/current-translation-receipt result)}})
 
 (defn- error-status
   [err]
@@ -469,36 +669,71 @@
           (fastify/log-unclassified-failure! "translation-review" err))
         (fastify/send-json! reply status (error-body/error-body err status))))))
 
+(defn- ^:async send-split-review-result!
+  [reply response-builder operation]
+  (try
+    (let [{:keys [status body]}
+          (response-builder (await (operation)))]
+      (fastify/send-json! reply status
+                          (resource-identity/encode-wire-values body)))
+    (catch :default err
+      (let [status (error-status err)]
+        (when-not (error-body/classified? status)
+          (fastify/log-unclassified-failure! "translation-split-review" err))
+        (fastify/send-json! reply status (error-body/error-body err status))))))
+
+(defn- authorized-handler
+  "Build one request-local Fastify handler around auth and response encoding."
+  [runtime handlers permission send! operation]
+  (^:async fn [request reply]
+    (await
+     ((:with-request-context! handlers) runtime request reply
+      (^:async fn [ctx]
+        (await
+         (send!
+          reply
+          (fn []
+            ((:ensure-permission! handlers) ctx permission)
+            (operation ctx request)))))))))
+
+(defn- ^:async send-single-split-review!
+  [reply operation]
+  (await (send-split-review-result! reply split-review-response-for operation)))
+
+(defn- ^:async send-bulk-split-review!
+  [reply operation]
+  (await (send-split-review-result! reply bulk-split-review-response-for operation)))
+
+(defn- register-handler!
+  [app method url handler]
+  (fastify/route! app {:method method :url url :handler handler}))
+
 (defn register-translation-review-routes!
-  [app runtime config handlers]
-  (fastify/route!
-   app
-   {:method "GET"
-    :url "/api/publications/translations/reviews"
-    :handler
-    (^:async fn [request reply]
-      (await
-       ((:with-request-context! handlers) runtime request reply
-        (^:async fn [ctx]
-          (await
-           (send-reviewable!
-            reply
-            (fn []
-              ((:ensure-permission! handlers) ctx read-permission)
-              (reviewable! config ctx))))))))})
-  (fastify/route!
-   app
-   {:method "POST"
-    :url "/api/publications/translations/approvals"
-    :handler
-    (^:async fn [request reply]
-      (await
-       ((:with-request-context! handlers) runtime request reply
-        (^:async fn [ctx]
-          (await
-           (send-result!
-            reply
-            (fn []
-              ((:ensure-permission! handlers) ctx approve-permission)
-              (approve! config ctx (decode-request request)))))))))})
-  nil)
+  "Register routes; the optional fifth argument supplies request-stable deps."
+  ([app runtime config handlers]
+   (register-translation-review-routes! app runtime config handlers {}))
+  ([app runtime config handlers dependencies]
+   (register-handler!
+    app "GET" "/api/publications/translations/reviews"
+    (authorized-handler runtime handlers read-permission send-reviewable!
+                        (fn [ctx _] (reviewable! config ctx dependencies))))
+   (register-handler!
+    app "POST" "/api/publications/translations/approvals"
+    (authorized-handler runtime handlers approve-permission send-result!
+                        (fn [ctx request]
+                          (approve! config ctx (decode-request request) dependencies))))
+   (register-handler!
+    app "POST" "/api/publications/translations/reviews"
+    (authorized-handler runtime handlers approve-permission send-single-split-review!
+                        (fn [ctx request]
+                          (split-review! config ctx
+                                         (decode-split-review-request request)
+                                         dependencies))))
+   (register-handler!
+    app "POST" "/api/publications/translations/reviews/bulk"
+    (authorized-handler runtime handlers approve-permission send-bulk-split-review!
+                        (fn [ctx request]
+                          (bulk-split-review! config ctx
+                                              (decode-bulk-split-review-request request)
+                                              dependencies))))
+   nil))

@@ -33,20 +33,23 @@
    :publication/locale :es})
 
 (defn- ^:async translated-blocks
-  [agent-value authored-value legacy-calls]
-  (with-redefs [agent-content/content-for-receipt!
-                (fn [_ _] (js/Promise.resolve agent-value))
-                contract-content/localized-content!
-                (fn [_ _ _] (js/Promise.resolve authored-value))
-                openplanner-client/translation-document!
-                (fn [& _]
-                  (swap! legacy-calls inc)
-                  (js/Promise.resolve {:segments [{:translated_text translated}]}))]
-    (await (#'runtime/translated-blocks!
-            ::client
-            {:org-id "org-1" :project "review-stage"}
-            {:knoxx.docs/probe "/contracts"}
-            document intent receipt "/published"))))
+  [agent-value authored-value legacy-calls
+   & [candidate-receipt legacy-segments]]
+  (let [candidate-receipt (or candidate-receipt receipt)
+        legacy-segments (or legacy-segments [{:translated_text translated}])]
+    (with-redefs [agent-content/content-for-receipt!
+                  (fn [_ _] (js/Promise.resolve agent-value))
+                  contract-content/localized-content!
+                  (fn [_ _ _] (js/Promise.resolve authored-value))
+                  openplanner-client/translation-document!
+                  (fn [& _]
+                    (swap! legacy-calls inc)
+                    (js/Promise.resolve {:segments legacy-segments}))]
+      (await (#'runtime/translated-blocks!
+              ::client
+              {:org-id "org-1" :project "review-stage"}
+              {:knoxx.docs/probe "/contracts"}
+              document intent candidate-receipt "/published")))))
 
 (deftest ^:async publication-renders-only-receipt-bound-target-bytes
   (testing "exact agent bytes are admitted without a weaker fallback"
@@ -70,3 +73,24 @@
       (is (= ["Primer bloque." "Segundo bloque."]
              (await (translated-blocks nil translated legacy-calls))))
       (is (zero? @legacy-calls)))))
+
+(deftest ^:async legacy-openplanner-segments-have-authenticated-boundaries
+  (let [segments [{:translated_text "Primer segmento."}
+                  {:translated_text "Segundo segmento."}]
+        joined "Primer segmento.\n\nSegundo segmento."
+        joined-receipt (assoc receipt
+                              :translation/content-digest
+                              (integrity/content-digest joined))
+        legacy-calls (atom 0)]
+    (is (= ["Primer segmento." "Segundo segmento."]
+           (await (translated-blocks nil nil legacy-calls
+                                     joined-receipt segments))))
+    (is (= 1 @legacy-calls))
+    (testing "the former undelimited bytes cannot reuse the joined receipt"
+      (let [undelimited-receipt (assoc receipt
+                                       :translation/content-digest
+                                       (integrity/content-digest
+                                        "Primer segmento.Segundo segmento."))]
+        (is (nil? (await (translated-blocks nil nil legacy-calls
+                                            undelimited-receipt segments))))
+        (is (= 2 @legacy-calls))))))

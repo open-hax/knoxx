@@ -70,8 +70,7 @@
 
 (defn- manifest-value
   "Build the closed manifest value before validation."
-  [{:keys [org-id project garden document source-locale target-locale
-           source-revision]}
+  [[org-id project garden document source-locale target-locale source-revision]
    source-digest splits manifest-id]
   (cond-> {:split-manifest/id manifest-id
            :split-manifest/org-id org-id
@@ -92,7 +91,7 @@
         source-digest (digest-hex source-text)
         splits (admitted-splits digest-hex coordinates source-parts)
         manifest-id (split-manifest-id digest-hex coordinates source-digest splits)]
-    (->> (manifest-value input source-digest splits manifest-id)
+    (->> (manifest-value coordinates source-digest splits manifest-id)
          (schema/assert-valid! :translation-split/manifest schema/SplitManifest))))
 
 (defn source-text

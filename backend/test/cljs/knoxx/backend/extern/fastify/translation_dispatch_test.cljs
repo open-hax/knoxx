@@ -7,8 +7,7 @@
   route can do."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.fastify.translation-dispatch :as adapter]
-            [knoxx.backend.infra.routes.translation-dispatch :as facade]
-            [knoxx.backend.infra.stores.translation-evidence-registry :as registry]
+            [knoxx.backend.infra.translation-evidence-store :as evidence-store]
             [knoxx.backend.law.openplanner-translation :as openplanner-law]
             [knoxx.backend.law.translation-dispatch :as law]
             [malli.core :as m]))
@@ -99,7 +98,28 @@
          :ensure-permission! (fn [actual-ctx permission]
                                (swap! checks conj [actual-ctx permission]))}
         config {:session-project-name "review-stage"
-                :openplanner-client-mode "rest"}]
+                :openplanner-client-mode "rest"}
+        dependencies
+        {:evidence-store ::evidence-store
+         :split-store ::split-store
+         :client ::client
+         :observe-source-revision (constantly (js/Promise.resolve nil))
+         :emit! (constantly (js/Promise.resolve nil))
+         :resolve-agent-contract
+         (fn [_config _agent-id]
+           {:model "gemma4:31b"
+            :thinking-level :medium
+            :system-prompt "Translate admitted splits."
+            :tool-ids ["save_translation"]})
+         :dispatch-translations!
+         (fn [actual-config deps scope selection]
+           (reset! facade-call
+                   {:config actual-config
+                    :deps deps
+                    :scope scope
+                    :selection selection})
+           (js/Promise.resolve
+            {:considered 1 :admissible 1 :dispatched []}))}]
     (aset reply "code" (fn [status]
                           (swap! response assoc :status status)
                           reply))
@@ -108,22 +128,13 @@
                           (swap! response assoc :body body)
                           reply))
     (aset reply "sent" false)
-    (adapter/register-translation-dispatch-routes! app {} config handlers)
+    (adapter/register-translation-dispatch-routes!
+     app {} config handlers dependencies)
     (let [route (first @routes)]
-      (with-redefs [registry/current (constantly ::evidence-store)
-                    facade/dispatch-translations!
-                    (fn [actual-config deps scope selection]
-                      (reset! facade-call
-                              {:config actual-config
-                               :deps deps
-                               :scope scope
-                               :selection selection})
-                      (js/Promise.resolve
-                       {:considered 1 :admissible 1 :dispatched []}))]
-        (await
-         ((aget route "handler")
-          (request {:publication "knoxx.publications/probe-es"})
-          reply)))
+      (await
+       ((aget route "handler")
+        (request {:publication "knoxx.publications/probe-es"})
+        reply))
 
       (testing "the real registered handler decodes and preserves publication identity"
         ;; Regressing to `(:document decoded)` hands nil to the facade here,
@@ -133,11 +144,120 @@
         (is (= {:org-id "org-1"
                 :membership-id "member-1"
                 :project "review-stage"}
-               (:scope @facade-call))))
+               (:scope @facade-call)))
+        (is (= ::split-store (get-in @facade-call [:deps :split-store]))))
 
       (testing "authorization still precedes dispatch and the response succeeds"
         (is (= [[ctx adapter/dispatch-permission]] @checks))
         (is (= 200 (:status @response)))))))
+
+(deftest ^:async a-registered-publication-command-narrows-the-real-facade
+  (let [document {:document/id :knoxx.docs/probe
+                  :document/title "Probe"
+                  :document/source-locale :en
+                  :document/source {:path "docs/probe.md"}}
+        garden (fn [id]
+                 {:garden/id id
+                  :garden/title (name id)
+                  :garden/status :active
+                  :garden/locales [:en :es]})
+        intent (fn [publication garden-id]
+                 {:publication/id publication
+                  :publication/document :knoxx.docs/probe
+                  :publication/garden garden-id
+                  :publication/locale :es
+                  :publication/revision :source/current
+                  :publication/state :published
+                  :publication/path (str "/" (name publication))
+                  :translation/review :required})
+        publication-a :knoxx.publications/probe-es-a
+        publication-b :knoxx.publications/probe-es-b
+        garden-a :knoxx.gardens/a
+        garden-b :knoxx.gardens/b
+        resource-record (fn [kind definition]
+                          {:ok? true
+                           :resource/kind kind
+                           :resource/file-path
+                           (str "/contracts/" (name kind) ".edn")
+                           :resource/definition definition})
+        records [(resource-record :document document)
+                 (resource-record :garden (garden garden-a))
+                 (resource-record :garden (garden garden-b))
+                 (resource-record :publication (intent publication-a garden-a))
+                 (resource-record :publication (intent publication-b garden-b))]
+        routes (atom [])
+        app (js-obj "route" (fn [options] (swap! routes conj options)))
+        response (atom {})
+        reply (js-obj)
+        revision-input (atom nil)
+        dispatched-intents (atom nil)
+        ctx {:org-id "org-1" :membership-id "member-1"}
+        evidence (evidence-store/memory-store)
+        handlers
+        {:with-request-context! (fn [_runtime _request _reply operation]
+                                  (operation ctx))
+         :ensure-permission! (fn [_ctx _permission] nil)}
+        config {:session-project-name "review-stage"
+                :translation-runner "agent"
+                :openplanner-client-mode "rest"}
+        dependencies
+        {:evidence-store evidence
+         :split-store ::split-store
+         :client ::client
+         :observe-source-revision (constantly (js/Promise.resolve nil))
+         :emit! (constantly (js/Promise.resolve nil))
+         :resolve-agent-contract
+         (fn [_config _agent-id]
+           {:model "gemma4:31b"
+            :thinking-level :medium
+            :system-prompt "Translate admitted splits."
+            :tool-ids ["save_translation"]})
+         :resource-records! (fn [_config] (js/Promise.resolve records))
+         :source-revisions!
+         (fn [_config documents _roots]
+           (reset! revision-input documents)
+           (js/Promise.resolve
+            {:knoxx.docs/probe "sha256-aaa111bbb222"}))
+         :ensure-contract-receipts! (fn [& _] (js/Promise.resolve []))
+         :dispatch-agent-intents!
+         (fn [_deps _index intents _facts _scope _roots]
+           (reset! dispatched-intents intents)
+           (js/Promise.resolve
+            (mapv (fn [selected]
+                    {:publication/id (:publication/id selected)
+                     :dispatch/outcome :dispatch/accepted})
+                  intents)))}]
+    (aset reply "code" (fn [status]
+                          (swap! response assoc :status status)
+                          reply))
+    (aset reply "type" (fn [_content-type] reply))
+    (aset reply "send" (fn [body]
+                          (swap! response assoc :body
+                                 (js->clj body :keywordize-keys true))
+                          reply))
+    (aset reply "sent" false)
+    (adapter/register-translation-dispatch-routes!
+     app {} config handlers dependencies)
+    (let [route (first @routes)]
+      (await
+       ((aget route "handler")
+        (request {:publication "knoxx.publications/probe-es-b"})
+        reply))
+
+      (testing "the transport selector narrows before revision derivation"
+        (is (= [document] @revision-input))
+        (is (= [publication-b]
+               (mapv :publication/id @dispatched-intents)))
+        (is (not-any? #(= publication-a (:publication/id %))
+                      @dispatched-intents)))
+
+      (testing "the real facade reports one considered and dispatched relation"
+        (is (= 200 (:status @response)))
+        (is (= 1 (get-in @response [:body :considered])))
+        (is (= 1 (get-in @response [:body :admissible])))
+        (is (= ["knoxx.publications/probe-es-b"]
+               (mapv :id
+                     (get-in @response [:body :dispatched]))))))))
 
 (deftest dispatched-batches-are-filed-in-the-project-the-review-surfaces-read
   ;; With no project the OpenPlanner batch store defaults to "devel", while the

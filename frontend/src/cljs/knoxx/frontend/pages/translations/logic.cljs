@@ -1,7 +1,9 @@
 (ns knoxx.frontend.pages.translations.logic
   "Pure logic for the translation review page. CLJS port of the helpers
    in src/pages/TranslationReviewPage.tsx."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.frontend.pages.translations.review-contract :as review-contract]
+            [knoxx.frontend.pages.translations.split-review :as split-review]))
 
 (def ^:private lang-names
   {"en" "English" "es" "Español" "fr" "Français" "de" "Deutsch"
@@ -15,8 +17,7 @@
 
 (def default-label
   "Empty review form values shown before a persisted judgment is selected."
-  {:adequacy "good" :fluency "good" :terminology "correct"
-   :risk "safe" :overall "approve" :corrected_text "" :editor_notes ""})
+  (assoc review-contract/default-form :overall "approve"))
 
 (def ^:private status-classes
   {"approved" "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
@@ -72,17 +73,14 @@
 (defn field-options
   "Return the closed option vocabulary for one review score field."
   [field]
-  (case field
-    :risk ["safe" "sensitive" "policy_violation"]
-    :terminology ["correct" "minor_errors" "major_errors"]
-    ["excellent" "good" "adequate" "poor" "unusable"]))
+  (review-contract/field-options field))
 
 (defn prepare-label-payload
-  "Label POST payload: trims corrected text and notes (omitting them when
-   blank) and applies the chosen overall verdict."
+  "Label POST payload: preserves nonblank correction bytes, trims notes,
+   omits blank optional text, and applies the chosen overall verdict."
   [form overall]
-  (let [corrected (some-> (:corrected_text form) str/trim not-empty)
-        notes (some-> (:editor_notes form) str/trim not-empty)]
+  (let [corrected (review-contract/correction-text (:corrected_text form))
+        notes (review-contract/trimmed-optional-text (:editor_notes form))]
     (cond-> (-> form
                 (assoc :overall overall)
                 (dissoc :corrected_text :editor_notes))
@@ -160,6 +158,8 @@
   [value]
   (or (some? (:translation_revision value))
       (some? (get-in value [:candidate :translation_revision]))
+      (some? (split-review/review value))
+      (some? (split-review/review (:candidate value)))
       (some? (:publication_review value))
       (true? (:legacy_candidate value))))
 
@@ -171,16 +171,28 @@
 (defn- wire-name [value]
   (if (keyword? value) (name value) value))
 
+(def ^:private authenticated-content-sources
+  "Resource content origins the backend authenticates against receipt bytes."
+  #{"agent" "authored-contract"})
+
+(defn- authenticated-content-source?
+  [row]
+  (contains? authenticated-content-sources
+             (wire-name (:content_source row))))
+
 (defn blocked-resource-candidate?
   "Whether a resource candidate failed the server's exact-byte hydration gate.
 
    A contract candidate is displayable only when the server says both that it
-   is reviewable and that hydration produced the exact source/target pair.
-   Missing evidence, including a future/unknown hydration state, fails closed."
+   is reviewable, that hydration produced the exact source/target pair, and
+   which authenticated content store supplied those bytes. Missing evidence,
+   including a future/unknown hydration state or source, fails closed."
   [row]
-  (and (true? (:contract_candidate row))
+  (and (nil? (split-review/review row))
+       (true? (:contract_candidate row))
        (or (not (true? (:reviewable row)))
-           (not= "displayable" (wire-name (:hydration_state row))))))
+           (not= "displayable" (wire-name (:hydration_state row)))
+           (not (authenticated-content-source? row)))))
 
 (defn allowed-action?
   "Whether the server explicitly admitted `action` for this work item.
@@ -246,37 +258,54 @@
       (when (candidate-present? work)
         (if (:approved work) "approved" "ready"))))
 
+(defn- candidate-summary
+  [flat candidate? approved? explicit-state]
+  (let [split-progress (when (split-review/review flat)
+                         (split-review/progress flat))
+        total (or (:total split-progress)
+                  (:total_segments flat)
+                  (:split_count flat)
+                  (if candidate? 1 0))]
+    {:approved (if split-progress
+                 (:approved split-progress)
+                 (if approved? total 0))
+     :total total
+     :overall-status (or (when split-progress
+                           (split-review/overall-status flat))
+                         explicit-state
+                         (when candidate?
+                           (if approved? "fully_approved" "pending_review"))
+                         "pending")}))
+
+(defn- document-row-value
+  [work flat state review {:keys [approved total overall-status]}]
+  (assoc flat
+         :publication (:publication work)
+         :document_id (document-id work)
+         :garden_id (garden-id work)
+         :source_lang (or (:source_locale work) (:source_lang work))
+         :target_lang (target-locale work)
+         :title (:title work)
+         :work_state state
+         :allowed_actions (vec (or (:allowed_actions work) []))
+         :approved approved
+         :total_segments total
+         :overall_status overall-status
+         :publication_review review))
+
 (defn- work-item->document-row [work]
   (let [flat (candidate-fields work)
         candidate? (candidate-present? flat)
         approved? (true? (:approved work))
         explicit-state (:work_state work)
         state (work-state work)
-        total (or (:total_segments flat)
-                  (:split_count flat)
-                  (if candidate? 1 0))
+        summary (candidate-summary flat candidate? approved? explicit-state)
         review (when candidate? flat)]
-    (cond-> (assoc flat
-                   :publication (:publication work)
-                   :document_id (document-id work)
-                   :garden_id (garden-id work)
-                   :source_lang (or (:source_locale work) (:source_lang work))
-                   :target_lang (target-locale work)
-                   :title (:title work)
-                   :work_state state
-                   :allowed_actions (vec (or (:allowed_actions work) []))
-                   :approved (if approved? total 0)
-                   :total_segments total
-                   :overall_status (or explicit-state
-                                       (when candidate?
-                                         (if approved?
-                                           "fully_approved"
-                                           "pending_review"))
-                                       "pending")
-                   :publication_review review)
+    (cond-> (document-row-value work flat state review summary)
       (and candidate?
            (or (true? (:contract_candidate flat))
-               (some? (:content_source flat))))
+               (authenticated-content-source? flat)
+               (some? (split-review/review flat))))
       (assoc :contract_content true))))
 
 (def ^:private legacy-summary-fields
@@ -428,18 +457,35 @@
      :segments segments}))
 
 (def ^:private review-form-fields
-  [:adequacy :fluency :terminology :risk :overall
-   :corrected_text :editor_notes])
+  (conj review-contract/review-form-fields :overall))
 
 (defn segment-review-form
   "Hydrate the editor from the newest persisted label for one segment.
 
    Document detail returns labels newest first. A segment without labels gets a
-   fresh form, which also prevents corrections typed for another split from
-   leaking across a selection change."
+  fresh form, which also prevents corrections typed for another split from
+  leaking across a selection change."
   [segment]
-  (merge default-label
-         (select-keys (first (:labels segment)) review-form-fields)))
+  (if (:resource_split segment)
+    (split-review/review-form segment)
+    (merge default-label
+           (select-keys (first (:labels segment)) review-form-fields))))
+
+(defn segment-review-identity
+  "Return the newest immutable review fact that owns a selected form.
+
+   Resource splits expose their effective receipt directly; the first history
+   label is a rollout-safe fallback. Legacy document detail already orders
+   labels newest first. The scalar identity is safe in a React dependency
+   vector and changes when the same split is reviewed elsewhere."
+  [segment]
+  (let [newest-label (first (:labels segment))]
+    (if (:resource_split segment)
+      (or (:review_id segment)
+          (:review_id newest-label)
+          (:id newest-label))
+      (or (:id newest-label)
+          (:review_id newest-label)))))
 
 (defn approval-request
   "The exact immutable coordinates the server exposed for approval."

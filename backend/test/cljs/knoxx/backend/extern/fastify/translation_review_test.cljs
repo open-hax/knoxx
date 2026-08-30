@@ -6,15 +6,11 @@
   the only way to be sure of that is to try to send them."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.publication-resolver :as resolver]
+            [knoxx.backend.domain.translation-review-inventory :as inventory]
             [knoxx.backend.extern.fastify.translation-review :as adapter]
-            [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
-            [knoxx.backend.infra.routes.publications :as publications]
-            [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
-            [knoxx.backend.infra.routes.translation-review :as facade]
-            [knoxx.backend.infra.stores.translation-evidence-registry :as registry]
-            [knoxx.backend.infra.translation-agent-content :as agent-content]
             [knoxx.backend.infra.translation-evidence-store :as evidence-store-api]
+            [knoxx.backend.law.translation-dispatch :as dispatch-law]
             [knoxx.backend.law.translation-evidence :as law]))
 
 (defn- request
@@ -171,6 +167,17 @@
    :translation/project "review-stage"
    :translation/at "2026-08-30T10:00:00.000Z"})
 
+(defn- hydration-dependencies
+  ([source translated]
+   (hydration-dependencies source translated nil))
+  ([source translated observed-receipts]
+   {:source-content! (fn [_ _] (js/Promise.resolve source))
+    :agent-content!
+    (fn [_ receipt]
+      (when observed-receipts
+        (swap! observed-receipts conj receipt))
+      (js/Promise.resolve translated))}))
+
 (def ^:private approval-garden
   {:garden/id :knoxx.docs/promethean
    :garden/title "Promethean"
@@ -227,6 +234,36 @@
     (aset reply "sent" false)
     reply))
 
+(defn- point-read-evidence-store
+  "Delegate persistence while exposing the dispatch key used by a list route."
+  [delegate point-read!]
+  (reify evidence-store-api/ITranslationEvidenceStore
+    (reserve-dispatch! [_ record]
+      (evidence-store-api/reserve-dispatch! delegate record))
+    (resolve-dispatch! [_ expected-record outcome detail]
+      (evidence-store-api/resolve-dispatch! delegate expected-record outcome detail))
+    (bind-dispatch-batch! [_ expected-record batch-id]
+      (evidence-store-api/bind-dispatch-batch! delegate expected-record batch-id))
+    (claim-dispatch-completion! [_ expected-record]
+      (evidence-store-api/claim-dispatch-completion! delegate expected-record))
+    (finish-dispatch-completion! [_ expected-record detail]
+      (evidence-store-api/finish-dispatch-completion! delegate expected-record detail))
+    (dispatch-for-key! [_ dispatch-key]
+      (point-read! dispatch-key))
+    (dispatch-for-batch-document! [_ batch-id document-wire-id]
+      (evidence-store-api/dispatch-for-batch-document!
+       delegate batch-id document-wire-id))
+    (dispatch-for-batch! [_ batch-id]
+      (evidence-store-api/dispatch-for-batch! delegate batch-id))
+    (record-translation! [_ completed]
+      (evidence-store-api/record-translation! delegate completed))
+    (completed-translations! [_ query]
+      (evidence-store-api/completed-translations! delegate query))
+    (record-approval! [_ approval]
+      (evidence-store-api/record-approval! delegate approval))
+    (approvals! [_ query]
+      (evidence-store-api/approvals! delegate query))))
+
 (defn- ^:async invoke-registered-approval!
   "Drive the registered Fastify handler through the real approval facade/store."
   [{:keys [index source translated revision]
@@ -246,34 +283,40 @@
     (await (evidence-store-api/record-translation!
             evidence-store receipt))
     (adapter/register-translation-review-routes!
-     app {} approval-config (approval-handlers permission-checks))
+     app {} approval-config (approval-handlers permission-checks)
+     {:evidence-store evidence-store
+      :resource-records! (fn [_] (js/Promise.resolve ::records))
+      :publication-index (constantly index)
+      :document-source-roots
+      (fn [_ _] {:knoxx.docs/probe "/contracts"})
+      :source-revisions!
+      (fn [_ _ _]
+        (js/Promise.resolve {:knoxx.docs/probe revision}))
+      :ensure-contract-receipts!
+      (fn [_ _ _ _ _] (js/Promise.resolve []))
+      :authenticate-receipts!
+      (fn [_ _ _ _ receipts]
+        (doseq [candidate receipts]
+          (swap! content-reads conj
+                 [:target (:translation/revision candidate)]))
+        (js/Promise.resolve
+         (filterv #(= (:translation/content-digest %)
+                      (source-revision/content-revision translated))
+                  receipts)))
+      :source-content!
+      (fn [_ document]
+        (swap! content-reads conj [:source (:document/id document)])
+        (js/Promise.resolve source))
+      :agent-content!
+      (fn [_ candidate]
+        (swap! content-reads conj
+               [:target (:translation/revision candidate)])
+        (js/Promise.resolve translated))})
     (let [route (second @routes)]
-      (with-redefs [registry/current (constantly evidence-store)
-                    publications/resource-records!
-                    (fn [_] (js/Promise.resolve ::records))
-                    publications/publication-index (constantly index)
-                    translation-dispatch/document-source-roots
-                    (fn [_ _]
-                      {:knoxx.docs/probe "/contracts"})
-                    source-revision/source-revisions!
-                    (fn [_ _ _]
-                      (js/Promise.resolve
-                       {:knoxx.docs/probe revision}))
-                    contract-content/ensure-receipts!
-                    (fn [_ _ _ _ _] (js/Promise.resolve []))
-                    contract-content/source-content!
-                    (fn [_ document]
-                      (swap! content-reads conj [:source (:document/id document)])
-                      (js/Promise.resolve source))
-                    agent-content/content-for-receipt!
-                    (fn [_ receipt]
-                      (swap! content-reads conj
-                             [:target (:translation/revision receipt)])
-                      (js/Promise.resolve translated))]
-        (await
-         ((aget route "handler")
-          (request wire-body)
-          reply))))
+      (await
+       ((aget route "handler")
+        (request wire-body)
+        reply)))
     {:response @response
      :approvals (await (evidence-store-api/approvals!
                         evidence-store
@@ -370,21 +413,16 @@
 (deftest ^:async a-resource-candidate-with-missing-output-is-not-reviewable
   (let [relation (#'adapter/review-relation hydration-review)
         observed-receipts (atom [])
-        result (with-redefs [contract-content/source-content!
-                             (fn [_ _]
-                               (js/Promise.resolve hydration-source))
-                             agent-content/content-for-receipt!
-                             (fn [_ receipt]
-                               (swap! observed-receipts conj receipt)
-                               (js/Promise.resolve nil))]
-                 (await
-                  (#'adapter/hydrate-review!
-                   {:publication-content-root "/translated"}
-                   {:documents {:knoxx.docs/probe hydration-document}}
-                   {:knoxx.docs/probe "/contracts"}
-                   #{}
-                   {relation hydration-receipt}
-                   hydration-review)))]
+        result (await
+                (#'adapter/hydrate-review!
+                 {:publication-content-root "/translated"}
+                 {:documents {:knoxx.docs/probe hydration-document}}
+                 {:knoxx.docs/probe "/contracts"}
+                 #{}
+                 {relation hydration-receipt}
+                 hydration-review
+                 (hydration-dependencies
+                  hydration-source nil observed-receipts)))]
     (testing "the candidate relation is retained even when its output cannot be loaded"
       (is (= [hydration-receipt] @observed-receipts))
       (is (true? (:contract_candidate result)))
@@ -398,18 +436,16 @@
 
 (deftest ^:async source-movement-between-snapshot-and-hydration-fails-closed
   (let [relation (#'adapter/review-relation hydration-review)
-        result (with-redefs [contract-content/source-content!
-                             (fn [_ _] (js/Promise.resolve "Moved source"))
-                             agent-content/content-for-receipt!
-                             (fn [_ _] (js/Promise.resolve "Texto traducido"))]
-                 (await
-                  (#'adapter/hydrate-review!
-                   {:publication-content-root "/translated"}
-                   {:documents {:knoxx.docs/probe hydration-document}}
-                   {:knoxx.docs/probe "/contracts"}
-                   #{}
-                   {relation hydration-receipt}
-                   hydration-review)))]
+        result (await
+                (#'adapter/hydrate-review!
+                 {:publication-content-root "/translated"}
+                 {:documents {:knoxx.docs/probe hydration-document}}
+                 {:knoxx.docs/probe "/contracts"}
+                 #{}
+                 {relation hydration-receipt}
+                 hydration-review
+                 (hydration-dependencies
+                  "Moved source" "Texto traducido")))]
     (is (true? (:contract_candidate result)))
     (is (false? (:reviewable result)))
     (is (= :source_moved (:hydration_state result)))
@@ -419,19 +455,16 @@
 
 (deftest ^:async target-movement-between-receipt-and-hydration-fails-closed
   (let [relation (#'adapter/review-relation hydration-review)
-        result (with-redefs [contract-content/source-content!
-                             (fn [_ _] (js/Promise.resolve hydration-source))
-                             agent-content/content-for-receipt!
-                             (fn [_ _]
-                               (js/Promise.resolve "Texto cambiado"))]
-                 (await
-                  (#'adapter/hydrate-review!
-                   {:publication-content-root "/translated"}
-                   {:documents {:knoxx.docs/probe hydration-document}}
-                   {:knoxx.docs/probe "/contracts"}
-                   #{}
-                   {relation hydration-receipt}
-                   hydration-review)))]
+        result (await
+                (#'adapter/hydrate-review!
+                 {:publication-content-root "/translated"}
+                 {:documents {:knoxx.docs/probe hydration-document}}
+                 {:knoxx.docs/probe "/contracts"}
+                 #{}
+                 {relation hydration-receipt}
+                 hydration-review
+                 (hydration-dependencies
+                  hydration-source "Texto cambiado")))]
     (is (true? (:contract_candidate result)))
     (is (false? (:reviewable result)))
     (is (= :content_moved (:hydration_state result)))
@@ -456,67 +489,154 @@
         observed-receipt-call (atom nil)
         observed-facade-call (atom nil)
         config {:session-project-name "review-stage"}
-        ctx {:org-id "org-1" :user-email "reviewer@example.test"}
-        result
-        (with-redefs [registry/current (constantly ::evidence-store)
-                      publications/resource-records!
-                      (fn [_] (js/Promise.resolve ::records))
-                      publications/publication-index (fn [_] index)
-                      translation-dispatch/document-source-roots
-                      (fn [_ _] roots)
-                      source-revision/source-revisions!
-                      (fn [actual-config actual-documents actual-roots]
-                        (reset! observed-source-call
-                                {:config actual-config
-                                 :documents actual-documents
-                                 :roots actual-roots})
-                        (js/Promise.resolve revisions))
-                      contract-content/ensure-receipts!
-                      (fn [store actual-index actual-roots scope actual-revisions]
-                        (reset! observed-receipt-call
-                                {:store store
-                                 :index actual-index
-                                 :roots actual-roots
-                                 :scope scope
-                                 :source-revisions actual-revisions})
-                        (js/Promise.resolve []))
-                      facade/reviewable-translations!
-                      (fn [deps scope]
-                        (reset! observed-facade-call {:deps deps :scope scope})
-                        (js/Promise.resolve
-                         {:project (:project scope)
-                          :reviews
-                          (mapv (fn [{document-id :document/id}]
-                                  {:publication
-                                   (keyword "knoxx.publications"
-                                            (str (name document-id) "-es"))
-                                   :document document-id
-                                   :garden :knoxx.gardens/promethean
-                                   :project (:project scope)
-                                   :source_locale :en
-                                   :locale :es
-                                   :revision (get (:source-revisions deps)
-                                                  document-id)
-                                   :revision_selector :source/current
-                                   :work_state :missing
-                                   :reviewable false
-                                   :approved false
-                                   :allowed_actions [:dispatch]})
-                                documents)}))
-                      evidence-store-api/completed-translations!
-                      (fn [_ _] (js/Promise.resolve []))]
-          (await (#'adapter/reviewable! config ctx)))]
-    (testing "the adapter computes both revisions from the same resource snapshot"
-      (is (= config (:config @observed-source-call)))
-      (is (= (set documents) (set (:documents @observed-source-call))))
-      (is (= roots (:roots @observed-source-call)))
-      (is (= revisions (:source-revisions @observed-receipt-call))))
+        routes (atom [])
+        response (atom {})
+        permission-checks (atom [])
+        app (route-capture routes)
+        reply (response-reply response)
+        evidence-store (evidence-store-api/memory-store)
+        dependencies
+        {:evidence-store evidence-store
+         :split-store ::split-store
+         :resource-records! (fn [_] (js/Promise.resolve ::records))
+         :publication-index (fn [_] index)
+         :document-source-roots (fn [_ _] roots)
+         :source-revisions!
+         (fn [actual-config actual-documents actual-roots]
+           (reset! observed-source-call
+                   {:config actual-config
+                    :documents actual-documents
+                    :roots actual-roots})
+           (js/Promise.resolve revisions))
+         :ensure-contract-receipts!
+         (fn [store actual-index actual-roots scope actual-revisions]
+           (reset! observed-receipt-call
+                   {:store store
+                    :index actual-index
+                    :roots actual-roots
+                    :scope scope
+                    :source-revisions actual-revisions})
+           (js/Promise.resolve []))
+         :authenticate-receipts!
+         (fn [_ _ _ _ receipts] (js/Promise.resolve (vec receipts)))
+         :reviewable-translations!
+         (fn [deps scope]
+           (reset! observed-facade-call {:deps deps :scope scope})
+           (js/Promise.resolve
+            {:project (:project scope)
+             :reviews
+             (mapv (fn [{document-id :document/id}]
+                     {:publication
+                      (keyword "knoxx.publications"
+                               (str (name document-id) "-es"))
+                      :document document-id
+                      :garden :knoxx.gardens/promethean
+                      :project (:project scope)
+                      :source_locale :en
+                      :locale :es
+                      :revision (get (:source-revisions deps) document-id)
+                      :revision_selector :source/current
+                      :work_state :missing
+                      :reviewable false
+                      :approved false
+                      :allowed_actions [:dispatch]})
+                   documents)}))}]
+    (adapter/register-translation-review-routes!
+     app {} config (approval-handlers permission-checks) dependencies)
+    (await
+     ((aget (first @routes) "handler")
+      (request {})
+      reply))
+    (let [wire-result (js->clj (:body @response) :keywordize-keys true)]
+      (testing "the registered GET computes both revisions from one resource snapshot"
+        (is (= 200 (:status @response)))
+        (is (= [[approval-context adapter/read-permission]]
+               @permission-checks))
+        (is (= config (:config @observed-source-call)))
+        (is (= (set documents) (set (:documents @observed-source-call))))
+        (is (= roots (:roots @observed-source-call)))
+        (is (= revisions (:source-revisions @observed-receipt-call))))
 
-    (testing "that exact map is handed to the facade rather than discarded"
-      ;; Before this handoff existed, receipt-backed rows could carry a revision
-      ;; but missing work could not, making observed evidence the row authority.
-      (is (= revisions (get-in @observed-facade-call
-                               [:deps :source-revisions])))
-      (is (= "review-stage" (:project result)))
-      (is (= #{[alpha "sha256-alpha"] [beta "sha256-beta"]}
-             (set (map (juxt :document :revision) (:reviews result))))))))
+      (testing "that exact map crosses the extern/facade boundary intact"
+        ;; Before this handoff existed, receipt-backed rows could carry a revision
+        ;; but missing work could not, making observed evidence the row authority.
+        (is (= revisions (get-in @observed-facade-call
+                                 [:deps :source-revisions])))
+        (is (= ::split-store
+               (get-in @observed-facade-call [:deps :split-store])))
+        (is (= "review-stage" (:project wire-result)))
+        (is (= #{["knoxx.docs/alpha" "sha256-alpha"]
+                 ["knoxx.docs/beta" "sha256-beta"]}
+               (set (map (juxt :document :revision)
+                         (:reviews wire-result)))))))))
+
+(deftest ^:async registered-list-uses-the-computed-revision-for-its-dispatch-point-read
+  (let [scope {:org-id "org-1" :project "review-stage"}
+        revisions {:knoxx.docs/probe hydration-source-revision}
+        [work] (inventory/desired-work approval-index revisions)
+        expected-key (inventory/dispatch-lookup-key scope work)
+        expected-record
+        (dispatch-law/dispatch-record
+         {:document (:translation/document work)
+          :locale (:translation/locale work)
+          :revision (:translation/source-revision work)
+          :replace-stale? false}
+         {:dispatch/garden "knoxx.docs/promethean"
+          :dispatch/document-wire-id "knoxx.docs/probe"
+          :dispatch/source-locale (:translation/source-locale work)
+          :dispatch/org-id (:org-id scope)
+          :dispatch/project (:project scope)
+          :dispatch/membership-id "member-1"}
+         :dispatch/accepted
+         "2026-08-30T10:00:00.000Z"
+         :attempt-id "dispatch-attempt-list-boundary")
+        observed-keys (atom [])
+        delegate (evidence-store-api/memory-store)
+        evidence-store
+        (point-read-evidence-store
+         delegate
+         (fn [dispatch-key]
+           (swap! observed-keys conj dispatch-key)
+           (js/Promise.resolve
+            (when (= expected-key dispatch-key) expected-record))))
+        routes (atom [])
+        response (atom {})
+        app (route-capture routes)
+        reply (response-reply response)
+        dependencies
+        {:evidence-store evidence-store
+         :split-store ::split-store
+         :resource-records! (fn [_] (js/Promise.resolve ::records))
+         :publication-index (constantly approval-index)
+         :document-source-roots
+         (fn [_ _] {:knoxx.docs/probe "/contracts"})
+         :source-revisions!
+         (fn [_ documents roots]
+           (is (= [hydration-document] documents))
+           (is (= {:knoxx.docs/probe "/contracts"} roots))
+           (js/Promise.resolve revisions))
+         :ensure-contract-receipts!
+         (fn [_ _ _ _ source-revisions]
+           (is (= revisions source-revisions))
+           (js/Promise.resolve []))
+         :authenticate-receipts!
+         (fn [_ _ _ _ receipts]
+           (js/Promise.resolve (vec receipts)))}]
+    (adapter/register-translation-review-routes!
+     app {} approval-config (approval-handlers (atom [])) dependencies)
+    (await
+     ((aget (first @routes) "handler")
+      (request {})
+      reply))
+    (let [[row] (:reviews (js->clj (:body @response) :keywordize-keys true))]
+      (testing "the real facade derives one exact, non-nil lookup key"
+        (is (= 200 (:status @response)))
+        (is (string? expected-key))
+        (is (seq expected-key))
+        (is (= [expected-key] @observed-keys)))
+
+      (testing "the non-nil point-read result reaches the wire inventory row"
+        (is (= hydration-source-revision (:revision row)))
+        (is (= "in_flight" (:work_state row)))
+        (is (= "dispatch/accepted" (:dispatch_outcome row)))
+        (is (= [] (:allowed_actions row)))))))

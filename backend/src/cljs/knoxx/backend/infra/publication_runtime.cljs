@@ -20,6 +20,8 @@
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.routes.translation-dispatch :as translation]
             [knoxx.backend.infra.stores.translation-evidence-registry :as evidence-registry]
+            [knoxx.backend.infra.stores.translation-split-registry :as split-registry]
+            [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-identity :as identity]))
 
@@ -96,8 +98,9 @@
                         :garden_id (identity/encode-keyword
                                     (:publication/garden intent))}))]
         (authenticated-blocks receipt
-                              (apply str (map :translated_text
-                                              (:segments response))))))))
+                              (str/join "\n\n"
+                                        (map :translated_text
+                                             (:segments response))))))))
 
 (defn artifact-source
   "The artifact one admitted intent renders to, at one concrete revision.
@@ -173,7 +176,15 @@
                                          {:source-revisions source-revisions
                                           :current-authored authored
                                           :desired-work desired-work
-                                          :authenticate-content? true}))
+                                          :authenticate-content? true
+                                          ;; A split rejection is durable before
+                                          ;; its projection. Publication must
+                                          ;; join current history and fail closed
+                                          ;; during that crash window rather than
+                                          ;; trust an older whole-file approval.
+                                          :enforce-split-review-readiness? true
+                                          :split-store (split-registry/current)
+                                          :digest-hex crypto/sha256-hex}))
         root (:publication-content-root config)
         target {:publication-target/id target-id
                 :publication-target/kind :publication-target/static-site

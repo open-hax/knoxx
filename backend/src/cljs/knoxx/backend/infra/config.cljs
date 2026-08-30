@@ -85,7 +85,7 @@
                          (when-not (str/blank? (or value ""))
                            value))
    :project-name (env-first ["WORKSPACE_PROJECT_NAME" "KNOXX_WORKSPACE_PROJECT"] "workspace")
-   :session-project-name (env "KNOXX_SESSION_PROJECT_NAME" "knoxx-session")
+   :session-project-name (env-first ["KNOXX_SESSION_PROJECT_NAME"] "knoxx-session")
    :collection-name (env "KNOXX_COLLECTION_NAME" "workspace_docs")
    :ingestion-base-url (env "KMS_INGESTION_URL" "http://127.0.0.1:3003")
    :openplanner-base-url (or (aget js/process.env "OPENPLANNER_BASE_URL")

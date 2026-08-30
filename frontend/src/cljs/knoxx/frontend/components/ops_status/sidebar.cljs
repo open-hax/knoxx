@@ -68,14 +68,17 @@
      (let [conn (ws/connect-stream
                  {:on-stats (fn [payload]
                               (set-samples!
-                               #(logic/push-sample % (logic/stats->sample payload (.getTime (js/Date.))))))})]
+                               #(logic/push-sample % (logic/stats->sample payload (.getTime (js/Date.))))))}
+                 nil
+                 nil)]
        (fn [] ((:disconnect conn)))))
     (hooks/use-effect
      []
-     (let [poll! (fn []
-                   (-> (documents-api/ingestion-progress)
-                       (.then set-ingestion!)
-                       (.catch (fn [_] (set-ingestion! nil)))))
+     (let [poll! (fn ^:async poll! []
+                   (try
+                     (set-ingestion! (await (documents-api/ingestion-progress)))
+                     (catch :default _
+                       (set-ingestion! nil))))
            timer (js/setInterval poll! 2500)]
        (poll!)
        (fn [] (js/clearInterval timer))))

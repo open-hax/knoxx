@@ -47,3 +47,58 @@
                      :project "knoxx-session"
                      :garden_id "gardens/sonic"}}]]
            @calls)))
+
+(t/deftest publication-split-review-uses-candidate-bound-endpoint
+  (api/submit-publication-split-review
+   {:candidate_set_id "candidate-set/1"
+    :split_id "split/1"
+    :status "approved"
+    :adequacy "excellent"
+    :fluency "good"
+    :terminology "minor_errors"
+    :risk "sensitive"
+    :corrected_text "Texto corregido"
+    :editor_notes "Checked against glossary"})
+  (t/is (= [["/api/publications/translations/reviews"
+             {:method "POST"
+              :body {:candidate_set_id "candidate-set/1"
+                     :split_id "split/1"
+                     :status "approved"
+                     :adequacy "excellent"
+                     :fluency "good"
+                     :terminology "minor_errors"
+                     :risk "sensitive"
+                     :corrected_text "Texto corregido"
+                     :editor_notes "Checked against glossary"}}]]
+           @calls)))
+
+(t/deftest publication-bulk-review-delegates-split-enumeration-to-the-server
+  (api/submit-publication-bulk-review
+   {:candidate_set_id "candidate-set/1"
+    :status "in-review"
+    :adequacy "adequate"
+    :fluency "poor"
+    :terminology "minor_errors"
+    :risk "sensitive"
+    :editor_notes "Apply this evaluation to the set"})
+  (t/is (= [["/api/publications/translations/reviews/bulk"
+             {:method "POST"
+              :body {:candidate_set_id "candidate-set/1"
+                     :status "in-review"
+                     :adequacy "adequate"
+                     :fluency "poor"
+                     :terminology "minor_errors"
+                     :risk "sensitive"
+                     :editor_notes "Apply this evaluation to the set"}}]]
+           @calls)
+      "the client sends no split ids or document-level correction"))
+
+(t/deftest publication-dispatch-carries-the-exact-publication-selector
+  (api/dispatch-publication-translation
+   "open-hax.publications/promethean-start-here-es")
+  (t/is (= [["/api/publications/translations/dispatch"
+             {:method "POST"
+              :body {:publication
+                     "open-hax.publications/promethean-start-here-es"}}]]
+           @calls)
+      "the transport cannot regress from one selected publication to a corpus dispatch"))

@@ -66,6 +66,32 @@
               (domain/receipt-for (domain/evidence {:receipts [newer older]})
                                   :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-aaa111bbb222")))))))
 
+(deftest current-receipts-by-work-is-the-source-locale-aware-authority
+  (let [same-ms "2026-08-22T09:00:00.000Z"
+        older (receipt :revision "sha256-aaa111bbb222+es@batch-a" :at same-ms)
+        current (receipt :revision "sha256-aaa111bbb222+es@batch-b" :at same-ms)
+        german-source (receipt :source-locale :de
+                               :revision "sha256-aaa111bbb222+es@batch-de"
+                               :at same-ms)
+        current-key (domain/receipt-work-identity current)
+        german-key (domain/receipt-work-identity german-source)
+        forward (domain/current-receipts-by-work
+                 [older german-source current])
+        reverse-order (domain/current-receipts-by-work
+                       [current german-source older])]
+    (testing "the law's total order selects the same winner in either store order"
+      (is (= current (get forward current-key)))
+      (is (= current (get reverse-order current-key))))
+
+    (testing "equal visible coordinates from another source locale remain separate work"
+      (is (not= current-key german-key))
+      (is (= german-source (get forward german-key))))
+
+    (testing "the sequence view delegates to the same authoritative map"
+      (is (= (set (vals forward))
+             (set (domain/current-receipts
+                   [older german-source current])))))))
+
 (deftest a-store-returning-garbage-is-refused-not-indexed
   (testing "an invalid receipt fails on the way in rather than becoming a fact"
     (is (thrown? js/Error
@@ -200,6 +226,38 @@
               (domain/evidence {:receipts [completed] :approvals [legacy]})
               :knoxx.docs/probe :knoxx.docs/promethean :es
               "sha256-aaa111bbb222")))))
+
+(deftest a-target-content-digest-mismatch-refuses-whole-output-approval
+  (let [completed (receipt)
+        mismatched (assoc (approval)
+                          :review/content-digest "sha256-different-target-content")
+        evidence (domain/evidence {:receipts [completed]
+                                   :approvals [mismatched]})
+        intent {:publication/id :knoxx.docs/probe-es
+                :publication/document :knoxx.docs/probe
+                :publication/garden :knoxx.docs/promethean
+                :publication/locale :es
+                :publication/revision "sha256-aaa111bbb222"
+                :publication/state :published
+                :publication/path "/probe"
+                :translation/review :required
+                :document/source-locale :en}
+        facts (merge {:current-source-revision
+                      (constantly "sha256-aaa111bbb222")
+                      :source-revision-superseded? (constantly false)}
+                     (domain/gate-facts evidence))]
+    (testing "the translation still exists, but the review names other bytes"
+      (is (domain/translated-revision?
+           evidence :knoxx.docs/probe :knoxx.docs/promethean :es
+           "sha256-aaa111bbb222"))
+      (is (not (domain/approved?
+                evidence :knoxx.docs/probe :knoxx.docs/promethean :es
+                "sha256-aaa111bbb222"))))
+
+    (testing "the publication gate keeps whole-output review required"
+      (let [decision (gate/gate intent facts)]
+        (is (= [:translation-review-required] (:blockers decision)))
+        (is (not (:admissible? decision)))))))
 
 (deftest a-re-translation-supersedes-its-approval
   (let [older (receipt :revision "sha256-aaa111bbb222+es@batch-1"

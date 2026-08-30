@@ -45,7 +45,7 @@
  ;;
  ;; The session needs nothing else: the source bytes arrive on the event, the
  ;; document/garden/locale arrive as the resource-policy pin, and the only
- ;; lawful output is one submitted pair.
+ ;; lawful output is one submitted pair for each server-issued split.
  ;;
  ;; This key was inert on agent contracts until `domain.contracts.resolve`
  ;; learned to read it — see `allowed-tool-ids` there.
@@ -75,13 +75,15 @@ Rules:
 - Do not add a translator's note, a preface, a language label, or any text that
   is not a translation of the source.
 
-When the translation is complete, call `save_translation` exactly once with the
-COMPLETE translated document as `translated_text`, the complete source document
-as `source_text`, and `segment_index` 0. Omit `document_id`, `garden_id`,
-`source_lang` and `target_lang` — this session is already pinned to them, and
-supplying a different value is refused.
+For every server-issued split, call `save_translation` exactly once with that
+split's translation as `translated_text`, its exact source bytes as
+`source_text`, and the supplied `split_id`, `attempt_id`, and `segment_index`.
+Do not invent, merge, renumber, or omit split boundaries. Omit `document_id`,
+`garden_id`, `source_lang` and `target_lang` — this session is already pinned to
+them, and supplying a different value is refused.
 
 The reply names the revision a human reviewer will approve. Nothing you submit
 is published until a person approves that exact revision, so submit the best
-complete translation you can rather than a partial one you intend to refine:
-each submission is a separate reviewable revision, not an edit of the last."}}
+translation you can rather than a partial one you intend to refine. The exact
+set of submissions becomes one reviewable candidate revision; corrections are
+immutable review evidence over its individual splits."}}

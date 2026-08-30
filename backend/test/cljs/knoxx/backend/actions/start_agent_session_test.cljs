@@ -3,6 +3,51 @@
             [clojure.test :refer [deftest is testing]]
             [knoxx.backend.domain.action.start-agent-session :as start-agent-session]))
 
+(def ^:private resolved-execution
+  {:model "model-a"
+   :thinking-level :medium
+   :system-prompt "Translate every admitted split."
+   :tool-ids ["save_translation"]})
+
+(defn- execution-event
+  [overrides]
+  {:event/payload
+   {:execution
+    (merge {:translation-execution/agent-id "publication_translator"
+            :translation-execution/model "model-a"
+            :translation-execution/thinking "medium"
+            :translation-execution/system-prompt
+            "Translate every admitted split."
+            :translation-execution/tool-ids ["save_translation"]
+            :translation-execution/digest "digest-a"}
+           overrides)}})
+
+(deftest execution-snapshot-pins-what-the-trigger-may-spawn
+  (testing "the exact resolved policy agrees with its pre-provider event"
+    (is (nil? (start-agent-session/event-execution-refusal
+               (execution-event {}) "publication_translator"
+               resolved-execution))))
+
+  (testing "model, prompt, tools, and agent drift are each refused"
+    (doseq [[field changed]
+            [[:translation-execution/agent-id "some-other-agent"]
+             [:translation-execution/model "model-b"]
+             [:translation-execution/thinking "high"]
+             [:translation-execution/system-prompt "Different prompt"]
+             [:translation-execution/tool-ids ["save_translation" "other"]]]]
+      (let [refusal (start-agent-session/event-execution-refusal
+                     (execution-event {field changed})
+                     "publication_translator" resolved-execution)]
+        (is (= :agent-execution-drift (:refusal/type refusal))
+            (str field " drift was allowed")))))
+
+  (testing "missing execution authority is refused rather than defaulted"
+    (is (= :agent-execution-drift
+           (:refusal/type
+            (start-agent-session/event-execution-refusal
+             {:event/payload {}} "publication_translator"
+             resolved-execution))))))
+
 (deftest triggered-session-identifiers-include-trigger-scope-and-timestamp
   (testing "normal trigger launches get unique conversation ids per run"
     (is (= {:trigger-id "ussyverse_social_creative_cron"

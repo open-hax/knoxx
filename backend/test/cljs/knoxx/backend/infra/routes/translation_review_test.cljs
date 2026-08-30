@@ -106,7 +106,8 @@
     :dispatch/project (:project scope)
     :dispatch/membership-id "member-1"}
    outcome
-   at))
+   at
+   :attempt-id "dispatch-attempt-review"))
 
 (defn- ^:async store-with!
   ([receipts]
@@ -121,6 +122,38 @@
              :publication-index default-publication-index
              :source-revisions default-source-revisions}
             overrides))))
+
+(defn- point-read-store
+  "Delegate evidence persistence while making dispatch point reads observable.
+
+   This is a protocol-level test double, not a global Var redefinition, so an
+   async inventory projection cannot leak its lookup behavior into another test."
+  [delegate point-read!]
+  (reify store/ITranslationEvidenceStore
+    (reserve-dispatch! [_ record]
+      (store/reserve-dispatch! delegate record))
+    (resolve-dispatch! [_ expected-record outcome detail]
+      (store/resolve-dispatch! delegate expected-record outcome detail))
+    (bind-dispatch-batch! [_ expected-record batch-id]
+      (store/bind-dispatch-batch! delegate expected-record batch-id))
+    (claim-dispatch-completion! [_ expected-record]
+      (store/claim-dispatch-completion! delegate expected-record))
+    (finish-dispatch-completion! [_ expected-record detail]
+      (store/finish-dispatch-completion! delegate expected-record detail))
+    (dispatch-for-key! [_ dispatch-key]
+      (point-read! delegate dispatch-key))
+    (dispatch-for-batch-document! [_ batch-id document-wire-id]
+      (store/dispatch-for-batch-document! delegate batch-id document-wire-id))
+    (dispatch-for-batch! [_ batch-id]
+      (store/dispatch-for-batch! delegate batch-id))
+    (record-translation! [_ completed]
+      (store/record-translation! delegate completed))
+    (completed-translations! [_ query]
+      (store/completed-translations! delegate query))
+    (record-approval! [_ approval]
+      (store/record-approval! delegate approval))
+    (approvals! [_ query]
+      (store/approvals! delegate query))))
 
 (def ^:private inventory-size 18)
 (def ^:private inventory-garden :knoxx.gardens/inventory)
@@ -189,6 +222,8 @@
     :dispatch/membership-id "member-1"}
    outcome
    at
+   :attempt-id (str "dispatch-attempt-inventory-"
+                    (:translation/document work))
    :detail detail))
 
 (t/deftest ^:async an-authorized-approval-is-recorded-with-attribution
@@ -448,8 +483,7 @@
 (t/deftest ^:async dispatch-point-reads-drive-inventory-state-and-actions
   (let [deps (await (store-with! []))
         evidence-store (:evidence-store deps)
-        accepted (dispatch-record :dispatch/accepted)
-        dispatch-key (:dispatch/key accepted)]
+        accepted (dispatch-record :dispatch/accepted)]
     (await (store/reserve-dispatch! evidence-store accepted))
     (let [row (first (:reviews
                       (await (facade/reviewable-translations! deps scope))))]
@@ -458,7 +492,7 @@
         (t/is (= :in_flight (:work_state row)))
         (t/is (= [] (:allowed_actions row)))))
 
-    (await (store/resolve-dispatch! evidence-store dispatch-key
+    (await (store/resolve-dispatch! evidence-store accepted
                                     :dispatch/failed "provider unavailable"))
     (let [row (first (:reviews
                       (await (facade/reviewable-translations! deps scope))))]
@@ -483,25 +517,28 @@
         failed-record (inventory-dispatch-record failed-work :dispatch/accepted)
         duplicate-record (inventory-dispatch-record
                           duplicate-work :dispatch/duplicate)
-        deps (await (store-with! [] inventory-data))
+        delegate (store/memory-store)
+        looked-up (atom [])
+        observed-store
+        (point-read-store
+         delegate
+         (fn [actual-store dispatch-key]
+           (swap! looked-up conj dispatch-key)
+           (store/dispatch-for-key! actual-store dispatch-key)))
+        deps (await (store-with! [] (assoc inventory-data
+                                           :evidence-store observed-store)))
         evidence-store (:evidence-store deps)
-        point-read store/dispatch-for-key!]
+        expected-keys (into #{}
+                            (keep #(inventory/dispatch-lookup-key scope %))
+                            work)]
     (await (store/reserve-dispatch! evidence-store in-flight-record))
     (await (store/reserve-dispatch! evidence-store failed-record))
     (await (store/resolve-dispatch! evidence-store
-                                    (:dispatch/key failed-record)
+                                    failed-record
                                     :dispatch/failed
                                     "provider unavailable"))
     (await (store/reserve-dispatch! evidence-store duplicate-record))
-    (let [looked-up (atom [])
-          result (with-redefs [store/dispatch-for-key!
-                               (fn [actual-store dispatch-key]
-                                 (swap! looked-up conj dispatch-key)
-                                 (point-read actual-store dispatch-key))]
-                   (await (facade/reviewable-translations! deps scope)))
-          expected-keys (into #{}
-                              (keep #(inventory/dispatch-lookup-key scope %))
-                              work)
+    (let [result (await (facade/reviewable-translations! deps scope))
           by-publication (into {}
                                (map (juxt :publication identity))
                                (:reviews result))
@@ -523,7 +560,7 @@
                  ((juxt :work_state :dispatch_outcome :dispatch_detail
                         :allowed_actions)
                   (row-for failed-work))))
-        (t/is (= [:evidence_missing :dispatch/duplicate []]
+        (t/is (= [:evidence_missing :dispatch/duplicate [:retry]]
                  ((juxt :work_state :dispatch_outcome :allowed_actions)
                   (row-for duplicate-work)))))
 
@@ -533,17 +570,19 @@
         (t/is (= [] (:allowed_actions unresolved-row)))))))
 
 (t/deftest ^:async a-corrupt-dispatch-point-read-fails-closed
-  (let [deps (await (store-with! []))
-        looked-up (atom [])
-        error (with-redefs [store/dispatch-for-key!
-                            (fn [_ dispatch-key]
-                              (swap! looked-up conj dispatch-key)
-                              (js/Promise.resolve
-                               {:dispatch/key (str dispatch-key ":wrong")}))]
-                (try
-                  (await (facade/reviewable-translations! deps scope))
-                  nil
-                  (catch :default err err)))]
+  (let [looked-up (atom [])
+        evidence-store
+        (point-read-store
+         (store/memory-store)
+         (fn [_ dispatch-key]
+           (swap! looked-up conj dispatch-key)
+           (js/Promise.resolve
+            {:dispatch/key (str dispatch-key ":wrong")})))
+        deps (await (store-with! [] {:evidence-store evidence-store}))
+        error (try
+                (await (facade/reviewable-translations! deps scope))
+                nil
+                (catch :default err err))]
     (t/testing "a replaceable store cannot attach another claim to desired work"
       (t/is (= 1 (count @looked-up)))
       (t/is (string? (first @looked-up)))

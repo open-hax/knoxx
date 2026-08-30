@@ -13,7 +13,9 @@
             [knoxx.backend.infra.translation-content-integrity :as content-integrity]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.translation-evidence-store :as store]
-            [knoxx.backend.law.translation-dispatch :as law]))
+            [knoxx.backend.infra.translation-split-store :as split-store]
+            [knoxx.backend.law.translation-dispatch :as law]
+            [knoxx.backend.law.translation-split :as split-law]))
 
 (def ^:private at "2026-08-22T09:00:00.000Z")
 
@@ -34,6 +36,27 @@
    :dispatch/org-id "org-1"
    :dispatch/membership-id "member-1"
    :dispatch/source-digest "sha256-aaa111bbb222"})
+
+(defn- agent-runtime-deps
+  "Durable turn dependencies required before an agent event may be emitted."
+  [evidence-store emitted instant]
+  (let [digest-hex #(str "digest-" (hash %))]
+    {:evidence-store evidence-store
+     :split-store (split-store/memory-store digest-hex)
+     :translation-execution
+     (split-law/execution-snapshot
+      digest-hex
+      {:agent-id "publication_translator"
+       :model "gemma4:31b"
+       :thinking :medium
+       :system-prompt "Translate the admitted source splits."
+       :tool-ids ["save_translation"]})
+     :clock (constantly instant)
+     :digest-hex digest-hex
+     :emit! (fn [event]
+              (swap! emitted conj event)
+              (js/Promise.resolve
+               {:matchedTriggers [:publication/translation-needed]}))}))
 
 (deftest publication-selection-does-not-fan-out-to-a-whole-document
   (let [document {:document/id :knoxx.docs/probe
@@ -137,13 +160,7 @@
         source-revision-value "sha256-aaa111bbb222"
         emitted (atom [])
         evidence-store (store/memory-store)
-        deps {:evidence-store evidence-store
-              :clock (constantly at)
-              :digest-hex #(str "digest-" (hash %))
-              :emit! (fn [event]
-                       (swap! emitted conj event)
-                       (js/Promise.resolve
-                        {:matchedTriggers [:publication/translation-needed]}))}
+        deps (agent-runtime-deps evidence-store emitted at)
         scope {:org-id "org-1"
                :membership-id "member-1"
                :project "knoxx-session"}]
@@ -217,39 +234,34 @@
                      :locale :es
                      :revision revision
                      :replace-stale? false}
-                    old-context :dispatch/accepted at)
+                    old-context :dispatch/accepted at
+                    :attempt-id "dispatch-attempt-old")
         emitted (atom [])
-        deps {:evidence-store evidence-store
-              :clock (constantly "2026-08-30T12:00:00.000Z")
-              :digest-hex #(str "digest-" (hash %))
-              :emit! (fn [event]
-                       (swap! emitted conj event)
-                       (js/Promise.resolve
-                        {:matchedTriggers [:publication/translation-needed]}))}
+        deps (agent-runtime-deps evidence-store emitted
+                                 "2026-08-30T12:00:00.000Z")
         scope {:org-id "org-1"
                :membership-id "member-1"
                :project "knoxx-session"}]
     (await (store/reserve-dispatch! evidence-store old-record))
-    (await (store/bind-dispatch-batch! evidence-store
-                                       (:dispatch/key old-record) "old-run"))
-    (await (store/resolve-dispatch! evidence-store
-                                    (:dispatch/key old-record)
-                                    :dispatch/completed nil))
-    (await (store/record-translation!
-            evidence-store
-            {:receipt/type :translation/completed
-             :translation/document :knoxx.docs/probe
-             :translation/garden :knoxx.gardens/promethean
-             :translation/source-locale :en
-             :translation/locale :es
-             :translation/source-revision revision
-             :translation/revision "candidate-lost"
-             :translation/content-digest
-             (content-integrity/content-digest target)
-             :translation/dispatch-key (:dispatch/key old-record)
-             :translation/org-id "org-1"
-             :translation/project "knoxx-session"
-             :translation/at "2026-08-30T10:00:00.000Z"}))
+    (let [bound (await (store/bind-dispatch-batch! evidence-store
+                                                    old-record "old-run"))]
+      (await (store/claim-dispatch-completion! evidence-store bound))
+      (await (store/record-translation!
+              evidence-store
+              {:receipt/type :translation/completed
+               :translation/document :knoxx.docs/probe
+               :translation/garden :knoxx.gardens/promethean
+               :translation/source-locale :en
+               :translation/locale :es
+               :translation/source-revision revision
+               :translation/revision "candidate-lost"
+               :translation/content-digest
+               (content-integrity/content-digest target)
+               :translation/dispatch-key (:dispatch/key old-record)
+               :translation/org-id "org-1"
+               :translation/project "knoxx-session"
+               :translation/at "2026-08-30T10:00:00.000Z"}))
+      (await (store/finish-dispatch-completion! evidence-store bound nil)))
     (with-redefs [publications/resource-records!
                   (fn [_] (js/Promise.resolve records))
                   source-revision/source-revisions!
@@ -277,9 +289,10 @@
   "A store holding one in-flight claim bound to `batch-1`."
   []
   (let [evidence-store (store/memory-store)
-        record (law/dispatch-record work context :dispatch/accepted at)]
+        record (law/dispatch-record work context :dispatch/accepted at
+                                    :attempt-id "dispatch-attempt-1")]
     (await (store/reserve-dispatch! evidence-store record))
-    (await (store/bind-dispatch-batch! evidence-store (:dispatch/key record) "batch-1"))
+    (await (store/bind-dispatch-batch! evidence-store record "batch-1"))
     {:evidence-store evidence-store
      :clock (constantly at)
      ;; Agrees with the dispatched revision, so completion is not refused for
@@ -370,7 +383,8 @@
                                      (assoc context
                                             :dispatch/document-wire-id "knoxx.docs/other")
                                      :dispatch/accepted
-                                     at)
+                                     at
+                                     :attempt-id "dispatch-attempt-unbound")
         deps {:evidence-store evidence-store
               :clock (constantly at)
               :observe-source-revision (constantly (js/Promise.resolve

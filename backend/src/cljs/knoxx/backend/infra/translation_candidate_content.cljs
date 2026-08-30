@@ -7,7 +7,8 @@
   file still exists. This adapter performs that join once so dispatch, review,
   and publication do not acquire three subtly different definitions of
   'translated'."
-  (:require [knoxx.backend.infra.publication-contract-content :as contract-content]
+  (:require [knoxx.backend.domain.translation-evidence :as evidence-domain]
+            [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.translation-agent-content :as agent-content]
             [knoxx.backend.infra.translation-content-integrity :as integrity]
             [knoxx.backend.law.translation-evidence :as evidence-law]
@@ -35,14 +36,7 @@
 (defn receipt-work-identity
   "Exact desired-work relation, excluding the candidate output that supersedes."
   [receipt]
-  ((juxt :translation/org-id
-         :translation/project
-         :translation/document
-         :translation/garden
-         :translation/source-locale
-         :translation/locale
-         :translation/source-revision)
-   receipt))
+  (evidence-domain/receipt-work-identity receipt))
 
 (defn current-receipts
   "Select the current candidate per work relation before content admission.
@@ -51,15 +45,7 @@
   older output current again. A missing newest artifact means retranslation,
   not rollback to bytes whose approval was already superseded."
   [receipts]
-  (vals
-   (reduce (fn [index receipt]
-             (let [checked (evidence-law/assert-receipt! receipt)
-                   relation (receipt-work-identity checked)]
-               (if (evidence-law/supersedes? checked (get index relation))
-                 (assoc index relation checked)
-                 index)))
-           {}
-           receipts)))
+  (evidence-domain/current-receipts receipts))
 
 (defn- ^:async target-content-for-identities!
   [content-root roots documents authored-ids receipt]

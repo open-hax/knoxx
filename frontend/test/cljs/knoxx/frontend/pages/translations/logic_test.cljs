@@ -72,21 +72,26 @@
   (t/is (= ["excellent" "good" "adequate" "poor" "unusable"] (logic/field-options :adequacy)))
   (t/is (= (logic/field-options :adequacy) (logic/field-options :fluency))))
 
-(t/deftest prepare-label-payload-trims-and-omits
+(t/deftest prepare-label-payload-preserves-correction-and-trims-notes
   (t/testing "blank corrected/notes are omitted entirely"
-    (let [payload (logic/prepare-label-payload logic/default-label "approve")]
+    (let [payload (logic/prepare-label-payload
+                   (assoc logic/default-label
+                          :corrected_text " \n\t "
+                          :editor_notes " \n ")
+                   "approve")]
       (t/is (= "approve" (:overall payload)))
       (t/is (not (contains? payload :corrected_text)))
       (t/is (not (contains? payload :editor_notes)))))
-  (t/testing "non-blank values are trimmed and kept; overall overridden"
+  (t/testing "correction bytes are exact, notes are trimmed, and overall is overridden"
     (let [payload (logic/prepare-label-payload
                    (assoc logic/default-label
-                          :corrected_text "  fixed  "
-                          :editor_notes "note"
+                          :corrected_text "  fixed  \n\n"
+                          :editor_notes "  note  "
                           :overall "approve")
                    "reject")]
       (t/is (= "reject" (:overall payload)))
-      (t/is (= "fixed" (:corrected_text payload)))
+      (t/is (= "  fixed  \n\n" (:corrected_text payload))
+            "split-separating whitespace is not destroyed")
       (t/is (= "note" (:editor_notes payload)))
       (t/is (= "good" (:adequacy payload)) "scores carried through"))))
 
@@ -177,6 +182,21 @@
         "legacy split totals cannot make receipt-shaped evidence look hydrated")
     (t/is (not (logic/legacy-mutation-admitted? row "knoxx-session")))))
 
+(t/deftest receipt-shaped-candidate-without-an-authenticated-content-path-is-blocked
+  (let [work (assoc (desired-work 0 "ready")
+                    :translation_revision "receipt-without-worker-bytes"
+                    :contract_candidate true
+                    :reviewable true
+                    :hydration_state "displayable")
+        [row] (logic/normalize-work-inventory [] [work])]
+    (t/is (logic/candidate-present? row))
+    (t/is (logic/blocked-resource-candidate? row)
+        "receipt coordinates and a displayable flag cannot replace authenticated bytes")
+    (t/is (:contract_content row)
+        "candidate ownership remains visible, but does not override the closed gate")
+    (t/is (not (logic/legacy-candidate? row))
+        "an absent worker document cannot silently become compatibility evidence")))
+
 (t/deftest matching-legacy-splits-bridge-a-candidate-less-resource-row
   (let [legacy {:document_id "docs/doc-4" :garden_id "gardens/promethean"
                 :target_lang "es" :source_lang "en" :title "Legacy title"
@@ -250,6 +270,23 @@
         "persisted segments remain selectable and reviewable in compatibility mode")
     (t/is (not (logic/work-row? row)))
     (t/is (= 2 (:total_segments row)))))
+
+(t/deftest empty-resource-compatibility-retains-an-unmatched-gardenless-worker-row
+  (let [worker {:document_id "docs/gardenless-worker"
+                :target_lang "es" :source_lang "en"
+                :project "knoxx-session" :title "Gardenless worker"
+                :total_segments 3 :approved 1
+                :overall_status "partial_review"}
+        [row :as rows] (logic/normalize-work-inventory [worker] [])]
+    (t/is (= 1 (count rows))
+        "legacy-only compatibility preserves worker evidence without inventing resource work")
+    (t/is (= "docs/gardenless-worker" (:document_id row)))
+    (t/is (nil? (:garden_id row)))
+    (t/is (logic/legacy-candidate? row))
+    (t/is (logic/legacy-mutation-admitted? row "knoxx-session"))
+    (t/is (= {:project "knoxx-session"}
+             (logic/legacy-review-scope row "devel")))
+    (t/is (not (logic/work-row? row)))))
 
 (t/deftest nil-garden-is-an-exact-legacy-coordinate
   (let [legacy {:document_id "docs/legacy" :target_lang "es"
@@ -350,7 +387,7 @@
 (t/deftest contract-candidate-hydration-fails-closed
   (t/is (not (logic/blocked-resource-candidate?
               {:contract_candidate true :reviewable true
-               :hydration_state "displayable"})))
+               :hydration_state "displayable" :content_source "agent"})))
   (doseq [row [{:contract_candidate true :reviewable false
                 :hydration_state "content_missing"}
                {:contract_candidate true :reviewable false
@@ -358,6 +395,10 @@
                {:contract_candidate true :reviewable false
                 :hydration_state "content_moved"}
                {:contract_candidate true :reviewable true}
+               {:contract_candidate true :reviewable true
+                :hydration_state "displayable"}
+               {:contract_candidate true :reviewable true
+                :hydration_state "displayable" :content_source "future-store"}
                {:contract_candidate true :reviewable true
                 :hydration_state "future_state"}]]
     (t/is (logic/blocked-resource-candidate? row))))
@@ -376,6 +417,21 @@
                        :corrected_text "Persisted correction"}
                       {:id "label/older" :adequacy "excellent"}]}))
       "detail labels are newest first and hydrate only admitted form fields"))
+
+(t/deftest segment-review-identity-follows-the-newest-immutable-fact
+  (t/is (= "resource-review/latest"
+           (logic/segment-review-identity
+            {:resource_split true
+             :review_id "resource-review/latest"
+             :labels [{:review_id "resource-review/older"}]})))
+  (t/is (= "resource-review/fallback"
+           (logic/segment-review-identity
+            {:resource_split true
+             :labels [{:review_id "resource-review/fallback"}]})))
+  (t/is (= "legacy-label/latest"
+           (logic/segment-review-identity
+            {:labels [{:id "legacy-label/latest"}
+                      {:id "legacy-label/older"}]}))))
 
 (t/deftest publication-review-joins-on-document-garden-and-locale
   (let [review {:publication "publications/doc-1-es"

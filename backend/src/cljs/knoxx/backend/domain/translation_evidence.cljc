@@ -31,6 +31,53 @@
   [document garden locale revision]
   [document garden locale revision])
 
+(defn receipt-work-identity
+  "The exact desired-work relation within which one output supersedes another.
+
+   Scope and source locale are included here even though the publication gate's
+   already-scoped lookup key can omit them. This selector is used before content
+   admission and review-readiness joins, where collapsing tenants, projects, or
+   source languages would let evidence from one relation replace another."
+  [receipt]
+  ((juxt :translation/org-id
+         :translation/project
+         :translation/document
+         :translation/garden
+         :translation/source-locale
+         :translation/locale
+         :translation/source-revision)
+   receipt))
+
+(defn current-receipts-by-work
+  "Index the current receipt for every exact desired-work relation.
+
+   Selection happens before any later admission filter. Removing an unavailable
+   newer receipt first would resurrect older bytes and their approval instead of
+   exposing the work as needing recovery.
+
+   The map form is public because inventory, review mutation, and content
+   admission must all use this exact source-locale-aware relation and the
+   evidence law's context-free total order. Reimplementing either at those
+   boundaries would let one surface review bytes another surface considers
+   superseded."
+  [receipts]
+  (reduce (fn [index receipt]
+            (let [checked (law/assert-receipt! receipt)
+                  relation (receipt-work-identity checked)]
+              (if (law/supersedes? checked (get index relation))
+                (assoc index relation checked)
+                index)))
+          {}
+          receipts))
+
+(defn current-receipts
+  "Select one current receipt per exact desired-work relation.
+
+   A value view over `current-receipts-by-work`, retained for consumers that do
+   not need to join the winners back to desired work."
+  [receipts]
+  (vals (current-receipts-by-work receipts)))
+
 (defn index-receipts
   "Index completed translation receipts by
    `[document garden locale source-revision]`.
@@ -86,8 +133,8 @@
   "The index a runtime loads once and then reads repeatedly.
 
    Order-insensitive: `index-receipts` resolves a re-translated source revision
-   by comparing timestamps, so a store is free to return receipts in whatever
-   order its query produced."
+   with the evidence law's context-free total order, so a store is free to return
+   receipts in whatever order its query produced."
   [{:keys [receipts approvals]}]
   {:receipts (index-receipts receipts)
    :approvals (index-approvals approvals)})

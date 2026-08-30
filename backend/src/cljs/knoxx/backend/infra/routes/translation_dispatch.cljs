@@ -24,6 +24,7 @@
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.translation-dispatch :as dispatch]
             [knoxx.backend.infra.translation-evidence-store :as store]
+            [knoxx.backend.infra.translation-split-projection :as split-projection]
             [knoxx.backend.law.translation-dispatch :as law]))
 
 (defn hydrated-intents
@@ -190,6 +191,21 @@
   [org-id receipts]
   (filterv #(= org-id (:translation/org-id %)) receipts))
 
+(defn- ^:async approvals-for-gate!
+  "Load scoped approvals and optionally join current durable split history."
+  [evidence-store {:keys [org-id project] :as scope} receipts
+   {:keys [enforce-split-review-readiness? split-store digest-hex]}]
+  (let [stored (->> (await (store/approvals!
+                            evidence-store
+                            (select-keys scope [:org-id :project])))
+                    (filterv #(and (= org-id (:review/org-id %))
+                                   (= project (:review/project %)))))]
+    (if enforce-split-review-readiness?
+      (await (split-projection/current-review-approvals!
+              {:split-store split-store :digest-hex digest-hex}
+              receipts stored))
+      stored)))
+
 (declare gate-evidence!)
 
 (defn ^:async gate-facts!
@@ -230,8 +246,12 @@
   ([config evidence-store scope documents document-roots]
    (gate-evidence! config evidence-store scope documents document-roots {}))
   ([config evidence-store {:keys [org-id project] :as scope} documents document-roots
-    {:keys [source-revisions current-authored desired-work authenticate-content?]
-     :or {current-authored [] desired-work [] authenticate-content? false}}]
+    {:keys [source-revisions current-authored desired-work authenticate-content?
+            enforce-split-review-readiness? split-store digest-hex]
+     :or {current-authored []
+          desired-work []
+          authenticate-content? false
+          enforce-split-review-readiness? false}}]
    (let [revisions (or source-revisions
                        (await (source-revision/source-revisions!
                                config documents document-roots)))
@@ -257,11 +277,12 @@
                            current-authored
                            scoped-receipts))
                    scoped-receipts)
-        approvals (->> (await (store/approvals!
-                               evidence-store
-                               (select-keys scope [:org-id :project])))
-                       (filterv #(and (= org-id (:review/org-id %))
-                                      (= project (:review/project %)))))
+        approvals (await (approvals-for-gate!
+                          evidence-store scope receipts
+                          {:enforce-split-review-readiness?
+                           enforce-split-review-readiness?
+                           :split-store split-store
+                           :digest-hex digest-hex}))
         evidence (evidence-domain/evidence {:receipts receipts
                                             :approvals approvals})]
      {:evidence evidence
@@ -354,14 +375,25 @@
    against the wrong scope — or against a garden that has been archived —
    deserves to be able to tell which."
   [config {:keys [evidence-store] :as deps} scope selection]
-  (let [records (await (publications/resource-records! config))
-        index (publications/publication-index records)
+  (let [load-records! (or (:resource-records! deps)
+                          publications/resource-records!)
+        build-index (or (:publication-index deps)
+                        publications/publication-index)
+        load-revisions! (or (:source-revisions! deps)
+                            source-revision/source-revisions!)
+        ensure-receipts! (or (:ensure-contract-receipts! deps)
+                             contract-content/ensure-receipts!)
+        dispatch-agent! (or (:dispatch-agent-intents! deps)
+                            dispatch-intents-to-agent!)
+        dispatch-worker! (or (:dispatch-worker-intents! deps)
+                             dispatch/dispatch-intents!)
+        records (await (load-records! config))
+        index (build-index records)
         hydrated (selected-hydrated-intents index selection)
         intents (admissible-intents index hydrated)
         documents (referenced-documents index intents)
         roots (document-source-roots config records)
-        revisions (await (source-revision/source-revisions!
-                          config documents roots))
+        revisions (await (load-revisions! config documents roots))
         selected-publications (set (map :publication/id intents))
         desired-work (->> (review-inventory/desired-work index revisions)
                           (filterv #(contains? selected-publications
@@ -369,8 +401,7 @@
                           (mapv #(assoc %
                                         :translation/org-id (:org-id scope)
                                         :translation/project (:project scope))))
-        authored (await (contract-content/ensure-receipts!
-                         evidence-store index roots scope revisions))
+        authored (await (ensure-receipts! evidence-store index roots scope revisions))
         facts (:facts
                (await (gate-evidence!
                        config evidence-store scope documents roots
@@ -383,9 +414,8 @@
      :admissible (count intents)
      :runner selected-runner
      :dispatched (if (= :agent selected-runner)
-                   (await (dispatch-intents-to-agent! deps index intents facts
-                                                      scope roots))
-                   (await (dispatch/dispatch-intents! deps intents facts scope)))}))
+                   (await (dispatch-agent! deps index intents facts scope roots))
+                   (await (dispatch-worker! deps intents facts scope)))}))
 
 (def worker-report-vocabulary
   "What the ingestion worker actually sends, read from

@@ -106,6 +106,7 @@
     :dispatch/membership-id "membership-1"}
    outcome
    at
+   :attempt-id (str "dispatch-attempt-" (:translation/document work))
    :detail (when (= outcome :dispatch/failed) "provider unavailable")))
 
 (t/deftest desired-work-is-resource-first-and-preserves-unresolved-items

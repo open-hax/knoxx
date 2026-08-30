@@ -35,14 +35,23 @@
 
 (def ^:private record
   (dispatch-law/dispatch-record
-   dispatch-work dispatch-context :dispatch/accepted at))
+   dispatch-work dispatch-context :dispatch/accepted at
+   :attempt-id "dispatch-attempt-1"))
 
 (defn- recovery-record
   []
   (dispatch-law/dispatch-record
    dispatch-work dispatch-context :dispatch/accepted
    "2026-08-22T10:00:00.000Z"
+   :attempt-id "dispatch-attempt-recovery"
    :recovery-reason :candidate-unavailable))
+
+(defn- ^:async complete-attempt!
+  ([evidence-store attempt]
+   (await (complete-attempt! evidence-store attempt nil)))
+  ([evidence-store attempt detail]
+   (await (store/claim-dispatch-completion! evidence-store attempt))
+   (await (store/finish-dispatch-completion! evidence-store attempt detail))))
 
 (def ^:private receipt
   {:receipt/type :translation/completed
@@ -57,6 +66,14 @@
    :translation/org-id "org-1"
    :translation/at at})
 
+(def ^:private split-lineage
+  {:translation/split-manifest-id "manifest-1"
+   :translation/candidate-claim-id "claim-1"
+   :translation/candidate-set-id "set-1"
+   :translation/candidate-set-digest "sha256-candidate-set"
+   :translation/split-count 3
+   :translation/split-turn-admitted-at "2026-08-22T08:00:00.000Z"})
+
 (defn- duplicate-key-error []
   (let [err (js/Error. "E11000 duplicate key error")]
     (aset err "code" 11000)
@@ -65,16 +82,23 @@
 (defn- fake-collection
   "A collection handle over one atom, honoring a unique index on `unique-field`.
 
-   A nil `unique-field` means no unique index, which is what the receipts
-   collection actually has: receipts are append-only facts and several of them
-   legitimately share one dispatch key, so enforcing uniqueness there would test
-   a constraint the real store does not declare.
+   A nil `unique-field` means no unique index. Completed receipts use their
+  stable `receipt_key`, not the dispatch key: distinct output revisions may
+   legitimately share a dispatch while an equal completion may not append.
 
    Only the driver surface `extern.mongo` actually calls: insertOne, updateOne,
    and find returning a cursor with toArray."
   [rows unique-field]
-  (letfn [(matches? [query row]
-            (every? (fn [[k v]] (= v (get row k))) query))]
+  (letfn [(field-matches? [row k condition]
+            (if (and (map? condition) (contains? condition :$exists))
+              (= (:$exists condition) (contains? row k))
+              (= condition (get row k))))
+          (matches? [query row]
+            (every? (fn [[k condition]]
+                      (if (= :$or k)
+                        (some #(matches? % row) condition)
+                        (field-matches? row k condition)))
+                    query))]
     #js {:insertOne
          (fn [doc]
            (let [row (js->clj doc :keywordize-keys true)]
@@ -117,11 +141,33 @@
                     (fake-collection dispatches :dispatch_key)
                     (if (= name mongo-store/APPROVALS_COLLECTION)
                       (fake-collection approvals :approval_key)
-                      (fake-collection receipts nil))))}]
+                      (fake-collection receipts :receipt_key))))}]
     {:dispatches dispatches
      :receipts receipts
      :approvals approvals
      :store (mongo-store/create-store db)}))
+
+(defn- recording-index-db
+  [calls]
+  #js {:collection
+       (fn [collection-name]
+         #js {:createIndex
+              (fn [spec options]
+                (swap! calls conj
+                       {:collection collection-name
+                        :spec (js->clj spec :keywordize-keys true)
+                        :options (js->clj options :keywordize-keys true)})
+                (js/Promise.resolve "index"))})})
+
+(deftest ^:async setup-enforces-one-keyed-receipt-per-stable-identity
+  (let [indexes (atom [])]
+    (is (true? (await (mongo-store/setup-indexes!
+                       (recording-index-db indexes)))))
+    (is (some #(= {:collection mongo-store/RECEIPTS_COLLECTION
+                   :spec {:receipt_key 1}
+                   :options {:unique true :sparse true}}
+                  %)
+              @indexes))))
 
 (deftest ^:async namespaced-keywords-survive-persistence
   (let [{:keys [store dispatches]} (fixture)
@@ -160,8 +206,7 @@
 (deftest ^:async an-ordinary-proposal-cannot-reopen-a-completed-claim
   (let [{:keys [store]} (fixture)
         _ (await (store/reserve-dispatch! store record))
-        _ (await (store/resolve-dispatch! store (:dispatch/key record)
-                                          :dispatch/completed nil))
+        _ (await (complete-attempt! store record))
         again (await (store/reserve-dispatch! store record))]
     (testing "completed remains terminal when no recovery reason was established"
       (is (= :done (:reservation/status again)))
@@ -170,10 +215,8 @@
 (deftest ^:async candidate-unavailable-recovery-is-an-atomic-completed-cas
   (let [{:keys [store dispatches]} (fixture)
         _ (await (store/reserve-dispatch! store record))
-        _ (await (store/bind-dispatch-batch!
-                  store (:dispatch/key record) "batch-old"))
-        _ (await (store/resolve-dispatch!
-                  store (:dispatch/key record) :dispatch/completed "old detail"))
+        bound (await (store/bind-dispatch-batch! store record "batch-old"))
+        _ (await (complete-attempt! store bound "old detail"))
         recovery (recovery-record)
         ;; Start both calls before awaiting either. Both are allowed to observe
         ;; completed, but the outcome predicate in updateOne lets exactly one
@@ -203,9 +246,8 @@
 (deftest ^:async mutable-fields-are-columns-so-two-writers-cannot-clobber
   (let [{:keys [store]} (fixture)
         _ (await (store/reserve-dispatch! store record))
-        bound (await (store/bind-dispatch-batch! store (:dispatch/key record) "batch-7"))
-        resolved (await (store/resolve-dispatch! store (:dispatch/key record)
-                                                 :dispatch/completed "done"))]
+        bound (await (store/bind-dispatch-batch! store record "batch-7"))
+        resolved (await (complete-attempt! store bound "done"))]
     (testing "binding a batch does not disturb the immutable binding"
       (is (= "batch-7" (:dispatch/batch-id bound)))
       (is (= "sha256-aaa111bbb222" (:dispatch/revision bound))))
@@ -220,9 +262,8 @@
 (deftest ^:async only-an-in-flight-claim-can-be-resolved
   (let [{:keys [store]} (fixture)
         _ (await (store/reserve-dispatch! store record))
-        _ (await (store/resolve-dispatch! store (:dispatch/key record)
-                                          :dispatch/completed nil))
-        second-resolve (await (store/resolve-dispatch! store (:dispatch/key record)
+        _ (await (complete-attempt! store record))
+        second-resolve (await (store/resolve-dispatch! store record
                                                        :dispatch/failed "late"))]
     (testing "the loser of the race learns it lost instead of overwriting"
       (is (nil? second-resolve)))
@@ -232,16 +273,62 @@
              (:dispatch/outcome (await (store/dispatch-for-key!
                                         store (:dispatch/key record)))))))))
 
+(deftest ^:async stale-attempts-cannot-bind-or-resolve-a-mongo-replacement
+  (let [{:keys [store]} (fixture)
+        attempt-a (assoc record :dispatch/attempt-id "dispatch-attempt-a")
+        attempt-b (assoc record :dispatch/attempt-id "dispatch-attempt-b")
+        _ (await (store/reserve-dispatch! store attempt-a))
+        bound-a (await (store/bind-dispatch-batch! store attempt-a "batch-a"))
+        _ (await (store/resolve-dispatch! store bound-a
+                                          :dispatch/failed "attempt A failed"))
+        _ (await (store/reserve-dispatch! store attempt-b))
+        bound-b (await (store/bind-dispatch-batch! store attempt-b "batch-b"))]
+    (testing "a delayed A cannot ABA-settle B at the same key and millisecond"
+      (is (nil? (await (store/resolve-dispatch! store bound-a
+                                                :dispatch/failed "late A"))))
+      (is (nil? (await (store/bind-dispatch-batch!
+                        store bound-a "batch-a-late")))))
+
+    (testing "the replacement remains accepted and bound to its own batch"
+      (is (= bound-b
+             (await (store/dispatch-for-key! store (:dispatch/key attempt-b))))))))
+
+(deftest ^:async mongo-hides-a-receipt-until-its-exact-attempt-is-completed
+  (let [{:keys [store]} (fixture)
+        _ (await (store/reserve-dispatch! store record))
+        bound (await (store/bind-dispatch-batch! store record "batch-1"))
+        completed-receipt (dispatch-law/translation-receipt
+                           bound (dispatch-law/output-revision bound)
+                           "2026-08-22T09:05:00.000Z"
+                           "sha256-target-content")
+        _ (await (store/claim-dispatch-completion! store bound))
+        _ (await (store/record-translation! store completed-receipt))]
+    (testing "a racing failure cannot invalidate an owned completion"
+      (is (nil? (await (store/resolve-dispatch! store bound
+                                                :dispatch/failed "late failure")))))
+
+    (testing "a crash after receipt insert exposes no production evidence"
+      (is (empty? (await (store/completed-translations! store evidence-scope)))))
+
+    (testing "the same completion owner resumes and admits the receipt"
+      (is (= bound (await (store/claim-dispatch-completion! store bound))))
+      (let [completed (await (store/finish-dispatch-completion! store bound nil))]
+        (is (= :dispatch/completed (:dispatch/outcome completed)))
+        (is (= completed
+               (await (store/claim-dispatch-completion! store bound)))))
+      (is (= [completed-receipt]
+             (await (store/completed-translations! store evidence-scope)))))))
+
 (deftest ^:async an-unknown-outcome-is-refused-rather-than-defaulted
   (let [{:keys [store]} (fixture)]
     (testing "a store cannot be asked to write an outcome outside the contract"
-      (is (thrown? js/Error (store/resolve-dispatch! store "any-key"
+      (is (thrown? js/Error (store/resolve-dispatch! store record
                                                      :dispatch/invented nil))))))
 
 (deftest ^:async the-batch-document-join-finds-the-binding
   (let [{:keys [store]} (fixture)
         _ (await (store/reserve-dispatch! store record))
-        _ (await (store/bind-dispatch-batch! store (:dispatch/key record) "batch-7"))]
+        _ (await (store/bind-dispatch-batch! store record "batch-7"))]
     (testing "the join the worker's report is resolved through"
       (is (= "sha256-aaa111bbb222"
              (:dispatch/revision (await (store/dispatch-for-batch-document!
@@ -253,19 +340,106 @@
       (is (nil? (await (store/dispatch-for-batch-document!
                         store "batch-7" "knoxx.docs/other")))))))
 
-(deftest ^:async receipts-round-trip-as-append-only-facts
+(deftest ^:async distinct-receipts-and-split-lineage-round-trip
   (let [{:keys [store]} (fixture)
         _ (await (store/record-translation! store receipt))
         read-back (await (store/completed-translations! store evidence-scope))]
     (testing "the receipt comes back identical"
       (is (= [receipt] read-back)))
 
-    (testing "a second receipt is appended, not merged"
-      (await (store/record-translation!
-              store (assoc receipt
-                           :translation/revision "sha256-aaa111bbb222+es@batch-2"
-                           :translation/at "2026-08-22T10:00:00.000Z")))
-      (is (= 2 (count (await (store/completed-translations! store evidence-scope))))))))
+    (testing "a genuinely different output is a second immutable fact"
+      (let [split-backed (merge receipt split-lineage
+                                {:translation/revision
+                                 "sha256-aaa111bbb222+es@batch-2"
+                                 :translation/at
+                                 "2026-08-22T10:00:00.000Z"})]
+        (await (store/record-translation! store split-backed))
+        (is (= #{receipt split-backed}
+               (set (await (store/completed-translations!
+                            store evidence-scope)))))))))
+
+(deftest ^:async completed-receipt-claim-is-idempotent
+  (let [{:keys [store receipts]} (fixture)
+        first-result (await (store/record-translation! store receipt))
+        later-retry (assoc receipt :translation/at "2026-08-22T10:00:00.000Z")
+        replay-result (await (store/record-translation! store later-retry))]
+    (testing "the unique claim returns the first fact and first timestamp"
+      (is (= receipt first-result))
+      (is (= receipt replay-result))
+      (is (= 1 (count @receipts)))
+      (is (string? (:receipt_key (first @receipts)))))
+
+    (testing "changed data at the same identity is a conflict"
+      (try
+        (await (store/record-translation!
+                store
+                (assoc later-retry :translation/content-digest "sha256-forged")))
+        (is false "changed receipt at one identity must fail")
+        (catch :default error
+          (is (= :translation-receipt-conflict (:cause (ex-data error))))))
+      (is (= 1 (count @receipts))))))
+
+(deftest ^:async pre-key-receipts-remain-idempotent-during-rollout
+  (let [{:keys [store receipts]} (fixture)
+        ;; Shape written by the previous adapter: authoritative EDN and scope
+        ;; columns, but no `receipt_key` column yet.
+        legacy-row {:dispatch_key (:translation/dispatch-key receipt)
+                    :org_id "org-1"
+                    :project "\u0000none"
+                    :receipt_edn (pr-str receipt)}
+        _ (swap! receipts conj legacy-row)
+        replay (await (store/record-translation!
+                       store
+                       (assoc receipt
+                              :translation/dispatch-attempt-id
+                              (:dispatch/attempt-id record)
+                              :translation/at "2026-08-22T10:00:00.000Z")))]
+    (testing "an attempt-bound retry discovers compatible legacy history"
+      (is (= receipt replay))
+      (is (= [legacy-row] @receipts)))))
+
+(deftest ^:async mixed-writer-equal-receipts-collapse-deterministically
+  (let [{:keys [store receipts]} (fixture)
+        attempt-receipt (assoc receipt
+                               :translation/dispatch-attempt-id
+                               (:dispatch/attempt-id record))
+        later-legacy (assoc receipt :translation/at
+                            "2026-08-22T10:00:00.000Z")
+        _ (await (store/reserve-dispatch! store record))
+        _ (await (store/record-translation! store attempt-receipt))
+        ;; Final state of the sparse-index race: an old binary inserts without
+        ;; `receipt_key` while the new binary admits the keyed form.
+        _ (swap! receipts conj {:dispatch_key (:translation/dispatch-key receipt)
+                                :org_id "org-1"
+                                :project "\u0000none"
+                                :receipt_edn (pr-str later-legacy)})
+        _ (await (complete-attempt! store record))]
+    (testing "read order cannot turn the duplicate into two completions"
+      (is (= [attempt-receipt]
+             (await (store/completed-translations! store evidence-scope)))))))
+
+(deftest ^:async mixed-writer-conflicting-receipts-fail-closed
+  (let [{:keys [store receipts]} (fixture)
+        attempt-receipt (assoc receipt
+                               :translation/dispatch-attempt-id
+                               (:dispatch/attempt-id record))
+        conflicting-legacy (-> receipt
+                               (assoc :translation/at
+                                      "2026-08-22T10:00:00.000Z")
+                               (assoc :translation/content-digest
+                                      "sha256-conflicting-content"))
+        _ (await (store/reserve-dispatch! store record))
+        _ (await (store/record-translation! store attempt-receipt))
+        _ (swap! receipts conj {:dispatch_key (:translation/dispatch-key receipt)
+                                :org_id "org-1"
+                                :project "\u0000none"
+                                :receipt_edn (pr-str conflicting-legacy)})
+        _ (await (complete-attempt! store record))]
+    (try
+      (await (store/completed-translations! store evidence-scope))
+      (is false "conflicting duplicate facts must block evidence consumption")
+      (catch :default error
+        (is (= :translation-receipt-conflict (:cause (ex-data error))))))))
 
 (def ^:private approval
   {:review/state :approved

@@ -2,44 +2,11 @@
   "Contracts for turning the publication gate's derived translation work into
   ingestion-worker input, and the worker's answer back into evidence.
 
-  ## The revision the worker cannot carry
-
-  The card behind this namespace assumed derived work maps onto the ingestion
-  worker's input contract 'carrying document identity, source and target locale,
-  concrete source revision, and a stable dispatch/idempotency identity'. The
-  first three map directly. The last two are split, and the split is the point.
-
-  **Idempotency does cross.** `CreateTranslationBatchRequest` now carries
-  `dispatch_key`, and the Knoxx-owned direct-Mongo adapter upserts the batch on
-  `{org_id, dispatch_key}` under a unique sparse index. That is what makes an
-  ambiguous send recoverable *exactly* rather than by a field-and-timestamp
-  heuristic that two concurrent sends satisfy identically. An earlier version of
-  this docstring said the request had no idempotency field; that was true of the
-  request as it stood and is no longer true of it.
-
-  It is an additive field on an `{:closed false}` contract, written by Knoxx's
-  own adapter — not a coordinated change in OpenPlanner. A REST server that has
-  not learned the field ignores it, which costs correlation but not correctness:
-  `infra.translation-dispatch/observe-batch!` treats a listing that came back
-  uncorrelated as evidence the lookup was not correlation-aware, never as
-  evidence of absence.
-
-  **The revision does not cross.** There is still no revision field, and Knoxx
-  does not want one there: revision semantics in a foreign collection are
-  semantics nothing here validates and no contract here can see drift. So the
-  binding stays local. Knoxx records a `DispatchRecord` — the concrete revision,
-  the locales, and the dispatch key — against the batch id the worker hands
-  back, and sends the worker only the fields its contract admits. The worker
-  never learns about revisions; it does not need to. When it reports a document
-  complete, the binding is joined back and *that* is where a stale or mismatched
-  answer is refused.
-
-  ## Dispatch facts are not translation facts
-
-  A dispatch says an attempt was made. A translation receipt says a translation
-  exists. `law.translation-evidence` holds only the latter, and the gate reads
-  only the latter — which is what lets `:translated-revision?` be a lookup
-  rather than a filter that has to know which attempt outcomes count.
+  `dispatch_key` crosses into the worker for exact ambiguous-send recovery; the
+  concrete source revision deliberately does not. Knoxx binds revision, locales,
+  tenant, attempt and returned batch locally, then refuses stale or mismatched
+  completion reports at that join. Dispatch attempts and completed translations
+  remain separate facts: only the latter become publication evidence.
 
   Portable by mandate; the client, store, and clock stay at the runtime edge."
   (:require [clojure.string :as str]
@@ -113,25 +80,9 @@
 (def key-dimensions
   "Everything that changes *which translation* is being asked for.
 
-   The organization is one of them, and an earlier version of this namespace
-   argued the opposite — that a tenant scopes who may ask rather than what the
-   answer is. That was wrong: the worker's translation data is itself
-   tenant-scoped, keying segments by `org_id` and requiring one on every
-   document read. So a translation produced for org A does not exist for org B,
-   and a key without the tenant collapsed org B's request into a duplicate of
-   org A's while org B's gate went on to report the document translated.
-
-   The project is in for the same reason as the organization. Translation output
-   is project-scoped — every existing segment, document and export route filters
-   by it — so output produced under one project does not exist under another.
-   With the project excluded, changing `KNOXX_SESSION_PROJECT_NAME` left the
-   durable evidence in place and the new project reused dispatch keys and
-   receipts belonging to the old one.
-
-   Membership stays out because it scopes who asked. Garden does not: the
-   worker includes it in the translation prompt and persists it on every
-   segment, so equal source bytes translated for two gardens are two different
-   outputs. Collapsing them would let one garden's receipt satisfy another."
+   Organization, project and garden belong because output is stored and consumed
+   in all three scopes. Membership stays out because it identifies who asked,
+   not the translated artifact."
   [:org-id :project :garden :document :source-locale :locale :revision])
 
 (defn dispatch-key
@@ -281,19 +232,9 @@
 (def retriable-outcomes
   "Outcomes a later pass may replace with a fresh attempt.
 
-   A failed or rejected dispatch is *finished*, but it is not *done*: no
-   translation came of it, so the gate still reports the translation missing and
-   the work genuinely still needs doing. Treating these as terminal — the same
-   as completed — strands that source revision permanently: reconciliation keeps
-   answering `:dispatch/duplicate`, no batch is ever enqueued again, and the only
-   way out is deleting rows by hand.
-
-   `:dispatch/completed`, `:dispatch/duplicate` and `:dispatch/unreachable` are
-   the terminal ones. Completed produced a translation; duplicate never was an
-   attempt of its own; unreachable can never succeed however many times it is
-   tried. The explicit candidate-unavailable recovery does not make completed
-   generally retriable — `replaceable-claim?` admits that exceptional proposed
-   transition separately."
+   Failed or rejected attempts produced no translation and remain actionable.
+   Completed, duplicate and unreachable outcomes are terminal except for the
+   explicit candidate-unavailable recovery in `replaceable-claim?`."
   #{:dispatch/failed :dispatch/rejected})
 
 (defn retriable?
@@ -320,6 +261,11 @@
    binding, and joining a worker answer to it would guess."
   [:map
    [:dispatch/key NonBlankString]
+   ;; Historical records predate attempt identity. Reads continue to admit those
+   ;; rows so the rollout does not strand an in-flight claim, but every newly
+   ;; constructed record below requires one. The token distinguishes successive
+   ;; attempts that intentionally reuse the same logical dispatch key.
+   [:dispatch/attempt-id {:optional true} NonBlankString]
    [:dispatch/outcome Outcome]
    [:dispatch/org-id NonBlankString]
    [:dispatch/project {:optional true} [:maybe NonBlankString]]
@@ -340,9 +286,40 @@
   [record]
   (assert-valid! :translation-dispatch/record DispatchRecord record))
 
+(def mutable-record-keys
+  "Fields that may change while one immutable dispatch attempt is in flight.
+
+   Kept in the law so in-memory and durable stores compare the exact same
+   attempt. Everything else, including an optional historical absence of
+   `:dispatch/attempt-id`, is part of the attempt binding."
+  [:dispatch/outcome :dispatch/batch-id :dispatch/detail])
+
+(defn attempt-binding
+  "The immutable coordinates that distinguish one dispatch attempt.
+
+   New attempts carry a random `:dispatch/attempt-id`. For a historical record
+   without one, the complete pre-existing immutable binding remains its identity;
+   replacing it with any newly constructed record therefore still changes this
+   value and makes a delayed compare-and-set lose."
+  [record]
+  (apply dissoc (assert-record! record) mutable-record-keys))
+
+(defn same-attempt?
+  "Whether two records describe the exact same immutable dispatch attempt."
+  [left right]
+  (= (attempt-binding left) (attempt-binding right)))
+
 (defn dispatch-record
-  "Build a dispatch record for one attempt. Pure: `at` is supplied, not read."
-  [work context outcome at & {:keys [batch-id detail recovery-reason]}]
+  "Build a dispatch record for one new attempt. Pure: identity and time are
+   supplied, not sampled here.
+
+   `attempt-id` is mandatory for newly constructed records. The schema keeps it
+   optional solely so claims persisted before attempt-bound settlement remain
+   readable and recoverable during rollout."
+  [work context outcome at & {:keys [attempt-id batch-id detail recovery-reason]}]
+  (when-not (m/validate NonBlankString attempt-id)
+    (throw (ex-info "new translation dispatch records require an attempt id"
+                    {:dispatch/attempt-id attempt-id})))
   (assert-record!
    (cond-> {:dispatch/key (dispatch-key
                            {:org-id (:dispatch/org-id context)
@@ -352,6 +329,7 @@
                             :source-locale (:dispatch/source-locale context)
                             :locale (:locale work)
                             :revision (:revision work)})
+            :dispatch/attempt-id attempt-id
             :dispatch/outcome outcome
             :dispatch/org-id (:dispatch/org-id context)
             :dispatch/garden (wire-resource-id (:dispatch/garden context))
@@ -778,25 +756,37 @@
    The worker was never told the revision, so it cannot supply one, and a report
    that appeared to carry one would be describing something it could not know.
 
-   `output-revision` is the produced translation's own identity, supplied by the
-   caller from the worker's answer. It is validated as a concrete revision like
-   any other, which is what stops a worker replying `\"source/current\"` from
-   becoming the revision an approval is later pinned to."
+  `output-revision` is the produced translation's own identity, supplied by the
+  caller from the worker's answer. It is validated as a concrete revision like
+  any other, which is what stops a worker replying `\"source/current\"` from
+  becoming the revision an approval is later pinned to.
+
+  `split-evidence`, when present, is the complete lineage of an agent-produced
+  candidate set. It is merged only at this constructor boundary so worker and
+  agent completions still mint the same receipt law rather than maintaining
+  parallel evidence shapes."
   ([record output-revision at]
-   (translation-receipt record output-revision at nil))
+   (translation-receipt record output-revision at nil nil))
   ([record output-revision at content-digest]
+   (translation-receipt record output-revision at content-digest nil))
+  ([record output-revision at content-digest split-evidence]
    (evidence/assert-receipt!
-    (cond->
-     {:receipt/type :translation/completed
-      :translation/document (:dispatch/document record)
-      :translation/garden (:dispatch/garden record)
-      :translation/source-locale (:dispatch/source-locale record)
-      :translation/locale (:dispatch/locale record)
-      :translation/source-revision (:dispatch/revision record)
-      :translation/revision output-revision
-      :translation/dispatch-key (:dispatch/key record)
-      :translation/org-id (:dispatch/org-id record)
-      :translation/project (:dispatch/project record)
-      :translation/at at}
-      (some? content-digest)
-      (assoc :translation/content-digest content-digest)))))
+    (merge
+     (cond->
+      {:receipt/type :translation/completed
+       :translation/document (:dispatch/document record)
+       :translation/garden (:dispatch/garden record)
+       :translation/source-locale (:dispatch/source-locale record)
+       :translation/locale (:dispatch/locale record)
+       :translation/source-revision (:dispatch/revision record)
+       :translation/revision output-revision
+       :translation/dispatch-key (:dispatch/key record)
+       :translation/org-id (:dispatch/org-id record)
+       :translation/project (:dispatch/project record)
+       :translation/at at}
+       (some? (:dispatch/attempt-id record))
+       (assoc :translation/dispatch-attempt-id (:dispatch/attempt-id record))
+
+       (some? content-digest)
+       (assoc :translation/content-digest content-digest))
+     split-evidence))))

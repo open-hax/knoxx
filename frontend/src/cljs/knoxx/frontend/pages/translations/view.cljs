@@ -9,7 +9,14 @@
             [knoxx.frontend.pages.translations.api :as api]
             [knoxx.frontend.pages.translations.logic :as logic]
             [knoxx.frontend.pages.translations.model-section :refer [model-section]]
-            [knoxx.frontend.pages.translations.review-controller :as controller]))
+            [knoxx.frontend.pages.translations.review-controls :as review-controls]
+            [knoxx.frontend.pages.translations.review-controller :as controller]
+            [knoxx.frontend.pages.translations.review-form-sync :as form-sync]
+            [knoxx.frontend.pages.translations.review-history
+             :refer [review-history]]
+            [knoxx.frontend.pages.translations.split-review :as split-review]
+            [knoxx.frontend.pages.translations.split-review-panel
+             :refer [split-review-panel]]))
 
 ;; ── small presentational pieces ──────────────────────────────────────────────
 
@@ -59,45 +66,29 @@
 (defnc segment-annotation [{:keys [segment selected? on-select]}]
   (let [{:keys [segment_index status label_count source_lang target_lang
                 source_text translated_text]} segment]
-    (d/div {:on-click on-select
-            :style #js {:cursor "pointer"
-                        :borderRadius 6
-                        :borderLeft (str "4px solid " (segment-border selected? status))
-                        :padding "8px 12px"}
-            :class-name "bg-slate-900/40 transition"}
+    (d/button {:type "button"
+               :on-click on-select
+               :aria-pressed (boolean selected?)
+               :style #js {:cursor "pointer"
+                           :borderRadius 6
+                           :borderLeft (str "4px solid " (segment-border selected? status))
+                           :padding "8px 12px"}
+               :class-name "w-full bg-slate-900/40 text-left transition"}
            (d/div {:class-name "mb-2 flex items-center gap-2 text-xs"}
                   (d/span {:class-name "text-slate-500"} (str "seg " segment_index))
                   (d/span (logic/status-icon status))
                   (d/span {:class-name "text-slate-400"} status)
                   (when (and (some? label_count) (pos? label_count))
                     (d/span {:class-name "text-slate-500"}
-                            (str label_count " review" (when (not= 1 label_count) "s")))))
+                            (str label_count " review" (when (not= 1 label_count) "s"))))
+                  (when (:corrected_text segment)
+                    (d/span {:class-name "rounded bg-blue-500/10 px-1.5 py-0.5 text-blue-300"}
+                            "corrected")))
            (d/div {:class-name "grid grid-cols-2 gap-3"}
                   (segment-text-column (str "Source (" (logic/lang-name source_lang) ")") source_text)
                   (segment-text-column (str "Translation (" (logic/lang-name target_lang) ")") translated_text)))))
 
 ;; ── segment review panel ─────────────────────────────────────────────────────
-
-(defnc label-score-fields [{:keys [form on-change]}]
-  (d/div {:class-name "grid gap-3"}
-         (for [field [:adequacy :fluency :terminology :risk]]
-           (d/label {:key (name field) :class-name "block text-sm"}
-                    (d/span {:class-name "mb-1 block font-medium capitalize text-slate-200"}
-                            (name field))
-                    (d/select {:value (get form field)
-                               :on-change #(on-change (assoc form field (.. % -target -value)))
-                               :class-name "w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-100"}
-                              (for [v (logic/field-options field)]
-                                (d/option {:key v :value v} v)))))))
-
-(defn- label-textarea [label value placeholder rows on-change]
-  (d/label {:class-name "block text-sm"}
-           (d/span {:class-name "mb-1 block font-medium text-slate-200"} label)
-           (d/textarea {:value (or value "")
-                        :on-change on-change
-                        :rows rows
-                        :placeholder placeholder
-                        :class-name "w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-100"})))
 
 (defn- segment-source-block [title text]
   (d/div {:class-name "rounded-lg border border-slate-700 bg-slate-800/50 p-3"}
@@ -105,16 +96,7 @@
          (d/pre {:class-name "whitespace-pre-wrap break-words text-sm text-slate-200"} text)))
 
 (defnc previous-labels [{:keys [labels]}]
-  (when (seq labels)
-    (d/div {:class-name "rounded-lg border border-slate-700 bg-slate-900/30 p-3"}
-           (d/h5 {:class-name "mb-2 text-xs font-semibold text-slate-300"} "Previous labels")
-           (d/div {:class-name "space-y-1"}
-                  (for [label labels]
-                    (d/div {:key (:id label) :class-name "text-xs text-slate-400"}
-                           (d/span {:class-name "font-medium"} (:labeler_email label))
-                           (str " · " (:overall label) " · " (:adequacy label) "/" (:fluency label))
-                           (when (:corrected_text label)
-                             (d/span {:class-name "ml-1"} "· corrected"))))))))
+  ($ review-history {:labels labels :title "Previous labels"}))
 
 (defnc authored-review-notice
   "Why this translation cannot be scored here, and what it is.
@@ -172,13 +154,17 @@
            ;; manufactures it.
            (when-not read-only?
              (hx/<>
-              ($ label-score-fields {:form form :on-change on-change})
-              (label-textarea "Corrected translation" (:corrected_text form)
-                              "Optional. If you enter a correction and submit the review, this becomes the rendered translation."
-                              4 #(on-change (assoc form :corrected_text (.. % -target -value))))
-              (label-textarea "Editor notes" (:editor_notes form)
-                              "Terminology caveats, tone issues, etc."
-                              2 #(on-change (assoc form :editor_notes (.. % -target -value))))))
+              ($ review-controls/score-fields {:form form :on-change on-change})
+              (review-controls/textarea
+               "Corrected translation" (:corrected_text form)
+               "Optional. If you enter a correction and submit the review, this becomes the rendered translation."
+               4 #(on-change (assoc form :corrected_text
+                                    (.. % -target -value))))
+              (review-controls/textarea
+               "Editor notes" (:editor_notes form)
+               "Terminology caveats, tone issues, etc."
+               2 #(on-change (assoc form :editor_notes
+                                    (.. % -target -value))))))
            ;; Omitted rather than disabled when read-only. A disabled Submit
            ;; still asserts that submitting is the thing to do here and that
            ;; something is temporarily in the way; neither is true.
@@ -212,6 +198,38 @@
                (reload-docs!)))
       (.catch (fn [^js err] (set-error! (or (.-message err) (str err)))))
       (.finally #(set-saving! false)))))
+
+(defn- ^:async run-resource-split-submit!
+  [selected segment form status
+   {:keys [set-saving! set-error! set-notice!]}
+   reload-docs!]
+  (set-saving! true)
+  (set-error! nil)
+  (try
+    (await (api/submit-publication-split-review
+            (split-review/review-payload selected segment status form)))
+    (set-notice! (str "Split " (:segment_index segment) " " status "."))
+    (reload-docs!)
+    (catch :default err
+      (set-error! (or (.-message err) (str err))))
+    (finally
+      (set-saving! false))))
+
+(defn- ^:async run-resource-bulk-submit!
+  [selected form status
+   {:keys [set-saving! set-error! set-notice!]}
+   reload-docs!]
+  (set-saving! true)
+  (set-error! nil)
+  (try
+    (await (api/submit-publication-bulk-review
+            (split-review/bulk-review-payload selected status form)))
+    (set-notice! (str "All splits " status "."))
+    (reload-docs!)
+    (catch :default err
+      (set-error! (or (.-message err) (str err))))
+    (finally
+      (set-saving! false))))
 
 (defn- run-document-review!
   [selected overall project
@@ -323,41 +341,72 @@
          text
          (d/button {:class-name "ml-2 underline" :on-click on-dismiss} "dismiss")))
 
+(defn- whole-approval-disabled?
+  [selected review saving]
+  (or saving
+      (if (split-review/review selected)
+        (not (split-review/all-approved? selected))
+        (not (true? (:reviewable review))))))
+
+(defnc publication-approval-action
+  [{:keys [selected saving on-publication-approval]}]
+  (when-let [review (:publication_review selected)]
+    (let [split-review? (some? (split-review/review selected))]
+      (when (and (:contract_content selected)
+                 (or split-review? (true? (:reviewable review)))
+                 (not (logic/blocked-resource-candidate? selected)))
+        (if (:approved review)
+          (d/span {:class-name "rounded bg-emerald-900/30 px-3 py-2 text-xs font-medium text-emerald-300"}
+                  (if split-review? "Whole output approved" "Approved for publication"))
+          ($ ui/button
+             {:size :sm
+              :variant :primary
+              :disabled (whole-approval-disabled? selected review saving)
+              :title (when (and split-review?
+                                (not (split-review/all-approved? selected)))
+                       "Approve every split before approving the whole output")
+             :on-click on-publication-approval}
+             (if split-review? "Approve whole output" "Approve for publication")))))))
+
+(defnc review-fast-path-actions
+  [{:keys [selected project saving on-review on-resource-review]}]
+  (let [resource? (some? (split-review/review selected))
+        legacy? (logic/legacy-mutation-admitted? selected project)]
+    (when (or resource? legacy?)
+      (let [submit (if resource? on-resource-review on-review)
+            [approve-status edit-status reject-status]
+            (if resource?
+              ["approved" "in-review" "rejected"]
+              ["approve" "needs_edit" "reject"])]
+        (hx/<>
+         ($ ui/button {:size :sm :disabled saving
+                       :on-click #(submit approve-status)}
+            "Approve All")
+         ($ ui/button {:size :sm :variant :secondary :disabled saving
+                       :on-click #(submit edit-status)}
+            "Needs Edit")
+         ($ ui/button {:size :sm :variant :ghost :disabled saving
+                       :on-click #(submit reject-status)}
+            "Reject All"))))))
+
 (defnc document-actions
   [{:keys [selected project saving on-review on-publication-approval
-           on-translation-dispatch]}]
-  (let [legacy-mutation? (logic/legacy-mutation-admitted? selected project)]
-    (d/div {:class-name "flex gap-2"}
-           (when (logic/allowed-action? selected "dispatch")
-             ($ ui/button {:size :sm :variant :primary :disabled saving
-                           :on-click on-translation-dispatch}
-                "Dispatch"))
-           (when (logic/allowed-action? selected "retry")
-             ($ ui/button {:size :sm :variant :primary :disabled saving
-                           :on-click on-translation-dispatch}
-                "Retry"))
-           (when legacy-mutation?
-             ($ ui/button {:size :sm :disabled saving
-                           :on-click #(on-review "approve")}
-                "Approve All"))
-           (when-let [review (:publication_review selected)]
-             (when (and (true? (:reviewable review))
-                        (:contract_content selected)
-                        (not (logic/blocked-resource-candidate? selected)))
-               (if (:approved review)
-                 (d/span {:class-name "rounded bg-emerald-900/30 px-3 py-2 text-xs font-medium text-emerald-300"}
-                         "Approved for publication")
-                 ($ ui/button {:size :sm :variant :primary :disabled saving
-                               :on-click on-publication-approval}
-                    "Approve for publication"))))
-           (when legacy-mutation?
-             ($ ui/button {:size :sm :variant :secondary :disabled saving
-                           :on-click #(on-review "needs_edit")}
-                "Needs Edit"))
-           (when legacy-mutation?
-             ($ ui/button {:size :sm :variant :ghost :disabled saving
-                           :on-click #(on-review "reject")}
-                "Reject All")))))
+           on-resource-review on-translation-dispatch]}]
+  (d/div {:class-name "flex gap-2"}
+         (when (logic/allowed-action? selected "dispatch")
+           ($ ui/button {:size :sm :variant :primary :disabled saving
+                         :on-click on-translation-dispatch}
+              "Dispatch"))
+         (when (logic/allowed-action? selected "retry")
+           ($ ui/button {:size :sm :variant :primary :disabled saving
+                         :on-click on-translation-dispatch}
+              "Retry"))
+         ($ review-fast-path-actions
+            {:selected selected :project project :saving saving
+             :on-review on-review :on-resource-review on-resource-review})
+         ($ publication-approval-action
+            {:selected selected :saving saving
+             :on-publication-approval on-publication-approval})))
 
 (defn- blocked-candidate-copy
   [row]
@@ -414,7 +463,7 @@
 
 (defnc document-pane
   [{:keys [selected project detail detail-loading saving seg-idx set-seg-idx
-           on-review on-publication-approval on-translation-dispatch]}]
+           on-review on-resource-review on-publication-approval on-translation-dispatch]}]
   (cond
     (nil? selected)
     (d/div {:class-name "flex flex-1 items-center justify-center text-sm text-slate-500"}
@@ -441,6 +490,7 @@
                            ($ status-badge {:status (get-in detail [:summary :overall_status])})))
                    ($ document-actions {:selected selected :project project :saving saving
                                         :on-review on-review
+                                        :on-resource-review on-resource-review
                                         :on-publication-approval on-publication-approval
                                         :on-translation-dispatch on-translation-dispatch}))
             ($ progress-bar {:approved (get-in detail [:summary :approved])
@@ -461,36 +511,48 @@
                                               :selected? (and selected (logic/same-work? doc selected))
                                               :on-select #(set-selected doc)}))))))
 
+(defnc segment-review-content
+  [{:keys [work-row segment form saving set-form on-submit on-skip
+           read-only? content-source]}]
+  (cond
+    (logic/blocked-resource-candidate? work-row)
+    (d/p {:class-name "text-sm text-rose-300"}
+         (blocked-candidate-copy work-row))
+
+    (split-review/review work-row)
+    ($ split-review-panel {:split segment :form form :saving saving
+                           :on-change set-form :on-submit on-submit
+                           :on-skip on-skip})
+
+    (and (logic/work-row? work-row) (not (logic/legacy-candidate? work-row)))
+    (d/p {:class-name "text-sm text-slate-400"}
+         (if (logic/candidate-present? work-row)
+           "This resource candidate has no admitted persisted split set. Legacy mutation controls remain unavailable."
+           "Dispatch this work item to create a candidate. Real persisted splits will appear here for review."))
+
+    :else
+    ($ segment-detail-panel {:segment segment :form form :saving saving
+                             :on-change set-form :on-submit on-submit
+                             :read-only? read-only? :content-source content-source})))
+
 (defnc segment-review-pane
-  [{:keys [work-row segment form saving set-form on-submit read-only? content-source]}]
+  [{:keys [work-row] :as props}]
   (d/aside {:class-name "flex w-[440px] shrink-0 flex-col overflow-hidden"}
            (d/div {:class-name "shrink-0 border-b border-slate-800 px-4 py-3"}
-                  (d/h3 {:class-name "text-sm font-semibold text-slate-200"} "Segment Review"))
+                  (d/h3 {:class-name "text-sm font-semibold text-slate-200"}
+                        (if (split-review/review work-row)
+                          "Split Review"
+                          "Segment Review")))
            (d/div {:class-name "min-h-0 flex-1 overflow-auto p-4"}
-                  (cond
-                    (logic/blocked-resource-candidate? work-row)
-                    (d/p {:class-name "text-sm text-rose-300"}
-                         (blocked-candidate-copy work-row))
-
-                    (and (logic/work-row? work-row)
-                         (not (logic/legacy-candidate? work-row)))
-                    (d/p {:class-name "text-sm text-slate-400"}
-                         (if (logic/candidate-present? work-row)
-                           "This resource candidate has no admitted persisted split set. Legacy mutation controls remain unavailable."
-                           "Dispatch this work item to create a candidate. Real persisted splits will appear here for review."))
-
-                    :else
-                    ($ segment-detail-panel {:segment segment :form form :saving saving
-                                             :on-change set-form :on-submit on-submit
-                                             :read-only? read-only?
-                                             :content-source content-source})))))
+                  ($ segment-review-content {& props}))))
 
 (defnc translation-review-layout
   [{:keys [project set-project target-lang set-target-lang manifest show-config?
            toggle-config on-export notice dismiss-notice error dismiss-error
            loading documents selected set-selected detail detail-loading saving
-           seg-idx set-seg-idx form set-form selected-segment on-review
-           on-publication-approval on-translation-dispatch on-segment-submit]}]
+           seg-idx set-seg-idx form set-form selected-segment on-review on-resource-review
+           on-publication-approval on-translation-dispatch
+           on-segment-submit on-segment-skip]}]
   (d/div {:class-name "flex min-h-0 flex-1 flex-col overflow-hidden"}
          ($ review-header {:project project :set-project set-project
                            :target-lang target-lang :set-target-lang set-target-lang
@@ -502,19 +564,18 @@
                 ($ document-list-pane {:loading loading :documents documents
                                        :selected selected :set-selected set-selected})
                 (d/main {:class-name "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-slate-800"}
-                ($ document-pane {:selected selected :detail detail
-                                          :project project
-                                          :detail-loading detail-loading :saving saving
-                                          :seg-idx seg-idx :set-seg-idx set-seg-idx
-                                          :on-review on-review
-                                          :on-publication-approval on-publication-approval
-                                          :on-translation-dispatch on-translation-dispatch}))
+                ($ document-pane {:selected selected :detail detail :project project
+                                  :detail-loading detail-loading :saving saving
+                                  :seg-idx seg-idx :set-seg-idx set-seg-idx
+                                  :on-review on-review :on-resource-review on-resource-review
+                                  :on-publication-approval on-publication-approval :on-translation-dispatch on-translation-dispatch}))
                 ($ segment-review-pane {:work-row selected :segment selected-segment
                                         :form form :saving saving :set-form set-form
                                         :read-only? (not (logic/legacy-mutation-admitted?
                                                           selected project))
                                         :content-source (:content_source selected)
-                                        :on-submit on-segment-submit}))))
+                                        :on-submit on-segment-submit
+                                        :on-skip on-segment-skip}))))
 
 ;; ── page ─────────────────────────────────────────────────────────────────────
 
@@ -541,10 +602,7 @@
        (set-detail! nil)
        (set-seg-idx! nil)
        nil)))
-  (hooks/use-effect
-   [(:id selected-segment)]
-   (set-form! (logic/segment-review-form selected-segment))
-   nil))
+  (form-sync/use-review-form-sync! selected-segment set-form!))
 
 (defnc translation-review-page []
   (let [[project set-project!] (hooks/use-state "devel")
@@ -572,7 +630,8 @@
                  :set-saving! set-saving! :set-notice! set-notice!}
         reload-docs! #(controller/load-documents! project target-lang
                                                    document-load-seq setters)
-        selected-segment (logic/find-segment detail seg-idx)]
+        selected-segment (logic/find-segment detail seg-idx)
+        next-split-index (split-review/next-split-index (:segments detail) seg-idx)]
     (use-review-loads!
      {:project project :target-lang target-lang :selected selected
       :selected-segment selected-segment :setters setters
@@ -593,10 +652,15 @@
         :saving saving :seg-idx seg-idx :set-seg-idx set-seg-idx!
         :form form :set-form set-form! :selected-segment selected-segment
         :on-review #(run-document-review! selected % project setters reload-docs!)
-        :on-publication-approval
-        #(run-publication-approval! selected setters reload-docs!)
+        :on-resource-review #(run-resource-bulk-submit! selected form % setters reload-docs!)
+        :on-publication-approval #(run-publication-approval! selected setters reload-docs!)
         :on-translation-dispatch
         #(run-translation-dispatch! selected setters reload-docs!)
         :on-segment-submit
-        #(run-segment-submit! selected-segment form % selected project
-                              setters reload-docs!)})))
+        #(if (:resource_split selected-segment)
+           (run-resource-split-submit! selected selected-segment form %
+                                       setters reload-docs!)
+           (run-segment-submit! selected-segment form % selected project
+                                setters reload-docs!))
+        :on-segment-skip (when (some? next-split-index)
+                           #(set-seg-idx! next-split-index))})))

@@ -14,7 +14,7 @@ category: tasks
 > from `knoxx-translation-split-memory-feedback`. This P2 card generalizes event history across
 > transduction after the P0 product slice; it does not block that slice or own segmentation, the
 > review UI, or correction-to-memory retrieval policy.
-
+>
 > Parent epic: `knoxx-transduction-provider-pipeline`
 
 ## Purpose

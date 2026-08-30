@@ -98,10 +98,16 @@
 
 (def ReviewPrincipal
   "Server-authenticated reviewer identity; never accepted inside a review request."
-  [:map {:closed true}
-   [:principal/user-id NonBlankString]
-   [:principal/user-email {:optional true} [:maybe NonBlankString]]
-   [:principal/membership-id {:optional true} [:maybe NonBlankString]]])
+  [:and
+   [:map {:closed true}
+    [:principal/user-id {:optional true} [:maybe NonBlankString]]
+    [:principal/user-email {:optional true} [:maybe NonBlankString]]
+    [:principal/membership-id {:optional true} [:maybe NonBlankString]]]
+   [:fn {:error/message "a reviewer needs at least one durable identity"}
+    #(some nonblank-string?
+           [(:principal/user-id %)
+            (:principal/user-email %)
+            (:principal/membership-id %)])]])
 
 (def SplitReviewRequest
   "The closed judgment and correction shape a review client may submit."
@@ -169,6 +175,118 @@
    [:translation-memory/target-text NonBlankString]
    [:translation-memory/correction-id {:optional true} [:maybe NonBlankString]]
    [:translation-memory/review-receipt-id NonBlankString]])
+
+(def TranslationExecutionSnapshot
+  "The exact agent execution policy admitted before a provider can run."
+  [:map {:closed true}
+   [:translation-execution/agent-id NonBlankString]
+   [:translation-execution/model NonBlankString]
+   [:translation-execution/thinking NonBlankString]
+   [:translation-execution/system-prompt NonBlankString]
+   [:translation-execution/tool-ids [:vector NonBlankString]]
+   [:translation-execution/digest NonBlankString]])
+
+(def TranslationMemoryStatus
+  "Whether memory retrieval found examples, found none, or failed explicitly."
+  [:enum :found :empty :failed])
+
+(def TranslationMemorySnapshot
+  "The exact reviewed examples pinned into one translation turn."
+  [:and
+   [:map {:closed true}
+    [:translation-memory-snapshot/status TranslationMemoryStatus]
+    [:translation-memory-snapshot/examples [:vector TranslationMemoryExample]]
+    [:translation-memory-snapshot/error {:optional true} [:maybe NonBlankString]]]
+   [:fn {:error/message "memory status must agree with its examples and error"}
+    (fn [snapshot]
+      (let [status (:translation-memory-snapshot/status snapshot)
+            examples (:translation-memory-snapshot/examples snapshot)
+            error (:translation-memory-snapshot/error snapshot)]
+        (case status
+          :found (and (seq examples) (nil? error))
+          :empty (and (empty? examples) (nil? error))
+          :failed (and (empty? examples) (nonblank-string? error))
+          false)))]] )
+
+(def TranslationTurnAdmission
+  "One atomic, immutable pre-provider translation turn."
+  [:map {:closed true}
+   [:translation-turn/id NonBlankString]
+   [:translation-turn/dispatch-key NonBlankString]
+   [:translation-turn/run-id NonBlankString]
+   [:translation-turn/admitted-at evidence/Instant]
+   [:translation-turn/manifest SplitManifest]
+   [:translation-turn/candidate-claim CandidateClaim]
+   [:translation-turn/execution TranslationExecutionSnapshot]
+   [:translation-turn/memory TranslationMemorySnapshot]])
+
+(def EffectiveReviewHistories
+  "Complete review histories keyed by the split identity they describe."
+  [:map-of NonBlankString SplitReviewHistory])
+
+(def EffectiveCandidateMember
+  "One approved target member selected from immutable candidate and review facts."
+  [:map {:closed true}
+   [:effective-candidate/split-id NonBlankString]
+   [:effective-candidate/split-index [:int {:min 0}]]
+   [:effective-candidate/candidate-attempt-id NonBlankString]
+   [:effective-candidate/candidate-digest NonBlankString]
+   [:effective-candidate/review-receipt-id NonBlankString]
+   [:effective-candidate/review-receipt-digest NonBlankString]
+   [:effective-candidate/target-text NonBlankString]
+   [:effective-candidate/target-digest NonBlankString]
+   [:effective-candidate/correction-id {:optional true} [:maybe NonBlankString]]])
+
+(def EffectiveCandidateSet
+  "The complete reviewed target selected in manifest order.
+
+  `:effective-candidate-set/content-digest` authenticates the composed target
+  bytes. The separate lineage digest also binds the raw candidate set and every
+  effective review receipt, so byte-identical re-review remains a new reviewed
+  revision rather than silently inheriting prior publication authority."
+  [:map {:closed true}
+   [:effective-candidate-set/id NonBlankString]
+   [:effective-candidate-set/manifest-id NonBlankString]
+   [:effective-candidate-set/candidate-set-id NonBlankString]
+   [:effective-candidate-set/candidate-set-digest NonBlankString]
+   [:effective-candidate-set/revision evidence/ConcreteRevision]
+   [:effective-candidate-set/digest NonBlankString]
+   [:effective-candidate-set/content-digest NonBlankString]
+   [:effective-candidate-set/text NonBlankString]
+   [:effective-candidate-set/members
+    [:vector {:min 1} EffectiveCandidateMember]]])
+
+(def EffectiveCandidateNotReadyReason
+  "Why one manifest split cannot yet contribute effective target bytes."
+  [:enum :review-missing :review-in-review :review-rejected])
+
+(def EffectiveCandidateNotReadySplit
+  "A non-content-bearing explanation for one split blocking composition."
+  [:map {:closed true}
+   [:effective-candidate-not-ready/split-id NonBlankString]
+   [:effective-candidate-not-ready/split-index [:int {:min 0}]]
+   [:effective-candidate-not-ready/reason EffectiveCandidateNotReadyReason]
+   [:effective-candidate-not-ready/review-status
+    {:optional true} ReviewStatus]
+   [:effective-candidate-not-ready/review-receipt-id
+    {:optional true} NonBlankString]])
+
+(def EffectiveCandidateSetRefusal
+  "Typed evidence that composition is blocked without exposing partial bytes."
+  [:map {:closed true}
+   [:refusal/type [:= :effective-candidate-set/not-ready]]
+   [:refusal/splits
+    [:vector {:min 1} EffectiveCandidateNotReadySplit]]])
+
+(def EffectiveCandidateSetResult
+  "Ready effective content or a typed, content-free not-ready refusal."
+  [:or
+   [:map {:closed true}
+    [:effective-candidate-set/status [:= :ready]]
+    [:effective-candidate-set/value EffectiveCandidateSet]]
+   [:map {:closed true}
+    [:effective-candidate-set/status [:= :not-ready]]
+    [:effective-candidate-set/refusal EffectiveCandidateSetRefusal]]])
 
 (defn assert-valid!
   "Return `value` when it satisfies `schema`, otherwise throw named evidence."

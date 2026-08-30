@@ -13,8 +13,10 @@
   from `infra.publication-runtime` because a translation submission arrives on
   an agent turn rather than on a reconcile request, and the two have no shared
   lifecycle."
-  (:require [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
+  (:require [knoxx.backend.domain.node.crypto :as crypto]
+            [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
             [knoxx.backend.infra.stores.translation-evidence-registry :as evidence-registry]
+            [knoxx.backend.infra.stores.translation-split-registry :as split-registry]
             [knoxx.backend.infra.translation-agent-sink :as sink]))
 
 (defn unavailable
@@ -36,7 +38,10 @@
     "publication content root is not configured, so translated content has nowhere to be written"
 
     (nil? (evidence-registry/current))
-    "translation evidence persistence is not configured, so a translation cannot be recorded"))
+    "translation evidence persistence is not configured, so a translation cannot be recorded"
+
+    (nil? (split-registry/current))
+    "translation split persistence is not configured, so split candidates cannot be recorded"))
 
 (defn deps
   "The real dependencies of the contract-backed sink.
@@ -47,6 +52,8 @@
   [config]
   {:content-root (:publication-content-root config)
    :evidence-store (evidence-registry/current)
+   :split-store (split-registry/current)
+   :digest-hex crypto/sha256-hex
    :clock (fn [] (.toISOString (js/Date.)))
    ;; Built here rather than inside the sink, for the reason
    ;; `routes.translation.resolve-evidence-safely!` gives about its own copy:

@@ -4,9 +4,11 @@
   Resource contracts own documents and publication intent. Split manifests,
   candidate claims, and candidate sets are immutable translation authority.
   Review memory is a derived projection of canonical evaluation evidence."
-  (:require [knoxx.backend.law.translation-split-identity :as identity]
+  (:require [knoxx.backend.law.translation-split-effective :as effective]
+            [knoxx.backend.law.translation-split-identity :as identity]
             [knoxx.backend.law.translation-split-review :as review-law]
-            [knoxx.backend.law.translation-split-schema :as schema]))
+            [knoxx.backend.law.translation-split-schema :as schema]
+            [knoxx.backend.law.translation-split-turn :as turn]))
 
 ;; One public namespace keeps callers stable while the implementations remain
 ;; independently reusable and reviewable.
@@ -57,6 +59,38 @@
 (def effective-review-receipt
   "Select the deterministic latest receipt from complete durable history."
   review-law/effective-review-receipt)
+
+(def execution-snapshot
+  "Snapshot and digest the exact agent policy one turn will execute."
+  turn/execution-snapshot)
+
+(def assert-execution-integrity!
+  "Authenticate a persisted agent execution snapshot."
+  turn/assert-execution-integrity!)
+
+(def memory-snapshot
+  "Close one truthful prior-review memory lookup outcome."
+  turn/memory-snapshot)
+
+(def translation-turn-admission
+  "Bind dispatch, split authority, execution, and memory before provider work."
+  turn/translation-turn-admission)
+
+(def assert-turn-integrity!
+  "Authenticate one persisted pre-provider turn aggregate."
+  turn/assert-turn-integrity!)
+
+(def effective-candidate-set
+  "Compose a reviewed target only when every manifest split is approved."
+  effective/effective-candidate-set)
+
+(def assert-effective-candidate-set-integrity!
+  "Authenticate one persisted complete reviewed target against current history."
+  effective/assert-effective-candidate-set-integrity!)
+
+(def reviewed-output
+  "Select the current ready or revoking output after any split review change."
+  effective/reviewed-output)
 
 (defn- split-member
   "Find one source split in an authenticated manifest."
