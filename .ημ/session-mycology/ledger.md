@@ -317,3 +317,13 @@
   spore: none
   receipt-refs: 2026-08-30T20:10:52.933Z
   note: Event uniqueness constrains claim admission; migration retries need a coordinate-independent legacy slot; model-selected splits require a non-authorizing proposal before the bound turn; and cross-repository atomicity must stay behind a Knoxx-owned adapter unless explicitly authorized.
+
+- ts: 2026-08-30T20:24:45.284Z
+  session: codex/knoxx-board-reconcile
+  task: Authorize proposal-model selection and quarantine ambiguous projection outcomes
+  p-efficiency: 0.91
+  p-friction: 0.44
+  p-skill-candidate: 0.48
+  spore: none
+  receipt-refs: 2026-08-30T20:24:45.284Z
+  note: A source-only proposal capability still needs server-selected model authority; pin config version and model before launch. A coordinate-only remote upsert cannot prove causal idempotency after a lost response, so serialize it locally, reconcile exact payload under the lease, and otherwise fail closed without redispatch or later overwrite.

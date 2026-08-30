@@ -113,12 +113,16 @@ config record and the later produced-candidate event are distinct lifecycle fact
 may partially install or reinterpret the shared identity.
 
 The initiating translation operation owns an immutable `TranslationTurnClaim` before any bound
-translation provider/model session can produce a candidate or receive `save_translation`. A
-preceding unbound `SegmentationProposal` session may inspect only manifest-bound canonical source
-bytes and propose logical boundaries, but it cannot call `save_translation`, observe translation
-config, mint attempt/effect identity, or persist candidate/history. The server validates each
-proposal against the admitted source revision, derives the complete coordinates and stable
-attempt/effect ids, atomically installs the claim, and launches a separate bound translation turn.
+translation provider/model session can produce a candidate or receive `save_translation`. Before a
+preceding unbound `SegmentationProposal` session, the server resolves an immutable
+`ProposalModelSelection` from Knoxx config authority and pins its config resource/version plus
+catalog model id. The session receives that selected model and manifest-bound canonical source
+bytes, but no config credential or payload; it may propose logical boundaries but cannot call
+`save_translation`, mint attempt/effect identity, or persist candidate/history. The server validates
+each proposal against the admitted source revision, derives the complete coordinates and stable
+attempt/effect ids, and exact-matches later config admission to the proposal selection. Selection
+drift discards the proposal and restarts preflight. Only an equal selection may atomically install
+the claim and launch a separate bound translation turn.
 That claim binds a non-empty, canonically ordered collection of
 provider-neutral `TranslationAttemptClaim` members keyed by complete canonical
 `AttemptEffectIdentity`, not by `SegmentCoordinate`, and validates a second unique index over the

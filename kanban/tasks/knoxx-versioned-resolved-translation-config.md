@@ -205,12 +205,15 @@ pre-admitted `AttemptEffectIdentity`. A duplicate complete canonical `AttemptEff
 repeated canonical `AttemptIdentity`, and any non-canonical encoding are rejected before persistence,
 while a repeated coordinate alone is not a duplicate. The claim identity/digest makes member
 addition, removal, or replacement a conflict after admission.
-An unbound `SegmentationProposal` session may precede this admission only to propose logical slices
-over manifest-bound canonical source bytes. It cannot call `save_translation`, observe or admit
-resolved config, invoke the translation provider, mint attempt/effect identity, or persist a
-candidate. After the server validates the proposal against the admitted source revision, it derives
-the complete member identities, performs this atomic config admission, and launches a separate bound
-translation turn.
+An unbound `SegmentationProposal` session may precede this admission only after server-owned
+preflight resolves an immutable `ProposalModelSelection` from Knoxx config authority and pins its
+config resource/version plus catalog model id. The session receives that selected model and
+manifest-bound canonical source bytes, but no config credential or payload. It cannot call
+`save_translation`, admit config, mint attempt/effect identity, or persist a candidate. After the
+server validates the proposal against the admitted source revision, it derives the complete member
+identities and exact-matches this atomic config admission to the pinned proposal selection. A changed
+selection discards the proposal and restarts preflight; only an equal selection launches the separate
+bound translation turn.
 Publication dispatch and ordinary-chat preflight use distinct turn-claim variants but the same
 turn-wide admission law; an unbound chat turn does not receive `save_translation`. Before config
 observation, the canonical claim binds its variant and stable variant-specific initiator facts:

@@ -122,12 +122,19 @@ and sole-writer rules.
     the sender-constrained batch/job capability may authorize a manifest-scoped read-only config GET
     as its sole authority; it can never authorize PATCH, and API key plus capability is rejected.
 12. Preserve the live worker's model-selected logical splits through two explicit phases. A first,
-   unbound `SegmentationProposal` run receives the proposal-scoped source manifest and cannot call
-   `save_translation`, observe translation config, or persist a candidate. It returns only proposed
-   document/span boundaries. Server code exact-matches those boundaries to canonical source bytes,
+   server-owned broker resolves an immutable `ProposalModelSelection` from the Knoxx translation
+   config boundary before launch. That selection pins the config resource/version and catalog model
+   id used to start the unbound `SegmentationProposal` run; the model receives no config-repository
+   credential and cannot choose or widen the selection. The proposal run receives only that selected
+   model plus the proposal-scoped source manifest and cannot call `save_translation`, read the config
+   repository or config payload, or persist a candidate. It returns only proposed document/span
+   boundaries. Server code exact-matches those boundaries to canonical source bytes,
    rejects gaps, overlaps, ambiguity, reordering, or source drift, derives the complete
    `SegmentCoordinate` plus stable attempt/effect ids, atomically installs the immutable translation
-   manifest and turn claim, and only then starts a separate bound translation turn. Server-owned
+   manifest and turn claim, and exact-matches config admission to the pinned proposal selection. A
+   changed selection discards the proposal and restarts preflight; it never mixes one model's spans
+   with another model/config snapshot. Only then does the server start a separate bound translation
+   turn. Server-owned
    launch code for that bound turn attaches an immutable authority envelope containing capability id, service principal,
    carrier type, batch or job id, membership id when applicable, organization id, allowed operations,
    translation-manifest id and digest, every complete immutable segment coordinate, Knoxx-owned authority epoch,
@@ -194,10 +201,19 @@ and sole-writer rules.
 18. Serialize delegated segment effects and carrier state on that Knoxx-owned manifest and epoch.
     One local transaction validates active carrier state, manifest, epoch, full
     `AttemptEffectIdentity`, and canonical retry equality; appends the immutable attempt event; claims
-    its effect exactly once; and enqueues the existing `save-openplanner-segment!` call. The outbox
-    adapter invokes only the existing stable OpenPlanner boundary, observes the resulting projection,
-    and records an immutable receipt. Equal retries reuse the local event/effect/receipt and cannot
-    create another semantic attempt. A terminal CAS uses expected manifest, epoch, and transition id
+    its logical effect exactly once; and enqueues the existing `save-openplanner-segment!` call. A
+    Knoxx-owned `ProjectionDispatchLease` serializes projection intents by complete
+    `SegmentCoordinate`, persists the intended attempt ordinal plus canonical projection-payload
+    digest, and permits at most one remote invocation for that intent. The existing OpenPlanner sink
+    is not a causal/idempotency authority: it stores neither attempt/effect identity nor the lease.
+    Therefore an acknowledged response records the immutable local receipt, while a lost or ambiguous
+    response never causes automatic redispatch. While the coordinate lease blocks later projection
+    intents, the adapter may reconcile an exact read-back of the intended canonical payload as the
+    completed effect. Any non-matching or unprovable outcome becomes a durable
+    `AmbiguousProjectionOutcome`: carrier completion and later projection dispatch on that coordinate
+    remain blocked for operator resolution, with no claimed receipt and no overwrite. Equal retries
+    reuse the local event/effect state and cannot create another semantic attempt or remote call. A
+    terminal CAS uses expected manifest, epoch, and transition id
     and serializes with every leased outbox dispatch, so an effect is either observed before terminal
     linearization or never sent; an old-epoch intent is refused locally with zero later dispatch.
 19. Keep scopes honest while removing second terminal truth. Immutable translation attempt/effect
@@ -302,9 +318,11 @@ and sole-writer rules.
    relevant full suites, real-server probes, compile/typecheck, and strict changed-surface lint with
    zero warnings.
 10. Exercise the live dynamic-split path as an unbound proposal run followed by admission and a
-    separate bound translation turn. Prove the proposal run can read only source-manifest bytes,
-    emits a `SegmentationProposal`, and cannot call `save_translation`, observe config, or persist a
-    candidate. Reject ambiguous, gapped, overlapped, duplicated, reordered, and source-drifted
+    separate bound translation turn. Prove the broker resolves and pins `ProposalModelSelection`
+    from the Knoxx config boundary before the proposal turn, the run receives that selected model and
+    source-manifest bytes but no config credential or payload, emits a `SegmentationProposal`, and
+    cannot call `save_translation` or persist a candidate. Reject ambiguous, gapped, overlapped,
+    duplicated, reordered, and source-drifted
     proposals before admission. Capture the bound run and prove its immutable authority envelope binds
     the complete coordinate, capability id, translation manifest, Knoxx epoch, translation resource
     scope, immutable turn-claim digest, and every pre-admitted `AttemptEffectIdentity`. Make `save_translation`
@@ -315,6 +333,8 @@ and sole-writer rules.
     input and `save_translation` arguments; every variant fails before OpenPlanner. The valid
     model-proposed logical boundary exact-matches one authoritative source slice before the bound
     turn, persists canonical source bytes once, and leaves logical segmentation behavior unchanged.
+    Change the config version/model between proposal and admission and prove preflight discards the
+    proposal and restarts instead of launching a mixed-snapshot bound turn.
 11. Exercise a completion/revocation race at agent start, before the first effect, and during an
     in-flight `save_translation`, plus a completion-versus-revocation race on one expected epoch.
     Exactly one terminal CAS wins; the authoritative transition invalidates the epoch-bound fence and
@@ -371,7 +391,11 @@ and sole-writer rules.
     full distinct `AttemptEffectIdentity`, manifest id/digest, expected epoch, and canonical payload
     reach the atomic local writer and existing adapter call. An unknown or substituted attempt,
     effect, manifest, or epoch produces no ledger claim or outbox dispatch; a same-identity equal
-    retry returns the original receipt.
+    retry returns the original receipt. Drop the response after the existing sink applies the first
+    write: the coordinate lease prevents the second retranslation and any repeat remote call until an
+    exact canonical projection read-back records the first receipt. Return a non-matching or
+    permanently unprovable read-back and prove `AmbiguousProjectionOutcome` blocks completion and
+    later same-coordinate projection dispatch without fabricating a receipt or overwriting state.
 
 ## Non-goals
 
@@ -394,7 +418,9 @@ target. Delegated ingestion can reach only the OpenPlanner segment sink. Every b
 the one Knoxx-owned manifest+epoch CAS and outbox gateway over the existing OpenPlanner adapter,
 which produces zero post-transition dispatches without erasing immutable
 translation/publication evidence. The proposal phase preserves model-selected logical splits, and
-the required happy paths remain compatible.
+the projection adapter never treats a coordinate-only upsert as causal/idempotency evidence: an
+ambiguous response is reconciled under a per-coordinate lease or fails closed. The required happy
+paths remain compatible.
 Issue #283 preserves typed member-key behavior and read-only delegated config, and #2 can reject the legacy
 collision without breaking either worker. Board PR #286 remains planning-only proof, not delivery of
 this runtime.
