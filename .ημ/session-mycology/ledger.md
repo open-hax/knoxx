@@ -387,3 +387,13 @@
   spore: none
   receipt-refs: 2026-08-30T21:13:57.573Z
   note: An authenticated proxy may authorize a call without exporting the caller's reusable credentials; build downstream headers from a closed allowlist. Initial password login needs a typed verified-bootstrap handoff rather than public header-shaped identity.
+
+- ts: 2026-08-30T21:17:59.306Z
+  session: codex/knoxx-board-reconcile
+  task: Fence migration by legacy identity and inventory remaining bearer routes
+  p-efficiency: 0.92
+  p-friction: 0.35
+  p-skill-candidate: 0.44
+  spore: none
+  receipt-refs: 2026-08-30T21:17:59.306Z
+  note: Coordinate-independent migration identity also needs coordinate-independent read/write authority; bind the legacy row slot before coordinate admission. Credentialed-route inventories must include optional-context voice and translation wrappers, not only shared proxy modules.

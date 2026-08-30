@@ -136,6 +136,8 @@ eventual rejection and cannot complete until that projected child is green.
   the separately registered `infra/routes/app.cljs` handlers under `/api/data/op/*`,
   `/api/data/mongo/collections`, `/api/data/mongo/list`, `/api/data/mongo/query`, and
   `/api/data/jobs/build-semantic-edges`, plus
+  `infra/routes/voice.cljs` `GET /api/voice/tts/health` and `POST /api/voice/tts`, plus
+  every bearer-backed `infra/routes/translation.cljs` `/api/translations/*` registration, plus
   `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs`. Include every Knoxx route that
   accepts inbound data or headers and then calls a downstream service with Knoxx-held credentials;
   record which headers are constructed locally, copied, or forwarded.
@@ -252,6 +254,10 @@ eventual rejection and cannot complete until that projected child is green.
    `/api/data/jobs/build-semantic-edges` registration in `infra/routes/app.cljs`; each must reject
    before `openplanner-client` can attach the server bearer credential, with zero downstream reads,
    queries, jobs, or mutations.
+   Direct no-context probes also cover `GET /api/voice/tts/health`, `POST /api/voice/tts`, and every
+   `/api/translations/*` registration. A nil context—including when the policy database is
+   disabled—must reject before the Voice Gateway API key or OpenPlanner bearer credential is
+   attached, with zero downstream voice, translation read, or translation mutation calls.
 11. A direct `GET /api/openplanner/v1/sessions` negative probe has no valid Knoxx credential and may
    include conflicting identity headers. The `openplanner-client/sessions!` call count remains zero,
    no session rows or enrichment data are disclosed, and the canonical protected-request failure is

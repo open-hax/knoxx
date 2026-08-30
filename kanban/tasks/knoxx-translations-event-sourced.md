@@ -288,19 +288,27 @@ projection, resumes from durable checkpoints, and keeps the existing read endpoi
 every migrated grouping key can be served from the new projection.
 
 Partial migration uses one server-owned, compare-and-swap `MigrationAuthority` marker per
-grouping key with only `:legacy` or `:events`. While `:legacy`, reads use the legacy row.
-Migration writes and verifies the deterministic initial event and projection first, then
-atomically advances the marker; before that CAS the event/projection is staged evidence, not
-read authority. Once `:events`, reads use the projection only and never fall back to or
-dual-write the legacy row.
+`LegacyAuthorityKey = (immutable legacy store/collection namespace, persisted legacy-row primary
+key)`, not per new grouping key. For an existing row this is the same persisted row identity used
+by `LegacyMigrationIdentity`; an absent-row bootstrap deterministically reserves the potential
+legacy primary-key slot. The marker stores `:legacy` or `:events` plus the one bound complete tagged
+coordinate. While `:legacy`, reads use the legacy row. Migration writes and verifies the
+deterministic initial event and projection first, then atomically advances the marker; before that
+CAS the event/projection is staged evidence, not read authority. Once `:events`, reads use the
+projection only and never fall back to or dual-write the legacy row. A distinct complete coordinate
+that resolves to an already bound `LegacyAuthorityKey` returns a typed migration-coordinate
+conflict before coordinate-specific admission, cutover, or writes.
 
 Marker absence is a bootstrap pre-state, not a third authority value. Every first read,
-migration, or save acquires the same per-key migration/admission fence and tests marker absence
+migration, or save derives and acquires the same legacy-authority migration/admission fence before
+any coordinate grouping-key fence, then tests marker absence
 and legacy-row existence in one transactionally consistent decision. When a legacy row exists,
-one compare-and-swap claims `:legacy` and the migration path below owns cutover. When no legacy
-row exists, a first save uses one atomic store transaction to compare both facts as still absent,
-append its canonical event with the next ordinal, install its projection, and set the marker to
-`:events`; no marker-only or event-only intermediate state is visible. A read or migration that
+one compare-and-swap claims `:legacy`, binds its `LegacyMigrationIdentity` to exactly one complete
+tagged coordinate, and gives that migration path cutover authority. When no legacy row exists, a
+first save uses one atomic store transaction to compare both facts as still absent, bind the
+`LegacyAuthorityKey` to its complete coordinate, append its canonical event with the next ordinal,
+install its projection, and set the marker to `:events`; no marker-only or event-only intermediate
+state is visible. A read or migration that
 finds no row may establish an empty `:events` authority, after which a save uses normal event
 admission.
 
@@ -312,12 +320,13 @@ crash after it exposes the complete chosen authority and, for a saving caller, i
 and projection. Thus no candidate waits on a marker that nobody owns, disappears between legacy
 discovery and cutover, or is written to both authorities.
 
-`save_translation` acquires the same per-key migration/admission fence. For a legacy key it
+`save_translation` acquires the same legacy-authority migration/admission fence before its
+coordinate grouping-key fence. For a legacy key it
 completes/reuses the initial event and projection, advances the marker, and only then appends
 the new canonical attempt; it never writes both authorities. A crash before marker advancement
 leaves legacy authoritative and retryable; a crash after advancement leaves events
-authoritative and replay repairs any projection checkpoint. Different grouping keys may cut
-over independently.
+authoritative and replay repairs any projection checkpoint. Only distinct legacy-authority keys
+may cut over independently.
 
 ## Boundary rules
 
@@ -411,12 +420,10 @@ land a migration that leaves that endpoint erroring.
   source-text digest plus `:historical-source-unavailable` without naming the current revision.
   Provenance-sensitive evaluation/training/publication and appending a new attempt to that unknown
   grouping key fail closed; a later verified retranslation uses a separate normal coordinate.
-- Migration fixtures seed two legacy rows that collide under
-  `(org_id, document_id, segment_index, target_lang)` but differ by project, garden, source locale,
-  source revision, or source span. The complete-coordinate migration preserves both, installs the
-  event unique index on `AttemptIdentity` and the current projection unique index on
-  `SegmentCoordinate`, replaces every legacy lookup atomically, and never lets one overwrite or
-  advance the other.
+- Migration fixtures address one legacy row concurrently through two complete coordinates that
+  differ by project, garden, source locale, source revision, or source span. Both resolve the same
+  `LegacyAuthorityKey`; exactly one coordinate binding wins, and the other receives the typed
+  migration-coordinate conflict before a second marker, cutover, event, projection, or write.
 - An evaluation receipt can bind to a candidate that remains addressable after a newer
   translation exists.
 - `save_translation` retains `destructiveHint: true` while it can replace current projection
