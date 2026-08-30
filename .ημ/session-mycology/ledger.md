@@ -177,3 +177,13 @@
   spore: none
   receipt-refs: 2026-08-30T01:51:27.304Z
   note: An adopted issue is not planning-ready until its premise is checked against the live tree; preserve partial repairs, name every active producer and consumer, and re-estimate when the real surface is wider.
+
+- ts: 2026-08-30T02:03:01.007Z
+  session: codex/knoxx-board-reconcile
+  task: Close exact-head server-boundary and optional-field review gaps
+  p-efficiency: 0.89
+  p-friction: 0.35
+  p-skill-candidate: 0.43
+  spore: none
+  receipt-refs: 2026-08-30T02:03:01.007Z
+  note: Frontend identity cleanup is incomplete while the server trusts the same wire headers; preserve schema-optional fields while rejecting malformed present values.

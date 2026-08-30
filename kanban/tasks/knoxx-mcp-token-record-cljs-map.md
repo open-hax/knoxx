@@ -54,8 +54,11 @@ silently become `nil`.
 
 - Authentication-contract and OAuth-store producers validate against the existing
   `law.mcp-token/TokenRecord` shape.
-- Missing or malformed membership, actor, organization, email, or tool fields fail at the
-  boundary with the canonical authentication error; no field typo silently narrows authority.
+- Missing or malformed required `accessToken`, `clientId`, `userEmail`, or `tools` fields fail at
+  the boundary with the canonical authentication error. Absent optional `membershipId`,
+  `orgSlug`, or `actorId` fields remain valid exactly as the existing schema and
+  `grant->token-record` require; when an optional field is present, a blank or wrong-typed value
+  fails validation. No field typo silently narrows authority.
 - A malformed or legacy OAuth token row fails closed before policy lookup, actor selection, or
   tool registration.
 - Tool order and allow/deny semantics remain unchanged.
@@ -71,7 +74,8 @@ silently become `nil`.
 3. Exercise context resolution, actor reassignment refusal, tool intersection, token listing, and
    malformed/legacy OAuth rows through the real OAuth producer.
 4. Exercise the trusted-loopback producer through the same consumers and prove both branches have
-   byte-equivalent field semantics without an early native conversion.
+   byte-equivalent field semantics without an early native conversion, including legitimate
+   absent optional identity fields and malformed present optional fields.
 5. Add a focused source/namespace regression forbidding token-record raw interop and JSON
    round-tripping in ordinary infra namespaces.
 6. Run focused MCP/auth/store tests, the full backend suite, server compile, and strict

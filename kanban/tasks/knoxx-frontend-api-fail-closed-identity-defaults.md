@@ -1,15 +1,15 @@
 ---
 uuid: knoxx-frontend-api-fail-closed-identity-defaults
-title: Fail closed instead of injecting frontend API identity defaults
+title: Fail closed instead of trusting browser-supplied API identity
 status: incoming
 priority: P1
-points: 3
-labels: tasks, 3sp, frontend, security, auth
+points: 5
+labels: tasks, 5sp, frontend, backend, security, auth
 created_at: 2026-08-30T01:19:13.727Z
 category: tasks
 ---
 
-# Fail closed instead of injecting frontend API identity defaults
+# Fail closed instead of trusting browser-supplied API identity
 
 > GitHub issue: [#2](https://github.com/open-hax/knoxx/issues/2)
 > Complements: `knoxx-tenant-fail-closed-route-guard` (#175; duplicate intake #9 is closed) and
@@ -29,11 +29,26 @@ translations. The admin surface also exposes `getKnoxxAuthIdentity` / `setKnoxxA
 request must never acquire authentication authority from any hard-coded, build-time, or
 mutable-browser identity fallback.
 
+Removing those emitters is necessary but not sufficient. The current server also promotes the
+same client-supplied identity headers into authority. `infra/auth/authz.cljs` function
+`resolve-request-context!` selects `x-knoxx-user-email` or `x-knoxx-membership-id` before the
+cookie resolver. In `infra/auth/session.cljs`, `create-session-hook` skips cookie hydration when
+either header is already present, and `resolve-auth-context` sends those headers directly to
+policy context resolution before checking an API key or cookie. A direct client can therefore
+produce a non-nil spoofed context even after every frontend helper is repaired; #175's nil-context
+guard cannot constrain authority that was synthesized before the route guard.
+
 ## Scope
 
 - Inventory both central request families and every direct `buildKnoxxAuthHeaders` consumer:
   `frontend/src/lib/api/core.ts`, `frontend/src/cljs/knoxx/frontend/lib/api.cljs`, their TypeScript
   and CLJS callers, and the generated bridge rebuilt from source.
+- Repair the server authentication boundary in `backend/src/cljs/knoxx/backend/infra/auth/`:
+  inventory `authz/resolve-request-context!`, `session/create-session-hook`,
+  `session/resolve-auth-context`, and every path that converts request headers into a policy
+  context. Client-supplied identity headers must be rejected or stripped before context
+  resolution; any internal identity handoff must be distinguishable from untrusted wire input and
+  derived from an already-verified session or API key.
 - Remove storage-derived, build-time-default, and caller-supplied identity-header injection from
   production frontend requests. `knoxx_user_email`, `knoxx_org_slug`, and `x-knoxx-*` identity
   headers are not browser authentication authority. Credential-derived session cookies remain the
@@ -46,6 +61,9 @@ mutable-browser identity fallback.
   that cannot enter a production bundle or production request.
 - When no verified authentication is available, send no fabricated identity headers, surface the
   server's canonical 401/reauthentication state, and perform no privileged retry or fallback.
+- Define credential precedence at the server: valid session and API-key credentials derive the
+  principal, cannot be overridden by any client identity header, and cannot borrow identity from
+  one another. Requests with only identity headers are unauthenticated.
 - Preserve caller-supplied non-identity headers, request bodies, credential inclusion, and normal
   authorized-session behavior.
 - Rebuild generated frontend assets from the repaired sources; do not hand-edit compiled bridge
@@ -60,14 +78,21 @@ mutable-browser identity fallback.
    rebuilt production assets contain no request-time storage/default identity injector.
 3. The admin surface cannot change the authenticated principal by editing local storage or
    submitting the former "Apply actor" form.
-4. Mutable storage values and caller-supplied identity headers cannot change the principal
+4. Direct-client spoof probes submit each identity header alone and in combination across
+   representative protected routes; header-only input cannot produce a non-nil request context,
+   resolve policy membership, or cause a protected effect.
+5. Valid session and API-key credentials determine the authenticated principal and cannot be
+   overridden by conflicting client identity headers; the credential-bound principal remains
+   unchanged or the request fails closed.
+6. Mutable storage values and caller-supplied identity headers cannot change the principal
    observed by protected real-server probes through one TypeScript surface and one CLJS surface.
-5. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
+7. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
    as a default administrator.
-6. An authorized credential-derived session still performs GET/mutation requests from both helper
+8. An authorized credential-derived session still performs GET/mutation requests from both helper
    families with the same payload, non-identity headers, credential inclusion, and error behavior.
-7. TypeScript tests, the full frontend CLJS suite, production build, and strict changed-surface
-   lint pass with zero warnings; real-server negative probes confirm zero protected effect.
+9. TypeScript tests, the full frontend CLJS suite, focused backend auth tests, production build,
+   server compile, and strict changed-surface lint pass with zero warnings; real-server negative
+   probes confirm zero protected effect.
 
 ## Non-goals
 
@@ -78,7 +103,8 @@ mutable-browser identity fallback.
 
 ## Done when
 
-Neither production request family nor the admin identity UI can synthesize or switch a privileged
-Knoxx principal from defaults, caller headers, or mutable browser storage; generated assets are
-rebuilt from those repaired sources, unauthenticated requests fail closed through the canonical
-server/UI path, and authorized credential-derived requests remain compatible.
+Neither production request family, the admin identity UI, nor direct wire input can synthesize or
+switch a privileged Knoxx principal from defaults, caller headers, or mutable browser storage.
+The server derives context only from verified credentials, generated assets are rebuilt from the
+repaired sources, unauthenticated requests fail closed through the canonical server/UI path, and
+authorized credential-derived requests remain compatible.
