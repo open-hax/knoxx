@@ -129,7 +129,7 @@ eventual rejection and cannot complete until that projected child is green.
   `register-openplanner-proxy-routes!` and its dedicated `GET /api/openplanner/v1/sessions` call to
   `openplanner-client/sessions!`, plus
   the separately registered `infra/routes/app.cljs` handlers under `/api/data/op/*`,
-  `/api/data/mongo/list`, `/api/data/mongo/query`, and
+  `/api/data/mongo/collections`, `/api/data/mongo/list`, `/api/data/mongo/query`, and
   `/api/data/jobs/build-semantic-edges`, plus
   `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs`. Include every Knoxx route that
   accepts inbound data or headers and then calls a downstream service with Knoxx-held credentials;
@@ -232,7 +232,7 @@ eventual rejection and cannot complete until that projected child is green.
    server bearer credential, API key, capability, or privileged response scope fails the probe even
    when no spoofed identity header is present.
    Run the same no-context and identity-header-only probes directly against every active
-   `/api/data/op/*`, `/api/data/mongo/{list,query}`, and
+   `/api/data/op/*`, `/api/data/mongo/{collections,list,query}`, and
    `/api/data/jobs/build-semantic-edges` registration in `infra/routes/app.cljs`; each must reject
    before `openplanner-client` can attach the server bearer credential, with zero downstream reads,
    queries, jobs, or mutations.

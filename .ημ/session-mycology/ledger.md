@@ -367,3 +367,13 @@
   spore: none
   receipt-refs: 2026-08-30T21:01:51.680Z
   note: A live probe with placeholder paths or ignored bodies is not production evidence. Public-read safety must constrain server-held credentials and response scope, while config GET must reject identity/credential collisions rather than silently ignore them.
+
+- ts: 2026-08-30T21:07:59.547Z
+  session: codex/knoxx-board-reconcile
+  task: Include the standalone Mongo collections dashboard route in the fail-closed boundary
+  p-efficiency: 0.95
+  p-friction: 0.25
+  p-skill-candidate: 0.38
+  spore: none
+  receipt-refs: 2026-08-30T21:07:59.547Z
+  note: Wildcards and sibling-route samples do not cover a separately registered bearer-backed dashboard handler; inventory and directly probe mongo/collections before any documents or graph-monitoring downstream read.
