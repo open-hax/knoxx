@@ -85,8 +85,11 @@ cross a Knoxx-owned service boundary with stronger server authority.
 - If a deliberately supported local-development identity seam remains, isolate it behind an
   authenticated server-side login/session mechanism and an unmistakable development-only guard
   that cannot enter a production bundle or production request.
-- When no verified authentication is available, send no fabricated identity headers, surface the
-  server's canonical 401/reauthentication state, and perform no privileged retry or fallback.
+- When no verified authentication is available for a protected or credential-required request,
+  send no fabricated identity headers, surface the server's canonical 401/reauthentication state,
+  and perform no privileged retry or fallback. A deliberately public unauthenticated read may
+  proceed only without fabricated identity; a downstream server-held credential cannot grant
+  caller authority or turn that read into a privileged operation.
 - Define credential precedence at the server: valid session and API-key credentials derive the
   principal, cannot be overridden by any client identity header, and cannot borrow identity from
   one another. Requests with only identity headers are unauthenticated.
@@ -129,8 +132,8 @@ cross a Knoxx-owned service boundary with stronger server authority.
    OpenPlanner's server-credential attachment and ingestion's former clone-all-headers path.
 9. Mutable storage values and caller-supplied identity headers cannot change the principal
    observed by protected real-server probes through one TypeScript surface and one CLJS surface.
-10. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
-   as a default administrator.
+10. A missing/expired session on a protected browser request reaches one canonical
+    401/reauthentication UI path; it never retries as a default administrator.
 11. An authorized credential-derived session still performs GET/mutation requests from both helper
    families with the same payload, non-identity headers, credential inclusion, and error behavior.
 12. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
@@ -150,5 +153,6 @@ Neither production request family, the admin identity UI, nor direct wire input 
 switch a privileged Knoxx principal from defaults, caller headers, or mutable browser storage.
 The server derives context only from verified credentials, no Knoxx-owned service proxy forwards
 client-selected identity or combines it with a server credential, generated assets are rebuilt
-from the repaired sources, unauthenticated requests fail closed through the canonical server/UI
-path, and authorized credential-derived requests remain compatible.
+from the repaired sources, protected unauthenticated requests fail closed through the canonical
+server/UI path, deliberately public reads remain compatible without acquiring identity authority,
+and authorized credential-derived requests remain compatible.

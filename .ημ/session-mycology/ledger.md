@@ -227,3 +227,13 @@
   spore: none
   receipt-refs: 2026-08-30T02:43:38.329Z
   note: Repairing ingress authentication is incomplete while a downstream proxy combines client-selected identity with server authority; sanitize the whole identity family and rederive only from verified context at every credentialed hop.
+
+- ts: 2026-08-30T03:18:10.949Z
+  session: codex/knoxx-board-reconcile
+  task: Separate public reads from protected authentication failure
+  p-efficiency: 0.91
+  p-friction: 0.33
+  p-skill-candidate: 0.41
+  spore: none
+  receipt-refs: 2026-08-30T03:18:10.949Z
+  note: Fail-closed authentication must name its protected boundary; an intentionally public read stays non-authorizing when it forwards no client identity and cannot borrow a downstream service credential.
