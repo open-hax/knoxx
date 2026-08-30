@@ -64,6 +64,11 @@ guard cannot constrain authority that was synthesized before the route guard.
 - Define credential precedence at the server: valid session and API-key credentials derive the
   principal, cannot be overridden by any client identity header, and cannot borrow identity from
   one another. Requests with only identity headers are unauthenticated.
+- Exactly one credential authority is admitted per request. When session-cookie and API-key
+  material are both present, reject the ambiguous request before identity or policy context
+  resolution, whether both credentials name the same principal, name different principals, or
+  one is malformed. Neither credential wins, and the collision permits no fallback to the other
+  credential.
 - Preserve caller-supplied non-identity headers, request bodies, credential inclusion, and normal
   authorized-session behavior.
 - Rebuild generated frontend assets from the repaired sources; do not hand-edit compiled bridge
@@ -84,13 +89,17 @@ guard cannot constrain authority that was synthesized before the route guard.
 5. Valid session and API-key credentials determine the authenticated principal and cannot be
    overridden by conflicting client identity headers; the credential-bound principal remains
    unchanged or the request fails closed.
-6. Mutable storage values and caller-supplied identity headers cannot change the principal
+6. Add simultaneous-credential probes for the same principal, different principals, and one
+   malformed credential. Every session-cookie/API-key collision fails before context resolution,
+   policy lookup, or protected effect; removing one credential restores that credential's normal
+   authenticated behavior without fallback from a rejected collision.
+7. Mutable storage values and caller-supplied identity headers cannot change the principal
    observed by protected real-server probes through one TypeScript surface and one CLJS surface.
-7. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
+8. A missing/expired session reaches one canonical 401/reauthentication UI path; it never retries
    as a default administrator.
-8. An authorized credential-derived session still performs GET/mutation requests from both helper
+9. An authorized credential-derived session still performs GET/mutation requests from both helper
    families with the same payload, non-identity headers, credential inclusion, and error behavior.
-9. TypeScript tests, the full frontend CLJS suite, focused backend auth tests, production build,
+10. TypeScript tests, the full frontend CLJS suite, focused backend auth tests, production build,
    server compile, and strict changed-surface lint pass with zero warnings; real-server negative
    probes confirm zero protected effect.
 

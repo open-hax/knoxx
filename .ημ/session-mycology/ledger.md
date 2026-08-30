@@ -187,3 +187,13 @@
   spore: none
   receipt-refs: 2026-08-30T02:03:01.007Z
   note: Frontend identity cleanup is incomplete while the server trusts the same wire headers; preserve schema-optional fields while rejecting malformed present values.
+
+- ts: 2026-08-30T02:15:58.767Z
+  session: codex/knoxx-board-reconcile
+  task: Define simultaneous session and API-key collision behavior
+  p-efficiency: 0.92
+  p-friction: 0.30
+  p-skill-candidate: 0.39
+  spore: none
+  receipt-refs: 2026-08-30T02:15:58.767Z
+  note: Credential precedence must cover collisions, not only identity-header override; admit one credential kind or fail before principal resolution without fallback.
