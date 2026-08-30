@@ -27,11 +27,13 @@
   The one thing that happens before the handoff is the content write, and the
   order matters in the same way `record-completion!`'s does. Bytes are written
   first, so a crash between the two leaves content with no receipt — reconciled
-  as 'not translated yet', which re-runs the agent and overwrites the orphan.
+  as 'not translated yet'. An equal retry reuses that immutable orphan; changed
+  bytes conflict instead of replacing content behind the same output revision.
   The reverse order would leave a receipt the gate believes, pointing at bytes
   that were never stored, and the reconciler would then publish the authored
   fallback under an approval granted for agent output."
   (:require [knoxx.backend.infra.translation-agent-content :as content]
+            [knoxx.backend.infra.translation-content-integrity :as content-integrity]
             [knoxx.backend.infra.translation-dispatch :as dispatch]
             [knoxx.backend.infra.translation-evidence-store :as store]
             [knoxx.backend.law.translation-agent-submission :as submission-law]
@@ -56,7 +58,12 @@
     (not= (:dispatch/key record) (:dispatch_key policies))
     {:refusal/type :worker-batch-mismatch
      :refusal/expected (:dispatch/key record)
-     :refusal/actual (:dispatch_key policies)}))
+     :refusal/actual (:dispatch_key policies)}
+
+    (not= :dispatch/accepted (:dispatch/outcome record))
+    {:refusal/type :dispatch-already-resolved
+     :refusal/expected :dispatch/accepted
+     :refusal/actual (:dispatch/outcome record)}))
 
 (defn ^:async submit-pair!
   "Record one agent-submitted translation pair as publication evidence.
@@ -85,7 +92,9 @@
                                  output-revision
                                  (:translated_text pair)))
           (await (dispatch/resolve-batch-report!
-                  deps
+                  (assoc deps :translation-content-digest
+                         (content-integrity/content-digest
+                          (:translated_text pair)))
                   (submission-law/completion-report
                    (:run_id policies)
                    (:dispatch/document-wire-id record)))))))))

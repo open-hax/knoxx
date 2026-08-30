@@ -6,7 +6,12 @@
   failure, and which does neither is decided here — so it is tested here."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.contracts.loader :as contract-loader]
+            [knoxx.backend.infra.publication-contract-content :as contract-content]
+            [knoxx.backend.infra.publication-source-revision :as source-revision]
             [knoxx.backend.infra.routes.translation-dispatch :as facade]
+            [knoxx.backend.infra.translation-agent-content :as agent-content]
+            [knoxx.backend.infra.translation-content-integrity :as content-integrity]
+            [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.translation-evidence-store :as store]
             [knoxx.backend.law.translation-dispatch :as law]))
 
@@ -29,6 +34,244 @@
    :dispatch/org-id "org-1"
    :dispatch/membership-id "member-1"
    :dispatch/source-digest "sha256-aaa111bbb222"})
+
+(deftest publication-selection-does-not-fan-out-to-a-whole-document
+  (let [document {:document/id :knoxx.docs/probe
+                  :document/title "Probe"
+                  :document/source-locale :en
+                  :document/source {:path "docs/probe.md"}}
+        intent (fn [publication garden]
+                 {:publication/id publication
+                  :publication/document :knoxx.docs/probe
+                  :publication/garden garden
+                  :publication/locale :es
+                  :publication/revision :source/current
+                  :publication/state :published
+                  :publication/path "/probe"
+                  :translation/review :required})
+        index {:documents {:knoxx.docs/probe document}
+               :publications [(intent :knoxx.docs/probe-es-a :knoxx.docs/garden-a)
+                              (intent :knoxx.docs/probe-es-b :knoxx.docs/garden-b)]}
+        selected (facade/selected-hydrated-intents
+                  index {:publication :knoxx.docs/probe-es-b})]
+    (is (= [:knoxx.docs/probe-es-b] (mapv :publication/id selected)))
+    (is (= 2 (count (facade/selected-hydrated-intents
+                     index {:document :knoxx.docs/probe})))
+        "the older document command intentionally remains the broader action")))
+
+(deftest invalid-facade-selections-are-refused-before-dispatch
+  (let [document {:document/id :knoxx.docs/probe
+                  :document/title "Probe"
+                  :document/source-locale :en
+                  :document/source {:path "docs/probe.md"}}
+        intent {:publication/id :knoxx.publications/probe-es
+                :publication/document :knoxx.docs/probe
+                :publication/garden :knoxx.docs/promethean
+                :publication/locale :es
+                :publication/revision :source/current
+                :publication/state :published
+                :publication/path "/probe"
+                :translation/review :required}
+        index {:documents {:knoxx.docs/probe document}
+               :publications [intent]}]
+    (testing "unknown keys cannot silently become a corpus sweep"
+      (is (thrown? js/Error
+                   (facade/selected-hydrated-intents index {:locale :es}))))
+
+    (testing "a present selector must name a qualified identity"
+      (is (thrown? js/Error
+                   (facade/selected-hydrated-intents index {:document nil})))
+      (is (thrown? js/Error
+                   (facade/selected-hydrated-intents index {:publication nil}))))
+
+    (testing "document and publication are alternatives, not precedence rules"
+      (is (thrown? js/Error
+                   (facade/selected-hydrated-intents
+                    index
+                    {:document :knoxx.docs/probe
+                     :publication :knoxx.publications/probe-es}))))
+
+    (testing "an exact publication miss is a typed not-found error"
+      (let [error (try
+                    (facade/selected-hydrated-intents
+                     index {:publication :knoxx.publications/missing})
+                    nil
+                    (catch :default err err))]
+        (is (some? error))
+        (is (= 404 (:status (ex-data error))))
+        (is (= "translation_publication_not_found" (:code (ex-data error))))))))
+
+(deftest ^:async exact-publication-dispatch-emits-exactly-one-agent-event
+  (let [document {:document/id :knoxx.docs/probe
+                  :document/title "Probe"
+                  :document/source-locale :en
+                  :document/source {:path "docs/probe.md"}}
+        garden (fn [id]
+                 {:garden/id id
+                  :garden/title (name id)
+                  :garden/status :active
+                  :garden/locales [:en :es]})
+        intent (fn [publication garden-id]
+                 {:publication/id publication
+                  :publication/document :knoxx.docs/probe
+                  :publication/garden garden-id
+                  :publication/locale :es
+                  :publication/revision :source/current
+                  :publication/state :published
+                  :publication/path "/probe"
+                  :translation/review :required})
+        garden-a :knoxx.gardens/a
+        garden-b :knoxx.gardens/b
+        publication-a :knoxx.publications/probe-es-a
+        publication-b :knoxx.publications/probe-es-b
+        resource-record (fn [kind definition]
+                          {:ok? true
+                           :resource/kind kind
+                           :resource/file-path (str "/contracts/" (name kind) ".edn")
+                           :resource/definition definition})
+        records [(resource-record :document document)
+                 (resource-record :garden (garden garden-a))
+                 (resource-record :garden (garden garden-b))
+                 (resource-record :publication (intent publication-a garden-a))
+                 (resource-record :publication (intent publication-b garden-b))]
+        source-revision-value "sha256-aaa111bbb222"
+        emitted (atom [])
+        evidence-store (store/memory-store)
+        deps {:evidence-store evidence-store
+              :clock (constantly at)
+              :digest-hex #(str "digest-" (hash %))
+              :emit! (fn [event]
+                       (swap! emitted conj event)
+                       (js/Promise.resolve
+                        {:matchedTriggers [:publication/translation-needed]}))}
+        scope {:org-id "org-1"
+               :membership-id "member-1"
+               :project "knoxx-session"}]
+    (with-redefs [publications/resource-records!
+                  (fn [_] (js/Promise.resolve records))
+                  source-revision/source-revisions!
+                  (fn [_ _ _]
+                    (js/Promise.resolve
+                     {:knoxx.docs/probe source-revision-value}))
+                  contract-content/source-content!
+                  (fn [_ _] (js/Promise.resolve "Translate exactly this source."))]
+      (let [result (await (facade/dispatch-translations!
+                           {:translation-runner "agent"}
+                           deps
+                           scope
+                           {:publication publication-b}))
+            event (first @emitted)]
+        (testing "the facade narrows before it derives and enqueues work"
+          (is (= 1 (:considered result)))
+          (is (= 1 (:admissible result)))
+          (is (= [publication-b]
+                 (mapv :publication/id (:dispatched result))))
+          (is (= 1 (count @emitted))
+              "one selected card must create one downstream agent emission"))
+
+        (testing "the single event belongs to the exact selected relation"
+          (is (= "knoxx.gardens/b"
+                 (get-in event
+                         [:event/payload :resource-policies :garden_id])))
+          (is (not= "knoxx.gardens/a"
+                    (get-in event
+                            [:event/payload :resource-policies :garden_id]))))))))
+
+(deftest ^:async a-completed-claim-with-lost-candidate-bytes-is-reopened
+  (let [document {:document/id :knoxx.docs/probe
+                  :document/title "Probe"
+                  :document/source-locale :en
+                  :document/source {:path "docs/probe.md"}}
+        garden {:garden/id :knoxx.gardens/promethean
+                :garden/title "Promethean"
+                :garden/status :active
+                :garden/locales [:en :es]}
+        intent {:publication/id :knoxx.publications/probe-es
+                :publication/document :knoxx.docs/probe
+                :publication/garden :knoxx.gardens/promethean
+                :publication/locale :es
+                :publication/revision :source/current
+                :publication/state :published
+                :publication/path "/probe"
+                :translation/review :required}
+        resource-record (fn [kind definition]
+                          {:ok? true
+                           :resource/kind kind
+                           :resource/file-path (str "/contracts/" (name kind) ".edn")
+                           :resource/definition definition})
+        records [(resource-record :document document)
+                 (resource-record :garden garden)
+                 (resource-record :publication intent)]
+        revision "sha256-aaa111bbb222"
+        target "Texto que ya no está en el almacén reproducible."
+        evidence-store (store/memory-store)
+        old-context {:dispatch/garden "knoxx.gardens/promethean"
+                     :dispatch/document-wire-id "knoxx.docs/probe"
+                     :dispatch/source-locale :en
+                     :dispatch/org-id "org-1"
+                     :dispatch/project "knoxx-session"
+                     :dispatch/membership-id "member-1"
+                     :dispatch/source-digest revision}
+        old-record (law/dispatch-record
+                    {:document :knoxx.docs/probe
+                     :locale :es
+                     :revision revision
+                     :replace-stale? false}
+                    old-context :dispatch/accepted at)
+        emitted (atom [])
+        deps {:evidence-store evidence-store
+              :clock (constantly "2026-08-30T12:00:00.000Z")
+              :digest-hex #(str "digest-" (hash %))
+              :emit! (fn [event]
+                       (swap! emitted conj event)
+                       (js/Promise.resolve
+                        {:matchedTriggers [:publication/translation-needed]}))}
+        scope {:org-id "org-1"
+               :membership-id "member-1"
+               :project "knoxx-session"}]
+    (await (store/reserve-dispatch! evidence-store old-record))
+    (await (store/bind-dispatch-batch! evidence-store
+                                       (:dispatch/key old-record) "old-run"))
+    (await (store/resolve-dispatch! evidence-store
+                                    (:dispatch/key old-record)
+                                    :dispatch/completed nil))
+    (await (store/record-translation!
+            evidence-store
+            {:receipt/type :translation/completed
+             :translation/document :knoxx.docs/probe
+             :translation/garden :knoxx.gardens/promethean
+             :translation/source-locale :en
+             :translation/locale :es
+             :translation/source-revision revision
+             :translation/revision "candidate-lost"
+             :translation/content-digest
+             (content-integrity/content-digest target)
+             :translation/dispatch-key (:dispatch/key old-record)
+             :translation/org-id "org-1"
+             :translation/project "knoxx-session"
+             :translation/at "2026-08-30T10:00:00.000Z"}))
+    (with-redefs [publications/resource-records!
+                  (fn [_] (js/Promise.resolve records))
+                  source-revision/source-revisions!
+                  (fn [_ _ _]
+                    (js/Promise.resolve {:knoxx.docs/probe revision}))
+                  contract-content/source-content!
+                  (fn [_ _] (js/Promise.resolve "Translate this source."))
+                  agent-content/content-for-receipt!
+                  (fn [_ _] (js/Promise.resolve nil))]
+      (let [result (await (facade/dispatch-translations!
+                           {:translation-runner "agent"
+                            :publication-content-root "/published"}
+                           deps scope {:publication :knoxx.publications/probe-es}))
+            current (await (store/dispatch-for-key!
+                            evidence-store (:dispatch/key old-record)))]
+        (testing "unavailable bytes derive actionable work and a fresh run"
+          (is (= 1 (count @emitted)))
+          (is (= :dispatch/accepted
+                 (:dispatch/outcome (first (:dispatched result)))))
+          (is (= :dispatch/accepted (:dispatch/outcome current)))
+          (is (= :candidate-unavailable (:dispatch/recovery-reason current)))
+          (is (not= "old-run" (:dispatch/batch-id current))))))))
 
 (defn- ^:async seeded-store!
   "A store holding one in-flight claim bound to `batch-1`."

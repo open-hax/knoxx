@@ -213,6 +213,10 @@
     [:translation/locale locale/Locale]
     [:translation/source-revision ConcreteRevision]
     [:translation/revision ConcreteRevision]
+    ;; Optional only so historical receipts remain readable. A candidate must
+    ;; carry this digest before current bytes can be shown, approved, or
+    ;; published; absence is history, not content authority.
+    [:translation/content-digest {:optional true} NonBlankString]
     [:translation/dispatch-key NonBlankString]
     [:translation/org-id NonBlankString]
     [:translation/project {:optional true} [:maybe NonBlankString]]
@@ -234,6 +238,16 @@
    already applies across the effect boundary."
   [receipt]
   (assert-valid! :translation/receipt CompletedTranslationReceipt receipt))
+
+(defn content-bound?
+  "Whether a receipt names the digest of the target bytes it proves.
+
+   The digest is optional in the schema solely so pre-binding ledger rows stay
+   readable during rollout. Such rows are history, not current translation
+   evidence: they cannot authenticate content, be reviewed, or authorize a
+   publication."
+  [receipt]
+  (nonblank-string? (:translation/content-digest receipt)))
 
 ;; ── Approval ───────────────────────────────────────────────────────────────
 
@@ -307,9 +321,15 @@
    [:review/state [:= :approved]]
    [:review/document :qualified-keyword]
    [:review/garden :qualified-keyword]
+   ;; Optional only so pre-migration approvals remain readable as history.
+   ;; `approval-current?` deliberately refuses one that lacks this coordinate.
+   [:review/source-locale {:optional true} locale/Locale]
    [:review/locale locale/Locale]
    [:review/revision ConcreteRevision]
    [:review/translation-revision ConcreteRevision]
+   ;; Optional only so pre-migration approvals remain readable as history.
+   ;; `approval-current?` requires it before authorizing any current bytes.
+   [:review/content-digest {:optional true} NonBlankString]
    [:review/org-id NonBlankString]
    [:review/project {:optional true} [:maybe NonBlankString]]
    [:review/principal Principal]
@@ -322,6 +342,7 @@
    than by re-deriving the classification from a message string, and so a new
    refusal cannot be introduced without appearing here."
   #{:translation-receipt-missing
+    :translation-content-unbound
     :translation-document-mismatch
     :translation-garden-mismatch
     :translation-locale-mismatch
@@ -368,6 +389,10 @@
                                               :review/locale
                                               :review/revision])}
 
+    (nil? (:translation/content-digest receipt))
+    {:refusal/type :translation-content-unbound
+     :refusal/recorded (:translation/revision receipt)}
+
     (not= (:translation/document receipt) (:review/document request))
     {:refusal/type :translation-document-mismatch
      :refusal/requested (:review/document request)
@@ -413,12 +438,16 @@
    (cond-> {:review/state :approved
             :review/document (:translation/document receipt)
             :review/garden (:translation/garden receipt)
+            :review/source-locale (:translation/source-locale receipt)
             :review/locale (:translation/locale receipt)
             :review/revision (:translation/source-revision receipt)
             :review/translation-revision (:translation/revision receipt)
             :review/org-id (:translation/org-id receipt)
             :review/principal principal
             :review/at at}
+     (some? (:translation/content-digest receipt))
+     (assoc :review/content-digest (:translation/content-digest receipt))
+
      (some? (:translation/project receipt))
      (assoc :review/project (:translation/project receipt)))))
 
@@ -453,6 +482,16 @@
    translation's approval stops satisfying the new revision."
   [approval receipt]
   (and (some? receipt)
+       ;; Historical approvals did not carry source locale. They remain valid
+       ;; stored history, but cannot authorize current bytes: equal source and
+       ;; output revisions across a later source-locale change are possible,
+       ;; especially for authored content, and absence is not proof of equality.
+       (some? (:review/source-locale approval))
+       (= (:review/source-locale approval)
+          (:translation/source-locale receipt))
+       (some? (:review/content-digest approval))
+       (= (:review/content-digest approval)
+          (:translation/content-digest receipt))
        (= (:review/translation-revision approval)
           (:translation/revision receipt))
        true))

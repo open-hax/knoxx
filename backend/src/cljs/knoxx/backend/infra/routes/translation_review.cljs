@@ -11,8 +11,10 @@
   admissible, but it must not itself publish. That separation is what lets a
   reviewer accept a translation without also deciding when the bytes go live."
   (:require [knoxx.backend.domain.translation-evidence :as evidence-domain]
+            [knoxx.backend.domain.translation-review-inventory :as inventory]
             [knoxx.backend.infra.translation-evidence-store :as store]
-            [knoxx.backend.law.translation-evidence :as law]))
+            [knoxx.backend.law.translation-evidence :as law]
+            [promesa.core :as p]))
 
 (defn- ^:async current-receipt!
   "The completed translation this request is about, or nil.
@@ -29,15 +31,22 @@
    Scoped to the acting tenant and project before indexing. A reviewer must not
    be able to approve a translation belonging to another organization, and the
    dispatch card learned that lesson at the cost of two review rounds."
-  [evidence-store scope request]
+  [evidence-store scope request receipt-admissible? receipts-transform
+   receipts-snapshot]
   (let [query-scope (select-keys scope [:org-id :project])
         ;; Scoped in the query, and checked again here. The query is the
         ;; optimization; the filter is the guarantee, since a replaceable store
         ;; that ignored the scope must not be able to widen what a reviewer can
         ;; approve.
-        receipts (->> (await (store/completed-translations! evidence-store query-scope))
+        receipts (->> (if (some? receipts-snapshot)
+                        receipts-snapshot
+                        (await (store/completed-translations!
+                                evidence-store query-scope)))
+                      ((or receipts-transform identity))
                       (filterv #(and (= (:org-id scope) (:translation/org-id %))
-                                     (= (:project scope) (:translation/project %)))))
+                                     (= (:project scope) (:translation/project %))
+                                     (or (nil? receipt-admissible?)
+                                         (receipt-admissible? %)))))
         evidence (evidence-domain/evidence {:receipts receipts})]
     (evidence-domain/receipt-for evidence
                                  (:review/document request)
@@ -58,71 +67,117 @@
    computed, and only then is anything written. Nothing is persisted on a
    refusal: an approval that was rejected must leave no trace a later read could
    mistake for evidence."
-  [{:keys [evidence-store clock]} scope request]
+  [{:keys [evidence-store clock authorize-approval! receipt-admissible?
+           receipts-transform receipts-snapshot]}
+   scope request]
+  (when-not (fn? authorize-approval!)
+    (throw (ex-info "translation approval requires content admission"
+                    {:status 503
+                     :code "translation_approval_admission_unavailable"})))
   (let [checked (law/assert-approval-request! request)
-        receipt (await (current-receipt! evidence-store scope checked))]
+        receipt (await (current-receipt! evidence-store scope checked
+                                         receipt-admissible? receipts-transform
+                                         receipts-snapshot))]
     (if-let [refusal (law/approval-refusal checked receipt)]
       {:approval/refusal refusal}
-      (await (store/record-approval!
-              evidence-store
-              (law/approve checked receipt (:principal scope) (clock)))))))
+      (do
+        ;; The HTTP adapter supplies the resource/content admission guard. It is
+        ;; invoked only after the receipt law has accepted the exact immutable
+        ;; coordinates, and before an approval can be persisted. Keeping it as
+        ;; an injected boundary makes direct law/facade callers testable while
+        ;; preventing a hand-written POST from bypassing the bytes the reviewer
+        ;; was required to see.
+        (await (authorize-approval! checked receipt))
+        (await (store/record-approval!
+                evidence-store
+                (law/approve checked receipt (:principal scope) (clock))))))))
 
-(defn- current-approval
-  [approvals receipt]
-  (some #(when (and (law/approval-matches?
-                     %
-                     (:translation/document receipt)
-                     (:translation/garden receipt)
-                     (:translation/locale receipt)
-                     (:translation/source-revision receipt))
-                    (law/approval-current? % receipt))
-           %)
-        approvals))
+(defn- scoped-receipts
+  [scope receipts]
+  (filterv #(and (= (:org-id scope) (:translation/org-id %))
+                 (= (:project scope) (:translation/project %)))
+           receipts))
 
-(defn reviewable-wire
-  "Project one current translation receipt and its current approval status.
+(defn- scoped-approvals
+  [scope approvals]
+  (filterv #(and (= (:org-id scope) (:review/org-id %))
+                 (= (:project scope) (:review/project %)))
+           approvals))
 
-   The revisions needed by the approval request cross this read boundary, so
-   the frontend never guesses them from mutable segment state."
-  [approvals publication-id receipt]
-  (let [approval (current-approval approvals receipt)]
-    (cond-> {:publication publication-id
-             :document (:translation/document receipt)
-             :garden (:translation/garden receipt)
-             :locale (:translation/locale receipt)
-             :revision (:translation/source-revision receipt)
-             :translation_revision (:translation/revision receipt)
-             :translated_at (:translation/at receipt)
-             :approved (boolean approval)}
-      approval (assoc :approved_at (:review/at approval)))))
+(defn- dispatch-matches-work?
+  "Whether a point-read record's body names the work encoded by its lookup key."
+  [scope work record]
+  (= [(:org-id scope)
+      (:project scope)
+      (:translation/garden work)
+      (:translation/document work)
+      (:translation/source-locale work)
+      (:translation/locale work)
+      (:translation/source-revision work)]
+     [(:dispatch/org-id record)
+      (:dispatch/project record)
+      (:dispatch/garden record)
+      (:dispatch/document record)
+      (:dispatch/source-locale record)
+      (:dispatch/locale record)
+      (:dispatch/revision record)]))
+
+(defn- ^:async dispatches-for-work!
+  "Point-read dispatch evidence for the already-derived desired work.
+
+   At deployment scale this is bounded by the resource inventory (the observed
+   case is eighteen rows) and the reads run concurrently.  It deliberately uses
+   the existing atomic dispatch key instead of introducing an incidental Mongo
+   migration: legacy dispatch rows do not have tenant/project query columns,
+   while the key already includes both coordinates and exactly matches the
+   claim boundary."
+  [evidence-store scope work]
+  (await
+   (p/all
+    (mapv (fn [item]
+            (if-let [dispatch-key (inventory/dispatch-lookup-key scope item)]
+              (p/let [record (store/dispatch-for-key! evidence-store dispatch-key)]
+                ;; The point lookup is an optimization supplied by a replaceable
+                ;; store; the key comparison is the tenant/project guarantee.
+                ;; Without it, project-inventory's resource relation (which does
+                ;; not repeat tenant coordinates) could attach another scope's
+                ;; outcome and diagnostic detail to this row.
+                (when (and record
+                           (or (not= dispatch-key (:dispatch/key record))
+                               (not (dispatch-matches-work? scope item record))))
+                  (throw (ex-info "translation dispatch lookup returned the wrong claim"
+                                  {:expected-dispatch-key dispatch-key
+                                   :actual-dispatch-key (:dispatch/key record)
+                                   :expected-work (inventory/work-key item)
+                                   :actual-work (inventory/work-key record)})))
+                record)
+              (js/Promise.resolve nil)))
+          work))))
 
 (defn ^:async reviewable-translations!
-  "Current completed translations in this tenant/project, with approval state."
-  [{:keys [evidence-store publication-index]} scope]
+  "Resource-derived translation work, left-joined with observed evidence.
+
+   Resource intent is cardinality authority. A missing receipt is a visible
+   `:missing` row rather than no row, and an orphan receipt cannot invent work.
+   This is the inverse of the old receipt-first projection that reduced eighteen
+   desired relations to the only completed candidate."
+  [{:keys [evidence-store publication-index source-revisions receipts-transform
+           receipts-snapshot]} scope]
   (let [query-scope (select-keys scope [:org-id :project])
-        receipts (->> (await (store/completed-translations! evidence-store query-scope))
-                      (filterv #(and (= (:org-id scope) (:translation/org-id %))
-                                     (= (:project scope) (:translation/project %))))
-                      evidence-domain/index-receipts
-                      vals)
-        approvals (->> (await (store/approvals! evidence-store query-scope))
-                       (filterv #(and (= (:org-id scope) (:review/org-id %))
-                                      (= (:project scope) (:review/project %)))))
-        publication-id-for
-        (fn [receipt]
-          (some (fn [intent]
-                  (when (and (= (:translation/document receipt)
-                                (:publication/document intent))
-                             (= (:translation/garden receipt)
-                                (:publication/garden intent))
-                             (= (:translation/locale receipt)
-                                (:publication/locale intent)))
-                    (:publication/id intent)))
-                (:publications publication-index)))]
-    {:reviews (->> receipts
-                   (keep #(when-let [publication-id (publication-id-for %)]
-                            (reviewable-wire approvals publication-id %)))
-                   (sort-by (juxt #(str (:document %))
-                                  #(str (:garden %))
-                                  #(str (:locale %))))
-                   vec)}))
+        work (mapv #(assoc %
+                           :translation/org-id (:org-id scope)
+                           :translation/project (:project scope))
+                   (inventory/desired-work publication-index source-revisions))
+        receipts (scoped-receipts
+                  scope
+                  ((or receipts-transform identity)
+                   (if (some? receipts-snapshot)
+                     receipts-snapshot
+                     (await (store/completed-translations!
+                             evidence-store query-scope)))))
+        approvals (scoped-approvals
+                   scope
+                   (await (store/approvals! evidence-store query-scope)))
+        dispatches (await (dispatches-for-work! evidence-store scope work))]
+    {:project (:project scope)
+     :reviews (inventory/project-inventory work receipts approvals dispatches)}))

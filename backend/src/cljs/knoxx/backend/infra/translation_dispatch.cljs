@@ -254,8 +254,9 @@
    `:dispatch/outcome` said completed. `resolve-dispatch!` answers nil when
    somebody else settled the claim first, and that is left absent rather than
    filled in with the stale copy."
-  [evidence-store clock record detail]
-  (let [receipt (law/translation-receipt record (law/output-revision record) (clock))]
+  [evidence-store clock record detail content-digest]
+  (let [receipt (law/translation-receipt record (law/output-revision record)
+                                         (clock) content-digest)]
     (await (store/record-translation! evidence-store receipt))
     (let [settled (await (store/resolve-dispatch! evidence-store
                                                   (:dispatch/key record)
@@ -292,12 +293,12 @@
    state. Recovery used to mint directly, which meant the one path that exists
    *because* evidence was lost was also the one path that skipped verifying it —
    the weaker check exactly where it matters most."
-  [evidence-store clock observe-source-revision record]
+  [evidence-store clock observe-source-revision record content-digest]
   (if-let [drift (law/source-drift-refusal
                   record
                   (await (observe-source-revision record)))]
     (await (refuse-drifted-completion! evidence-store record drift))
-    (await (record-completion! evidence-store clock record nil))))
+    (await (record-completion! evidence-store clock record nil content-digest))))
 
 (defn- ^:async recover-settled-batch!
   "Re-read the batch behind an in-flight claim, and settle the claim if this
@@ -336,7 +337,7 @@
       ;; Through the same drift guard as the worker's own report. This branch
       ;; exists because evidence was lost, which is no reason to trust it more.
       (let [result (await (complete-if-source-agrees!
-                           evidence-store clock observe-source-revision record))]
+                           evidence-store clock observe-source-revision record nil))]
         (assoc result
                :dispatch/outcome (if (:translation/receipt result)
                                    :dispatch/completed
@@ -403,7 +404,9 @@
                                     (if pin-refusal
                                       law/unreachable-outcome
                                       :dispatch/accepted)
-                                    (clock))]
+                                    (clock)
+                                    :recovery-reason
+                                    (:dispatch/recovery-reason context))]
     (if pin-refusal
       ;; Refused before any batch is created, and deliberately NOT persisted. A
       ;; pin refusal is a decision about *current* state, not an observed fact:
@@ -416,6 +419,29 @@
        :dispatch/record record
        :translation/refusal pin-refusal}
       (await (reserve-and-send! deps checked-work context record)))))
+
+(defn ^:async candidate-recovery-context!
+  "Mark a fresh attempt when the evidence snapshot found no usable candidate.
+
+  The caller invokes this only for work the gate derived from a content-
+  authenticated evidence snapshot. If the same key already completed, the
+  missing work means its candidate bytes are unavailable (including historical
+  receipts that never bound bytes), so the explicit store recovery CAS is
+  lawful. Other outcomes keep their ordinary reservation semantics."
+  [evidence-store work context]
+  (let [dispatch-key (law/dispatch-key
+                      {:org-id (:dispatch/org-id context)
+                       :project (:dispatch/project context)
+                       :garden (:dispatch/garden context)
+                       :document (:document work)
+                       :source-locale (:dispatch/source-locale context)
+                       :locale (:locale work)
+                       :revision (:revision work)})
+        existing (await (store/dispatch-for-key! evidence-store dispatch-key))]
+    (cond-> context
+      (contains? #{:dispatch/completed :dispatch/duplicate}
+                 (:dispatch/outcome existing))
+      (assoc :dispatch/recovery-reason :candidate-unavailable))))
 
 ;; ── Deriving work from desired state ───────────────────────────────────────
 
@@ -447,9 +473,12 @@
     (doseq [intent intents]
       (when-let [work (derived-work intent facts)]
         (let [digest ((:current-source-revision facts) (:publication/document intent))
-              outcome (await (dispatch-work! deps
-                                             (:action/with work)
-                                             (dispatch-context intent scope digest)))]
+              checked-work (:action/with work)
+              context (await (candidate-recovery-context!
+                              (:evidence-store deps)
+                              checked-work
+                              (dispatch-context intent scope digest)))
+              outcome (await (dispatch-work! deps checked-work context))]
           (swap! results conj (assoc outcome
                                      :publication/id (:publication/id intent))))))
     @results))
@@ -470,7 +499,8 @@
    translation that may still be running.
 
    Returns `{:translation/receipt r}` on success, or `{:translation/refusal f}`."
-  [{:keys [evidence-store clock observe-source-revision]} report]
+  [{:keys [evidence-store clock observe-source-revision
+           translation-content-digest]} report]
   ;; Required, not optional, and for the same reason
   ;; `publication-target-registry` requires its locale guard: a caller that
   ;; forgot to supply the check must fail, not quietly get a version with the
@@ -493,7 +523,8 @@
       ;; the source has not moved since. Verified rather than assumed — see
       ;; `law/source-drift-refusal`.
       (await (complete-if-source-agrees! evidence-store clock
-                                         observe-source-revision record)))))
+                                         observe-source-revision record
+                                         translation-content-digest)))))
 
 (defn ^:async fail-batch-document!
   "Record that the worker could not translate one document of a batch.

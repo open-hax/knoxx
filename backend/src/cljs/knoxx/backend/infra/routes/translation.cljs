@@ -140,9 +140,12 @@
   [config]
   (fn [request ctx {:keys [ctx-user-id ctx-user-email ctx-org-id]}]
     (let [body (body-clj request)
-          body-with-auth (merge body {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
-                                      :labeler_email (str (or (ctx-user-email ctx) "unknown"))
-                                      :org_id (org-id! ctx ctx-org-id)})]
+          body-with-auth (merge body
+                                {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
+                                 :labeler_email (str (or (ctx-user-email ctx) "unknown"))
+                                 :org_id (org-id! ctx ctx-org-id)
+                                 :project (or (:project body)
+                                              (:session-project-name config))})]
       (openplanner-client/label-translation-segment!
        (op-client config) (aget (params request) "id") body-with-auth))))
 
@@ -180,10 +183,13 @@
   [config]
   (fn [request ctx {:keys [ctx-user-id ctx-user-email ctx-org-id]}]
     (let [p (params request)
-          body-with-auth (merge (body-clj request)
+          body (body-clj request)
+          body-with-auth (merge body
                                 {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
                                  :labeler_email (str (or (ctx-user-email ctx) "unknown"))
-                                 :org_id (org-id! ctx ctx-org-id)})]
+                                 :org_id (org-id! ctx ctx-org-id)
+                                 :project (or (:project body)
+                                              (:session-project-name config))})]
       (openplanner-client/review-translation-document!
        (op-client config) (aget p "documentId") (aget p "targetLang") body-with-auth))))
 
@@ -233,11 +239,15 @@
   (register-json-route! app "GET" "/api/translations/documents/:documentId/:targetLang" runtime config handlers
                         "org.translations.read"
                         (fn [request ctx {:keys [ctx-org-id]}]
-                          (openplanner-client/translation-document!
-                           (op-client config)
-                           (aget (params request) "documentId")
-                           (aget (params request) "targetLang")
-                           (org-scope ctx ctx-org-id))))
+                          (let [q (query request)]
+                            (openplanner-client/translation-document!
+                             (op-client config)
+                             (aget (params request) "documentId")
+                             (aget (params request) "targetLang")
+                             {:org_id (org-id! ctx ctx-org-id)
+                              :project (or (aget q "project")
+                                           (:session-project-name config))
+                              :garden_id (aget q "garden_id")}))))
   (register-json-route! app "POST" "/api/translations/documents/:documentId/:targetLang/review" runtime config handlers
                         "org.translations.review" (review-document-op config)))
 

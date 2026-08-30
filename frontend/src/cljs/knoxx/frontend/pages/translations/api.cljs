@@ -10,19 +10,53 @@
     (when (seq target-lang) (.set q "target_lang" target-lang))
     (api/request (str "/api/translations/documents?" (.toString q)))))
 
-(defn get-document [document-id target-lang]
-  (api/request (str "/api/translations/documents/"
-                    (js/encodeURIComponent document-id) "/"
-                    (js/encodeURIComponent target-lang))))
+(defn- wire-scope
+  [{:keys [project garden-id]}]
+  (cond-> {}
+    (seq project) (assoc :project project)
+    (seq garden-id) (assoc :garden_id garden-id)))
 
-(defn review-document [document-id target-lang payload]
-  (api/request (str "/api/translations/documents/"
-                    (js/encodeURIComponent document-id) "/"
-                    (js/encodeURIComponent target-lang) "/review")
-               {:method "POST" :body payload}))
+(defn- document-path
+  [document-id target-lang]
+  (str "/api/translations/documents/"
+       (js/encodeURIComponent document-id) "/"
+       (js/encodeURIComponent target-lang)))
+
+(defn get-document
+  "Load one legacy split document under its project and garden coordinates."
+  ([document-id target-lang]
+   (get-document document-id target-lang nil))
+  ([document-id target-lang scope]
+   (let [q (js/URLSearchParams.)
+         {:keys [project garden_id]} (wire-scope scope)]
+     (when project (.set q "project" project))
+     (when garden_id (.set q "garden_id" garden_id))
+     (api/request (str (document-path document-id target-lang)
+                       (when (seq (.toString q))
+                         (str "?" (.toString q))))))))
+
+(defn review-document
+  "Apply a document-wide legacy split review under exact row scope."
+  ([document-id target-lang payload]
+   (review-document document-id target-lang nil payload))
+  ([document-id target-lang scope payload]
+   (api/request (str (document-path document-id target-lang) "/review")
+                {:method "POST"
+                 :body (merge payload (wire-scope scope))})))
 
 (defn list-publication-reviews []
   (api/request "/api/publications/translations/reviews"))
+
+(defn dispatch-publication-translation
+  "Ask Knoxx to dispatch exactly the resource work row the reviewer selected.
+
+   Publication identity stays server-resolved.  The client does not send a
+   revision or a retry flag: the resource snapshot decides the concrete work,
+   and durable dispatch evidence decides whether this is a first attempt,
+   in-flight duplicate, terminal duplicate, or lawful retry."
+  [publication-id]
+  (api/request "/api/publications/translations/dispatch"
+               {:method "POST" :body {:publication publication-id}}))
 
 (defn approve-publication-translation [payload]
   (api/request "/api/publications/translations/approvals"
@@ -33,10 +67,15 @@
                {:method "POST"
                 :body {:publicationId publication-id}}))
 
-(defn submit-label [segment-id payload]
-  (api/request (str "/api/translations/segments/"
-                    (js/encodeURIComponent segment-id) "/labels")
-               {:method "POST" :body payload}))
+(defn submit-label
+  "Apply a split judgment, carrying the selected row's project and garden."
+  ([segment-id payload]
+   (submit-label segment-id nil payload))
+  ([segment-id scope payload]
+   (api/request (str "/api/translations/segments/"
+                     (js/encodeURIComponent segment-id) "/labels")
+                {:method "POST"
+                 :body (merge payload (wire-scope scope))})))
 
 (defn get-manifest [project]
   (api/request (str "/api/translations/export/manifest?project="

@@ -43,6 +43,7 @@
   (:require [clojure.edn :as edn]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.node.fs :as fs]
+            [knoxx.backend.infra.translation-content-integrity :as content-integrity]
             [knoxx.backend.law.translation-agent :as agent-law]
             [knoxx.backend.law.translation-evidence :as evidence-law]))
 
@@ -85,6 +86,7 @@
    [:translation/revision agent-law/NonBlankString]
    [:translation/org-id agent-law/NonBlankString]
    [:translation/project {:optional true} [:maybe agent-law/NonBlankString]]
+   [:translation/content-digest agent-law/NonBlankString]
    [:translation/content :string]])
 
 (defn entry
@@ -106,23 +108,28 @@
             :translation/source-revision (:dispatch/revision record)
             :translation/revision output-revision
             :translation/org-id (:dispatch/org-id record)
+            :translation/content-digest (content-integrity/content-digest content)
             :translation/content content}
      (some? (:dispatch/project record))
      (assoc :translation/project (:dispatch/project record)))))
 
 (defn ^:async write!
-  "Persist one submitted translation. Returns the entry that was written.
-
-   Overwrites, and that is correct rather than merely convenient: the key is the
-   output revision, so the same key can only ever be rewritten by the same run
-   re-submitting. A second run has a different run id, therefore a different
-   output revision, therefore a different file — the two never contend."
+  "Atomically persist one submitted translation. Equal retries are idempotent;
+   changed bytes behind one output revision conflict and preserve the first."
   [content-root record output-revision content]
-  (let [value (entry record output-revision content)]
-    (await (fs/write-file-ensure-dir!
-            (entry-path content-root output-revision)
-            (pr-str value)))
-    value))
+  (let [value (entry record output-revision content)
+        path (entry-path content-root output-revision)
+        encoded (pr-str value)]
+    (await (fs/mkdir! (store-dir content-root)))
+    (if (fs/write-file-exclusive-sync! path encoded)
+      value
+      (let [existing (await (fs/read-file-or-nil! path))]
+        (if (= encoded existing)
+          value
+          (throw (ex-info "translation output revision already contains different bytes"
+                          {:translation/revision output-revision
+                           :translation/content-digest
+                           (:translation/content-digest value)})))))))
 
 (def ^:private compared-coordinates
   "Every field a stored entry and a receipt must agree about.
@@ -137,6 +144,7 @@
    :translation/source-locale
    :translation/source-revision
    :translation/revision
+   :translation/content-digest
    :translation/org-id
    :translation/project])
 
@@ -186,5 +194,8 @@
                                   (:translation/revision parsed)))
                         parsed))
                     (catch :default _ nil)))]
-      (when (and value (matches-receipt? value receipt))
+      (when (and value
+                 (matches-receipt? value receipt)
+                 (content-integrity/authenticated-content?
+                  receipt (:translation/content value)))
         (:translation/content value)))))

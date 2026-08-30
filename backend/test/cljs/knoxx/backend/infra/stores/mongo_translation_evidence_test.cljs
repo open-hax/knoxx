@@ -20,19 +20,29 @@
   "The tenant and project every fixture record here belongs to."
   {:org-id "org-1" :project nil})
 
+(def ^:private dispatch-work
+  {:document :knoxx.docs/probe
+   :locale :es
+   :revision "sha256-aaa111bbb222"
+   :replace-stale? false})
+
+(def ^:private dispatch-context
+  {:dispatch/garden "knoxx.docs/promethean"
+   :dispatch/document-wire-id "knoxx.docs/probe"
+   :dispatch/source-locale :en
+   :dispatch/org-id "org-1"
+   :dispatch/membership-id "member-1"})
+
 (def ^:private record
   (dispatch-law/dispatch-record
-   {:document :knoxx.docs/probe
-    :locale :es
-    :revision "sha256-aaa111bbb222"
-    :replace-stale? false}
-   {:dispatch/garden "knoxx.docs/promethean"
-    :dispatch/document-wire-id "knoxx.docs/probe"
-    :dispatch/source-locale :en
-    :dispatch/org-id "org-1"
-    :dispatch/membership-id "member-1"}
-   :dispatch/accepted
-   at))
+   dispatch-work dispatch-context :dispatch/accepted at))
+
+(defn- recovery-record
+  []
+  (dispatch-law/dispatch-record
+   dispatch-work dispatch-context :dispatch/accepted
+   "2026-08-22T10:00:00.000Z"
+   :recovery-reason :candidate-unavailable))
 
 (def ^:private receipt
   {:receipt/type :translation/completed
@@ -42,6 +52,7 @@
    :translation/locale :es
    :translation/source-revision "sha256-aaa111bbb222"
    :translation/revision "sha256-aaa111bbb222+es@batch-1"
+   :translation/content-digest "sha256-target-content"
    :translation/dispatch-key (:dispatch/key record)
    :translation/org-id "org-1"
    :translation/at at})
@@ -77,10 +88,14 @@
          ;; `clojure.core/update`, which this body calls one line down.
          (fn [query update-doc]
            (let [q (js->clj query :keywordize-keys true)
-                 changes (get (js->clj update-doc :keywordize-keys true) :$set)
+                 update-map (js->clj update-doc :keywordize-keys true)
+                 changes (get update-map :$set)
+                 unset-fields (keys (get update-map :$unset))
                  index (first (keep-indexed (fn [i row] (when (matches? q row) i)) @rows))]
              (if index
-               (do (swap! rows update index merge changes)
+               (do (swap! rows update index
+                          (fn [row]
+                            (apply dissoc (merge row changes) unset-fields)))
                    (js/Promise.resolve #js {"matchedCount" 1 "modifiedCount" 1}))
                (js/Promise.resolve #js {"matchedCount" 0 "modifiedCount" 0}))))
          :find
@@ -142,15 +157,48 @@
     (testing "only one row exists"
       (is (= 1 (count @dispatches))))))
 
-(deftest ^:async a-resolved-claim-reports-done-rather-than-in-flight
+(deftest ^:async an-ordinary-proposal-cannot-reopen-a-completed-claim
   (let [{:keys [store]} (fixture)
         _ (await (store/reserve-dispatch! store record))
         _ (await (store/resolve-dispatch! store (:dispatch/key record)
                                           :dispatch/completed nil))
         again (await (store/reserve-dispatch! store record))]
-    (testing "the distinction the gate needs between running and finished"
+    (testing "completed remains terminal when no recovery reason was established"
       (is (= :done (:reservation/status again)))
       (is (= :dispatch/completed (:dispatch/outcome (:record again)))))))
+
+(deftest ^:async candidate-unavailable-recovery-is-an-atomic-completed-cas
+  (let [{:keys [store dispatches]} (fixture)
+        _ (await (store/reserve-dispatch! store record))
+        _ (await (store/bind-dispatch-batch!
+                  store (:dispatch/key record) "batch-old"))
+        _ (await (store/resolve-dispatch!
+                  store (:dispatch/key record) :dispatch/completed "old detail"))
+        recovery (recovery-record)
+        ;; Start both calls before awaiting either. Both are allowed to observe
+        ;; completed, but the outcome predicate in updateOne lets exactly one
+        ;; compare-and-set it back to accepted.
+        first-promise (store/reserve-dispatch! store recovery)
+        second-promise (store/reserve-dispatch! store recovery)
+        first-result (await first-promise)
+        second-result (await second-promise)
+        stored (await (store/dispatch-for-key! store (:dispatch/key record)))]
+    (testing "exactly one recovery caller owns the fresh attempt"
+      (is (= {:reserved 1 :in-flight 1}
+             (frequencies (map :reservation/status
+                               [first-result second-result])))))
+
+    (testing "the replacement is the marked accepted record"
+      (is (= :dispatch/accepted (:dispatch/outcome stored)))
+      (is (= :candidate-unavailable (:dispatch/recovery-reason stored)))
+      (is (= (:dispatch/at recovery) (:dispatch/at stored))))
+
+    (testing "recovery clears mutable evidence belonging to the old attempt"
+      (is (not (contains? stored :dispatch/batch-id)))
+      (is (not (contains? stored :dispatch/detail))))
+
+    (testing "the unique key still has exactly one durable row"
+      (is (= 1 (count @dispatches))))))
 
 (deftest ^:async mutable-fields-are-columns-so-two-writers-cannot-clobber
   (let [{:keys [store]} (fixture)
@@ -223,9 +271,11 @@
   {:review/state :approved
    :review/document :knoxx.docs/probe
    :review/garden :knoxx.docs/promethean
+   :review/source-locale :en
    :review/locale :es
    :review/revision "sha256-aaa111bbb222"
    :review/translation-revision "sha256-aaa111bbb222+es@batch-1"
+   :review/content-digest "sha256-target-content"
    :review/org-id "org-1"
    :review/project "knoxx-session"
    :review/principal {:principal/user-email "reviewer@open-hax.local"}

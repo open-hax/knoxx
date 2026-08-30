@@ -8,10 +8,13 @@
    "ja" "日本語" "zh" "中文" "ko" "한국어" "pt" "Português"
    "ru" "Русский" "it" "Italiano"})
 
-(defn lang-name [code]
+(defn lang-name
+  "Return the display name for a locale code, preserving unknown codes."
+  [code]
   (get lang-names code code))
 
 (def default-label
+  "Empty review form values shown before a persisted judgment is selected."
   {:adequacy "good" :fluency "good" :terminology "correct"
    :risk "safe" :overall "approve" :corrected_text "" :editor_notes ""})
 
@@ -24,26 +27,51 @@
    "pending_review" "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
    "partial_review" "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300"
    "fully_rejected" "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
-   "mixed" "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300"})
+   "mixed" "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300"
+   "missing" "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+   "queued" "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300"
+   "running" "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300"
+   "in_flight" "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300"
+   "failed" "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+   "stale" "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+   "evidence_missing" "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+   "evidence_unbound" "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+   "revision_unresolved" "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+   "ready" "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+   "changes_requested" "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+   "published" "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"})
 
 (def ^:private status-icons
   {"approved" "✅" "rejected" "❌" "in_review" "📝" "pending" "⏳"
    "fully_approved" "✅" "pending_review" "⏳" "partial_review" "🔄"
-   "fully_rejected" "❌" "mixed" "🔀"})
+   "fully_rejected" "❌" "mixed" "🔀" "missing" "⏳" "queued" "⏳"
+   "running" "🔄" "in_flight" "🔄" "failed" "❌" "stale" "❌"
+   "evidence_missing" "❌" "evidence_unbound" "❌" "revision_unresolved" "❌" "ready" "📝" "changes_requested" "📝"
+   "published" "✅"})
 
-(defn status-class [status]
+(defn status-class
+  "Return presentation classes for a review or work status."
+  [status]
   (get status-classes status (get status-classes "pending")))
 
-(defn status-icon [status]
+(defn status-icon
+  "Return the compact icon for a review or work status."
+  [status]
   (get status-icons status "⏳"))
 
-(defn status-label [status]
+(defn status-label
+  "Turn an underscore-delimited wire status into a display label."
+  [status]
   (str/replace status "_" " "))
 
-(defn progress-pct [approved total]
+(defn progress-pct
+  "Return a safe completion percentage for a progress summary."
+  [approved total]
   (if (pos? total) (* 100 (/ approved total)) 0))
 
-(defn field-options [field]
+(defn field-options
+  "Return the closed option vocabulary for one review score field."
+  [field]
   (case field
     :risk ["safe" "sensitive" "policy_violation"]
     :terminology ["correct" "minor_errors" "major_errors"]
@@ -61,73 +89,314 @@
       corrected (assoc :corrected_text corrected)
       notes (assoc :editor_notes notes))))
 
-(defn find-segment [detail segment-index]
+(defn find-segment
+  "Find one split projection by its manifest ordinal."
+  [detail segment-index]
   (when (and detail (some? segment-index))
     (first (filter #(= segment-index (:segment_index %)) (:segments detail)))))
 
 (def ^:private fallback-langs ["es" "de" "ko" "fr" "ja" "zh" "it" "pt" "ru"])
 
-(defn available-langs [manifest]
+(defn available-langs
+  "Return manifest locales, or the historical fallback locale list."
+  [manifest]
   (if manifest
     (mapv name (keys (:languages manifest)))
     fallback-langs))
 
-(defn- doc-key [doc]
-  [(:document_id doc) (:target_lang doc)])
+(defn- document-id [value]
+  (or (:document value) (:document_id value)))
 
-(defn still-listed? [documents selected]
-  (boolean (some #(= (doc-key %) (doc-key selected)) documents)))
+(defn- garden-id [value]
+  (or (:garden value) (:garden_id value)))
+
+(defn- target-locale [value]
+  (or (:locale value) (:target_lang value)))
+
+(defn- source-locale [value]
+  (or (:source_locale value) (:source_lang value)))
 
 (defn- review-key [value]
-  [(or (:document value) (:document_id value))
-   (or (:garden value) (:garden_id value))
-   (or (:locale value) (:target_lang value))])
+  [(document-id value) (garden-id value) (target-locale value)])
+
+(defn work-row-id
+  "Stable identity for one desired publication work row.
+
+   Resource-backed inventory is keyed by publication intent. The coordinate
+   fallback keeps the legacy Mongo segment list usable while that older surface
+   is still joined into this page. It includes garden deliberately: one document
+   and locale may be desired in more than one garden."
+  [row]
+  (when row
+    (or (:publication row)
+        (:work_id row)
+        (let [[document _garden locale :as coordinates] (review-key row)]
+          (when (and (some? document) (some? locale))
+            coordinates)))))
+
+(defn same-work?
+  "Whether two rows describe the same desired publication work item."
+  [left right]
+  (let [left-id (work-row-id left)
+        right-id (work-row-id right)]
+    (and (some? left-id)
+         (some? right-id)
+         (= left-id right-id))))
+
+(defn work-row?
+  "Whether a row came from the resource-derived work inventory."
+  [row]
+  (and (some? (:publication row))
+       (some? (:work_state row))))
+
+(defn candidate-present?
+  "Whether a work value carries completed candidate evidence.
+
+   Supports the resource-first nested shape and the flattened compatibility
+   shape consumed by the current page. A legacy-only document summary is marked
+   explicitly when no resource inventory exists, because its persisted segments
+   are the candidate in that compatibility mode. Source revision or aggregate
+   segment counts alone never count as candidate evidence."
+  [value]
+  (or (some? (:translation_revision value))
+      (some? (get-in value [:candidate :translation_revision]))
+      (some? (:publication_review value))
+      (true? (:legacy_candidate value))))
+
+(defn legacy-candidate?
+  "Whether this row names a persisted legacy split set admitted for review."
+  [row]
+  (true? (:legacy_candidate row)))
+
+(defn- wire-name [value]
+  (if (keyword? value) (name value) value))
+
+(defn blocked-resource-candidate?
+  "Whether a resource candidate failed the server's exact-byte hydration gate.
+
+   A contract candidate is displayable only when the server says both that it
+   is reviewable and that hydration produced the exact source/target pair.
+   Missing evidence, including a future/unknown hydration state, fails closed."
+  [row]
+  (and (true? (:contract_candidate row))
+       (or (not (true? (:reviewable row)))
+           (not= "displayable" (wire-name (:hydration_state row))))))
+
+(defn allowed-action?
+  "Whether the server explicitly admitted `action` for this work item.
+
+   No work-state inference belongs here. Retryability is a dispatch law and the
+   resource projection must carry its decision across the boundary."
+  [row action]
+  (let [wanted (if (keyword? action) (name action) (str action))]
+    (boolean
+     (some #(= wanted (if (keyword? %) (name %) (str %)))
+           (:allowed_actions row)))))
+
+(defn still-listed?
+  "Whether the selected publication work identity remains in a refreshed list."
+  [documents selected]
+  (boolean (some #(same-work? % selected) documents)))
+
+(defn legacy-review-scope
+  "Scope an older segment API call to the selected work row.
+
+   Resource inventory owns project when the server supplies it; the page-level
+   project is only a compatibility fallback for legacy-only documents. Garden
+   is always row-specific, because the same document and locale may be present
+   in multiple gardens."
+  [row fallback-project]
+  (let [project (or (some-> (:project row) str not-empty)
+                    (some-> fallback-project str not-empty))
+        garden (some-> (garden-id row) str not-empty)]
+    (cond-> {}
+      project (assoc :project project)
+      garden (assoc :garden-id garden))))
+
+(defn effective-project
+  "Prefer the server-authored inventory project over the page fallback.
+
+   The response envelope remains authoritative when the desired work relation
+   is empty, so an empty inventory cannot silently send the legacy query back
+   to the UI's historical `devel` default."
+  [inventory fallback-project]
+  (let [work-items (if (map? inventory) (:reviews inventory) inventory)]
+    (or (when (map? inventory)
+          (some-> (:project inventory) str not-empty))
+        (some #(some-> (:project %) str not-empty) work-items)
+        (some-> fallback-project str not-empty))))
+
+(defn legacy-mutation-admitted?
+  "Whether legacy mutation controls have a persisted split and project scope.
+
+   Garden is optional because the backend treats an omitted garden as the exact
+   legacy nil-garden coordinate, never as a wildcard."
+  [row fallback-project]
+  (let [{:keys [project]} (legacy-review-scope row fallback-project)]
+    (and (legacy-candidate? row)
+         (some? project))))
+
+(defn- candidate-fields [work]
+  (if (map? (:candidate work))
+    (merge work (:candidate work))
+    work))
+
+(defn- work-state [work]
+  (or (:work_state work)
+      (when (candidate-present? work)
+        (if (:approved work) "approved" "ready"))))
+
+(defn- work-item->document-row [work]
+  (let [flat (candidate-fields work)
+        candidate? (candidate-present? flat)
+        approved? (true? (:approved work))
+        explicit-state (:work_state work)
+        state (work-state work)
+        total (or (:total_segments flat)
+                  (:split_count flat)
+                  (if candidate? 1 0))
+        review (when candidate? flat)]
+    (cond-> (assoc flat
+                   :publication (:publication work)
+                   :document_id (document-id work)
+                   :garden_id (garden-id work)
+                   :source_lang (or (:source_locale work) (:source_lang work))
+                   :target_lang (target-locale work)
+                   :title (:title work)
+                   :work_state state
+                   :allowed_actions (vec (or (:allowed_actions work) []))
+                   :approved (if approved? total 0)
+                   :total_segments total
+                   :overall_status (or explicit-state
+                                       (when candidate?
+                                         (if approved?
+                                           "fully_approved"
+                                           "pending_review"))
+                                       "pending")
+                   :publication_review review)
+      (and candidate?
+           (or (true? (:contract_candidate flat))
+               (some? (:content_source flat))))
+      (assoc :contract_content true))))
+
+(def ^:private legacy-summary-fields
+  "Legacy aggregate fields that may safely decorate authoritative work.
+
+   Candidate identity, text, revisions, status and actions are intentionally
+   absent. Copying the whole legacy row here lets old Mongo evidence overwrite
+   the resource candidate merely because both share document coordinates."
+  [:title :source_lang :project :pending :rejected :in_review :visibility])
+
+(def ^:private legacy-review-fields
+  "Aggregate split-review facts that may decorate candidate-less resource work.
+
+   These fields describe the persisted legacy split set, not publication
+   authority. Resource work state/actions and `publication_review` therefore
+   remain untouched."
+  [:total_segments :approved :pending :rejected :in_review :overall_status])
+
+(defn- legacy-split-candidate?
+  [document]
+  (pos? (or (:total_segments document) 0)))
+
+(defn- compatible-project?
+  "Require the project coordinate to be present and equal on both relations."
+  [document work]
+  (let [document-project (some-> (:project document) str not-empty)
+        work-project (some-> (:project work) str not-empty)]
+    (and (some? document-project)
+         (some? work-project)
+         (= document-project work-project))))
+
+(defn- compatible-source-locale?
+  "Require an explicit equal source locale before exposing legacy splits."
+  [document work]
+  (let [document-locale (some-> (source-locale document) str not-empty)
+        work-locale (some-> (source-locale work) str not-empty)]
+    (and (some? document-locale)
+         (some? work-locale)
+         (= document-locale work-locale))))
+
+(defn- matching-legacy-document
+  [documents work]
+  (first (filter #(and (= (review-key %) (review-key work))
+                       (compatible-project? % work)
+                       (compatible-source-locale? % work))
+                 documents)))
+
+(defn- legacy-compatibility-evidence
+  "Record what the compatibility bridge proved and what it cannot prove.
+
+   Legacy segments predate resource revisions, so coordinate equality is useful
+   evidence for restoring the old review UI but is never revision authority."
+  [document work]
+  {:basis :exact-coordinate-match
+   :document (document-id work)
+   :garden (garden-id work)
+   :source_locale (source-locale work)
+   :legacy_source_locale (source-locale document)
+   :locale (target-locale work)
+   :project (:project work)
+   :legacy_project (:project document)
+   :source_revision :unavailable})
+
+(defn- attach-work-item [document work]
+  (let [resource-candidate? (candidate-present? work)
+        decorated (reduce (fn [row field]
+                            (if (or (some? (get row field))
+                                    (not (contains? document field)))
+                              row
+                              (assoc row field (get document field))))
+                          (work-item->document-row work)
+                          legacy-summary-fields)]
+    (if (or resource-candidate?
+            (not (legacy-split-candidate? document)))
+      decorated
+      (reduce (fn [row field]
+                (if (contains? document field)
+                  (assoc row field (get document field))
+                  row))
+              (assoc decorated
+                     :legacy_candidate true
+                     :legacy_compatibility
+                     (legacy-compatibility-evidence document work))
+              legacy-review-fields))))
+
+(defn- legacy-document->row
+  "Make persisted legacy segments explicit candidate evidence.
+
+   This adapter is used only when the resource inventory is empty. Once desired
+   resource work exists, its candidate/evidence projection is authoritative."
+  [document]
+  (assoc document :legacy_candidate true))
+
+(defn normalize-work-inventory
+  "Join legacy segment summaries onto a resource-first translation work list.
+
+   Desired publication work is authoritative for cardinality. Candidate content,
+   dispatch records and Mongo segments are optional evidence about those rows;
+   their absence must never erase a desired document/locale pair, and an orphan
+   legacy row must never add a nineteenth card to an eighteen-item resource
+   inventory. When there is no resource inventory at all, legacy summaries are
+   retained as candidate-bearing rows so the pre-resource review flow continues
+   to work."
+  [documents work-items]
+  (if (seq work-items)
+    (mapv (fn [work]
+            (if-let [document (matching-legacy-document documents work)]
+              (attach-work-item document work)
+              (work-item->document-row work)))
+          work-items)
+    (mapv legacy-document->row documents)))
 
 (defn attach-publication-reviews
-  "Join revision-bound publication evidence onto segment rows, and retain every
-   CONTRACT-BACKED translation even when no worker document exists.
+  "Compatibility name for `normalize-work-inventory`.
 
-   Contract-backed, not authored. An agent-produced translation of a
-   contract-backed document also has no worker document — `translation-agent-sink`
-   writes content and a receipt and creates no Mongo segments, and
-   `/api/translations/documents` aggregates over the segments collection. So
-   keeping only `authored-contract` here dropped every agent translation on the
-   floor: invisible, therefore unapprovable, therefore unpublishable under
-   `:translation/review :required`.
-
-   The server marks any review it hydrated with `:content_source`, so presence of
-   that key is the test, and its value says which kind it is."
+   The second argument historically contained completed publication reviews.
+   It now accepts the resource-derived work inventory, of which a completed
+   review is only one possible state."
   [documents reviews]
-  (let [by-key (into {} (map (juxt review-key identity)) reviews)
-        attached (mapv #(assoc % :publication_review (get by-key (review-key %))) documents)
-        existing (set (map review-key documents))
-        authored (->> reviews
-                      (filter #(and (some? (:content_source %))
-                                    (not (contains? existing (review-key %)))))
-                      (mapv (fn [review]
-                              {:document_id (:document review)
-                               :garden_id (:garden review)
-                               :source_lang (:source_locale review)
-                               :target_lang (:locale review)
-                               :title (:title review)
-                               :overall_status (if (:approved review)
-                                                 "fully_approved"
-                                                 "pending_review")
-                               :approved (if (:approved review) 1 0)
-                               :total_segments 1
-                               ;; Why it is read-only, kept separate from where
-                               ;; the bytes came from. The durable reason is that
-                               ;; a contract-backed translation has no persisted
-                               ;; segment for a label to attach to — true of
-                               ;; authored and agent content alike. Which of the
-                               ;; two it is stays in `:content_source`, because
-                               ;; approving authored bytes and approving
-                               ;; generated bytes are different acts and the
-                               ;; reviewer should be told which they are doing.
-                               :contract_content true
-                               :content_source (:content_source review)
-                               :publication_review review})))]
-    (into attached authored)))
+  (normalize-work-inventory documents reviews))
 
 (defn authored-detail
   "Synthesize a reviewable detail from a contract-backed review's text.
@@ -158,10 +427,26 @@
                                  "pending_review")}
      :segments segments}))
 
+(def ^:private review-form-fields
+  [:adequacy :fluency :terminology :risk :overall
+   :corrected_text :editor_notes])
+
+(defn segment-review-form
+  "Hydrate the editor from the newest persisted label for one segment.
+
+   Document detail returns labels newest first. A segment without labels gets a
+   fresh form, which also prevents corrections typed for another split from
+   leaking across a selection change."
+  [segment]
+  (merge default-label
+         (select-keys (first (:labels segment)) review-form-fields)))
+
 (defn approval-request
   "The exact immutable coordinates the server exposed for approval."
   [review]
   (select-keys review [:document :garden :locale :revision :translation_revision]))
 
-(defn sft-filename [project target-lang]
+(defn sft-filename
+  "Return the stable filename for one translation export selection."
+  [project target-lang]
   (str project "-" (or (not-empty target-lang) "all") "-translations.jsonl"))

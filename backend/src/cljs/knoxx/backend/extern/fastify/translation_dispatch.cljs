@@ -38,22 +38,30 @@
    an empty decoded map, which is a valid request to translate the entire
    corpus. The typo silently became the most expensive operation this route has.
 
-   So the body is checked first. `:document` is optional — absence is how an
-   operator asks for a whole-corpus sweep — and when present it must be a
-   non-blank string."
-  [:map {:closed true}
-   [:document {:optional true} [:and :string [:fn {:error/message "a named document may not be blank"}
-                                              #(seq (str/trim %))]]]])
+   So the body is checked first. A document selects all of its publication
+   relations; a publication selects exactly one inventory row; absence of both
+   asks for a whole-corpus sweep. The two selectors are mutually exclusive so a
+   caller never has to guess which one wins."
+  [:and
+   [:map {:closed true}
+    [:document {:optional true} [:and :string [:fn {:error/message "a named document may not be blank"}
+                                               #(seq (str/trim %))]]]
+    [:publication {:optional true} [:and :string [:fn {:error/message "a named publication may not be blank"}
+                                                  #(seq (str/trim %))]]]]
+   [:fn {:error/message "dispatch may select a document or publication, not both"}
+    #(not (and (contains? % :document) (contains? % :publication)))]])
 
 (def DecodedRequest
   "Contract for the data this adapter hands inward, after decoding.
 
-   `:document` is optional and, when present, must be a qualified keyword. Not
-   `[:maybe ...]`: a nil document is not a way of saying 'all documents', it is a
-   caller that meant to name one and sent nothing. Absence is the only way to ask
-   for a whole-corpus sweep."
-  [:map {:closed true}
-   [:document {:optional true} :qualified-keyword]])
+   Either selector is optional and, when present, must be a qualified keyword.
+   Not `[:maybe ...]`: nil is not a way of saying 'all', it is a caller that
+   meant to name one and sent nothing. Absence is the only whole-corpus form."
+  [:and
+   [:map {:closed true}
+    [:document {:optional true} :qualified-keyword]
+    [:publication {:optional true} :qualified-keyword]]
+   [:fn #(not (and (contains? % :document) (contains? % :publication)))]])
 
 (defn decode-request
   "Validate the native request body, then project it onto what the facade reads.
@@ -72,7 +80,10 @@
      DecodedRequest
      (cond-> {}
        (contains? body :document)
-       (assoc :document (resource-identity/decode-keyword (:document body)))))))
+       (assoc :document (resource-identity/decode-keyword (:document body)))
+
+       (contains? body :publication)
+       (assoc :publication (resource-identity/decode-keyword (:publication body)))))))
 
 (defn- scope
   "The acting principal's dispatch scope, plus the project batches are filed in.
@@ -122,7 +133,7 @@
       :emit! (fn [event] (event-dispatch/dispatch! config event))
       :digest-hex crypto/sha256-hex}
      (scope config ctx)
-     (:document decoded))
+     decoded)
     ;; No durable store means a dispatch whose revision binding would be lost.
     ;; Refusing is the only honest answer — see the registry's docstring.
     (throw (ex-info "translation evidence persistence is not configured"

@@ -11,10 +11,11 @@
   "Per document+language status totals for the matched tenant scope."
   [selector]
   [{:$match selector}
-   {:$group {:_id {:document_id "$document_id" :target_lang "$target_lang"}
+   {:$group {:_id {:document_id "$document_id"
+                   :target_lang "$target_lang"
+                   :garden_id "$garden_id"
+                   :project "$project"}
              :source_lang {:$first "$source_lang"}
-             :garden_id {:$first "$garden_id"}
-             :project {:$first "$project"}
              :total_segments {:$sum 1}
              :approved (common/status-count "approved")
              :pending (common/status-count "pending")
@@ -43,8 +44,8 @@
      {:document-id document-id
       :target-lang (common/jget id-object "target_lang")
       :source-lang (common/jget row "source_lang")
-      :garden-id (common/jget row "garden_id")
-      :project (common/jget row "project")
+      :garden-id (common/jget id-object "garden_id")
+      :project (common/jget id-object "project")
       :total (common/jget row "total_segments")
       :approved (common/jget row "approved")
       :pending (common/jget row "pending")
@@ -87,12 +88,19 @@
                              contract/TranslationDocumentsResponse
                              response)))
 
+(defn- exact-document-selector
+  "One document/locale/project/garden relation, including legacy nil garden."
+  [document-id target-lang {:keys [org_id project garden_id]}]
+  {:document_id (str document-id)
+   :target_lang (str target-lang)
+   :org_id org_id
+   :project project
+   :garden_id garden_id})
+
 (defn- document-segments-pipeline
-  "Latest revision of each segment index for one document+language pair."
-  [document-id target-lang org-id]
-  [{:$match {:document_id (str document-id)
-             :target_lang (str target-lang)
-             :org_id org-id}}
+  "Latest revision of each split in one exact scoped document relation."
+  [document-id target-lang scope]
+  [{:$match (exact-document-selector document-id target-lang scope)}
    {:$sort {:segment_index 1 :created_at -1}}
    {:$group {:_id "$segment_index" :doc {:$first "$$ROOT"}}}
    {:$replaceRoot {:newRoot "$doc"}}
@@ -142,11 +150,11 @@
      :overall_status (translation/status-wire (:overall-status summary))}))
 
 (defn- latest-document-segments!
-  "Load the newest revision of every segment in one document+language pair."
-  [collection-map document-id target-lang org-id]
+  "Load the newest revision of every split in one exact scoped relation."
+  [collection-map document-id target-lang scope]
   (.toArray
    (.aggregate (:segments collection-map)
-               (clj->js (document-segments-pipeline document-id target-lang org-id)))))
+               (clj->js (document-segments-pipeline document-id target-lang scope)))))
 
 (defn- source-event!
   "Load the source event backing a document, if it has one."
@@ -164,7 +172,8 @@
         org-id (common/required-org-id! (:org_id scope))
         collection-map (common/collections (await (common/db!)))
         rows (await (latest-document-segments!
-                     collection-map document-id target-lang org-id))]
+                     collection-map document-id target-lang
+                     (assoc scope :org_id org-id)))]
     (when (zero? (.-length rows))
       (throw (js/Error. "Document translation not found")))
     (let [event (await (source-event! collection-map document-id org-id))
@@ -308,9 +317,8 @@
                                         (or payload {}))
         org-id (common/required-org-id! (:org_id request))
         collection-map (common/collections (await (common/db!)))
-        selector {:document_id (str document-id)
-                  :target_lang (str target-lang)
-                  :org_id org-id}
+        selector (exact-document-selector document-id target-lang
+                                          (assoc request :org_id org-id))
         segment-array (await
                        (.toArray
                         (-> (.find (:segments collection-map) (clj->js selector))

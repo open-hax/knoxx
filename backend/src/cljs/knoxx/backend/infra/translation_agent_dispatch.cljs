@@ -148,7 +148,9 @@
                                     (if pin-refusal
                                       law/unreachable-outcome
                                       :dispatch/accepted)
-                                    (clock))]
+                                    (clock)
+                                    :recovery-reason
+                                    (:dispatch/recovery-reason context))]
     (if pin-refusal
       {:dispatch/outcome law/unreachable-outcome
        :dispatch/record record

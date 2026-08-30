@@ -20,8 +20,11 @@
 (def ^:private at "2026-08-22T09:00:00.000Z")
 
 (defn- record
-  [& {:keys [outcome batch-id] :or {outcome :dispatch/accepted}}]
-  (law/dispatch-record work context outcome at :batch-id batch-id))
+  [& {:keys [outcome batch-id recovery-reason]
+      :or {outcome :dispatch/accepted}}]
+  (law/dispatch-record work context outcome at
+                       :batch-id batch-id
+                       :recovery-reason recovery-reason))
 
 (deftest derived-work-is-validated-on-arrival
   (testing "the gate's payload shape is accepted"
@@ -110,6 +113,39 @@
   (testing "an unknown outcome cannot be recorded"
     (is (thrown? js/Error (law/dispatch-record work context :dispatch/invented at)))))
 
+(deftest completed-claim-recovery-is-explicit-and-narrow
+  (let [completed (record :outcome :dispatch/completed :batch-id "batch-old")
+        ordinary (record)
+        recovery (record :recovery-reason :candidate-unavailable)]
+    (testing "the closed recovery vocabulary is validated on the record"
+      (is (= :candidate-unavailable (:dispatch/recovery-reason recovery)))
+      (is (thrown? js/Error
+                   (record :recovery-reason :invented-recovery))))
+
+    (testing "an ordinary completed claim remains terminal"
+      (is (law/terminal? :dispatch/completed))
+      (is (not (law/replaceable-claim? ordinary completed))))
+
+    (testing "the explicit candidate-unavailable proposal may reopen candidate-terminal claims"
+      (is (law/replaceable-claim? recovery completed))
+      (is (law/replaceable-claim?
+           recovery (assoc completed :dispatch/outcome :dispatch/duplicate))))
+
+    (testing "the exception cannot cross a key or replace unreachable work"
+      (is (not (law/replaceable-claim?
+                (assoc recovery :dispatch/key "some-other-key") completed)))
+      (is (not (law/replaceable-claim?
+                recovery (assoc completed :dispatch/outcome :dispatch/unreachable)))))
+
+    (testing "a replacement is always a new accepted attempt"
+      (is (not (law/replaceable-claim?
+                (assoc recovery :dispatch/outcome :dispatch/failed) completed))))
+
+    (testing "ordinary failed and rejected attempts remain replaceable"
+      (doseq [outcome [:dispatch/failed :dispatch/rejected]]
+        (is (law/replaceable-claim?
+             ordinary (assoc completed :dispatch/outcome outcome)))))))
+
 (deftest output-revision-changes-with-the-producing-batch
   (testing "the same source revision translated twice yields distinct outputs"
     ;; This is what stops an approval of the first translation authorizing the
@@ -181,7 +217,14 @@
       (is (= (:dispatch/key accepted) (:translation/dispatch-key receipt))))
 
     (testing "a worker-supplied selector output revision is refused"
-      (is (thrown? js/Error (law/translation-receipt accepted "source/current" at))))))
+      (is (thrown? js/Error (law/translation-receipt accepted "source/current" at))))
+
+    (testing "a producer can bind the exact translated bytes into its receipt"
+      (is (= "sha256-target"
+             (:translation/content-digest
+              (law/translation-receipt accepted
+                                       (law/output-revision accepted)
+                                       at "sha256-target")))))))
 
 (deftest drift-is-decided-against-the-recorded-digest-not-the-pinned-revision
   ;; `law.publication/PublicationRevision` admits any nonblank string, so an

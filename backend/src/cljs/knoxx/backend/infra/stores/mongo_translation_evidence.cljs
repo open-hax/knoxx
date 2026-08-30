@@ -227,13 +227,16 @@
     (when (and (number? matched-count) (pos? matched-count))
       (await (find-dispatch! db dispatch-key)))))
 
-(defn- ^:async replace-retriable!
-  "Replace a failed or rejected claim with a fresh attempt, or report nil.
+(defn- ^:async replace-claim!
+  "Replace an admitted claim with a fresh attempt, or report nil.
 
    Compare-and-set on the outcome we just read. The query names that exact
    outcome, so if another pass replaced or resolved the claim in between, this
    update matches nothing and the caller re-reads instead of overwriting a live
-   attempt.
+   attempt. Admission is decided before this call by
+   `law.translation-dispatch/replaceable-claim?`: ordinarily only failed or
+   rejected claims qualify, with explicit candidate-unavailable recovery as the
+   exception for completed or duplicate candidate-terminal claims.
 
    The previous attempt's `batch_id` and `detail` are unset, not merely left. A
    stale batch id would let the old batch's completion report resolve the new
@@ -291,8 +294,8 @@
    learn the key was taken — which is why `setup-indexes!` describes that index
    as the claim rather than as a performance choice.
 
-   A retriable existing claim is replaced rather than reported settled. See
-   `law.translation-dispatch/retriable-outcomes`."
+   A replaceable existing claim is replaced rather than reported settled. See
+   `law.translation-dispatch/replaceable-claim?`."
   [db record]
   (let [{:keys [inserted?]}
         (await (extern-mongo/insert-one-unique! (dispatches-coll db)
@@ -305,8 +308,8 @@
           (= :dispatch/accepted outcome)
           {:reservation/status :in-flight :record existing}
 
-          (dispatch-law/retriable? outcome)
-          (if-let [replaced (await (replace-retriable! db record outcome))]
+          (dispatch-law/replaceable-claim? record existing)
+          (if-let [replaced (await (replace-claim! db record outcome))]
             {:reservation/status :reserved :record replaced}
             (await (reread-claim! db (:dispatch/key record))))
 

@@ -12,6 +12,7 @@
    :translation/locale :es
    :translation/source-revision "sha256-abc123def456"
    :translation/revision "sha256-abc123def456+es@batch-7"
+   :translation/content-digest "sha256-target-content"
    :translation/dispatch-key "key-1"
    :translation/org-id "org-1"
    :translation/at "2026-08-22T09:00:00.000Z"})

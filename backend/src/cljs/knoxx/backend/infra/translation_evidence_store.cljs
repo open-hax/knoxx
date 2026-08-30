@@ -36,10 +36,13 @@
 
      A claim whose outcome is retriable — failed or rejected — is *replaced* by
      `record` and reported `:reserved`, because no translation came of it and the
-     work still needs doing. Only `:dispatch/completed` and
-     `:dispatch/duplicate` are `:done`. Reporting a failed attempt as done
-     strands that source revision forever: the gate keeps reporting the
-     translation missing while every later pass answers duplicate.
+     work still needs doing. A completed or duplicate claim is also replaceable
+     when `record` carries the validated `:candidate-unavailable` recovery
+     reason; this is the explicit repair path for translated candidate bytes
+     that can no longer be read. Ordinary terminal claims remain `:done`.
+     Reporting a failed attempt as done strands that source revision forever:
+     the gate keeps reporting the translation missing while every later pass
+     answers duplicate.
 
      Implementations must contain no `await` between reading the key and
      claiming it.")
@@ -144,12 +147,13 @@
 (defn- reserve-in-state
   "Claim `record`'s key, or report the claim already there.
 
-   A *retriable* existing claim — failed or rejected — is replaced by `record`
-   outright rather than reported as settled. Replacing wholesale is what clears
-   the previous attempt's batch id: left behind, the old batch's completion
-   report would resolve the new attempt, minting a receipt for a translation the
-   new attempt never produced. See `law.translation-dispatch/retriable-outcomes`
-   for why a failed attempt must not be terminal at all."
+   A replaceable existing claim is replaced by `record` outright rather than
+   reported as settled. That includes ordinary failed/rejected retries and the
+   explicit candidate-unavailable recovery of a completed claim. Replacing
+   wholesale is what clears the previous attempt's batch id: left behind, the
+   old batch's completion report would resolve the new attempt, minting a receipt
+   for a translation the new attempt never produced. See
+   `law.translation-dispatch/replaceable-claim?` for the complete admission law."
   [current record]
   (let [dispatch-key (:dispatch/key record)
         existing (get-in current [:dispatches dispatch-key])]
@@ -162,7 +166,7 @@
       (in-flight? existing)
       (assoc current :answer {:reservation/status :in-flight :record existing})
 
-      (dispatch-law/retriable? (:dispatch/outcome existing))
+      (dispatch-law/replaceable-claim? record existing)
       (-> current
           (assoc-in [:dispatches dispatch-key] record)
           (assoc :answer {:reservation/status :reserved :record record}))
@@ -227,8 +231,10 @@
    (:review/project approval)
    (:review/document approval)
    (:review/garden approval)
+   (:review/source-locale approval)
    (:review/locale approval)
    (:review/revision approval)
+   (:review/content-digest approval)
    (:review/translation-revision approval)])
 
 (defn- record-approval-in-state

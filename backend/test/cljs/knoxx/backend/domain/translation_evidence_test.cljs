@@ -4,8 +4,9 @@
             [knoxx.backend.domain.translation-evidence :as domain]))
 
 (defn- receipt
-  [& {:keys [garden locale source-revision revision at]
+  [& {:keys [garden source-locale locale source-revision revision at]
       :or {garden :knoxx.docs/promethean
+           source-locale :en
            locale :es
            source-revision "sha256-aaa111bbb222"
            revision "sha256-aaa111bbb222+es@batch-1"
@@ -13,10 +14,11 @@
   {:receipt/type :translation/completed
    :translation/document :knoxx.docs/probe
    :translation/garden garden
-   :translation/source-locale :en
+   :translation/source-locale source-locale
    :translation/locale locale
    :translation/source-revision source-revision
    :translation/revision revision
+   :translation/content-digest (str revision "-content")
    :translation/dispatch-key "key-1"
    :translation/org-id "org-1"
    :translation/at at})
@@ -31,6 +33,19 @@
       (is (not (domain/translated-revision? evidence :knoxx.docs/probe :knoxx.docs/other :es "sha256-aaa111bbb222")))
       (is (not (domain/translated-revision? evidence :knoxx.docs/probe :knoxx.docs/promethean :fr "sha256-aaa111bbb222")))
       (is (not (domain/translated-revision? evidence :knoxx.docs/probe :knoxx.docs/promethean :es "sha256-different"))))))
+
+(deftest a-historical-unbound-receipt-is-not-current-translation-evidence
+  (let [historical (dissoc (receipt) :translation/content-digest)
+        evidence (domain/evidence {:receipts [historical]})]
+    (is (= historical
+           (domain/receipt-for evidence :knoxx.docs/probe
+                               :knoxx.docs/promethean :es
+                               "sha256-aaa111bbb222"))
+        "history remains readable")
+    (is (not (domain/translated-revision?
+              evidence :knoxx.docs/probe :knoxx.docs/promethean :es
+              "sha256-aaa111bbb222"))
+        "history without a target digest derives recovery work")))
 
 (deftest a-re-translation-wins-by-timestamp-not-arrival-order
   (let [older (receipt :revision "sha256-aaa111bbb222+es@batch-1"
@@ -59,8 +74,9 @@
                  (domain/evidence {:receipts [(receipt :source-revision "source/current")]})))))
 
 (defn- approval
-  [& {:keys [garden locale revision translation-revision at]
+  [& {:keys [garden source-locale locale revision translation-revision at]
       :or {garden :knoxx.docs/promethean
+           source-locale :en
            locale :es
            revision "sha256-aaa111bbb222"
            translation-revision "sha256-aaa111bbb222+es@batch-1"
@@ -68,9 +84,11 @@
   {:review/state :approved
    :review/document :knoxx.docs/probe
    :review/garden garden
+   :review/source-locale source-locale
    :review/locale locale
    :review/revision revision
    :review/translation-revision translation-revision
+   :review/content-digest (str translation-revision "-content")
    :review/org-id "org-1"
    :review/principal {:principal/user-email "reviewer@open-hax.local"}
    :review/at at})
@@ -144,6 +162,44 @@
                               :es "sha256-aaa111bbb222"))
         (is (domain/approved? both :knoxx.docs/probe other-garden
                               :es "sha256-aaa111bbb222"))))))
+
+(deftest an-approval-does-not-cross-source-locales
+  (let [german-source (receipt :source-locale :de)
+        english-approval (approval)
+        legacy-approval (dissoc english-approval :review/source-locale)]
+    (testing "an approval from another source language cannot authorize equal revisions"
+      (is (not (domain/approved?
+                (domain/evidence {:receipts [german-source]
+                                  :approvals [english-approval]})
+                :knoxx.docs/probe :knoxx.docs/promethean :es
+                "sha256-aaa111bbb222"))))
+
+    (testing "pre-migration evidence remains readable history but fails closed"
+      (is (not (domain/approved?
+                (domain/evidence {:receipts [german-source]
+                                  :approvals [legacy-approval]})
+                :knoxx.docs/probe :knoxx.docs/promethean :es
+                "sha256-aaa111bbb222"))))
+
+    (testing "an approval bound to the current source locale remains current"
+      (is (domain/approved?
+           (domain/evidence {:receipts [german-source]
+                             :approvals [(approval :source-locale :de)]})
+           :knoxx.docs/probe :knoxx.docs/promethean :es
+           "sha256-aaa111bbb222")))))
+
+(deftest an-approval-without-a-content-binding-is-history-only
+  (let [completed (receipt)
+        legacy (dissoc (approval) :review/content-digest)]
+    (is (= legacy (first (get-in (domain/evidence {:receipts [completed]
+                                                   :approvals [legacy]})
+                                 [:approvals
+                                  [:knoxx.docs/probe :knoxx.docs/promethean
+                                   :es "sha256-aaa111bbb222"]]))))
+    (is (not (domain/approved?
+              (domain/evidence {:receipts [completed] :approvals [legacy]})
+              :knoxx.docs/probe :knoxx.docs/promethean :es
+              "sha256-aaa111bbb222")))))
 
 (deftest a-re-translation-supersedes-its-approval
   (let [older (receipt :revision "sha256-aaa111bbb222+es@batch-1"

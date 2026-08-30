@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.translation-agent-sink-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.translation-agent-content :as content]
+            [knoxx.backend.infra.translation-content-integrity :as content-integrity]
             [knoxx.backend.infra.translation-agent-sink :as sink]
             [knoxx.backend.infra.translation-evidence-store :as store]
             [knoxx.backend.law.translation-agent :as agent-law]
@@ -73,7 +74,9 @@
       (is (= :de (:translation/locale receipt)))
       (is (= :en (:translation/source-locale receipt)))
       (is (= "sha256-abc123" (:translation/source-revision receipt)))
-      (is (= "open-hax" (:translation/org-id receipt))))
+      (is (= "open-hax" (:translation/org-id receipt)))
+      (is (= (content-integrity/content-digest translated)
+             (:translation/content-digest receipt))))
 
     (testing "the output revision names the producing run, so a re-run supersedes it"
       (is (= (dispatch-law/output-revision bound) (:translation/revision receipt)))
@@ -99,7 +102,29 @@
     (testing "the claim is settled, so a later pass reports duplicate rather than re-running"
       (is (= :dispatch/completed
              (:dispatch/outcome (await (store/dispatch-for-key!
-                                        evidence-store (:dispatch/key bound)))))))))
+                                        evidence-store (:dispatch/key bound)))))))
+
+    (testing "a repeated changed submission cannot replace approved candidate bytes"
+      (let [repeat-result (await (sink/submit-pair!
+                                  (deps root evidence-store) policies
+                                  (pair :translated_text "Geänderte Bytes.")))]
+        (is (= :dispatch-already-resolved
+               (get-in repeat-result [:translation/refusal :refusal/type])))
+        (is (= translated
+               (await (content/content-for-receipt! root receipt))))))))
+
+(deftest ^:async one-output-revision-is-immutable-even-before-claim-settlement
+  (let [root "/tmp/knoxx-translation-agent-sink-test/immutable"
+        evidence-store (store/memory-store)
+        bound (await (claim! evidence-store))
+        revision (dispatch-law/output-revision bound)
+        _ (await (content/write! root bound revision translated))
+        error (try
+                (await (content/write! root bound revision "Andere Bytes."))
+                nil
+                (catch :default err err))]
+    (is (some? error))
+    (is (re-find #"already contains different bytes" (ex-message error)))))
 
 (deftest ^:async a-pair-with-nothing-to-join-is-refused-and-the-claim-survives
   (let [root "/tmp/knoxx-translation-agent-sink-test/unjoinable"

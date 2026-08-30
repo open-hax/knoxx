@@ -18,11 +18,14 @@
      would let an anonymous caller manufacture the review evidence a publication
      gate is waiting on."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.translation-review-inventory :as inventory]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
             [knoxx.backend.infra.translation-agent-content :as agent-content]
+            [knoxx.backend.infra.translation-candidate-content :as candidate-content]
+            [knoxx.backend.infra.translation-content-integrity :as content-integrity]
             [knoxx.backend.infra.translation-evidence-store :as evidence-store-api]
             [knoxx.backend.infra.routes.translation-review :as facade]
             [knoxx.backend.infra.routes.publications :as publications]
@@ -61,6 +64,7 @@
    like the rest: the receipt is keyed by garden, so naming another one is a
    disagreement with recorded fact rather than a malformed request."
   {:translation-receipt-missing 409
+   :translation-content-unbound 409
    :translation-document-mismatch 409
    :translation-garden-mismatch 409
    :translation-locale-mismatch 409
@@ -154,26 +158,64 @@
         documents (vec (vals (:documents index)))
         roots (translation-dispatch/document-source-roots config records)
         revisions (await (source-revision/source-revisions!
-                          config documents roots))]
+                          config documents roots))
+        work (mapv #(assoc %
+                           :translation/org-id (:org-id scope)
+                           :translation/project (:project scope))
+                   (inventory/desired-work index revisions))
+        authored (await (contract-content/ensure-receipts!
+                         evidence-store index roots scope revisions))]
     {:index index
      :roots roots
-     :authored (await (contract-content/ensure-receipts!
-                       evidence-store index roots scope revisions))}))
+     ;; The inventory resolves every desired `:source/current` relation from
+     ;; this same snapshot.  Discarding the map here forced the old read path to
+     ;; start from completed receipts, because a missing candidate otherwise had
+     ;; no concrete revision to put on the wire.  That inverted authority: one
+     ;; receipt yielded one row even when the resource graph declared eighteen
+     ;; pieces of translation work.
+     :source-revisions revisions
+     :work work
+     :authored authored}))
+
+(defn- ^:async authenticated-contract-receipts!
+  "One content-authenticated receipt snapshot for review and approval.
+
+  Authored history is first normalized against *desired work*, so deleting a
+  declared locale file retires its old receipt instead of leaving a ready row
+  nobody can inspect. Agent receipts then have to resolve to their exact
+  digest-bound content entry."
+  [config evidence-store scope {:keys [index roots work authored]}]
+  (let [stored (await (evidence-store-api/completed-translations!
+                       evidence-store (select-keys scope [:org-id :project])))
+        normalized (contract-content/current-authored-receipts
+                    stored authored work)
+        desired-relations (set (map inventory/work-key work))]
+    (await (candidate-content/authenticated-receipts!
+            (:publication-content-root config)
+            roots
+            (:documents index)
+            authored
+            (filterv #(and (= (:org-id scope) (:translation/org-id %))
+                            (= (:project scope) (:translation/project %))
+                            (contains? desired-relations
+                                       (inventory/work-key %)))
+                     normalized)))))
 
 (defn- relation-key
-  "The five coordinates that identify one translated revision.
+  "The six coordinates that identify one translated revision.
 
    Shared by receipts and by the wire reviews built from them, so the two can be
    joined without either side inventing an ordering. Source revision AND output
    revision are both present because an approval is revision-specific on both
    sides — see `law.translation-evidence/approval-current?`."
-  [document garden locale revision translation-revision]
-  [document garden locale revision translation-revision])
+  [document garden source-locale locale revision translation-revision]
+  [document garden source-locale locale revision translation-revision])
 
 (defn- receipt-relation
   [receipt]
   (relation-key (:translation/document receipt)
                 (:translation/garden receipt)
+                (:translation/source-locale receipt)
                 (:translation/locale receipt)
                 (:translation/source-revision receipt)
                 (:translation/revision receipt)))
@@ -182,72 +224,165 @@
   [review]
   (relation-key (:document review)
                 (:garden review)
+                (:source_locale review)
                 (:locale review)
                 (:revision review)
                 (:translation_revision review)))
 
+(defn- ^:async contract-candidate-content!
+  "Load candidate columns and independently digest the source bytes read now."
+  [config roots document locale authored? receipt]
+  (let [root (get roots (:document/id document))
+        source (await (contract-content/source-content! root document))
+        translated (if authored?
+                     (await (contract-content/localized-content!
+                             root document locale))
+                     (await (agent-content/content-for-receipt!
+                             (:publication-content-root config) receipt)))]
+    {:source source
+     :source-revision (source-revision/content-revision source)
+     :translated translated
+     :translated-current? (content-integrity/authenticated-content?
+                           receipt translated)
+     :content-source (if authored? :authored-contract :agent)}))
+
+(defn- displayable-content?
+  "Whether a review column contains bytes a person can actually inspect."
+  [content]
+  (and (string? content) (not (str/blank? content))))
+
+(defn- hydrated-contract-review
+  "Project loaded candidate bytes without inventing reviewability."
+  [review document {:keys [source source-revision translated translated-current?
+                           content-source]}]
+  (let [source-present? (displayable-content? source)
+        translated-present? (displayable-content? translated)
+        source-current? (and source-present?
+                             (= (:revision review) source-revision))
+        displayable? (and source-current? translated-present?
+                          translated-current?)
+        hydration-state (cond
+                          (not source-present?) :content_missing
+                          (not source-current?) :source_moved
+                          (not translated-present?) :content_missing
+                          (not translated-current?) :content_moved
+                          :else :displayable)]
+    (cond-> (assoc review
+                   :title (:document/title document)
+                   :source_locale (:document/source-locale document)
+                   :contract_candidate true
+                   :reviewable displayable?
+                   :hydration_state hydration-state)
+      displayable? (assoc :source_text source
+                          :translated_text translated
+                          :content_source content-source))))
+
 (defn- ^:async hydrate-review!
-  "Attach the text a reviewer has to read before approving, for any review whose
-   document this deployment's contracts own.
+  "Attach the exact bytes a reviewer must see before approval.
 
-   Previously only AUTHORED reviews were hydrated, and the consequence was that
-   an agent-produced translation of a contract-backed document reached the page
-   carrying no `:content_source`, no `:source_text` and no `:translated_text` —
-   whereupon `pages.translations.logic/attach-publication-reviews` dropped it,
-   because it joined no worker document and was not authored. Since agent
-   submissions create no Mongo segments (`infra.translation-agent-sink` writes
-   content and a receipt, nothing else), no worker document ever exists for one.
-
-   So an agent translation was invisible, therefore unapprovable, therefore —
-   under `:translation/review :required` — unpublishable. The publish path knew
-   about it all along: `infra.publication-runtime/translated-blocks!` reads agent
-   content as precedence 1. Only the review path did not.
-
-   The precedence here mirrors that one deliberately, so a reviewer reads the
-   same bytes the reconciler would publish: agent-submitted content first, keyed
-   by the receipt it attests to, then the authored locale file.
-
-   `:content_source` distinguishes the two rather than collapsing them. What a
-   reviewer is looking at is not a detail — approving authored bytes and
-   approving generated bytes are different acts."
+   Precedence mirrors publication rendering: receipt-bound agent content, then
+   authored locale content. `:content_source` preserves that distinction, and
+   `:reviewable` is reduced to false whenever either display column is missing."
   [config index roots authored-relations receipts-by-relation review]
   (let [document (get-in index [:documents (:document review)])]
-    (if (nil? document)
+    (if (or (nil? document)
+            (not (:candidate_present review)))
       ;; Not a document these contracts own. It belongs to the OpenPlanner
-      ;; worker path and is joined to its own document row on the client.
+      ;; worker path and is joined to its own document row on the client.  A
+      ;; resource work item with no candidate also stops here: it must remain in
+      ;; the inventory, but there is no receipt-bound output to hydrate and no
+      ;; approval control may be rendered over it.
       review
       (let [relation (review-relation review)
-            root (get roots (:document/id document))
             authored? (contains? authored-relations relation)
             receipt (get receipts-by-relation relation)
-            source (await (contract-content/source-content! root document))
-            submitted (when-not authored?
-                        (await (agent-content/content-for-receipt!
-                                (:publication-content-root config) receipt)))
-            translated (if authored?
-                         (await (contract-content/localized-content!
-                                 root document (:locale review)))
-                         submitted)]
-        (cond-> (assoc review
-                       :title (:document/title document)
-                       :source_locale (:document/source-locale document))
-          (some? source) (assoc :source_text source)
-          ;; Both or neither. A review carrying a content source but no text
-          ;; would render an approval control over nothing, which is the one
-          ;; thing revision-specific approval exists to prevent.
-          (some? translated) (assoc :translated_text translated
-                                    :content_source (if authored?
-                                                      :authored-contract
-                                                      :agent)))))))
+            content (await (contract-candidate-content!
+                            config roots document (:locale review)
+                            authored? receipt))]
+        ;; Resource ownership stays explicit even when bytes are missing, so
+        ;; the client cannot fall through to a same-named legacy Mongo row.
+        (hydrated-contract-review review document content)))))
+
+(defn- matching-resource-work
+  "Find the exact desired resource relation attested by `receipt`."
+  [index source-revisions receipt]
+  (let [relation (inventory/work-key receipt)]
+    (some #(when (= relation (inventory/work-key %)) %)
+          (mapv (fn [work]
+                  (assoc work
+                         :translation/org-id (:translation/org-id receipt)
+                         :translation/project (:translation/project receipt)))
+                (inventory/desired-work index source-revisions)))))
+
+(defn- matching-request-work
+  "Resolve a client approval onto server-owned source-locale work."
+  [index source-revisions scope request]
+  (some (fn [work]
+          (when (= [(:review/document request)
+                    (:review/garden request)
+                    (:review/locale request)
+                    (:review/revision request)]
+                   [(:translation/document work)
+                    (:translation/garden work)
+                    (:translation/locale work)
+                    (:translation/source-revision work)])
+            work))
+        (mapv #(assoc %
+                      :translation/org-id (:org-id scope)
+                      :translation/project (:project scope))
+              (inventory/desired-work index source-revisions))))
+
+(defn- ^:async authorize-resource-approval!
+  "Require declared resource work and both exact display columns before write."
+  [config {:keys [index roots source-revisions authored]} _request receipt]
+  (let [work (matching-resource-work index source-revisions receipt)]
+    (when-not work
+      (throw (ex-info "translation candidate is not declared resource work"
+                      {:status 409
+                       :code "translation_candidate_not_declared"})))
+    (let [document (get-in index [:documents (:translation/document work)])
+          authored? (contains? (into #{} (map receipt-relation) authored)
+                               (receipt-relation receipt))
+          content (await (contract-candidate-content!
+                          config roots document (:translation/locale work)
+                          authored? receipt))]
+      (when-not (and (displayable-content? (:source content))
+                     (= (:translation/source-revision receipt)
+                        (:source-revision content))
+                     (displayable-content? (:translated content))
+                     (:translated-current? content))
+        (throw (ex-info "translation candidate content is unavailable for review"
+                        {:status 409
+                         :code "translation_candidate_content_unavailable"})))
+      true)))
 
 (defn- ^:async approve!
   [config ctx decoded]
   (if-let [evidence-store (registry/current)]
     (let [scope (review-scope config ctx)
-          _ (await (ensure-contract-receipts! config evidence-store scope))]
+          contract-snapshot (await (ensure-contract-receipts!
+                                    config evidence-store scope))
+          receipts (await (authenticated-contract-receipts!
+                           config evidence-store scope contract-snapshot))
+          requested-work (matching-request-work
+                          (:index contract-snapshot)
+                          (:source-revisions contract-snapshot)
+                          scope
+                          decoded)]
       (facade/approve-translation!
        {:evidence-store evidence-store
-        :clock (fn [] (.toISOString (js/Date.)))}
+        :clock (fn [] (.toISOString (js/Date.)))
+        ;; The request cannot supply source locale. Resolve it from current
+        ;; resource work before receipts are indexed, or an A→B locale history
+        ;; with equal revisions can make the wrong receipt win the 4-D index.
+        :receipt-admissible?
+        (fn [receipt]
+          (and requested-work
+               (= (inventory/work-key requested-work)
+                  (inventory/work-key receipt))))
+        :receipts-snapshot receipts
+        :authorize-approval!
+        (partial authorize-resource-approval! config contract-snapshot)}
        scope
        decoded))
     ;; Approval evidence that does not survive a restart is worse than none: the
@@ -260,27 +395,17 @@
   [config ctx]
   (if-let [evidence-store (registry/current)]
     (let [scope (review-scope config ctx)
-          {:keys [index roots authored]}
+          {:keys [index roots source-revisions authored] :as contract-snapshot}
           (await (ensure-contract-receipts! config evidence-store scope))
+          completed (await (authenticated-contract-receipts!
+                            config evidence-store scope contract-snapshot))
           result (await
                   (facade/reviewable-translations!
                    {:evidence-store evidence-store
-                    :publication-index index}
+                    :publication-index index
+                    :source-revisions source-revisions
+                    :receipts-snapshot completed}
                    scope))
-          ;; One extra scoped read so hydration can find the receipt a review
-          ;; was built from. `content-for-receipt!` compares all eight
-          ;; coordinates before returning bytes, and the wire review carries
-          ;; only five — so the receipt itself is required, not reconstructable.
-          completed (->> (await (evidence-store-api/completed-translations!
-                                 evidence-store (select-keys scope [:org-id :project])))
-                         ;; Scoped in the query AND filtered here, for the reason
-                         ;; `facade/current-receipt!` gives about its own copy:
-                         ;; the query is the optimization, the filter is the
-                         ;; guarantee. A replaceable store that ignored the scope
-                         ;; must not be able to widen whose bytes a reviewer is
-                         ;; shown — and these bytes are what they approve.
-                         (filterv #(and (= (:org-id scope) (:translation/org-id %))
-                                        (= (:project scope) (:translation/project %)))))
           receipts-by-relation (into {} (map (juxt receipt-relation identity)) completed)
           authored-relations (into #{} (map receipt-relation) authored)
           reviews (await
@@ -288,7 +413,8 @@
                     (mapv #(hydrate-review! config index roots
                                             authored-relations receipts-by-relation %)
                           (:reviews result))))]
-      {:reviews (vec reviews)})
+      {:project (:project result)
+       :reviews (vec reviews)})
     (throw (ex-info "translation evidence persistence is not configured"
                     {:status 503
                      :code "translation_evidence_unavailable"}))))

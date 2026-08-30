@@ -94,9 +94,14 @@
 
 (defn translated-revision?
   "Whether a completed translation exists for this document, target locale and
-   concrete source revision."
-  [evidence document garden locale revision]
-  (some? (get-in evidence [:receipts (evidence-key document garden locale revision)])))
+   concrete source revision, with target bytes bound by digest.
+
+   Receipt schemas retain pre-binding history, but those rows must derive new
+   work rather than permanently satisfying the gate with bytes no current
+   runtime can authenticate."
+  [evidence-index document garden locale revision]
+  (law/content-bound?
+   (get-in evidence-index [:receipts (evidence-key document garden locale revision)])))
 
 (defn receipt-for
   "The completed translation receipt for these four coordinates, or nil.
@@ -104,12 +109,12 @@
    Distinct from `translated-revision?` on purpose: approval evidence has to
    join against the receipt's *output* revision, not merely learn that one
    exists."
-  [evidence document garden locale revision]
-  (get-in evidence [:receipts (evidence-key document garden locale revision)]))
+  [evidence-index document garden locale revision]
+  (get-in evidence-index [:receipts (evidence-key document garden locale revision)]))
 
-(defn approved?
-  "Whether a *current* approval exists for this document, garden, target locale
-   and concrete source revision.
+(defn approval-for
+  "The *current* approval for this document, garden, target locale and concrete
+   source revision, or nil.
 
    Both halves are required. Without a receipt there is nothing to approve, so an
    approval alone is never enough; and an approval that does not name the
@@ -119,16 +124,28 @@
 
    This is why `:approved?` cannot be a plain store lookup. The gate can only
    tell it the source revision, and the source revision alone does not identify
-   which bytes were reviewed."
-  [evidence document garden locale revision]
+   which bytes were reviewed.
+
+   Returning the approval rather than only a boolean lets read projections carry
+   its attribution and timestamp without reimplementing this join."
+  [evidence-index document garden locale revision]
   (let [entry-key (evidence-key document garden locale revision)
-        receipt (get-in evidence [:receipts entry-key])]
-    (boolean
-     (and (some? receipt)
-          (some (fn [approval]
-                  (and (law/approval-matches? approval document garden locale revision)
-                       (law/approval-current? approval receipt)))
-                (get-in evidence [:approvals entry-key]))))))
+        receipt (get-in evidence-index [:receipts entry-key])]
+    (when (some? receipt)
+      (some (fn [approval]
+              (when (and (law/approval-matches? approval document garden locale revision)
+                         (law/approval-current? approval receipt))
+                approval))
+            (get-in evidence-index [:approvals entry-key])))))
+
+(defn approved?
+  "Whether a *current* approval exists for this document, garden, target locale
+   and concrete source revision.
+
+   A predicate view over `approval-for`, so the gate and review inventory share
+   one receipt-bound approval join."
+  [evidence-index document garden locale revision]
+  (boolean (approval-for evidence-index document garden locale revision)))
 
 (defn gate-facts
   "The two evidential `facts` entries this namespace owns, closed over loaded
@@ -141,8 +158,8 @@
    any of them here would let a caller forget to supply the real thing and still
    get a gate that answers — which is the failure mode where a publication is
    admitted on evidence nobody produced."
-  [evidence]
+  [evidence-index]
   {:translated-revision? (fn [document garden locale revision]
-                           (translated-revision? evidence document garden locale revision))
+                           (translated-revision? evidence-index document garden locale revision))
    :approved? (fn [document garden locale revision]
-                (approved? evidence document garden locale revision))})
+                (approved? evidence-index document garden locale revision))})

@@ -245,6 +245,21 @@
   "One dispatch outcome."
   (into [:enum] (sort outcomes)))
 
+(def recovery-reasons
+  "Why an otherwise terminal dispatch claim may be reopened.
+
+   Recovery is deliberately a closed vocabulary rather than free text. A
+   completed or duplicate claim normally points at translation work handled
+   elsewhere and remains terminal; a caller may reopen it only after
+   independently establishing one of these exceptional conditions. Keeping the
+   reason on the proposed record makes the exception explicit, validated, and
+   durable for later diagnosis."
+  #{:candidate-unavailable})
+
+(def RecoveryReason
+  "One validated reason for exceptionally reopening a terminal claim."
+  (into [:enum] (sort recovery-reasons)))
+
 (def unreachable-outcome
   "The revision this claim names can no longer be produced.
 
@@ -276,7 +291,9 @@
    `:dispatch/completed`, `:dispatch/duplicate` and `:dispatch/unreachable` are
    the terminal ones. Completed produced a translation; duplicate never was an
    attempt of its own; unreachable can never succeed however many times it is
-   tried."
+   tried. The explicit candidate-unavailable recovery does not make completed
+   generally retriable — `replaceable-claim?` admits that exceptional proposed
+   transition separately."
   #{:dispatch/failed :dispatch/rejected})
 
 (defn retriable?
@@ -285,7 +302,10 @@
   (contains? retriable-outcomes outcome))
 
 (defn terminal?
-  "Whether an existing claim with this outcome is settled for good."
+  "Whether this outcome is settled for ordinary dispatch.
+
+   A completed claim remains terminal here even though `replaceable-claim?` may
+   admit the explicit candidate-unavailable recovery transition."
   [outcome]
   (and (contains? outcomes outcome)
        (not (retriable? outcome))
@@ -311,6 +331,7 @@
    [:dispatch/revision ConcreteRevision]
    [:dispatch/at Instant]
    [:dispatch/source-digest {:optional true} [:maybe NonBlankString]]
+   [:dispatch/recovery-reason {:optional true} RecoveryReason]
    [:dispatch/batch-id {:optional true} [:maybe NonBlankString]]
    [:dispatch/detail {:optional true} [:maybe :string]]])
 
@@ -321,7 +342,7 @@
 
 (defn dispatch-record
   "Build a dispatch record for one attempt. Pure: `at` is supplied, not read."
-  [work context outcome at & {:keys [batch-id detail]}]
+  [work context outcome at & {:keys [batch-id detail recovery-reason]}]
   (assert-record!
    (cond-> {:dispatch/key (dispatch-key
                            {:org-id (:dispatch/org-id context)
@@ -346,8 +367,29 @@
      (some? (:dispatch/source-digest context))
      (assoc :dispatch/source-digest (:dispatch/source-digest context))
 
+     (some? recovery-reason)
+     (assoc :dispatch/recovery-reason recovery-reason)
+
      (some? batch-id) (assoc :dispatch/batch-id batch-id)
      (some? detail) (assoc :dispatch/detail detail))))
+
+(defn replaceable-claim?
+  "Whether `proposed` may atomically replace `existing` under the same key.
+
+   The ordinary path replaces only failed or rejected attempts. Completed and
+   duplicate remain terminal unless the new accepted attempt carries the
+   explicit, validated `:candidate-unavailable` recovery marker. The key equality check
+   keeps this law safe outside a keyed store lookup too, and requiring an
+   accepted proposal prevents `reserve-dispatch!` from replacing one settled
+   record with another settled record."
+  [proposed existing]
+  (and (= :dispatch/accepted (:dispatch/outcome proposed))
+       (= (:dispatch/key proposed) (:dispatch/key existing))
+       (or (retriable? (:dispatch/outcome existing))
+           (and (contains? #{:dispatch/completed :dispatch/duplicate}
+                           (:dispatch/outcome existing))
+                (= :candidate-unavailable
+                   (:dispatch/recovery-reason proposed))))))
 
 ;; ── The worker's answers ───────────────────────────────────────────────────
 
@@ -740,16 +782,21 @@
    caller from the worker's answer. It is validated as a concrete revision like
    any other, which is what stops a worker replying `\"source/current\"` from
    becoming the revision an approval is later pinned to."
-  [record output-revision at]
-  (evidence/assert-receipt!
-   {:receipt/type :translation/completed
-    :translation/document (:dispatch/document record)
-    :translation/garden (:dispatch/garden record)
-    :translation/source-locale (:dispatch/source-locale record)
-    :translation/locale (:dispatch/locale record)
-    :translation/source-revision (:dispatch/revision record)
-    :translation/revision output-revision
-    :translation/dispatch-key (:dispatch/key record)
-    :translation/org-id (:dispatch/org-id record)
-    :translation/project (:dispatch/project record)
-    :translation/at at}))
+  ([record output-revision at]
+   (translation-receipt record output-revision at nil))
+  ([record output-revision at content-digest]
+   (evidence/assert-receipt!
+    (cond->
+     {:receipt/type :translation/completed
+      :translation/document (:dispatch/document record)
+      :translation/garden (:dispatch/garden record)
+      :translation/source-locale (:dispatch/source-locale record)
+      :translation/locale (:dispatch/locale record)
+      :translation/source-revision (:dispatch/revision record)
+      :translation/revision output-revision
+      :translation/dispatch-key (:dispatch/key record)
+      :translation/org-id (:dispatch/org-id record)
+      :translation/project (:dispatch/project record)
+      :translation/at at}
+      (some? content-digest)
+      (assoc :translation/content-digest content-digest)))))

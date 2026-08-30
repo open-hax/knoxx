@@ -14,11 +14,13 @@
   or a collection per call would put that drift straight back."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.publication-resolver :as resolver]
+            [knoxx.backend.domain.translation-review-inventory :as review-inventory]
             [knoxx.backend.law.publication :as publication-law]
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
             [knoxx.backend.infra.translation-agent-dispatch :as agent-dispatch]
+            [knoxx.backend.infra.translation-candidate-content :as candidate-content]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.translation-dispatch :as dispatch]
             [knoxx.backend.infra.translation-evidence-store :as store]
@@ -39,6 +41,46 @@
     (into []
           (mapcat #(resolver/desired-publications index %))
           (keys (:documents index)))))
+
+(defn- normalized-selection
+  "Validate reusable facade input before absence can mean corpus-wide work."
+  [selection]
+  (cond
+    (map? selection)
+    (let [selector-keys (set (keys selection))
+          allowed-keys #{:document :publication}]
+      (when-not (and (every? allowed-keys selector-keys)
+                     (<= (count selector-keys) 1)
+                     (every? qualified-keyword? (vals selection)))
+        (throw (ex-info "invalid translation dispatch selection"
+                        {:selection selection})))
+      selection)
+
+    (qualified-keyword? selection) {:document selection}
+    (nil? selection) {}
+    :else (throw (ex-info "invalid translation dispatch selection"
+                          {:selection selection}))))
+
+(defn- select-publication
+  "Narrow `intents` to one exact publication, refusing an absent id."
+  [intents publication]
+  (let [selected (filterv #(= publication (:publication/id %)) intents)]
+    (when (and publication (empty? selected))
+      (throw (ex-info "translation publication selection was not found"
+                      {:status 404
+                       :code "translation_publication_not_found"
+                       :publication publication})))
+    selected))
+
+(defn selected-hydrated-intents
+  "Hydrated intents selected by exact publication, document, or whole corpus.
+
+   A qualified keyword remains the legacy document form. Map input is closed
+   here as well as at HTTP, so a misspelling can never become a corpus sweep."
+  [index selection]
+  (let [{:keys [document publication]} (normalized-selection selection)
+        intents (hydrated-intents index document)]
+    (if publication (select-publication intents publication) intents)))
 
 (defn admissible-intents
   "The intents that could actually reconcile to a public materialization.
@@ -185,20 +227,36 @@
    the content was read from come from two different reads — and a
    re-translation landing between them would publish the new bytes under the old
    approval, which is precisely the transplant the two-revision design prevents."
-  [config evidence-store {:keys [org-id project] :as scope} documents document-roots]
-  (let [revisions (await (source-revision/source-revisions! config documents document-roots))
+  ([config evidence-store scope documents document-roots]
+   (gate-evidence! config evidence-store scope documents document-roots {}))
+  ([config evidence-store {:keys [org-id project] :as scope} documents document-roots
+    {:keys [source-revisions current-authored desired-work authenticate-content?]
+     :or {current-authored [] desired-work [] authenticate-content? false}}]
+   (let [revisions (or source-revisions
+                       (await (source-revision/source-revisions!
+                               config documents document-roots)))
         ;; Scoped in the *query*. Reading every receipt ever recorded and
         ;; narrowing afterwards made each dispatch pass grow with the global
         ;; history of every tenant, and left the collection's own indexes unused.
         ;; The in-memory filters below stay as a second check — a store is
         ;; replaceable, and one that ignored the scope must not be able to widen
         ;; what the gate sees.
-        receipts (->> (await (store/completed-translations!
-                              evidence-store
-                              (select-keys scope [:org-id :project])))
-                      (tenant-receipts org-id)
-                      (project-receipts project)
-                      (current-source-locale-receipts documents))
+        scoped-receipts (->> (await (store/completed-translations!
+                                     evidence-store
+                                     (select-keys scope [:org-id :project])))
+                             (#(contract-content/current-authored-receipts
+                                % current-authored desired-work))
+                             (tenant-receipts org-id)
+                             (project-receipts project)
+                             (current-source-locale-receipts documents))
+        receipts (if authenticate-content?
+                   (await (candidate-content/authenticated-receipts!
+                           (:publication-content-root config)
+                           document-roots
+                           (into {} (map (juxt :document/id identity)) documents)
+                           current-authored
+                           scoped-receipts))
+                   scoped-receipts)
         approvals (->> (await (store/approvals!
                                evidence-store
                                (select-keys scope [:org-id :project])))
@@ -206,9 +264,9 @@
                                       (= project (:review/project %)))))
         evidence (evidence-domain/evidence {:receipts receipts
                                             :approvals approvals})]
-    {:evidence evidence
-     :facts (merge (source-revision/revision-facts revisions)
-                   (evidence-domain/gate-facts evidence))}))
+     {:evidence evidence
+      :facts (merge (source-revision/revision-facts revisions)
+                    (evidence-domain/gate-facts evidence))})))
 
 (def runner-kinds
   "The producers a deployment may ask translations from.
@@ -266,7 +324,12 @@
     (doseq [intent intents]
       (when-let [work (dispatch/derived-work intent facts)]
         (let [digest ((:current-source-revision facts) (:publication/document intent))
-              source (await (document-source! index roots intent))]
+              source (await (document-source! index roots intent))
+              checked-work (:action/with work)
+              context (await (dispatch/candidate-recovery-context!
+                              (:evidence-store deps)
+                              checked-work
+                              (dispatch/dispatch-context intent scope digest)))]
           (swap! results conj
                  (assoc (if (str/blank? (str source))
                           {:dispatch/outcome :dispatch/failed
@@ -275,14 +338,14 @@
                                 " there are no bytes to translate")}
                           (await (agent-dispatch/dispatch-work!
                                   deps
-                                  (:action/with work)
-                                  (dispatch/dispatch-context intent scope digest)
+                                  checked-work
+                                  context
                                   source)))
                         :publication/id (:publication/id intent))))))
     @results))
 
 (defn ^:async dispatch-translations!
-  "Dispatch the derived translation work for one document, or for all of them.
+  "Dispatch derived work for one publication, one document, or the corpus.
 
    Returns `{:considered n :admissible n :dispatched [...]}`. The counts are
    reported separately because an empty dispatch list is ambiguous on its own:
@@ -290,14 +353,31 @@
    was structurally inadmissible all read identically. An operator running this
    against the wrong scope — or against a garden that has been archived —
    deserves to be able to tell which."
-  [config {:keys [evidence-store] :as deps} scope document-id]
+  [config {:keys [evidence-store] :as deps} scope selection]
   (let [records (await (publications/resource-records! config))
         index (publications/publication-index records)
-        hydrated (hydrated-intents index document-id)
+        hydrated (selected-hydrated-intents index selection)
         intents (admissible-intents index hydrated)
         documents (referenced-documents index intents)
         roots (document-source-roots config records)
-        facts (await (gate-facts! config evidence-store scope documents roots))
+        revisions (await (source-revision/source-revisions!
+                          config documents roots))
+        selected-publications (set (map :publication/id intents))
+        desired-work (->> (review-inventory/desired-work index revisions)
+                          (filterv #(contains? selected-publications
+                                               (:publication/id %)))
+                          (mapv #(assoc %
+                                        :translation/org-id (:org-id scope)
+                                        :translation/project (:project scope))))
+        authored (await (contract-content/ensure-receipts!
+                         evidence-store index roots scope revisions))
+        facts (:facts
+               (await (gate-evidence!
+                       config evidence-store scope documents roots
+                       {:source-revisions revisions
+                        :current-authored authored
+                        :desired-work desired-work
+                        :authenticate-content? true})))
         selected-runner (runner config)]
     {:considered (count hydrated)
      :admissible (count intents)
