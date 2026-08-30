@@ -95,9 +95,15 @@ eventual rejection and cannot complete until that projected child is green.
 - Repair the server authentication boundary in `backend/src/cljs/knoxx/backend/infra/auth/`:
   inventory `authz/resolve-request-context!`, `session/create-session-hook`,
   `session/resolve-auth-context`, and every path that converts request headers into a policy
-  context. Client-supplied identity headers must be rejected or stripped before context
-  resolution; any internal identity handoff must be distinguishable from untrusted wire input and
-  derived from an already-verified session or API key.
+  context. On every protected or credential-required route, any public `x-knoxx-*` identity header
+  combined with session-cookie or API-key material is a credential collision and is rejected before
+  context resolution, policy lookup, downstream I/O, or another protected effect. There is no
+  strip-and-continue outcome, even when the header happens to name the credential-derived principal.
+  Identity-header-only protected requests remain unauthenticated. A deliberately credentialless
+  public read may ignore or remove those bytes only as non-authorizing input; it cannot derive a
+  principal, membership, organization, or privileged downstream request from them. Any internal
+  identity handoff must be distinguishable from untrusted wire input and derived from an
+  already-verified session or API key.
 - Inventory `infra.clients.knoxx-control/headers-for` and its event, actor, and Discord voice
   callers. Protected control requests send the configured API key without any `x-knoxx-*` identity
   header; the server derives that credential's principal only from `KNOXX_API_KEY_USER_EMAIL` and
@@ -161,9 +167,15 @@ eventual rejection and cannot complete until that projected child is green.
   and perform no privileged retry or fallback. A deliberately public unauthenticated read may
   proceed only without fabricated identity; a downstream server-held credential cannot grant
   caller authority or turn that read into a privileged operation.
-- Define credential precedence at the server: valid session and API-key credentials derive the
-  principal, cannot be overridden by any client identity header, and cannot borrow identity from
-  one another. Requests with only identity headers are unauthenticated.
+- Define credential precedence at the server: a valid session or API-key credential derives the
+  principal only when no public identity header is present. On a protected or credential-required
+  route, adding any public identity header makes that otherwise valid request an invalid collision;
+  the server rejects it rather than preserving the credential-derived principal. Requests with only
+  identity headers are unauthenticated, and credentialless deliberately public reads treat the
+  headers as non-authorizing input.
+- Valid session and API-key credentials cannot be overridden by conflicting client identity headers:
+  the no-header credential path derives its configured principal, while every identity-header
+  collision is rejected before context rather than selecting either value.
 - Exactly one credential authority is admitted per request. When session-cookie and API-key
   material are both present, reject the ambiguous request before identity or policy context
   resolution, whether both credentials name the same principal, name different principals, or
@@ -186,9 +198,13 @@ eventual rejection and cannot complete until that projected child is green.
 4. Direct-client spoof probes submit each identity header alone and in combination across
    representative protected routes; header-only input cannot produce a non-nil request context,
    resolve policy membership, or cause a protected effect.
-5. Valid session and API-key credentials determine the authenticated principal and cannot be
-   overridden by conflicting client identity headers; the credential-bound principal remains
-   unchanged or the request fails closed.
+5. Send each public identity header, both singly and in combinations, alongside a valid session and
+   alongside a valid API key on protected routes. Every collision fails before context resolution,
+   policy lookup, downstream request, or protected effect; there is no strip-and-continue case even
+   when the header value equals the credential-derived principal. Removing every identity header
+   restores the one credential's normal principal. Header-only protected requests remain
+   unauthenticated, while a credentialless deliberately public read proves the same bytes are
+   non-authorizing and cannot select downstream identity.
 6. Add simultaneous-credential probes for the same principal, different principals, and one
    malformed credential. Every session-cookie/API-key collision fails before context resolution,
    policy lookup, or protected effect; removing one credential restores that credential's normal
@@ -215,15 +231,17 @@ eventual rejection and cannot complete until that projected child is green.
    `/api/admin/eta-mu-sessions{,/status,/ingest}` and
    `/api/admin/opencode-sessions{,/status,/ingest}`. Local list/status and downstream fetch/job call
    counts remain zero; no session data, source/job data, or mutation result is disclosed.
-13. Valid administrator session and API-key probes can perform each admitted admin operation;
-    authenticated non-admin is denied before local/downstream work, and conflicting client identity
-    headers cannot override the credential-derived administrator. Capture the KMS request to prove
-    any internal system identity is added only after that authorization fence.
+13. Valid administrator session and API-key probes with no public identity headers can perform each
+    admitted admin operation; authenticated non-admin is denied before local/downstream work, and
+    conflicting client identity headers cannot override the credential-derived administrator because
+    adding any such header rejects the otherwise valid request before context. Capture the KMS request
+    to prove any internal system identity is added only after that authorization fence.
 14. Valid session and API-key probes for the dedicated sessions route and the wildcard/ingestion
-    proxy routes derive any required downstream identity from verified context. Conflicting client
-    identity headers cannot override that principal, and the fake downstream captures neither the
-    conflicting value nor a fabricated system actor. Exercise OpenPlanner's server-credential
-    attachment and ingestion's former clone-all-headers path.
+    proxy routes derive any required downstream identity from verified context only when no public
+    identity header is present. Conflicting client identity headers cannot override that principal:
+    adding any such header rejects the protected request before the proxy, and the fake downstream
+    captures neither the conflicting value nor a fabricated system actor. Exercise OpenPlanner's
+    server-credential attachment and ingestion's former clone-all-headers path.
 15. Mutable storage values and caller-supplied identity headers cannot change the principal
     observed by protected real-server probes through one TypeScript surface and one CLJS surface.
 16. A missing/expired session on a protected browser request reaches one canonical

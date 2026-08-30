@@ -297,3 +297,13 @@
   spore: none
   receipt-refs: 2026-08-30T04:21:25.264Z
   note: Request admission is not enough for asynchronous tools; carry an immutable authorization lease into each effect fence, and make a sender-constrained per-request proof atomically idempotent for exact same-route replay.
+
+- ts: 2026-08-30T07:14:21.086Z
+  session: codex/knoxx-board-reconcile
+  task: Bind repeated-coordinate turn members through canonical event and effect identity
+  p-efficiency: 0.87
+  p-friction: 0.58
+  p-skill-candidate: 0.49
+  spore: none
+  receipt-refs: 2026-08-30T07:14:21.086Z
+  note: Segment coordinates group events and projections but cannot key turn membership; pre-admit the complete attempt/effect identity, exact-echo both stable ids, and carry server-owned manifest and epoch facts through canonical event admission and the OpenPlanner writer. Independent audit was clean on the exact five-card semantic diff before this append-only provenance.

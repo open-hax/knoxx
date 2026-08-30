@@ -11,6 +11,8 @@ category: tasks
 # Preserve translation attempts as append-only history instead of destructive upserts
 
 > Parent epic: `knoxx-transduction-provider-pipeline`
+> Coupled identity contracts: `knoxx-ingestion-scoped-service-identity-handoff` (#287) and
+> `knoxx-versioned-resolved-translation-config` (#275)
 
 ## Purpose
 
@@ -40,11 +42,27 @@ separate operation that cannot change or remove any current authority can claim 
 - Append one immutable translation/transduction-attempt event per successful candidate
   save rather than mutating the historical record.
 - Bind every attempt to the exact source segment/revision and target locale it transformed.
-- Use one explicit grouping key for events and current projections:
-  `{:org-id org_id :document-id document_id :segment-index segment_index
-  :target-lang target_lang}`. The persisted field spellings may remain provider-native at
-  the edge, but no event, deduplication key, projection read, or projection write may omit
-  or reinterpret any member.
+- Name one complete immutable `SegmentCoordinate` for event grouping, current projections, #287
+  effect fences, and #275 attempt admission:
+  `{:org-id org_id :project project :garden-id garden_id :document-id document_id
+  :source-lang source_lang :source-revision source_revision
+  :source-span {:start source_start :end source_end :slice-digest source_slice_digest}
+  :segment-index segment_index :target-lang target_lang}`. The authoritative source span/slice
+  identity exact-matches canonical source bytes at that revision. The persisted field spellings may
+  remain provider-native at the edge, but no grouping, projection read, or projection write may omit
+  or reinterpret organization, project, garden, document, source language, source revision,
+  authoritative source span/slice, segment index, or target language.
+- Define `AttemptIdentity` as `(SegmentCoordinate, stable attempt/event id)`. The event unique index
+  uses `AttemptIdentity`, while the current projection unique index and per-coordinate ordinal use
+  `SegmentCoordinate`. Multiple intentional retranslations therefore share one segment coordinate
+  but remain distinct events under different stable attempt ids; the highest admitted ordinal for
+  that `SegmentCoordinate` alone advances its current projection.
+- Every pre-admitted turn member adds a stable effect id to its `AttemptIdentity`, forming
+  `AttemptEffectIdentity = (AttemptIdentity, stable effect id)`. A #287 delegated attempt
+  additionally binds the admitting manifest id/digest and OpenPlanner authority epoch as immutable
+  canonical facts, and its exact-once ledger claims `AttemptEffectIdentity`, never
+  `SegmentCoordinate` globally. Equal retries compare manifest, epoch, effect identity, and canonical
+  payload; substitution conflicts without another event or projection write.
 - Record candidate/provenance identity sufficient for the evaluation system to review a
   specific candidate rather than "whatever is current now".
 - Derive current segment state from events as a projection.
@@ -61,24 +79,30 @@ separate operation that cannot change or remove any current authority can claim 
 Settle these before migration:
 
 | obligation | why |
-|---|---|
+| --- | --- |
 | immutable attempt/event id | a retried save must be recognized as the same event, not appended twice |
 | source artifact identity | the candidate must remain bound to the exact input it transformed |
-| segment/candidate grouping key | exactly `(org_id, document_id, segment_index, target_lang)` for event grouping and every projection read/write |
+| segment/candidate grouping key | `SegmentCoordinate` is the complete immutable coordinate `(org_id, project, garden_id, document_id, source_lang, source_revision, authoritative source span/slice identity+digest, segment_index, target_lang)` for event grouping and every projection read/write |
+| event uniqueness | the event unique index is `AttemptIdentity = (SegmentCoordinate, stable attempt/event id)` so intentional retranslations do not alias |
+| projection uniqueness | the current projection unique index and ordinal stream use `SegmentCoordinate`; the legacy short key is migrated, never retained as an aliasing authority |
 | ordering rule | the store atomically assigns a unique monotonic ordinal per grouping key; wall clock never selects current authority |
 | retry behavior | equal canonical events for one attempt identity return the existing event; any payload difference conflicts and preserves the original |
 | projection recovery | define what happens when append succeeds but projection update fails |
 
-An attempt identity is the composite grouping key plus its immutable attempt/event id;
-source revision and candidate identity remain immutable facts on that event. Tests must
-use the same document and segment index across two organizations and across two target
-languages, then prove their histories, deduplication, candidates, and current projections
-never merge.
+An `AttemptIdentity` is the complete immutable `SegmentCoordinate` plus its immutable attempt/event
+id. Every pre-admitted member adds its immutable stable effect id to form `AttemptEffectIdentity`.
+For #287 work the canonical attempt additionally exact-matches manifest id/digest and authority
+epoch on every retry. Candidate identity remains an immutable fact on that event. Tests must reuse
+the same document and segment
+index across organizations, projects, gardens, source languages, source revisions, authoritative
+source spans/slices, and target languages, then prove histories, deduplication, candidates, unique
+indexes, and current projections never merge.
 
 Every upstream admission record for that attempt—including resolved translation configuration—uses
 this same composite `AttemptIdentity`. The raw caller id is not globally unique. Reusing it for
-another segment or target language creates an independent attempt; reusing the same composite
-identity with changed source, candidate, request, or configuration facts conflicts. Config
+another complete immutable segment coordinate creates an independent attempt; reusing the same
+composite identity with changed source, candidate, request, manifest, epoch, or configuration facts
+conflicts. Config
 admission and event admission may not disagree about that identity boundary.
 
 The upstream config owner does not persist a bare reservation: it atomically installs the
@@ -90,10 +114,14 @@ may partially install or reinterpret the shared identity.
 
 The initiating translation operation owns an immutable `TranslationTurnClaim` before any
 provider or model session starts. That claim binds a non-empty, canonically ordered collection of
-provider-neutral `TranslationAttemptClaim` members: exactly one member for every complete
-segment/target composite the bound turn may save. Each member owns its stable `attempt_id`, exact
-grouping/source/request facts, and matching `AttemptConfigAdmission`; duplicate composites are
-invalid. The turn claim also binds one immutable `TranslationTurnExecutionSnapshot` and canonical
+provider-neutral `TranslationAttemptClaim` members keyed by complete canonical
+`AttemptEffectIdentity`, not by `SegmentCoordinate`. Multiple members may share the same `SegmentCoordinate`;
+distinct stable attempt/effect pairs produce distinct `AttemptEffectIdentity`
+values. Each member owns its stable `attempt_id`, stable
+`effect_id`, exact grouping/source/request facts, and matching `AttemptConfigAdmission`. A duplicate
+complete canonical `AttemptEffectIdentity` or non-canonical encoding is invalid, while a repeated
+`SegmentCoordinate` alone is not a duplicate. The turn claim also binds one immutable
+`TranslationTurnExecutionSnapshot` and canonical
 `provider-session-config-digest` covering the exact provider/model identity, config/policy
 resource revisions, and normalized session parameters used by the one model session. Member
 source and request facts may differ, but every member config admission names that same snapshot
@@ -147,26 +175,33 @@ variant-specific initiator facts, and member/source/request facts return the ins
 winner even when their unattached observations straddle a config change. A different execution
 configuration uses a new turn id rather than replacing the installed digest.
 
-The production `save_translation` MCP input schema exposes the required stable `attempt_id` on
-every call so the session echoes the pre-existing member value after timeout or lost response.
-The tool handler selects the exact member by the authenticated turn pin plus complete composite
-coordinate, compares the echo with that member and its installed config admission, passes the
-stored value unchanged through the domain/save boundary, and returns it with the admitted
-event/ordinal. The tool may be called repeatedly for different admitted members in either order;
-saving one member never consumes or authorizes another. Missing or different input, an unclaimed
+The production `save_translation` MCP input schema exposes the required stable `attempt_id` and the
+required stable `effect_id` on every call so the session echoes both pre-existing member values after
+timeout or lost response. The tool handler selects the exact member by the authenticated turn pin
+plus its full pre-admitted `AttemptEffectIdentity` and complete immutable segment coordinate. It
+compares both echoes with that member and its installed config admission, then passes the full `AttemptEffectIdentity`,
+manifest id/digest when delegated, and authority epoch when delegated
+unchanged through the domain/save boundary to canonical event admission and, for delegated
+ingestion, the OpenPlanner atomic segment commit. Manifest and epoch come only from authenticated
+server-owned admission/envelope state, never model or caller input. The handler returns the bound
+identity with the admitted event/ordinal. The tool may be called repeatedly for different admitted
+members in either order; saving one member never consumes or authorizes another. Missing or
+different attempt/effect input, an unclaimed
 composite, or a claim-set change is rejected and appends no candidate. The handler may not discard
-the value, mint a replacement per invocation, substitute the transport `_tool-call-id`, or derive
-identity from content. Organization scope remains server-derived and combines with this value at
-event admission. Every saved member event carries its member artifact plus the same turn execution
-snapshot/digest as the authenticated provider session; a mixed or substituted digest conflicts
-and appends nothing. Distinct attempt ids with byte-equivalent content intentionally remain
-distinct attempts.
+either value, mint an attempt or effect identity per invocation, substitute the transport
+`_tool-call-id`, or derive identity from content. Organization scope remains server-derived and
+combines with these values at event admission. Every saved member event carries its member artifact
+plus the same turn execution snapshot/digest as the authenticated provider session; a mixed or
+substituted digest conflicts and appends nothing. Distinct attempt ids with byte-equivalent content
+intentionally remain distinct attempts.
 
 ### Canonical attempt event
 
 Define one versioned `CanonicalAttemptEvent` before storage. Its compared/digested fields are:
 
-- the complete composite `AttemptIdentity`;
+- the complete `AttemptEffectIdentity`, including the complete `AttemptIdentity`, stable attempt id,
+  and stable effect id;
+- for delegated ingestion, carrier type, exact manifest id/digest, and authority epoch;
 - authenticated actor and effective/delegated organization evidence;
 - immutable source artifact identity, revision, media/locale facts, and digest;
 - candidate artifact identity, canonical content/media facts, and digest;
@@ -179,8 +214,9 @@ One canonical encoder/version supplies admission equality, the evidence digest, 
 and replay. Store-assigned ordinal/record id, accepted/updated timestamps, transport tool-call
 id, retry count, latency, logs, worker/process identity, and projection checkpoint/envelope
 metadata are explicitly excluded. Those generated facts may surround the stored payload but a
-retry never recomputes them for equality. Any change to a canonical field conflicts; changes
-only to excluded execution-envelope facts return the original admitted event.
+retry never recomputes them for equality. Any change to a canonical field, including attempt/effect,
+delegated manifest, or epoch facts, conflicts; changes only to excluded execution-envelope facts
+return the original admitted event.
 
 Attempt admission is one atomic unique-insert/compare operation on that composite identity,
 not a read followed by an append. A retry whose complete canonical validated event equals the
@@ -201,9 +237,12 @@ current state. If append succeeds but projection update fails, the durable event
 authoritative and an idempotent replay/recovery step advances the projection from its
 checkpoint without appending another attempt.
 
-Legacy migration derives a deterministic initial event id only from stable legacy row identity
-and the complete grouping coordinates, never from mutable source/candidate values or revision
-facts. The canonical migrated event payload contains that observed mutable snapshot. Re-running
+Legacy migration derives a deterministic initial event id only from stable legacy row identity and
+the newly derived complete immutable segment coordinate, never from candidate values. Before
+cutover it resolves project, garden, source language, source revision, and authoritative source
+span/slice from the source authority; missing or ambiguous coordinates stop for operator
+reconciliation rather than collapsing into the legacy short key. The canonical migrated event
+payload contains that observed snapshot. Re-running
 migration returns the equal existing event; a row changed after a partial migration therefore
 reuses the same derived id with a different canonical payload and stops with the normal
 `:attempt-id-reused` conflict for operator reconciliation instead of appending a second initial
@@ -264,14 +303,26 @@ land a migration that leaves that endpoint erroring.
   difference conflicts with the original event preserved. Concurrent equal and conflicting
   retries prove the unique-insert/compare operation is atomic and only one event exists.
 - Real-boundary MCP tests simulate a lost response after commit, retry `save_translation` with
-  the same `attempt_id`, and observe the same single event/ordinal. Reusing that id with changed
-  content conflicts, while two distinct ids with equal content preserve two intentional
-  attempts. The schema/handler proof fails if the id is absent, regenerated, or discarded.
+  the same stable `attempt_id` and `effect_id`, and observe the same single event/ordinal. Reusing
+  either id with changed canonical content conflicts, while two distinct attempt/effect identities
+  with equal content preserve two intentional attempts. The schema/handler proof fails if either id
+  is absent, regenerated, discarded, or replaced by a transport/tool-call identity.
 - Cross-organization and cross-target-language fixtures with otherwise identical document
-  and segment coordinates remain isolated in both append history and current projection.
-- The same raw `attempt_id` reused across two segments and two target languages produces
+  and segment coordinates remain isolated in both append history and current projection. Extend the
+  matrix across project, garden, source language, source revision, and authoritative source
+  span/slice; each dimension remains isolated in event and current-projection unique indexes.
+- Two different stable `attempt_id` values on the same `SegmentCoordinate` produce two distinct
+  intentional retranslation events and consecutive per-coordinate ordinals; the current projection
+  advances to the highest ordinal without rejecting the second attempt. The same raw `attempt_id`
+  reused across two complete immutable segment coordinates produces
   independent complete config admissions/events, while changed reuse inside one composite grouping
-  conflicts consistently at config and event admission.
+  conflicts consistently at config and event admission. A delegated attempt with a substituted
+  manifest or epoch also conflicts before append/projection mutation.
+- On the same `SegmentCoordinate`, two members with different stable `attempt_id` values and
+  different stable `effect_id` values in the same turn save independently under their distinct
+  `AttemptEffectIdentity` values. Duplicate full member identities are rejected, but repeated
+  coordinates are not. Missing or substituted attempt/effect, manifest, or epoch facts append no
+  candidate and do not advance the projection.
 - Turn-config crash/race fixtures prove no bare reservation or partial member can strand a later
   event: pre-install retry must resolve/authorize anew, post-install retry reuses the exact complete
   turn map, and each canonical event accepts only its embedded artifact identity/attestation.
@@ -314,6 +365,12 @@ land a migration that leaves that endpoint erroring.
   stable row/grouping-derived migration identity conflicts instead of being silently replaced.
   A partial-run fixture mutates the legacy payload before restart and proves no second initial
   event can be admitted.
+- Migration fixtures seed two legacy rows that collide under
+  `(org_id, document_id, segment_index, target_lang)` but differ by project, garden, source locale,
+  source revision, or source span. The complete-coordinate migration preserves both, installs the
+  event unique index on `AttemptIdentity` and the current projection unique index on
+  `SegmentCoordinate`, replaces every legacy lookup atomically, and never lets one overwrite or
+  advance the other.
 - An evaluation receipt can bind to a candidate that remains addressable after a newer
   translation exists.
 - `save_translation` retains `destructiveHint: true` while it can replace current projection

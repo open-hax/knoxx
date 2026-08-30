@@ -17,9 +17,10 @@ category: tasks
 > `knoxx-file-resource-repository-provider` for provider-neutral resource versions
 > Depends on: `knoxx-resource-repository-snapshot-observation` (#282) for one
 > provider-neutral multi-resource observation and exact absence entry
-> Depends on: `knoxx-translation-config-trusted-auth-context` (#283) for session/API-key
-> scope that cannot be selected by caller identity headers
-> Integrates with: `knoxx-translations-event-sourced` for server-admitted attempt identity
+> Depends on: `knoxx-translation-config-trusted-auth-context` (#283) for typed member-credential or
+> delegated read scope that cannot be selected by caller identity headers
+> Integrates with: `knoxx-translations-event-sourced` for server-admitted attempt identity and
+> `knoxx-ingestion-scoped-service-identity-handoff` (#287) for manifest/epoch-bound attempts
 
 ## Purpose
 
@@ -48,10 +49,12 @@ law namespaces add no configuration authority. The facade exposes two explicit o
 that one domain resolver:
 
 1. **Inspect effective config** — the existing authenticated
-   `GET /api/translations/config`/`config-response!` use case accepts only trusted
-   session/API-key organization context from #283 and returns a typed `EffectiveConfigView`.
-   Client identity headers cannot select its scope. It performs no attempt reservation or
-   write and carries no provider-invocation authority.
+   `GET /api/translations/config`/`config-response!` use case accepts only #283's typed trusted
+   authority: a session or membership-bearing API-key organization context, or #287's admitted
+   sender-constrained capability as the sole authority for a manifest-scoped read-only GET. The raw
+   broker-only ingestion API key cannot inspect config, and a capability can never PATCH. Client
+   identity headers cannot select scope. Inspection performs no attempt reservation or write and
+   carries no provider-invocation authority.
 2. **Admit config for attempt** — `admit-resolved-config-for-attempt!` requires the
    server-admitted attempt/source/operation context and returns the attested
    `ResolvedConfigArtifact` below.
@@ -69,8 +72,12 @@ The resolved artifact contains:
 - effective typed configuration values;
 - the server-derived effective organization used for resolution plus authenticated actor and
   delegation evidence when a trusted system administrator targets another organization;
-- the server-admitted composite attempt identity (event grouping key plus caller-stable attempt
-  id), immutable source identity/revision, and canonical operation;
+- the server-admitted composite attempt identity (complete immutable segment coordinate plus
+  caller-stable attempt id), immutable source identity/revision/span/slice, and canonical operation;
+- the stable effect id admitted with that turn member; together the attempt identity plus effect id
+  is its `AttemptEffectIdentity`; for #287 delegated ingestion the artifact also binds carrier type,
+  manifest id/digest, and OpenPlanner authority epoch, and the exact-once ledger uses that complete
+  attempt/effect identity;
 - the repository contract/schema version and snapshot observation identity;
 - the final composite `RepositoryOperationReceipt` identity/digest and its ordered
   per-coordinate `authorization-policy-version` bindings for the exact observation, preserving
@@ -172,17 +179,29 @@ admitted and the V1 receipt cannot be replayed as authority. An idempotent retry
 admitted composite attempt retains its original V1 artifact as historical evidence rather than
 performing a new read under V2.
 
-There is no free-floating reusable attestation. Before provider invocation, the server derives
-the same canonical `AttemptIdentity` used by `knoxx-translations-event-sourced`: the full
-`{:org-id :document-id :segment-index :target-lang}` grouping key, where `:org-id` is the
-server-derived effective organization, plus the caller-stable `attempt_id`.
+There is no free-floating reusable attestation. Before provider invocation, the server derives the
+same canonical `AttemptIdentity` used by `knoxx-translations-event-sourced` and #287: the complete
+immutable segment coordinate
+`{:org-id :project :garden-id :document-id :source-lang :source-revision
+  :source-span {:start :end :slice-digest} :segment-index :target-lang}`, where organization,
+project, garden, document, source language, source revision, authoritative source span/slice
+identity and digest, segment index, and target language are immutable, plus the caller-stable
+`attempt_id`. The event unique index uses that `AttemptIdentity`; the current projection unique index
+uses only the complete coordinate, so separate attempt ids remain intentional retranslations. A
+delegated-ingestion attempt additionally binds its manifest id/digest, authority epoch, and stable
+effect identity; substituting any of them conflicts before config observation, provider invocation,
+ledger claim, or save.
 
 Every translation-bound agent turn installs an immutable `TranslationTurnClaim` containing a
-non-empty, canonically ordered collection of provider-neutral attempt-claim members, one for every
-exact segment/target composite that turn may save. The initiating workflow accepts or creates
-stable member ids with their exact grouping/source/request facts before provider work. Duplicate
-composites and non-canonical encodings are rejected before persistence, and the claim
-identity/digest makes member addition, removal, or replacement a conflict after admission.
+non-empty collection of provider-neutral attempt-claim members keyed and canonically ordered by the
+complete `AttemptEffectIdentity`, not by `SegmentCoordinate`. Multiple members may share the same `SegmentCoordinate`;
+distinct stable attempt/effect pairs produce distinct `AttemptEffectIdentity`
+values. Before provider work, the initiating workflow accepts or creates each stable
+attempt id and stable effect id with its exact grouping/source/request facts, forming the member's
+pre-admitted `AttemptEffectIdentity`. A duplicate complete canonical `AttemptEffectIdentity` and any
+non-canonical encoding are rejected before persistence, while a repeated coordinate alone is not a
+duplicate. The claim identity/digest makes member addition, removal, or replacement a conflict after
+admission.
 Publication dispatch and ordinary-chat preflight use distinct turn-claim variants but the same
 turn-wide admission law; an unbound chat turn does not receive `save_translation`. Before config
 observation, the canonical claim binds its variant and stable variant-specific initiator facts:
@@ -225,8 +244,9 @@ and non-circular.
 
 The facade derives the complete ordered map of member artifacts from that exact turn snapshot
 instead of performing a new current-config observation per member. Each embedded
-`AttemptConfigAdmission` contains its composite identity, immutable source/canonical request
-facts, turn-snapshot identity/digest, and full attested artifact. Candidate artifacts and staged
+`AttemptConfigAdmission` contains its `AttemptIdentity`, stable effect id and complete
+`AttemptEffectIdentity`, immutable source/canonical request facts, turn-snapshot identity/digest, and
+full attested artifact. Candidate artifacts and staged
 map entries are not reservations and cannot authorize provider invocation.
 
 One atomic unique-insert/compare operation, `TranslationTurnConfigAdmission`, authorizes and
@@ -282,12 +302,13 @@ evidence used at the operation's linearization point. That evidence comes from t
 operation, not from the observation receipt. Nothing is externally visible until the
 whole map commits; there is no partial member, pre-artifact, or `:pending` turn reservation. The
 agent session starts only from that complete admitted record. It receives the turn claim,
-snapshot, and member map through authenticated server context; each later `save_translation` call
-only selects, echoes, and validates one member and cannot become an identity-minting,
+snapshot, and member map—including each pre-admitted `AttemptEffectIdentity`—through authenticated
+server context; each later `save_translation` call only selects, exact-echoes, and validates one
+member's stable attempt and effect ids and cannot become an identity-minting,
 collection-expansion, configuration-selection, or reauthorization boundary. Raw attempt ids are
-not globally unique:
-the same value under a different segment or target-language grouping is a distinct embedded
-attempt. The atomic turn install is every member's shared durable freshness boundary.
+not globally unique: the same value under a different complete immutable segment coordinate is a
+distinct embedded attempt. The atomic turn install is every member's shared durable freshness
+boundary.
 
 A crash or injected failure before that atomic commit leaves no persisted turn claim, execution
 snapshot, member admission, or provider/session side effect. Retry may reuse only the initiator's
@@ -374,9 +395,16 @@ The publication-free namespace closure from #273 remains an invariant.
    candidate/history. A caller-computed digest plus a forged absent marker is insufficient.
    Reusing an old token under a new composite attempt or source fails; a same-attempt
    lost-response retry returns the identical artifact, while changed same-composite reuse
-   conflicts. Two segments and two target languages reuse one raw `attempt_id` and are admitted
-   as independently identified entries under their distinct grouping keys inside one atomic turn
-   map. The same raw `turn_id` under two organizations creates independent admission slots and
+   conflicts. Reuse one raw `attempt_id` across coordinates that differ only by project, garden,
+   document, source language, source revision, authoritative source span/slice, segment index, or
+   target language; each is independently admitted under the complete immutable segment coordinate
+   inside one atomic turn map. In that same atomic map, admit two members with the same coordinate but
+   different stable attempt ids and effect ids, key them by their distinct complete
+   `AttemptEffectIdentity` values, and preserve both intentional retranslations. Reject a duplicate
+   full member identity without treating the repeated coordinate as a duplicate. Reuse one delegated
+   attempt with a different manifest, epoch, or effect id and prove it conflicts before observation,
+   ledger claim, or provider work. The same raw `turn_id` under two organizations creates
+   independent admission slots and
    records with no collision or cross-tenant read. Within the same organization, the same
    `turn_id` with changed membership, claim variant, or variant-specific initiator facts conflicts
    for a currently authorized slot caller instead of creating a digest-keyed second record or
@@ -449,8 +477,10 @@ The publication-free namespace closure from #273 remains an invariant.
 13. Exercise attempt admission through both a publication dispatch claim and an ordinary-chat
     interactive claim. Each path atomically installs its turn claim, snapshot, and complete member
     map before the model turn. An ordinary-chat fixture claims two segments, saves them in both
-    orders, and binds each call to its own embedded artifact; a lost-response retry returns the
-    exact complete turn and member event. Inject failure after staging the first member: no claim,
+    orders, and binds each call to its own embedded artifact; another fixture places two distinct
+    `AttemptEffectIdentity` members on the same `SegmentCoordinate` and saves both without a
+    coordinate-key collision. A lost-response retry returns the exact complete turn and member
+    event. Inject failure after staging the first member: no claim,
     snapshot, member admission, provider call, or session is visible, and retry performs a fresh
     authorized whole-turn observation. An omitted member cannot save, and adding/replacing a
     member after admission conflicts. Reuse the same organization, `turn_id`, principal/capability,
@@ -508,6 +538,12 @@ The publication-free namespace closure from #273 remains an invariant.
 - One-time server attempt admission supplies freshness: later attempts cannot replay old policy,
   while idempotent retries of the same composite attempt retain their exact artifact and
   cross-group reuse of a raw id remains independent.
+- Attempt admission and event persistence compare the same complete immutable segment coordinate:
+  organization, project, garden, document, source language/revision, authoritative source
+  span/slice identity and digest, segment index, and target language. Delegated attempts additionally
+  bind manifest, epoch, and stable effect id, so neither the legacy short grouping key nor a new
+  manifest/effect can alias an installed attempt. Event uniqueness adds stable attempt id; projection
+  uniqueness remains the segment coordinate.
 - Publication-dispatch and ordinary-chat initiators share that admission law without making a
   publication dispatch claim mandatory for an admitted interactive translation.
 - One turn-wide execution snapshot supplies the truthful provider/model/config provenance shared

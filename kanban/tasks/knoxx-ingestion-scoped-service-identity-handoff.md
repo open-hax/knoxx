@@ -13,6 +13,9 @@ category: tasks
 
 > GitHub issue: [#287](https://github.com/open-hax/knoxx/issues/287)
 > Required child of: `knoxx-frontend-api-fail-closed-identity-defaults` (#2)
+> Coupled contracts: `knoxx-translation-config-trusted-auth-context` (#283),
+> `knoxx-translations-event-sourced`, and
+> `knoxx-versioned-resolved-translation-config` (#275)
 
 ## Signal
 
@@ -31,64 +34,175 @@ the same API-key/user-email pair for audio agent start and run polling. In addit
 `kms-ingestion.config` defaults `KNOXX_USER_EMAIL` to `system-admin@open-hax.local`, which is an
 ambient identity fallback rather than authentication.
 
-Issue #2 must close the public-wire collision, but its implementation cannot complete until these
-workers have one server-verifiable authority each. This child owns that independently
-implementable JVM/service migration. Board PR #286 only plans and projects the dependency; it does
-not deliver the broader delegation runtime.
+Issue #2 must close the public-wire collision with one exact rule: any public identity header plus
+session or API-key material on a protected route is rejected before context or effect, with no
+strip-and-continue outcome. Its implementation cannot complete until these workers have one
+server-verifiable authority each. This child owns that independently implementable JVM/service
+migration. Board PR #286 only plans and projects the dependency; it does not deliver the broader
+delegation runtime.
+
+The translation worker also has a live legacy single-job carrier. It polls
+`/translations/jobs/next`, launches Knoxx work without batch membership, and calls
+`mark-job-status` for processing, complete, and failed. That carrier needs its own admitted job
+manifest, epoch, and non-ambient status authority; it cannot sit outside the batch-only delegation
+and sole-writer rules.
 
 ## Scope
 
 1. Inventory both production `knoxx-headers` functions, their configuration readers, and every
    translation/audio Knoxx call site. Include translation config, segment reads, direct agent
-   starts, run polling, legacy jobs, batch jobs, and audio analysis.
+   starts, run polling, the `/translations/jobs/next` legacy single-job carrier, batch jobs, each
+   job/batch status writer, and audio analysis.
 2. Remove every worker-emitted `x-knoxx-*` identity header. Remove the `KNOXX_USER_EMAIL` production
-   identity input and its default `system-admin@open-hax.local`; do not rename or move that ambient
-   fallback.
+   identity input and its default `system-admin@open-hax.local`; do not retain, rename, replace, or
+   move that ambient fallback.
 3. Give each ingestion deployment a dedicated machine credential whose API key authenticates only
    the server-mapped ingestion service principal. The key cannot select a membership, accept a
    companion user email, or inherit a default administrator. Missing, malformed, expired, or
-   unmapped production credentials fail before any protected request.
+   unmapped production credentials fail before any protected request. On protected routes any
+   public identity header combined with that API key is rejected before context or effect; there is
+   no strip-and-continue case. Credentialless deliberately public reads remain non-authorizing and
+   cannot use identity headers to select scope.
 4. Audio operations that need no delegated user run only as the admitted service principal, under
    explicit audio-analysis permissions. They send the API key as the sole credential and no
    identity assertion.
-5. Treat batch membership from a row or job as a delegation request, not an asserted identity.
+5. Treat batch membership from a row as a delegation request, not an asserted identity.
    Under the service API key alone, a named server broker verifies explicit delegation permission,
    resolves one active membership in the requested organization, confirms the current batch tuple
-   through an authoritative batch adapter, and either refuses or mints a short-lived capability.
-6. The delegation capability binds the service principal, batch id, membership id, organization id,
-   allowed routes or operations, expiry, and nonce. It is audience-bound to Knoxx,
+   through the registered OpenPlanner batch adapter, and either refuses or mints a short-lived
+   capability. The adapter returns an immutable authoritative translation manifest: manifest id and
+   digest, batch id, and the complete immutable segment coordinates it permits. One coordinate is
+   organization, project, garden, document, source language, source revision, authoritative source
+   span/slice identity and digest, segment index, and target language. The manifest also binds its
+   segment-coordinate policy and the OpenPlanner batch authority epoch. No worker row, launch
+   payload, query, tool argument, caller-provided `source_text`, or model output can select or widen
+   it.
+6. Admit the legacy single-job carrier separately through the same broker. Under the service API key
+   alone, the broker resolves `/translations/jobs/next` output to one OpenPlanner-owned job manifest,
+   its explicit service-principal permission, current job authority epoch, organization, immutable
+   complete segment coordinates, and allowed job operations. It mints a job-scoped capability or
+   returns a typed non-effect. Membership is absent from the job request, capability, and derived
+   context; a membership-bearing job is rejected as the wrong carrier type. The job needs no
+   fabricated member identity, and ambiguous,
+   unowned, cross-organization, or epoch-stale work never launches. OpenPlanner owns job processing,
+   complete, and failed truth through the same registered transition gateway used for batch state;
+   direct `mark-job-status` is retired.
+7. For a batch, the delegation capability binds the service principal, batch id, membership id,
+   organization id, and carrier type. For a membershipless legacy job it binds the service
+   principal, job id, organization id, and carrier type with no fabricated member. Both variants bind
+   manifest id and digest;
+   OpenPlanner authority epoch; allowed routes or operations; expiry; and nonce. It is
+   audience-bound to Knoxx,
    sender-constrained to the ingestion deployment's workload signing key by public-key thumbprint,
    and cannot be widened by request body, query, or header data. It is not a reusable bearer.
-7. Subsequent batch work uses that capability authority as its sole credential: never API key plus
+   The canonical batch authority tuple is service principal, batch id, membership id, organization
+   id; its manifest and epoch narrow that tuple further and never widen it.
+8. Subsequent batch or job work uses that capability authority as its sole credential: never API key plus
    capability and never capability plus identity header. Each call carries a fresh per-request proof
-   over the HTTP method, canonical route, body digest, capability id, timestamp, sequence, and unique
-   proof id. The proof demonstrates possession of the bound workload key; it is part of the one
-   delegated credential authority, not a second principal or permission source.
-8. The capability resolver rechecks expiry, audience, operation, batch state, and active membership
+   over the HTTP method, canonical route and complete request target, normalized query, body digest,
+   capability id and digest, timestamp, sequence, and unique proof id. The proof demonstrates
+   possession of the bound workload key; it is part of the one delegated credential authority, not a
+   second principal or permission source.
+9. Define one deterministic request-target canonicalizer shared by the worker and verifier. It
+   allowlists query keys, rejects blank values plus duplicate and unknown query keys, normalizes UTF-8
+   and percent-encoding, and serializes sorted keys. Equivalent reordered queries have one canonical
+   target; any missing, added, or substituted selector changes the signed value and fails.
+10. The capability resolver rechecks expiry, audience, operation, carrier state, manifest digest,
+   OpenPlanner authority epoch, and the active membership when the carrier is a delegated batch
    before deriving request context. It atomically consumes each `(capability id, sequence, proof id)`
    and records an idempotency receipt. Valid sequential calls use fresh proofs. An exact retry or
    concurrent same-route replay receives the cached receipt or a typed non-effect and causes no
    duplicate protected effect; a proof from another sender or for different request material fails.
-9. Bind the spawned agent run to the admitted authority after `/api/knoxx/direct/start`. Server-owned
+11. Couple translation-config authority explicitly to #283. Ordinary membership-bearing API keys
+    remain typed member principals under #283. The ingestion deployment key is instead a broker-only,
+    membershipless service principal and cannot access the config repository. Only after admission,
+    the sender-constrained batch/job capability may authorize a manifest-scoped read-only config GET
+    as its sole authority; it can never authorize PATCH, and API key plus capability is rejected.
+12. Bind the spawned agent run to the admitted authority after `/api/knoxx/direct/start`. Server-owned
    launch code attaches an immutable authority envelope containing capability id, service principal,
-   batch id, membership id, organization id, allowed operations, and an authorization-lease id to the
-   run. Agent/model input cannot supply, replace, or widen that envelope, and the run cannot inherit
-   ambient tool authority.
-10. Recheck the envelope before every protected effect that outlives the request. In particular, a
-    named `save_translation` boundary validates the authorization lease, active membership, current
-    batch tuple, operation, expiry, completion, revocation, and a server-issued effect fence before
-    any translation write. The fence is verified again at commit so an in-flight effect cannot write
-    after the authoritative terminal transition.
-11. Define explicit completion, cancellation, and replay behavior. Batch completion, revocation, or
-    capability expiry atomically closes the authorization lease, invalidates outstanding effect
-    fences, and cancels pending and active runs. Cancellation is defense in depth; even if execution
-    continues briefly, every subsequent translation write returns a terminal non-effect. No captured
-    capability, request proof, run id, or agent tool call can revive or widen the lease.
-12. Preserve legacy batches only when the broker can resolve their configured service principal to a
+   carrier type, batch or job id, membership id when applicable, organization id, allowed operations,
+   manifest id and digest, every complete immutable segment coordinate, OpenPlanner authority epoch,
+   and a canonical ordered map of every pre-admitted `AttemptEffectIdentity` with its stable attempt
+   id and stable effect id, plus the immutable turn-claim reference/digest that resolves to exactly
+   that map and a derived authorization-lease id. Resource policies are constructed from that
+   envelope, never from the launch payload. A registered launch adapter loads document content by
+   the manifest's source revisions/digests, or rejects a supplied content digest that does not match;
+   the worker cannot substitute prompt content for an allowed document. Agent/model input cannot
+   supply, replace, or widen the envelope, and the run cannot inherit ambient tool authority.
+13. Recheck the envelope before every protected effect that outlives the request, including active
+    membership and current batch for a delegated batch or current job for the single-job carrier.
+    At the named `save_translation` boundary, define and reuse
+    one complete immutable `SegmentCoordinate` across this effect fence, #275 attempt admission,
+    event grouping, and the current projection unique index: organization, project, garden,
+    document, source language, source revision, authoritative source span/slice identity and digest,
+    segment index, and target language. `AttemptIdentity` adds the pre-admitted stable attempt id, and
+    the event unique index uses that composite rather than the segment coordinate alone.
+    `AttemptEffectIdentity` adds the pre-admitted stable effect id to `AttemptIdentity`; the
+    server-managed segment ledger atomically claims that admitted attempt/effect exactly once and
+    never claims the `SegmentCoordinate` globally. Intentional retranslations with different stable
+    attempt ids therefore remain possible on one coordinate. Every retry exact-matches the admitted
+    manifest id/digest, authority epoch, effect id, and canonical payload; substituting any of them
+    conflicts with no new claim or write. Caller/model substitutions fail before an OpenPlanner
+    request. `save_translation` selects one envelope member and exact-echoes its stable attempt id and
+    stable effect id; it cannot mint identity from caller/model content, a transport tool-call id, or
+    a new save invocation. The server reconstructs the full pre-admitted `AttemptEffectIdentity` and
+    rejects an unknown or partial echo before the ledger. The event-owned production schema requires
+    both stable ids, and its `CanonicalAttemptEvent` carries the full `AttemptEffectIdentity` plus the
+    delegated manifest id/digest and authority epoch as compared/digested facts; neither boundary may
+    drop or regenerate part of the identity before OpenPlanner.
+14. Bind persisted source content to the manifest rather than the model. The launch adapter loads
+    canonical source bytes for the admitted revision. A model may propose a logical segment boundary,
+    but `save_translation` must exact-match its `source_text`, source span, and source slice digest to one
+    unique authoritative source slice before claiming an effect. Altered bytes, a different span,
+    an ambiguous match, a gap, an overlap, or reordered/duplicated content fails before persistence.
+    The server persists canonical bytes and coordinate from that slice; whole-document revision plus
+    segment index alone is not sufficient authority.
+15. Treat every signed segment selector as both authorized and consumed. Inventory
+    `translation-segments-op`: after exact capability/manifest matching it forwards `document_id`
+    and every other allowlisted selector to the data adapter, with no dropped field or default that
+    widens the query. Progress and completion derive only from accepted receipts for the current
+    manifest, epoch, and effect set/run, never generic segment counts. Reads from another document,
+    or a same-document/other-run or other-epoch result, cannot advance current work.
+16. Inventory both live `save_translation` sinks but narrow delegated ingestion to the
+    OpenPlanner-segment-only `save-openplanner-segment!` path. A delegated envelope cannot carry or
+    select publication `dispatch_key`, publication `run_id`, or `save-publication-translation!`;
+    injected publication discriminators or policy fail before `content/write!` or any other content
+    effect. The publication filesystem trigger/receipt transaction is outside #287 and requires its
+    own protocol; this card does not pretend it shares the OpenPlanner batch CAS.
+17. Make OpenPlanner the single durable writer and authority-epoch owner for delegated-ingestion
+    batch and legacy-job state. Knoxx exposes one registered manifest+epoch CAS transition gateway,
+    implemented identically by direct Mongo and REST clients. Exhaustively inventory and migrate
+    `next-batch!` queued-to-processing/attempt mutation, `update-batch!`, the update-status route,
+    worker `mark-batch-status`, legacy `mark-job-status`, direct Mongo/REST status calls, initial
+    processing/run ids, per-document progress, partial/complete/failed/revoked/operator transitions,
+    and any `resolve-dispatch!` outcome that currently acts as delegated-ingestion terminal truth.
+    No arbitrary direct setter remains.
+    Completion, revocation, failure, and operator decisions all use this same gateway.
+18. Serialize delegated OpenPlanner segment effects and carrier state on that same OpenPlanner-owned
+    manifest and authority epoch. Every admitted OpenPlanner segment commit sends the full
+    `AttemptEffectIdentity`, manifest id/digest, expected epoch, and canonical payload facts;
+    OpenPlanner atomically validates that identity, active carrier state, manifest, epoch, and retry
+    equality before its idempotent segment write. The stable attempt id therefore reaches the atomic
+    writer and distinguishes intentional same-coordinate attempts. The gateway performs terminal
+    status CAS with expected manifest, epoch, and transition id. That CAS is the terminal
+    linearization point, so an old-epoch write either commits before it or is refused, with zero
+    writes after it.
+19. Keep scopes honest while removing second terminal truth. Immutable translation attempt/effect
+    receipts and publication immutable workflow evidence may remain auditable local records, but a
+    mutable Knoxx `resolve-dispatch!` outcome cannot decide delegated-ingestion batch/job terminal
+    state. Such evidence is derived from the authoritative gateway/outbox receipt and cannot outvote,
+    reopen, or independently close the carrier.
+20. Make terminal transitions idempotent and observable. A completion-versus-revocation race on the
+    same epoch lets exactly one transition id win; the loser receives the canonical terminal receipt
+    and cannot overwrite it. OpenPlanner publishes that receipt through a durable outbox so Knoxx
+    invalidates derived leases and cancels pending and active runs. Delayed delivery cannot permit a
+    write because OpenPlanner already rejects the old epoch; retry reconciliation never reopens a
+    terminal batch or job. Every subsequent translation write returns a terminal non-effect.
+21. Preserve legacy batches only when the broker can resolve their configured service principal to a
    single explicitly delegable active membership. Ambiguous, cross-organization, or unresolved
    legacy work stays queued or fails with a typed non-effect result; it never falls back to system
    administrator.
-13. Run a whole-repository identity-emitter scan over production sources, tests, generated assets,
+22. Run a whole-repository identity-emitter scan over production sources, tests, generated assets,
     scripts, and operator docs. Update `scripts/verify-publication-tour.sh` and other fixtures that
     currently authenticate with public identity headers; retain such headers only in clearly named
     malicious-header probes.
@@ -99,14 +213,22 @@ not deliver the broader delegation runtime.
   membership.
 - A batch membership is a delegation request, not an asserted identity. Possessing a batch id or
   membership id confers no authority.
-- Delegation requires explicit delegation permission, one active membership, the matching
-  organization, and a current batch confirmed by the authoritative adapter.
+- Batch delegation requires explicit delegation permission, one active membership, the matching
+  organization, and a current batch confirmed by the authoritative adapter. Legacy single-job
+  admission requires explicit job permission, matching organization, and the current OpenPlanner
+  job manifest/epoch without fabricating membership.
 - No request contains more than one credential authority. Broker requests use only the API key;
   delegated work uses only the issued sender-constrained capability and its per-request possession
   proof as one composite credential authority.
 - Public `x-knoxx-*` headers are always untrusted and never distinguish an internal worker.
+- On protected routes, any public identity header plus session/API-key credential material is
+  rejected before context or effects, with no strip-and-continue path. Credentialless public reads
+  remain non-authorizing.
+- Ordinary membership-bearing API keys and the broker-only membershipless ingestion key are distinct
+  principal types. Only an admitted capability may authorize ingestion config GET; it never PATCHes.
 - A capability grants only its bound tuple and operations. Unknown fields, blank identifiers,
-  malformed claims, tuple changes, and missing issuer/audience metadata fail closed.
+  malformed claims, tuple/manifest/resource changes, and missing issuer/audience metadata fail
+  closed.
 - Translation and audio retain their existing domain behavior, ordering, payloads, polling, and
   error handling after the authority transport changes.
 - No fixed service identity, API key, or capability becomes ambient system-administrator authority.
@@ -114,25 +236,46 @@ not deliver the broader delegation runtime.
   negatives produce zero protected effects and no administrator fallback.
 - Spawned runs and internal tool effects receive authority only from their immutable server-owned
   envelope. The agent, prompt, payload, and tool arguments cannot select or widen that authority.
-- The terminal batch/revocation transition and each protected effect commit share an authoritative
-  fence: an effect committed before the transition may stand, but zero post-transition writes occur.
+- `SegmentCoordinate`, the complete immutable segment coordinate, is organization, project, garden, document, source
+  language, source revision, authoritative source span/slice identity and digest, segment index, and
+  target language. Event grouping and the current projection unique index use that coordinate.
+  `AttemptIdentity` additionally binds stable attempt id and supplies event uniqueness;
+  `AttemptEffectIdentity` adds the admitted effect id for exact-once ledger claims. A delegated
+  attempt also exact-matches manifest and epoch on retry.
+- OpenPlanner is the sole delegated-ingestion terminal/epoch authority. Knoxx closes batch and job
+  work only through the same manifest+epoch CAS gateway and keeps no second terminal truth.
+- At the OpenPlanner boundary, OpenPlanner is the single durable writer and epoch authority for
+  delegated-ingestion batch/job state; a derived Knoxx lease cannot outvote or reopen it. Publication
+  immutable receipts remain evidence for a separate workflow and are never delegated-ingestion
+  terminal authority.
+- The terminal batch/job/revocation CAS and each admitted OpenPlanner segment commit share the
+  OpenPlanner authority epoch: an effect committed before the transition may stand, but zero
+  post-transition writes occur.
 
 ## TDD / proof
 
 1. RED-prove that the exact current translation and audio `knoxx-headers` producers send API key
    plus identity and that the translation producer accepts arbitrary batch membership.
 2. GREEN-prove API-key-only audio and non-delegated service operations resolve exactly the configured
-   service principal; identity headers, a second credential, and unmapped keys fail before policy
-   lookup or downstream work.
+   service principal. Pair each public identity header with the valid API key and prove mandatory
+   rejection before context, policy lookup, or downstream work—never strip-and-continue. Identity
+   headers alone, a second credential, and unmapped keys fail too; a credentialless public read
+   remains non-authorizing.
 3. Exercise capability issuance with an authorized service principal and a current active
-   batch/membership/organization tuple. Capture the credential and prove its decoded/validated
-   claims bind the complete tuple, audience, operations, expiry, and nonce.
+   batch/membership/organization tuple, then with an admitted legacy single-job manifest from
+   `/translations/jobs/next`. Capture each credential and prove its decoded/validated claims bind
+   carrier type, complete immutable coordinate set, authoritative manifest id/digest, OpenPlanner
+   batch or job authority epoch, audience, operations, expiry, and nonce. The batch variant binds
+   its admitted membership; the legacy-job variant proves membership absent and explicit
+   service-principal job permission.
 4. Send an arbitrary membership with a valid service key; a swapped batch, membership, or
    organization; and an expired, replayed, forged, or cross-route capability. Every variant fails
    before policy lookup, segment read, agent start, or audio effect, with no administrator fallback.
 5. Prove the valid translation path retains translation config, segment read, agent start, and
    polling behavior across explicit-membership, same-organization, and safely admitted legacy
-   batches. Batch completion/revocation invalidates its capability.
+   batches. Prove the legacy single-job path retains polling plus processing, complete, and failed
+   behavior under a job-scoped capability and OpenPlanner transition receipts. Batch/job
+   completion or revocation invalidates its capability; `mark-job-status` is unreachable directly.
 6. Prove the valid audio path retains audio start and run polling under the service principal,
    including concurrency limits, timeouts, payloads, and error behavior.
 7. Add a cross-process fake Knoxx server that captures every request. Valid worker traffic contains
@@ -145,18 +288,69 @@ not deliver the broader delegation runtime.
    relevant full suites, real-server probes, compile/typecheck, and strict changed-surface lint with
    zero warnings.
 10. Capture the spawned agent run after admission and prove its immutable authority envelope binds
-    the complete tuple and capability id. Attempt to alter the batch, membership, organization,
-    operation, lease, or effect fence through agent input and `save_translation` arguments; every
-    variant fails at the named `save_translation` boundary before a write.
+    the complete coordinate, capability id, manifest, epoch, translation resource scope, immutable
+    turn-claim digest, and every pre-admitted `AttemptEffectIdentity`. Make `save_translation`
+    exact-echo the selected stable attempt/effect ids and prove it cannot mint either from model
+    output, caller bytes, transport tool-call id, or invocation order.
+    Substitute organization, project, garden, document, source/target language, source revision,
+    authoritative source span/slice, source text, segment index, manifest, and epoch through launch
+    input and `save_translation` arguments; every variant fails before OpenPlanner. Seed ambiguous,
+    gapped, overlapped, duplicated, and reordered source spans. The valid model-proposed logical
+    boundary exact-matches one authoritative source slice, persists canonical source bytes once, and
+    leaves logical segmentation behavior unchanged.
 11. Exercise a completion/revocation race at agent start, before the first effect, and during an
-    in-flight `save_translation`. The authoritative transition invalidates the lease/fence and
-    cancels pending and active work; there are zero post-transition writes, even when cancellation
-    delivery is delayed. A pre-transition committed write remains exactly once and is auditable.
+    in-flight `save_translation`, plus a completion-versus-revocation race on one expected epoch.
+    Exactly one terminal CAS wins; the authoritative transition invalidates the epoch-bound fence and
+    cancels pending and active work. There are zero post-transition writes even when outbox/cancel
+    delivery is delayed, while a pre-transition committed write remains exactly once and auditable.
 12. Capture a valid sender-constrained proof and run an exact same-route replay before and after the
     legitimate call, plus concurrent duplicates. The server atomically admits at most one execution,
     returns the same cached receipt or typed non-effect to retries, and produces no duplicate
     protected effect. Valid translation config, segment, start, and polling sequences use fresh
     proofs and retain normal behavior.
+13. Canonicalize two semantically equivalent reordered/percent-encoded queries and prove they produce
+    the same complete request target before proof-id replay enforcement. Reject duplicate, unknown,
+    blank, and ambiguous encodings. For segment reads, a query-substitution probe changes each of
+    `project`, `org_id`, `document_id`, `source_lang`, `target_lang`, and `limit`; every change
+    produces signature failure before route handling or data access. Separately prove that
+    `translation-segments-op` consumes and forwards every validated selector, especially
+    `document_id`, into the adapter. Seed another document plus same-document/other-run and
+    other-epoch rows; only receipts for the current manifest, epoch, and effect set advance progress
+    or terminal state, and generic counts cannot close work.
+14. Replace every delegated-ingestion status writer with the registered gateway: `next-batch!`,
+    `update-batch!`, the update-status route, direct Mongo and REST client setters,
+    `mark-batch-status`, `mark-job-status`, and mutable local `resolve-dispatch!` terminal outcomes.
+    Route claims, attempts, processing/run/progress, completion, failure, and revocation through the
+    same OpenPlanner manifest+epoch CAS protocol; make any arbitrary direct status call fail the
+    regression inventory. Fault-inject before and after the OpenPlanner terminal status
+    CAS, drop/duplicate the outbox event, retry the same transition id, and race an old-epoch segment
+    write. Race completion against revocation with different transition ids. The canonical terminal
+    receipt converges without reopening or a post-linearization write, while immutable translation
+    and publication workflow receipts remain evidence and cannot decide batch/job status.
+15. Pass a delegated ingestion envelope carrying `dispatch_key`, publication `run_id`, publication
+    sink policy, and each discriminator in nested/renamed forms. Every case is rejected before
+    `save-publication-translation!` and `content/write!`; the valid envelope can select only
+    `save-openplanner-segment!`. Test the publication workflow separately without claiming its
+    filesystem write shares #287's OpenPlanner CAS.
+16. Cross-test #283's typed authority seam. A membership-bearing member API key retains its admitted
+    config behavior; the raw membershipless ingestion key reaches only the broker. A valid admitted
+    capability as sole authority can GET only its manifest-scoped config, never PATCH. API key plus
+    capability and every tuple/manifest/epoch substitution fail before repository I/O.
+17. Make the #287 fence, event grouping/current projection, event uniqueness, and #275 attempt
+    admission serialize and compare the byte-identical complete immutable segment coordinate. The event unique
+    index uses `AttemptIdentity`, while the projection unique index uses `SegmentCoordinate` and the
+    exact-once ledger uses `AttemptEffectIdentity`; none substitutes the shorter or broader identity.
+    Save two intentional retranslations with different stable attempt ids on the same coordinate and
+    prove two events plus consecutive ordinals, one current projection, and no global-coordinate
+    claim conflict. Cross
+    organization/project/garden/document/source-language/source-revision/source-span/segment/target
+    fixtures never alias; attempts also exact-match manifest and epoch. Migration detects the former
+    short-key collisions instead of silently overwriting either record.
+18. At the real OpenPlanner boundary, let two pre-admitted members on the same `SegmentCoordinate`
+    with different stable attempt ids succeed exactly once each. Capture both requests and prove the
+    full distinct `AttemptEffectIdentity`, manifest id/digest, expected epoch, and canonical payload
+    reach the atomic writer. An unknown or substituted attempt, effect, manifest, or epoch produces
+    no ledger claim or write; a same-identity equal retry returns the original receipt.
 
 ## Non-goals
 
@@ -164,13 +358,20 @@ not deliver the broader delegation runtime.
 - Reusing the generic API key as both service authentication and delegated user authority.
 - Building a generic delegation framework for unrelated services.
 - Changing translation selection, segment semantics, audio analysis behavior, or queue policy.
+- Delivering the publication filesystem trigger/receipt atomicity protocol.
 - Claiming that board PR #286 delivers this runtime; it records the required child work only.
 
 ## Done when
 
 Translation and audio ingestion send no public identity headers, each protected request has exactly
-one server-verifiable authority, audio runs as its service principal, translation batch authority
-comes only from a narrowly bound policy-admitted sender-constrained capability, exact retries cannot
-duplicate an effect, spawned runs remain tuple-bound through every asynchronous write, completion or
-revocation produces zero post-transition writes, the required happy paths remain compatible, and #2
-can reject the legacy collision without breaking either worker.
+one server-verifiable authority, audio runs as its service principal, and translation batch plus
+legacy single-job authority comes only from a narrowly bound policy-admitted sender-constrained
+capability. Exact retries cannot duplicate an effect; signed request targets cover selectors that
+the route actually consumes; source text exact-matches one authoritative slice; and the complete
+immutable coordinate cannot alias another project, garden, locale, revision, span, segment, or
+target. Delegated ingestion can reach only the OpenPlanner segment sink. Every batch/job writer uses
+the one OpenPlanner manifest+epoch CAS gateway, which produces zero post-transition writes without
+erasing immutable translation/publication evidence. The required happy paths remain compatible,
+Issue #283 preserves typed member-key behavior and read-only delegated config, and #2 can reject the legacy
+collision without breaking either worker. Board PR #286 remains planning-only proof, not delivery of
+this runtime.
