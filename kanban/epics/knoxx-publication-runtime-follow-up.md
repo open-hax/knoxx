@@ -77,3 +77,8 @@ deferred architecture work does not retroactively block the landed closeout stac
 - Event-runtime lifecycle operations are explicit and truthful in disabled and failure modes.
 - `OPENPLANNER_API_KEY` is removed when the caller inventory proves no supported surface needs it.
 - Required live probes reject unexpected 4xx/5xx responses and prove deployment identity.
+- Every live probe receives an explicit fixture/resource-id map, a route-valid method-specific body,
+  and its route-specific expected status set. Template paths, placeholder identifiers, empty PATCH
+  bodies, and the verifier's default-request arity are invalid production evidence. Contract E2E
+  invokes only the explicit-input verifier form; its stub asserts the concrete path parameters,
+  request body, method, and expected statuses rather than returning success for ignored inputs.

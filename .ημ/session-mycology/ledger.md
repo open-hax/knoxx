@@ -357,3 +357,13 @@
   spore: none
   receipt-refs: 2026-08-30T20:55:41.087Z
   note: Route-family inventories must include separately registered bearer-backed handlers, not only named proxy modules. Legacy source history that cannot be proven must remain explicitly unknown and servable, never be attributed to current content.
+
+- ts: 2026-08-30T21:01:51.680Z
+  session: codex/knoxx-board-reconcile
+  task: Make live probes concrete and credential scope explicit
+  p-efficiency: 0.93
+  p-friction: 0.38
+  p-skill-candidate: 0.43
+  spore: none
+  receipt-refs: 2026-08-30T21:01:51.680Z
+  note: A live probe with placeholder paths or ignored bodies is not production evidence. Public-read safety must constrain server-held credentials and response scope, while config GET must reject identity/credential collisions rather than silently ignore them.

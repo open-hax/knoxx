@@ -225,7 +225,12 @@ eventual rejection and cannot complete until that projected child is green.
 10. Direct unauthenticated OpenPlanner wildcard and `/api/ingestion/*` probes send malicious identity
    headers through representative read and protected mutation routes. Before authorization, the
    downstream call count remains zero and no protected mutation occurs; where an unauthenticated
-   read is deliberately public, its captured outbound request contains no spoofed identity.
+   read is deliberately public, its captured outbound request contains no spoofed identity. For
+   every such public read, also capture all outbound credential headers and the returned response
+   scope: the request carries no Knoxx-held downstream credential unless the adapter names and tests
+   an explicitly public downstream operation whose response is limited to that public scope. A
+   server bearer credential, API key, capability, or privileged response scope fails the probe even
+   when no spoofed identity header is present.
    Run the same no-context and identity-header-only probes directly against every active
    `/api/data/op/*`, `/api/data/mongo/{list,query}`, and
    `/api/data/jobs/build-semantic-edges` registration in `infra/routes/app.cljs`; each must reject

@@ -52,8 +52,11 @@ that one domain resolver:
    `GET /api/translations/config`/`config-response!` use case accepts only #283's typed trusted
    authority: a session or membership-bearing API-key organization context, or #287's admitted
    sender-constrained capability as the sole authority for a manifest-scoped read-only GET. The raw
-   broker-only ingestion API key cannot inspect config, and a capability can never PATCH. Client
-   identity headers cannot select scope. Inspection performs no attempt reservation or write and
+   broker-only ingestion API key cannot inspect config, and a capability can never PATCH. Any
+   public `x-knoxx-*` identity header combined with session or API-key material returns the canonical
+   credential-collision failure before context resolution or repository observation, including when
+   the header value matches the authenticated organization/principal. The header is never ignored
+   and cannot select scope. Inspection performs no attempt reservation or write and
    carries no provider-invocation authority.
 2. **Admit config for attempt** — `admit-resolved-config-for-attempt!` requires the
    server-admitted attempt/source/operation context and returns the attested
