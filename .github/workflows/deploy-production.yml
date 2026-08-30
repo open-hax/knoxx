@@ -9,6 +9,23 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Knoxx ref to validate
+        required: false
+        default: main
+        type: string
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Knoxx ref to validate for a centralized deployment
+        required: false
+        default: main
+        type: string
+    outputs:
+      source_sha:
+        description: Immutable Knoxx commit that passed the preflight
+        value: ${{ jobs.production-preflight.outputs.source_sha }}
 
 permissions:
   contents: read
@@ -27,9 +44,19 @@ jobs:
     name: production-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
+        with:
+          repository: open-hax/knoxx
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+
+      - name: Record validated source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@v4
