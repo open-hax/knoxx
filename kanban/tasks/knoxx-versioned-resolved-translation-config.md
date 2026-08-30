@@ -205,8 +205,11 @@ pre-admitted `AttemptEffectIdentity`. A duplicate complete canonical `AttemptEff
 repeated canonical `AttemptIdentity`, and any non-canonical encoding are rejected before persistence,
 while a repeated coordinate alone is not a duplicate. The claim identity/digest makes member
 addition, removal, or replacement a conflict after admission.
-An unbound `SegmentationProposal` session may precede this admission only after server-owned
-preflight resolves an immutable `ProposalModelSelection` from Knoxx config authority and pins its
+An unbound `SegmentationProposal` session may precede this admission only after carrier/source-
+manifest verification mints a typed sender-constrained `ProposalSelectionCapability` whose closed
+operations authorize source-manifest read plus one `translation-config:model-select` repository
+observation. Server preflight uses that sole authority to resolve an immutable
+`ProposalModelSelection` from Knoxx config authority and pins its
 config resource/version plus catalog model id. The session receives that selected model and
 manifest-bound canonical source bytes, but no config credential or payload. It cannot call
 `save_translation`, admit config, mint attempt/effect identity, or persist a candidate. After the

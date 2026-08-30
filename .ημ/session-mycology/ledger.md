@@ -327,3 +327,13 @@
   spore: none
   receipt-refs: 2026-08-30T20:24:45.284Z
   note: A source-only proposal capability still needs server-selected model authority; pin config version and model before launch. A coordinate-only remote upsert cannot prove causal idempotency after a lost response, so serialize it locally, reconcile exact payload under the lease, and otherwise fail closed without redispatch or later overwrite.
+
+- ts: 2026-08-30T20:36:12.756Z
+  session: codex/knoxx-board-reconcile
+  task: Type proposal-selection authority before config observation
+  p-efficiency: 0.92
+  p-friction: 0.39
+  p-skill-candidate: 0.45
+  spore: none
+  receipt-refs: 2026-08-30T20:36:12.756Z
+  note: Server ownership does not authorize repository access. Mint a sender-constrained proposal-selection capability only after carrier/source-manifest admission, restrict it to model selection plus source read, and keep the later bound config capability distinct.

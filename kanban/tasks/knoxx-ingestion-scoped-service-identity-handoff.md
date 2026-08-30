@@ -72,8 +72,12 @@ and sole-writer rules.
    through the registered OpenPlanner batch adapter, and either refuses or installs an immutable
    Knoxx-owned `SourceManifest`. That manifest binds its id/digest, batch id, allowed documents,
    canonical source revisions/digests, target languages, and segment-coordinate policy, but does not
-   pretend that model-selected logical boundaries already exist. A proposal-scoped capability can
-   read only those canonical bytes. After a `SegmentationProposal` is validated, Knoxx derives a new
+   pretend that model-selected logical boundaries already exist. Only after carrier verification,
+   the broker mints a sender-constrained `ProposalSelectionCapability` bound to the service
+   principal, carrier tuple, `SourceManifest`, authority epoch, expiry, audience, and workload key.
+   Its closed operation set is exactly `source-manifest:read` and
+   `translation-config:model-select`; it cannot perform general config GET/PATCH or any translation
+   effect. After a `SegmentationProposal` is validated, Knoxx derives a new
    immutable `TranslationManifest` containing every complete admitted `SegmentCoordinate` and mints
    the separate short-lived capability used by the bound translation turn. One coordinate is
    organization, project, garden, document, source language, source revision, authoritative source
@@ -118,12 +122,17 @@ and sole-writer rules.
    duplicate protected effect; a proof from another sender or for different request material fails.
 11. Couple translation-config authority explicitly to #283. Ordinary membership-bearing API keys
     remain typed member principals under #283. The ingestion deployment key is instead a broker-only,
-    membershipless service principal and cannot access the config repository. Only after admission,
-    the sender-constrained batch/job capability may authorize a manifest-scoped read-only config GET
-    as its sole authority; it can never authorize PATCH, and API key plus capability is rejected.
+    membershipless service principal and cannot access the config repository. After carrier and
+    source-manifest admission, the `ProposalSelectionCapability` is the sole authority for one
+    manifest-scoped `translation-config:model-select` repository observation; server preflight
+    returns only the immutable model/config-version selection to the proposal launcher, never the
+    config payload or a reusable GET credential. After translation-manifest admission, the distinct
+    sender-constrained bound batch/job capability may authorize its manifest-scoped read-only config
+    GET. Neither capability authorizes PATCH, and API key plus capability is rejected.
 12. Preserve the live worker's model-selected logical splits through two explicit phases. A first,
-   server-owned broker resolves an immutable `ProposalModelSelection` from the Knoxx translation
-   config boundary before launch. That selection pins the config resource/version and catalog model
+   server-owned broker uses the admitted `ProposalSelectionCapability` to resolve an immutable
+   `ProposalModelSelection` from the Knoxx translation config boundary before launch. That selection
+   pins the config resource/version and catalog model
    id used to start the unbound `SegmentationProposal` run; the model receives no config-repository
    credential and cannot choose or widen the selection. The proposal run receives only that selected
    model plus the proposal-scoped source manifest and cannot call `save_translation`, read the config
@@ -318,8 +327,11 @@ and sole-writer rules.
    relevant full suites, real-server probes, compile/typecheck, and strict changed-surface lint with
    zero warnings.
 10. Exercise the live dynamic-split path as an unbound proposal run followed by admission and a
-    separate bound translation turn. Prove the broker resolves and pins `ProposalModelSelection`
-    from the Knoxx config boundary before the proposal turn, the run receives that selected model and
+    separate bound translation turn. Prove the broker first verifies the carrier/source manifest,
+    mints a sender-constrained `ProposalSelectionCapability` with exactly
+    `source-manifest:read` and `translation-config:model-select`, then uses it as sole repository
+    authority to resolve and pin `ProposalModelSelection` before the proposal turn. The run receives
+    that selected model and
     source-manifest bytes but no config credential or payload, emits a `SegmentationProposal`, and
     cannot call `save_translation` or persist a candidate. Reject ambiguous, gapped, overlapped,
     duplicated, reordered, and source-drifted
@@ -372,9 +384,12 @@ and sole-writer rules.
     `save-openplanner-segment!`. Test the publication workflow separately without claiming its
     filesystem write shares #287's delegated-ingestion authority store.
 16. Cross-test #283's typed authority seam. A membership-bearing member API key retains its admitted
-    config behavior; the raw membershipless ingestion key reaches only the broker. A valid admitted
-    capability as sole authority can GET only its manifest-scoped config, never PATCH. API key plus
-    capability and every tuple/manifest/epoch substitution fail before repository I/O.
+    config behavior; the raw membershipless ingestion key reaches only the broker. Before carrier
+    verification there is zero config repository I/O. A valid `ProposalSelectionCapability` can
+    perform only its one manifest-scoped model-selection observation and cannot obtain the config
+    payload; a valid bound capability as sole authority can GET only its manifest-scoped config.
+    Neither can PATCH. API key plus capability, using one capability for the other's operation, and
+    every tuple/manifest/epoch/sender substitution fail before repository I/O.
 17. Make the #287 fence, event grouping/current projection, event uniqueness, and #275 attempt
     admission serialize and compare the byte-identical complete immutable segment coordinate. The event unique
     index uses `AttemptIdentity`, while the projection unique index uses `SegmentCoordinate` and the

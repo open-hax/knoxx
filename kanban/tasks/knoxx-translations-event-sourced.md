@@ -113,8 +113,10 @@ config record and the later produced-candidate event are distinct lifecycle fact
 may partially install or reinterpret the shared identity.
 
 The initiating translation operation owns an immutable `TranslationTurnClaim` before any bound
-translation provider/model session can produce a candidate or receive `save_translation`. Before a
-preceding unbound `SegmentationProposal` session, the server resolves an immutable
+translation provider/model session can produce a candidate or receive `save_translation`. After
+carrier/source-manifest verification, a typed sender-constrained `ProposalSelectionCapability`
+authorizes only source-manifest read plus one config model-selection observation. Before a preceding
+unbound `SegmentationProposal` session, server preflight uses that capability to resolve an immutable
 `ProposalModelSelection` from Knoxx config authority and pins its config resource/version plus
 catalog model id. The session receives that selected model and manifest-bound canonical source
 bytes, but no config credential or payload; it may propose logical boundaries but cannot call

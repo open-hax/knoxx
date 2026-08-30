@@ -26,8 +26,10 @@ headers can manufacture a non-nil context for another real tenant.
 Bind translation-config scope to one typed, verified authority before permission checks or
 repository access. Ordinary membership-bearing API keys retain their server-configured member
 principal. The ingestion credential from #287 is instead a broker-only, membershipless service
-principal: it cannot read the repository directly, and only a separately admitted delegated
-capability may authorize its read-only translation-config GET.
+principal: it cannot read the repository directly. After carrier/source-manifest verification, a
+typed `ProposalSelectionCapability` may authorize exactly one model-selection observation; after
+translation-manifest admission, the distinct bound delegated capability may authorize its read-only
+translation-config GET.
 
 ## Contract
 
@@ -42,8 +44,14 @@ capability may authorize its read-only translation-config GET.
   capability, membership is absent: the broker instead verifies service-principal job permission,
   matching organization, the current job manifest, and its authority epoch. A job request or
   capability carrying membership fails as the wrong carrier type rather than borrowing batch
-  authority. After that carrier-specific admission, the sender-constrained capability becomes the
-  sole request authority. Its read-only config scope exact-matches the admitted organization,
+  authority. After that carrier-specific admission and `SourceManifest` install, the broker may mint
+  a sender-constrained `ProposalSelectionCapability` bound to the exact carrier tuple, source
+  manifest id/digest, authority epoch, audience, expiry, and workload key. Its closed config
+  operation is only `translation-config:model-select`: server preflight uses it for one repository
+  observation and exposes only immutable config resource/version plus catalog model id to the
+  launcher, never the config payload or reusable GET authority. After translation-manifest
+  admission, the distinct bound capability becomes the sole request authority. Its read-only config
+  scope exact-matches the admitted organization,
   project, garden, source/target language, and manifest; it may authorize translation-config GET
   and never PATCH. API key plus capability is a collision, not an alternate path.
 - External email, membership, organization-id, and organization-slug headers are never
@@ -77,7 +85,13 @@ capability may authorize its read-only translation-config GET.
 4. Missing, expired, revoked, and forged sessions return the canonical non-enumerating
    authentication result and neither read nor rotate config authority.
 5. A raw #287 ingestion API key can reach only the broker and performs zero config repository I/O.
-   A valid sender-constrained batch capability requires the current active membership, delegation
+   Before carrier and `SourceManifest` admission, no proposal-selection authority exists. A valid
+   sender-constrained `ProposalSelectionCapability` requires the verified carrier tuple, source
+   manifest, epoch, audience, expiry, and workload key, and can perform exactly one
+   `translation-config:model-select` observation that returns no config payload. Swap each fact,
+   replay it, request general GET/PATCH, or invoke it after selection drift and prove failure before
+   repository I/O or disclosure. A valid sender-constrained batch capability requires the current
+   active membership, delegation
    permission, organization, manifest, and epoch. Swap each fact and prove failure before I/O.
 6. A valid sender-constrained legacy-job capability requires membership absent plus the service
    principal's explicit job permission, organization, current job manifest, and epoch. Adding a
@@ -107,7 +121,8 @@ capability may authorize its read-only translation-config GET.
 ## Done when
 
 - Translation-config repository access always has one typed verified authority: a credential-derived
-  member scope, or #287's capability-derived delegated read scope after broker admission.
+  member scope, #287's proposal-selection scope after carrier/source-manifest admission, or #287's
+  distinct bound delegated read scope after translation-manifest admission.
 - Cross-tenant header selection is impossible and non-enumerating.
 - Session/API-key/capability provenance remains attributable through permission and operation
   receipts, without treating the raw ingestion key as repository authority.
