@@ -130,9 +130,13 @@ No already-running unbound turn may generate a candidate and synthesize admissio
 Non-agent workflows establish the same per-attempt admission before their provider call. Recovery
 uses the server-derived organization/turn slot and compares any installed record against the
 caller's stable initiator/member facts before a new config observation or reauthorization. An equal
-installed turn returns unchanged; changed stable facts conflict. Only an empty installed-slot
-comparison may perform the fresh authorized config observation and complete atomic install. A
-crash before that admission leaves no persisted turn claim, execution snapshot, member admission,
+installed turn returns unchanged without new reauthorization. Empty and mismatched outcomes remain
+internal and pass the same current slot authorization over the canonical organization/turn
+coordinate before disclosure. Denial returns one slot-existence-neutral result and performs no
+config observation; an authorized mismatch returns a redacted conflict, while only an authorized
+empty installed-slot outcome may perform the fresh authorized config observation and complete
+atomic install. A crash before that admission leaves no persisted turn claim, execution snapshot,
+member admission,
 or session, so recovery of that empty slot observes afresh. A crash after commit returns the one
 complete stored turn on retry even if a postcommit policy denial linearizes before that retry; the
 installed allow decision is not retroactively rewritten and the retry starts no second session.

@@ -125,10 +125,15 @@ Explicitly **out of scope here**:
    proof. Inject failures after observation, after attestation minting, while staging each member,
    immediately before atomic commit, and after commit/before response. Every precommit failure
    exposes no claim, snapshot, member admission, or session. Retry first compares the
-   organization/turn installed-slot using stable initiator/member facts; an empty slot performs a
-   fresh authorized whole-turn observation, an equal installed slot returns the exact record, and
-   changed facts conflict before policy observation. The earlier receipt is audit evidence, never
-   retry authority. A postcommit retry returns the exact complete turn, and equal concurrent losers
+   organization/turn installed-slot using stable initiator/member facts; an equal installed slot
+   returns the exact record without new authorization. Empty and mismatched outcomes pass one
+   non-disclosing current slot authorization before observation: a caller that lacks the
+   turn-admission capability receives the same canonical byte-identical denial for an occupied
+   slot probed with changed facts and an unused empty slot, with no conflict or repository/config
+   observation. An authorized mismatch returns the redacted conflict, and only an authorized empty
+   slot performs a fresh whole-turn observation and final exact-resource authorization. The earlier
+   receipt is audit evidence, never retry authority. A postcommit retry returns the exact complete
+   turn, and equal concurrent losers
    cannot return a different candidate. A config-straddling equal loser with the same claim variant
    and variant-specific initiator facts excludes its server-derived candidate execution digest
    from retry equality, discards it, and returns the installed winner;

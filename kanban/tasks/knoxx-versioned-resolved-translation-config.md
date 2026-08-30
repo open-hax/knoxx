@@ -232,13 +232,33 @@ map entries are not reservations and cannot authorize provider invocation.
 One atomic unique-insert/compare operation, `TranslationTurnConfigAdmission`, authorizes and
 installs the final turn claim, execution snapshot, complete ordered member-admission map, and one
 immutable `TranslationTurnAdmissionReceipt`. It targets that organization-scoped admission slot.
-Its installed-slot comparison precedes any new `observe-many` or current reauthorization on every
-initiation/retry. A canonically equal installed record is the already-linearized result and returns
-unchanged before any new current authorization; changed same-slot stable facts conflict before any
-repository or policy observation.
-Only an empty slot proceeds through a fresh `observe-many`, complete candidate construction, and
-the final atomic compare/install. If a concurrent winner appears between the early comparison and
-final install, the final comparison applies the same equal-return-or-conflict rule.
+Its internal installed-slot read precedes any new `observe-many` or current reauthorization on
+every initiation/retry. A canonically equal installed record is the already-linearized result and
+returns unchanged without new current reauthorization. Empty and mismatched installed-slot
+outcomes remain internal and are collapsed behind one non-disclosing authorization boundary
+before either outcome can become caller-visible.
+
+That boundary is a server-owned `authorize-translation-turn-admission-slot` operation over the
+authenticated principal, effective scope/delegation, required turn-admission capability, and the
+canonical slot coordinate `(server-derived effective organization, turn_id)`. Slot authorization
+only permits the caller to learn that its stable facts conflict with a slot it is currently
+allowed to address; it cannot authorize or satisfy config observation, whole-turn admission, or
+provider/session work. A denial returns the same canonical, byte-identical result for empty and
+mismatched slots, emits no conflict or existence bit, and reaches no `observe-many`, repository
+observation, candidate construction, provider call, or session start. An authorized mismatch
+returns one redacted, non-enumerating conflict shape. An authorized empty slot proceeds through a
+fresh `observe-many`, complete candidate construction, and the final atomic compare/install.
+
+The slot-disclosure decision linearizes with authorization-policy rotation under the
+`TranslationTurnAdmissionAuthority` fence, but its allow result is not reusable admission
+authority. The empty path must still perform the exact-resource authorization below at final
+linearization. If a concurrent winner appears after the early internal read, the final operation
+again returns a canonically equal installed record without new reauthorization; otherwise it
+collapses the still-empty and mismatched outcomes and freshly repeats the slot authorization under
+the fence. A current slot denial returns the same canonical denial for either outcome, an allowed
+mismatch returns the redacted conflict, and only an allowed empty outcome proceeds to the final
+exact-resource authorization and install. Neither the early slot-authorization result nor its
+receipt can be reused at this later comparison.
 
 At the empty slot's final linearization point, a fresh server-owned
 `authorize-translation-turn-admission` operation evaluates the authenticated principal and
@@ -271,11 +291,14 @@ attempt. The atomic turn install is every member's shared durable freshness boun
 
 A crash or injected failure before that atomic commit leaves no persisted turn claim, execution
 snapshot, member admission, or provider/session side effect. Retry may reuse only the initiator's
-stable turn/member ids. It first performs the installed-slot comparison. An empty slot must then
-perform a fresh `observe-many` authorization/config observation and build a new complete candidate
-turn. Retry equality is evaluated over the effective organization, stable turn id, authenticated
-principal/effective delegation/required capability, claim variant and its complete stable
-variant-specific initiator facts, and complete caller-stable canonical member/source/request facts.
+stable turn/member ids. It first performs the internal installed-slot comparison. An equal record
+returns as durable history. Every non-equal outcome must pass the common slot authorization before
+an authorized empty slot can perform a fresh `observe-many` authorization/config observation and
+build a new complete candidate turn; an unauthorized caller receives the same denial whether the
+slot is mismatched or empty. Retry equality is evaluated over the effective organization, stable
+turn id, authenticated principal/effective delegation/required capability, claim variant and its
+complete stable variant-specific initiator facts, and complete caller-stable canonical
+member/source/request facts.
 The freshly observed candidate execution digest is server-derived, cannot be supplied by
 the caller, and is excluded from retry equality; it is discarded when those stable facts match an
 installed record.
@@ -291,7 +314,9 @@ variant-specific initiator facts, may build different unattached candidate turns
 digests straddle a semantic config change, but exactly one whole record wins; every loser discards
 its candidates and returns the installed winner. Reusing the same organization-scoped slot with a
 changed authenticated initiator, claim variant, variant-specific initiator facts,
-source/request facts, or turn membership conflicts before repository or policy observation.
+source/request facts, or turn membership returns the redacted conflict only after current slot
+authorization; a denied caller instead receives the slot-existence-neutral canonical denial before
+repository observation.
 After installation, substituting the installed execution digest in a final claim, authenticated
 session, member artifact, or save also conflicts. A genuinely different execution configuration
 requires an explicit new initiation with a stable `turn_id` and separately admitted turn; the
@@ -354,7 +379,13 @@ The publication-free namespace closure from #273 remains an invariant.
    map. The same raw `turn_id` under two organizations creates independent admission slots and
    records with no collision or cross-tenant read. Within the same organization, the same
    `turn_id` with changed membership, claim variant, or variant-specific initiator facts conflicts
-   instead of creating a digest-keyed second record or returning a claim of the wrong type.
+   for a currently authorized slot caller instead of creating a digest-keyed second record or
+   returning a claim of the wrong type. A caller that lacks the current turn-admission capability
+   probes one known occupied `turn_id` with mismatched facts and one unused empty `turn_id`; both
+   return the same canonical byte-identical denial and expose no conflict, repository/config
+   observation, receipt, provider call, or session. Granting slot authority makes the authorized
+   mismatch return only the redacted conflict while the authorized empty slot continues to fresh
+   observation and final admission authorization.
 6. Inject crashes after the final observation, after attestation minting, immediately before
    atomic turn install, while staging each member, and after install/before response. Every
    pre-install crash leaves no claim, snapshot, member admission, or provider side effect and
@@ -368,8 +399,11 @@ The publication-free namespace closure from #273 remains an invariant.
    Commit a turn under allow, lose the response, rotate policy to deny, and make an equal retry.
    Installed-slot comparison precedes reauthorization, so the retry returns the exact committed
    record. This postcommit retry starts no second provider/session and does not use the old receipt
-   as authority. A changed same-slot retry still conflicts before policy observation, while a
-   genuinely new empty-slot turn under the denial installs nothing.
+   as authority. An authorized mismatch returns the redacted conflict, while a denied changed-slot
+   probe and a genuinely new empty-slot turn return the same canonical denial before observation
+   and install nothing. Thus the authorized mismatch conflict coexists with the historical equal
+   retry returning the exact committed record after revocation without creating an occupancy
+   oracle.
    Race callers with equal stable initiator facts whose observations straddle a config change:
    authenticated initiator, claim variant, stable variant-specific initiator facts, and
    member/source/request facts are the retry projection; the

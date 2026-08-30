@@ -117,3 +117,13 @@
   spore: none
   receipt-refs: 2026-08-30T00:18:11.391Z
   note: A lost response cannot strand a turn that already linearized under allow; compare the installed slot first, reauthorize only an empty slot, and let a later denial block new authority without rewriting admitted history.
+
+- ts: 2026-08-30T00:36:50.409Z
+  session: codex/knoxx238-repair
+  task: Hide turn-slot mismatches from unauthorized callers
+  p-efficiency: 0.84
+  p-friction: 0.52
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 2026-08-30T00:36:50.409Z
+  note: Historical equal retry readback can remain installed-first without exposing occupancy; collapse empty and mismatched outcomes behind one current slot-authorization boundary and disclose only a redacted conflict to an authorized caller.
