@@ -76,7 +76,7 @@ The resolved artifact contains:
   caller-stable attempt id), immutable source identity/revision/span/slice, and canonical operation;
 - the stable effect id admitted with that turn member; together the attempt identity plus effect id
   is its `AttemptEffectIdentity`; for #287 delegated ingestion the artifact also binds carrier type,
-  manifest id/digest, and OpenPlanner authority epoch, and the exact-once ledger uses that complete
+  manifest id/digest, and Knoxx-owned authority epoch, and the exact-once ledger uses that complete
   attempt/effect identity;
 - the repository contract/schema version and snapshot observation identity;
 - the final composite `RepositoryOperationReceipt` identity/digest and its ordered
@@ -194,14 +194,23 @@ ledger claim, or save.
 
 Every translation-bound agent turn installs an immutable `TranslationTurnClaim` containing a
 non-empty collection of provider-neutral attempt-claim members keyed and canonically ordered by the
-complete `AttemptEffectIdentity`, not by `SegmentCoordinate`. Multiple members may share the same `SegmentCoordinate`;
-distinct stable attempt/effect pairs produce distinct `AttemptEffectIdentity`
-values. Before provider work, the initiating workflow accepts or creates each stable
+complete `AttemptEffectIdentity`, not by `SegmentCoordinate`, and validates a second unique index
+over the embedded `AttemptIdentity`. Multiple members may share the same `SegmentCoordinate` only
+when their stable attempt ids make their complete `AttemptIdentity` values distinct; a repeated
+canonical `AttemptIdentity` with a different `effect_id` is invalid. Distinct stable attempt/effect
+pairs then produce distinct `AttemptEffectIdentity` values. Before provider work, the initiating
+workflow accepts or creates each stable
 attempt id and stable effect id with its exact grouping/source/request facts, forming the member's
-pre-admitted `AttemptEffectIdentity`. A duplicate complete canonical `AttemptEffectIdentity` and any
-non-canonical encoding are rejected before persistence, while a repeated coordinate alone is not a
-duplicate. The claim identity/digest makes member addition, removal, or replacement a conflict after
-admission.
+pre-admitted `AttemptEffectIdentity`. A duplicate complete canonical `AttemptEffectIdentity`, a
+repeated canonical `AttemptIdentity`, and any non-canonical encoding are rejected before persistence,
+while a repeated coordinate alone is not a duplicate. The claim identity/digest makes member
+addition, removal, or replacement a conflict after admission.
+An unbound `SegmentationProposal` session may precede this admission only to propose logical slices
+over manifest-bound canonical source bytes. It cannot call `save_translation`, observe or admit
+resolved config, invoke the translation provider, mint attempt/effect identity, or persist a
+candidate. After the server validates the proposal against the admitted source revision, it derives
+the complete member identities, performs this atomic config admission, and launches a separate bound
+translation turn.
 Publication dispatch and ordinary-chat preflight use distinct turn-claim variants but the same
 turn-wide admission law; an unbound chat turn does not receive `save_translation`. Before config
 observation, the canonical claim binds its variant and stable variant-specific initiator facts:
@@ -401,7 +410,9 @@ The publication-free namespace closure from #273 remains an invariant.
    inside one atomic turn map. In that same atomic map, admit two members with the same coordinate but
    different stable attempt ids and effect ids, key them by their distinct complete
    `AttemptEffectIdentity` values, and preserve both intentional retranslations. Reject a duplicate
-   full member identity without treating the repeated coordinate as a duplicate. Reuse one delegated
+   full member identity without treating the repeated coordinate as a duplicate. Reject a claim with
+   the same `AttemptIdentity` but different stable `effect_id` values before config observation,
+   persistence, provider work, or event admission. Reuse one delegated
    attempt with a different manifest, epoch, or effect id and prove it conflicts before observation,
    ledger claim, or provider work. The same raw `turn_id` under two organizations creates
    independent admission slots and

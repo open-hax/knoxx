@@ -59,7 +59,7 @@ separate operation that cannot change or remove any current authority can claim 
   that `SegmentCoordinate` alone advances its current projection.
 - Every pre-admitted turn member adds a stable effect id to its `AttemptIdentity`, forming
   `AttemptEffectIdentity = (AttemptIdentity, stable effect id)`. A #287 delegated attempt
-  additionally binds the admitting manifest id/digest and OpenPlanner authority epoch as immutable
+  additionally binds the admitting manifest id/digest and Knoxx-owned authority epoch as immutable
   canonical facts, and its exact-once ledger claims `AttemptEffectIdentity`, never
   `SegmentCoordinate` globally. Equal retries compare manifest, epoch, effect identity, and canonical
   payload; substitution conflicts without another event or projection write.
@@ -112,15 +112,24 @@ A crash before config install leaves no reservation; a crash after install reuse
 config record and the later produced-candidate event are distinct lifecycle facts, but neither
 may partially install or reinterpret the shared identity.
 
-The initiating translation operation owns an immutable `TranslationTurnClaim` before any
-provider or model session starts. That claim binds a non-empty, canonically ordered collection of
+The initiating translation operation owns an immutable `TranslationTurnClaim` before any bound
+translation provider/model session can produce a candidate or receive `save_translation`. A
+preceding unbound `SegmentationProposal` session may inspect only manifest-bound canonical source
+bytes and propose logical boundaries, but it cannot call `save_translation`, observe translation
+config, mint attempt/effect identity, or persist candidate/history. The server validates each
+proposal against the admitted source revision, derives the complete coordinates and stable
+attempt/effect ids, atomically installs the claim, and launches a separate bound translation turn.
+That claim binds a non-empty, canonically ordered collection of
 provider-neutral `TranslationAttemptClaim` members keyed by complete canonical
-`AttemptEffectIdentity`, not by `SegmentCoordinate`. Multiple members may share the same `SegmentCoordinate`;
-distinct stable attempt/effect pairs produce distinct `AttemptEffectIdentity`
-values. Each member owns its stable `attempt_id`, stable
+`AttemptEffectIdentity`, not by `SegmentCoordinate`, and validates a second unique index over the
+embedded `AttemptIdentity`. Multiple members may share the same `SegmentCoordinate` only when their
+stable attempt ids make their complete `AttemptIdentity` values distinct; a repeated canonical
+`AttemptIdentity` with a different `effect_id` is invalid. Distinct stable attempt/effect pairs then
+produce distinct `AttemptEffectIdentity` values. Each member owns its stable `attempt_id`, stable
 `effect_id`, exact grouping/source/request facts, and matching `AttemptConfigAdmission`. A duplicate
-complete canonical `AttemptEffectIdentity` or non-canonical encoding is invalid, while a repeated
-`SegmentCoordinate` alone is not a duplicate. The turn claim also binds one immutable
+complete canonical `AttemptEffectIdentity`, repeated canonical `AttemptIdentity`, or non-canonical
+encoding is invalid, while a repeated `SegmentCoordinate` alone is not a duplicate. The turn claim
+also binds one immutable
 `TranslationTurnExecutionSnapshot` and canonical
 `provider-session-config-digest` covering the exact provider/model identity, config/policy
 resource revisions, and normalized session parameters used by the one model session. Member
@@ -182,8 +191,9 @@ plus its full pre-admitted `AttemptEffectIdentity` and complete immutable segmen
 compares both echoes with that member and its installed config admission, then passes the full `AttemptEffectIdentity`,
 manifest id/digest when delegated, and authority epoch when delegated
 unchanged through the domain/save boundary to canonical event admission and, for delegated
-ingestion, the OpenPlanner atomic segment commit. Manifest and epoch come only from authenticated
-server-owned admission/envelope state, never model or caller input. The handler returns the bound
+ingestion, the Knoxx authority-store transaction and outbox adapter to the existing OpenPlanner
+segment sink. Manifest and epoch come only from authenticated server-owned admission/envelope state,
+never model or caller input. The handler returns the bound
 identity with the admitted event/ordinal. The tool may be called repeatedly for different admitted
 members in either order; saving one member never consumes or authorizes another. Missing or
 different attempt/effect input, an unclaimed
@@ -237,18 +247,23 @@ current state. If append succeeds but projection update fails, the durable event
 authoritative and an idempotent replay/recovery step advances the projection from its
 checkpoint without appending another attempt.
 
-Legacy migration derives a deterministic initial event id only from stable legacy row identity and
-the newly derived complete immutable segment coordinate, never from candidate values. Before
-cutover it resolves project, garden, source language, source revision, and authoritative source
-span/slice from the source authority; missing or ambiguous coordinates stop for operator
-reconciliation rather than collapsing into the legacy short key. The canonical migrated event
-payload contains that observed snapshot. Re-running
-migration returns the equal existing event; a row changed after a partial migration therefore
-reuses the same derived id with a different canonical payload and stops with the normal
-`:attempt-id-reused` conflict for operator reconciliation instead of appending a second initial
-event. Migration writes the event before the projection, resumes from durable checkpoints, and
-keeps the existing read endpoint available until every migrated grouping key can be served from
-the new projection.
+Legacy migration first persists a `LegacyMigrationIdentity` derived only from the immutable legacy
+store/collection namespace and persisted legacy-row primary key. It is independent of
+`SegmentCoordinate`, candidate values, and every coordinate inferred during migration. The event
+store installs a unique index on `LegacyMigrationIdentity`; the deterministic initial attempt/event
+id is derived from that identity in a fixed migration namespace, and the canonical migrated event
+retains both identities. Before cutover migration resolves project, garden, source language, source
+revision, and authoritative source span/slice from the source authority; missing or ambiguous
+coordinates stop for operator reconciliation rather than collapsing into the legacy short key.
+The canonical migrated event payload contains that observed snapshot.
+
+Migration admission atomically unique-inserts or compares by `LegacyMigrationIdentity` before
+normal `AttemptIdentity` admission. An equal retry returns the stored initial event. If any derived
+coordinate or payload differs from the stored migrated event, retry reports the existing
+`:attempt-id-reused` conflict with the persisted migration identity for operator reconciliation,
+without deriving or appending a second initial event. Migration writes the event before the
+projection, resumes from durable checkpoints, and keeps the existing read endpoint available until
+every migrated grouping key can be served from the new projection.
 
 Partial migration uses one server-owned, compare-and-swap `MigrationAuthority` marker per
 grouping key with only `:legacy` or `:events`. While `:legacy`, reads use the legacy row.
@@ -322,7 +337,9 @@ land a migration that leaves that endpoint erroring.
   different stable `effect_id` values in the same turn save independently under their distinct
   `AttemptEffectIdentity` values. Duplicate full member identities are rejected, but repeated
   coordinates are not. Missing or substituted attempt/effect, manifest, or epoch facts append no
-  candidate and do not advance the projection.
+  candidate and do not advance the projection. A claim containing two members with the same
+  `AttemptIdentity` but different stable `effect_id` values is rejected before persistence,
+  config observation, provider work, or event admission.
 - Turn-config crash/race fixtures prove no bare reservation or partial member can strand a later
   event: pre-install retry must resolve/authorize anew, post-install retry reuses the exact complete
   turn map, and each canonical event accepts only its embedded artifact identity/attestation.
@@ -362,9 +379,11 @@ land a migration that leaves that endpoint erroring.
   delivery cannot regress current state, and replay/recovery is byte-equivalent and
   idempotent after an injected append/projection split failure.
 - Running legacy migration twice appends no duplicates; changed legacy authority at a reused
-  stable row/grouping-derived migration identity conflicts instead of being silently replaced.
-  A partial-run fixture mutates the legacy payload before restart and proves no second initial
-  event can be admitted.
+  `LegacyMigrationIdentity` conflicts instead of being silently replaced. Partial-run fixtures
+  mutate the legacy payload and separately change project, garden, source revision, or source span
+  before restart; every retry resolves the same persisted migration slot, conflicts against its
+  stored coordinate/payload snapshot, and proves one initial event remains without a second event or
+  projection advance.
 - Migration fixtures seed two legacy rows that collide under
   `(org_id, document_id, segment_index, target_lang)` but differ by project, garden, source locale,
   source revision, or source span. The complete-coordinate migration preserves both, installs the

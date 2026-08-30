@@ -307,3 +307,13 @@
   spore: none
   receipt-refs: 2026-08-30T07:14:21.086Z
   note: Segment coordinates group events and projections but cannot key turn membership; pre-admit the complete attempt/effect identity, exact-echo both stable ids, and carry server-owned manifest and epoch facts through canonical event admission and the OpenPlanner writer. Independent audit was clean on the exact five-card semantic diff before this append-only provenance.
+
+- ts: 2026-08-30T20:10:52.933Z
+  session: codex/knoxx-board-reconcile
+  task: Align translation admission, migration, segmentation, and authority ownership
+  p-efficiency: 0.90
+  p-friction: 0.46
+  p-skill-candidate: 0.47
+  spore: none
+  receipt-refs: 2026-08-30T20:10:52.933Z
+  note: Event uniqueness constrains claim admission; migration retries need a coordinate-independent legacy slot; model-selected splits require a non-authorizing proposal before the bound turn; and cross-repository atomicity must stay behind a Knoxx-owned adapter unless explicitly authorized.
