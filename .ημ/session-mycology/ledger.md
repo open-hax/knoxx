@@ -247,3 +247,13 @@
   spore: none
   receipt-refs: 2026-08-30T03:28:29.984Z
   note: Wildcard proxy hardening does not cover a more-specific route registered first; inventory each credential-attaching handler and prove its downstream call is unreachable without verified caller context.
+
+- ts: 2026-08-30T03:33:48.114Z
+  session: codex/knoxx-board-reconcile
+  task: Fence fixed-identity KMS admin operations
+  p-efficiency: 0.93
+  p-friction: 0.28
+  p-skill-candidate: 0.39
+  spore: none
+  receipt-refs: 2026-08-30T03:33:48.114Z
+  note: Registration-table inventory must include local observations and service-authorized mutations; fixed downstream identity is safe only after a verified caller permission fence and cannot substitute for it.

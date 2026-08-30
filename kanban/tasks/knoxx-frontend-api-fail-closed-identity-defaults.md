@@ -54,6 +54,13 @@ There is also a dedicated `GET /api/openplanner/v1/sessions` registration inside
 That session listing is a separate credential-required boundary, not a deliberately public read
 that the wildcard handler's tests can cover implicitly.
 
+The same registration table exposes the eta-mu and OpenCode session list, status, and ingest admin
+routes. `register-session-status-route!` and `register-session-ingest-route!` reach KMS through
+`system-kms-headers`, whose fixed `system-admin@open-hax.local` identity is stronger than caller
+input; `source-ingest-request!` can create a downstream job. The two list routes expose local
+session data even without a downstream credential. These six admin endpoints therefore need an
+explicit caller authorization fence before either local observation or system-authorized KMS work.
+
 ## Scope
 
 - Inventory both central request families and every direct `buildKnoxxAuthHeaders` consumer:
@@ -82,6 +89,14 @@ that the wildcard handler's tests can cover implicitly.
 - The dedicated OpenPlanner sessions listing is credential-required: require a verified Knoxx
   request context before any downstream call. The server-held bearer credential cannot make this
   session inventory anonymously readable or serve as caller authentication.
+- Inventory `system-kms-headers`, `session-status-handler!`, `source-ingest-request!`,
+  `register-session-status-route!`, and `register-session-ingest-route!`, together with the direct
+  list responders for `/api/admin/eta-mu-sessions{,/status,/ingest}` and
+  `/api/admin/opencode-sessions{,/status,/ingest}`. Require a verified administrator context and
+  explicit permission before any local listing, status handler, or downstream KMS fetch/mutation.
+- The fixed KMS system identity is not caller authentication. If the downstream service still
+  requires that identity, it is constructed only after caller authorization inside a named service
+  adapter, scoped to the admitted operation, and never exposed as the Knoxx request principal.
 - Inventory direct frontend callers of `/api/openplanner/*` and `/api/ingestion/*`, including
   write-capable CMS, labels, review, garden, workspace, and ingestion flows and
   `frontend/src/test/ui-backend-surface-matrix.ts`. Cover the listed GET, POST, PUT, PATCH, and
@@ -141,18 +156,26 @@ that the wildcard handler's tests can cover implicitly.
    include conflicting identity headers. The `openplanner-client/sessions!` call count remains zero,
    no session rows or enrichment data are disclosed, and the canonical protected-request failure is
    returned before the server bearer credential can be used.
-9. Valid session and API-key probes for the dedicated sessions route and the wildcard/ingestion
+9. Add direct unauthenticated and identity-header-only probes across all six admin routes in
+   `/api/admin/eta-mu-sessions{,/status,/ingest}` and
+   `/api/admin/opencode-sessions{,/status,/ingest}`. Local list/status and downstream fetch/job call
+   counts remain zero; no session data, source/job data, or mutation result is disclosed.
+10. Valid administrator session and API-key probes can perform each admitted admin operation;
+    authenticated non-admin is denied before local/downstream work, and conflicting client identity
+    headers cannot override the credential-derived administrator. Capture the KMS request to prove
+    any internal system identity is added only after that authorization fence.
+11. Valid session and API-key probes for the dedicated sessions route and the wildcard/ingestion
    proxy routes derive any required downstream identity from verified context. Conflicting client
    identity headers cannot override that principal, and the fake downstream captures neither the
    conflicting value nor a fabricated system actor. Exercise OpenPlanner's server-credential
    attachment and ingestion's former clone-all-headers path.
-10. Mutable storage values and caller-supplied identity headers cannot change the principal
+12. Mutable storage values and caller-supplied identity headers cannot change the principal
    observed by protected real-server probes through one TypeScript surface and one CLJS surface.
-11. A missing/expired session on a protected browser request reaches one canonical
+13. A missing/expired session on a protected browser request reaches one canonical
     401/reauthentication UI path; it never retries as a default administrator.
-12. An authorized credential-derived session still performs GET/mutation requests from both helper
+14. An authorized credential-derived session still performs GET/mutation requests from both helper
     families with the same payload, non-identity headers, credential inclusion, and error behavior.
-13. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
+15. TypeScript tests, the full frontend CLJS suite, focused backend auth and proxy tests, production build,
     server compile, and strict changed-surface lint pass with zero warnings; real-server negative
     probes confirm zero protected effect across both the direct auth and service-proxy boundaries.
 
