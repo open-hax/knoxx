@@ -103,7 +103,12 @@ eventual rejection and cannot complete until that projected child is green.
   public read may ignore or remove those bytes only as non-authorizing input; it cannot derive a
   principal, membership, organization, or privileged downstream request from them. Any internal
   identity handoff must be distinguishable from untrusted wire input and derived from an
-  already-verified session or API key.
+  already-verified session, API key, or typed bootstrap credential. Inventory
+  `infra/routes/auth.cljs` `local-login-handler!`: after password verification, replace its
+  header-shaped `policy-db/resolve-context!` input with a named internal adapter that accepts the
+  verified local-password record as typed bootstrap evidence. The adapter cannot consume request
+  identity headers, and invalid password/bootstrap evidence cannot resolve context or create a
+  session.
 - Inventory `infra.clients.knoxx-control/headers-for` and its event, actor, and Discord voice
   callers. Protected control requests send the configured API key without any `x-knoxx-*` identity
   header; the server derives that credential's principal only from `KNOXX_API_KEY_USER_EMAIL` and
@@ -134,12 +139,14 @@ eventual rejection and cannot complete until that projected child is green.
   `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs`. Include every Knoxx route that
   accepts inbound data or headers and then calls a downstream service with Knoxx-held credentials;
   record which headers are constructed locally, copied, or forwarded.
-- At every such proxy boundary, drop every inbound `x-knoxx-*` identity header before constructing
-  the outbound request. Knoxx's server-held OpenPlanner bearer credential and any other service
-  credential must not amplify untrusted identity. If the downstream protocol genuinely requires
-  identity, rederive it from the verified server request context and pass it through a named
-  internal service adapter; never reuse client bytes or let an absent context become a system
-  actor.
+- At every such proxy boundary, construct outbound headers from an explicit non-authority
+  allowlist; never clone the inbound header object. Drop `cookie`, `authorization`, `x-api-key`,
+  every `x-knoxx-*` identity header, and every caller-supplied credential or capability before
+  constructing the downstream request. Add a required downstream service credential only from
+  Knoxx server configuration after caller authorization. If the downstream protocol genuinely
+  requires identity, rederive it from the verified server request context and pass it through a
+  named internal service adapter; never reuse client bytes or let an absent context become a
+  system actor.
 - The dedicated OpenPlanner sessions listing is credential-required: require a verified Knoxx
   request context before any downstream call. The server-held bearer credential cannot make this
   session inventory anonymously readable or serve as caller authentication.
@@ -222,6 +229,10 @@ eventual rejection and cannot complete until that projected child is green.
    internal boundary without public identity headers. External media URLs receive no Knoxx
    credential, capability, or identity header, and an unverified local protected fetch fails before
    network or file disclosure.
+   A valid local-password login passes only a typed verified-password/bootstrap fact to the named
+   context adapter and creates the expected session. Captured public identity headers cannot alter
+   that context. Invalid password or malformed bootstrap evidence produces zero context-resolution
+   and session-creation calls.
 10. Direct unauthenticated OpenPlanner wildcard and `/api/ingestion/*` probes send malicious identity
    headers through representative read and protected mutation routes. Before authorization, the
    downstream call count remains zero and no protected mutation occurs; where an unauthenticated
@@ -231,6 +242,11 @@ eventual rejection and cannot complete until that projected child is green.
    an explicitly public downstream operation whose response is limited to that public scope. A
    server bearer credential, API key, capability, or privileged response scope fails the probe even
    when no spoofed identity header is present.
+   For `/api/ingestion/*`, an authenticated caller probe captures the downstream headers and proves
+   `cookie`, `authorization`, `x-api-key`, every `x-knoxx-*` header, and any caller capability are
+   absent. Only explicit non-authority headers plus the server-selected, operation-scoped KMS
+   service credential may cross after caller authorization; the proxy never clones inbound
+   headers.
    Run the same no-context and identity-header-only probes directly against every active
    `/api/data/op/*`, `/api/data/mongo/{collections,list,query}`, and
    `/api/data/jobs/build-semantic-edges` registration in `infra/routes/app.cljs`; each must reject

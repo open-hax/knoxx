@@ -377,3 +377,13 @@
   spore: none
   receipt-refs: 2026-08-30T21:07:59.547Z
   note: Wildcards and sibling-route samples do not cover a separately registered bearer-backed dashboard handler; inventory and directly probe mongo/collections before any documents or graph-monitoring downstream read.
+
+- ts: 2026-08-30T21:13:57.573Z
+  session: codex/knoxx-board-reconcile
+  task: Separate proxy service credentials from caller credentials and type password bootstrap
+  p-efficiency: 0.93
+  p-friction: 0.31
+  p-skill-candidate: 0.42
+  spore: none
+  receipt-refs: 2026-08-30T21:13:57.573Z
+  note: An authenticated proxy may authorize a call without exporting the caller's reusable credentials; build downstream headers from a closed allowlist. Initial password login needs a typed verified-bootstrap handoff rather than public header-shaped identity.
