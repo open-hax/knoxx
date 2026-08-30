@@ -397,3 +397,13 @@
   spore: none
   receipt-refs: 2026-08-30T21:17:59.306Z
   note: Coordinate-independent migration identity also needs coordinate-independent read/write authority; bind the legacy row slot before coordinate admission. Credentialed-route inventories must include optional-context voice and translation wrappers, not only shared proxy modules.
+
+- ts: 2026-08-30T21:22:36.323Z
+  session: codex/knoxx-board-reconcile
+  task: Generate credential-route probes and close every auth bootstrap variant
+  p-efficiency: 0.94
+  p-friction: 0.32
+  p-skill-candidate: 0.45
+  spore: none
+  receipt-refs: 2026-08-30T21:22:36.323Z
+  note: A sampled route inventory is not a closed security proof; derive probes from registered handlers that can reach server credentials. Bootstrap context requires closed typed evidence for signup, password, invite, and OAuth paths, never public identity-header reuse.

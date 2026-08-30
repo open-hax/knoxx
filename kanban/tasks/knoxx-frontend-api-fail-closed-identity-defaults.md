@@ -103,12 +103,15 @@ eventual rejection and cannot complete until that projected child is green.
   public read may ignore or remove those bytes only as non-authorizing input; it cannot derive a
   principal, membership, organization, or privileged downstream request from them. Any internal
   identity handoff must be distinguishable from untrusted wire input and derived from an
-  already-verified session, API key, or typed bootstrap credential. Inventory
-  `infra/routes/auth.cljs` `local-login-handler!`: after password verification, replace its
-  header-shaped `policy-db/resolve-context!` input with a named internal adapter that accepts the
-  verified local-password record as typed bootstrap evidence. The adapter cannot consume request
-  identity headers, and invalid password/bootstrap evidence cannot resolve context or create a
-  session.
+  already-verified session, API key, or typed bootstrap credential. Inventory every internal
+  header-shaped `policy-db/resolve-context!` caller, including `infra/routes/auth.cljs`
+  `signup-handler!`, `local-login-handler!`, and `invite-redeem-handler!`, plus
+  `infra/auth/session.cljs` OAuth membership synchronization. Replace them with one named internal
+  adapter over closed typed variants for the newly created membership, verified local-password
+  record, verified invite redemption, and synchronized OAuth membership. Invite redemption never
+  sources its email from `x-knoxx-user-email`; its untrusted code/body selectors must be verified
+  together before the typed result exists. The adapter cannot consume request identity headers,
+  and invalid bootstrap evidence cannot resolve context or create a session.
 - Inventory `infra.clients.knoxx-control/headers-for` and its event, actor, and Discord voice
   callers. Protected control requests send the configured API key without any `x-knoxx-*` identity
   header; the server derives that credential's principal only from `KNOXX_API_KEY_USER_EMAIL` and
@@ -138,6 +141,9 @@ eventual rejection and cannot complete until that projected child is green.
   `/api/data/jobs/build-semantic-edges`, plus
   `infra/routes/voice.cljs` `GET /api/voice/tts/health` and `POST /api/voice/tts`, plus
   every bearer-backed `infra/routes/translation.cljs` `/api/translations/*` registration, plus
+  every `infra/routes/memory.cljs` `/api/memory/*` registration that can read or mutate
+  OpenPlanner-backed session rows, including session list/detail and title status/backfill/import,
+  plus
   `backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs`. Include every Knoxx route that
   accepts inbound data or headers and then calls a downstream service with Knoxx-held credentials;
   record which headers are constructed locally, copied, or forwarded.
@@ -231,10 +237,12 @@ eventual rejection and cannot complete until that projected child is green.
    internal boundary without public identity headers. External media URLs receive no Knoxx
    credential, capability, or identity header, and an unverified local protected fetch fails before
    network or file disclosure.
-   A valid local-password login passes only a typed verified-password/bootstrap fact to the named
-   context adapter and creates the expected session. Captured public identity headers cannot alter
-   that context. Invalid password or malformed bootstrap evidence produces zero context-resolution
-   and session-creation calls.
+   End-to-end signup, local-password login, invite redemption, and OAuth callback probes each pass
+   only their closed typed bootstrap variant to the named context adapter and create the expected
+   session. Captured public identity headers cannot alter any resulting context. Invite fixtures
+   prove a header-only email is rejected and code/body mismatch cannot create typed evidence.
+   Invalid password, invite, OAuth state, or malformed bootstrap evidence produces zero
+   context-resolution and session-creation calls.
 10. Direct unauthenticated OpenPlanner wildcard and `/api/ingestion/*` probes send malicious identity
    headers through representative read and protected mutation routes. Before authorization, the
    downstream call count remains zero and no protected mutation occurs; where an unauthenticated
@@ -258,6 +266,11 @@ eventual rejection and cannot complete until that projected child is green.
    `/api/translations/*` registration. A nil context—including when the policy database is
    disabled—must reject before the Voice Gateway API key or OpenPlanner bearer credential is
    attached, with zero downstream voice, translation read, or translation mutation calls.
+   Apply the same generated route-table probe to every credential-reachable `/api/memory/*`
+   registration, including session list/detail and title status/backfill/import; nil context has
+   zero OpenPlanner session-row reads, title jobs, imports, or mutations. The gate derives this
+   inventory from registered handlers and their server-credential call graph, then fails if any
+   credential-reachable route lacks a direct negative probe.
 11. A direct `GET /api/openplanner/v1/sessions` negative probe has no valid Knoxx credential and may
    include conflicting identity headers. The `openplanner-client/sessions!` call count remains zero,
    no session rows or enrichment data are disclosed, and the canonical protected-request failure is
