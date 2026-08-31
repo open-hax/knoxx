@@ -28,14 +28,6 @@ function append(label, values = []) {
   appendFileSync(diagnosticPath, `${label}${rendered ? ` ${redact(rendered)}` : ""}\n`);
 }
 
-if (diagnosticPath) {
-  const stderrWrite = process.stderr.write.bind(process.stderr);
-  process.stderr.write = (chunk, ...args) => {
-    append("stderr", [Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk]);
-    return stderrWrite(chunk, ...args);
-  };
-}
-
 process.on("uncaughtExceptionMonitor", (error, origin) => {
   append("uncaught-exception", [origin, error]);
 });
