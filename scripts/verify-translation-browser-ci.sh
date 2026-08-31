@@ -29,7 +29,23 @@ die() { printf 'ABORT %s\n' "$1" >&2; exit 2; }
 
 stop_process() {
   local pid="$1"
-  [ -z "$pid" ] || kill -TERM -- "$pid" >/dev/null 2>&1 || true
+  local watchdog_pid=""
+
+  [ -n "$pid" ] || return 0
+  if ! kill -TERM -- "$pid" >/dev/null 2>&1; then
+    wait "$pid" 2>/dev/null || true
+    return 0
+  fi
+
+  (
+    sleep 5
+    kill -KILL -- "$pid" >/dev/null 2>&1 || true
+  ) &
+  watchdog_pid=$!
+
+  wait "$pid" 2>/dev/null || true
+  kill -TERM -- "$watchdog_pid" >/dev/null 2>&1 || true
+  wait "$watchdog_pid" 2>/dev/null || true
 }
 
 cleanup() {
