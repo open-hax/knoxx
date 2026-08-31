@@ -8,7 +8,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERIFY_TMP_DIR="$(mktemp -d)"
 BACKEND_PID=""
 FRONTEND_PID=""
-BACKEND_PORT="${KNOXX_BROWSER_BACKEND_PORT:-18000}"
+BACKEND_PORT="${KNOXX_BROWSER_BACKEND_PORT:-$(node -e '
+  const server = require("node:net").createServer();
+  server.unref();
+  server.listen(0, "127.0.0.1", () => {
+    process.stdout.write(String(server.address().port));
+    server.close();
+  });
+')}"
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
 FRONTEND_URL="${KNOXX_FRONTEND_URL:-http://127.0.0.1:5173}"
 KNOXX_SHOT_DIR="${KNOXX_SHOT_DIR:-${VERIFY_TMP_DIR}/screenshots}"
@@ -62,7 +69,7 @@ done
   || die "backend/dist/server.js is absent; run pnpm -C backend run typecheck"
 mkdir -p "$KNOXX_PUBLICATION_CONTENT_ROOT" "$KNOXX_SHOT_DIR"
 
-note "starting isolated backend and frontend"
+note "starting isolated backend on ${BACKEND_URL} and frontend on ${FRONTEND_URL}"
 setsid bash -c '
   pid_file=$1
   shift
@@ -70,7 +77,8 @@ setsid bash -c '
   exec "$@"
 ' _ "${VERIFY_TMP_DIR}/backend.pid" \
   env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
-  pnpm -C "${REPO_ROOT}/backend" start >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
+  bash -c 'cd "$1" && exec node dist/server.js' _ "${REPO_ROOT}/backend" \
+  >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
 setsid bash -c '
   pid_file=$1
   shift
