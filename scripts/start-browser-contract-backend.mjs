@@ -1,7 +1,12 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { inspect } from "node:util";
 
 const diagnosticPath = process.env.KNOXX_BROWSER_BACKEND_DIAGNOSTIC_PATH;
+const pidPath = process.env.KNOXX_BROWSER_BACKEND_PID_PATH;
+
+if (pidPath) {
+  writeFileSync(pidPath, `${process.pid}\n`);
+}
 
 function redact(value) {
   return String(value)

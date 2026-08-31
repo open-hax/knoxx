@@ -7,6 +7,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERIFY_TMP_DIR="$(mktemp -d)"
 BACKEND_PID=""
+BACKEND_LAUNCH_PID=""
 FRONTEND_PID=""
 BACKEND_PORT="${KNOXX_BROWSER_BACKEND_PORT:-$(node -e '
   const server = require("node:net").createServer();
@@ -43,6 +44,7 @@ cleanup() {
   local code=$?
   stop_process "$FRONTEND_PID"
   stop_process "$BACKEND_PID"
+  stop_process "$BACKEND_LAUNCH_PID"
   if [ "$code" -ne 0 ]; then
     # pnpm and Node can finish writing redirected diagnostics just after the
     # watched process exits; give the file descriptors a moment to drain.
@@ -105,11 +107,33 @@ fi
 note "starting isolated backend on ${BACKEND_URL}"
 (
   cd "${REPO_ROOT}/backend"
+  printf 'backend shell launcher pid=%s\n' "$BASHPID"
   exec env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
     KNOXX_BROWSER_BACKEND_DIAGNOSTIC_PATH="${VERIFY_TMP_DIR}/backend.diagnostic.log" \
+    KNOXX_BROWSER_BACKEND_PID_PATH="${VERIFY_TMP_DIR}/backend.node.pid" \
     node "${REPO_ROOT}/scripts/start-browser-contract-backend.mjs"
 ) >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
-BACKEND_PID=$!
+BACKEND_LAUNCH_PID=$!
+
+for _ in $(seq 1 50); do
+  if [ -s "${VERIFY_TMP_DIR}/backend.node.pid" ]; then
+    break
+  fi
+  if ! kill -0 "$BACKEND_LAUNCH_PID" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+if [ -s "${VERIFY_TMP_DIR}/backend.node.pid" ]; then
+  IFS= read -r BACKEND_PID <"${VERIFY_TMP_DIR}/backend.node.pid" \
+    || die "backend Node PID could not be read"
+else
+  set +e
+  wait "$BACKEND_LAUNCH_PID"
+  backend_status=$?
+  set -e
+  die "backend Node process did not start (launcher status ${backend_status})"
+fi
 
 context=""
 context_status="000"
