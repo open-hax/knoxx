@@ -93,6 +93,15 @@ note "building the browser frontend once before starting runtime processes"
     -c tailwind.config.ts -i src/index.css -o dist/app.css
 } >"${VERIFY_TMP_DIR}/frontend.log" 2>&1
 
+# A hosted runner may keep a Shadow server JVM alive after a compile even
+# though this contract only needs the emitted files. Reclaim it before loading
+# the large backend module graph; otherwise the kernel can terminate Node before
+# its first JavaScript instruction and leave no application diagnostic.
+if [ "${CI:-}" = "true" ]; then
+  pnpm -C "${REPO_ROOT}/frontend" exec shadow-cljs stop >/dev/null 2>&1 || true
+  pnpm -C "${REPO_ROOT}/backend" exec shadow-cljs stop >/dev/null 2>&1 || true
+fi
+
 note "starting isolated backend on ${BACKEND_URL}"
 (
   cd "${REPO_ROOT}/backend"
@@ -106,7 +115,11 @@ context=""
 context_status="000"
 for _ in $(seq 1 120); do
   if ! kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
-    die "backend exited before the authenticated context became ready"
+    set +e
+    wait "$BACKEND_PID"
+    backend_status=$?
+    set -e
+    die "backend exited before the authenticated context became ready (status ${backend_status})"
   fi
 
   context_status="$(curl -q --noproxy '*' -sS --max-time 2 \
@@ -145,10 +158,18 @@ FRONTEND_PID=$!
 frontend_ready="false"
 for _ in $(seq 1 120); do
   if ! kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
-    die "backend exited while the frontend was starting"
+    set +e
+    wait "$BACKEND_PID"
+    backend_status=$?
+    set -e
+    die "backend exited while the frontend was starting (status ${backend_status})"
   fi
   if ! kill -0 "$FRONTEND_PID" >/dev/null 2>&1; then
-    die "frontend exited before its browser surface became ready"
+    set +e
+    wait "$FRONTEND_PID"
+    frontend_status=$?
+    set -e
+    die "frontend exited before its browser surface became ready (status ${frontend_status})"
   fi
   if curl -q --noproxy '*' -fsS --max-time 2 -H 'Accept: text/html' \
        "$FRONTEND_URL" >/dev/null 2>&1; then
