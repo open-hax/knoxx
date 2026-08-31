@@ -34,15 +34,15 @@ export KNOXX_CONTRACTS_DIR="$CONTRACTS_DIR"
 note() { printf '   %s\n' "$1"; }
 die() { printf 'ABORT %s\n' "$1" >&2; exit 2; }
 
-stop_group() {
+stop_process() {
   local pid="$1"
-  [ -z "$pid" ] || kill -TERM -- "-$pid" >/dev/null 2>&1 || true
+  [ -z "$pid" ] || kill -TERM -- "$pid" >/dev/null 2>&1 || true
 }
 
 cleanup() {
   local code=$?
-  stop_group "$FRONTEND_PID"
-  stop_group "$BACKEND_PID"
+  stop_process "$FRONTEND_PID"
+  stop_process "$BACKEND_PID"
   if [ "$code" -ne 0 ]; then
     # pnpm and Node can finish writing redirected diagnostics just after the
     # watched process exits; give the file descriptors a moment to drain.
@@ -68,7 +68,7 @@ if [ "$FRONTEND_PORT" -lt 1 ] || [ "$FRONTEND_PORT" -gt 65535 ]; then
   die "KNOXX_BROWSER_FRONTEND_PORT must be between 1 and 65535"
 fi
 
-for tool in curl jq node pnpm setsid; do
+for tool in curl jq node pnpm; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 [ -n "${MONGODB_URI:-}" ] || die "MONGODB_URI is required"
@@ -92,28 +92,12 @@ note "building the browser frontend once before starting runtime processes"
 } >"${VERIFY_TMP_DIR}/frontend.log" 2>&1
 
 note "starting isolated backend on ${BACKEND_URL}"
-setsid bash -c '
-  pid_file=$1
-  shift
-  printf "%s\n" "$BASHPID" >"$pid_file"
-  exec "$@"
-' _ "${VERIFY_TMP_DIR}/backend.pid" \
-  env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
-  bash -c 'cd "$1" && exec node dist/server.js' _ "${REPO_ROOT}/backend" \
-  >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
-
-# util-linux setsid forks when its caller is already a process-group leader.
-# Record BASHPID inside the new session before Bash execs the runtime. That PID
-# remains the process-group leader, so liveness and cleanup address the same
-# exact group on local shells and GitHub-hosted runners.
-for _ in $(seq 1 50); do
-  if [ -s "${VERIFY_TMP_DIR}/backend.pid" ]; then
-    break
-  fi
-  sleep 0.1
-done
-IFS= read -r BACKEND_PID <"${VERIFY_TMP_DIR}/backend.pid" \
-  || die "backend process group did not start"
+(
+  cd "${REPO_ROOT}/backend"
+  exec env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
+    node dist/server.js
+) >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
+BACKEND_PID=$!
 
 context=""
 context_status="000"
@@ -147,25 +131,13 @@ KNOXX_ORG_SLUG="$(printf '%s' "$context" | jq -er '.org.slug' 2>/dev/null)" \
 export VERIFY_ORG_ID KNOXX_USER_EMAIL KNOXX_ORG_SLUG
 
 note "backend is ready; starting isolated frontend on ${FRONTEND_URL}"
-setsid bash -c '
-  pid_file=$1
-  shift
-  printf "%s\n" "$BASHPID" >"$pid_file"
-  exec "$@"
-' _ "${VERIFY_TMP_DIR}/frontend.pid" \
-  env VITE_KNOXX_BACKEND_URL="$BACKEND_URL" \
-  pnpm -C "${REPO_ROOT}/frontend" exec vite preview \
-    --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort \
-    >>"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
-
-for _ in $(seq 1 50); do
-  if [ -s "${VERIFY_TMP_DIR}/frontend.pid" ]; then
-    break
-  fi
-  sleep 0.1
-done
-IFS= read -r FRONTEND_PID <"${VERIFY_TMP_DIR}/frontend.pid" \
-  || die "frontend process group did not start"
+(
+  cd "${REPO_ROOT}/frontend"
+  exec env VITE_KNOXX_BACKEND_URL="$BACKEND_URL" \
+    node node_modules/vite/bin/vite.js preview \
+      --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort
+) >>"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
+FRONTEND_PID=$!
 
 frontend_ready="false"
 for _ in $(seq 1 120); do
