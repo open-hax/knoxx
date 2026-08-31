@@ -59,11 +59,37 @@ done
 mkdir -p "$KNOXX_PUBLICATION_CONTENT_ROOT" "$KNOXX_SHOT_DIR"
 
 note "starting isolated backend and frontend"
-setsid env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true \
+setsid bash -c '
+  pid_file=$1
+  shift
+  printf "%s\n" "$$" >"$pid_file"
+  exec "$@"
+' _ "${VERIFY_TMP_DIR}/backend.pid" \
+  env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true \
   pnpm -C "${REPO_ROOT}/backend" start >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
-BACKEND_PID=$!
-setsid pnpm -C "${REPO_ROOT}/frontend" dev >"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
-FRONTEND_PID=$!
+setsid bash -c '
+  pid_file=$1
+  shift
+  printf "%s\n" "$$" >"$pid_file"
+  exec "$@"
+' _ "${VERIFY_TMP_DIR}/frontend.pid" \
+  pnpm -C "${REPO_ROOT}/frontend" dev >"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
+
+# util-linux setsid forks when its caller is already a process-group leader.
+# Capture the process inside the new session rather than the transient launcher
+# so liveness checks and cleanup address the real backend/frontend groups on
+# both local shells and GitHub-hosted runners.
+for _ in $(seq 1 50); do
+  if [ -s "${VERIFY_TMP_DIR}/backend.pid" ] \
+     && [ -s "${VERIFY_TMP_DIR}/frontend.pid" ]; then
+    break
+  fi
+  sleep 0.1
+done
+IFS= read -r BACKEND_PID <"${VERIFY_TMP_DIR}/backend.pid" \
+  || die "backend process group did not start"
+IFS= read -r FRONTEND_PID <"${VERIFY_TMP_DIR}/frontend.pid" \
+  || die "frontend process group did not start"
 
 context=""
 context_status="000"
