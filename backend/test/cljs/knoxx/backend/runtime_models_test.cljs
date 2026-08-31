@@ -26,6 +26,19 @@
       (is (contains? model-ids "glm-5"))
       (is (contains? model-ids "gemma4:31b")))))
 
+(deftest models-config-registers-optional-ollama-without-an-auth-header
+  (testing "a configured local Ollama provider gets its OpenAI-compatible base and local model"
+    (let [config (assoc test-config
+                        :ollama-base-url "http://127.0.0.1:11434"
+                        :ollama-default-model "gemma4:e4b"
+                        :provider-base-urls {"ollama" "http://127.0.0.1:11434"}
+                        :provider-auth-headers {"ollama" "false"})
+          registry (models/models-config config [])
+          provider (get-in registry [:providers :ollama])]
+      (is (= "http://127.0.0.1:11434/v1" (:baseUrl provider)))
+      (is (false? (:authHeader provider)))
+      (is (contains? (set (map :id (:models provider))) "gemma4:e4b")))))
+
 (deftest provider-model-config-routes-gpt-family-through-responses
   (testing "gpt-family models use OpenAI Responses with reasoning enabled"
     (let [model (models/provider-model-config test-config "gpt-5")]

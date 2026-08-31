@@ -41,6 +41,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
+    services:
+      mongodb:
+        image: mongo:8.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'quit(db.runCommand({ping:1}).ok ? 0 : 1)'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
@@ -76,7 +87,8 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # agent-browser's native launcher requires Node 24.
+          node-version: 24
           cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
@@ -135,6 +147,22 @@ jobs:
 
       - name: Frontend tests + coverage (vitest)
         run: pnpm -C frontend run test:coverage
+
+      - name: Translation review browser contract
+        env:
+          MONGODB_URI: mongodb://127.0.0.1:27017/knoxx_translation_browser_ci?directConnection=true
+          MONGODB_DB: knoxx_translation_browser_ci
+          KNOXX_SHOT_DIR: ${{ runner.temp }}/knoxx-translation-browser
+          KNOXX_PUBLICATION_CONTENT_ROOT: ${{ runner.temp }}/knoxx-publication-content
+        run: ./scripts/verify-translation-browser-ci.sh
+
+      - name: Upload translation browser storyboard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knoxx-translation-browser-storyboard
+          path: ${{ runner.temp }}/knoxx-translation-browser
+          if-no-files-found: error
 
       - name: Upload frontend coverage artifact
         uses: actions/upload-artifact@v4

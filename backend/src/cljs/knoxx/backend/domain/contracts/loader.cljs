@@ -13,7 +13,7 @@
 ;; ── Constants ──────────────────────────────────────────────────────────────
 
 (def contract-class-order
-  ["agents" "actors" "roles" "capabilities" "policies" "authentication"
+  ["agents" "actors" "roles" "capabilities" "policies" "authentication" "mcp_servers"
    "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "triggers" "stores" "sub_agents" "cms" "documents" "gardens" "publications"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
@@ -84,6 +84,7 @@
          ["capabilities" "cap" "caps" "capability"]
          ["policies" "policy"]
          ["authentication" "auth" "auth-method" "auth-methods" "auth_method" "auth_methods"]
+         ["mcp_servers" "mcp-server" "mcp-servers" "mcp_server"]
          ["generators" "generator"]
          ["schedules" "schedule"]
          ["source_modes" "source-mode" "source-modes" "source_mode"]

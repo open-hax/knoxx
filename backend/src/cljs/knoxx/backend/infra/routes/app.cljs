@@ -368,41 +368,50 @@
 (defn- fetch-json-err-detail [reply prefix err]
   (json-response! reply 502 {:detail (str prefix err)}))
 
-(defn- health-deps-ok [reply proxx-configured openplanner-configured [proxx-res openplanner-res]]
+(defn- dependency-status
+  [configured reachable result]
+  {:configured configured
+   :reachable (boolean reachable)
+   :status_code (:status result)
+   :detail (:body result)})
+
+(defn- health-deps-ok [reply proxx-configured openplanner-configured ollama-configured
+                       [proxx-res openplanner-res ollama-res]]
   (let [proxx-ok       (and proxx-configured (:ok proxx-res))
         openplanner-ok (and openplanner-configured (:ok openplanner-res))
-        healthy        (and proxx-ok openplanner-ok)]
+        ollama-ok      (and ollama-configured (:ok ollama-res))
+        healthy        (and proxx-ok
+                            openplanner-ok
+                            (or (not ollama-configured) ollama-ok))]
     (json-response!
      reply
      (if healthy 200 503)
      {:status (if healthy "ok" "unhealthy")
       :service "knoxx-backend-cljs"
-      :dependencies {:proxx {:configured proxx-configured
-                             :reachable (boolean proxx-ok)
-                             :status_code (:status proxx-res)
-                             :detail (:body proxx-res)}
-                     :openplanner {:configured openplanner-configured
-                                   :reachable (boolean openplanner-ok)
-                                   :status_code (:status openplanner-res)
-                                   :detail (:body openplanner-res)}}})))
+      :dependencies {:proxx (dependency-status proxx-configured proxx-ok proxx-res)
+                     :openplanner (dependency-status openplanner-configured openplanner-ok openplanner-res)
+                     :ollama (dependency-status ollama-configured ollama-ok ollama-res)}})))
 
 (defn- health-deps-err [reply err]
   (json-response! reply 503 {:status "unhealthy"
                              :service "knoxx-backend-cljs"
                              :error (str err)}))
 
-(defn- knoxx-health-ok [reply config proxx-configured openplanner-configured [proxx-res openplanner-res]]
+(defn- knoxx-health-ok [reply config proxx-configured openplanner-configured ollama-configured
+                        [proxx-res openplanner-res ollama-res]]
   (let [proxx-ok       (and proxx-configured (:ok proxx-res))
         openplanner-ok (and openplanner-configured (:ok openplanner-res))
+        ollama-ok      (and ollama-configured (:ok ollama-res))
         ;; Healthy only when every configured dependency is reachable.
         healthy        (and (or (not proxx-configured) proxx-ok)
                             (or (not openplanner-configured) openplanner-ok)
-                            (or proxx-configured openplanner-configured))]
+                            (or (not ollama-configured) ollama-ok)
+                            (or proxx-configured openplanner-configured ollama-configured))]
     (json-response!
      reply
      (if healthy 200 503)
      {:reachable healthy
-      :configured (boolean (or proxx-configured openplanner-configured))
+      :configured (boolean (or proxx-configured openplanner-configured ollama-configured))
       :base_url (:knoxx-base-url config)
       :status_code (if healthy 200 503)
       :status (if healthy "ok" "unhealthy")
@@ -411,14 +420,10 @@
                 :project (:project-name config)
                 :collection {:name (:collection-name config)
                              :pointsCount nil}
-                :dependencies {:proxx {:configured proxx-configured
-                                       :reachable (boolean proxx-ok)
-                                       :status_code (:status proxx-res)
-                                       :detail (:body proxx-res)}
-                               :openplanner {:configured openplanner-configured
-                                             :reachable (boolean openplanner-ok)
-                                             :status_code (:status openplanner-res)
-                                             :detail (:body openplanner-res)}}}})))
+                :dependencies
+                {:proxx (dependency-status proxx-configured proxx-ok proxx-res)
+                 :openplanner (dependency-status openplanner-configured openplanner-ok openplanner-res)
+                 :ollama (dependency-status ollama-configured ollama-ok ollama-res)}}})))
 
 (defn- knoxx-health-err [reply config err]
   (json-response! reply 503 {:reachable false
@@ -438,7 +443,8 @@
                               :shuvcrawl (nth results 4)
                               :vexx (nth results 5)
                               :eros-eris-field-app (nth results 6)
-                              :myrmex (nth results 7)}}))
+                              :myrmex (nth results 7)
+                              :ollama (nth results 8)}}))
 
 (defn- data-health-err [reply err]
   (json-response! reply 500 {:error (.-message err)}))
@@ -540,6 +546,40 @@
       (catch :default err
         (health-error-result url err)))))
 
+(defn ^:async ollama-health-check!
+  [config]
+  (if (str/blank? (:ollama-base-url config))
+    {:ok false :configured false :url nil :detail {:status "not configured"}}
+    (service-health-check! (str (str/replace (:ollama-base-url config) #"/+$" "")
+                                "/api/version")
+                           nil)))
+
+(defn- unavailable-health
+  [service-name]
+  (js/Promise.resolve {:ok false
+                       :status 503
+                       :body {:detail (str service-name " is not configured")}}))
+
+(defn- dependency-probes
+  [config]
+  (let [proxx-configured (and (not (str/blank? (:proxx-base-url config)))
+                              (not (str/blank? (:proxx-auth-token config))))
+        ollama-configured (not (str/blank? (:ollama-base-url config)))
+        openplanner (openplanner-client/client config)
+        openplanner-configured (openplanner-client/enabled? openplanner)]
+    {:proxx-configured proxx-configured
+     :openplanner-configured openplanner-configured
+     :ollama-configured ollama-configured
+     :promises [(if proxx-configured
+                  (proxx-client/health! (proxx-client/client config))
+                  (unavailable-health "Proxx"))
+                (if openplanner-configured
+                  (openplanner-client/health! openplanner)
+                  (unavailable-health "OpenPlanner"))
+                (if ollama-configured
+                  (ollama-health-check! config)
+                  (unavailable-health "Ollama"))]}))
+
 (defn ^:async send-data-health!
   [config reply]
   (let [ingestion-base (:ingestion-base-url config)]
@@ -553,32 +593,22 @@
                                (service-health-check! "http://127.0.0.1:3777/health" nil)
                                (service-health-check! "http://127.0.0.1:8787/v1/health" nil)
                                (service-health-check! "http://127.0.0.1:8786/health" nil)
-                               (service-health-check! "http://127.0.0.1:8801/health" nil)])))
+                               (service-health-check! "http://127.0.0.1:8801/health" nil)
+                               (ollama-health-check! config)])))
       (catch :default err
         (data-health-err reply err)))))
 
 (defn ^:async send-knoxx-health!
   [config reply]
-  (let [proxx-configured (and (not (str/blank? (:proxx-base-url config)))
-                              (not (str/blank? (:proxx-auth-token config))))
-        openplanner-client (openplanner-client/client config)
-        openplanner-configured (openplanner-client/enabled? openplanner-client)
-        proxx-promise (if proxx-configured
-                        (proxx-client/health! (proxx-client/client config))
-                        (js/Promise.resolve {:ok false
-                                             :status 503
-                                             :body {:detail "Proxx is not configured"}}))
-        openplanner-promise (if openplanner-configured
-                              (openplanner-client/health! openplanner-client)
-                              (js/Promise.resolve {:ok false
-                                                   :status 503
-                                                   :body {:detail "OpenPlanner is not configured"}}))]
+  (let [{:keys [proxx-configured openplanner-configured ollama-configured promises]}
+        (dependency-probes config)]
     (try
       (knoxx-health-ok reply
                        config
                        proxx-configured
                        openplanner-configured
-                       (await (promise/all-vec [proxx-promise openplanner-promise])))
+                       ollama-configured
+                       (await (promise/all-vec promises)))
       (catch :default err
         (knoxx-health-err reply config err)))))
 
@@ -901,19 +931,11 @@
 
 (defroute health! []
   "GET" "/health"
-  (let [proxx-configured (and (not (str/blank? (:proxx-base-url config)))
-                              (not (str/blank? (:proxx-auth-token config))))
-        openplanner-client (openplanner-client/client config)
-        openplanner-configured (openplanner-client/enabled? openplanner-client)
-        proxx-promise (if proxx-configured
-                        (proxx-client/health! (proxx-client/client config))
-                        (js/Promise.resolve {:ok false
-                                             :status 503
-                                             :body {:detail "Proxx is not configured"}}))
-        openplanner-promise (openplanner-client/health! openplanner-client)]
+  (let [{:keys [proxx-configured openplanner-configured ollama-configured promises]}
+        (dependency-probes config)]
     (try
-      (health-deps-ok reply proxx-configured openplanner-configured
-                      (await (promise/all-vec [proxx-promise openplanner-promise])))
+      (health-deps-ok reply proxx-configured openplanner-configured ollama-configured
+                      (await (promise/all-vec promises)))
       (catch :default err
         (health-deps-err reply err)))))
 
@@ -946,6 +968,8 @@
     :tts_default_postprocess_profile "sports-commentator-v1"
     :proxx_enabled (and (not (str/blank? (:proxx-base-url config)))
                         (not (str/blank? (:proxx-auth-token config))))
+    :ollama_enabled (not (str/blank? (:ollama-base-url config)))
+    :ollama_default_model (:ollama-default-model config)
     :proxx_default_model (:llmModel @settings-state*)
     :shibboleth_ui_url (if (str/blank? (:shibboleth-ui-url config))
                          ""

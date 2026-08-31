@@ -160,12 +160,12 @@ requires the HTML to contain correction B but not superseded correction A.
 ## Browser tour and screenshots
 
 The browser tour needs the same backend/Mongo/content variables, plus a running
-frontend and a real local password session:
+frontend and either a scoped API key or a real local password session. CI uses
+an ephemeral API key so no human password enters workflow state:
 
 ```bash
 KNOXX_FRONTEND_URL=http://localhost:5173 \
-KNOXX_DEV_EMAIL=reviewer@example.test \
-KNOXX_DEV_PASSWORD=... \
+KNOXX_API_KEY=... \
 KNOXX_USER_EMAIL=reviewer@example.test \
 KNOXX_ORG_SLUG=open-hax \
 VERIFY_ORG_ID=... \
@@ -175,9 +175,12 @@ KNOXX_PUBLICATION_CONTENT_ROOT=/absolute/path/to/publication-content \
 scripts/verify-translation-split-review-tour.sh
 ```
 
-The tour refuses to treat local-storage headers as an app login. It establishes
-a real session cookie, verifies the frontend proxy can see the run-scoped
-fixture, and then captures:
+For a manual password-session run, replace `KNOXX_API_KEY` with
+`KNOXX_DEV_EMAIL` and `KNOXX_DEV_PASSWORD`. The tour refuses to treat
+local-storage identity hints as authentication. It establishes either an API
+key header context or a real session cookie, verifies the frontend proxy can
+see the run-scoped fixture, selects dark mode with reduced motion, and then
+captures:
 
 1. an exact DOM count of eighteen resource rows, with top and bottom captures
    that include row 18 in the internally scrolling inventory;
@@ -192,11 +195,16 @@ fixture, and then captures:
    static artifact; and
 10. a later rejection revoking that approval.
 
-It finishes with an unauthenticated same-origin request using
-`credentials: "omit"`; a real session cookie cannot accidentally make that
-check authenticated. Screenshots are written to a run-specific directory below
+It finishes with an unauthenticated same-origin request. API-key headers are
+cleared first and `credentials: "omit"` prevents a real session cookie from
+making that check authenticated. Screenshots are written to a run-specific directory below
 `docs/verification/screenshots/`, which is gitignored; a failed capture cannot
 be mistaken for an older run's evidence.
+
+Pull-request CI runs `scripts/verify-translation-browser-ci.sh`. The wrapper
+boots an isolated backend and frontend, derives the organization identity from
+the authenticated context, runs this same tour, and uploads its screenshots.
+It requires a disposable Mongo database supplied by the workflow.
 
 ## Honest boundary
 

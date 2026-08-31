@@ -335,10 +335,16 @@
                                      {}
                                      configured-provider-ids)]
     (merge
-     {"proxx" {:baseUrl (provider-openai-base-url (:proxx-base-url config))
-                :apiKey "PROXX_AUTH_TOKEN"
-                :authHeader true
-                :compat proxx-affinity-compat}}
+     (cond->
+      {"proxx" {:baseUrl (provider-openai-base-url (:proxx-base-url config))
+                 :apiKey "PROXX_AUTH_TOKEN"
+                 :authHeader true
+                 :compat proxx-affinity-compat}}
+       (not (str/blank? (:ollama-base-url config)))
+       (assoc "ollama" {:baseUrl (provider-openai-base-url (:ollama-base-url config))
+                         ;; Local Ollama does not require or expect an
+                         ;; Authorization header.
+                         :authHeader false}))
      configured-providers)))
 
 (defn per-model-compat
@@ -359,7 +365,8 @@
    is unavailable or omits a contract-backed local model. Eta-mu requires every
    selected model to exist in models.json before a session can be created."
   [config]
-  (->> (concat [(:proxx-default-model config)]
+  (->> (concat [(:proxx-default-model config)
+                 (:ollama-default-model config)]
                (keep (fn [contract]
                        (when (not= false (:allowlisted contract))
                          (:id contract)))

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Boot an isolated Knoxx backend/frontend and run the browser translation
+# contract used by pull-request CI. The API key is ephemeral and never printed.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERIFY_TMP_DIR="$(mktemp -d)"
+BACKEND_PID=""
+FRONTEND_PID=""
+BACKEND_URL="${KNOXX_BASE_URL:-http://127.0.0.1:8000}"
+FRONTEND_URL="${KNOXX_FRONTEND_URL:-http://127.0.0.1:5173}"
+KNOXX_SHOT_DIR="${KNOXX_SHOT_DIR:-${VERIFY_TMP_DIR}/screenshots}"
+KNOXX_PUBLICATION_CONTENT_ROOT="${KNOXX_PUBLICATION_CONTENT_ROOT:-${VERIFY_TMP_DIR}/publication-content}"
+KNOXX_API_KEY="${KNOXX_API_KEY:-$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))")}"
+
+export KNOXX_API_KEY KNOXX_PUBLICATION_CONTENT_ROOT KNOXX_SHOT_DIR
+export KNOXX_BASE_URL="$BACKEND_URL" KNOXX_FRONTEND_URL="$FRONTEND_URL"
+export CONTRACTS_DIR="${KNOXX_CONTRACTS_DIR:-${REPO_ROOT}/contracts}"
+export KNOXX_CONTRACTS_DIR="$CONTRACTS_DIR"
+
+note() { printf '   %s\n' "$1"; }
+die() { printf 'ABORT %s\n' "$1" >&2; exit 2; }
+
+stop_group() {
+  local pid="$1"
+  [ -z "$pid" ] || kill -TERM -- "-$pid" >/dev/null 2>&1 || true
+}
+
+cleanup() {
+  local code=$?
+  stop_group "$FRONTEND_PID"
+  stop_group "$BACKEND_PID"
+  if [ "$code" -ne 0 ]; then
+    printf '\nbackend log (tail)\n' >&2
+    tail -n 80 "${VERIFY_TMP_DIR}/backend.log" 2>/dev/null >&2 || true
+    printf '\nfrontend log (tail)\n' >&2
+    tail -n 80 "${VERIFY_TMP_DIR}/frontend.log" 2>/dev/null >&2 || true
+    printf '\nfailed-run logs preserved at %s\n' "$VERIFY_TMP_DIR" >&2
+  else
+    rm -rf -- "$VERIFY_TMP_DIR"
+  fi
+  exit "$code"
+}
+trap cleanup EXIT
+trap 'trap - EXIT; cleanup 130' INT
+trap 'trap - EXIT; cleanup 143' TERM
+
+for tool in curl jq node pnpm setsid; do
+  command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
+done
+[ -n "${MONGODB_URI:-}" ] || die "MONGODB_URI is required"
+[ -n "${MONGODB_DB:-}" ] || die "MONGODB_DB is required"
+[ -f "${REPO_ROOT}/backend/dist/server.js" ] \
+  || die "backend/dist/server.js is absent; run pnpm -C backend run typecheck"
+mkdir -p "$KNOXX_PUBLICATION_CONTENT_ROOT" "$KNOXX_SHOT_DIR"
+
+note "starting isolated backend and frontend"
+setsid env NODE_ENV=test \
+  pnpm -C "${REPO_ROOT}/backend" start >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
+BACKEND_PID=$!
+setsid pnpm -C "${REPO_ROOT}/frontend" dev >"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
+FRONTEND_PID=$!
+
+context=""
+for _ in $(seq 1 120); do
+  context="$(curl -q --noproxy '*' -fsS --max-time 2 \
+    -H "x-api-key: ${KNOXX_API_KEY}" "${BACKEND_URL}/api/auth/context" 2>/dev/null || true)"
+  if printf '%s' "$context" | jq -e '.org.id and .user.email' >/dev/null 2>&1 \
+     && curl -q --noproxy '*' -fsS --max-time 2 -H 'Accept: text/html' \
+          "$FRONTEND_URL" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+VERIFY_ORG_ID="$(printf '%s' "$context" | jq -er '.org.id' 2>/dev/null)" \
+  || die "authenticated Knoxx context did not become ready"
+KNOXX_USER_EMAIL="$(printf '%s' "$context" | jq -er '.user.email' 2>/dev/null)" \
+  || die "authenticated Knoxx user did not become ready"
+KNOXX_ORG_SLUG="$(printf '%s' "$context" | jq -er '.org.slug' 2>/dev/null)" \
+  || die "authenticated Knoxx organization did not become ready"
+export VERIFY_ORG_ID KNOXX_USER_EMAIL KNOXX_ORG_SLUG
+
+note "running the translation review browser contract"
+"${REPO_ROOT}/scripts/verify-translation-split-review-tour.sh"
