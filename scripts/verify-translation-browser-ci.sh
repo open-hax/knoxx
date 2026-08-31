@@ -69,28 +69,54 @@ done
   || die "backend/dist/server.js is absent; run pnpm -C backend run typecheck"
 mkdir -p "$KNOXX_PUBLICATION_CONTENT_ROOT" "$KNOXX_SHOT_DIR"
 
+note "building the browser frontend once before starting runtime processes"
+{
+  pnpm -C "${REPO_ROOT}/frontend" run build:bridge
+  pnpm -C "${REPO_ROOT}/frontend" run build:app-bridge
+  # Vite copies frontend/public (including compatibility CLJS output) into
+  # dist. Run it before the authoritative compile so that stale development
+  # artifacts cannot replace the browser-contract bundle.
+  pnpm -C "${REPO_ROOT}/frontend" exec vite build
+  pnpm -C "${REPO_ROOT}/frontend" exec shadow-cljs compile app \
+    --config-merge '{:devtools {:enabled false}}'
+  pnpm -C "${REPO_ROOT}/frontend" exec tailwindcss \
+    -c tailwind.config.ts -i src/index.css -o dist/app.css
+} >"${VERIFY_TMP_DIR}/frontend.log" 2>&1
+
 note "starting isolated backend on ${BACKEND_URL} and frontend on ${FRONTEND_URL}"
 setsid bash -c '
   pid_file=$1
-  shift
+  status_file=$2
+  shift 2
   printf "%s\n" "$BASHPID" >"$pid_file"
   "$@" &
   child=$!
+  set +e
   wait "$child"
-' _ "${VERIFY_TMP_DIR}/backend.pid" \
+  code=$?
+  printf "%s\n" "$code" >"$status_file"
+  exit "$code"
+' _ "${VERIFY_TMP_DIR}/backend.pid" "${VERIFY_TMP_DIR}/backend.status" \
   env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
   bash -c 'cd "$1" && exec node dist/server.js' _ "${REPO_ROOT}/backend" \
   >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
 setsid bash -c '
   pid_file=$1
-  shift
+  status_file=$2
+  shift 2
   printf "%s\n" "$BASHPID" >"$pid_file"
   "$@" &
   child=$!
+  set +e
   wait "$child"
-' _ "${VERIFY_TMP_DIR}/frontend.pid" \
-  env "SHADOW_CLJS={:dev-http {5173 {:proxy-url \"${BACKEND_URL}\"}}}" \
-  pnpm -C "${REPO_ROOT}/frontend" dev >"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
+  code=$?
+  printf "%s\n" "$code" >"$status_file"
+  exit "$code"
+' _ "${VERIFY_TMP_DIR}/frontend.pid" "${VERIFY_TMP_DIR}/frontend.status" \
+  env VITE_KNOXX_BACKEND_URL="$BACKEND_URL" \
+  pnpm -C "${REPO_ROOT}/frontend" exec vite preview \
+    --host 127.0.0.1 --port 5173 --strictPort \
+    >>"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
 
 # util-linux setsid forks when its caller is already a process-group leader.
 # Keep a stable Bash supervisor inside each new session, record BASHPID rather
@@ -112,10 +138,14 @@ context=""
 context_status="000"
 frontend_ready="false"
 for _ in $(seq 1 120); do
-  kill -0 "$BACKEND_PID" >/dev/null 2>&1 \
-    || die "backend exited before the authenticated context became ready"
-  kill -0 "$FRONTEND_PID" >/dev/null 2>&1 \
-    || die "frontend exited before its browser surface became ready"
+  if ! kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
+    backend_status="$(cat "${VERIFY_TMP_DIR}/backend.status" 2>/dev/null || printf unavailable)"
+    die "backend exited before the authenticated context became ready (status ${backend_status})"
+  fi
+  if ! kill -0 "$FRONTEND_PID" >/dev/null 2>&1; then
+    frontend_status="$(cat "${VERIFY_TMP_DIR}/frontend.status" 2>/dev/null || printf unavailable)"
+    die "frontend exited before its browser surface became ready (status ${frontend_status})"
+  fi
 
   context_status="$(curl -q --noproxy '*' -sS --max-time 2 \
     -o "${VERIFY_TMP_DIR}/auth-context.json" -w '%{http_code}' \
