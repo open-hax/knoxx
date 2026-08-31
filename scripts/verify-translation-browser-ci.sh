@@ -17,7 +17,8 @@ BACKEND_PORT="${KNOXX_BROWSER_BACKEND_PORT:-$(node -e '
   });
 ')}"
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
-FRONTEND_URL="${KNOXX_FRONTEND_URL:-http://127.0.0.1:5173}"
+FRONTEND_PORT="${KNOXX_BROWSER_FRONTEND_PORT:-5173}"
+FRONTEND_URL="http://127.0.0.1:${FRONTEND_PORT}"
 KNOXX_SHOT_DIR="${KNOXX_SHOT_DIR:-${VERIFY_TMP_DIR}/screenshots}"
 KNOXX_PUBLICATION_CONTENT_ROOT="${KNOXX_PUBLICATION_CONTENT_ROOT:-${VERIFY_TMP_DIR}/publication-content}"
 GENERATED_API_KEY="$(node -e \
@@ -59,6 +60,13 @@ cleanup() {
 trap cleanup EXIT
 trap 'trap - EXIT; cleanup 130' INT
 trap 'trap - EXIT; cleanup 143' TERM
+
+case "$FRONTEND_PORT" in
+  ''|*[!0-9]*) die "KNOXX_BROWSER_FRONTEND_PORT must be an integer" ;;
+esac
+if [ "$FRONTEND_PORT" -lt 1 ] || [ "$FRONTEND_PORT" -gt 65535 ]; then
+  die "KNOXX_BROWSER_FRONTEND_PORT must be between 1 and 65535"
+fi
 
 for tool in curl jq node pnpm setsid; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
@@ -115,7 +123,7 @@ setsid bash -c '
 ' _ "${VERIFY_TMP_DIR}/frontend.pid" "${VERIFY_TMP_DIR}/frontend.status" \
   env VITE_KNOXX_BACKEND_URL="$BACKEND_URL" \
   pnpm -C "${REPO_ROOT}/frontend" exec vite preview \
-    --host 127.0.0.1 --port 5173 --strictPort \
+    --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort \
     >>"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
 
 # util-linux setsid forks when its caller is already a process-group leader.
