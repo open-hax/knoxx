@@ -53,6 +53,7 @@ translation_fixture_write() {
       printf '\n  {:publication/id :%s-es\n' "$local_id"
       printf '   :publication/document :%s\n' "$local_id"
       printf '   :publication/garden :review-garden\n'
+      printf '   :publication/target :open-hax.publication/static-site\n'
       printf '   :publication/locale :es\n'
       printf '   :publication/revision :source/current\n'
       printf '   :publication/state :published\n'

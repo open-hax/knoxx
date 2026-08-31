@@ -10,6 +10,8 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PATH="${REPO_ROOT}/node_modules/.bin:${PATH}"
+export PATH
 FRONTEND_URL="${KNOXX_FRONTEND_URL:-http://localhost:5173}"
 CONTRACTS_DIR="${KNOXX_CONTRACTS_DIR:-${REPO_ROOT}/contracts}"
 FIXTURE_DIR="${CONTRACTS_DIR}/_verify_translation_split_review_tour"
@@ -24,6 +26,7 @@ SESSION="knoxx-translation-split-review-tour-${RUN_ID}"
 CORRECTION_A="Browser-tour correction A retained in label history."
 CORRECTION_B="Browser-tour correction B rendered by publication."
 LOOPBACK_HTTP=0
+API_KEY_SESSION=0
 
 # shellcheck source=lib/translation-split-review-fixture.sh
 . "${REPO_ROOT}/scripts/lib/translation-split-review-fixture.sh"
@@ -131,7 +134,7 @@ note "shots    ${SHOT_DIR#$REPO_ROOT/}"
   || die "KNOXX_PUBLICATION_CONTENT_ROOT must equal the backend's content root"
 [ -d "$CONTRACTS_DIR" ] || die "contracts directory not found: $CONTRACTS_DIR"
 [ ! -e "$FIXTURE_DIR" ] || die "stale fixture exists: $FIXTURE_DIR"
-health_args=(-q -sS -o /dev/null --max-time 5)
+health_args=(-q -sS -H 'Accept: text/html' -o /dev/null --max-time 5)
 [ "$LOOPBACK_HTTP" -eq 1 ] && health_args+=(--noproxy '*')
 curl "${health_args[@]}" "$FRONTEND_URL" 2>/dev/null \
   || die "the admitted frontend does not answer"
@@ -158,22 +161,37 @@ translation_fixture_write
 
 step "1. establish the app session and prove checkout identity"
 ab set viewport 1600 1000 >/dev/null
-ab open "$FRONTEND_URL" >/dev/null
+ab set media dark reduced-motion >/dev/null
 identity_js="$(jq -rn --arg email "$USER_EMAIL" --arg org "$ORG_SLUG" \
   '"localStorage.setItem(\"knoxx_user_email\", \($email|tojson)); localStorage.setItem(\"knoxx_org_slug\", \($org|tojson)); \"seeded\""')"
+ab open "$FRONTEND_URL" >/dev/null
 ab eval "$identity_js" >/dev/null
-[ -n "${KNOXX_DEV_EMAIL:-}" ] && [ -n "${KNOXX_DEV_PASSWORD:-}" ] \
-  || die "KNOXX_DEV_EMAIL and KNOXX_DEV_PASSWORD are required for the protected UI"
-login_body="$(jq -cn --arg email "$KNOXX_DEV_EMAIL" --arg password "$KNOXX_DEV_PASSWORD" \
-  '{email:$email,password:$password}')"
-login="$(ab eval "(async()=> (await fetch('/api/auth/local/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify($login_body)})).status)()")"
-printf '%s' "$login" | grep -q 200 || die "local password login failed: $login"
-pass "the app shell session is authenticated"
+if [ -n "${KNOXX_API_KEY:-}" ]; then
+  api_headers="$(jq -cn --arg key "$KNOXX_API_KEY" '{"x-api-key":$key}')"
+  ab set headers "$api_headers" >/dev/null
+  ab reload >/dev/null
+  ab wait 1000 >/dev/null
+  auth_status="$(ab eval '(async()=> (await fetch("/api/auth/context")).status)()')"
+  printf '%s' "$auth_status" | grep -q 200 \
+    || die "API-key browser authentication failed: $auth_status"
+  API_KEY_SESSION=1
+  pass "the app shell session is authenticated with an API key"
+elif [ -n "${KNOXX_DEV_EMAIL:-}" ] && [ -n "${KNOXX_DEV_PASSWORD:-}" ]; then
+  login_body="$(jq -cn --arg email "$KNOXX_DEV_EMAIL" --arg password "$KNOXX_DEV_PASSWORD" \
+    '{email:$email,password:$password}')"
+  login="$(ab eval "(async()=> (await fetch('/api/auth/local/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify($login_body)})).status)()")"
+  printf '%s' "$login" | grep -q 200 || die "local password login failed: $login"
+  pass "the app shell session is authenticated with a local password session"
+else
+  die "set KNOXX_API_KEY or both KNOXX_DEV_EMAIL and KNOXX_DEV_PASSWORD"
+fi
 
 sleep 1
-probe="$(ab eval '(async()=>{const h={"x-knoxx-user-email":localStorage.getItem("knoxx_user_email")||"","x-knoxx-org-slug":localStorage.getItem("knoxx_org_slug")||""};const r=await fetch("/api/publications/translations/reviews",{headers:h});return {status:r.status,body:await r.json()};})()')"
+user_email_json="$(jq -Rn --arg value "$USER_EMAIL" '$value')"
+org_slug_json="$(jq -Rn --arg value "$ORG_SLUG" '$value')"
+probe="$(ab eval "(async()=>{const h={\"x-knoxx-user-email\":$user_email_json,\"x-knoxx-org-slug\":$org_slug_json};const r=await fetch(\"/api/publications/translations/reviews\",{headers:h});return {status:r.status,body:await r.json()};})()")"
 printf '%s' "$probe" | grep -qF "$TRANSLATION_FIXTURE_PUBLICATION_ID" \
-  || die "the proxy backend cannot see ${FIXTURE_DIR#$REPO_ROOT/}"
+  || die "the proxy backend cannot see ${FIXTURE_DIR#$REPO_ROOT/}: $(printf '%s' "$probe" | jq -c '{status, error:.body.error, row_count:(.body.rows // .body.items // [] | length)}' 2>/dev/null || printf 'unparseable response: %.300s' "$probe")"
 pass "the proxy backend serves this checkout's run-scoped fixture"
 project="$(printf '%s' "$probe" | jq -r '.body.project // "__NONE__"' 2>/dev/null)"
 if [ -z "$project" ] || [ "$project" = "__NONE__" ]; then
@@ -185,7 +203,8 @@ DURABLE_SEED_ATTEMPTED=1
 translation_fixture_helper seed >/dev/null || die "could not seed the production-shaped candidate"
 
 step "2. see eighteen rows and one real three-split candidate"
-ab open "${FRONTEND_URL}/translations" >/dev/null
+[ "$API_KEY_SESSION" -eq 1 ] && ab set headers "$api_headers" >/dev/null
+ab eval 'history.pushState({}, "", "/translations"); window.dispatchEvent(new PopStateEvent("popstate")); "navigated"' >/dev/null
 ab wait 3000 >/dev/null
 page_text="$(ab get text body)"
 title_prefix_json="$(jq -Rn --arg value "$TRANSLATION_FIXTURE_TITLE_PREFIX" '$value')"
@@ -264,6 +283,8 @@ page_text="$(ab get text body)"
 printf '%s' "$page_text" | grep -qE 'Whole output approved|Translation approved' \
   && pass "the UI completed revision-bound whole-output approval" \
   || fail "whole-output approval did not become visible" "reconciliation may be absent"
+publication_id_json="$(jq -Rn --arg value "$TRANSLATION_FIXTURE_PUBLICATION_ID" '$value')"
+reconciliation="$(ab eval "(async()=>{const r=await fetch('/api/publications/reconcile',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({publicationId:$publication_id_json})});return {status:r.status,body:await r.json()};})()")"
 materialization="$(translation_fixture_helper materialization)" \
   || die "could not inspect the production static-site target"
 if printf '%s' "$materialization" | jq -e \
@@ -274,7 +295,7 @@ if printf '%s' "$materialization" | jq -e \
    (.content | contains($correction_a) | not)' >/dev/null 2>&1; then
   pass "the browser workflow materialized correction B, not superseded A"
 else
-  fail "whole approval did not commit the corrected artifact" "$materialization"
+  fail "whole approval did not commit the corrected artifact" "$materialization; reconciliation=$reconciliation"
 fi
 click_button "seg 0" contains; ab wait 200 >/dev/null
 click_button "Reject split"; ab wait 1800 >/dev/null; shot "later-rejection-revokes-approval"
@@ -284,6 +305,7 @@ printf '%s' "$page_text" | grep -qF "Approve whole output" \
   || fail "the stale whole-output approval remained current"
 
 step "6. the same browser origin refuses an anonymous inventory read"
+[ "$API_KEY_SESSION" -eq 1 ] && ab set headers '{}' >/dev/null
 anonymous="$(ab eval '(async()=> (await fetch("/api/publications/translations/reviews",{credentials:"omit",headers:{"x-knoxx-user-email":"","x-knoxx-org-slug":""}})).status)()')"
 printf '%s' "$anonymous" | grep -qE '401|403' \
   && pass "anonymous inventory is refused (401/403)" \

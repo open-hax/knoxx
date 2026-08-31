@@ -65,6 +65,19 @@
     (fn []
       (is (= "openplanner-project" (:openplanner-mcp-project (config/cfg)))))))
 
+(deftest cfg-keeps-ollama-optional-and-accepts-local-provider-settings
+  (with-env! {"OLLAMA_BASE_URL" nil
+              "OLLAMA_DEFAULT_MODEL" nil}
+    (fn []
+      (is (= "" (:ollama-base-url (config/cfg))))
+      (is (nil? (:ollama-default-model (config/cfg))))))
+  (with-env! {"OLLAMA_BASE_URL" "http://127.0.0.1:11434"
+              "OLLAMA_DEFAULT_MODEL" "gemma4:e4b"}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= "http://127.0.0.1:11434" (:ollama-base-url cfg)))
+        (is (= "gemma4:e4b" (:ollama-default-model cfg)))))))
+
 (deftest cfg-session-project-name-uses-a-nonblank-override
   (testing "unset and blank values retain the safe session-project default"
     (doseq [value [nil "" " "]]

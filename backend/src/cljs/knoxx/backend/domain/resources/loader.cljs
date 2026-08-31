@@ -11,6 +11,7 @@
   {:action "actions"
    :actor "actors"
    :agent "agents"
+   :authentication "authentication"
    :capability "capabilities"
    :cms "cms"
    :document "documents"
@@ -19,6 +20,7 @@
    :ingest-source "ingest_sources"
    :model "models"
    :model-family "model_families"
+   :mcp-server "mcp_servers"
    :policy "policies"
    :publication "publications"
    :role "roles"
@@ -54,6 +56,7 @@
     ("action" "actions") :action
     ("actor" "actors") :actor
     ("agent" "agents" "agent-spec" "agent-specs" "contract" "contracts") :agent
+    ("authentication" "auth" "auth-method" "auth-methods" "auth_method" "auth_methods") :authentication
     ("cap" "caps" "capability" "capabilities") :capability
     ("cms" "cms-config" "cms-configs" "cms-block-registry" "cms-template-registry" "cms-templates") :cms
     ("document" "documents") :document
@@ -62,6 +65,7 @@
     ("ingest-source" "ingest-sources" "ingest_source" "ingest_sources") :ingest-source
     ("model" "models") :model
     ("model-family" "model-families" "model_family" "model_families") :model-family
+    ("mcp-server" "mcp-servers" "mcp_server" "mcp_servers") :mcp-server
     ("pipeline" "pipelines") :pipeline
     ("policy" "policies") :policy
     ("publication" "publications") :publication

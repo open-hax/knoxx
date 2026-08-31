@@ -182,6 +182,22 @@
    [:auth/surface [:enum :mcp]]
    [:auth/methods [:vector AuthenticationMethod]]])
 
+(def McpServerContract
+  "A declared MCP server Knoxx may connect to.
+
+   Credentials are referenced by environment-variable name. Resource files may
+   describe the admission boundary, but must never contain the credential."
+  [:map {:closed true}
+   [:contract/kind [:= :mcp-server]]
+   [:contract/id ContractId]
+   [:mcp-server/id string?]
+   [:mcp-server/transport [:enum :http :stdio]]
+   [:mcp-server/url {:optional true} string?]
+   [:mcp-server/command {:optional true} string?]
+   [:mcp-server/args {:optional true} [:vector string?]]
+   [:mcp-server/auth-token-env {:optional true} string?]
+   [:enabled {:optional true} boolean?]])
+
 (def ModelFamilyContract
   [:map {:closed false}
    [:model-family/id string?]
@@ -431,6 +447,7 @@
   (case (:contract/kind value)
     :policy "policies"
     :authentication "authentication"
+    :mcp-server "mcp_servers"
     :sub-agent "sub_agents"
     :action "actions"
     :pipeline "pipelines"
@@ -480,6 +497,7 @@
     "capabilities" CapabilityContract
     "policies" PolicyContract
     "authentication" AuthenticationContract
+    "mcp_servers" McpServerContract
     "generators" GeneratorContract
     "schedules" ScheduleContract
     "source_modes" SourceModeContract
