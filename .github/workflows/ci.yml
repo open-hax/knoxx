@@ -43,14 +43,13 @@ jobs:
 
     services:
       mongodb:
-        image: mongo:8.0
+        # Policy bootstrap performs transactions and intentionally refuses a
+        # standalone mongod. Atlas Local supplies the same single-node replica
+        # topology used by `pnpm local:up`, so the browser gate exercises the
+        # production persistence contract instead of dying before HTTP bind.
+        image: mongodb/mongodb-atlas-local@sha256:5941a11ca0fa4f4ed7ffc6c476253f95449cd96797fbf66a2deade10f54e0cd5
         ports:
           - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'quit(db.runCommand({ping:1}).ok ? 0 : 1)'"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
 
     steps:
       - name: Checkout Knoxx
