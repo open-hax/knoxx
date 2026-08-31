@@ -28,25 +28,6 @@ function append(label, values = []) {
   appendFileSync(diagnosticPath, `${label}${rendered ? ` ${redact(rendered)}` : ""}\n`);
 }
 
-process.on("uncaughtExceptionMonitor", (error, origin) => {
-  append("uncaught-exception", [origin, error]);
-});
-process.on("unhandledRejection", (reason) => {
-  append("unhandled-rejection", [reason]);
-});
-process.on("beforeExit", (code) => {
-  append("before-exit", [code]);
-});
-process.on("exit", (code) => {
-  append("exit", [code]);
-});
-
-const originalExit = process.exit.bind(process);
-process.exit = (code) => {
-  append("process-exit", [code, new Error("process.exit call site").stack]);
-  originalExit(code);
-};
-
 append("launcher", [process.version, process.platform, process.arch]);
 await import("../backend/dist/server.js");
 append("server-module-imported");
