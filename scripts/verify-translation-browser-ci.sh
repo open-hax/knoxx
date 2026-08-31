@@ -9,15 +9,7 @@ VERIFY_TMP_DIR="$(mktemp -d)"
 BACKEND_PID=""
 BACKEND_LAUNCH_PID=""
 FRONTEND_PID=""
-BACKEND_PORT="${KNOXX_BROWSER_BACKEND_PORT:-$(node -e '
-  const server = require("node:net").createServer();
-  server.unref();
-  server.listen(0, "127.0.0.1", () => {
-    process.stdout.write(String(server.address().port));
-    server.close();
-  });
-')}"
-BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
+BACKEND_PORT="${KNOXX_BROWSER_BACKEND_PORT:-}"
 FRONTEND_PORT="${KNOXX_BROWSER_FRONTEND_PORT:-5173}"
 FRONTEND_URL="http://127.0.0.1:${FRONTEND_PORT}"
 KNOXX_SHOT_DIR="${KNOXX_SHOT_DIR:-${VERIFY_TMP_DIR}/screenshots}"
@@ -28,7 +20,7 @@ KNOXX_API_KEY="${KNOXX_API_KEY:-$GENERATED_API_KEY}"
 KNOXX_API_KEY_USER_EMAIL="${KNOXX_API_KEY_USER_EMAIL:-pi@open-hax.local}"
 
 export KNOXX_API_KEY KNOXX_API_KEY_USER_EMAIL KNOXX_PUBLICATION_CONTENT_ROOT KNOXX_SHOT_DIR
-export KNOXX_BASE_URL="$BACKEND_URL" KNOXX_FRONTEND_URL="$FRONTEND_URL"
+export KNOXX_FRONTEND_URL="$FRONTEND_URL"
 export CONTRACTS_DIR="${KNOXX_CONTRACTS_DIR:-${REPO_ROOT}/contracts}"
 export KNOXX_CONTRACTS_DIR="$CONTRACTS_DIR"
 
@@ -103,6 +95,27 @@ if [ "${CI:-}" = "true" ]; then
   pnpm -C "${REPO_ROOT}/frontend" exec shadow-cljs stop >/dev/null 2>&1 || true
   pnpm -C "${REPO_ROOT}/backend" exec shadow-cljs stop >/dev/null 2>&1 || true
 fi
+
+if [ -z "$BACKEND_PORT" ]; then
+  BACKEND_PORT="$(node -e '
+    const server = require("node:net").createServer();
+    server.unref();
+    server.listen(0, "127.0.0.1", () => {
+      process.stdout.write(String(server.address().port));
+      server.close();
+    });
+  ')"
+fi
+
+case "$BACKEND_PORT" in
+  ''|*[!0-9]*) die "KNOXX_BROWSER_BACKEND_PORT must be an integer" ;;
+esac
+if [ "$BACKEND_PORT" -lt 1 ] || [ "$BACKEND_PORT" -gt 65535 ]; then
+  die "KNOXX_BROWSER_BACKEND_PORT must be between 1 and 65535"
+fi
+
+BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
+export KNOXX_BASE_URL="$BACKEND_URL"
 
 note "starting isolated backend on ${BACKEND_URL}"
 (

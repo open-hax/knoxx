@@ -50,7 +50,7 @@ export default defineConfig({
   // Keep both surfaces on the same backend map so CI browser requests cannot
   // fall through to the static preview server.
   preview: {
-    allowedHosts: true,
+    allowedHosts: [],
     host: "0.0.0.0",
     port: 5173,
     strictPort: true,

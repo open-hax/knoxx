@@ -33,6 +33,7 @@ process.on("uncaughtExceptionMonitor", (error, origin) => {
 });
 process.on("unhandledRejection", (reason) => {
   append("unhandled-rejection", [reason]);
+  process.exit(1);
 });
 process.on("beforeExit", (code) => {
   append("before-exit", [code]);
