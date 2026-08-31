@@ -91,7 +91,7 @@ note "building the browser frontend once before starting runtime processes"
     -c tailwind.config.ts -i src/index.css -o dist/app.css
 } >"${VERIFY_TMP_DIR}/frontend.log" 2>&1
 
-note "starting isolated backend on ${BACKEND_URL} and frontend on ${FRONTEND_URL}"
+note "starting isolated backend on ${BACKEND_URL}"
 setsid bash -c '
   pid_file=$1
   status_file=$2
@@ -108,6 +108,53 @@ setsid bash -c '
   env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
   bash -c 'cd "$1" && exec node dist/server.js' _ "${REPO_ROOT}/backend" \
   >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
+
+# util-linux setsid forks when its caller is already a process-group leader.
+# Keep a stable Bash supervisor inside each new session, record BASHPID rather
+# than the inherited $$ value, and address that process group for liveness and
+# cleanup on both local shells and GitHub-hosted runners.
+for _ in $(seq 1 50); do
+  if [ -s "${VERIFY_TMP_DIR}/backend.pid" ]; then
+    break
+  fi
+  sleep 0.1
+done
+IFS= read -r BACKEND_PID <"${VERIFY_TMP_DIR}/backend.pid" \
+  || die "backend process group did not start"
+
+context=""
+context_status="000"
+for _ in $(seq 1 120); do
+  if ! kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
+    backend_status="$(cat "${VERIFY_TMP_DIR}/backend.status" 2>/dev/null || printf unavailable)"
+    die "backend exited before the authenticated context became ready (status ${backend_status})"
+  fi
+
+  context_status="$(curl -q --noproxy '*' -sS --max-time 2 \
+    -o "${VERIFY_TMP_DIR}/auth-context.json" -w '%{http_code}' \
+    -H "x-api-key: ${KNOXX_API_KEY}" "${BACKEND_URL}/api/auth/context" 2>/dev/null || true)"
+  context="$(cat "${VERIFY_TMP_DIR}/auth-context.json" 2>/dev/null || true)"
+  if [ "$context_status" = "200" ] \
+     && printf '%s' "$context" | jq -e '.org.id and .user.email' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+VERIFY_ORG_ID="$(printf '%s' "$context" | jq -er '.org.id' 2>/dev/null)" \
+  || {
+    context_error="$(printf '%s' "$context" | jq -cr \
+      '{detail:(.detail // null),error:(.error // null),code:(.code // null)}' 2>/dev/null \
+      || printf '{"detail":"unavailable","error":null,"code":null}')"
+    die "authenticated Knoxx context did not become ready (HTTP ${context_status}; ${context_error})"
+  }
+KNOXX_USER_EMAIL="$(printf '%s' "$context" | jq -er '.user.email' 2>/dev/null)" \
+  || die "authenticated Knoxx user did not become ready"
+KNOXX_ORG_SLUG="$(printf '%s' "$context" | jq -er '.org.slug' 2>/dev/null)" \
+  || die "authenticated Knoxx organization did not become ready"
+export VERIFY_ORG_ID KNOXX_USER_EMAIL KNOXX_ORG_SLUG
+
+note "backend is ready; starting isolated frontend on ${FRONTEND_URL}"
 setsid bash -c '
   pid_file=$1
   status_file=$2
@@ -126,64 +173,33 @@ setsid bash -c '
     --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort \
     >>"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
 
-# util-linux setsid forks when its caller is already a process-group leader.
-# Keep a stable Bash supervisor inside each new session, record BASHPID rather
-# than the inherited $$ value, and address that process group for liveness and
-# cleanup on both local shells and GitHub-hosted runners.
 for _ in $(seq 1 50); do
-  if [ -s "${VERIFY_TMP_DIR}/backend.pid" ] \
-     && [ -s "${VERIFY_TMP_DIR}/frontend.pid" ]; then
+  if [ -s "${VERIFY_TMP_DIR}/frontend.pid" ]; then
     break
   fi
   sleep 0.1
 done
-IFS= read -r BACKEND_PID <"${VERIFY_TMP_DIR}/backend.pid" \
-  || die "backend process group did not start"
 IFS= read -r FRONTEND_PID <"${VERIFY_TMP_DIR}/frontend.pid" \
   || die "frontend process group did not start"
 
-context=""
-context_status="000"
 frontend_ready="false"
 for _ in $(seq 1 120); do
   if ! kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
     backend_status="$(cat "${VERIFY_TMP_DIR}/backend.status" 2>/dev/null || printf unavailable)"
-    die "backend exited before the authenticated context became ready (status ${backend_status})"
+    die "backend exited while the frontend was starting (status ${backend_status})"
   fi
   if ! kill -0 "$FRONTEND_PID" >/dev/null 2>&1; then
     frontend_status="$(cat "${VERIFY_TMP_DIR}/frontend.status" 2>/dev/null || printf unavailable)"
     die "frontend exited before its browser surface became ready (status ${frontend_status})"
   fi
-
-  context_status="$(curl -q --noproxy '*' -sS --max-time 2 \
-    -o "${VERIFY_TMP_DIR}/auth-context.json" -w '%{http_code}' \
-    -H "x-api-key: ${KNOXX_API_KEY}" "${BACKEND_URL}/api/auth/context" 2>/dev/null || true)"
-  context="$(cat "${VERIFY_TMP_DIR}/auth-context.json" 2>/dev/null || true)"
   if curl -q --noproxy '*' -fsS --max-time 2 -H 'Accept: text/html' \
        "$FRONTEND_URL" >/dev/null 2>&1; then
     frontend_ready="true"
-  fi
-  if [ "$context_status" = "200" ] \
-     && printf '%s' "$context" | jq -e '.org.id and .user.email' >/dev/null 2>&1 \
-     && [ "$frontend_ready" = "true" ]; then
     break
   fi
   sleep 1
 done
-
-VERIFY_ORG_ID="$(printf '%s' "$context" | jq -er '.org.id' 2>/dev/null)" \
-  || {
-    context_error="$(printf '%s' "$context" | jq -cr \
-      '{detail:(.detail // null),error:(.error // null),code:(.code // null)}' 2>/dev/null \
-      || printf '{"detail":"unavailable","error":null,"code":null}')"
-    die "authenticated Knoxx context did not become ready (HTTP ${context_status}; ${context_error})"
-  }
-KNOXX_USER_EMAIL="$(printf '%s' "$context" | jq -er '.user.email' 2>/dev/null)" \
-  || die "authenticated Knoxx user did not become ready"
-KNOXX_ORG_SLUG="$(printf '%s' "$context" | jq -er '.org.slug' 2>/dev/null)" \
-  || die "authenticated Knoxx organization did not become ready"
 [ "$frontend_ready" = "true" ] || die "frontend browser surface did not become ready"
-export VERIFY_ORG_ID KNOXX_USER_EMAIL KNOXX_ORG_SLUG
 
 note "running the translation review browser contract"
 "${REPO_ROOT}/scripts/verify-translation-split-review-tour.sh"
