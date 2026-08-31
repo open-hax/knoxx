@@ -118,6 +118,31 @@ jobs:
       - name: Backend typecheck (shadow-cljs compile app)
         run: pnpm -C backend run typecheck
 
+      # Verify the browser against the backend artifact immediately after the
+      # compile that produces it. Keeping this isolated from later coverage and
+      # e2e processes makes the required visual contract deterministic and
+      # lets browser regressions fail fast without weakening the job: every
+      # remaining suite below must still pass before this required check does.
+      - name: Translation review browser contract
+        env:
+          MONGODB_URI: mongodb://127.0.0.1:27017/knoxx_translation_browser_ci?directConnection=true
+          MONGODB_DB: knoxx_translation_browser_ci
+          KNOXX_SHOT_DIR: ${{ runner.temp }}/knoxx-translation-browser
+          KNOXX_PUBLICATION_CONTENT_ROOT: ${{ runner.temp }}/knoxx-publication-content
+        run: ./scripts/verify-translation-browser-ci.sh
+
+      - name: Upload translation browser storyboard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knoxx-translation-browser-storyboard
+          path: ${{ runner.temp }}/knoxx-translation-browser
+          # A browser-contract failure still creates this directory and must
+          # upload its evidence. An earlier setup failure has no browser
+          # evidence; preserve that original failure instead of adding a
+          # misleading second artifact error.
+          if-no-files-found: warn
+
       - name: Backend tests + coverage (cljs.test via shadow-cljs + c8)
         run: pnpm -C backend run test:coverage
 
@@ -149,26 +174,6 @@ jobs:
 
       - name: Frontend tests + coverage (vitest)
         run: pnpm -C frontend run test:coverage
-
-      - name: Translation review browser contract
-        env:
-          MONGODB_URI: mongodb://127.0.0.1:27017/knoxx_translation_browser_ci?directConnection=true
-          MONGODB_DB: knoxx_translation_browser_ci
-          KNOXX_SHOT_DIR: ${{ runner.temp }}/knoxx-translation-browser
-          KNOXX_PUBLICATION_CONTENT_ROOT: ${{ runner.temp }}/knoxx-publication-content
-        run: ./scripts/verify-translation-browser-ci.sh
-
-      - name: Upload translation browser storyboard
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: knoxx-translation-browser-storyboard
-          path: ${{ runner.temp }}/knoxx-translation-browser
-          # A browser-contract failure still creates this directory and must
-          # upload its evidence. An earlier setup failure has no browser
-          # evidence; preserve that original failure instead of adding a
-          # misleading second artifact error.
-          if-no-files-found: warn
 
       - name: Upload frontend coverage artifact
         uses: actions/upload-artifact@v4
