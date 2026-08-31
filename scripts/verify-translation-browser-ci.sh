@@ -49,6 +49,8 @@ cleanup() {
     sleep 0.25
     printf '\nbackend log (tail)\n' >&2
     tail -n 80 "${VERIFY_TMP_DIR}/backend.log" 2>/dev/null >&2 || true
+    printf '\nbackend diagnostic (tail)\n' >&2
+    tail -n 120 "${VERIFY_TMP_DIR}/backend.diagnostic.log" 2>/dev/null >&2 || true
     printf '\nfrontend log (tail)\n' >&2
     tail -n 80 "${VERIFY_TMP_DIR}/frontend.log" 2>/dev/null >&2 || true
     printf '\nfailed-run logs preserved at %s\n' "$VERIFY_TMP_DIR" >&2
@@ -95,7 +97,8 @@ note "starting isolated backend on ${BACKEND_URL}"
 (
   cd "${REPO_ROOT}/backend"
   exec env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
-    node dist/server.js
+    KNOXX_BROWSER_BACKEND_DIAGNOSTIC_PATH="${VERIFY_TMP_DIR}/backend.diagnostic.log" \
+    node "${REPO_ROOT}/scripts/start-browser-contract-backend.mjs"
 ) >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
 BACKEND_PID=$!
 
