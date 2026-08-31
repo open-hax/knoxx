@@ -12,9 +12,12 @@ BACKEND_URL="${KNOXX_BASE_URL:-http://127.0.0.1:8000}"
 FRONTEND_URL="${KNOXX_FRONTEND_URL:-http://127.0.0.1:5173}"
 KNOXX_SHOT_DIR="${KNOXX_SHOT_DIR:-${VERIFY_TMP_DIR}/screenshots}"
 KNOXX_PUBLICATION_CONTENT_ROOT="${KNOXX_PUBLICATION_CONTENT_ROOT:-${VERIFY_TMP_DIR}/publication-content}"
-KNOXX_API_KEY="${KNOXX_API_KEY:-$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))")}"
+GENERATED_API_KEY="$(node -e \
+  "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))")"
+KNOXX_API_KEY="${KNOXX_API_KEY:-$GENERATED_API_KEY}"
+KNOXX_API_KEY_USER_EMAIL="${KNOXX_API_KEY_USER_EMAIL:-pi@open-hax.local}"
 
-export KNOXX_API_KEY KNOXX_PUBLICATION_CONTENT_ROOT KNOXX_SHOT_DIR
+export KNOXX_API_KEY KNOXX_API_KEY_USER_EMAIL KNOXX_PUBLICATION_CONTENT_ROOT KNOXX_SHOT_DIR
 export KNOXX_BASE_URL="$BACKEND_URL" KNOXX_FRONTEND_URL="$FRONTEND_URL"
 export CONTRACTS_DIR="${KNOXX_CONTRACTS_DIR:-${REPO_ROOT}/contracts}"
 export KNOXX_CONTRACTS_DIR="$CONTRACTS_DIR"
@@ -56,30 +59,49 @@ done
 mkdir -p "$KNOXX_PUBLICATION_CONTENT_ROOT" "$KNOXX_SHOT_DIR"
 
 note "starting isolated backend and frontend"
-setsid env NODE_ENV=test \
+setsid env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true \
   pnpm -C "${REPO_ROOT}/backend" start >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
 BACKEND_PID=$!
 setsid pnpm -C "${REPO_ROOT}/frontend" dev >"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 
 context=""
+context_status="000"
+frontend_ready="false"
 for _ in $(seq 1 120); do
-  context="$(curl -q --noproxy '*' -fsS --max-time 2 \
+  kill -0 "$BACKEND_PID" >/dev/null 2>&1 \
+    || die "backend exited before the authenticated context became ready"
+  kill -0 "$FRONTEND_PID" >/dev/null 2>&1 \
+    || die "frontend exited before its browser surface became ready"
+
+  context_status="$(curl -q --noproxy '*' -sS --max-time 2 \
+    -o "${VERIFY_TMP_DIR}/auth-context.json" -w '%{http_code}' \
     -H "x-api-key: ${KNOXX_API_KEY}" "${BACKEND_URL}/api/auth/context" 2>/dev/null || true)"
-  if printf '%s' "$context" | jq -e '.org.id and .user.email' >/dev/null 2>&1 \
-     && curl -q --noproxy '*' -fsS --max-time 2 -H 'Accept: text/html' \
-          "$FRONTEND_URL" >/dev/null 2>&1; then
+  context="$(cat "${VERIFY_TMP_DIR}/auth-context.json" 2>/dev/null || true)"
+  if curl -q --noproxy '*' -fsS --max-time 2 -H 'Accept: text/html' \
+       "$FRONTEND_URL" >/dev/null 2>&1; then
+    frontend_ready="true"
+  fi
+  if [ "$context_status" = "200" ] \
+     && printf '%s' "$context" | jq -e '.org.id and .user.email' >/dev/null 2>&1 \
+     && [ "$frontend_ready" = "true" ]; then
     break
   fi
   sleep 1
 done
 
 VERIFY_ORG_ID="$(printf '%s' "$context" | jq -er '.org.id' 2>/dev/null)" \
-  || die "authenticated Knoxx context did not become ready"
+  || {
+    context_error="$(printf '%s' "$context" | jq -cr \
+      '{detail:(.detail // null),error:(.error // null),code:(.code // null)}' 2>/dev/null \
+      || printf '{"detail":"unavailable","error":null,"code":null}')"
+    die "authenticated Knoxx context did not become ready (HTTP ${context_status}; ${context_error})"
+  }
 KNOXX_USER_EMAIL="$(printf '%s' "$context" | jq -er '.user.email' 2>/dev/null)" \
   || die "authenticated Knoxx user did not become ready"
 KNOXX_ORG_SLUG="$(printf '%s' "$context" | jq -er '.org.slug' 2>/dev/null)" \
   || die "authenticated Knoxx organization did not become ready"
+[ "$frontend_ready" = "true" ] || die "frontend browser surface did not become ready"
 export VERIFY_ORG_ID KNOXX_USER_EMAIL KNOXX_ORG_SLUG
 
 note "running the translation review browser contract"
