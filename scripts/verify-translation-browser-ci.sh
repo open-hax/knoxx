@@ -8,7 +8,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERIFY_TMP_DIR="$(mktemp -d)"
 BACKEND_PID=""
 FRONTEND_PID=""
-BACKEND_URL="${KNOXX_BASE_URL:-http://127.0.0.1:8000}"
+BACKEND_PORT="${KNOXX_BROWSER_BACKEND_PORT:-18000}"
+BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
 FRONTEND_URL="${KNOXX_FRONTEND_URL:-http://127.0.0.1:5173}"
 KNOXX_SHOT_DIR="${KNOXX_SHOT_DIR:-${VERIFY_TMP_DIR}/screenshots}"
 KNOXX_PUBLICATION_CONTENT_ROOT="${KNOXX_PUBLICATION_CONTENT_ROOT:-${VERIFY_TMP_DIR}/publication-content}"
@@ -35,6 +36,9 @@ cleanup() {
   stop_group "$FRONTEND_PID"
   stop_group "$BACKEND_PID"
   if [ "$code" -ne 0 ]; then
+    # pnpm and Node can finish writing redirected diagnostics just after the
+    # watched process exits; give the file descriptors a moment to drain.
+    sleep 0.25
     printf '\nbackend log (tail)\n' >&2
     tail -n 80 "${VERIFY_TMP_DIR}/backend.log" 2>/dev/null >&2 || true
     printf '\nfrontend log (tail)\n' >&2
@@ -65,7 +69,7 @@ setsid bash -c '
   printf "%s\n" "$$" >"$pid_file"
   exec "$@"
 ' _ "${VERIFY_TMP_DIR}/backend.pid" \
-  env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true \
+  env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
   pnpm -C "${REPO_ROOT}/backend" start >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
 setsid bash -c '
   pid_file=$1
@@ -73,6 +77,7 @@ setsid bash -c '
   printf "%s\n" "$$" >"$pid_file"
   exec "$@"
 ' _ "${VERIFY_TMP_DIR}/frontend.pid" \
+  env "SHADOW_CLJS={:dev-http {5173 {:proxy-url \"${BACKEND_URL}\"}}}" \
   pnpm -C "${REPO_ROOT}/frontend" dev >"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
 
 # util-linux setsid forks when its caller is already a process-group leader.
