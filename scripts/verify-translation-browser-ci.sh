@@ -94,25 +94,18 @@ note "building the browser frontend once before starting runtime processes"
 note "starting isolated backend on ${BACKEND_URL}"
 setsid bash -c '
   pid_file=$1
-  status_file=$2
-  shift 2
+  shift
   printf "%s\n" "$BASHPID" >"$pid_file"
-  "$@" &
-  child=$!
-  set +e
-  wait "$child"
-  code=$?
-  printf "%s\n" "$code" >"$status_file"
-  exit "$code"
-' _ "${VERIFY_TMP_DIR}/backend.pid" "${VERIFY_TMP_DIR}/backend.status" \
+  exec "$@"
+' _ "${VERIFY_TMP_DIR}/backend.pid" \
   env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
   bash -c 'cd "$1" && exec node dist/server.js' _ "${REPO_ROOT}/backend" \
   >"${VERIFY_TMP_DIR}/backend.log" 2>&1 &
 
 # util-linux setsid forks when its caller is already a process-group leader.
-# Keep a stable Bash supervisor inside each new session, record BASHPID rather
-# than the inherited $$ value, and address that process group for liveness and
-# cleanup on both local shells and GitHub-hosted runners.
+# Record BASHPID inside the new session before Bash execs the runtime. That PID
+# remains the process-group leader, so liveness and cleanup address the same
+# exact group on local shells and GitHub-hosted runners.
 for _ in $(seq 1 50); do
   if [ -s "${VERIFY_TMP_DIR}/backend.pid" ]; then
     break
@@ -126,8 +119,7 @@ context=""
 context_status="000"
 for _ in $(seq 1 120); do
   if ! kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
-    backend_status="$(cat "${VERIFY_TMP_DIR}/backend.status" 2>/dev/null || printf unavailable)"
-    die "backend exited before the authenticated context became ready (status ${backend_status})"
+    die "backend exited before the authenticated context became ready"
   fi
 
   context_status="$(curl -q --noproxy '*' -sS --max-time 2 \
@@ -157,17 +149,10 @@ export VERIFY_ORG_ID KNOXX_USER_EMAIL KNOXX_ORG_SLUG
 note "backend is ready; starting isolated frontend on ${FRONTEND_URL}"
 setsid bash -c '
   pid_file=$1
-  status_file=$2
-  shift 2
+  shift
   printf "%s\n" "$BASHPID" >"$pid_file"
-  "$@" &
-  child=$!
-  set +e
-  wait "$child"
-  code=$?
-  printf "%s\n" "$code" >"$status_file"
-  exit "$code"
-' _ "${VERIFY_TMP_DIR}/frontend.pid" "${VERIFY_TMP_DIR}/frontend.status" \
+  exec "$@"
+' _ "${VERIFY_TMP_DIR}/frontend.pid" \
   env VITE_KNOXX_BACKEND_URL="$BACKEND_URL" \
   pnpm -C "${REPO_ROOT}/frontend" exec vite preview \
     --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort \
@@ -185,12 +170,10 @@ IFS= read -r FRONTEND_PID <"${VERIFY_TMP_DIR}/frontend.pid" \
 frontend_ready="false"
 for _ in $(seq 1 120); do
   if ! kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
-    backend_status="$(cat "${VERIFY_TMP_DIR}/backend.status" 2>/dev/null || printf unavailable)"
-    die "backend exited while the frontend was starting (status ${backend_status})"
+    die "backend exited while the frontend was starting"
   fi
   if ! kill -0 "$FRONTEND_PID" >/dev/null 2>&1; then
-    frontend_status="$(cat "${VERIFY_TMP_DIR}/frontend.status" 2>/dev/null || printf unavailable)"
-    die "frontend exited before its browser surface became ready (status ${frontend_status})"
+    die "frontend exited before its browser surface became ready"
   fi
   if curl -q --noproxy '*' -fsS --max-time 2 -H 'Accept: text/html' \
        "$FRONTEND_URL" >/dev/null 2>&1; then
