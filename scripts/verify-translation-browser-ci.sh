@@ -73,8 +73,10 @@ note "starting isolated backend on ${BACKEND_URL} and frontend on ${FRONTEND_URL
 setsid bash -c '
   pid_file=$1
   shift
-  printf "%s\n" "$$" >"$pid_file"
-  exec "$@"
+  printf "%s\n" "$BASHPID" >"$pid_file"
+  "$@" &
+  child=$!
+  wait "$child"
 ' _ "${VERIFY_TMP_DIR}/backend.pid" \
   env NODE_ENV=test KNOXX_DISABLE_EVENT_RUNTIMES=true PORT="$BACKEND_PORT" \
   bash -c 'cd "$1" && exec node dist/server.js' _ "${REPO_ROOT}/backend" \
@@ -82,16 +84,18 @@ setsid bash -c '
 setsid bash -c '
   pid_file=$1
   shift
-  printf "%s\n" "$$" >"$pid_file"
-  exec "$@"
+  printf "%s\n" "$BASHPID" >"$pid_file"
+  "$@" &
+  child=$!
+  wait "$child"
 ' _ "${VERIFY_TMP_DIR}/frontend.pid" \
   env "SHADOW_CLJS={:dev-http {5173 {:proxy-url \"${BACKEND_URL}\"}}}" \
   pnpm -C "${REPO_ROOT}/frontend" dev >"${VERIFY_TMP_DIR}/frontend.log" 2>&1 &
 
 # util-linux setsid forks when its caller is already a process-group leader.
-# Capture the process inside the new session rather than the transient launcher
-# so liveness checks and cleanup address the real backend/frontend groups on
-# both local shells and GitHub-hosted runners.
+# Keep a stable Bash supervisor inside each new session, record BASHPID rather
+# than the inherited $$ value, and address that process group for liveness and
+# cleanup on both local shells and GitHub-hosted runners.
 for _ in $(seq 1 50); do
   if [ -s "${VERIFY_TMP_DIR}/backend.pid" ] \
      && [ -s "${VERIFY_TMP_DIR}/frontend.pid" ]; then
