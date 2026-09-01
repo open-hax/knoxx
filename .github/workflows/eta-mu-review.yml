@@ -18,6 +18,7 @@ jobs:
     # completed invocation omitted review_submit.
     uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@e8eea02d31030215984375980b765803fc72d80d
     with:
+      pr_head_sha: ${{ github.event.pull_request.head.sha }}
       setup_eta_mu_toolchain: false
       evidence_gates_script: |
         run_gate diff_stat git diff --stat "${PR_BASE_SHA}...HEAD"
