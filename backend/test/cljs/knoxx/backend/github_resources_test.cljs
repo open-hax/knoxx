@@ -58,9 +58,11 @@
   (let [records (contract-records "namespaces/github.edn")
         source (first (contracts-by-kind records :source))
         stores (contracts-by-kind records :store)
-        stores-by-id (into {} (map (juxt :store/id identity) stores))
-        ledger (get stores-by-id :github/event-ledger)
-        projection (get stores-by-id :github/object-index)
+        ;; parse-contract-file-records! preserves local IDs from a namespace file;
+        ;; the control catalog applies namespace qualification at composition time.
+        stores-by-local-id (into {} (map (juxt :store/id identity) stores))
+        ledger (get stores-by-local-id :event-ledger)
+        projection (get stores-by-local-id :object-index)
         selected-types (set (:source/listens source))
         emitted-types (set (driver-registry/emitted-event-types
                             :driver/github-app))]
@@ -80,7 +82,7 @@
       (is (true? (get-in (control-catalog/catalog records)
                          [:admissibility :ok?]))))
     (testing "webhook delivery remains at-least-once with explicit reconciliation"
-      (is (= :github/app-events (:source/id source)))
+      (is (= :app-events (:source/id source)))
       (is (false? (:enabled source)))
       (is (= :webhook (get-in source [:source/protocol :message-transport])))
       (is (= :at-least-once (get-in source [:source/protocol :delivery])))
