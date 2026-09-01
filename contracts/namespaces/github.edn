@@ -3,22 +3,13 @@
  [{:source/id :app-events
    :source/type :event-generator
    :source/name "GitHub App webhook and reconciliation source"
-   :source/enabled? false
    :source/driver :driver/github-app
    :source/provider :github
    :source/actor "github_automation"
-   :source/listens
-   [{:event/type :github/webhook
-     :description "Verified GitHub App delivery signal"}]
-   :source/emits
-   [{:event/type :github/delivery-received
-     :description "Raw verified delivery admitted before hydration"}
-    {:event/type :github/object-observed
-     :description "Hydrated GitHub object observation"}
-    {:event/type :github/coverage-observed
-     :description "Permission, rate-limit, and reconciliation coverage"}
-    {:event/type :github/ledger-discovered
-     :description "A .ημ or .eta-mu ledger locator was observed"}]
+   :source/listens [:github.delivery-received
+                    :github.object-observed
+                    :github.coverage-observed
+                    :github.ledger-discovered]
    :source/protocol
    {:message-transport :webhook
     :delivery :at-least-once
@@ -30,9 +21,7 @@
     :checkpoint :github/delivery-cursor
     :reconcile :github/deliveries-and-api
     :completeness :explicit}
-   :source/tools [:github/discover
-                  :github/hydrate
-                  :github/reconcile]}
+   :enabled false}
 
   {:store/id :event-ledger
    :store/schema :clio/event-record-v1
