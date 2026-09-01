@@ -7,6 +7,9 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @open-hax/knoxx-frontend dev",
+    "local:check": "./scripts/verify-local-resources.sh",
+    "local:start": "./scripts/start-local-knoxx.sh",
+    "verify:translation:browser": "./scripts/verify-translation-browser-ci.sh",
     "build": "pnpm --filter @open-hax/knoxx-frontend build",
     "lint:size": "node scripts/lint-file-sizes.mjs",
     "scan:duplication": "pnpm dlx jscpd@4.2.3 --config .jscpd.json"
@@ -16,5 +19,8 @@
   },
   "dependencies": {
     "@open-hax/uxx": "0.2.2"
+  },
+  "devDependencies": {
+    "agent-browser": "0.35.2"
   }
 }

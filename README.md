@@ -134,6 +134,17 @@ Prerequisites:
 - OpenPlanner for durable memory/events/graph, usually on
   `http://127.0.0.1:7777`.
 
+For the local Foresight/OpenPlanner/Proxx/Ollama stack, Knoxx can discover the
+already-running application credentials without writing them into this repo:
+
+```bash
+pnpm local:check
+pnpm local:start
+```
+
+See [Local resources, MongoDB, Proxx, and Ollama](docs/verification/local-resources.md)
+for the connection contract and overrides.
+
 Install dependencies from the Knoxx root:
 
 ```bash
@@ -229,6 +240,8 @@ REDIS_URL=redis://127.0.0.1:6379
 PROXX_BASE_URL=http://127.0.0.1:8789
 PROXX_AUTH_TOKEN=...
 PROXX_DEFAULT_MODEL=glm-5
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_DEFAULT_MODEL=gemma4:e4b
 OPENPLANNER_BASE_URL=http://127.0.0.1:7777
 OPENPLANNER_API_KEY=...
 KMS_INGESTION_URL=http://127.0.0.1:3003

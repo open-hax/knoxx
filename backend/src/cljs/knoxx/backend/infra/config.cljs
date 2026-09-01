@@ -121,6 +121,12 @@
                           (when (and (string? value) (not (str/blank? value)))
                             value))
    :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")
+   ;; Ollama exposes an OpenAI-compatible API under /v1. Keep it optional in
+   ;; deployment config; the local launcher opts in with 127.0.0.1:11434.
+   :ollama-base-url (env "OLLAMA_BASE_URL" "")
+   :ollama-default-model (let [value (aget js/process.env "OLLAMA_DEFAULT_MODEL")]
+                           (when (and (string? value) (not (str/blank? value)))
+                             value))
    :provider-base-urls (env-kv-map "KNOXX_PROVIDER_BASE_URLS")
    :provider-auth-tokens (env-kv-map "KNOXX_PROVIDER_AUTH_TOKENS")
    :provider-auth-headers (env-kv-map "KNOXX_PROVIDER_AUTH_HEADERS")

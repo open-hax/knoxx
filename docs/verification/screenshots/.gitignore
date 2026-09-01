@@ -5,3 +5,8 @@
 # evidence for a finding, named by date and what they show.
 !reference/
 !reference/*.png
+
+# Reviewed, deterministic storyboards are merge evidence. Ad-hoc run folders
+# remain ignored so a stale run cannot accidentally satisfy the CI contract.
+!translation-split-review-storyboard/
+!translation-split-review-storyboard/*.png

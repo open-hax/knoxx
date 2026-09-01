@@ -81,6 +81,7 @@ contracts/
   capabilities/   Capability resources — capability id to tool/action surfaces
   policies/       Policy resources — invariants, guardrails, and denials
   authentication/ Authentication resources — which methods a surface accepts
+  mcp_servers/    MCP server resources — transport and secret environment references
   generators/     Generator resources — event-producing provenance/adapters
   schedules/      Schedule resources — temporal rules that emit synthetic events
   actions/        Action resources — registered behavior and schemas
