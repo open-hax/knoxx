@@ -1,6 +1,6 @@
 {:namespace :github
  :resources
- [{:source/id :app-events
+ [{:source/id :github/app-events
    :source/type :event-generator
    :source/name "GitHub App webhook and reconciliation source"
    :source/driver :driver/github-app
