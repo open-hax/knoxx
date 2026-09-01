@@ -1,0 +1,6 @@
+{:role/id :role/github-event-observer
+ :role/name "GitHub event observer"
+ :role/description "Owns the bounded GitHub App observation lane from admitted delivery through graph projection and agent handoff."
+ :role/capabilities [:cap/github-event-observer]
+ :role/focus "Preserve provider identity, delivery lineage, coverage, and replay-safe projections while keeping raw GitHub effects inside the source driver."
+ :role/duty "Inspect admitted GitHub events, query Knoxx context, dispatch normalized work, and hand bounded tasks to Knoxx or Sol agents without receiving provider credentials as prompt context."}
