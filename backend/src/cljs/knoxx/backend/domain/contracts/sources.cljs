@@ -195,7 +195,8 @@
 
    Pass groups in low -> high precedence order (actor, roles, agent, run). Later
    refs for the same :source/id deep-merge over earlier refs while preserving the
-   first position in the source vector."
+   first position in the source vector. A higher-precedence ref may disable an
+   enabled source, but no ref can re-enable a disabled source contract."
   [config & groups]
   (let [refs (mapcat source-group->refs groups)
         indexed (reduce (fn [{:keys [order by-id] :as acc} source-ref]
@@ -212,7 +213,12 @@
                             acc))
                         {:order [] :by-id {}}
                         refs)]
-    (mapv #(get-in indexed [:by-id %]) (:order indexed))))
+    (->> (:order indexed)
+         (keep (fn [source-id]
+                 (let [source (get-in indexed [:by-id source-id])]
+                   (when (enabled? source)
+                     source))))
+         vec)))
 
 (defn agent-source-refs
   [agent-spec]
