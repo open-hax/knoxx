@@ -13,7 +13,10 @@ permissions:
 jobs:
   review:
     name: Evidence-first review (eta-mu)
-    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@2b918cdab2ebd30e745bb8fa86d077d7a3af0030
+    # eta-mu#304: preserve response/stderr and recovery metadata for every
+    # invocation, then allow one bounded corrective attempt only when a
+    # completed invocation omitted review_submit.
+    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@e8eea02d31030215984375980b765803fc72d80d
     with:
       setup_eta_mu_toolchain: false
       evidence_gates_script: |
