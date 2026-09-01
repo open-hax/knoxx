@@ -13,11 +13,16 @@ permissions:
 jobs:
   review:
     name: Evidence-first review (eta-mu)
-    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@2b918cdab2ebd30e745bb8fa86d077d7a3af0030
+    # Reviewed recovery merge from eta-mu PR #304. It preserves model stdout and
+    # stderr, records invocation metadata, and permits only one omission-only
+    # corrective attempt before failing closed.
+    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@e8eea02d31030215984375980b765803fc72d80d
     with:
+      pr_head_sha: ${{ github.event.pull_request.head.sha }}
       setup_eta_mu_toolchain: false
       evidence_gates_script: |
         run_gate diff_stat git diff --stat "${PR_BASE_SHA}...HEAD"
+        run_gate diff_check git diff --check "${PR_BASE_SHA}...HEAD"
     # Least privilege: forward only the secrets the review job consumes.
     secrets:
       ETA_MU_APP_ID: ${{ secrets.ETA_MU_APP_ID }}
