@@ -4,14 +4,13 @@
             [knoxx.backend.domain.control.catalog :as control-catalog]
             [knoxx.backend.domain.driver.builtin :as driver-builtin]
             [knoxx.backend.domain.driver.registry :as driver-registry]
-            ["node:fs" :as fs]
-            ["node:path" :as path]))
+            [knoxx.backend.extern.contract-fixture :as contract-fixture]))
 
 (defn- contract-records
   [relative-path]
-  (let [file-path (.join path ".." "contracts" relative-path)
-        edn-text (.readFileSync fs file-path "utf8")]
-    (contract-loader/parse-contract-file-records! file-path edn-text)))
+  (let [{:keys [path content]}
+        (contract-fixture/read-contract relative-path)]
+    (contract-loader/parse-contract-file-records! path content)))
 
 (defn- contracts-by-kind
   [records kind]
@@ -58,8 +57,8 @@
   (let [records (contract-records "namespaces/github.edn")
         source (first (contracts-by-kind records :source))
         stores (contracts-by-kind records :store)
-        ;; parse-contract-file-records! preserves local IDs from a namespace file;
-        ;; the control catalog applies namespace qualification at composition time.
+        ;; Store IDs remain local inside this namespace file. The GitHub source
+        ;; intentionally carries its qualified identity into runtime provenance.
         stores-by-local-id (into {} (map (juxt :store/id identity) stores))
         ledger (get stores-by-local-id :event-ledger)
         projection (get stores-by-local-id :object-index)
@@ -81,8 +80,9 @@
              selected-types))
       (is (true? (get-in (control-catalog/catalog records)
                          [:admissibility :ok?]))))
+    (testing "runtime provenance preserves the qualified GitHub source identity"
+      (is (= :github/app-events (:source/id source))))
     (testing "webhook delivery remains at-least-once with explicit reconciliation"
-      (is (= :app-events (:source/id source)))
       (is (false? (:enabled source)))
       (is (= :webhook (get-in source [:source/protocol :message-transport])))
       (is (= :at-least-once (get-in source [:source/protocol :delivery])))
