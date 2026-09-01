@@ -10,10 +10,6 @@
    :principal-binding :required
    :installation-binding :required
    :object-binding :required}}
- :actor/roles [:provider-observer]
- :actor/capabilities [:github/discover
-                      :github/hydrate
-                      :github/reconcile
-                      :event-ledger/append
-                      :knoxx/project]
+ :actor/roles [:role/github-event-observer]
+ :actor/capabilities [:cap/github-event-observer]
  :actor/sources [:github/app-events]}
