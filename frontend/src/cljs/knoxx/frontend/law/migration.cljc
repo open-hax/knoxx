@@ -11,6 +11,8 @@
   [:enum :agent-audit :auth :bridge :broadcast-studio :chat-workspace :cms
    :components :contracts :data :event-agents :layout :ops :routes :shared
    :test-infrastructure :translations :workspace])
+;; Reserved for generated TypeScript declarations explicitly admitted by the
+;; final-state law; no such file exists in the current inventory.
 (def Disposition [:enum :port :wrap :delete :retain-generated])
 (def Status [:enum :legacy :native])
 

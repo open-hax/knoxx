@@ -8,12 +8,15 @@
 (deftest file-walk-does-not-follow-symbolic-links
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))
         nested (node-path/join root "nested")
-        source (node-path/join nested "source.ts")]
+        source (node-path/join nested "source.ts")
+        linked-source (node-path/join root "linked-source.ts")]
     (try
       (fs/mkdirSync nested)
       (fs/writeFileSync source "export const value = 1;\n")
       (fs/symlinkSync root (node-path/join root "cycle") "dir")
-      (is (= [source] (vec (manifest/walk-files root))))
+      (fs/symlinkSync source linked-source "file")
+      (is (= (sort [linked-source source])
+             (manifest/walk-files root)))
       (finally
         (fs/rmSync root #js {:recursive true :force true})))))
 

@@ -56,7 +56,8 @@
   (or (some (fn [[pattern island]]
               (when (re-find pattern path) island))
             island-rules)
-      :unclassified))
+      (throw (ex-info "No migration island rule matches governed path"
+                      {:path path}))))
 
 (defn file-role
   "Classify a governed file by its migration responsibility."

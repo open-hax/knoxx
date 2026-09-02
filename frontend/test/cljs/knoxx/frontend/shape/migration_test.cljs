@@ -30,3 +30,9 @@
                  :tests ["frontend/src/pages/SettingsPage.test.tsx"]})]
     (is (= :delete (:disposition record)))
     (is (= :route (:role record)))))
+
+(deftest unknown-source-layouts-fail-with-the-governed-path
+  (is (thrown-with-msg?
+       js/Error
+       #"No migration island rule matches governed path"
+       (shape/classify-island "frontend/src/new-module/Legacy.ts"))))

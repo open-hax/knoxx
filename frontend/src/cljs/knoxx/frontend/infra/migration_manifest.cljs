@@ -11,14 +11,18 @@
 (def manifest-relative-path "frontend/migration/manifest.ndedn")
 
 (defn walk-files
-  "Return sorted absolute file paths beneath root."
+  "Return sorted absolute file paths beneath root without traversing directory
+   symlinks. File symlinks remain visible to the governed-source inventory."
   [root]
   (->> (fs/readdirSync root)
        (mapcat (fn [name]
                  (let [path (node-path/join root name)
                        stat (fs/lstatSync path)]
                    (cond
-                     (.isSymbolicLink stat) []
+                     (and (.isSymbolicLink stat)
+                          (try
+                            (.isDirectory (fs/statSync path))
+                            (catch :default _ false))) []
                      (.isDirectory stat) (walk-files path)
                      :else [path]))))
        sort))
