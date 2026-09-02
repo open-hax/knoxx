@@ -178,7 +178,7 @@ jobs:
       - name: Frontend migration manifest and ratchets
         env:
           KNOXX_MIGRATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          KNOXX_MIGRATION_INFRASTRUCTURE: ${{ contains(github.event.pull_request.body || '', 'Migration infrastructure: yes') }}
+          KNOXX_MIGRATION_INFRASTRUCTURE: "${{ contains(github.event.pull_request.body || '', 'Migration infrastructure: yes') }}"
         run: pnpm -C frontend run migration:check
 
       - name: Frontend CLJS tests
