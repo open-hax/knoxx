@@ -10,18 +10,17 @@
 
 (def manifest-relative-path "frontend/migration/manifest.ndedn")
 
-(defn- directory? [path]
-  (.isDirectory (fs/statSync path)))
-
-(defn- walk-files
+(defn walk-files
   "Return sorted absolute file paths beneath root."
   [root]
   (->> (fs/readdirSync root)
        (mapcat (fn [name]
-                 (let [path (node-path/join root name)]
-                   (if (directory? path)
-                     (walk-files path)
-                     [path]))))
+                 (let [path (node-path/join root name)
+                       stat (fs/lstatSync path)]
+                   (cond
+                     (.isSymbolicLink stat) []
+                     (.isDirectory stat) (walk-files path)
+                     :else [path]))))
        sort))
 
 (defn- repository-root []

@@ -1,6 +1,21 @@
 (ns knoxx.frontend.infra.migration-manifest-test
   (:require [cljs.test :refer [deftest is]]
-            [knoxx.frontend.infra.migration-manifest :as manifest]))
+            [knoxx.frontend.infra.migration-manifest :as manifest]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as node-path]))
+
+(deftest file-walk-does-not-follow-symbolic-links
+  (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))
+        nested (node-path/join root "nested")
+        source (node-path/join nested "source.ts")]
+    (try
+      (fs/mkdirSync nested)
+      (fs/writeFileSync source "export const value = 1;\n")
+      (fs/symlinkSync root (node-path/join root "cycle") "dir")
+      (is (= [source] (vec (manifest/walk-files root))))
+      (finally
+        (fs/rmSync root #js {:recursive true :force true})))))
 
 (deftest newline-edn-admits-exactly-one-canonical-form-per-line
   (let [line "{:record/id \"one\", :kind :route}"]
