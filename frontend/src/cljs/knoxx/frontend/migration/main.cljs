@@ -38,7 +38,9 @@
           (fail! "The base revision has no migration manifest; this bootstrap PR must declare migration infrastructure."
                  {:base-sha base-sha}))))))
 
-(defn main []
+(defn main
+  "Write or validate the migration ledger for the requested CLI command."
+  []
   (try
     (let [command (or (aget (.-argv js/process) 2) "--check")
           records (infra/current-records)

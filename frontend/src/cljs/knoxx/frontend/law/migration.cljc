@@ -5,18 +5,28 @@
             [malli.core :as m]
             [malli.error :as me]))
 
-(def NonBlankString [:string {:min 1}])
-(def Bridge [:enum :frontend :app])
+(def NonBlankString
+  "Schema for nonempty manifest string values."
+  [:string {:min 1}])
+(def Bridge
+  "Schema for compatibility-bridge identities."
+  [:enum :frontend :app])
 (def Island
+  "Schema for migration behavior-island identities."
   [:enum :agent-audit :auth :bridge :broadcast-studio :chat-workspace :cms
    :components :contracts :data :event-agents :layout :ops :routes :shared
    :test-infrastructure :translations :workspace])
 ;; Reserved for generated TypeScript declarations explicitly admitted by the
 ;; final-state law; no such file exists in the current inventory.
-(def Disposition [:enum :port :wrap :delete :retain-generated])
-(def Status [:enum :legacy :native])
+(def Disposition
+  "Schema for the terminal action assigned to a legacy record."
+  [:enum :port :wrap :delete :retain-generated])
+(def Status
+  "Schema for current route or source ownership."
+  [:enum :legacy :native])
 
 (def LegacyFileRecord
+  "Closed schema for one governed TypeScript source file."
   [:map {:closed true}
    [:record/id NonBlankString]
    [:path NonBlankString]
@@ -30,6 +40,7 @@
    [:blocked-by [:vector keyword?]]])
 
 (def BridgeExportRecord
+  "Closed schema for one compatibility-bridge export."
   [:map {:closed true}
    [:record/id NonBlankString]
    [:path NonBlankString]
@@ -40,6 +51,7 @@
    [:status [:= :legacy]]])
 
 (def RouteRecord
+  "Closed schema for one Shadow-owned application route."
   [:map {:closed true}
    [:record/id NonBlankString]
    [:path NonBlankString]
@@ -49,6 +61,7 @@
    [:status Status]])
 
 (def LegacyTestSuiteRecord
+  "Closed schema for one Vitest retirement record."
   [:map {:closed true}
    [:record/id NonBlankString]
    [:path NonBlankString]
@@ -58,6 +71,7 @@
    [:status [:= :legacy]]])
 
 (def ManifestRecord
+  "Closed union schema for every migration-ledger record."
   [:multi {:dispatch :kind}
    [:ts LegacyFileRecord]
    [:tsx LegacyFileRecord]

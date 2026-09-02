@@ -7,7 +7,9 @@
   "The production tree governed by the TypeScript non-growth ratchet."
   #"^frontend/src/.*\.tsx?$")
 
-(def test-source-pattern #"\.(?:test|spec)\.tsx?$")
+(def test-source-pattern
+  "Pattern identifying governed Vitest source paths."
+  #"\.(?:test|spec)\.tsx?$")
 
 (def island-rules
   "Ordered source-path rules. First match wins, making every classification
@@ -31,6 +33,7 @@
    [#"(?:src/test/)" :test-infrastructure]])
 
 (def island-blockers
+  "Known migration dependencies between behavior islands."
   {:agent-audit [:chat-workspace]
    :broadcast-studio [:chat-workspace :audio-visualization-adapter]
    :cms [:chat-workspace :codemirror-adapter :puck-adapter]
@@ -38,6 +41,7 @@
    :data [:chart-adapter :webgl-graph-adapter]})
 
 (def heavy-widget-pattern
+  "Legacy widgets whose libraries should stay behind thin Helix adapters."
   #"(?:EdnEditor|VisualEditor|GraphExplorer|VectorsPage|DataPage|MusicPlayerView)")
 
 (defn normalize-path
@@ -100,14 +104,15 @@
 
 (defn bridge-export-record
   "Construct one record for a named compatibility-bridge export."
-  [{:keys [bridge path source symbol]}]
-  {:record/id (str "bridge:" (name bridge) ":" symbol)
-   :path (normalize-path path)
-   :kind :bridge-export
-   :bridge bridge
-   :symbol symbol
-   :source source
-   :status :legacy})
+  [{:keys [bridge path source] :as attributes}]
+  (let [export-name (:symbol attributes)]
+    {:record/id (str "bridge:" (name bridge) ":" export-name)
+     :path (normalize-path path)
+     :kind :bridge-export
+     :bridge bridge
+     :symbol export-name
+     :source source
+     :status :legacy}))
 
 (defn route-record
   "Construct one record for a Shadow-owned route and its current implementation."

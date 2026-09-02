@@ -1,22 +1,24 @@
 (ns knoxx.frontend.infra.migration-manifest
   "Node filesystem and Git adapters for the generated migration ledger."
-  (:require [cljs.tools.reader.edn :as edn]
+  (:require ["node:child_process" :as child-process]
+            ["node:fs" :as fs]
+            ["node:path" :as node-path]
+            [cljs.tools.reader.edn :as edn]
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
-            [knoxx.frontend.shape.migration :as shape]
-            ["node:child_process" :as child-process]
-            ["node:fs" :as fs]
-            ["node:path" :as node-path]))
+            [knoxx.frontend.shape.migration :as shape]))
 
-(def manifest-relative-path "frontend/migration/manifest.ndedn")
+(def manifest-relative-path
+  "Repository-relative path to the generated migration ledger."
+  "frontend/migration/manifest.ndedn")
 
 (defn walk-files
   "Return sorted absolute file paths beneath root without traversing directory
    symlinks. File symlinks remain visible to the governed-source inventory."
   [root]
   (->> (fs/readdirSync root)
-       (mapcat (fn [name]
-                 (let [path (node-path/join root name)
+       (mapcat (fn [entry-name]
+                 (let [path (node-path/join root entry-name)
                        stat (fs/lstatSync path)]
                    (cond
                      (and (.isSymbolicLink stat)
@@ -58,8 +60,8 @@
                            (map str/trim)
                            (remove str/blank?)
                            (map #(last (str/split % #"\s+as\s+"))))]
-          (recur (into exports (map (fn [symbol]
-                                      {:symbol symbol :source source-path})
+          (recur (into exports (map (fn [export-name]
+                                      {:symbol export-name :source source-path})
                                     symbols))))
         exports))))
 
@@ -78,14 +80,16 @@
                                 (count (re-seq #"(?m)^export\s*\{" source)))
                      (throw (ex-info "Unsupported bridge export syntax"
                                      {:path path})))
-                   (map (fn [{:keys [symbol source]}]
-                          (assoc (shape/bridge-export-record
-                                  {:bridge bridge
-                                   :path path
-                                   :source source
-                                   :symbol symbol})
-                                 :resolved-source
-                                 (resolve-local-export absolute-path source)))
+                   (map (fn [export-entry]
+                          (let [source-path (:source export-entry)
+                                export-name (:symbol export-entry)]
+                            (assoc (shape/bridge-export-record
+                                    {:bridge bridge
+                                     :path path
+                                     :source source-path
+                                     :symbol export-name})
+                                   :resolved-source
+                                   (resolve-local-export absolute-path source-path))))
                         (export-symbols source)))))
        vec))
 
@@ -167,17 +171,23 @@
                                    {:line line})))
                  record)))))
 
-(defn read-manifest []
+(defn read-manifest
+  "Read the checked-in migration ledger as text."
+  []
   (let [root (repository-root)]
     (fs/readFileSync (node-path/join root manifest-relative-path) "utf8")))
 
-(defn write-manifest! [text]
+(defn write-manifest!
+  "Replace the checked-in migration ledger with canonical text."
+  [text]
   (let [root (repository-root)
         path (node-path/join root manifest-relative-path)]
     (fs/mkdirSync (node-path/dirname path) #js {:recursive true})
     (fs/writeFileSync path text "utf8")))
 
-(defn base-manifest [sha]
+(defn base-manifest
+  "Read and parse the migration ledger at a Git revision, or return nil."
+  [sha]
   (when (seq sha)
     (try
       (-> (child-process/execFileSync
@@ -188,7 +198,9 @@
           parse-records)
       (catch :default _ nil))))
 
-(defn changed-paths [sha]
+(defn changed-paths
+  "Return repository paths changed between a Git revision and HEAD."
+  [sha]
   (if (seq sha)
     (-> (child-process/execFileSync
          "git" #js ["diff" "--name-only" (str sha "...HEAD")]
