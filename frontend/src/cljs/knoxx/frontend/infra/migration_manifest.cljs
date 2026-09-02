@@ -1,6 +1,6 @@
 (ns knoxx.frontend.infra.migration-manifest
   "Node filesystem and Git adapters for the generated migration ledger."
-  (:require [cljs.reader :as reader]
+  (:require [cljs.tools.reader.edn :as edn]
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
             [knoxx.frontend.shape.migration :as shape]
@@ -158,7 +158,7 @@
   (->> (str/split-lines text)
        (remove str/blank?)
        (mapv (fn [line]
-               (let [record (reader/read-string line)]
+               (let [record (edn/read-string line)]
                  (when-not (= line (pr-str record))
                    (throw (ex-info "Manifest line is not canonical single-form EDN"
                                    {:line line})))
@@ -190,5 +190,6 @@
     (-> (child-process/execFileSync
          "git" #js ["diff" "--name-only" (str sha "...HEAD")]
          #js {:cwd (repository-root) :encoding "utf8"})
-        str/split-lines)
+        str/split-lines
+        (->> (remove str/blank?) vec))
     []))

@@ -172,12 +172,12 @@ jobs:
 
       - name: Frontend CLJS lint
         env:
-          KNOXX_LINT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          KNOXX_LINT_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}"
         run: pnpm -C frontend run lint:cljs:changed
 
       - name: Frontend migration manifest and ratchets
         env:
-          KNOXX_MIGRATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          KNOXX_MIGRATION_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}"
           KNOXX_MIGRATION_INFRASTRUCTURE: "${{ contains(github.event.pull_request.body || '', 'Migration infrastructure: yes') }}"
         run: pnpm -C frontend run migration:check
 
