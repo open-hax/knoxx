@@ -41,3 +41,11 @@
           "the Git adapter retrieves the exact committed ND-EDN records")
     (t/is (empty? (manifest/changed-paths "HEAD"))
           "the Git diff adapter reports no paths against the same revision")))
+
+(t/deftest unreadable-git-baselines-fail-closed
+  (t/is (try
+          (manifest/base-manifest "definitely-not-a-git-revision")
+          false
+          (catch js/Error error
+            (boolean (re-find #"cannot resolve the migration baseline"
+                              (.-message error)))))))

@@ -185,10 +185,24 @@
     (fs/mkdirSync (node-path/dirname path) #js {:recursive true})
     (fs/writeFileSync path text "utf8")))
 
+(defn- git-commit-exists?
+  "Whether Git can resolve a revision to a commit in the local checkout."
+  [sha]
+  (try
+    (child-process/execFileSync
+     "git" #js ["cat-file" "-e" (str sha "^{commit}")]
+     #js {:cwd (repository-root)
+          :stdio #js ["ignore" "ignore" "ignore"]})
+    true
+    (catch :default _ false)))
+
 (defn base-manifest
   "Read and parse the migration ledger at a Git revision, or return nil."
   [sha]
   (when (seq sha)
+    (when-not (git-commit-exists? sha)
+      (throw (ex-info "Git cannot resolve the migration baseline revision"
+                      {:base-sha sha})))
     (try
       (-> (child-process/execFileSync
            "git" #js ["show" (str sha ":" manifest-relative-path)]
