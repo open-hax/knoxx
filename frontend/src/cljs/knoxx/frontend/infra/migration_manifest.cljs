@@ -12,22 +12,45 @@
   "Repository-relative path to the generated migration ledger."
   "frontend/migration/manifest.ndedn")
 
-(defn walk-files
-  "Return sorted absolute file paths beneath root without traversing directory
-   symlinks. File symlinks remain visible to the governed-source inventory."
-  [root]
-  (->> (fs/readdirSync root)
+(defn- path-inside-root?
+  "Whether target resolves within the canonical root directory."
+  [root target]
+  (let [relative (node-path/relative root target)]
+    (and (not (node-path/isAbsolute relative))
+         (not= relative "..")
+         (not (str/starts-with? relative (str ".." node-path/sep))))))
+
+(defn- safe-file-symlink?
+  "Whether path resolves to a regular file contained by root."
+  [root path]
+  (try
+    (let [target (fs/realpathSync path)]
+      (and (path-inside-root? root target)
+           (.isFile (fs/statSync target))))
+    (catch :default _ false)))
+
+(defn- walk-files-under
+  "Return file paths under directory without leaving the canonical root."
+  [root directory]
+  (->> (fs/readdirSync directory)
        (mapcat (fn [entry-name]
-                 (let [path (node-path/join root entry-name)
+                 (let [path (node-path/join directory entry-name)
                        stat (fs/lstatSync path)]
                    (cond
-                     (and (.isSymbolicLink stat)
-                          (try
-                            (.isDirectory (fs/statSync path))
-                            (catch :default _ false))) []
-                     (.isDirectory stat) (walk-files path)
+                     (.isSymbolicLink stat)
+                     (if (safe-file-symlink? root path)
+                       [path]
+                       (throw (ex-info "Unsafe symbolic link in migration source tree"
+                                       {:path path})))
+
+                     (.isDirectory stat) (walk-files-under root path)
                      :else [path]))))
        sort))
+
+(defn walk-files
+  "Return sorted absolute file paths without following unsafe symbolic links."
+  [root]
+  (walk-files-under (fs/realpathSync root) root))
 
 (defn- repository-root []
   (let [cwd (.cwd js/process)]
@@ -116,9 +139,26 @@
       (second (re-find #"\(\$\s+(LegacyOpsRedirect|Navigate|PlaceholderPage)" block))
       "inline"))
 
+(defn app-bridge-alias
+  "Read the local alias bound to the application compatibility bridge."
+  [source]
+  (let [aliases (map second
+                     (re-seq #"\[\"@open-hax/knoxx-app-bridge\"\s+:as\s+([A-Za-z0-9_-]+)"
+                             source))]
+    (when-not (= 1 (count aliases))
+      (throw (ex-info "Expected exactly one application bridge alias"
+                      {:aliases (vec aliases)})))
+    (first aliases)))
+
+(defn bridge-owned-implementation?
+  "Whether a parsed route implementation is owned by the bridge alias."
+  [bridge-alias implementation]
+  (str/starts-with? implementation (str bridge-alias "/")))
+
 (defn- route-records [root]
   (let [path "frontend/src/cljs/knoxx/frontend/app.cljs"
         source (fs/readFileSync (node-path/join root path) "utf8")
+        bridge-alias (app-bridge-alias source)
         pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
         route-count (count (re-seq #"\(\$ Route \{:path" source))]
     (loop [matches []]
@@ -138,7 +178,8 @@
                     (shape/route-record {:path path
                                          :route (:route position)
                                          :implementation implementation
-                                         :legacy? (str/starts-with? implementation "app/")})))
+                                         :legacy? (bridge-owned-implementation?
+                                                   bridge-alias implementation)})))
                 matches
                 (concat (rest matches) [nil])))))))
 

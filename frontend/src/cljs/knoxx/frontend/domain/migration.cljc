@@ -20,6 +20,43 @@
        (map (fn [[stem tests]] [stem (mapv :path tests)]))
        (into {})))
 
+(def island-rules
+  "Ordered ownership rules for the migration's behavior islands."
+  [[#"(?:chat-page|ChatPage|ChatComposer|ToolReceiptBlock|MemorySignalChip|LoungePanel|ConsolePanel)" :chat-workspace]
+   [#"(?:agent-audit|AgentsPage)" :agent-audit]
+   [#"(?:event-agent|EventAgent|EventsPage)" :event-agents]
+   [#"(?:ContractsPage|api/contracts|EdnEditor)" :contracts]
+   [#"(?:BroadcastStudio|components/studio)" :broadcast-studio]
+   [#"(?:CmsPage|VisualCms|components/cms|components/editor|components/review|ReviewQueue|ContentEditor|publication|viewContract|contractComposition)" :cms]
+   [#"(?:DataPage|DocumentsPage|IngestionPage|VectorsPage|RawGraphExport|GraphExplorer|ingestion-page|raw-graph-export|DataLakes)" :data]
+   [#"(?:OpsRoot|components/ops|SidebarOpsStatus)" :ops]
+   [#"(?:auth-context|useAuth)" :auth]
+   [#"(?:TranslationPage|translation-page)" :translations]
+   [#"(?:components/layout|context-bar)" :layout]
+   [#"(?:workspace-context|WorkspaceBrowser)" :workspace]
+   [#"(?:bridge/)" :bridge]
+   [#"(?:src/lib/)" :shared]
+   [#"(?:src/pages/)" :routes]
+   [#"(?:src/components/)" :components]
+   [#"(?:src/test/)" :test-infrastructure]])
+
+(def island-blockers
+  "Known migration dependencies between behavior islands."
+  {:agent-audit [:chat-workspace]
+   :broadcast-studio [:chat-workspace :audio-visualization-adapter]
+   :cms [:chat-workspace :codemirror-adapter :puck-adapter]
+   :contracts [:chat-workspace :codemirror-adapter]
+   :data [:chart-adapter :webgl-graph-adapter]})
+
+(defn classify-island
+  "Assign a governed source path to its migration behavior island."
+  [path]
+  (or (some (fn [[pattern island]]
+              (when (re-find pattern path) island))
+            island-rules)
+      (throw (ex-info "No migration island rule matches governed path"
+                      {:path path}))))
+
 (def heavy-widget-pattern
   "Legacy widgets whose libraries should stay behind thin Helix adapters."
   #"(?:EdnEditor|VisualEditor|GraphExplorer|VectorsPage|DataPage|MusicPlayerView)")
@@ -38,12 +75,15 @@
   [{:keys [sources bridge-exports routes]}]
   (let [test-index (tests-by-source sources)
         file-records (map (fn [{:keys [path] :as source}]
-                            (shape/legacy-file-record
-                             (assoc source
-                                    :disposition (file-disposition path (:source source))
-                                    :tests (if (shape/test-source? path)
-                                             []
-                                             (get test-index (source-stem path) [])))))
+                            (let [island (classify-island path)]
+                              (shape/legacy-file-record
+                               (assoc source
+                                      :island island
+                                      :blocked-by (get island-blockers island [])
+                                      :disposition (file-disposition path (:source source))
+                                      :tests (if (shape/test-source? path)
+                                               []
+                                               (get test-index (source-stem path) []))))))
                           sources)
         suite-records (->> file-records
                            (filter #(= :test (:role %)))

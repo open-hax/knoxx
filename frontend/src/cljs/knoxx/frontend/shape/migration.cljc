@@ -1,6 +1,5 @@
 (ns knoxx.frontend.shape.migration
-  "Pure classification and record construction for the frontend strangler
-   manifest. This namespace knows source shapes; it performs no filesystem I/O."
+  "Pure structural record construction for the frontend strangler manifest."
   (:require [clojure.string :as str]))
 
 (def legacy-source-pattern
@@ -11,35 +10,6 @@
   "Pattern identifying governed Vitest source paths."
   #"\.(?:test|spec)\.tsx?$")
 
-(def island-rules
-  "Ordered source-path rules. First match wins, making every classification
-   deterministic and reviewable rather than a second hand-maintained list."
-  [[#"(?:chat-page|ChatPage|ChatComposer|ToolReceiptBlock|MemorySignalChip|LoungePanel|ConsolePanel)" :chat-workspace]
-   [#"(?:agent-audit|AgentsPage)" :agent-audit]
-   [#"(?:event-agent|EventAgent|EventsPage)" :event-agents]
-   [#"(?:ContractsPage|api/contracts|EdnEditor)" :contracts]
-   [#"(?:BroadcastStudio|components/studio)" :broadcast-studio]
-   [#"(?:CmsPage|VisualCms|components/cms|components/editor|components/review|ReviewQueue|ContentEditor|publication|viewContract|contractComposition)" :cms]
-   [#"(?:DataPage|DocumentsPage|IngestionPage|VectorsPage|RawGraphExport|GraphExplorer|ingestion-page|raw-graph-export|DataLakes)" :data]
-   [#"(?:OpsRoot|components/ops|SidebarOpsStatus)" :ops]
-   [#"(?:auth-context|useAuth)" :auth]
-   [#"(?:TranslationPage|translation-page)" :translations]
-   [#"(?:components/layout|context-bar)" :layout]
-   [#"(?:workspace-context|WorkspaceBrowser)" :workspace]
-   [#"(?:bridge/)" :bridge]
-   [#"(?:src/lib/)" :shared]
-   [#"(?:src/pages/)" :routes]
-   [#"(?:src/components/)" :components]
-   [#"(?:src/test/)" :test-infrastructure]])
-
-(def island-blockers
-  "Known migration dependencies between behavior islands."
-  {:agent-audit [:chat-workspace]
-   :broadcast-studio [:chat-workspace :audio-visualization-adapter]
-   :cms [:chat-workspace :codemirror-adapter :puck-adapter]
-   :contracts [:chat-workspace :codemirror-adapter]
-   :data [:chart-adapter :webgl-graph-adapter]})
-
 (defn normalize-path
   "Return a repository path with POSIX separators."
   [path]
@@ -49,15 +19,6 @@
   "Whether a governed TypeScript path is a Vitest suite."
   [path]
   (boolean (re-find test-source-pattern path)))
-
-(defn classify-island
-  "Assign one behavior island from the ordered path rules."
-  [path]
-  (or (some (fn [[pattern island]]
-              (when (re-find pattern path) island))
-            island-rules)
-      (throw (ex-info "No migration island rule matches governed path"
-                      {:path path}))))
 
 (defn file-role
   "Classify a governed file by its migration responsibility."
@@ -72,10 +33,9 @@
 
 (defn legacy-file-record
   "Construct one file record from classified migration attributes."
-  [{:keys [path bridge tests disposition]}]
+  [{:keys [path bridge tests disposition island blocked-by]}]
   (let [path (normalize-path path)
-        kind (if (str/ends-with? path ".tsx") :tsx :ts)
-        island (classify-island path)]
+        kind (if (str/ends-with? path ".tsx") :tsx :ts)]
     (cond-> {:record/id (str "file:" path)
              :path path
              :kind kind
@@ -84,7 +44,7 @@
              :disposition disposition
              :status :legacy
              :tests (vec (sort tests))
-             :blocked-by (get island-blockers island [])}
+             :blocked-by blocked-by}
       bridge (assoc :bridge bridge))))
 
 (defn bridge-export-record
@@ -118,11 +78,3 @@
    :island island
    :disposition disposition
    :status :legacy})
-
-(defn migration-surface-path?
-  "Whether a changed path makes a pull request part of the frontend migration."
-  [path]
-  (boolean
-   (or (re-find #"^frontend/src/.*\.(?:ts|tsx|cljs|cljc)$" path)
-       (re-find #"^frontend/(?:migration/|shadow-cljs\.edn$|package\.json$)" path)
-       (= path ".github/workflows/ci.yml"))))

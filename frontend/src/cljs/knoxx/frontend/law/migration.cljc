@@ -1,7 +1,6 @@
 (ns knoxx.frontend.law.migration
   "Malli contracts and monotonicity laws for the frontend migration ledger."
   (:require [clojure.set :as set]
-            [knoxx.frontend.shape.migration :as shape]
             [malli.core :as m]
             [malli.error :as me]))
 
@@ -137,6 +136,14 @@
                       (and (= :route (:kind %)) (= :legacy (:status %))))
                  records)))
 
+(defn migration-surface-path?
+  "Whether a changed path activates the migration progress contract."
+  [path]
+  (boolean
+   (or (re-find #"^frontend/src/.*\.(?:ts|tsx|cljs|cljc)$" path)
+       (re-find #"^frontend/(?:migration/|shadow-cljs\.edn$|package\.json$)" path)
+       (= path ".github/workflows/ci.yml"))))
+
 (defn- ratchet-context
   [{:keys [baseline current changed-paths infrastructure?]}]
   (let [file-kinds #{:ts :tsx}
@@ -158,7 +165,7 @@
      :added-exports (sort (set/difference current-exports baseline-exports))
      :regressed-routes (sort (set/intersection baseline-native-routes
                                                current-legacy-routes))
-     :touched? (some shape/migration-surface-path? changed-paths)
+     :touched? (some migration-surface-path? changed-paths)
      :before (legacy-surface-count baseline)
      :after (legacy-surface-count current)
      :infrastructure? infrastructure?}))

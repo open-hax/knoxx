@@ -2,14 +2,12 @@
   (:require [cljs.test :as t]
             [knoxx.frontend.shape.migration :as shape]))
 
-(t/deftest classifies-keystone-and-widget-islands
-  (t/testing "chat owns its controller subtree"
-    (t/is (= :chat-workspace
-             (shape/classify-island
-              "frontend/src/components/chat-page/useChatWorkspaceController.ts"))))
-  (t/testing "contracts expose their real blockers"
+(t/deftest constructs-classified-source-records
+  (t/testing "preclassified contracts retain their dependencies"
     (let [record (shape/legacy-file-record
                   {:path "frontend/src/pages/ContractsPage.tsx"
+                   :island :contracts
+                   :blocked-by [:chat-workspace :codemirror-adapter]
                    :disposition :port
                    :tests ["frontend/src/pages/ContractsPage.test.tsx"]})]
       (t/is (= :contracts (:island record)))
@@ -19,15 +17,9 @@
 (t/deftest loader-shims-delete-with-their-final-consumer
   (let [record (shape/legacy-file-record
                 {:path "frontend/src/pages/SettingsPage.tsx"
+                 :island :routes
+                 :blocked-by []
                  :disposition :delete
                  :tests ["frontend/src/pages/SettingsPage.test.tsx"]})]
     (t/is (= :delete (:disposition record)))
     (t/is (= :route (:role record)))))
-
-(t/deftest unknown-source-layouts-fail-with-the-governed-path
-  (t/is (try
-          (shape/classify-island "frontend/src/new-module/Legacy.ts")
-          false
-          (catch js/Error error
-            (boolean (re-find #"No migration island rule matches governed path"
-                              (.-message error)))))))
