@@ -7,7 +7,7 @@
   "Representative legacy file fixture."
   (shape/legacy-file-record
    {:path "frontend/src/pages/LegacyPage.tsx"
-    :source "export default function LegacyPage() {}"
+    :disposition :port
     :tests []}))
 
 (def legacy-route
@@ -37,7 +37,7 @@
 (t/deftest ratchet-rejects-new-legacy-and-route-regression
   (let [new-file (shape/legacy-file-record
                   {:path "frontend/src/pages/NewLegacyPage.tsx"
-                   :source "export default function NewLegacyPage() {}"
+                   :disposition :port
                    :tests []})
         regressed-native (assoc native-route
                                 :implementation "app/NativePage"
@@ -52,6 +52,16 @@
     (t/is (contains? laws :legacy-source/no-new-paths))
     (t/is (contains? laws :native-routes/no-regression))
     (t/is (contains? laws :migration-slice/must-progress))))
+
+(t/deftest removing-a-native-route-is-not-a-regression
+  (let [laws (->> (law/ratchet-violations
+                   {:baseline [native-route]
+                    :current []
+                    :changed-paths []
+                    :infrastructure? false})
+                  (map :law)
+                  set)]
+    (t/is (not (contains? laws :native-routes/no-regression)))))
 
 (t/deftest migration-slice-must-delete-or-declare-infrastructure
   (t/testing "an unchanged touched surface fails"

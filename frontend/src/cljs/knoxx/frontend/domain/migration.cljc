@@ -20,15 +20,30 @@
        (map (fn [[stem tests]] [stem (mapv :path tests)]))
        (into {})))
 
+(def heavy-widget-pattern
+  "Legacy widgets whose libraries should stay behind thin Helix adapters."
+  #"(?:EdnEditor|VisualEditor|GraphExplorer|VectorsPage|DataPage|MusicPlayerView)")
+
+(defn file-disposition
+  "Choose the migration's terminal action for a legacy source file."
+  [path source]
+  (cond
+    (str/includes? path "/bridge/") :delete
+    (str/includes? source "window.knoxx.frontend") :delete
+    (re-find heavy-widget-pattern path) :wrap
+    :else :port))
+
 (defn assemble-records
   "Build, validate, and deterministically order all manifest records."
   [{:keys [sources bridge-exports routes]}]
   (let [test-index (tests-by-source sources)
         file-records (map (fn [{:keys [path] :as source}]
                             (shape/legacy-file-record
-                             (assoc source :tests (if (shape/test-source? path)
-                                                    []
-                                                    (get test-index (source-stem path) [])))))
+                             (assoc source
+                                    :disposition (file-disposition path (:source source))
+                                    :tests (if (shape/test-source? path)
+                                             []
+                                             (get test-index (source-stem path) [])))))
                           sources)
         suite-records (->> file-records
                            (filter #(= :test (:role %)))

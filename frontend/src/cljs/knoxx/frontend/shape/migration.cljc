@@ -40,10 +40,6 @@
    :contracts [:chat-workspace :codemirror-adapter]
    :data [:chart-adapter :webgl-graph-adapter]})
 
-(def heavy-widget-pattern
-  "Legacy widgets whose libraries should stay behind thin Helix adapters."
-  #"(?:EdnEditor|VisualEditor|GraphExplorer|VectorsPage|DataPage|MusicPlayerView)")
-
 (defn normalize-path
   "Return a repository path with POSIX separators."
   [path]
@@ -74,20 +70,9 @@
     (str/includes? path "/src/components/") :component
     :else :support))
 
-(defn file-disposition
-  "Choose the intended terminal action for a legacy file. Loader shims and
-   bridge modules disappear; heavy widgets keep only a CLJS-owned adapter."
-  [path source]
-  (cond
-    (str/includes? path "/bridge/") :delete
-    (and (test-source? path) (str/includes? source "window.knoxx.frontend")) :delete
-    (str/includes? source "window.knoxx.frontend") :delete
-    (re-find heavy-widget-pattern path) :wrap
-    :else :port))
-
 (defn legacy-file-record
-  "Construct one file record from repository-relative path and source text."
-  [{:keys [path source bridge tests]}]
+  "Construct one file record from classified migration attributes."
+  [{:keys [path bridge tests disposition]}]
   (let [path (normalize-path path)
         kind (if (str/ends-with? path ".tsx") :tsx :ts)
         island (classify-island path)]
@@ -96,7 +81,7 @@
              :kind kind
              :island island
              :role (file-role path)
-             :disposition (file-disposition path source)
+             :disposition disposition
              :status :legacy
              :tests (vec (sort tests))
              :blocked-by (get island-blockers island [])}

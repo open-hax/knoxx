@@ -147,8 +147,8 @@
         baseline-native-routes (ids-of-kind
                                 (filter #(= :native (:status %)) baseline)
                                 #{:route})
-        current-native-routes (ids-of-kind
-                               (filter #(= :native (:status %)) current)
+        current-legacy-routes (ids-of-kind
+                               (filter #(= :legacy (:status %)) current)
                                #{:route})]
     {:ts-before (count-kind baseline :ts)
      :ts-after (count-kind current :ts)
@@ -156,8 +156,8 @@
      :tsx-after (count-kind current :tsx)
      :added-files (sort (set/difference current-files baseline-files))
      :added-exports (sort (set/difference current-exports baseline-exports))
-     :regressed-routes (sort (set/difference baseline-native-routes
-                                             current-native-routes))
+     :regressed-routes (sort (set/intersection baseline-native-routes
+                                               current-legacy-routes))
      :touched? (some shape/migration-surface-path? changed-paths)
      :before (legacy-surface-count baseline)
      :after (legacy-surface-count current)
