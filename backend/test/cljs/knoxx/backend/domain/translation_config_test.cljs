@@ -12,6 +12,7 @@
 (def gpt-model {:model/id "gpt-5.5" :model/label "GPT 5.5"})
 (def scoped-model {:model/id "xiaomi/mimo-v2-pro" :model/label "MiMo v2 Pro"})
 (def colon-model {:model/id "gemma4:31b" :model/label "Gemma 4 31B"})
+(def local-model {:model/id "gemma4:e2b" :model/label "Gemma 4 E2B"})
 
 (def global-config
   {:namespace :knoxx.translation
@@ -20,7 +21,7 @@
    :translation/source-locale :en
    :translation/default-review :required})
 
-(def catalog [glm-model gpt-model scoped-model colon-model])
+(def catalog [glm-model gpt-model scoped-model colon-model local-model])
 
 (def base-resources (into [global-config] catalog))
 
@@ -141,6 +142,14 @@
     (testing "the written resource keeps its policy identity"
       (is (= :pipeline-default (:policy/id written))))))
 
+(deftest deployment-model-override-is-validated-without-changing-authority
+  (let [index (index-of base-resources)
+        effective (config/apply-patch index {}
+                                      {:translation/model "gemma4:e2b"})]
+    (is (= "gemma4:e2b" (:translation/model effective)))
+    (is (= "glm-5" (:translation/model (config/resolve-config index {})))
+        "the deploy-time effective selection does not rewrite the resource")))
+
 (deftest patch-cannot-move-anything-but-the-model
   (let [index (index-of base-resources)]
     (doseq [[label patch] [["source locale" {:translation/source-locale :fr}]
@@ -193,7 +202,7 @@
       (testing "and it resolves against the real model catalog"
         (let [resolved (config/resolve-config index {})]
           (is (true? (m/validate law/TranslationPipelineConfig resolved)))
-          (is (string? (:translation/model resolved)))
+          (is (= "glm-5" (:translation/model resolved)))
           (testing "with the selected model present in the catalog"
             (is (contains? (:models index) (:translation/model resolved))))))
       (testing "the model catalog itself loaded"

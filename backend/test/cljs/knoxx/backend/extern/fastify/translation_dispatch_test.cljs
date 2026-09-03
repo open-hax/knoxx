@@ -97,7 +97,9 @@
                                   (operation ctx))
          :ensure-permission! (fn [actual-ctx permission]
                                (swap! checks conj [actual-ctx permission]))}
+        candidate-event-emitter (fn [_] (js/Promise.resolve {:ok true}))
         config {:session-project-name "review-stage"
+                :publication-content-root "/translation-content"
                 :openplanner-client-mode "rest"}
         dependencies
         {:evidence-store ::evidence-store
@@ -105,6 +107,7 @@
          :client ::client
          :observe-source-revision (constantly (js/Promise.resolve nil))
          :emit! (constantly (js/Promise.resolve nil))
+         :emit-candidate-events! candidate-event-emitter
          :resolve-agent-contract
          (fn [_config _agent-id]
            {:model "gemma4:31b"
@@ -145,7 +148,11 @@
                 :membership-id "member-1"
                 :project "review-stage"}
                (:scope @facade-call)))
-        (is (= ::split-store (get-in @facade-call [:deps :split-store]))))
+        (is (= ::split-store (get-in @facade-call [:deps :split-store])))
+        (is (= "/translation-content"
+               (get-in @facade-call [:deps :content-root])))
+        (is (identical? candidate-event-emitter
+                        (get-in @facade-call [:deps :emit-candidate-events!]))))
 
       (testing "authorization still precedes dispatch and the response succeeds"
         (is (= [[ctx adapter/dispatch-permission]] @checks))

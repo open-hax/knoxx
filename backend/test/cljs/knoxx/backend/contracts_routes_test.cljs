@@ -1,5 +1,8 @@
 (ns knoxx.backend.contracts-routes-test
-  (:require [clojure.string :as str]
+  (:require ["node:fs/promises" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            [clojure.string :as str]
             [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.routes.contracts :as contract-routes]
             [knoxx.backend.infra.routes.resources :as resource-routes]))
@@ -95,3 +98,329 @@
     (is (some #(str/includes? % "mutable runtime state") messages))
     (is (some #(str/includes? % "Role refs should use") messages))
     (is (some #(str/includes? % "Prompt references mutable :data") messages))))
+
+(deftest saved-publication-resources-select-the-affected-document
+  (is (= :knoxx.docs/entered
+         (resource-routes/admission-document-id
+          "documents" {:document/id :knoxx.docs/entered})))
+  (is (= :knoxx.docs/entered
+         (resource-routes/admission-document-id
+          "publications" {:publication/document :knoxx.docs/entered})))
+  (is (nil? (resource-routes/admission-document-id
+             "agents" {:contract/id "unrelated"}))))
+
+(deftest publication-resource-copy-rewrites-the-semantic-identity
+  (is (str/includes?
+       (resource-routes/update-resource-id-in-edn-text
+        "documents"
+        "{:document/id :open-hax.documents/source-doc\n :document/title \"Source\"}"
+        "copied_doc")
+       ":document/id :open-hax.documents/copied-doc"))
+  (is (str/includes?
+       (resource-routes/update-resource-id-in-edn-text
+        "gardens"
+        "{:garden/id :open-hax.gardens/source-garden\n :garden/title \"Source\"}"
+        "copied_garden")
+       ":garden/id :open-hax.gardens/copied-garden"))
+  (is (str/includes?
+       (resource-routes/update-resource-id-in-edn-text
+        "publications"
+        "{:publication/id :open-hax.publications/source-es\n :publication/document :open-hax.documents/source}"
+        "copied_fr")
+       ":publication/id :open-hax.publications/copied-fr")))
+
+(deftest ^:async saved-document-and-publication-trigger-exact-admission
+  (let [calls (atom [])
+        config {:session-project-name "knoxx-session"}
+        ctx {:orgId "org-1" :membershipId "membership-1"}
+        admit! (fn [scope selection]
+                 (swap! calls conj [scope selection])
+                 (js/Promise.resolve {:ok true :admitted 1 :failed 0}))]
+    (await (resource-routes/admit-saved-publication-resource!
+            config ctx "documents" {:document/id :knoxx.docs/entered} admit!))
+    (await (resource-routes/admit-saved-publication-resource!
+            config ctx "publications"
+            {:publication/document :knoxx.docs/entered} admit!))
+    (await (resource-routes/admit-saved-publication-resource!
+            config ctx "agents" {:contract/id "unrelated"} admit!))
+    (is (= [[{:org-id "org-1"
+              :membership-id "membership-1"
+              :project "knoxx-session"}
+             {:document :knoxx.docs/entered}]
+            [{:org-id "org-1"
+              :membership-id "membership-1"
+              :project "knoxx-session"}
+             {:document :knoxx.docs/entered}]]
+           @calls))))
+
+(deftest ^:async compatibility-put-enters-and-admits-a-document-resource
+  (let [root (await (.mkdtemp fs (.join path (.tmpdir os) "knoxx-resource-put-")))
+        response (atom nil)
+        calls (atom [])
+        config {:contracts-dir root :session-project-name "knoxx-session"}
+        ctx {:orgId "org-1" :membershipId "membership-1"}
+        edn-text (str "{:document/id :knoxx.docs/entered\n"
+                      " :document/title \"Entered\"\n"
+                      " :document/source-locale :en\n"
+                      " :document/source {:path \"source.md\"}\n"
+                      " :document/anchor? true}")]
+    (try
+      (await
+       (resource-routes/handle-agent-put-contract-edn
+        (fn [status body] (reset! response [status body]))
+        config "documents" "entered" edn-text ctx
+        (fn [scope selection]
+          (swap! calls conj [scope selection])
+          (js/Promise.resolve {:ok true :admitted 1 :failed 0}))))
+      (is (= 200 (first @response)))
+      (is (= [[{:org-id "org-1"
+                :membership-id "membership-1"
+                :project "knoxx-session"}
+               {:document :knoxx.docs/entered}]]
+             @calls))
+      (is (= edn-text
+             (await (.readFile fs (.join path root "documents" "entered.edn")
+                               "utf8"))))
+      (finally
+        (await (.rm fs root #js {:recursive true :force true}))))))
+
+(deftest automatic-admission-refuses-unattributed-resource-writes
+  (try
+    (resource-routes/admission-scope
+     {:session-project-name "knoxx-session"}
+     {:orgId "org-1"})
+    (is false "missing membership must fail closed")
+    (catch :default err
+      (is (= 403 (:status (ex-data err))))
+      (is (= "document_admission_context_required"
+             (:code (ex-data err)))))))
+
+(deftest ^:async automatic-admission-rejects-a-resolved-failure-result
+  (try
+    (await
+     (resource-routes/admit-saved-publication-resource!
+      {:session-project-name "knoxx-session"}
+      {:orgId "org-1" :membershipId "membership-1"}
+      "documents"
+      {:document/id :knoxx.docs/entered}
+      (fn [_scope _selection]
+        (js/Promise.resolve {:ok false :admitted 1 :failed 1}))))
+    (is false "a resolved failed admission must still fail the resource write")
+    (catch :default err
+      (is (= 503 (:status (ex-data err))))
+      (is (= "document_admission_failed" (:code (ex-data err))))
+      (is (= :knoxx.docs/entered (:document/id (ex-data err)))))))
+
+(defn- missing-file-rejection
+  []
+  (let [err (js/Error. "missing")]
+    (aset err "code" "ENOENT")
+    (js/Promise.reject err)))
+
+(defn- deferred
+  []
+  (let [resolve* (atom nil)
+        reject* (atom nil)
+        promise (js/Promise.
+                 (fn [resolve reject]
+                   (reset! resolve* resolve)
+                   (reset! reject* reject)))]
+    {:promise promise
+     :resolve! (fn [value] (@resolve* value))
+     :reject! (fn [error] (@reject* error))}))
+
+(defn- ^:async flush-promises!
+  []
+  (dotimes [_ 8]
+    (await (js/Promise.resolve nil))))
+
+(deftest ^:async entered-resource-preserves-new-bytes-when-admission-fails
+  (let [calls (atom [])
+        failure (ex-info "index admission rejected"
+                         {:status 503 :code "document_admission_failed"})]
+    (try
+      (await
+       (resource-routes/write-resource-and-admit!
+        fixture-config "/resources/doc.edn" "new-edn"
+        (fn []
+          (swap! calls conj [:admit])
+          (js/Promise.reject failure))
+        {:read-file! (fn [path]
+                       (swap! calls conj [:read path])
+                       (js/Promise.resolve "old-edn"))
+         :write-file! (fn [path text]
+                        (swap! calls conj [:write path text])
+                        (js/Promise.resolve nil))
+         :delete-file! (fn [path]
+                         (swap! calls conj [:delete path])
+                         (js/Promise.resolve nil))
+         :sync-index! (fn [_config]
+                        (swap! calls conj [:sync])
+                        (js/Promise.resolve {:ok true}))}))
+      (is false "admission rejection must propagate")
+      (catch :default err
+        (is (identical? failure err))))
+    (is (= [[:read "/resources/doc.edn"]
+            [:write "/resources/doc.edn" "new-edn"]
+            [:sync]
+            [:admit]]
+           @calls)
+        "admission may have durable effects, so its source bytes must remain")))
+
+(deftest ^:async entered-resource-preserves-new-file-when-admission-fails
+  (let [calls (atom [])]
+    (try
+      (await
+       (resource-routes/write-resource-and-admit!
+        fixture-config "/resources/new-doc.edn" "new-edn"
+        (fn [] (js/Promise.reject (js/Error. "index admission rejected")))
+        {:read-file! (fn [path]
+                       (swap! calls conj [:read path])
+                       (missing-file-rejection))
+         :write-file! (fn [path text]
+                        (swap! calls conj [:write path text])
+                        (js/Promise.resolve nil))
+         :delete-file! (fn [path]
+                         (swap! calls conj [:delete path])
+                         (js/Promise.resolve nil))
+         :sync-index! (fn [_config]
+                        (swap! calls conj [:sync])
+                        (js/Promise.resolve {:ok true}))}))
+      (is false "admission rejection must propagate")
+      (catch :default err
+        (is (= "index admission rejected" (.-message err)))))
+    (is (= [[:read "/resources/new-doc.edn"]
+            [:write "/resources/new-doc.edn" "new-edn"]
+            [:sync]]
+           @calls)
+        "a newly entered source remains available for retry/reconciliation")))
+
+(deftest ^:async entered-resource-returns-admission-without-rollback-on-success
+  (let [calls (atom [])
+        admission {:ok true :admitted 1 :failed 0}
+        result
+        (await
+         (resource-routes/write-resource-and-admit!
+          fixture-config "/resources/doc.edn" "new-edn"
+          (fn []
+            (swap! calls conj [:admit])
+            (js/Promise.resolve admission))
+          {:read-file! (fn [path]
+                         (swap! calls conj [:read path])
+                         (js/Promise.resolve "old-edn"))
+           :write-file! (fn [path text]
+                          (swap! calls conj [:write path text])
+                          (js/Promise.resolve nil))
+           :delete-file! (fn [path]
+                           (swap! calls conj [:delete path])
+                           (js/Promise.resolve nil))
+           :sync-index! (fn [_config]
+                          (swap! calls conj [:sync])
+                          (js/Promise.resolve {:ok true}))}))]
+    (is (= admission result))
+    (is (= [[:read "/resources/doc.edn"]
+            [:write "/resources/doc.edn" "new-edn"]
+            [:sync]
+            [:admit]]
+           @calls))))
+
+(deftest ^:async entered-resource-treats-a-resolved-index-failure-as-a-write-failure
+  (let [calls (atom [])
+        sync-results (atom [{:ok false :error "loader rejected the new file"}
+                            {:ok true}])]
+    (try
+      (await
+       (resource-routes/write-resource-and-admit!
+        fixture-config "/resources/doc.edn" "new-edn"
+        (fn []
+          (swap! calls conj [:admit])
+          (js/Promise.resolve {:ok true :admitted 1 :failed 0}))
+        {:read-file! (fn [path]
+                       (swap! calls conj [:read path])
+                       (js/Promise.resolve "old-edn"))
+         :write-file! (fn [path text]
+                        (swap! calls conj [:write path text])
+                        (js/Promise.resolve nil))
+         :delete-file! (fn [path]
+                         (swap! calls conj [:delete path])
+                         (js/Promise.resolve nil))
+         :sync-index! (fn [_config]
+                        (swap! calls conj [:sync])
+                        (let [result (first @sync-results)]
+                          (swap! sync-results subvec 1)
+                          (js/Promise.resolve result)))}))
+      (is false "a resolved {:ok false} sync must reject the write")
+      (catch :default err
+        (is (= "resource_index_sync_failed" (:code (ex-data err))))
+        (is (= :forward (:resource/index-sync-phase (ex-data err))))))
+    (is (= [[:read "/resources/doc.edn"]
+            [:write "/resources/doc.edn" "new-edn"]
+            [:sync]
+            [:write "/resources/doc.edn" "old-edn"]
+            [:sync]]
+           @calls)
+        "the old bytes and index are restored before the sync error escapes")))
+
+(deftest ^:async concurrent-put-admission-failure-preserves-ordered-source-history
+  (let [file-text (atom "original-edn")
+        calls (atom [])
+        first-admission (deferred)
+        failure (ex-info "first admission rejected"
+                         {:status 503 :code "document_admission_failed"})
+        io-deps
+        {:read-file! (fn [_path]
+                       (swap! calls conj [:read @file-text])
+                       (js/Promise.resolve @file-text))
+         :write-file! (fn [_path text]
+                        (reset! file-text text)
+                        (swap! calls conj [:write text])
+                        (js/Promise.resolve nil))
+         :delete-file! (fn [_path]
+                         (reset! file-text nil)
+                         (swap! calls conj [:delete])
+                         (js/Promise.resolve nil))
+         :sync-index! (fn [_config]
+                        (swap! calls conj [:sync])
+                        (js/Promise.resolve {:ok true}))}
+        rejected-write
+        (resource-routes/write-resource-and-admit!
+         fixture-config "/resources/shared.edn" "rejected-edn"
+         (fn []
+           (swap! calls conj [:admit "rejected-edn"])
+           (:promise first-admission))
+         io-deps)
+        successful-write
+        (resource-routes/write-resource-and-admit!
+         fixture-config "/resources/shared.edn" "successful-edn"
+         (fn []
+           (swap! calls conj [:admit "successful-edn"])
+           (js/Promise.resolve {:ok true :admitted 1 :failed 0}))
+         io-deps)]
+    (await (flush-promises!))
+    (testing "the newer PUT cannot snapshot or write while the older PUT is admitting"
+      (is (= "rejected-edn" @file-text))
+      (is (= [[:read "original-edn"]
+              [:write "rejected-edn"]
+              [:sync]
+              [:admit "rejected-edn"]]
+             @calls)))
+    ((:reject! first-admission) failure)
+    (let [rejected-error (try
+                           (await rejected-write)
+                           nil
+                           (catch :default err err))
+          successful-result (await successful-write)]
+      (is (identical? failure rejected-error))
+      (is (= {:ok true :admitted 1 :failed 0} successful-result))
+      (is (= "successful-edn" @file-text)
+          "the later successful PUT remains authoritative")
+      (is (= [[:read "original-edn"]
+              [:write "rejected-edn"]
+              [:sync]
+              [:admit "rejected-edn"]
+              [:read "rejected-edn"]
+              [:write "successful-edn"]
+              [:sync]
+              [:admit "successful-edn"]]
+             @calls)
+          "the later PUT snapshots the exact bytes retained after admission failure"))))

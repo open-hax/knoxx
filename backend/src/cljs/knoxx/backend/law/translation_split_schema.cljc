@@ -184,6 +184,7 @@
    [:translation-execution/thinking NonBlankString]
    [:translation-execution/system-prompt NonBlankString]
    [:translation-execution/tool-ids [:vector NonBlankString]]
+   [:translation-execution/tools-choice {:optional true} [:enum :required-first]]
    [:translation-execution/digest NonBlankString]])
 
 (def TranslationMemoryStatus

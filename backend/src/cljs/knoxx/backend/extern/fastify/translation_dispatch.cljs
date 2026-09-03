@@ -16,11 +16,14 @@
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.routes.translation-dispatch :as facade]
             [knoxx.backend.infra.stores.translation-evidence-registry :as evidence-registry]
             [knoxx.backend.infra.stores.translation-split-registry :as split-registry]
+            [knoxx.backend.infra.translation-agent-structured-output :as structured-output]
+            [knoxx.backend.infra.translation-event-writer :as translation-event-writer]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as publication-law]
             [knoxx.backend.law.translation-split :as split-law]
@@ -114,6 +117,15 @@
       (some-> (:session-project-name config) str not-empty)
       (assoc :project (str (:session-project-name config))))))
 
+(defn request-scope
+  "Public scope projection for app-owned commands composed beside this route.
+
+  Document admission uses the identical authenticated organization,
+  membership, and project coordinates before invoking translation dispatch;
+  keeping this projection here prevents the two HTTP adapters from drifting."
+  [config ctx]
+  (scope config ctx))
+
 (def translation-agent-id
   "The contract the publication translation trigger executes."
   "publication_translator")
@@ -133,10 +145,52 @@
       :model (:model resolved)
       :thinking (:thinking-level resolved)
       :system-prompt (:system-prompt resolved)
-      :tool-ids (:tool-ids resolved)})))
+      :tool-ids (:tool-ids resolved)
+      :tools-choice (:tools-choice resolved)})))
 
-(defn- ^:async dispatch!
-  [config ctx decoded dependencies]
+(defn- assembled-dispatch-dependencies
+  [config dependencies evidence-store split-store]
+  (merge
+   dependencies
+   {:evidence-store evidence-store
+    :split-store split-store
+    :content-root (:publication-content-root config)
+    :emit-candidate-events!
+    (or (:emit-candidate-events! dependencies)
+        translation-event-writer/emit-candidate-events!)
+    :translation-execution (or (:translation-execution dependencies)
+                               (translation-execution config dependencies))
+    :client (or (:client dependencies)
+                (openplanner-client/client config))
+    :clock (or (:clock dependencies)
+               (fn [] (.toISOString (js/Date.))))
+    :observe-source-revision
+    (or (:observe-source-revision dependencies)
+        (facade/source-revision-observer! config))
+    :emit! (or (:emit! dependencies)
+               (fn [event] (event-dispatch/dispatch! config event)))
+    :register-turn-settler!
+    (or (:register-turn-settler! dependencies)
+        agent-runner/register-event-turn-settler!)
+    :unregister-turn-settler!
+    (or (:unregister-turn-settler! dependencies)
+        agent-runner/unregister-event-turn-settler!)
+    :complete-turn!
+    (if (contains? dependencies :complete-turn!)
+      (:complete-turn! dependencies)
+      (fn [runtime-deps record turn]
+        (structured-output/complete-turn! config runtime-deps record turn)))
+    :digest-hex (or (:digest-hex dependencies) crypto/sha256-hex)}))
+
+(defn ^:async dispatch-selection-for-scope!
+  "Invoke translation dispatch from an already trusted tenant scope.
+
+   HTTP callers must use `dispatch-selection!`, which derives this scope from
+   the authenticated request. This sibling exists for generated-resource
+   admission: its scope was server-pinned on the originating admission event,
+   so forcing an HTTP loopback would add no authority and would create a
+   tools/Fastify dependency cycle."
+  [config dispatch-scope decoded dependencies]
   (let [evidence-store (or (:evidence-store dependencies)
                            (evidence-registry/current))
         split-store (or (:split-store dependencies)
@@ -151,35 +205,25 @@
       (throw (ex-info "translation split persistence is not configured"
                       {:status 503
                        :code "translation_split_persistence_unavailable"})))
+    ;; This outer adapter owns the runner/event dependencies because requiring
+    ;; them from the facade would close a tools -> sink -> facade cycle.
     (dispatch-translations!
      config
-     (merge dependencies
-            {:evidence-store evidence-store
-             :split-store split-store
-             :translation-execution (or (:translation-execution dependencies)
-                                        (translation-execution config dependencies))
-             :client (or (:client dependencies)
-                         (openplanner-client/client config))
-             :clock (or (:clock dependencies)
-                        (fn [] (.toISOString (js/Date.))))
-      ;; A dispatch pass can recover a completion it finds already finished, and
-      ;; that recovery goes through the same source-drift check as the worker's
-      ;; own report. Without the observer here, recovery would have no way to
-      ;; verify what it was about to record.
-             :observe-source-revision
-             (or (:observe-source-revision dependencies)
-                 (facade/source-revision-observer! config))
-      ;; The agent runner's two dependencies, assembled here rather than inside
-      ;; the facade — and not merely for the usual injectability reason. The
-      ;; event dispatcher's own require closure reaches the agent tool surface,
-      ;; which reaches the contract-backed `save_translation` sink, which reaches
-      ;; the facade: required from there this would be a cycle. Nothing requires
-      ;; this adapter, so the boundary is where it can be named.
-             :emit! (or (:emit! dependencies)
-                        (fn [event] (event-dispatch/dispatch! config event)))
-             :digest-hex (or (:digest-hex dependencies) crypto/sha256-hex)})
-     (scope config ctx)
-     decoded)))
+     (assembled-dispatch-dependencies
+      config dependencies evidence-store split-store)
+     dispatch-scope decoded)))
+
+(defn- ^:async dispatch!
+  [config ctx decoded dependencies]
+  (await (dispatch-selection-for-scope! config (scope config ctx)
+                                        decoded dependencies)))
+
+(defn ^:async dispatch-selection!
+  "Invoke the fully composed translation dispatcher for an already decoded
+  selection. Intended for sibling app commands such as document admission that
+  must reuse the same request context without an HTTP loopback."
+  [config ctx selection dependencies]
+  (await (dispatch! config ctx selection dependencies)))
 
 (defn- error-status
   "A status the error already carries wins; a contract violation is a 400,
@@ -229,6 +273,6 @@
              (fn []
                ;; Authorization is unconditional; a nil context is not access.
                ((:ensure-permission! handlers) ctx dispatch-permission)
-               (dispatch! config ctx (decode-request request)
-                          dependencies))))))))})
+               (dispatch-selection! config ctx (decode-request request)
+                                    dependencies))))))))})
    nil))

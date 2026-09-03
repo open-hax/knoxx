@@ -330,6 +330,10 @@
    adding a language a contract change in two places."
   :publication/translation-needed)
 
+(def event-actor
+  "Server-owned emitter identity for publication admission work."
+  "knoxx-publication")
+
 (def TranslationNeededEvent
   "The payload that says one document needs one locale at one revision.
 
@@ -356,6 +360,7 @@
    how event shape stops being reviewable."
   [:map {:closed true}
    [:event/type [:= event-type]]
+   [:event/actor [:= event-actor]]
    [:event/payload
     [:map {:closed true}
      [:document :qualified-keyword]
@@ -395,6 +400,7 @@
      :translation-agent/translation-needed-event
      TranslationNeededEvent
      {:event/type event-type
+      :event/actor event-actor
       :event/payload {:document (:dispatch/document record)
                       :source-locale source-locale
                       :locale locale

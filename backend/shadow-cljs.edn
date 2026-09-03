@@ -123,7 +123,9 @@
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                      :file "test/js/eta_mu_cli_test_stub.cjs"}
                           "@open-hax/openplanner-sdk" {:target :file
-                                                       :file "test/js/openplanner_sdk_test_stub.mjs"}}},
+                                                       :file "test/js/openplanner_sdk_test_stub.mjs"}
+                          "@open-hax/openplanner-sdk/mongo-vectors" {:target :file
+                                                                     :file "test/js/openplanner_sdk_test_stub.mjs"}}},
    :compiler-options
    {:output-feature-set :es-next,
     :macros {:knoxx.backend.macros true},
@@ -144,7 +146,9 @@
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                   :file "test/js/eta_mu_cli_test_stub.cjs"}
                           "@open-hax/openplanner-sdk" {:target :file
-                                                       :file "test/js/openplanner_sdk_test_stub.mjs"}}},
+                                                       :file "test/js/openplanner_sdk_test_stub.mjs"}
+                          "@open-hax/openplanner-sdk/mongo-vectors" {:target :file
+                                                                     :file "test/js/openplanner_sdk_test_stub.mjs"}}},
    :compiler-options
    {:output-feature-set :es-next,
     :optimizations :none,
@@ -160,7 +164,9 @@
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                      :file "test/js/eta_mu_cli_test_stub.cjs"}
                           "@open-hax/openplanner-sdk" {:target :file
-                                                       :file "test/js/openplanner_sdk_test_stub.mjs"}}},
+                                                       :file "test/js/openplanner_sdk_test_stub.mjs"}
+                          "@open-hax/openplanner-sdk/mongo-vectors" {:target :file
+                                                                     :file "test/js/openplanner_sdk_test_stub.mjs"}}},
     :compiler-options
     {:output-feature-set :es-next,
      :optimizations :none,

@@ -36,8 +36,26 @@
           registry (models/models-config config [])
           provider (get-in registry [:providers :ollama])]
       (is (= "http://127.0.0.1:11434/v1" (:baseUrl provider)))
+      (is (= "ollama" (:apiKey provider)))
       (is (false? (:authHeader provider)))
-      (is (contains? (set (map :id (:models provider))) "gemma4:e4b")))))
+      (is (contains? (set (map :id (:models provider))) "gemma4:e4b"))
+      (is (contains? (set (map :id (:models provider))) "gemma4:e2b"))
+      (is (= {:supportsDeveloperRole false
+              :supportsReasoningEffort false}
+             (models/per-model-compat config "gemma4:e2b")))
+      (is (= "off" (models/effective-thinking-level config "gemma4:e2b" "high"))))))
+
+(deftest models-config-registers-generic-only-ollama-without-an-auth-header
+  (testing "the generic provider map preserves Ollama's required dummy key defaults"
+    (let [config (assoc test-config
+                        :ollama-default-model "gemma4:e2b"
+                        :provider-base-urls {"ollama" "http://127.0.0.1:11434"})
+          registry (models/models-config config [])
+          provider (get-in registry [:providers :ollama])]
+      (is (= "http://127.0.0.1:11434/v1" (:baseUrl provider)))
+      (is (= "ollama" (:apiKey provider)))
+      (is (false? (:authHeader provider)))
+      (is (contains? (set (map :id (:models provider))) "gemma4:e2b")))))
 
 (deftest provider-model-config-routes-gpt-family-through-responses
   (testing "gpt-family models use OpenAI Responses with reasoning enabled"

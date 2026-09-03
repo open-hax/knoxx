@@ -8,7 +8,9 @@
             [knoxx.backend.infra.event-runtime :as event-runtime]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.law.contracts :as validator]
+            [knoxx.backend.infra.publication-admission-hook :as publication-admission-hook]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]))
 
@@ -38,6 +40,18 @@
           str
           (str/replace #"[^A-Za-z0-9._-]+" "_")
           (str/replace #"_+" "_")))
+
+(defn- qualified-id-with-local-slug
+  [value new-id]
+  (let [existing-ns (when (keyword? value) (namespace value))
+        local-name (str/replace (str new-id) #"_" "-")]
+    (keyword existing-ns local-name)))
+
+(defn- replace-qualified-resource-id
+  [edn-text id-key pattern new-id]
+  (let [parsed (reader/read-string edn-text)
+        value (qualified-id-with-local-slug (get parsed id-key) new-id)]
+    (str/replace edn-text pattern (str id-key " " value))))
 
 (defn- parsed-resource-id
   [resource-class value]
@@ -298,7 +312,8 @@
   [raw-class]
   (safe-resource-class raw-class))
 
-(defn- update-resource-id-in-edn-text
+(defn update-resource-id-in-edn-text
+  "Rewrite the copied resource's own identity while preserving its namespace."
   [resource-class edn-text new-id]
   (case (normalize-resource-class resource-class)
     "agents"
@@ -347,6 +362,13 @@
       (if (str/includes? edn-text ":model/id")
         (str/replace edn-text #":model/id\s+\"[^\"]+\"" (str ":model/id \"" model-id "\""))
         (str ":model/id \"" model-id "\"\n" edn-text)))
+
+    "documents" (replace-qualified-resource-id
+                 edn-text :document/id #":document/id\s+:[^\s\]}]+" new-id)
+    "gardens" (replace-qualified-resource-id
+               edn-text :garden/id #":garden/id\s+:[^\s\]}]+" new-id)
+    "publications" (replace-qualified-resource-id
+                    edn-text :publication/id #":publication/id\s+:[^\s\]}]+" new-id)
 
     edn-text))
 
@@ -530,94 +552,297 @@
         (do-json 404 {:detail (str "Contract not found: " contract-id)})
         (do-json 500 {:detail (str "Failed to read contract: " (.-message err))})))))
 
-(defn- ^:async handle-save-resource
-  [do-json config resource-kind resource-id edn-text]
-  (let [resource-class (normalize-resource-class resource-kind)
-        validation (validate-resource-edn resource-class edn-text)
-        validation-out (dissoc validation :contract)
-        parsed (:contract validation)
-        parsed-id (parsed-resource-id resource-class parsed)
-        route-id (str resource-id)]
-    (cond
-      (not (:ok validation))
-      (do-json 400 {:ok false
-                    :detail "Resource EDN failed validation"
-                    :validation validation-out})
+(defn admission-document-id
+  "Return the document whose translation inventory changed after a resource write."
+  [resource-class resource]
+  (case (normalize-resource-class resource-class)
+    "documents" (:document/id resource)
+    "publications" (:publication/document resource)
+    nil))
 
-      (and parsed-id (not= route-id parsed-id))
-      (do-json 400 {:ok false
-                    :detail "Refusing to save resource: record id does not match route resourceId"
-                    :routeResourceId route-id
-                    :ednResourceId parsed-id
-                    :validation validation-out})
+(defn admission-scope
+  "Project an authenticated write context into the trusted admission scope."
+  [config ctx]
+  (let [org-id (some-> (authz/ctx-org-id ctx) str not-empty)
+        membership-id (some-> (authz/ctx-membership-id ctx) str not-empty)]
+    (when-not (and org-id membership-id)
+      (throw (ex-info "automatic document admission requires an organization and membership context"
+                      {:status 403
+                       :code "document_admission_context_required"})))
+    (cond-> {:org-id org-id :membership-id membership-id}
+      (some-> (:session-project-name config) str not-empty)
+      (assoc :project (str (:session-project-name config))))))
 
-      :else
-      (try
-        (let [file-path (resources/resource-file-path config resource-class route-id)]
-          (await (resources/write-edn-file! file-path edn-text))
-          (await (sync-resource-index! config))
-          (do-json 200 {:ok true
-                        :resourceClass resource-class
-                        :resource/id route-id
-                        :ednText edn-text
-                        :resource (wire-value parsed)
-                        :validation validation-out}))
-        (catch :default err
-          (do-json 500 {:detail (str "Failed to save resource: " (.-message err))}))))))
+(defn ^:async admit-saved-publication-resource!
+  "Admit a saved document/publication through the app-owned internal hook."
+  [config ctx resource-class resource admit!]
+  (when-let [document-id (admission-document-id resource-class resource)]
+    (let [result (await (admit! (admission-scope config ctx)
+                                {:document document-id}))]
+      (when-not (and (true? (:ok result))
+                     (zero? (or (:failed result) 0))
+                     (pos? (or (:admitted result) 0)))
+        (throw (ex-info "automatic document admission did not complete"
+                        {:status 503
+                         :code "document_admission_failed"
+                         :document/id document-id
+                         :admission result})))
+      result)))
+
+(defn- missing-file-error?
+  [err]
+  (= "ENOENT" (or (.-code err) (:code (ex-data err)))))
+
+(defn- ^:async require-index-sync!
+  [sync-index! config file-path phase]
+  (let [result (await (sync-index! config))]
+    (when-not (true? (:ok result))
+      (throw (ex-info "resource index synchronization failed"
+                      {:status 503
+                       :code "resource_index_sync_failed"
+                       :resource/path file-path
+                       :resource/index-sync-phase phase
+                       :resource/index-sync-result result})))
+    result))
+
+(defonce ^:private resource-write-tails* (atom {}))
+
+(defn- ^:async run-after-resource-write!
+  [previous task-fn]
+  (when previous
+    (try
+      (await previous)
+      (catch :default _
+        nil)))
+  (await (task-fn)))
+
+(defn- ^:async recover-resource-write-tail!
+  [task]
+  (try
+    (await task)
+    (catch :default _
+      nil)))
+
+(defn- ^:async retire-resource-write-tail!
+  [file-path tail]
+  (await tail)
+  (swap! resource-write-tails*
+         (fn [tails]
+           (if (identical? tail (get tails file-path))
+             (dissoc tails file-path)
+             tails))))
+
+(defn- enqueue-resource-write!
+  "Run one complete write transaction after earlier work for the exact path."
+  [file-path task-fn]
+  ;; ClojureScript runs this deref/create/assoc sequence without yielding. The
+  ;; task itself first yields only after the tail has been installed, so another
+  ;; request cannot observe a stale predecessor on the single JS event loop.
+  (let [task (run-after-resource-write!
+              (get @resource-write-tails* file-path) task-fn)
+        tail (recover-resource-write-tail! task)]
+    (swap! resource-write-tails* assoc file-path tail)
+    (retire-resource-write-tail! file-path tail)
+    task))
+
+(defn- ^:async rollback-resource-write!
+  [config file-path previous write-file! delete-file! sync-index!]
+  (if (:exists? previous)
+    (await (write-file! file-path (:text previous)))
+    (try
+      (await (delete-file! file-path))
+      (catch :default delete-err
+        (when-not (missing-file-error? delete-err)
+          (throw delete-err)))))
+  (await (require-index-sync! sync-index! config file-path :rollback)))
+
+(defn- resource-write-rollback-error
+  [file-path write-error rollback-error]
+  (ex-info "resource write/index synchronization failed and its file rollback also failed"
+           {:status 500
+            :code "resource_write_rollback_failed"
+            :resource/path file-path
+            :write/error (or (ex-message write-error)
+                             (str write-error))
+            :rollback/error (or (ex-message rollback-error)
+                                (str rollback-error))}
+           rollback-error))
+
+(defn- ^:async write-resource-and-admit-once!
+  "Perform one resource write/admission transaction while its path is owned."
+  [config file-path edn-text admission!
+   {:keys [read-file! write-file! delete-file! sync-index!] :as _deps}]
+  (let [read-file! (or read-file! (fn [path] (.readFile fs path "utf8")))
+        write-file! (or write-file! resources/write-edn-file!)
+        delete-file! (or delete-file! (fn [path] (.unlink fs path)))
+        sync-index! (or sync-index! sync-resource-index!)
+        previous (try
+                   {:exists? true :text (await (read-file! file-path))}
+                   (catch :default err
+                     (if (missing-file-error? err)
+                       {:exists? false}
+                       (throw err))))]
+    (try
+      (await (write-file! file-path edn-text))
+      (await (require-index-sync! sync-index! config file-path :forward))
+      (catch :default err
+        (try
+          (await (rollback-resource-write!
+                  config file-path previous write-file! delete-file! sync-index!))
+          (catch :default rollback-err
+            (throw (resource-write-rollback-error file-path err rollback-err))))
+        (throw err)))
+    ;; Invoking admission crosses into durable event and queue effects that the
+    ;; filesystem cannot roll back. Preserve the exact entered bytes if that
+    ;; work fails so a retry or reconciliation pass still has its source.
+    (when admission! (await (admission!)))))
+
+(defn ^:async write-resource-and-admit!
+  "Persist one resource and run its admission action as one serialized write.
+
+  Filesystem and translation/event persistence cannot share a transaction. This
+  boundary therefore treats writing plus forward index synchronization as its
+  reversible phase: either failure restores the previous file (or removes a
+  newly created one), refreshes the index, and rethrows the original failure.
+
+  Invoking admission begins an irreversible phase because it may append events
+  or enqueue agents before failing. An admission failure is rethrown without
+  restoring or deleting the entered file. Its exact bytes remain available to
+  retry or reconciliation instead of leaving durable effects whose source has
+  vanished.
+
+  The snapshot, write, sync, admission, and any pre-admission rollback are
+  serialized by exact file path. A newer request therefore observes the bytes
+  actually left by the preceding request before publishing its own.
+
+  The optional dependency map exists for focused failure-path tests; production
+  uses the real resource writer, filesystem, and index sync functions."
+  ([config file-path edn-text admission!]
+   (write-resource-and-admit! config file-path edn-text admission! {}))
+  ([config file-path edn-text admission!
+    deps]
+   (await
+    (enqueue-resource-write!
+     file-path
+     (fn []
+       (write-resource-and-admit-once!
+        config file-path edn-text admission! deps))))))
+
+(defn ^:async handle-save-resource
+  ([do-json config resource-kind resource-id edn-text]
+   (handle-save-resource do-json config resource-kind resource-id edn-text nil nil))
+  ([do-json config resource-kind resource-id edn-text ctx admit!]
+   (let [resource-class (normalize-resource-class resource-kind)
+         validation (validate-resource-edn resource-class edn-text)
+         validation-out (dissoc validation :contract)
+         parsed (:contract validation)
+         parsed-id (parsed-resource-id resource-class parsed)
+         route-id (str resource-id)]
+     (cond
+       (not (:ok validation))
+       (do-json 400 {:ok false
+                     :detail "Resource EDN failed validation"
+                     :validation validation-out})
+
+       (and parsed-id (not= route-id parsed-id))
+       (do-json 400 {:ok false
+                     :detail "Refusing to save resource: record id does not match route resourceId"
+                     :routeResourceId route-id
+                     :ednResourceId parsed-id
+                     :validation validation-out})
+
+       :else
+       (try
+         (let [file-path (resources/resource-file-path config resource-class route-id)
+               admission (await
+                          (write-resource-and-admit!
+                           config file-path edn-text
+                           (when admit!
+                             (fn []
+                               (admit-saved-publication-resource!
+                                config ctx resource-class parsed admit!)))))]
+             (do-json 200 (cond-> {:ok true
+                                   :resourceClass resource-class
+                                   :resource/id route-id
+                                   :ednText edn-text
+                                   :resource (wire-value parsed)
+                                   :validation validation-out}
+                            admission (assoc :admission (wire-value admission)))))
+         (catch :default err
+           (let [status (or (:status (ex-data err)) 500)]
+             (do-json status {:ok false
+                              :detail (str "Failed to save and admit resource: " (.-message err))
+                              :code (:code (ex-data err))}))))))))
 
 (defn- ^:async handle-save-contract
-  [do-json config contract-class contract-id edn-text]
-  (let [klass (normalize-contract-class contract-class)
-        validation (validate-contract-edn klass edn-text)
-        validation-out (dissoc validation :contract)
-        parsed (:contract validation)
-        parsed-id (parsed-resource-id klass parsed)
-        route-id (str contract-id)]
-    (cond
-      (not (:ok validation))
-      (do-json 400 {:ok false
-                    :detail "Contract EDN failed validation"
-                    :validation validation-out})
+  ([do-json config contract-class contract-id edn-text]
+   (handle-save-contract do-json config contract-class contract-id edn-text nil nil))
+  ([do-json config contract-class contract-id edn-text ctx admit!]
+   (let [klass (normalize-contract-class contract-class)
+         validation (validate-contract-edn klass edn-text)
+         validation-out (dissoc validation :contract)
+         parsed (:contract validation)
+         parsed-id (parsed-resource-id klass parsed)
+         route-id (str contract-id)]
+     (cond
+       (not (:ok validation))
+       (do-json 400 {:ok false
+                     :detail "Contract EDN failed validation"
+                     :validation validation-out})
 
-      (and parsed-id (not= route-id parsed-id))
-      (do-json 400 {:ok false
-                    :detail "Refusing to save contract: record id does not match route contractId"
-                    :routeContractId route-id
-                    :ednContractId parsed-id
-                    :validation validation-out})
+       (and parsed-id (not= route-id parsed-id))
+       (do-json 400 {:ok false
+                     :detail "Refusing to save contract: record id does not match route contractId"
+                     :routeContractId route-id
+                     :ednContractId parsed-id
+                     :validation validation-out})
 
-      :else
-      (try
-        (let [file-path (resources/resource-file-path config klass route-id)]
-          (await (resources/write-edn-file! file-path edn-text))
-          (await (sync-resource-index! config))
-          (do-json 200 {:ok true
-                        :contractClass klass
-                        :ednText edn-text
-                        :contract (wire-value parsed)
-                        :validation validation-out}))
-        (catch :default err
-          (do-json 500 {:detail (str "Failed to save contract: " (.-message err))}))))))
+       :else
+       (try
+         (let [file-path (resources/resource-file-path config klass route-id)
+               admission (await
+                          (write-resource-and-admit!
+                           config file-path edn-text
+                           (when admit!
+                             (fn []
+                               (admit-saved-publication-resource!
+                                config ctx klass parsed admit!)))))]
+           (do-json 200 (cond-> {:ok true
+                                 :contractClass klass
+                                 :ednText edn-text
+                                 :contract (wire-value parsed)
+                                 :validation validation-out}
+                          admission (assoc :admission (wire-value admission)))))
+         (catch :default err
+           (let [status (or (:status (ex-data err)) 500)]
+             (do-json status {:ok false
+                              :detail (str "Failed to save and admit contract: "
+                                           (.-message err))
+                              :code (:code (ex-data err))}))))))))
 
 (defn- ^:async handle-copy-resource
-  [do-json config resource-kind source-id new-id]
-  (try
-    (let [source-edn (await (.readFile fs (resources/resource-file-path config resource-kind source-id) "utf8"))
-          text (or source-edn "")
-          cloned (update-resource-id-in-edn-text resource-kind text new-id)]
-      (await (handle-save-resource do-json config resource-kind new-id cloned)))
-    (catch :default err
-      (do-json 500 {:detail (str "Failed to copy resource: " (.-message err))}))))
+  ([do-json config resource-kind source-id new-id]
+   (handle-copy-resource do-json config resource-kind source-id new-id nil nil))
+  ([do-json config resource-kind source-id new-id ctx admit!]
+   (try
+     (let [source-edn (await (.readFile fs (resources/resource-file-path config resource-kind source-id) "utf8"))
+           text (or source-edn "")
+           cloned (update-resource-id-in-edn-text resource-kind text new-id)]
+       (await (handle-save-resource do-json config resource-kind new-id cloned ctx admit!)))
+     (catch :default err
+       (do-json 500 {:detail (str "Failed to copy resource: " (.-message err))})))))
 
 (defn- ^:async handle-copy-contract
-  [do-json config contract-class source-id new-id]
-  (try
-    (let [source-edn (await (.readFile fs (resources/resource-file-path config contract-class source-id) "utf8"))
-          text (or source-edn "")
-          cloned (update-resource-id-in-edn-text contract-class text new-id)]
-      (await (handle-save-contract do-json config contract-class new-id cloned)))
-    (catch :default err
-      (do-json 500 {:detail (str "Failed to copy contract: " (.-message err))}))))
+  ([do-json config contract-class source-id new-id]
+   (handle-copy-contract do-json config contract-class source-id new-id nil nil))
+  ([do-json config contract-class source-id new-id ctx admit!]
+   (try
+     (let [source-edn (await (.readFile fs (resources/resource-file-path config contract-class source-id) "utf8"))
+           text (or source-edn "")
+           cloned (update-resource-id-in-edn-text contract-class text new-id)]
+       (await (handle-save-contract do-json config contract-class new-id cloned ctx admit!)))
+     (catch :default err
+       (do-json 500 {:detail (str "Failed to copy contract: " (.-message err))})))))
 
 (defn- handle-validate-resource
   [do-json resource-kind edn-text]
@@ -653,32 +878,47 @@
   (do-json 200 (assoc (wire-validation (validate-contract-edn contract-class edn-text))
                       :contractClass (normalize-contract-class contract-class))))
 
-(defn- ^:async handle-agent-put-contract-edn
-  [do-text config contract-class contract-id edn-text]
-  (let [klass (normalize-contract-class contract-class)
-        validation (validate-contract-edn klass edn-text)]
-    (if-not (:ok validation)
-      (do-text 422 (pr-str {:ok false
-                            :errors (:errors validation)
-                            :warnings (:warnings validation)}))
-      (let [parsed (:contract validation)
-            parsed-id (parsed-resource-id klass parsed)
-            route-id (str contract-id)]
-        (if (not= route-id parsed-id)
-          (do-text 400 (pr-str {:ok false
-                                :error "contract_id_mismatch"
-                                :routeContractId route-id
-                                :ednContractId parsed-id}))
-          (try
-            (await (resources/write-edn-file! (resources/resource-file-path config klass route-id) edn-text))
-            (await (sync-resource-index! config))
-            (do-text 200 (pr-str {:ok true
-                                  :contractClass klass
-                                  :contract/id route-id
-                                  :contract parsed
-                                  :warnings (:warnings validation)}))
-            (catch :default err
-              (do-text 500 (str ";; Failed to save contract: " (.-message err))))))))))
+(defn ^:async handle-agent-put-contract-edn
+  "Compatibility PUT handler retained for agent clients during resource migration."
+  ([do-text config contract-class contract-id edn-text]
+   (handle-agent-put-contract-edn do-text config contract-class contract-id edn-text nil nil))
+  ([do-text config contract-class contract-id edn-text ctx admit!]
+   (let [klass (normalize-contract-class contract-class)
+         validation (validate-contract-edn klass edn-text)]
+     (if-not (:ok validation)
+       (do-text 422 (pr-str {:ok false
+                             :errors (:errors validation)
+                             :warnings (:warnings validation)}))
+       (let [parsed (:contract validation)
+             parsed-id (parsed-resource-id klass parsed)
+             route-id (str contract-id)]
+         (if (and parsed-id (not= route-id parsed-id))
+           (do-text 400 (pr-str {:ok false
+                                 :error "contract_id_mismatch"
+                                 :routeContractId route-id
+                                 :ednContractId parsed-id}))
+           (try
+             (let [admission
+                   (await
+                    (write-resource-and-admit!
+                     config
+                     (resources/resource-file-path config klass route-id)
+                     edn-text
+                     (when admit!
+                       (fn []
+                         (admit-saved-publication-resource!
+                          config ctx klass parsed admit!)))))]
+               (do-text 200 (pr-str (cond-> {:ok true
+                                             :contractClass klass
+                                             :contract/id route-id
+                                             :contract parsed
+                                             :warnings (:warnings validation)}
+                                      admission (assoc :admission admission)))))
+             (catch :default err
+               (let [status (or (:status (ex-data err)) 500)]
+                 (do-text status
+                          (str ";; Failed to save and admit contract: "
+                               (or (.-message err) (ex-message err)))))))))))))
 
 (defn- handle-ui-actions
   [do-json config actor-id surface]
@@ -808,7 +1048,9 @@
           (str/blank? contract-id) (text-response! reply 400 ";; contractId is required")
           (not (:ok safe-kind)) (text-response! reply 400 (str ";; Invalid contract class: " (:error safe-kind)))
           (not (:ok safe)) (text-response! reply 400 (str ";; Invalid contractId: " (:error safe)))
-          :else (handle-agent-put-contract-edn (partial text-response! reply) config (:class safe-kind) (:id safe) edn-text))))))
+          :else (handle-agent-put-contract-edn (partial text-response! reply) config
+                                               (:class safe-kind) (:id safe) edn-text
+                                               ctx publication-admission-hook/admit!))))))
 
 (defn- register-agent-contract-routes!
   [app runtime config helpers]
@@ -866,7 +1108,8 @@
           (str/blank? resource-id) (do-json reply 400 {:detail "resourceId is required"})
           (not (:ok safe-kind)) (do-json reply 400 {:detail "Invalid resource kind" :error (:error safe-kind)})
           (not (:ok safe)) (do-json reply 400 {:detail "Invalid resourceId" :error (:error safe)})
-          :else (handle-save-resource (partial do-json reply) config (:class safe-kind) (:id safe) (body-edn-text body)))))))
+          :else (handle-save-resource (partial do-json reply) config (:class safe-kind) (:id safe)
+                                      (body-edn-text body) ctx publication-admission-hook/admit!))))))
 
 (defn- admin-validate-resource-route
   [runtime do-json do-err do-ctx do-perm]
@@ -895,7 +1138,9 @@
           (or (str/blank? source-id) (str/blank? new-id)) (do-json reply 400 {:detail "source resourceId and newId are required"})
           (not (:ok safe-source)) (do-json reply 400 {:detail "Invalid source resourceId" :error (:error safe-source)})
           (not (:ok safe-new)) (do-json reply 400 {:detail "Invalid newId" :error (:error safe-new)})
-          :else (handle-copy-resource (partial do-json reply) config (:class safe-kind) (:id safe-source) (:id safe-new)))))))
+          :else (handle-copy-resource (partial do-json reply) config (:class safe-kind)
+                                      (:id safe-source) (:id safe-new)
+                                      ctx publication-admission-hook/admit!))))))
 
 (defn- admin-list-contracts-route
   [runtime config do-json do-err do-ctx do-perm]
@@ -935,7 +1180,8 @@
           (str/blank? contract-id) (do-json reply 400 {:detail "contractId is required"})
           (not (:ok safe-kind)) (do-json reply 400 {:detail "Invalid contract class" :error (:error safe-kind)})
           (not (:ok safe)) (do-json reply 400 {:detail "Invalid contractId" :error (:error safe)})
-          :else (handle-save-contract (partial do-json reply) config (:class safe-kind) (:id safe) (body-edn-text body)))))))
+          :else (handle-save-contract (partial do-json reply) config (:class safe-kind) (:id safe)
+                                      (body-edn-text body) ctx publication-admission-hook/admit!))))))
 
 (defn- admin-validate-contract-route
   [runtime do-json do-err do-ctx do-perm]
@@ -964,7 +1210,9 @@
           (or (str/blank? source-id) (str/blank? new-id)) (do-json reply 400 {:detail "source contractId and newId are required"})
           (not (:ok safe-source)) (do-json reply 400 {:detail "Invalid source contractId" :error (:error safe-source)})
           (not (:ok safe-new)) (do-json reply 400 {:detail "Invalid newId" :error (:error safe-new)})
-          :else (handle-copy-contract (partial do-json reply) config (:class safe-kind) (:id safe-source) (:id safe-new)))))))
+          :else (handle-copy-contract (partial do-json reply) config (:class safe-kind)
+                                      (:id safe-source) (:id safe-new)
+                                      ctx publication-admission-hook/admit!))))))
 
 (defn- register-admin-resource-routes!
   [app runtime config helpers]

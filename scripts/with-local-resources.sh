@@ -13,7 +13,9 @@ if [[ $# -eq 0 ]]; then
   printf '  contracts: %s\n' "$CONTRACTS_DIR"
   printf '  MongoDB:   127.0.0.1:27017/%s (credential redacted)\n' "$MONGODB_DB"
   printf '  Proxx:     %s (credential redacted)\n' "$PROXX_BASE_URL"
-  printf '  Ollama:    %s (%s)\n' "$OLLAMA_BASE_URL" "$OLLAMA_DEFAULT_MODEL"
+  printf '  Ollama:    %s (agents: %s; embeddings: %s/%s)\n' \
+    "$OLLAMA_BASE_URL" "$OLLAMA_DEFAULT_MODEL" \
+    "$EMBED_PROVIDER_MODEL" "$EMBED_PROVIDER_DIMENSIONS"
   exit 0
 fi
 

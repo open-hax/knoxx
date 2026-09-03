@@ -38,6 +38,23 @@
             fixture/digest
             (assoc snapshot :translation-execution/model "another-model"))))))
 
+(t/deftest optional-tools-choice-is-content-addressed-without-invalidating-legacy-snapshots
+  (let [legacy (split/execution-snapshot fixture/digest execution-input)
+        required (split/execution-snapshot fixture/digest
+                                           (assoc execution-input
+                                                  :tools-choice :required-first))]
+    (t/is (= legacy (split/assert-execution-integrity! fixture/digest legacy)))
+    (t/is (= :required-first
+             (:translation-execution/tools-choice required)))
+    (t/is (not= (:translation-execution/digest legacy)
+                (:translation-execution/digest required)))
+    (t/is (thrown-with-msg?
+           js/Error
+           #"execution snapshot digest"
+           (split/assert-execution-integrity!
+            fixture/digest
+            (dissoc required :translation-execution/tools-choice))))))
+
 (t/deftest memory-outcomes-are-truthful-and-closed
   (t/is (= :empty
            (:translation-memory-snapshot/status

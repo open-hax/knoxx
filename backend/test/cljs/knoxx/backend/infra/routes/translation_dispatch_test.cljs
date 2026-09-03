@@ -551,6 +551,15 @@
                    (index {:status :active :locales [:es]})
                    [(assoc intent :publication/state :archived)]))))
 
+    (testing "a draft is translatable but a withheld intent is not"
+      (is (= [(assoc intent :publication/state :draft)]
+             (facade/admissible-intents
+              (index {:status :active :locales [:es]})
+              [(assoc intent :publication/state :draft)])))
+      (is (empty? (facade/admissible-intents
+                   (index {:status :active :locales [:es]})
+                   [(assoc intent :publication/state :withheld)]))))
+
     (testing "a dangling garden reference is not"
       (is (empty? (facade/admissible-intents
                    {:documents {:knoxx.docs/probe {}} :gardens {}} [intent]))))))

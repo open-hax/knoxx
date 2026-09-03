@@ -84,7 +84,7 @@
     (if publication (select-publication intents publication) intents)))
 
 (defn admissible-intents
-  "The intents that could actually reconcile to a public materialization.
+  "The intents that may derive translation work.
 
    `domain.publication-gate` states outright that it decides only the
    *evidential* half of admissibility and assumes the structural half holds
@@ -95,11 +95,13 @@
    it: it asks only whether the intent publishes and needs translating, which
    both remain true.
 
-   `law.publication/admissible-publication?` is the contract that owns this
-   question, so it is called rather than re-derived. Filtering here rather than
-   inside the gate keeps the two halves where their own docstrings put them."
+   `law.publication/translatable-publication?` owns this question. It admits
+   review-bound drafts without making them reconcilable, and refuses withheld,
+   archived, dangling, inactive, or unsupported-locale relations. Filtering
+   here rather than inside the gate keeps structural and evidential decisions
+   at their respective boundaries."
   [index intents]
-  (filterv #(publication-law/admissible-publication? index %) intents))
+  (filterv #(publication-law/translatable-publication? index %) intents))
 
 (defn- referenced-documents
   "The document records the given intents point at.

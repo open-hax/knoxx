@@ -16,19 +16,30 @@
   not evidence that no batch exists, and adopting or retrying it wrongly
   translates twice. Emitting an event has no such window. The dispatcher is
   in-process, the event id is derived from the run id so a re-emit is deduped
-  rather than doubled, and a throw means no trigger ran. So a failure here is
-  conclusively retriable, and there is nothing to observe or adopt.
+  rather than doubled, and a throw means the dispatcher did not confirm a
+  successful trigger action. So a failure here is retriable, and there is no
+  remote batch to observe or adopt.
 
-  What this path does *not* have is the worker path's recovery from a settled
-  batch. `recover-settled-batch!` can re-read a batch and learn that a document
-  finished even when the completion bookkeeping was lost; an agent session has
-  no equivalent read here, so a claim whose session died mid-run stays in flight
-  and needs an operator. That is a real gap and it is recorded rather than
-  papered over — see `known-gap` below."
-  (:require [knoxx.backend.domain.node.crypto :as crypto]
+  Durable replay closes the process-local queue's restart gap. An accepted
+  claim is re-announced with the same deterministic event id: the live process'
+  dispatcher deduplicates it, while a restarted process has no in-memory event
+  owner and enqueues it again. The immutable split turn is reused when present
+  and reconstructed only when the process died before admitting it.
+
+  The runner's full-turn settlement callback also moves an exact claim that did
+  not complete to retriable failure. That covers provider rejection, tool
+  rejection, partial submission, and a successful-looking turn that simply did
+  not produce the claimed complete candidate set. What remains is scheduling:
+  unlike the worker path there is no internal retry timer, so the next admission
+  or reconciliation performs the retry. That narrower gap is recorded rather
+  than papered over — see `known-gap` below."
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
+            [knoxx.backend.infra.translation-agent-sink :as agent-sink]
             [knoxx.backend.infra.translation-evidence-store :as store]
             [knoxx.backend.infra.translation-split-store :as split-store]
+            [knoxx.backend.infra.translation-dictionary :as translation-dictionary]
             [knoxx.backend.law.translation-agent :as agent-law]
             [knoxx.backend.law.translation-dispatch :as law]
             [knoxx.backend.law.translation-source-split :as source-split]
@@ -41,14 +52,14 @@
    rather than leaving it to be rediscovered. A permanently visible known gap is
    the house rule; a silently narrowed one is how a reviewer approves a
    guarantee that was never made."
-  {:gap/id :translation-agent-dispatch/no-session-recovery
+  {:gap/id :translation-agent-dispatch/no-autonomous-retry-timer
    :gap/summary
-   (str "an agent-dispatched translation claim whose session dies mid-run stays"
-        " in flight: there is no session read that can settle it, so that"
-        " revision needs an operator")
+   (str "a failed agent turn is durably made retriable, but Knoxx does not run"
+        " an internal translation retry timer; the next document admission,"
+        " deployment admission, or explicit reconciliation starts the retry")
    :gap/consequence
-   (str "the publication gate keeps reporting the translation missing while"
-        " every later pass answers duplicate")})
+   (str "failed work is visible and no longer stranded in flight, but it waits"
+        " for the next reconciliation trigger rather than retrying on a timer")})
 
 (defn event-id
   "The dispatcher's dedup key for one attempt's translation-needed event.
@@ -125,9 +136,11 @@
   (try
     (let [current-candidate-set-ids
           (await (current-candidate-set-ids! evidence-store manifest))
-          examples (await (split-store/applicable-memory!
-                           translation-store
-                           (memory-scope manifest current-candidate-set-ids)))]
+          dictionary (await (translation-dictionary/current!
+                             translation-store
+                             (memory-scope manifest current-candidate-set-ids)))
+          examples (mapv :translation-dictionary/evidence
+                         (:translation-dictionary/entries dictionary))]
       (split-law/memory-snapshot {:status (if (seq examples) :found :empty)
                                   :examples examples}))
     (catch :default err
@@ -162,87 +175,238 @@
                :memory memory})]
     (await (split-store/admit-turn! split-store turn))))
 
+(defn- ^:async fail-run!
+  [evidence-store record detail]
+  {:dispatch/outcome :dispatch/failed
+   :dispatch/record (or (await (store/resolve-dispatch!
+                                evidence-store record :dispatch/failed detail))
+                        record)
+   :dispatch/detail detail})
+
+(defn- accepted-run
+  [bound run-id]
+  {:dispatch/outcome :dispatch/accepted
+   :dispatch/record bound
+   :translation/run-id run-id})
+
+(defn- duplicate-run
+  [bound run-id]
+  {:dispatch/outcome :dispatch/duplicate
+   :dispatch/record bound
+   :translation/run-id run-id
+   :dispatch/detail
+   (str "the translation event is already owned by this live process; durable"
+        " replay will enqueue it after a restart")})
+
+(defn- turn-settlement-detail
+  [settlement]
+  (if (= :failed (:event-turn/status settlement))
+    (str "translation agent turn failed before completing its claim: "
+         (or (:event-turn/detail settlement) "unknown agent turn failure"))
+    (str "translation agent turn completed without producing the claimed"
+         " complete translation")))
+
+(defn- recovery-error-detail
+  [err]
+  (or (some-> (ex-message err) str str/trim not-empty)
+      "structured translation completion failed"))
+
+(defn- ^:async recovery-attempt!
+  [recover!]
+  (try
+    {:recovery/result (await (recover!))}
+    (catch :default err
+      {:recovery/error err})))
+
+(defn- ^:async recover-turn-obligation!
+  "Try durable settlement first, then the structured provider boundary.
+
+   The second step also runs when durable settlement threw. That exception can
+   mean the receipt became immutable before candidate-event projection failed;
+   replaying through the structured adapter authenticates the stored final pair
+   and repairs that projection without asking the model for new bytes."
+  [{:keys [complete-turn!] :as deps} bound turn]
+  (let [durable (await (recovery-attempt!
+                        #(agent-sink/settle-durable-turn! deps bound turn)))]
+    (if (and (nil? (:recovery/error durable))
+             (:recovery/result durable))
+      nil
+      (if complete-turn!
+        (:recovery/error
+         (await (recovery-attempt! #(complete-turn! deps bound turn))))
+        (:recovery/error durable)))))
+
+(defn- ^:async settle-bound-turn!
+  "Complete a durable translation obligation or make its exact claim retriable.
+
+   A successful `save_translation` completion has already moved the claim to
+   `:dispatch/completed`. Before failing any still-accepted turn, recover a
+   complete durable prefix and, when production supplied one, run the provider's
+   validated structured-output adapter for only the missing admitted splits.
+
+   The adapter cannot declare success: after it returns, the stored dispatch is
+   re-read and only the canonical `:dispatch/completed` state satisfies the
+   obligation. A rejected provider/schema result, partial submission, or prose
+   imitation therefore leaves the exact attempt accepted until this callback
+   moves it to retriable failure. A delayed callback cannot touch a replacement
+   attempt because `resolve-dispatch!` compares immutable attempt identity, not
+   only the shared dispatch key."
+  [{:keys [evidence-store] :as deps} bound turn settlement]
+  (let [recovery-error (await (recover-turn-obligation! deps bound turn))
+        current (await (store/dispatch-for-batch!
+                        evidence-store (:dispatch/batch-id bound)))]
+    (if (= :dispatch/completed (:dispatch/outcome current))
+      ;; A durable receipt is irreversible. Keep callback delivery visibly
+      ;; pending if its idempotent event repair still failed; the next admission
+      ;; also performs tenant-scoped completed-event repair before new writes.
+      (when recovery-error
+        (throw recovery-error))
+      (await (store/resolve-dispatch!
+              evidence-store bound :dispatch/failed
+              (str (turn-settlement-detail settlement)
+                   (when recovery-error
+                     (str "; structured completion failed: "
+                          (recovery-error-detail recovery-error))))))))
+  true)
+
+(defn- ^:async register-bound-turn-settler!
+  [{:keys [register-turn-settler!] :as deps} event-id bound turn]
+  (when register-turn-settler!
+    (await (register-turn-settler!
+            event-id
+            (fn [settlement]
+              (settle-bound-turn! deps bound turn settlement))))))
+
+(defn- ^:async unregister-bound-turn-settler!
+  [{:keys [unregister-turn-settler!]} event-id registered?]
+  (when (and registered? unregister-turn-settler!)
+    (await (unregister-turn-settler! event-id))))
+
+(defn- ^:async handle-emission-result!
+  [{:keys [evidence-store] :as deps} bound run-id event-id' registered? dispatched]
+  (cond
+    (seq (:matchedTriggers dispatched))
+    (accepted-run bound run-id)
+
+    (:skipped dispatched)
+    (do
+      ;; Cached settlement may resolve this old attempt during registration. A
+      ;; sealed event enqueues nothing, so the re-armed callback has no owner.
+      (when (and (:event-turn/redelivered? registered?)
+                 (:event-turn/redelivery-accepted? registered?))
+        (await (unregister-bound-turn-settler!
+                deps event-id' registered?)))
+      (duplicate-run bound run-id))
+
+    :else
+    (do
+      (await (unregister-bound-turn-settler!
+              deps event-id' registered?))
+      (await (fail-run!
+              evidence-store bound
+              (str "no enabled trigger subscribes to " agent-law/event-type
+                   ", so nothing will translate this claim"))))))
+
+(defn- ^:async emit-bound-turn!
+  [{:keys [emit!] :as deps} bound turn run-id]
+  (let [event-id' (event-id run-id)
+        event (assoc (agent-law/translation-needed-event bound turn)
+                     :event/id event-id')
+        registered? (await (register-bound-turn-settler!
+                            deps event-id' bound turn))]
+    (try
+      (let [dispatched (await (emit! event))]
+        (await (handle-emission-result!
+                deps bound run-id event-id' registered? dispatched)))
+      (catch :default err
+        (await (unregister-bound-turn-settler! deps event-id' registered?))
+        (throw err)))))
+
+(defn- ^:async emit-bound-run!
+  [deps bound source-content run-id]
+  (let [turn (await (admit-translation-turn! deps bound source-content))]
+    (await (emit-bound-turn! deps bound turn run-id))))
+
+(defn- recovered-durable-run
+  [bound run-id settled]
+  (let [settled-record (or (:dispatch/record settled) bound)]
+    (cond-> (assoc settled
+                   :dispatch/outcome
+                   (cond
+                     (:translation/receipt settled) :dispatch/completed
+                     (:dispatch/record settled) (:dispatch/outcome settled-record)
+                     :else :dispatch/duplicate)
+                   :dispatch/record settled-record
+                   :translation/run-id run-id)
+      (:translation/receipt settled)
+      (assoc :dispatch/detail
+             (str "settled the complete durable candidate set without"
+                  " rerunning the translation provider")))))
+
+(defn- ^:async recover-bound-run!
+  "Settle a complete durable prefix, otherwise replay the exact provider event.
+
+   Reusing the persisted turn preserves its original dictionary snapshot. A
+   missing turn is the safe bind-before-admission crash window and is completed
+   before either recovery path continues."
+  [{:keys [split-store] :as deps} bound source-content run-id]
+  (let [turn (or (await (split-store/turn-for-run! split-store run-id))
+                 (await (admit-translation-turn! deps bound source-content)))
+        settled (await (agent-sink/settle-durable-turn! deps bound turn))]
+    (if settled
+      (recovered-durable-run bound run-id settled)
+      (await (emit-bound-turn! deps bound turn run-id)))))
+
+(declare start-run!)
+
+(defn- ^:async recover-run!
+  "Repair any accepted-claim crash window, then replay its deterministic event."
+  [{:keys [evidence-store digest-hex] :as deps} record source-content]
+  (let [expected-run-id (agent-law/run-id record digest-hex)
+        bound-run-id (:dispatch/batch-id record)]
+    (cond
+      (and bound-run-id (not= expected-run-id bound-run-id))
+      {:dispatch/outcome :dispatch/duplicate
+       :dispatch/record record
+       :dispatch/detail
+       (str "the accepted claim is bound to a non-agent producer run and cannot"
+            " be replayed through the translation agent")}
+
+      bound-run-id
+      (try
+        (await (recover-bound-run! deps record source-content bound-run-id))
+        (catch :default err
+          (await (fail-run!
+                  evidence-store record
+                  (or (not-empty (str (ex-message err)))
+                      "the accepted translation event could not be replayed")))))
+
+      :else
+      ;; The first process can die after the atomic claim but before binding the
+      ;; deterministic run. `start-run!` binds exactly that same attempt before
+      ;; it admits or emits anything, so an immediate answer remains joinable.
+      (await (start-run! deps record source-content)))))
+
 (defn- ^:async start-run!
-  "Bind the run id to a freshly reserved claim, then announce the work.
-
-   Bound *before* the event is emitted, and that order is the whole reason this
-   function exists separately. The trigger's action may start a session that
-   submits a pair immediately; `law.translation-dispatch/output-revision`
-   requires the run id to already be on the claim, so an event emitted first
-   could be answered before the claim could accept the answer — and the
-   submission would be refused as `:dispatch-record-missing`, losing work that
-   really happened.
-
-   A binding that cannot be recorded refuses to emit at all. That is the
-   opposite of the worker path's choice, and correctly so: there, the batch
-   existed and was recoverable by its persisted dispatch key, so proceeding kept
-   real work. Here nothing has happened yet, so declining costs nothing and
-   emitting anyway would start an agent whose output has nowhere to land."
-  [{:keys [evidence-store emit! digest-hex] :as deps} record source-content]
+  "Persist the run binding before emission so an immediate agent answer can
+   join its claim. A missing binding or unconfirmed trigger remains retriable."
+  [{:keys [evidence-store digest-hex] :as deps} record source-content]
   (let [run-id (agent-law/run-id record digest-hex)
         bound (await (store/bind-dispatch-batch! evidence-store record run-id))]
     (if-not bound
-      {:dispatch/outcome :dispatch/failed
-       :dispatch/record (or (await (store/resolve-dispatch!
-                                    evidence-store record
-                                    :dispatch/failed
-                                    "the run id could not be bound to the claim"))
-                            record)
-       :dispatch/detail "the run id could not be bound to the claim"}
+      (await (fail-run! evidence-store record
+                        "the run id could not be bound to the claim"))
       (try
-        (let [turn (await (admit-translation-turn! deps bound source-content))
-              event (assoc (agent-law/translation-needed-event bound turn)
-                           :event/id (event-id run-id))
-              dispatched (await (emit! event))]
-          (cond-> {:dispatch/outcome :dispatch/accepted
-                   :dispatch/record bound
-                   :translation/run-id run-id}
-            (empty? (:matchedTriggers dispatched))
-            (assoc :dispatch/detail
-                   (str "no enabled trigger subscribes to "
-                        agent-law/event-type
-                        ", so nothing will translate this claim"))))
+        (await (emit-bound-run! deps bound source-content run-id))
         (catch :default err
-          ;; Conclusively retriable: a throw from the in-process dispatcher means
-          ;; no action ran. See the ns docstring for why this needs none of the
-          ;; worker path's observation.
-          (let [detail (or (not-empty (str (ex-message err)))
-                           "the translation event could not be dispatched")]
-            {:dispatch/outcome :dispatch/failed
-             :dispatch/record (or (await (store/resolve-dispatch!
-                                          evidence-store bound
-                                          :dispatch/failed detail))
-                                  bound)
-             :dispatch/detail detail}))))))
+          ;; There is no remote worker batch to observe or adopt on this path.
+          (await (fail-run!
+                  evidence-store bound
+                  (or (not-empty (str (ex-message err)))
+                      "the translation event could not be dispatched"))))))))
 
 (defn ^:async dispatch-work!
-  "Dispatch one derived translation work item to an agent actor, exactly once.
-
-   The claim is taken before the event is emitted, for the reason
-   `infra.translation-dispatch/dispatch-work!` gives: emitting first would leave
-   a window in which a second pass sees no claim and starts a second session for
-   the same revision.
-
-   A pin refusal is decided and deliberately not persisted, matching the worker
-   path exactly. A pin refusal is a statement about *current* state — the pinned
-   bytes are not the bytes on disk — so restoring them makes it stop applying.
-   Recorded as a terminal claim it would outlive its own reason and block a pin
-   that had become valid.
-
-   `deps` needs `:evidence-store`, `:clock`, `:emit!` and `:digest-hex`.
-   `emit!` receives one already-enveloped event and returns the dispatcher's
-   answer. The envelope — the dedup `:event/id` — is added here rather than by
-   `law.translation-agent`, whose payload contract is closed on purpose: a law
-   that also owned the envelope would have to admit runtime identity fields into
-   a shape whose reviewability comes from being closed.
-
-   `digest-hex` is the hash `law.translation-agent/run-id` mints with, injected
-   so the law stays free of a runtime dependency.
-   `source-content` is the document's bytes at the dispatched revision, read by
-   the caller. Passed in rather than read here because the caller has already
-   read them to compute the digest the claim is keyed by — reading again would be
-   a second read of a file that could have changed in between, which is exactly
-   the drift this design removes."
+  "Claim then dispatch one turn from exact already-digested source bytes."
   [{:keys [clock] :as deps} work context source-content]
   (let [checked-work (law/assert-valid! :translation-dispatch/work law/DerivedWork work)
         pin-refusal (law/pin-refusal checked-work context)
@@ -263,14 +427,8 @@
         (case (:reservation/status reservation)
           :reserved (await (start-run! deps (:record reservation) source-content))
 
-          ;; In flight, and unlike the worker path there is nothing to re-read.
-          ;; Reported as a duplicate with the gap named, so an operator reading a
-          ;; reconcile report can tell "still translating" from "stuck" by the
-          ;; claim's age rather than by guessing.
           :in-flight
-          {:dispatch/outcome :dispatch/duplicate
-           :dispatch/record (:record reservation)
-           :dispatch/detail (:gap/summary known-gap)}
+          (await (recover-run! deps (:record reservation) source-content))
 
           :done
           {:dispatch/outcome :dispatch/duplicate

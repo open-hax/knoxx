@@ -1,0 +1,7 @@
+{:role/id :role/publication-drafter
+ :role/name "Publication Drafter"
+ :role/description "Crafts one immutable, review-bound post from an admitted source revision."
+ :role/capabilities [:cap/publication-draft]
+ :role/permissions ["agent.chat.use"
+                    "org.publications.read"
+                    "org.publications.manage"]}

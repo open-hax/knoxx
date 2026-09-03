@@ -98,6 +98,18 @@
   (is (false? (m/validate pub/Document (assoc-in translation-pipeline-document [:document/source :path] ""))))
   (is (false? (m/validate pub/Document (assoc-in translation-pipeline-document [:document/source :path] "   ")))))
 
+(deftest document-shape-declares-optional-admission-policy
+  (is (true? (m/validate pub/Document
+                         (assoc translation-pipeline-document
+                                :document/anchor? true
+                                :document/generate-drafts? false
+                                :document/derived-from :knoxx.docs/source
+                                :document/derived-source-revision "sha256-source"))))
+  (doseq [field [:document/anchor? :document/generate-drafts?]]
+    (is (false? (m/validate pub/Document
+                            (assoc translation-pipeline-document field :yes)))
+        (str field " must be boolean when declared"))))
+
 ;; ── 4 Garden ──────────────────────────────────────────────────────────────
 
 (deftest garden-shape-enumerates-status
@@ -116,6 +128,8 @@
 
 (deftest publication-intent-resource-validates-relation
   (is (true? (m/validate pub/PublicationIntentResource example-manifest-intent)))
+  (is (true? (m/validate pub/PublicationIntentResource
+                         (assoc example-manifest-intent :publication/state :draft))))
   (testing "missing garden ref"
     (is (false? (m/validate pub/PublicationIntentResource
                              (dissoc example-manifest-intent :publication/garden)))))
@@ -183,6 +197,18 @@
     (is (false? (pub/admissible-publication?
                  resource-index
                  (assoc example-manifest-intent :publication/state :archived))))))
+
+(deftest draft-is-translatable-but-never-reconcilable
+  (let [resource-index (pub/index-resources [translation-pipeline-document promethean-garden])
+        draft (assoc example-manifest-intent :publication/state :draft)]
+    (is (true? (pub/translatable-publication? resource-index draft)))
+    (is (false? (pub/admissible-publication? resource-index draft)))
+    (is (true? (pub/requests-translation? draft)))
+    (is (false? (pub/publishes? draft)))
+    (doseq [state [:withheld :archived nil]]
+      (is (false? (pub/translatable-publication?
+                   resource-index
+                   (assoc example-manifest-intent :publication/state state)))))))
 
 (deftest admissible-publication?-fails-closed-on-unrecognized-state
   (testing "only :published and :withheld reconcile"
