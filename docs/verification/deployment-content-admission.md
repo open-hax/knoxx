@@ -235,7 +235,7 @@ must exist, and both retain the fixture document id and exact source revision.
 
 It then queries `event_chunks` by parent id. Both events must use
 `qwen3-embedding:8b`, declare exactly 1024 dimensions, and carry an embedding array
-of exactly 768 values. This is the end-to-end indexing assertion: a 200
+of exactly 1024 values. This is the end-to-end indexing assertion: a 200
 admission response without the requested searchable vectors is not green.
 
 ### 5. Translation agents finish and persist events
@@ -323,8 +323,8 @@ The live resource projection must prove that the generated document:
 
 Terminal generation does not disable translation. The script waits for Spanish
 and French `translation.segment` events for the generated source revision,
-requires the same Gemma metadata and exact nomic vectors as the original
-document, and checks that both target review rows remain unapproved. CMS must
+requires the same Gemma metadata and exact 1024-dimensional
+`qwen3-embedding:8b` vectors as the original document, and checks that both target review rows remain unapproved. CMS must
 show all three generated relations as desired drafts with no observed
 materialization, and the receipt journal must contain no generated-document
 publication receipt. As with the source translations, event output revisions
