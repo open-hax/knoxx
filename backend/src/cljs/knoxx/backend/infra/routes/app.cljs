@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.routes.app
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.routes.admin :as admin-routes]
             [knoxx.backend.infra.routes.actors :as actor-routes]
             [knoxx.backend.infra.agent.hydration :refer [ensure-settings! settings-state*]]
@@ -14,8 +15,14 @@
             [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-role-slugs ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.infra.routes.resources :as resource-routes]
+            [knoxx.backend.infra.publication-admission-hook :as publication-admission-hook]
+            [knoxx.backend.infra.translation-event-writer :as translation-event-writer]
+            [knoxx.backend.infra.stores.translation-evidence-registry :as translation-evidence-registry]
+            [knoxx.backend.infra.stores.translation-split-registry :as translation-split-registry]
+            [knoxx.backend.infra.routes.document-admission :as document-admission]
             [knoxx.backend.infra.routes.publication-reconcile :as reconcile-routes]
             [knoxx.backend.extern.fastify.publications :as publication-routes]
+            [knoxx.backend.extern.fastify.document-admission :as document-admission-routes]
             [knoxx.backend.extern.fastify.translation-config :as translation-config-routes]
             [knoxx.backend.extern.fastify.translation-dispatch :as translation-dispatch-routes]
             [knoxx.backend.extern.fastify.translation-review :as translation-review-routes]
@@ -1131,10 +1138,56 @@
         qs (if (>= query-idx 0) (subs raw-url query-idx) "")]
     (send-openplanner-v1-json! config reply "GET" (str path qs) nil)))
 
+(defn- canonical-openplanner-proxy-path
+  [path]
+  (let [decoded (loop [value (str path)
+                       attempts 0]
+                  (if (or (not (str/includes? value "%"))
+                          (= attempts 16))
+                    value
+                    (let [next-value (try
+                                       (fastify/decode-uri-component value)
+                                       (catch :default _ value))]
+                      (if (= value next-value)
+                        value
+                        (recur next-value (inc attempts))))))
+        segments (->> (str/split (-> decoded
+                                      str/lower-case
+                                      (str/replace "\\" "/"))
+                                  #"/+")
+                      (reduce (fn [result segment]
+                                (case segment
+                                  "" result
+                                  "." result
+                                  ".." (if (seq result) (pop result) result)
+                                  (conj result segment)))
+                              []))]
+    (if (= "v1" (first segments))
+      (vec (rest segments))
+      segments)))
+
+(defn authorize-openplanner-proxy-post!
+  "Refuse authenticated vector search until OpenPlanner can enforce org scope.
+
+  The current SDK only accepts a fixed non-tenant `where` allowlist and drops
+  `org_id` from stored vector documents. Response-side filtering would disclose
+  rows to this process and truncate top-k results, so the service-credential
+  compatibility proxy fails closed before forwarding. Policy-disabled local
+  mode remains the existing explicitly trusted workstation boundary."
+  [ctx path body]
+  (when (and ctx
+             (= ["search" "vector"]
+                (canonical-openplanner-proxy-path path)))
+    (throw (http-error 403
+                       "openplanner_vector_search_scope_unavailable"
+                       "Vector search is unavailable until tenant filtering is supported")))
+  body)
+
 (defroute api-data-op-post! []
   "POST" "/api/data/op/*"
   (let [path (aget request "params" "*")
-        body (aget request "body")]
+        body (authorize-openplanner-proxy-post!
+              ctx path (aget request "body"))]
     (send-openplanner-v1-json! config reply "POST" path body)))
 
 (defroute api-data-op-delete! []
@@ -1160,9 +1213,36 @@
   "GET" "/api/data/mongo/list"
   (send-json-promise! reply (openplanner-client/mongo-collections! (openplanner-client/client config))))
 
+(def data-mongo-read-permission
+  "org.datalakes.read")
+
+(defn authorize-mongo-query!
+  "Authorize raw data exploration and tenant-scope publication source events.
+
+   Policy-disabled local mode is an explicitly trusted workstation boundary.
+   Once an authenticated context exists, however, even a caller-supplied
+   `extra.org_id` is replaced with the server-derived tenant before the query
+   reaches OpenPlanner. Other collections retain their established query shape;
+   this predicate closes the source-event disclosure introduced by document
+   admission without guessing at unrelated collection schemas."
+  [ctx ensure-permission-fn body]
+  (if-not ctx
+    body
+    (do
+      (ensure-permission-fn ctx data-mongo-read-permission)
+      (if-not (= "events" (:collection body))
+        body
+        (let [org-id (some-> (ctx-org-id ctx) str str/trim not-empty)]
+          (when-not org-id
+            (throw (http-error 403 "org_scope_denied"
+                               "Event queries require an authenticated organization")))
+          (assoc body :filter
+                 (assoc (or (:filter body) {}) :extra.org_id org-id)))))))
+
 (defroute api-data-mongo-query! []
   "POST" "/api/data/mongo/query"
-  (let [body (request-body request)]
+  (let [body (authorize-mongo-query! ctx ensure-permission!
+                                     (request-body request))]
     (send-json-promise! reply (openplanner-client/mongo-query! (openplanner-client/client config) body))))
 
 (defroute api-data-pg-tables! []
@@ -1547,16 +1627,55 @@
                                           :ensure-permission! ensure-permission!
                                           :session-guard session-guard})))
 
+(defn- ^:async repair-publication-translation-events!
+  [client scope]
+  (let [evidence-store (translation-evidence-registry/current)
+        split-store (translation-split-registry/current)]
+    (when-not evidence-store
+      (throw (ex-info "translation evidence persistence is not configured"
+                      {:status 503
+                       :code "translation_evidence_unavailable"})))
+    (when-not split-store
+      (throw (ex-info "translation split persistence is not configured"
+                      {:status 503
+                       :code "translation_split_persistence_unavailable"})))
+    (await
+     (translation-event-writer/repair-completed-event-projections!
+      {:evidence-store evidence-store
+       :openplanner-client client
+       :split-store split-store}
+      (select-keys scope [:org-id :project])))))
+
 (defn- register-publication-surface-routes!
   "The contract-owned publication surface: the resource projection, the CMS
    editor's view of it, and translation configuration. None of these is gated on
    a hosted publishing backend being reachable — resolving desired state with
    that backend absent is the whole point."
   [app runtime config]
-  (let [helpers {:route! route!
+  (let [client (openplanner-client/client config)
+        helpers {:route! route!
                  :json-response! json-response!
                  :with-request-context! with-request-context!
-                 :ensure-permission! ensure-permission!}]
+                 :ensure-permission! ensure-permission!}
+        admission-dependencies
+        {:client client
+         :repair-translation-events!
+         (partial repair-publication-translation-events! client)}
+        internal-admission!
+        (fn [scope selection]
+          (document-admission/admit-documents!
+           config
+           (assoc admission-dependencies
+                  :dispatch-document!
+                  (fn [document-id snapshot-deps]
+                    (translation-dispatch-routes/dispatch-selection-for-scope!
+                     config scope {:document document-id}
+                     (assoc snapshot-deps :client client))))
+           scope selection))]
+    ;; Generated draft tools call this cycle-free port. The handler derives all
+    ;; model work from the server-pinned scope carried on the originating
+    ;; admission event; no HTTP credential or agent-supplied identity is used.
+    (publication-admission-hook/register! internal-admission!)
     ;; Fastify interop is owned by each extern adapter, which authorizes before
     ;; touching the filesystem-backed projection.
     (publication-routes/register-publication-routes!
@@ -1568,6 +1687,10 @@
                                               :ensure-permission!]))
     (translation-config-routes/register-translation-config-routes!
      app runtime config helpers)
+    (document-admission-routes/register-document-admission-routes!
+     app runtime config (select-keys helpers [:with-request-context!
+                                              :ensure-permission!])
+     admission-dependencies)
     (translation-dispatch-routes/register-translation-dispatch-routes!
      app runtime config (select-keys helpers [:with-request-context!
                                               :ensure-permission!]))

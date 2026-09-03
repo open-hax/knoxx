@@ -33,6 +33,29 @@
       parsed
       default)))
 
+(def ^:private max-node-timeout-ms 2147483647)
+
+(defn- env-node-timeout-ms
+  "Read an optional Node.js timer duration. Unset means default; an explicitly
+   invalid value is a startup error rather than silently becoming unbounded or
+   being clamped by Node to a near-immediate timeout."
+  [k default]
+  (let [raw-value (aget js/process.env k)]
+    (if (nil? raw-value)
+      default
+      (let [raw (-> raw-value str str/trim)
+            parsed (js/Number raw)]
+        (if (and (re-matches #"[1-9][0-9]*" raw)
+                 (js/Number.isSafeInteger parsed)
+                 (<= parsed max-node-timeout-ms))
+          parsed
+          (throw
+           (ex-info
+            (str k " must be an integer between 1 and " max-node-timeout-ms)
+            {:error/kind :config/invalid-node-timeout
+             :env/name k
+             :maximum max-node-timeout-ms})))))))
+
 (defn- env-flag
   "True only for an explicit affirmative. Anything else — unset, empty, \"false\",
    \"0\", a typo — is false, so a flag that disables production behavior can
@@ -68,6 +91,11 @@
    :knoxx-default-actor-id (env "KNOXX_DEFAULT_ACTOR_ID" "chat_primary")
    :knoxx-default-agent-contract (env "KNOXX_DEFAULT_AGENT_CONTRACT" "knoxx_default")
    :contracts-dir (env "CONTRACTS_DIR" "contracts")
+   ;; Generated publication drafts are runtime output, never written into the
+   ;; authored/read-only deployment contracts. When configured, the resource
+   ;; loader treats this as a lower-priority second root.
+   :generated-contracts-dir
+   (some-> (aget js/process.env "KNOXX_GENERATED_CONTRACTS_DIR") str str/trim not-empty)
    :shutdown-grace-ms (env-int "KNOXX_SHUTDOWN_GRACE_MS" 25000)
    :shutdown-poll-ms (env-int "KNOXX_SHUTDOWN_POLL_MS" 250)
    ;; Boot the HTTP surface WITHOUT schedules, triggers, or Discord actor
@@ -154,10 +182,24 @@
    :voxx-default-speed (env "KNOXX_VOXX_DEFAULT_SPEED" (env "VOICE_GATEWAY_TTS_DEFAULT_SPEED" "1.15"))
    :stt-base-url (env "KNOXX_STT_BASE_URL" "")})
 
+(defn- agent-deployment-config
+  []
+  ;; Deployment overlays select local/provider-specific models without
+  ;; rewriting the authored agent contracts. The limiter applies only to
+  ;; event-triggered turns; interactive chat stays on its existing path.
+  {:agent-model-overrides (env-kv-map "KNOXX_AGENT_MODEL_OVERRIDES")
+   :agent-thinking-overrides (env-kv-map "KNOXX_AGENT_THINKING_OVERRIDES")
+   :event-agent-concurrency (max 1 (env-int "KNOXX_EVENT_AGENT_CONCURRENCY" 1))
+   :event-agent-queue-limit (max 1 (env-int "KNOXX_EVENT_AGENT_QUEUE_LIMIT" 256))
+   :event-agent-turn-timeout-ms
+   (env-node-timeout-ms "KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS" 0)})
+
 (defn- agent-config
   []
-  {:agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
-    :agent-compaction-enabled? (not= "false" (str/lower-case (env "KNOXX_AGENT_COMPACTION_ENABLED" "true")))
+  (merge
+   {:agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")}
+   (agent-deployment-config)
+   {:agent-compaction-enabled? (not= "false" (str/lower-case (env "KNOXX_AGENT_COMPACTION_ENABLED" "true")))
     :agent-compaction-reserve-tokens (env-int "KNOXX_AGENT_COMPACTION_RESERVE_TOKENS" 16384)
     :agent-compaction-keep-recent-tokens (env-int "KNOXX_AGENT_COMPACTION_KEEP_RECENT_TOKENS" 20000)
     ;; 0 (the default) means no per-turn timeout: agents run as long as they
@@ -177,7 +219,7 @@
                           "Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, "
                           "use semantic_query, semantic_read, and graph_query instead of guessing. "
                           "Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, "
-                          "prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember."))})
+                          "prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember."))}))
 
 (defn- sandbox-config
   []

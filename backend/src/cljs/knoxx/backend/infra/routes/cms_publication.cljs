@@ -10,6 +10,7 @@
   re-key is a separate, conflict-checked operation and never a side effect of
   publishing."
   (:require [knoxx.backend.domain.cms-publication :as cms]
+            [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.infra.routes.publications :as publications]
@@ -17,8 +18,9 @@
             [knoxx.backend.shape.resource-manifest :as manifest]))
 
 (defn ^:async resource-index!
-  [config]
-  (await (publications/publication-index! config)))
+  [config scope]
+  (document-admission/visible-publication-index
+   (await (publications/publication-index! config)) scope))
 
 (defn evidence
   "Runtime evidence keyed by publication id. Receipts and blockers are supplied
@@ -29,16 +31,17 @@
    :blockers (or blockers {})})
 
 (defn ^:async list-documents!
-  ([config] (list-documents! config {}))
-  ([config runtime-evidence]
+  ([config scope] (list-documents! config scope {}))
+  ([config scope runtime-evidence]
    (cms/list-view->wire (evidence runtime-evidence)
-                        (resolver/list-document-views (await (resource-index! config))))))
+                        (resolver/list-document-views
+                         (await (resource-index! config scope))))))
 
 (defn ^:async document-view!
-  ([config document-id] (document-view! config document-id {}))
-  ([config document-id runtime-evidence]
+  ([config scope document-id] (document-view! config scope document-id {}))
+  ([config scope document-id runtime-evidence]
    (cms/document-view->wire (evidence runtime-evidence)
-                            (resolver/document-view (await (resource-index! config))
+                            (resolver/document-view (await (resource-index! config scope))
                                                     document-id))))
 
 (defn- assert-unique-target!
@@ -117,8 +120,8 @@
 
    The current resource is read from the graph and only its state is replaced,
    so identity cannot move even if a caller contrived to send identity fields."
-  [config publication-id domain-patch]
-  (let [index (await (resource-index! config))
+  [config scope publication-id domain-patch]
+  (let [index (await (resource-index! config scope))
         current (->> (:publications index)
                      (filter #(= publication-id (:publication/id %)))
                      first)]

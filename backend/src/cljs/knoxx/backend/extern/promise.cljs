@@ -24,6 +24,22 @@
    (fn [_resolve reject]
      (js/setTimeout #(reject (js/Error. message)) timeout-ms))))
 
+(defn with-timeout-error
+  "Mirror promise, rejecting with error after timeout-ms and clearing the timer
+   whenever the provider settles first."
+  [promise timeout-ms error]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [timer-id (js/setTimeout #(reject error) timeout-ms)]
+       ((^:async fn []
+          (try
+            (let [value (await promise)]
+              (js/clearTimeout timer-id)
+              (resolve value))
+            (catch :default provider-error
+              (js/clearTimeout timer-id)
+              (reject provider-error)))))))))
+
 (defn race
   "Promise.race for a CLJS collection of promises."
   [promises]

@@ -6,6 +6,7 @@
   publication topology must not imply authority to change what is public."
   (:require [knoxx.backend.domain.cms-publication :as cms]
             [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.routes.cms-publication :as facade]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
@@ -13,6 +14,10 @@
 
 (def read-permission "org.publications.read")
 (def write-permission "org.publications.manage")
+
+(defn- request-scope
+  [ctx]
+  {:org-id (some-> (authz/ctx-org-id ctx) str not-empty)})
 
 (def DecodedRequest
   [:map {:closed true}
@@ -98,24 +103,27 @@
          (await
           (respond! handlers reply
                     #(guarded! handlers ctx permission
-                               (fn [] (operation decoded))))))))))
+                               (fn [] (operation (request-scope ctx)
+                                                 decoded))))))))))
 
 (defn register-cms-publication-routes!
   [app runtime config handlers]
   (let [{:keys [route!]} handlers]
     (route! app "GET" "/api/cms/publications/documents"
             (route-handler runtime handlers read-permission
-                           (fn [_decoded] (facade/list-documents! config))))
+                           (fn [scope _decoded]
+                             (facade/list-documents! config scope))))
     (route! app "GET" "/api/cms/publications/documents/:documentId"
             (route-handler runtime handlers read-permission
-                           (fn [decoded]
+                           (fn [scope decoded]
                              (facade/document-view!
-                              config (get-in decoded [:params :documentId])))))
+                              config scope
+                              (get-in decoded [:params :documentId])))))
     (route! app "PATCH" "/api/cms/publications/intents/:publicationId"
             (route-handler runtime handlers write-permission
-                           (fn [decoded]
+                           (fn [scope decoded]
                              (facade/set-publication-state!
-                              config
+                              config scope
                               (resource-identity/decode-keyword
                                (get-in decoded [:params :publicationId]))
                               (cms/decode-publication-state-patch (:body decoded))))))

@@ -40,6 +40,7 @@ translation_fixture_write() {
       printf '\n  {:document/id :%s\n' "$local_id"
       printf '   :document/title "%s %02d"\n' "$TRANSLATION_FIXTURE_TITLE_PREFIX" "$index"
       printf '   :document/source-locale :en\n'
+      printf '   :document/visibility :public\n'
       printf '   :document/source {:path "%s"}}\n' "$source_rel"
     done
 

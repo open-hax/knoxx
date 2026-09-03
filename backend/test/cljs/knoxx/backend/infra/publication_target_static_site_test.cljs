@@ -148,6 +148,31 @@
               (is (= "utf-8" (:route/encoding route))))
             (is (= (:artifact/content artifact) (read-artifact root))))))))))
 
+(deftest ^:async titled-materialization-receipt-matches-the-committed-route
+  (await
+   (with-root!
+    (^:async fn [root]
+      (let [store (static-site/static-site-store root)
+            target (target-in root)
+            titled-intent (assoc intent :document/title "Deployment Probe")
+            titled-plan (assoc publish-plan
+                               :intent titled-intent
+                               :desired {:materialized/revision "probe-revision"
+                                         :materialized/path "/probe"
+                                         :materialized/title "Deployment Probe"})
+            receipt (await (effects/execute-plan!
+                            store target {} titled-plan artifact))
+            observed (await (effects/observe! target {} titled-intent))
+            replay (await (effects/execute-plan!
+                           store target {} titled-plan artifact))]
+        (is (= :publication/materialized (:receipt/type receipt)))
+        (is (= "Deployment Probe" (:materialized/title receipt)))
+        (is (= "Deployment Probe" (:materialized/title observed)))
+        (is (= "Deployment Probe"
+               (:route/title (first (:manifest/routes (read-manifest root))))))
+        (is (= receipt replay)
+            "the persisted idempotency receipt retains the committed title"))))))
+
 (deftest ^:async byte-artifacts-are-written-verbatim
   (await
    (with-root!

@@ -10,6 +10,11 @@
   [x]
   (or (nil? x) (= js/undefined x)))
 
+(defn decode-uri-component
+  "Decode one route-path component at the raw Fastify/JavaScript boundary."
+  [value]
+  (js/decodeURIComponent (str value)))
+
 (defn reply-already-sent?
   [reply]
   (let [raw (aget reply "raw")]

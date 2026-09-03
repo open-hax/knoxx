@@ -182,6 +182,7 @@
                                 :thinking-level thinking-level
                                 :tool-name-allowlist tool-name-allowlist
                                 :custom-tools custom-tools
+                                :tools-choice (:tools-choice agent-spec)
                                 :materialize! materialize!}))]
            (set-thinking-level! session thinking-level)
            session))))))

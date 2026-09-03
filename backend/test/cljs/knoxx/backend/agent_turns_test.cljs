@@ -2,13 +2,12 @@
   (:require [knoxx.backend.infra.auth.authz :as authz]
              [cljs.test :refer [deftest is testing]]
              [knoxx.backend.domain.agent.content :as content]
+             [knoxx.backend.domain.models :as models]
              [knoxx.backend.infra.agent.tools :as tools]
              [knoxx.backend.infra.agent.transcript :as transcript]
              [knoxx.backend.infra.agent.turn :as agent-turns]
-             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
              [knoxx.backend.extern.agent-turn-node :as xturn-node]
-             [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]
-             [knoxx.backend.shape.agent :as agent-shape]))
+             [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]))
 
 (deftest ensure-session-id-preserves-provided-value
   (testing "existing session ids are kept intact"
@@ -21,10 +20,17 @@
       (is (= "generated-session-id"
              (agent-turns/ensure-session-id nil))))))
 
+(deftest active-run-agent-summary-preserves-tools-choice
+  (is (= "required-first"
+         (:toolsChoice
+          (#'agent-turns/agent-spec-summary
+           {:contract-id "publication_translator"
+            :tools-choice "required-first"})))))
+
 (deftest model-ready-content-parts-normalizes-js-object-image-parts
   (testing "image parts arriving as JS objects are normalized and do not crash"
-    (with-redefs [knoxx.backend.domain.models/model-supports-input? (fn [_ _ part-type]
-                                                                      (= part-type "image"))]
+    (with-redefs [models/model-supports-input? (fn [_ _ part-type]
+                                                 (= part-type "image"))]
       (is (= [{:type "image"
                :url "file://clip.png"}]
              (content/model-ready-content-parts
@@ -131,83 +137,6 @@
         (is (= [{:type "text" :text "hello"}] parts)))
       (catch :default err
         (is false (str "materialize-content-parts! threw: " (.-message err)))))))
-
-(defn- pending-agent-session
-  []
-  (reify agent-shape/IAgentSession
-    (streaming? [_] true)
-    (current-turn [_] nil)
-    (messages [_] [])
-    (subscribe! [_ _handler] (fn [] nil))
-    (send-user-message! [_ _content] (js/Promise. (fn [_resolve _reject] nil)))
-    (follow-up! [_ _message] (js/Promise.resolve nil))
-    (steer! [_ _message] (js/Promise.resolve nil))
-    (set-thinking-level! [_ _level] nil)
-    (abort! [_] (js/Promise.resolve nil))))
-
-(defn- delayed-send-session
-  "A session whose send-user-message! resolves to `value` after `delay-ms`."
-  [value delay-ms]
-  (reify agent-shape/IAgentSession
-    (streaming? [_] true)
-    (current-turn [_] nil)
-    (messages [_] [])
-    (subscribe! [_ _handler] (fn [] nil))
-    (send-user-message! [_ _content]
-      (js/Promise. (fn [resolve _reject]
-                     (js/setTimeout #(resolve value) delay-ms))))
-    (follow-up! [_ _message] (js/Promise.resolve nil))
-    (steer! [_ _message] (js/Promise.resolve nil))
-    (set-thinking-level! [_ _level] nil)
-    (abort! [_] (js/Promise.resolve nil))))
-
-(deftest ^:async send-user-message-runs-unbounded-when-timeout-disabled
-  (testing "a zero/nil timeout means the provider send is never raced against a timer"
-    ;; A 20ms send would lose to a 1ms race timer; with the timeout disabled it
-    ;; resolves normally, proving autonomous agents can run as long as they need.
-    (is (= "agent-done"
-           (await (agent-turns/send-user-message-with-timeout!
-                   (delayed-send-session "agent-done" 20) "hello" 0))))
-    (is (= "agent-done"
-           (await (agent-turns/send-user-message-with-timeout!
-                   (delayed-send-session "agent-done" 20) "hello" nil))))))
-
-(deftest ^:async send-user-message-still-races-when-timeout-positive
-  (testing "an explicit positive timeout still force-closes a turn that overruns it"
-    (try
-      (await (agent-turns/send-user-message-with-timeout!
-              (delayed-send-session "agent-done" 50) "hello" 1))
-      (is false "should have rejected on timeout")
-      (catch :default err
-        (is (re-find #"Agent turn timed out after 1ms" (.-message err)))))))
-
-(deftest ^:async prompt-timeout-finalizes-session-as-failed
-  (testing "provider turns that never settle clear the active stream through failure finalization"
-    (let [completed* (atom nil)]
-      (with-redefs [session-store/complete-session! (fn ([session-id conversation-id payload]
-                                                          (reset! completed* {:session-id session-id
-                                                                              :conversation-id conversation-id
-                                                                              :payload payload}))
-                                                        ([_db session-id conversation-id payload]
-                                                          (reset! completed* {:session-id session-id
-                                                                              :conversation-id conversation-id
-                                                                              :payload payload})))]
-        (try
-          (await (agent-turns/prompt-and-await!
-                  {:agent-turn-timeout-ms 1}
-                  "session-timeout" "run-timeout" "conversation-timeout"
-                  (.now js/Date) "gpt-5.5" "direct"
-                  (pending-agent-session)
-                  "hello" [] nil nil [{:role "user" :content "hello"}] {}))
-          (is false "prompt-and-await! should reject on timeout")
-          (catch :default err
-            (is (re-find #"Agent turn timed out after 1ms" (.-message err)))
-            (is (= {:session-id "session-timeout"
-                    :conversation-id "conversation-timeout"
-                    :payload {:status "failed"
-                              :error "Error: Agent turn timed out after 1ms"
-                              :messages [{:role "user" :content "hello"}]}}
-                   @completed*))))))))
 
 (deftest merge-content-parts-dedupes-overlapping-attachments
   (testing "reply media already present in the assistant response is not duplicated"

@@ -336,13 +336,23 @@
    Both spellings are read. The driver puts the code on `code`, but a write
    surfaced through a bulk path carries it on the first entry of
    `writeErrors`, and a caller that checked only one of them would treat a
-   collided claim as an outage."
+   collided claim as an outage. Some SDK paths preserve only the string code or
+   canonical E11000 message, so those native representations are decoded here
+   too rather than leaking raw error inspection into ordinary infra code."
   [err]
-  (let [code (or (aget err "code")
-                 (some-> (aget err "writeErrors")
+  (let [data (ex-data err)
+        code (or (:code data)
+                 (when err (aget err "code"))
+                 (some-> (when err (aget err "writeErrors"))
                          (aget 0)
-                         (aget "code")))]
-    (= duplicate-key-error-code code)))
+                         (aget "code")))
+        message (or (when err (aget err "message"))
+                    (ex-message err)
+                    (str err))]
+    (boolean
+     (or (= duplicate-key-error-code code)
+         (= (str duplicate-key-error-code) (str code))
+         (re-find #"(?i)(E11000|duplicate key)" (str message))))))
 
 (defn ^:async insert-one-unique!
   "Insert one CLJS document, reporting collision rather than throwing it.

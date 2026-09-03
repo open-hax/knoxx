@@ -25,7 +25,8 @@
 (def state-values
   "Domain state keyword -> wire string. The full set of states a CMS edit may
    request."
-  {:published "published"
+  {:draft "draft"
+   :published "published"
    :withheld "withheld"
    :archived "archived"})
 

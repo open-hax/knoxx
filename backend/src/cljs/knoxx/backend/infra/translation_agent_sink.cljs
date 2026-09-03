@@ -187,25 +187,70 @@
         {:refusal refusal}
         (throw err)))))
 
+(defn- ^:async stored-candidate-for-attempt!
+  "Read the first durable bytes owned by one admitted candidate attempt."
+  [translation-store turn candidate]
+  (some #(when (= (:candidate/attempt-id candidate)
+                  (:candidate/attempt-id %))
+           %)
+        (await (split-store/candidate-splits-for-turn!
+                translation-store (:translation-turn/id turn)))))
+
+(defn- bind-authoritative-source-text
+  "Fill an omitted source echo from the admitted server-owned split.
+
+  Split-backed tool schemas deliberately do not ask a language model to copy
+  source bytes: trailing newlines and other invisible Markdown bytes are easy to
+  normalize accidentally. Explicit source_text remains checked, preserving the
+  diagnostic and tamper refusal for non-tool callers and stale clients."
+  [turn pair]
+  (if (nil? (:source_text pair))
+    (let [index (:segment_index pair)
+          splits (get-in turn [:translation-turn/manifest
+                               :split-manifest/splits])
+          source-split (when (and (integer? index)
+                                  (<= 0 index)
+                                  (< index (count splits)))
+                         (nth splits index))]
+      (cond-> pair
+        source-split (assoc :source_text (:split/source-text source-split))))
+    pair))
+
+(defn- ^:async authenticate-completed-candidate!
+  [translation-store turn candidate]
+  (let [stored (await (split-store/candidate-splits-for-turn!
+                       translation-store (:translation-turn/id turn)))
+        existing (some #(when (= (:candidate/attempt-id candidate)
+                                 (:candidate/attempt-id %)) %)
+                       stored)]
+    (cond
+      (= existing candidate) {:candidate existing}
+      existing {:refusal (candidate-conflict-refusal existing candidate)}
+      :else {:refusal {:refusal/type :dispatch-candidate-missing
+                       :refusal/actual
+                       {:attempt-id (:candidate/attempt-id candidate)}}})))
+
 (defn- ^:async admit-submitted-candidate!
-  "Persist an in-flight candidate or authenticate an equal completed replay."
+  "Persist an in-flight candidate or authenticate a durable replay.
+
+   An accepted run may be replaying after a process crash. If this attempt
+   already has candidate bytes, those first bytes remain authoritative even
+   when a nondeterministic provider submits a different translation on replay.
+   Returning the durable member as progress lets the same turn continue with
+   its missing splits without deleting, overwriting, or conflicting on the
+   prefix that already succeeded. Completed runs remain strict: a terminal
+   replay must be byte-equal to repair only downstream projection."
   [translation-store record turn candidate]
   (case (:dispatch/outcome record)
     :dispatch/accepted
-    (await (persist-candidate! translation-store turn candidate))
+    (if-let [existing (await (stored-candidate-for-attempt!
+                              translation-store turn candidate))]
+      {:candidate existing :candidate/reused? true}
+      (await (persist-candidate! translation-store turn candidate)))
 
     :dispatch/completed
-    (let [stored (await (split-store/candidate-splits-for-turn!
-                         translation-store (:translation-turn/id turn)))
-          existing (some #(when (= (:candidate/attempt-id candidate)
-                                   (:candidate/attempt-id %)) %)
-                         stored)]
-      (cond
-        (= existing candidate) {:candidate existing}
-        existing {:refusal (candidate-conflict-refusal existing candidate)}
-        :else {:refusal {:refusal/type :dispatch-candidate-missing
-                         :refusal/actual
-                         {:attempt-id (:candidate/attempt-id candidate)}}}))
+    (await (authenticate-completed-candidate!
+            translation-store turn candidate))
 
     {:refusal (terminal-claim-refusal record)}))
 
@@ -218,80 +263,131 @@
    (:translation-turn/candidate-claim turn)
    candidates))
 
+(defn- ^:async project-completion-events!
+  "Project a receipt only after it is durable, preserving the completion result.
+
+  Event failure is intentionally visible. The dispatch is already completed and
+  its receipt is immutable at this point, so the caller can repeat the exact
+  final split: the terminal replay path authenticates the stored evidence and
+  retries these same stable event ids without translating again."
+  [{:keys [emit-candidate-events!]} result turn candidate-set]
+  (if-let [receipt (:translation/receipt result)]
+    (do
+      (when-not (fn? emit-candidate-events!)
+        (throw (ex-info "translation candidate event emitter is not configured"
+                        {:translation-event/error :emitter-missing
+                         :translation/revision (:translation/revision receipt)})))
+      (await (emit-candidate-events! {:receipt receipt
+                                     :turn turn
+                                     :candidate-set candidate-set}))
+      result)
+    result))
+
+(defn- ^:async settle-accepted-set!
+  [deps record turn candidate-set]
+  (let [{:keys [content-root]} deps]
+    (await (content/write! content-root record
+                           (dispatch-law/output-revision record)
+                           (:candidate-set/text candidate-set)))
+    (let [result
+          (await (dispatch/resolve-batch-report!
+                  (assoc deps
+                         :translation-content-digest
+                         (content-integrity/content-digest
+                          (:candidate-set/text candidate-set))
+                         :translation-split-evidence
+                         (split-lineage candidate-set
+                                        (:translation-turn/admitted-at turn)))
+                  (submission-law/completion-report
+                   (:translation-turn/run-id turn)
+                   (:dispatch/document-wire-id record))))]
+      (await (project-completion-events! deps result turn candidate-set)))))
+
+(defn- ^:async repair-completed-set!
+  [deps record turn candidate-set]
+  (let [{:keys [content-root evidence-store]} deps]
+    (if-let [receipt (await (existing-completion! evidence-store record candidate-set))]
+      (do
+        ;; Recoverable equal orphan: content is immutable, so recreating a
+        ;; missing file under the same output revision cannot change evidence.
+        (await (content/write! content-root record
+                               (dispatch-law/output-revision record)
+                               (:candidate-set/text candidate-set)))
+        (await (project-completion-events!
+                deps {:translation/receipt receipt} turn candidate-set)))
+      {:translation/refusal
+       {:refusal/type :dispatch-receipt-missing
+        :refusal/actual {:dispatch-key (:dispatch/key record)
+                         :candidate-set-id (:candidate-set/id candidate-set)}}})))
+
 (defn- ^:async finish-candidate-set!
   "Persist, write, and settle one exact complete candidate set once."
-  [{:keys [content-root evidence-store split-store digest-hex] :as deps}
-   record turn candidates]
+  [{:keys [split-store digest-hex] :as deps} record turn candidates]
   (let [candidate-set (complete-candidate-set digest-hex turn candidates)
         stored-set (await (split-store/complete-candidate-set!
                            split-store (:translation-turn/id turn) candidate-set))]
     (case (:dispatch/outcome record)
       :dispatch/accepted
-      (do
-        (await (content/write! content-root record
-                               (dispatch-law/output-revision record)
-                               (:candidate-set/text stored-set)))
-        (await (dispatch/resolve-batch-report!
-                (assoc deps
-                       :translation-content-digest
-                       (content-integrity/content-digest
-                        (:candidate-set/text stored-set))
-                       :translation-split-evidence
-                       (split-lineage stored-set (:translation-turn/admitted-at turn)))
-                (submission-law/completion-report
-                 (:translation-turn/run-id turn)
-                 (:dispatch/document-wire-id record)))))
+      (await (settle-accepted-set! deps record turn stored-set))
 
       :dispatch/completed
-      (if-let [receipt (await (existing-completion! evidence-store record stored-set))]
-        (do
-          ;; Recoverable equal orphan: content is immutable, so recreating a
-          ;; missing file under the same output revision cannot change evidence.
-          (await (content/write! content-root record
-                                 (dispatch-law/output-revision record)
-                                 (:candidate-set/text stored-set)))
-          {:translation/receipt receipt})
-        {:translation/refusal
-         {:refusal/type :dispatch-receipt-missing
-          :refusal/actual {:dispatch-key (:dispatch/key record)
-                           :candidate-set-id (:candidate-set/id stored-set)}}})
+      (await (repair-completed-set! deps record turn stored-set))
 
       {:translation/refusal (terminal-claim-refusal record)})))
+
+(defn ^:async settle-durable-turn!
+  "Settle an accepted turn whose complete candidate evidence survived a crash.
+
+   Returns nil for an incomplete durable prefix, which tells the dispatcher it
+   still needs the provider to supply missing splits. A persisted candidate set
+   is used directly. Exact full member coverage without the aggregate set is
+   completed first, closing the adjacent crash window. No provider bytes enter
+   this path."
+  [{:keys [split-store] :as deps} record turn]
+  (when (= :dispatch/accepted (:dispatch/outcome record))
+    (if-let [candidate-set
+             (await (split-store/candidate-set-for-turn!
+                     split-store (:translation-turn/id turn)))]
+      (await (settle-accepted-set! deps record turn candidate-set))
+      (let [candidates (await (split-store/candidate-splits-for-turn!
+                               split-store (:translation-turn/id turn)))
+            total (count (get-in turn [:translation-turn/candidate-claim
+                                       :candidate-claim/members]))]
+        (when (and (pos? total) (= total (count candidates)))
+          (await (finish-candidate-set! deps record turn candidates)))))))
 
 (defn- ^:async submit-to-turn!
   "Validate and record one pair against its exact persisted turn authority."
   [{:keys [split-store digest-hex] :as deps} record turn policies pair]
-  (if-let [refusal (submission-law/split-pair-refusal turn policies pair)]
-    {:translation/refusal refusal}
-    (let [member (claim-member-at-index turn (:segment_index pair))
-          candidate (split-law/candidate-split
-                     digest-hex member (:translated_text pair))
-          admitted (await (admit-submitted-candidate!
-                           split-store record turn candidate))]
-      (if-let [candidate-refusal (:refusal admitted)]
-        {:translation/refusal candidate-refusal}
-        (let [candidates (await (split-store/candidate-splits-for-turn!
-                                 split-store (:translation-turn/id turn)))
-              total (count (get-in turn [:translation-turn/candidate-claim
-                                         :candidate-claim/members]))]
-          (if (< (count candidates) total)
-            (progress turn (count candidates) total)
-            (await (finish-candidate-set! deps record turn candidates))))))))
+  (let [pair (bind-authoritative-source-text turn pair)]
+    (if-let [refusal (or (submission-law/pair-refusal policies pair)
+                         (submission-law/split-pair-refusal turn policies pair))]
+      {:translation/refusal refusal}
+      (let [member (claim-member-at-index turn (:segment_index pair))
+            candidate (split-law/candidate-split
+                       digest-hex member (:translated_text pair))
+            admitted (await (admit-submitted-candidate!
+                             split-store record turn candidate))]
+        (if-let [candidate-refusal (:refusal admitted)]
+          {:translation/refusal candidate-refusal}
+          (let [candidates (await (split-store/candidate-splits-for-turn!
+                                   split-store (:translation-turn/id turn)))
+                total (count (get-in turn [:translation-turn/candidate-claim
+                                           :candidate-claim/members]))]
+            (if (< (count candidates) total)
+              (progress turn (count candidates) total)
+              (await (finish-candidate-set! deps record turn candidates)))))))))
 
 (defn ^:async submit-pair!
   "Record one agent-submitted translation pair as publication evidence.
 
    Returns `{:translation/receipt r}` on success, or `{:translation/refusal f}`
-   with a typed refusal the caller turns into the agent's error message. Never
-   throws for an ordinary bad submission: this is an untrusted boundary whose
-   caller is a language model, and a refusal it can read and correct is worth
-   more than a stack trace.
+   with a typed, agent-readable refusal for ordinary bad input.
 
    `deps` needs `:content-root`, `:evidence-store`, `:split-store`, `:digest-hex`,
-   `:clock` and `:observe-source-revision`. The last is not defaulted, for the reason
-   `resolve-batch-report!` gives about its own copy: a caller who forgot to
-   supply the drift observer must fail, not quietly receive a version with the
-   only check that proves what was translated missing."
+   `:clock`, `:emit-candidate-events!` and `:observe-source-revision`. The event
+   writer and drift observer are required: omitting either silently loses a
+   durable fact the publication workflow depends on."
   [{:keys [evidence-store split-store] :as deps} policies pair]
   (if-let [pair-refusal (submission-law/pair-refusal policies pair)]
     {:translation/refusal pair-refusal}

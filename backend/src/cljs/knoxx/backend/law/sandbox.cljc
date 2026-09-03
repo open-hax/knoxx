@@ -80,6 +80,22 @@
   (let [detail (str (or detail ""))]
     (subs detail 0 (min max-internal-command-detail-chars (count detail)))))
 
+(defn docker-container-missing?
+  "Return true when a failed Docker inspect says the container is absent.
+
+   Docker CLI versions vary both the casing of this diagnostic and whether
+   Node exposes it through stderr or the rejected exec error message.  Other
+   inspect failures remain operational errors instead of being mistaken for
+   an absent sandbox."
+  [result]
+  (let [detail (->> [(:stderr result) (:error result)]
+                    (map #(-> (or % "") str str/lower-case))
+                    (str/join "\n"))]
+    (boolean
+     (and (not= true (:ok result))
+          (or (str/includes? detail "no such object")
+              (str/includes? detail "no such container"))))))
+
 (defn internal-command-failure
   "Normalize a failed Knoxx-owned command, or return nil for success.
 

@@ -36,12 +36,14 @@
 
 (defn- contract-root-candidates
   [config]
-  (let [configured (configured-contracts-dir config)]
-    (if (default-configured-contracts-dir? configured)
-      ["../contracts" "contracts"
-       "packages/agents/knoxx/contracts"
-       "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
-      [configured])))
+  (let [configured (configured-contracts-dir config)
+        authored (if (default-configured-contracts-dir? configured)
+                   ["../contracts" "contracts"
+                    "packages/agents/knoxx/contracts"
+                    "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
+                   [configured])
+        generated (some-> (:generated-contracts-dir config) str str/trim not-empty)]
+    (cond-> authored generated (conj generated))))
 
 (defn contract-root-paths
   [config]

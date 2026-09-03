@@ -11,6 +11,21 @@ knoxx_local_error() {
   printf 'ERROR  %s\n' "$*" >&2
 }
 
+knoxx_require_node_timeout_ms() {
+  local env_name="$1"
+  local env_value="${!env_name:-}"
+  local max_timeout_ms=2147483647
+  local LC_ALL=C
+
+  if [[ ! "$env_value" =~ ^[1-9][0-9]*$ ]] \
+    || (( ${#env_value} > ${#max_timeout_ms} )) \
+    || { (( ${#env_value} == ${#max_timeout_ms} )) \
+         && [[ "$env_value" > "$max_timeout_ms" ]]; }; then
+    knoxx_local_error "$env_name must be an integer between 1 and $max_timeout_ms"
+    return 1
+  fi
+}
+
 knoxx_env_file_value() {
   local env_file="$1"
   local env_key="$2"
@@ -55,13 +70,29 @@ configure_knoxx_local_runtime() {
   export WORKSPACE_PROJECT_NAME="${WORKSPACE_PROJECT_NAME:-$(basename "$WORKSPACE_ROOT")}"
   export CONTRACTS_DIR="${CONTRACTS_DIR:-$knoxx_dir/contracts}"
   export KNOXX_AGENT_DIR="${KNOXX_AGENT_DIR:-/tmp/knoxx-agent-local}"
+  export KNOXX_GENERATED_CONTRACTS_DIR="${KNOXX_GENERATED_CONTRACTS_DIR:-$HOME/.local/state/knoxx/generated-contracts}"
   export KNOXX_DISABLE_EVENT_RUNTIMES="${KNOXX_DISABLE_EVENT_RUNTIMES:-true}"
 
   export OPENPLANNER_BASE_URL="${OPENPLANNER_BASE_URL:-http://127.0.0.1:7777}"
   export PROXX_BASE_URL="${PROXX_BASE_URL:-http://127.0.0.1:8789}"
   export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-  export OLLAMA_DEFAULT_MODEL="${OLLAMA_DEFAULT_MODEL:-gemma4:e4b}"
+  export OLLAMA_DEFAULT_MODEL="${OLLAMA_DEFAULT_MODEL:-gemma4:e2b}"
+  export KNOXX_AGENT_MODEL_OVERRIDES="${KNOXX_AGENT_MODEL_OVERRIDES:-publication_translator=gemma4:e2b,publication_post_drafter=gemma4:e2b}"
+  export KNOXX_AGENT_THINKING_OVERRIDES="${KNOXX_AGENT_THINKING_OVERRIDES:-publication_translator=off,publication_post_drafter=off}"
+  export KNOXX_TRANSLATION_RUNNER="${KNOXX_TRANSLATION_RUNNER:-agent}"
+  export KNOXX_EVENT_AGENT_CONCURRENCY="${KNOXX_EVENT_AGENT_CONCURRENCY:-1}"
+  export KNOXX_EVENT_AGENT_QUEUE_LIMIT="${KNOXX_EVENT_AGENT_QUEUE_LIMIT:-256}"
+  export KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS="${KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS-300000}"
+  export EMBED_PROVIDER_BASE_URL="${EMBED_PROVIDER_BASE_URL:-$OLLAMA_BASE_URL}"
+  export EMBED_PROVIDER_API_KEY="${EMBED_PROVIDER_API_KEY:-}"
+  export EMBED_PROVIDER_MODEL="${EMBED_PROVIDER_MODEL:-nomic-embed-text}"
+  export EMBED_PROVIDER_DIMENSIONS="${EMBED_PROVIDER_DIMENSIONS:-768}"
   export MONGODB_DB="${MONGODB_DB:-openplanner}"
+
+  # Reject an invalid deployment liveness bound before credential discovery or
+  # network access. Event workers must not silently start with an unbounded
+  # stalled-provider slot.
+  knoxx_require_node_timeout_ms KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS || return 1
 
   if [[ -z "${MONGODB_URI:-}" ]]; then
     mongo_container="${KNOXX_OPENPLANNER_CONTAINER:-openplanner-openplanner-1}"

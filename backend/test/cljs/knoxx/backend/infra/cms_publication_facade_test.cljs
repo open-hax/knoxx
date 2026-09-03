@@ -66,6 +66,26 @@
             (str (pr-str body) " must satisfy the backend contract"))
         (is (= {:publication/state state} (cms/decode-publication-state-patch body)))))))
 
+(deftest draft-is-wire-visible-and-patchable-without-becoming-publishable
+  (let [draft-intent (assoc intent :publication/state :draft)
+        publication-wire (cms/publication->wire {:observed nil :blockers []}
+                                                draft-intent)
+        patch-body (wire/state-patch-body :draft)
+        resource-index (law-publication/index-resources [document garden draft-intent])]
+    (testing "CMS GET can project a draft desired state"
+      (is (= "draft" (:desired publication-wire)))
+      (is (true? (m/validate law/PublicationWireJson publication-wire))))
+    (testing "CMS PATCH can decode and apply that same state"
+      (is (= {:state "draft"} patch-body))
+      (is (true? (m/validate law/PublicationStatePatchJson patch-body)))
+      (is (= :draft
+             (:publication/state
+              (cms/apply-state-patch intent
+                                     (cms/decode-publication-state-patch patch-body))))))
+    (testing "wire visibility does not grant reconciliation or publication"
+      (is (false? (law-publication/admissible-publication? resource-index draft-intent)))
+      (is (false? (law-publication/publishes? draft-intent))))))
+
 ;; ── 4 resource id round trip ──────────────────────────────────────────────
 
 (deftest resource-id-round-trip
@@ -249,7 +269,7 @@
 (deftest every-lawful-state-is-accepted-by-the-contract
   (testing "the enum the writer validates against is the one the resource shape
             declares, so the two cannot drift apart"
-    (doseq [state [:published :withheld :archived]]
+    (doseq [state [:draft :published :withheld :archived]]
       (is (m/validate law-publication/PublicationState state)
           (str state " must be a lawful publication state"))))
   (testing "and nothing else is"

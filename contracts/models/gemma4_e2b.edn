@@ -1,0 +1,16 @@
+{:model/id "gemma4:e2b"
+ :model-family/id "gemma4"
+ :model/provider :ollama
+ :model/api "openai-completions"
+ :model/compat {:supportsDeveloperRole false
+                :supportsReasoningEffort false}
+ :model/label "Gemma 4 E2B"
+ :model/allowlisted true
+ ;; Keep this tool-calling deployment non-thinking until Ollama's Gemma 4
+ ;; tool parser can reliably flush calls produced alongside reasoning output.
+ :model/reasoning false
+ :model/default-thinking :off
+ :model/thinking-levels [:off]
+ :model/context-window 128000
+ :model/max-tokens 8192
+ :model/input [:text]}
