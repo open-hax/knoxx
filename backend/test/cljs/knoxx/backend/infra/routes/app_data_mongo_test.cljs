@@ -41,3 +41,30 @@
             (fn [_ctx _permission] (reset! checked? true))
             body)))
     (is (false? @checked?))))
+
+(deftest authenticated-openplanner-vector-proxy-fails-closed
+  (doseq [path ["search/vector"
+                "/search/vector"
+                "v1/search/vector"
+                "other/../search/vector"
+                "SEARCH\\VECTOR"
+                "%73earch%2Fvector"
+                "%2573earch%252Fvector"]]
+    (let [error (try
+                  (app/authorize-openplanner-proxy-post!
+                   {:org-id "org-a"} path {:q "private source"})
+                  nil
+                  (catch :default cause cause))]
+      (is (= 403 (:status (ex-data error))) path)
+      (is (= "openplanner_vector_search_scope_unavailable"
+             (:code (ex-data error)))
+          path))))
+
+(deftest openplanner-post-proxy-preserves-non-vector-and-local-traffic
+  (let [body {:q "hello"}]
+    (is (= body
+           (app/authorize-openplanner-proxy-post!
+            {:org-id "org-a"} "labels/records/id/reaction" body)))
+    (is (= body
+           (app/authorize-openplanner-proxy-post!
+            nil "search/vector" body)))))

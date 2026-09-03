@@ -33,6 +33,7 @@ An anchored document is a normal publication `Document` carrying:
 {:document/id :example.documents/source
  :document/title "Source"
  :document/source-locale :en
+ :document/visibility :public
  :document/source {:path "publication-source/source.md"}
  :document/anchor? true
  :document/generate-drafts? true}
@@ -43,7 +44,21 @@ relations for that document. A generated post is itself a document with draft
 publication relations, and therefore re-enters the same admission/translation
 path. Generated documents carry `:document/generate-drafts? false`: they are
 terminal for post generation, but their non-source publication relations are
-still admitted automatically for translation.
+still admitted automatically for translation. Admission never infers public
+visibility from a missing owner: authored shared anchors declare
+`:document/visibility :public`, while generated drafts declare their owning
+`:document/org-id` and `:document/visibility :private`. A legacy document with
+neither a matching owner nor explicit public visibility is omitted from sweeps
+and indistinguishable from a missing document in exact admission.
+
+The same server-derived organization predicate scopes manual translation
+dispatch, review inventory and receipt synthesis, publication/CMS projections
+and state changes, and production reconciliation. Each surface filters both a
+hidden document and its publication relations before reading source bytes;
+exact hidden identifiers remain ordinary 404s. The authenticated generic
+OpenPlanner compatibility proxy refuses vector search until its backend can
+persist and enforce organization metadata, rather than response-filtering an
+already leaked or truncated top-k result.
 
 ## Admission transaction
 

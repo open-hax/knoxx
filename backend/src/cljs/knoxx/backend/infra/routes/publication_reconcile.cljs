@@ -29,6 +29,7 @@
    reconciler that silently cannot publish. Fastify handles are decoded
    through `extern.fastify`; no native object crosses into the runtime."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.publication-reconciler :as reconciler]
@@ -98,8 +99,10 @@
    An incomplete spec throws at the first request, not at registration — an
    unconfigured route is a 503, but a MISconfigured one is an operator defect
    and must fail loudly."
-  [config spec]
-  (let [journal (reconciler/make-receipt-journal)]
+  [config spec scope]
+  (let [journal (reconciler/make-receipt-journal)
+        load-index! (or (:load-index! spec)
+                        (fn [] (publications/publication-index! config)))]
     {:journal journal
      :reconciler
      (reconciler/make-reconciler
@@ -109,23 +112,27 @@
                           static-site/static-site-target}
                          (:target-factories spec)))
        :store (or (:store spec) (:store (memory/memory-store)))
-       :load-index! (or (:load-index! spec)
-                        (fn [] (publications/publication-index! config)))
+       :load-index! (^:async fn []
+                      (document-admission/visible-publication-index
+                       (await (load-index!)) scope))
        :evidence-facts (:evidence-facts spec)
        :artifact-source (:artifact-source spec)
        :locale-admissible? (:locale-admissible? spec)
        :emit-receipt! (or (:emit-receipt! spec) (:emit! journal))})}))
 
 (defn- runtime-for
-  "The `{:reconciler ... :journal ...}` for `config`, built once per distinct
-   config value. nil when the config declares no `:publication/reconciliation`
-   spec."
-  [config]
-  (or (get @runtimes* config)
+  "The `{:reconciler ... :journal ...}` for `config` and tenant scope.
+
+   The scope is part of the cache key so a custom configured reconciler cannot
+   reuse another organization's filtered index or receipt journal. nil when
+   the config declares no `:publication/reconciliation` spec."
+  [config scope]
+  (let [runtime-key [config scope]]
+    (or (get @runtimes* runtime-key)
       (when-let [spec (:publication/reconciliation config)]
-        (let [built (build-runtime config spec)]
-          (swap! runtimes* assoc config built)
-          built))))
+        (let [built (build-runtime config spec scope)]
+          (swap! runtimes* assoc runtime-key built)
+          built)))))
 
 (defn- production-scope
   [config ctx]
@@ -188,7 +195,8 @@
   "Run one decoded trigger and answer with its correlated receipt. 503 when no
    reconciler is configured: the demand is lawful, the capability is absent."
   [config ctx request reply]
-  (if-let [{:keys [reconciler]} (runtime-for config)]
+  (if-let [{:keys [reconciler]}
+           (runtime-for config (production-scope config ctx))]
     (await (send-result! reply
                          #(reconciler/reconcile!
                            reconciler
@@ -209,7 +217,8 @@
 (defn- ^:async handle-receipts!
   "Answer with the receipt journal the configured reconciler has emitted into."
   [config ctx _request reply]
-  (if-let [{:keys [journal]} (runtime-for config)]
+  (if-let [{:keys [journal]}
+           (runtime-for config (production-scope config ctx))]
     (await (send-result! reply (fn [] {:receipts ((:receipts journal))})))
     (if (production/configured? config)
       (let [journal (production-journal (production-scope config ctx))]

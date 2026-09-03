@@ -238,6 +238,63 @@
     (is (some? (:translation/receipt result)))
     (is (= [300000] (mapv :timeout-ms @requests)))))
 
+(deftest ^:async inherited-event-deadline-caps-structured-recovery-to-remaining-time
+  (let [{:keys [turn] :as state}
+        (await (admitted! {:parts [(first source-parts)]}))
+        requests (atom [])
+        times (atom [296000 296000 296000])
+        production-config (-> config
+                              (dissoc :translation-agent-structured-output-timeout-ms)
+                              (assoc :event-agent-turn-timeout-ms 300000
+                                     :agent-turn-timeout-ms 0))
+        deps (assoc
+              (base-deps
+               "/tmp/knoxx-translation-structured-output/inherited-deadline"
+               state)
+              :event-turn/deadline-ms 301000
+              :now-ms (fn []
+                        (let [value (or (first @times) 296000)]
+                          (when (seq @times)
+                            (swap! times subvec 1))
+                          value))
+              :request!
+              (fn [request]
+                (swap! requests conj request)
+                (js/Promise.resolve
+                 (ollama-response (first translations)))))
+        result (await (sut/complete-turn!
+                       production-config deps (:record state) turn))]
+    (is (some? (:translation/receipt result)))
+    (is (= [5000] (mapv :timeout-ms @requests)))))
+
+(deftest ^:async expired-event-deadline-refuses-recovery-before-provider-work
+  (let [{:keys [turn] :as state}
+        (await (admitted! {:parts [(first source-parts)]}))
+        requests (atom [])
+        production-config (-> config
+                              (dissoc :translation-agent-structured-output-timeout-ms)
+                              (assoc :event-agent-turn-timeout-ms 300000
+                                     :agent-turn-timeout-ms 0))
+        deps (assoc
+              (base-deps
+               "/tmp/knoxx-translation-structured-output/expired-deadline"
+               state)
+              :event-turn/deadline-ms 301000
+              :now-ms (constantly 301001)
+              :request! (fn [request]
+                          (swap! requests conj request)
+                          (js/Promise.resolve
+                           (ollama-response (first translations)))))
+        error (try
+                (await (sut/complete-turn!
+                        production-config deps (:record state) turn))
+                nil
+                (catch :default err err))]
+    (is (= :completion-timeout
+           (:translation-agent-structured-output/error (ex-data error))))
+    (is (= 0 (:timeout-ms (ex-data error))))
+    (is (empty? @requests))))
+
 (deftest ^:async every-missing-split-shares-one-completion-deadline
   (let [{:keys [turn splits] :as state} (await (admitted!))
         requests (atom [])

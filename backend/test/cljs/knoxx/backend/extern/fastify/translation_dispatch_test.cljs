@@ -328,6 +328,7 @@
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
+                  :document/visibility :public
                   :document/source {:path "docs/probe.md"}}
         garden (fn [id]
                  {:garden/id id

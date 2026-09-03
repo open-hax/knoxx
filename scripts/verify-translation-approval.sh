@@ -169,6 +169,7 @@ fixture_write() {
  [{:document/id :${DOC_LOCAL}
    :document/title "Translation Approval Verification Probe"
    :document/source-locale :en
+   :document/visibility :public
    :document/source {:path "${SOURCE_REL}"}}
 
   {:garden/id :probe-garden

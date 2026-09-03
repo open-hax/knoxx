@@ -12,6 +12,9 @@
 (def admission-permission "org.translations.manage")
 (def draft-permission "org.publications.manage")
 
+(def BarrierBody
+  [:map {:closed true}])
+
 (def RequestBody
   "Closed admission command. Empty means the default anchor sweep.
 
@@ -53,13 +56,21 @@
        (contains? body :generateDrafts)
        (assoc :generate-drafts? (:generateDrafts body))))))
 
+(defn decode-barrier-request
+  [request]
+  (publication-law/assert-valid! :document-admission/barrier-body
+                                 BarrierBody
+                                 (fastify/request-body request)))
+
 (defn- error-status
   [err]
   (let [data (ex-data err)]
     (or (:status data)
         (fastify/error-status err nil)
         (cond
-          (= :document-admission/body (:contract data)) 400
+          (contains? #{:document-admission/body
+                       :document-admission/barrier-body}
+                     (:contract data)) 400
           (contains? data :document/id) 404
           (or (contains? data :blockers)
               (contains? data :conflicts)
@@ -94,6 +105,21 @@
              (translation-adapter/dispatch-selection!
               config ctx {:document document-id}
               (merge dependencies snapshot-deps))))))
+
+(defn- ^:async handle-admission-barrier!
+  [runtime handlers dependencies request reply]
+  (await
+   ((:with-request-context! handlers) runtime request reply
+    (^:async fn [ctx]
+      (await
+       (send-result!
+        reply
+        (fn []
+          ((:ensure-permission! handlers) ctx admission-permission)
+          (decode-barrier-request request)
+          (if-let [barrier! (:await-document-admission-barrier! dependencies)]
+            (barrier!)
+            (admission/await-document-admission-barrier!)))))))))
 
 (defn register-document-admission-routes!
   "Register POST /api/publications/documents/admit.
@@ -130,4 +156,12 @@
                  (admission/admit-documents!
                   config (request-dependencies config ctx dependencies)
                   scope selection))))))))))})
+   (fastify/route!
+    app
+    {:method "POST"
+     :url "/api/publications/documents/admission-barrier"
+     :handler
+     (fn [request reply]
+       (handle-admission-barrier!
+        runtime handlers dependencies request reply))})
    nil))

@@ -20,6 +20,8 @@
     (is (m/validate publication/Document (:draft/document result)))
     (is (= true (get-in result [:draft/document :document/anchor?])))
     (is (= false (get-in result [:draft/document :document/generate-drafts?])))
+    (is (= "org-1" (get-in result [:draft/document :document/org-id])))
+    (is (= :private (get-in result [:draft/document :document/visibility])))
     (is (= (:source-document-id input)
            (get-in result [:draft/document :document/derived-from])))
     (is (= (:source-revision input)

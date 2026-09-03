@@ -41,7 +41,8 @@
 
 (def document-projection-keys
   [:document/id :document/title :document/source-locale :document/source
-   :document/translations :document/anchor? :document/generate-drafts?
+   :document/translations :document/org-id :document/visibility
+   :document/anchor? :document/generate-drafts?
    :document/derived-from :document/derived-source-revision])
 
 (def garden-projection-keys

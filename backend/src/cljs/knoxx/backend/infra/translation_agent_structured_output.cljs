@@ -415,14 +415,24 @@
   "Complete an admitted turn via native Ollama JSON schema; return a receipt or throw.
 
    Every missing split shares one deadline. Event-triggered recovery is capped by
-   the event turn timeout; an explicit structured timeout can only tighten it."
+   the original event turn deadline; an explicit structured timeout can only
+   tighten the remaining window."
   [config deps record turn]
   (let [timeout-ms (completion-timeout-ms config)
-        deadline-ms (+ (now-ms deps) timeout-ms)]
+        started-ms (now-ms deps)
+        configured-deadline-ms (+ started-ms timeout-ms)
+        inherited-deadline-ms
+        (positive-number (:event-turn/deadline-ms deps))
+        deadline-ms (if inherited-deadline-ms
+                      (min configured-deadline-ms inherited-deadline-ms)
+                      configured-deadline-ms)
+        remaining-ms (- deadline-ms started-ms)]
+    (when-not (pos? remaining-ms)
+      (throw (timeout-error 0)))
     ;; Keep the operation expression outside an async `await` form so the timer
     ;; is installed while provider work is still pending.
     (xpromise/with-timeout-error
      (complete-turn-before-deadline!
-      config deps record turn deadline-ms timeout-ms)
-     timeout-ms
-     (timeout-error timeout-ms))))
+      config deps record turn deadline-ms remaining-ms)
+     remaining-ms
+     (timeout-error remaining-ms))))

@@ -455,7 +455,7 @@
   [config runtime scope selection]
   (let [records (await ((:load-records! runtime) config))
         index ((:build-index runtime) records)
-        documents (admission/select-documents index selection)
+        documents (admission/select-documents index scope selection)
         roots ((:roots-for runtime) config records)
         resource-paths ((:paths-for runtime) records)
         prepared (await (preflight-documents!
@@ -538,6 +538,18 @@
     (reset! document-admission-tail*
             (recover-document-admission-tail! task))
     task))
+
+(defn ^:async await-document-admission-barrier!
+  "Resolve only after every document admission already queued in this process.
+
+   The no-op occupies the same serialized tail as HTTP admission and generated
+   draft re-entry. Callers that drain asynchronous owners must await this
+   barrier again after those owners release, because an owner may enqueue a
+   recursive admission while the first barrier is waiting."
+  []
+  (await
+   (enqueue-document-admission!
+    (fn [] (js/Promise.resolve {:settled true})))))
 
 (defn- ^:async admit-documents-once!
   "Run one admission pass while the process-wide event writer is owned."

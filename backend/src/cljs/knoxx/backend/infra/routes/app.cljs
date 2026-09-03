@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.routes.app
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.routes.admin :as admin-routes]
             [knoxx.backend.infra.routes.actors :as actor-routes]
             [knoxx.backend.infra.agent.hydration :refer [ensure-settings! settings-state*]]
@@ -1137,10 +1138,56 @@
         qs (if (>= query-idx 0) (subs raw-url query-idx) "")]
     (send-openplanner-v1-json! config reply "GET" (str path qs) nil)))
 
+(defn- canonical-openplanner-proxy-path
+  [path]
+  (let [decoded (loop [value (str path)
+                       attempts 0]
+                  (if (or (not (str/includes? value "%"))
+                          (= attempts 16))
+                    value
+                    (let [next-value (try
+                                       (fastify/decode-uri-component value)
+                                       (catch :default _ value))]
+                      (if (= value next-value)
+                        value
+                        (recur next-value (inc attempts))))))
+        segments (->> (str/split (-> decoded
+                                      str/lower-case
+                                      (str/replace "\\" "/"))
+                                  #"/+")
+                      (reduce (fn [result segment]
+                                (case segment
+                                  "" result
+                                  "." result
+                                  ".." (if (seq result) (pop result) result)
+                                  (conj result segment)))
+                              []))]
+    (if (= "v1" (first segments))
+      (vec (rest segments))
+      segments)))
+
+(defn authorize-openplanner-proxy-post!
+  "Refuse authenticated vector search until OpenPlanner can enforce org scope.
+
+  The current SDK only accepts a fixed non-tenant `where` allowlist and drops
+  `org_id` from stored vector documents. Response-side filtering would disclose
+  rows to this process and truncate top-k results, so the service-credential
+  compatibility proxy fails closed before forwarding. Policy-disabled local
+  mode remains the existing explicitly trusted workstation boundary."
+  [ctx path body]
+  (when (and ctx
+             (= ["search" "vector"]
+                (canonical-openplanner-proxy-path path)))
+    (throw (http-error 403
+                       "openplanner_vector_search_scope_unavailable"
+                       "Vector search is unavailable until tenant filtering is supported")))
+  body)
+
 (defroute api-data-op-post! []
   "POST" "/api/data/op/*"
   (let [path (aget request "params" "*")
-        body (aget request "body")]
+        body (authorize-openplanner-proxy-post!
+              ctx path (aget request "body"))]
     (send-openplanner-v1-json! config reply "POST" path body)))
 
 (defroute api-data-op-delete! []

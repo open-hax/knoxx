@@ -313,6 +313,34 @@
     (runner/reset-event-turn-settlers!)
     (remove-test-runs! [run-id])))
 
+(deftest ^:async event-turn-settlement-carries-the-original-fifo-deadline
+  (let [run-id "settlement-deadline"
+        settlements* (atom [])
+        config {:event-agent-concurrency 1
+                :event-agent-queue-limit 1
+                :event-agent-turn-timeout-ms 300000
+                :collection-name "test"}]
+    (runner/reset-event-turn-queue!)
+    (runner/reset-event-turn-settlers!)
+    (await
+     (runner/register-event-turn-settler!
+      (str "event-" run-id)
+      (fn [settlement]
+        (swap! settlements* conj settlement)
+        (js/Promise.resolve true))))
+    (with-redefs [xrunner/now-ms (constantly 1000)]
+      (runner/enqueue-event-turn!
+       config
+       (event-turn-body run-id)
+       (fn [] (js/Promise.resolve {})))
+      (await (flush-promises!)))
+    (is (= [{:event-turn/status :completed
+             :event-turn/deadline-ms 301000}]
+           @settlements*))
+    (runner/reset-event-turn-queue!)
+    (runner/reset-event-turn-settlers!)
+    (remove-test-runs! [run-id])))
+
 (deftest ^:async a-terminal-settlement-is-redelivered-until-accepted
   (let [run-id "settlement-redelivery"
         event-id (str "event-" run-id)

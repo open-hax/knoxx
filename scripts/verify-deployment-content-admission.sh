@@ -15,9 +15,11 @@
 # PATCH is the idempotent state {"state":"draft"}, proving that the draft wire
 # value is accepted without requesting publication. Unless explicit keep-demo
 # mode is green, filesystem and database fixtures are removed by the
-# EXIT/INT/TERM trap once their agent work has settled. Durable admission events
-# and asynchronous agent evidence are retained only while a live translation
-# may still be using them.
+# EXIT/INT/TERM trap. The trap fences the run's resource anchors, drains the
+# serialized admission tail and every reconstructed event owner, and requires
+# two identical durable snapshots before it removes any database or filesystem
+# state. A teardown failure exits nonzero and keeps the fenced bytes at one
+# named evidence path outside every resource root.
 #
 # Usage:
 #   KNOXX_API_KEY=... scripts/verify-deployment-content-admission.sh
@@ -36,7 +38,7 @@
 
 # jq receives its `$name` variables through `--arg`; single quotes are required
 # to keep Bash from expanding them first.
-# shellcheck disable=SC2016
+# shellcheck disable=SC2016,SC2329
 
 set -uo pipefail
 
@@ -67,6 +69,7 @@ EVENTS_COLLECTION="${MONGODB_EVENTS_COLLECTION:-events}"
 VECTOR_COLLECTION="${MONGODB_VECTOR_HOT_COLLECTION:-event_chunks}"
 GRAPH_NODE_EMBEDDING_COLLECTION="${MONGODB_GRAPH_NODE_EMBEDDING_COLLECTION:-graph_node_embeddings}"
 ADMISSION_URL="/api/publications/documents/admit"
+ADMISSION_BARRIER_URL="/api/publications/documents/admission-barrier"
 REVIEWS_URL="/api/publications/translations/reviews"
 EVENT_TURN_STATUS_URL="/api/publications/translations/event-turn-status"
 MONGO_QUERY_URL="/api/data/mongo/query"
@@ -110,6 +113,10 @@ GENERATED_TRANSLATION_CONTENT_SETTLED=0
 GRAPH_NODE_EMBEDDINGS_SETTLED=0
 EVENT_TURNS_SETTLED=0
 TRANSLATION_CONTENT_FILES=()
+CLEANUP_EVENT_IDS='[]'
+CLEANUP_QUARANTINE_DIR=""
+CLEANUP_GENERATED_FILES_QUARANTINED=0
+CLEANUP_LAST_ERROR=""
 
 if [ -t 1 ]; then
   C_RESET=$'\033[0m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
@@ -234,30 +241,330 @@ durable_agent_work_settled() {
               && [ "$GENERATED_TRANSLATION_CONTENT_SETTLED" -eq 1 ]; }; }
 }
 
+cleanup_documents_json() {
+  jq -cn \
+    --arg source "$DOC_ID" \
+    --arg generated "$GENERATED_DOC_ID" \
+    '[$source,$generated] | map(select(length > 0))'
+}
+
+# The verifier's source manifest is itself an admission capability. Move it
+# outside every resource root before asking the process to drain so that a new
+# anchor sweep cannot create work behind the cleanup barrier.
+ensure_cleanup_quarantine() {
+  local quarantine contracts_root generated_root=""
+  [ -n "$CLEANUP_QUARANTINE_DIR" ] && return 0
+  quarantine="$(mktemp -d "/tmp/knoxx-deployment-admission-${RUN_ID}.XXXXXX")" \
+    || return 1
+  quarantine="$(realpath -m "$quarantine")" || return 1
+  contracts_root="$(realpath -m "$CONTRACTS_DIR")" || return 1
+  if [ -n "$GENERATED_CONTRACTS_DIR" ]; then
+    generated_root="$(realpath -m "$GENERATED_CONTRACTS_DIR")" || return 1
+  fi
+  case "$quarantine" in
+    "$contracts_root"|"$contracts_root"/*)
+      rmdir -- "$quarantine" 2>/dev/null || true
+      return 1
+      ;;
+  esac
+  if [ -n "$generated_root" ]; then
+    case "$quarantine" in
+      "$generated_root"|"$generated_root"/*)
+        rmdir -- "$quarantine" 2>/dev/null || true
+        return 1
+        ;;
+    esac
+  fi
+  CLEANUP_QUARANTINE_DIR="$quarantine"
+}
+
+quarantine_source_resources() {
+  ensure_cleanup_quarantine || return 1
+  if [ "$FIXTURE_OWNED" -eq 1 ] && [ -d "$FIXTURE_DIR" ]; then
+    mv -- "$FIXTURE_DIR" "$CLEANUP_QUARANTINE_DIR/source-fixture" || return 1
+  fi
+  if [ -n "$REVIEW_DEMO_SOURCE_DIR" ] && [ -d "$REVIEW_DEMO_SOURCE_DIR" ]; then
+    mv -- "$REVIEW_DEMO_SOURCE_DIR" \
+      "$CLEANUP_QUARANTINE_DIR/review-demo-source" || return 1
+  fi
+}
+
+# Generated manifests are anchors too. They cannot be fenced until the source
+# document's post-draft owner has released, because that owner may still be
+# writing the files. The first barrier/owner drain establishes that point.
+quarantine_generated_files() {
+  [ "$CLEANUP_GENERATED_FILES_QUARANTINED" -eq 0 ] || return 0
+  ensure_cleanup_quarantine || return 1
+  mkdir -p "$CLEANUP_QUARANTINE_DIR/generated" || return 1
+  if [ -n "$GENERATED_MANIFEST_FILE" ] && [ -e "$GENERATED_MANIFEST_FILE" ]; then
+    mv -- "$GENERATED_MANIFEST_FILE" \
+      "$CLEANUP_QUARANTINE_DIR/generated/manifest.edn" || return 1
+  fi
+  if [ -n "$GENERATED_SOURCE_FILE" ] && [ -e "$GENERATED_SOURCE_FILE" ]; then
+    mv -- "$GENERATED_SOURCE_FILE" \
+      "$CLEANUP_QUARANTINE_DIR/generated/source.md" || return 1
+  fi
+  if [ -n "$GENERATED_COMPLETION_FILE" ] \
+     && [ -e "$GENERATED_COMPLETION_FILE" ]; then
+    mv -- "$GENERATED_COMPLETION_FILE" \
+      "$CLEANUP_QUARANTINE_DIR/generated/completion.edn" || return 1
+  fi
+  CLEANUP_GENERATED_FILES_QUARANTINED=1
+}
+
+inspect_durable_fixtures() {
+  local documents_json="$1"
+  KNOXX_VERIFY_CLEANUP_MODE=inspect \
+  KNOXX_VERIFY_CLEANUP_DOCUMENTS_JSON="$documents_json" \
+  KNOXX_VERIFY_CLEANUP_EVENT_IDS_JSON='[]' \
+  MONGODB_EVENTS_COLLECTION="$EVENTS_COLLECTION" \
+  MONGODB_VECTOR_HOT_COLLECTION="$VECTOR_COLLECTION" \
+  MONGODB_GRAPH_NODE_EMBEDDING_COLLECTION="$GRAPH_NODE_EMBEDDING_COLLECTION" \
+    node "${REPO_ROOT}/backend/scripts/cleanup-deployment-content-admission.mjs"
+}
+
+valid_cleanup_inspection() {
+  local inspection="$1" documents_json="$2"
+  printf '%s' "$inspection" | jq -e --argjson documents "$documents_json" '
+    type == "object" and .documents == $documents and
+    (.eventIds | type) == "array" and
+    (.eventIds | all(type == "string" and length > 0)) and
+    (.eventIds | length) == (.eventIds | unique | length) and
+    (.ownerEventIds | type) == "array" and
+    (.ownerEventIds |
+      all(type == "string" and
+          test("^(translation-needed-translation-run|knoxx-publication-document-indexed)-[0-9a-f]{64}$"))) and
+    (.ownerEventIds | length) == (.ownerEventIds | unique | length) and
+    (.dispatches | type) == "array" and
+    (.dispatches |
+      all((keys | sort) == ["batchId","document","outcome"] and
+          (.document as $document | $documents | index($document) != null) and
+          (.outcome | type) == "string" and
+          ((.batchId == null) or ((.batchId | type) == "string" and
+                                  (.batchId | length) > 0)))) and
+    (.turnIds | type) == "array" and
+    (.turnIds | all(type == "string" and length > 0)) and
+    (.candidateSetIds | type) == "array" and
+    (.candidateSetIds | all(type == "string" and length > 0)) and
+    (.candidateRevisions | type) == "array" and
+    (.candidateRevisions | all(type == "string" and length > 0)) and
+    (if (.eventIds | length) == 0 then
+       ((.ownerEventIds + .dispatches + .turnIds + .candidateSetIds +
+         .candidateRevisions) | length) == 0
+     else true end)' >/dev/null 2>&1
+}
+
+cleanup_dispatches_terminal() {
+  local inspection="$1"
+  printf '%s' "$inspection" | jq -e '
+    .dispatches |
+    all(.outcome == "dispatch/completed" or
+        .outcome == "dispatch/failed" or
+        .outcome == "dispatch/unreachable")' >/dev/null 2>&1
+}
+
+# Return 0 when every supplied process-local owner is released, 1 for a
+# transient in-flight/unreachable state, and 2 for a malformed API response.
+cleanup_owners_released_once() {
+  local event_ids="$1" payload response status body
+  CLEANUP_LAST_ERROR=""
+  if ! printf '%s' "$event_ids" | jq -e '
+       type == "array" and length <= 16 and
+       length == (unique | length) and
+       all(type == "string" and
+           test("^(translation-needed-translation-run|knoxx-publication-document-indexed)-[0-9a-f]{64}$"))' \
+       >/dev/null 2>&1; then
+    CLEANUP_LAST_ERROR="cleanup reconstructed an invalid event-owner set"
+    return 2
+  fi
+  if printf '%s' "$event_ids" | jq -e 'length == 0' >/dev/null 2>&1; then
+    return 0
+  fi
+  payload="$(jq -cn --argjson event_ids "$event_ids" \
+    '{event_ids:$event_ids}')" || return 2
+  response="$(http POST "$EVENT_TURN_STATUS_URL" auth "$payload")"
+  status="$(status_of "$response")"
+  body="$(body_of "$response")"
+  if [ "$status" != "200" ]; then
+    CLEANUP_LAST_ERROR="event-owner status returned HTTP ${status}"
+    return 1
+  fi
+  if ! printf '%s' "$body" | jq -e --argjson ids "$event_ids" '
+       type == "object" and (.settled | type) == "boolean" and
+       (.events | type) == "array" and
+       ([.events[].event_id] == $ids) and
+       (.events |
+         all((keys | sort) == ["event_id","state"] and
+             (.state == "in_flight" or
+              .state == "redelivery_pending" or
+              .state == "released"))) and
+       (.settled == (.events | all(.state == "released")))' \
+       >/dev/null 2>&1; then
+    CLEANUP_LAST_ERROR="event-owner status returned a malformed identity/state set"
+    return 2
+  fi
+  if printf '%s' "$body" | jq -e \
+       '.settled == true and (.events | all(.state == "released"))' \
+       >/dev/null 2>&1; then
+    return 0
+  fi
+  CLEANUP_LAST_ERROR="one or more event owners remain active"
+  return 1
+}
+
+# Return 0 when the process-wide admission tail has drained, 1 for a transient
+# transport/server failure, and 2 for a malformed success response.
+await_admission_barrier_once() {
+  local response status body
+  CLEANUP_LAST_ERROR=""
+  response="$(http POST "$ADMISSION_BARRIER_URL" auth '{}')"
+  status="$(status_of "$response")"
+  body="$(body_of "$response")"
+  if [ "$status" != "200" ]; then
+    CLEANUP_LAST_ERROR="document-admission barrier returned HTTP ${status}"
+    return 1
+  fi
+  if ! printf '%s' "$body" | jq -e \
+       'type == "object" and (keys == ["settled"]) and .settled == true' \
+       >/dev/null 2>&1; then
+    CLEANUP_LAST_ERROR="document-admission barrier returned malformed success"
+    return 2
+  fi
+  return 0
+}
+
+track_cleanup_translation_content() {
+  local inspection="$1" revision digest file tracked existing
+  while IFS= read -r revision; do
+    [ -n "$revision" ] || continue
+    digest="$(printf '%s' "$revision" | sha256sum | awk '{print $1}')" \
+      || return 1
+    file="${PUBLICATION_CONTENT_ROOT}/.translations/${digest}.edn"
+    case "$file" in
+      "${PUBLICATION_CONTENT_ROOT}/.translations/"[0-9a-f][0-9a-f]*) ;;
+      *) return 1 ;;
+    esac
+    [ -e "$file" ] || continue
+    tracked=0
+    for existing in "${TRANSLATION_CONTENT_FILES[@]}"; do
+      if [ "$existing" = "$file" ]; then
+        tracked=1
+        break
+      fi
+    done
+    [ "$tracked" -eq 1 ] || TRANSLATION_CONTENT_FILES+=("$file")
+  done < <(printf '%s' "$inspection" | jq -r '.candidateRevisions[]')
+}
+
+# Establish a quiescent exact scope even when the main assertions were killed
+# before they learned event/run ids. Source anchors are already fenced. The
+# first barrier closes the owner-registration window, inspection reconstructs
+# every run-owned owner from Mongo, and the second barrier catches recursive
+# admission queued by a post-draft owner. Identical snapshots prove that no
+# accepted dispatch or durable identity appeared between the two barriers.
+await_cleanup_quiescence() {
+  local documents_json deadline first second first_canonical second_canonical
+  local owner_ids barrier_status owner_status
+  documents_json="$(cleanup_documents_json)" || return 1
+  deadline=$((SECONDS + AGENT_WAIT_SECONDS))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    await_admission_barrier_once
+    barrier_status=$?
+    [ "$barrier_status" -eq 2 ] && return 1
+    if [ "$barrier_status" -ne 0 ]; then
+      sleep 2
+      continue
+    fi
+
+    first="$(inspect_durable_fixtures "$documents_json")" || {
+      CLEANUP_LAST_ERROR="durable cleanup inspection failed"
+      sleep 2
+      continue
+    }
+    if ! valid_cleanup_inspection "$first" "$documents_json"; then
+      CLEANUP_LAST_ERROR="durable cleanup inspection returned malformed scope"
+      return 1
+    fi
+    if ! cleanup_dispatches_terminal "$first"; then
+      CLEANUP_LAST_ERROR="one or more translation dispatches remain accepted"
+      sleep 2
+      continue
+    fi
+    owner_ids="$(printf '%s' "$first" | jq -c '.ownerEventIds')" || return 1
+    cleanup_owners_released_once "$owner_ids"
+    owner_status=$?
+    [ "$owner_status" -eq 2 ] && return 1
+    if [ "$owner_status" -ne 0 ]; then
+      sleep 2
+      continue
+    fi
+
+    # No run-owned producer remains able to create these generated files. Move
+    # their anchor and immutable companions out of the resource roots before
+    # the second barrier closes any admission already queued by another caller.
+    quarantine_generated_files || {
+      CLEANUP_LAST_ERROR="could not quarantine generated run files"
+      return 1
+    }
+
+    await_admission_barrier_once
+    barrier_status=$?
+    [ "$barrier_status" -eq 2 ] && return 1
+    if [ "$barrier_status" -ne 0 ]; then
+      sleep 2
+      continue
+    fi
+    second="$(inspect_durable_fixtures "$documents_json")" || {
+      CLEANUP_LAST_ERROR="second durable cleanup inspection failed"
+      sleep 2
+      continue
+    }
+    if ! valid_cleanup_inspection "$second" "$documents_json"; then
+      CLEANUP_LAST_ERROR="second durable cleanup inspection returned malformed scope"
+      return 1
+    fi
+    if ! cleanup_dispatches_terminal "$second"; then
+      CLEANUP_LAST_ERROR="a translation dispatch appeared after the first barrier"
+      sleep 2
+      continue
+    fi
+    owner_ids="$(printf '%s' "$second" | jq -c '.ownerEventIds')" || return 1
+    cleanup_owners_released_once "$owner_ids"
+    owner_status=$?
+    [ "$owner_status" -eq 2 ] && return 1
+    if [ "$owner_status" -ne 0 ]; then
+      sleep 2
+      continue
+    fi
+
+    first_canonical="$(printf '%s' "$first" | jq -S -c .)" || return 1
+    second_canonical="$(printf '%s' "$second" | jq -S -c .)" || return 1
+    if [ "$first_canonical" = "$second_canonical" ]; then
+      CLEANUP_EVENT_IDS="$(printf '%s' "$second" | jq -c '.eventIds')" \
+        || return 1
+      track_cleanup_translation_content "$second" || {
+        CLEANUP_LAST_ERROR="could not derive exact translation-content paths"
+        return 1
+      }
+      return 0
+    fi
+    CLEANUP_LAST_ERROR="run-owned durable scope changed across cleanup barriers"
+    sleep 2
+  done
+  [ -n "$CLEANUP_LAST_ERROR" ] \
+    || CLEANUP_LAST_ERROR="cleanup quiescence deadline expired"
+  return 1
+}
+
 # Called from the EXIT/INT/TERM cleanup path.
 # shellcheck disable=SC2329
 cleanup_durable_fixtures() {
-  local documents_json event_ids_json
-  documents_json="$(jq -cn \
-    --arg source "$DOC_ID" \
-    --arg generated "$GENERATED_DOC_ID" \
-    '[$source,$generated] | map(select(length > 0))')" || return 1
-  event_ids_json="$(jq -cn \
-    --arg source "$SOURCE_EVENT_ID" \
-    --arg indexed "$INDEX_EVENT_ID" \
-    --arg generation_source "$GENERATION_REQUEST_SOURCE_EVENT_ID" \
-    --arg generation_indexed "$GENERATION_REQUEST_INDEX_EVENT_ID" \
-    --arg generated_source "$GENERATED_SOURCE_EVENT_ID" \
-    --arg generated_indexed "$GENERATED_INDEX_EVENT_ID" \
-    --argjson candidates "$CANDIDATE_EVENT_IDS" \
-    --argjson generated_candidates "$GENERATED_CANDIDATE_EVENT_IDS" \
-    '([$source,$indexed,$generation_source,$generation_indexed,
-       $generated_source,$generated_indexed] + $candidates +
-       $generated_candidates) |
-     map(select(type == "string" and length > 0)) | unique')" || return 1
+  local documents_json
+  documents_json="$(cleanup_documents_json)" || return 1
 
+  KNOXX_VERIFY_CLEANUP_MODE=delete \
   KNOXX_VERIFY_CLEANUP_DOCUMENTS_JSON="$documents_json" \
-  KNOXX_VERIFY_CLEANUP_EVENT_IDS_JSON="$event_ids_json" \
+  KNOXX_VERIFY_CLEANUP_EVENT_IDS_JSON="$CLEANUP_EVENT_IDS" \
   MONGODB_EVENTS_COLLECTION="$EVENTS_COLLECTION" \
   MONGODB_VECTOR_HOT_COLLECTION="$VECTOR_COLLECTION" \
   MONGODB_GRAPH_NODE_EMBEDDING_COLLECTION="$GRAPH_NODE_EMBEDDING_COLLECTION" \
@@ -374,6 +681,7 @@ fixture_write_manifest() {
  [{:document/id :${DOC_LOCAL}
    :document/title "${document_title}"
    :document/source-locale :en
+   :document/visibility :public
    :document/source {:path "${SOURCE_REL}"}
    :document/anchor? true
    :document/generate-drafts? false}
@@ -406,28 +714,45 @@ EDN
 # ShellCheck cannot see invocations made through EXIT/INT/TERM traps.
 # shellcheck disable=SC2329
 cleanup() {
-  local code=$? signalled="${1:-}" cleanup_failed=0 translation_file cleanup_summary deleted_total
+  local code=$? signalled="${1:-}" cleanup_failed=0 translation_file
+  local generated_file cleanup_summary deleted_total event_count
+  trap - EXIT INT TERM
   [ -n "$signalled" ] && code="$signalled"
 
   if [ "$REVIEW_DEMO_READY" -eq 1 ] && [ "$code" -eq 0 ]; then
     note "retained the exact run-scoped database fixtures for review"
-  elif durable_agent_work_settled; then
-    if cleanup_summary="$(cleanup_durable_fixtures)"; then
-      deleted_total="$(printf '%s' "$cleanup_summary" | jq -r '.deletedTotal // 0')"
-      note "torn down the exact run-scoped database fixtures (${deleted_total} rows)"
-    else
-      printf '%s   FAIL%s  could not remove the exact run-scoped database fixtures\n' \
-        "$C_RED" "$C_RESET" >&2
+  elif [ "$FIXTURE_OWNED" -eq 1 ]; then
+    if ! quarantine_source_resources; then
+      CLEANUP_LAST_ERROR="could not fence the source fixture outside resource roots"
       cleanup_failed=1
+    elif ! await_cleanup_quiescence; then
+      cleanup_failed=1
+    else
+      event_count="$(printf '%s' "$CLEANUP_EVENT_IDS" | jq -r 'length')"
+      if [ "$event_count" -gt 0 ]; then
+        if cleanup_summary="$(cleanup_durable_fixtures)"; then
+          deleted_total="$(printf '%s' "$cleanup_summary" | jq -r \
+            '.deletedTotal // 0')"
+          note "torn down the exact run-scoped database fixtures (${deleted_total} rows)"
+        else
+          CLEANUP_LAST_ERROR="could not remove the exact run-scoped database fixtures"
+          cleanup_failed=1
+        fi
+      else
+        note "the fenced run wrote no durable database fixtures"
+      fi
     fi
-  elif [ -n "$SOURCE_EVENT_ID" ] || [ -n "$INDEX_EVENT_ID" ]; then
-    printf '%s   WARN%s  database fixtures were retained because agent work had not settled\n' \
-      "$C_YELLOW" "$C_RESET" >&2
   fi
 
   if [ "$cleanup_failed" -eq 1 ]; then
-    printf '%s   WARN%s  filesystem fixtures were retained because database teardown did not complete\n' \
-      "$C_YELLOW" "$C_RESET" >&2
+    printf '%s   FAIL%s  cleanup could not prove and remove the exact run scope: %s\n' \
+      "$C_RED" "$C_RESET" "${CLEANUP_LAST_ERROR:-unknown cleanup failure}" >&2
+    if [ -n "$CLEANUP_QUARANTINE_DIR" ] \
+       && [ -d "$CLEANUP_QUARANTINE_DIR" ]; then
+      printf '%s   WARN%s  fenced evidence remains outside admission scope: %s\n' \
+        "$C_YELLOW" "$C_RESET" "$CLEANUP_QUARANTINE_DIR" >&2
+    fi
+    print_translation_content_cleanup >&2
     [ "$code" -eq 0 ] && code=1
     exit "$code"
   fi
@@ -435,7 +760,7 @@ cleanup() {
   if [ "${#TRANSLATION_CONTENT_FILES[@]}" -gt 0 ]; then
     if [ "$REVIEW_DEMO_READY" -eq 1 ] && [ "$code" -eq 0 ]; then
       note "retained the exact agent translation entries for review"
-    elif durable_agent_work_settled; then
+    else
       for translation_file in "${TRANSLATION_CONTENT_FILES[@]}"; do
         if [ -e "$translation_file" ] && ! rm -f -- "$translation_file"; then
           printf '%s   FAIL%s  could not remove owned translation entry %s\n' \
@@ -445,10 +770,6 @@ cleanup() {
       done
       [ "$cleanup_failed" -eq 0 ] \
         && note "torn down the exact agent translation entries"
-    else
-      printf '%s   WARN%s  exact translation entries were retained because the run was partial or failed\n' \
-        "$C_YELLOW" "$C_RESET" >&2
-      print_translation_content_cleanup >&2
     fi
   fi
 
@@ -456,7 +777,7 @@ cleanup() {
      || [ -n "$GENERATED_COMPLETION_FILE" ]; then
     if [ "$REVIEW_DEMO_READY" -eq 1 ] && [ "$code" -eq 0 ]; then
       note "retained the generated post bytes and admission-completion marker for review"
-    elif durable_agent_work_settled; then
+    else
       for generated_file in "$GENERATED_MANIFEST_FILE" "$GENERATED_SOURCE_FILE" \
                             "$GENERATED_COMPLETION_FILE"; do
         [ -n "$generated_file" ] || continue
@@ -468,14 +789,6 @@ cleanup() {
       done
       [ "$cleanup_failed" -eq 0 ] \
         && note "torn down the three exact generated draft files"
-    elif { [ -n "$GENERATED_MANIFEST_FILE" ] && [ -e "$GENERATED_MANIFEST_FILE" ]; } \
-         || { [ -n "$GENERATED_SOURCE_FILE" ] && [ -e "$GENERATED_SOURCE_FILE" ]; } \
-         || { [ -n "$GENERATED_COMPLETION_FILE" ] && [ -e "$GENERATED_COMPLETION_FILE" ]; }; then
-      printf '%s   WARN%s  generated agent work had not settled; exact files were left intact\n' \
-        "$C_YELLOW" "$C_RESET" >&2
-      printf '         after its agent runs settle: rm -f -- %q %q %q\n' \
-        "$GENERATED_MANIFEST_FILE" "$GENERATED_SOURCE_FILE" \
-        "$GENERATED_COMPLETION_FILE" >&2
     fi
   fi
 
@@ -497,6 +810,24 @@ cleanup() {
         "$C_RED" "$C_RESET" "$REVIEW_DEMO_SOURCE_DIR" >&2
       cleanup_failed=1
     fi
+  fi
+  if [ -n "$CLEANUP_QUARANTINE_DIR" ] && [ -d "$CLEANUP_QUARANTINE_DIR" ]; then
+    case "$CLEANUP_QUARANTINE_DIR" in
+      /tmp/knoxx-deployment-admission-"${RUN_ID}".*)
+        if rm -rf -- "$CLEANUP_QUARANTINE_DIR"; then
+          note "removed the fenced cleanup quarantine"
+        else
+          printf '%s   FAIL%s  could not remove cleanup quarantine %s\n' \
+            "$C_RED" "$C_RESET" "$CLEANUP_QUARANTINE_DIR" >&2
+          cleanup_failed=1
+        fi
+        ;;
+      *)
+        printf '%s   FAIL%s  refused unexpected cleanup quarantine path %s\n' \
+          "$C_RED" "$C_RESET" "$CLEANUP_QUARANTINE_DIR" >&2
+        cleanup_failed=1
+        ;;
+    esac
   fi
   if [ "$cleanup_failed" -eq 1 ] && [ "$code" -eq 0 ]; then code=1; fi
   exit "$code"
@@ -1312,7 +1643,7 @@ else
   note "Set KNOXX_VERIFY_GENERATED_DRAFTS=true and KNOXX_GENERATED_CONTRACTS_DIR to enable the isolated bounded proof."
 fi
 
-step "9. run-scoped cleanup is bounded and automatic after settlement"
+step "9. run-scoped cleanup is bounded and automatic"
 settlement_documents="$(jq -cn \
   --arg source "$DOC_ID" --arg generated "$GENERATED_DOC_ID" \
   '[$source,$generated] | map(select(length > 0))')"
@@ -1390,12 +1721,12 @@ if [ "$RETAIN_REVIEW_DEMO" -eq 1 ] && [ "$FAIL_COUNT" -eq 0 ] \
   print_translation_content_cleanup
 else
   if durable_agent_work_settled; then
-    pass "the exit trap will remove the settled run's events, vectors, dispatches, candidates, receipts, and reviews"
+    pass "the exit trap will fence both anchors and remove the run's exact durable and filesystem scope"
   else
-    warn "durable fixtures cannot be removed until all tracked agent work settles"
+    warn "the exit trap will reconstruct and drain partial agent work before removing it"
   fi
 fi
-note "The trap retains durable facts only while deleting them could race a live agent session."
+note "The trap requires two identical post-barrier snapshots before deleting durable facts."
 
 printf '\n%s====================================================================%s\n' "$C_BOLD" "$C_RESET"
 printf '%s%s passed%s' "$C_GREEN$C_BOLD" "$PASS_COUNT" "$C_RESET"

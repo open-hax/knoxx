@@ -501,22 +501,31 @@
          :agent-turn-timeout-ms
          (or (:event-agent-turn-timeout-ms config) 0)))
 
+(defn- event-turn-deadline-ms
+  [timeout-ms]
+  (when (and (number? timeout-ms) (pos? timeout-ms))
+    (+ (xrunner/now-ms) timeout-ms)))
+
 (defn- busy-error
   [message]
   (js/Promise.reject (js/Error. message)))
 
 (defn- event-turn-settlement
-  [result]
-  (if-let [detail (some-> (:error result) str str/trim not-empty)]
-    {:event-turn/status :failed
-     :event-turn/detail detail}
-    {:event-turn/status :completed}))
+  [result deadline-ms]
+  (cond->
+   (if-let [detail (some-> (:error result) str str/trim not-empty)]
+     {:event-turn/status :failed
+      :event-turn/detail detail}
+     {:event-turn/status :completed})
+    deadline-ms (assoc :event-turn/deadline-ms deadline-ms)))
 
 (defn- event-turn-failure
-  [err]
-  {:event-turn/status :failed
-   :event-turn/detail (or (some-> (ex-message err) str str/trim not-empty)
-                          "event-triggered agent turn failed")})
+  [err deadline-ms]
+  (cond->
+   {:event-turn/status :failed
+    :event-turn/detail (or (some-> (ex-message err) str str/trim not-empty)
+                           "event-triggered agent turn failed")}
+    deadline-ms (assoc :event-turn/deadline-ms deadline-ms)))
 
 (defn- event-id-from-body
   [body]
@@ -545,17 +554,20 @@
               event-id settle! settlement)))))
 
 (defn- ^:async execute-event-turn!
-  [{:keys [queue-id body start-turn!]}]
-  (try
-    (mark-event-turn-started! body)
-    (let [result (await (start-turn!))]
-      (await (notify-event-turn-settler! body (event-turn-settlement result))))
-    (catch :default err
-      (log-and-record-async-spawn-error! body err)
-      (await (notify-event-turn-settler! body (event-turn-failure err))))
-    (finally
-      (when-let [next-entry (release-event-turn! queue-id)]
-        (execute-event-turn! next-entry)))))
+  [{:keys [queue-id body start-turn! event-turn-timeout-ms]}]
+  (let [deadline-ms (event-turn-deadline-ms event-turn-timeout-ms)]
+    (try
+      (mark-event-turn-started! body)
+      (let [result (await (start-turn!))]
+        (await (notify-event-turn-settler!
+                body (event-turn-settlement result deadline-ms))))
+      (catch :default err
+        (log-and-record-async-spawn-error! body err)
+        (await (notify-event-turn-settler!
+                body (event-turn-failure err deadline-ms))))
+      (finally
+        (when-let [next-entry (release-event-turn! queue-id)]
+          (execute-event-turn! next-entry))))))
 
 (defn enqueue-event-turn!
   "Admit an event-triggered turn to the bounded process-local FIFO.
@@ -569,6 +581,7 @@
   (let [{:keys [concurrency queue-limit]} (event-queue-settings config)
         entry {:queue-id (xturn-node/random-uuid!)
                :body body
+               :event-turn-timeout-ms (:event-agent-turn-timeout-ms config)
                :start-turn! start-turn!}
         queue-result (reserve-event-turn! entry concurrency queue-limit)]
     (if (= :full (:status queue-result))

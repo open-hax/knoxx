@@ -101,6 +101,8 @@
 (deftest document-shape-declares-optional-admission-policy
   (is (true? (m/validate pub/Document
                          (assoc translation-pipeline-document
+                                :document/org-id "org-1"
+                                :document/visibility :private
                                 :document/anchor? true
                                 :document/generate-drafts? false
                                 :document/derived-from :knoxx.docs/source
@@ -108,7 +110,16 @@
   (doseq [field [:document/anchor? :document/generate-drafts?]]
     (is (false? (m/validate pub/Document
                             (assoc translation-pipeline-document field :yes)))
-        (str field " must be boolean when declared"))))
+        (str field " must be boolean when declared")))
+  (is (true? (m/validate pub/Document
+                         (assoc translation-pipeline-document
+                                :document/visibility :public))))
+  (is (false? (m/validate pub/Document
+                          (assoc translation-pipeline-document
+                                 :document/org-id "  "))))
+  (is (false? (m/validate pub/Document
+                          (assoc translation-pipeline-document
+                                 :document/visibility :internal)))))
 
 ;; ── 4 Garden ──────────────────────────────────────────────────────────────
 

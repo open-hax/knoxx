@@ -8,6 +8,7 @@
   {:document/id :knoxx.docs/anchor
    :document/title "Anchor"
    :document/source-locale :en
+   :document/visibility :public
    :document/source {:path "docs/anchor.md"}
    :document/anchor? true
    :document/generate-drafts? true})
@@ -16,7 +17,11 @@
   {:document/id :knoxx.docs/exact
    :document/title "Exact"
    :document/source-locale :en
+   :document/visibility :public
    :document/source {:path "docs/exact.md"}})
+
+(def scope
+  {:org-id "org-1"})
 
 (def garden
   {:garden/id :knoxx.gardens/main
@@ -56,23 +61,84 @@
 (deftest selection-is-explicit-and-stable
   (testing "the default sweep selects only anchors"
     (is (= [:knoxx.docs/anchor]
-           (mapv :document/id (admission/select-documents index {})))))
+           (mapv :document/id (admission/select-documents index scope {})))))
 
   (testing "an exact non-anchor remains admissible"
     (is (= [:knoxx.docs/exact]
            (mapv :document/id
                  (admission/select-documents
-                  index {:document :knoxx.docs/exact})))))
+                  index scope {:document :knoxx.docs/exact})))))
 
   (testing "an absent exact identity is a visible 404"
     (let [err (try
                 (admission/select-documents
-                 index {:document :knoxx.docs/missing})
+                 index scope {:document :knoxx.docs/missing})
                 nil
                 (catch :default error error))]
       (is (= 404 (:status (ex-data err))))
       (is (= "document_admission_document_not_found"
              (:code (ex-data err)))))))
+
+(deftest selection-requires-explicit-public-or-matching-organization
+  (let [owned (assoc anchor
+                     :document/id :knoxx.generated/owned
+                     :document/org-id "org-1"
+                     :document/visibility :private)
+        other (assoc owned
+                     :document/id :knoxx.generated/other
+                     :document/org-id "org-2")
+        legacy (-> owned
+                   (assoc :document/id :knoxx.generated/legacy)
+                   (dissoc :document/org-id :document/visibility))
+        private-unowned (-> owned
+                            (assoc :document/id :knoxx.generated/unowned)
+                            (dissoc :document/org-id))
+        scoped-index {:documents (into {}
+                                       (map (juxt :document/id identity))
+                                       [anchor owned other legacy private-unowned])}]
+    (testing "the anchor sweep includes only explicit public and exact-owner rows"
+      (is (= [:knoxx.docs/anchor :knoxx.generated/owned]
+             (mapv :document/id
+                   (admission/select-documents scoped-index scope {})))))
+
+    (testing "other-tenant and legacy unowned documents are indistinguishable from absence"
+      (doseq [document-id [:knoxx.generated/other
+                           :knoxx.generated/legacy
+                           :knoxx.generated/unowned]]
+        (let [err (try
+                    (admission/select-documents
+                     scoped-index scope {:document document-id})
+                    nil
+                    (catch :default error error))]
+          (is (= 404 (:status (ex-data err))))
+          (is (= "document_admission_document_not_found"
+                 (:code (ex-data err)))))))))
+
+(deftest visible-index-removes-hidden-publication-relations-with-their-documents
+  (let [owned (assoc exact
+                     :document/id :knoxx.generated/owned
+                     :document/org-id "org-1"
+                     :document/visibility :private)
+        other (assoc owned
+                     :document/id :knoxx.generated/other
+                     :document/org-id "org-2")
+        relation (fn [id document]
+                   {:publication/id id
+                    :publication/document document})
+        scoped (admission/visible-publication-index
+                {:documents {(:document/id anchor) anchor
+                             (:document/id owned) owned
+                             (:document/id other) other}
+                 :gardens {:shared {:garden/id :shared}}
+                 :publications [(relation :public-relation (:document/id anchor))
+                                (relation :owned-relation (:document/id owned))
+                                (relation :hidden-relation (:document/id other))]}
+                scope)]
+    (is (= #{:knoxx.docs/anchor :knoxx.generated/owned}
+           (set (keys (:documents scoped)))))
+    (is (= [:public-relation :owned-relation]
+           (mapv :publication/id (:publications scoped))))
+    (is (= {:shared {:garden/id :shared}} (:gardens scoped)))))
 
 (deftest derived-documents-never-request-another-draft
   (let [derived (assoc exact

@@ -25,12 +25,18 @@
     (is (thrown? js/Error
                  (adapter/decode-request
                   (request {:anchors true
-                            :document "knoxx.docs/probe"}))))))
+                            :document "knoxx.docs/probe"})))))
+  (testing "the admission barrier body is closed"
+    (is (= {} (adapter/decode-barrier-request (request {}))))
+    (is (thrown? js/Error
+                 (adapter/decode-barrier-request
+                  (request {:document "knoxx.docs/probe"}))))))
 
 (def document
   {:document/id :knoxx.docs/probe
    :document/title "Probe"
    :document/source-locale :en
+   :document/visibility :public
    :document/source {:path "docs/probe.md"}
    :document/anchor? true})
 
@@ -129,6 +135,57 @@
       (is (true? (get-in @response [:body :ok])))
       (is (= 1 (get-in @response [:body :admitted])))
       (is (= 0 (get-in @response [:body :failed]))))))
+
+(deftest ^:async registered-admission-barrier-authorizes-before-draining
+  (let [routes (atom [])
+        app (js-obj "route" (fn [options] (swap! routes conj options)))
+        success-response (atom {})
+        denied-response (atom {})
+        invalid-response (atom {})
+        checks (atom [])
+        drains (atom 0)
+        authorized? (atom true)
+        ctx {:org-id "org-1" :membership-id "member-1"}
+        handlers
+        {:with-request-context! (fn [_ _ _ operation]
+                                  (operation ctx))
+         :ensure-permission! (fn [actual permission]
+                               (swap! checks conj [actual permission])
+                               (when-not @authorized?
+                                 (throw (ex-info "forbidden" {:status 403}))))}
+        dependencies
+        {:await-document-admission-barrier!
+         (fn []
+           (swap! drains inc)
+           (js/Promise.resolve {:settled true}))}]
+    (adapter/register-document-admission-routes!
+     app {} {:session-project-name "knoxx-local"}
+     handlers dependencies)
+    (let [route (some #(when (= "/api/publications/documents/admission-barrier"
+                                (aget % "url"))
+                         %)
+                      @routes)
+          handler (aget route "handler")]
+      (is (= "POST" (aget route "method")))
+      (await (handler (request {}) (reply success-response)))
+      (is (= 200 (:status @success-response)))
+      (is (= {:settled true} (:body @success-response)))
+      (is (= 1 @drains))
+
+      (await (handler (request {:unexpected true}) (reply invalid-response)))
+      (is (= 400 (:status @invalid-response)))
+      (is (= 1 @drains)
+          "closed validation runs before the admission barrier")
+
+      (reset! authorized? false)
+      (await (handler (request {}) (reply denied-response)))
+      (is (= 403 (:status @denied-response)))
+      (is (= 1 @drains)
+          "authorization failure cannot inspect the admission tail")
+      (is (= [[ctx adapter/admission-permission]
+              [ctx adapter/admission-permission]
+              [ctx adapter/admission-permission]]
+             @checks)))))
 
 (deftest ^:async explicit-or-policy-draft-generation-requires-publication-management-before-effects
   (let [routes (atom [])

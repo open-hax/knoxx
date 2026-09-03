@@ -146,10 +146,12 @@
      :draft/source-path (str "drafts/" (name document-id) ".md")}))
 
 (defn- draft-document
-  [document-id title source-locale source-document-id source-revision source-path]
+  [document-id title source-locale org-id source-document-id source-revision source-path]
   {:document/id document-id
    :document/title title
    :document/source-locale source-locale
+   :document/org-id org-id
+   :document/visibility :private
    :document/anchor? true
    :document/generate-drafts? false
    :document/derived-from source-document-id
@@ -184,10 +186,10 @@
   "Build deterministic draft resources pinned to one admitted source revision."
   [{:keys [title content] :as input}]
   (let [{:draft/keys [id policy source-path] :as identity} (draft-identity input)
-        {:keys [source-document-id source-revision source-locale gardens]} policy
+        {:keys [source-document-id source-revision source-locale gardens org-id]} policy
         content (nonblank! :content content)
         title (resolved-title title content source-document-id)
-        document (draft-document id title source-locale
+        document (draft-document id title source-locale org-id
                                  source-document-id source-revision source-path)
         publications (draft-publications id source-locale gardens)
         _ (publication/assert-valid! :publication-draft/document

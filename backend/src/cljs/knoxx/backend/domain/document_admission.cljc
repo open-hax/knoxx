@@ -78,20 +78,56 @@
     (assert-selector! selection document anchors?)
     (assoc selection :anchors? (if document false anchors?))))
 
+(defn document-visible-to-org?
+  "True only for an explicit public document or an exact request-org owner."
+  [scope document]
+  (or (= :public (:document/visibility document))
+      (and (contains? document :document/org-id)
+           (= (:org-id scope) (:document/org-id document)))))
+
+(defn visible-publication-index
+  "Restrict one resolved publication index to documents visible to `scope`.
+
+  Publications are filtered with their owning document. Keeping a relation
+  whose document was removed would either disclose its identity or make later
+  hydration fail on a deliberately hidden reference. Gardens are shared
+  topology and carry no document content, so they remain intact."
+  [index scope]
+  (let [documents (into {}
+                        (filter (fn [[_ document]]
+                                  (document-visible-to-org? scope document)))
+                        (:documents index))
+        document-ids (set (keys documents))]
+    (-> index
+        (assoc :documents documents)
+        (update :publications
+                (fn [publications]
+                  (filterv #(contains? document-ids
+                                       (:publication/document %))
+                           publications))))))
+
 (defn select-documents
-  "Select an exact document or every explicitly anchored document, stably."
-  [index selection]
+  "Select documents visible to the request organization, stably.
+
+  A document is admissible only when its declared owner equals the request
+  organization or it is explicitly public. Missing ownership never means
+  public: legacy private/generated resources therefore fail closed. Exact
+  denials use the same 404 as absence so this boundary does not disclose an
+  out-of-scope document's existence."
+  [index scope selection]
   (let [{:keys [document]} (normalize-selection selection)]
     (if document
-      (if-let [selected (get-in index [:documents document])]
-        [selected]
-        (throw (ex-info "document admission selection was not found"
-                        {:status 404
-                         :code "document_admission_document_not_found"
-                         :document/id document})))
+      (let [selected (get-in index [:documents document])]
+        (if (and selected (document-visible-to-org? scope selected))
+          [selected]
+          (throw (ex-info "document admission selection was not found"
+                          {:status 404
+                           :code "document_admission_document_not_found"
+                           :document/id document}))))
       (->> (:documents index)
            vals
-           (filter #(true? (:document/anchor? %)))
+           (filter #(and (true? (:document/anchor? %))
+                         (document-visible-to-org? scope %)))
            (sort-by #(pr-str (:document/id %)))
            vec))))
 

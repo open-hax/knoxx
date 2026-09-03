@@ -251,15 +251,22 @@
    mean the receipt became immutable before candidate-event projection failed;
    replaying through the structured adapter authenticates the stored final pair
    and repairs that projection without asking the model for new bytes."
-  [{:keys [complete-turn!] :as deps} bound turn]
-  (let [durable (await (recovery-attempt!
-                        #(agent-sink/settle-durable-turn! deps bound turn)))]
+  [{:keys [complete-turn!] :as deps} bound turn settlement]
+  (let [recovery-deps
+        (cond-> deps
+          (number? (:event-turn/deadline-ms settlement))
+          (assoc :event-turn/deadline-ms
+                 (:event-turn/deadline-ms settlement)))
+        durable (await (recovery-attempt!
+                        #(agent-sink/settle-durable-turn!
+                          recovery-deps bound turn)))]
     (if (and (nil? (:recovery/error durable))
              (:recovery/result durable))
       nil
       (if complete-turn!
         (:recovery/error
-         (await (recovery-attempt! #(complete-turn! deps bound turn))))
+         (await (recovery-attempt!
+                 #(complete-turn! recovery-deps bound turn))))
         (:recovery/error durable)))))
 
 (defn- ^:async settle-bound-turn!
@@ -278,7 +285,8 @@
    attempt because `resolve-dispatch!` compares immutable attempt identity, not
    only the shared dispatch key."
   [{:keys [evidence-store] :as deps} bound turn settlement]
-  (let [recovery-error (await (recover-turn-obligation! deps bound turn))
+  (let [recovery-error (await (recover-turn-obligation!
+                               deps bound turn settlement))
         current (await (store/dispatch-for-batch!
                         evidence-store (:dispatch/batch-id bound)))]
     (if (= :dispatch/completed (:dispatch/outcome current))

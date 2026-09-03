@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   cleanupDeploymentContentAdmission,
+  inspectDeploymentContentAdmission,
   validateCleanupScope,
 } from "../../scripts/cleanup-deployment-content-admission.mjs";
 
@@ -23,6 +24,7 @@ function fakeDb(rowsByCollection = {}) {
         collections.set(name, {
           deletes: [],
           finds: [],
+          counts: [],
           deleteMany: async function deleteMany(filter) {
             this.deletes.push(filter);
             operations.push({ type: "delete", collection: name });
@@ -32,6 +34,11 @@ function fakeDb(rowsByCollection = {}) {
             this.finds.push({ filter, options });
             operations.push({ type: "find", collection: name });
             return { toArray: async () => rowsByCollection[name] ?? [] };
+          },
+          countDocuments: async function countDocuments(filter) {
+            this.counts.push(filter);
+            operations.push({ type: "count", collection: name });
+            return 0;
           },
         });
       }
@@ -75,14 +82,25 @@ test("deployment verifier cleanup rejects scopes outside its run-owned namespace
   );
 });
 
-test("deployment verifier trap cleans settled runs and retains only a green explicit demo", () => {
-  const databaseFailureGuard = verifier.indexOf('if [ "$cleanup_failed" -eq 1 ]; then');
-  const translationFileCleanup = verifier.indexOf('if [ "${#TRANSLATION_CONTENT_FILES[@]}" -gt 0 ]; then');
-  const generatedFileCleanup = verifier.indexOf('if [ -n "$GENERATED_MANIFEST_FILE" ]');
-  const fixtureDirectoryCleanup = verifier.indexOf('if [ "$FIXTURE_OWNED" -eq 1 ]');
+test("deployment verifier trap drains partial runs and retains only a green explicit demo", () => {
+  const cleanupStart = verifier.indexOf("\ncleanup() {");
+  const cleanupEnd = verifier.indexOf("trap cleanup EXIT", cleanupStart);
+  const cleanup = verifier.slice(cleanupStart, cleanupEnd);
+  const databaseFailureGuard = cleanup.indexOf('if [ "$cleanup_failed" -eq 1 ]; then');
+  const translationFileCleanup = cleanup.indexOf('if [ "${#TRANSLATION_CONTENT_FILES[@]}" -gt 0 ]; then');
+  const generatedFileCleanup = cleanup.indexOf('if [ -n "$GENERATED_MANIFEST_FILE" ]');
+  const fixtureDirectoryCleanup = cleanup.indexOf(
+    'if [ "$FIXTURE_OWNED" -eq 1 ]',
+    generatedFileCleanup,
+  );
 
   assert.match(verifier, /trap cleanup EXIT/);
-  assert.match(verifier, /elif durable_agent_work_settled; then/);
+  assert.match(verifier, /await_cleanup_quiescence/);
+  assert.match(verifier, /ADMISSION_BARRIER_URL="\/api\/publications\/documents\/admission-barrier"/);
+  assert.match(verifier, /quarantine_source_resources/);
+  assert.match(verifier, /quarantine_generated_files/);
+  assert.match(verifier, /first_canonical.*second_canonical/s);
+  assert.doesNotMatch(verifier, /mv -- .*source-fixture.*"\$FIXTURE_DIR"/);
   assert.match(verifier, /cleanup_summary="\$\(cleanup_durable_fixtures\)"/);
   assert.match(verifier, /cleanup_failed=1/);
   assert.match(
@@ -106,19 +124,14 @@ test("deployment verifier trap cleans settled runs and retains only a green expl
   assert.ok(databaseFailureGuard >= 0);
   assert.ok(databaseFailureGuard < translationFileCleanup);
   assert.match(
-    verifier.slice(databaseFailureGuard, translationFileCleanup),
+    cleanup.slice(databaseFailureGuard, translationFileCleanup),
     /exit "\$code"/,
   );
   assert.ok(generatedFileCleanup > translationFileCleanup);
   assert.ok(fixtureDirectoryCleanup > generatedFileCleanup);
-  assert.match(
-    verifier.slice(translationFileCleanup, generatedFileCleanup),
-    /elif durable_agent_work_settled; then/,
-  );
-  assert.match(
-    verifier.slice(generatedFileCleanup, fixtureDirectoryCleanup),
-    /elif durable_agent_work_settled; then/,
-  );
+  assert.doesNotMatch(verifier, /database fixtures were retained because agent work had not settled/);
+  assert.doesNotMatch(verifier, /translation entries were retained because the run was partial/);
+  assert.doesNotMatch(verifier, /generated agent work had not settled; exact files were left intact/);
   assert.doesNotMatch(verifier, /mongosh/);
 });
 
@@ -132,8 +145,12 @@ test("deployment verifier cleanup uses exact identities for all durable fixture 
     ],
     knoxx_translation_turns: [{ turn_id: "turn-1" }, { turn_id: "turn-2" }],
     knoxx_translation_candidate_sets: [
-      { candidate_set_id: "set-1" },
-      { candidate_set_id: "set-2" },
+      { candidate_set_id: "set-1", turn_id: "turn-1", candidate_revision: "revision-1" },
+      { candidate_set_id: "set-2", turn_id: "turn-2", candidate_revision: "revision-2" },
+    ],
+    knoxx_translation_dispatches: [
+      { document_wire_id: sourceDocument, outcome: "dispatch/completed", batch_id: "run-1" },
+      { document_wire_id: generatedDocument, outcome: "dispatch/failed", batch_id: "run-2" },
     ],
   });
   const result = await cleanupDeploymentContentAdmission(db, {
@@ -144,23 +161,23 @@ test("deployment verifier cleanup uses exact identities for all durable fixture 
     graphNodeEmbeddingCollection: "custom_graph_embeddings",
   });
 
-  assert.deepEqual(result.eventIds, ["source-1", "index-1", "translation-1", "translation-2"]);
+  assert.deepEqual(result.eventIds, ["index-1", "source-1", "translation-1", "translation-2"]);
   assert.equal(result.deletedTotal, 11);
   assert.deepEqual(db.collections.get("events").finds, [{
     filter: {
       "extra.document_id": { $in: [sourceDocument, generatedDocument] },
     },
-    options: { projection: { _id: 0, id: 1 } },
+    options: { projection: { _id: 0, id: 1, kind: 1, "extra.document_id": 1 } },
   }]);
   assert.deepEqual(db.collections.get("events").deletes, [{
     id: {
       $in: [
-        "source-1",
         "index-1",
+        "source-1",
         "translation-1",
         "translation-2",
-        "graph.node:derive:source-1",
         "graph.node:derive:index-1",
+        "graph.node:derive:source-1",
         "graph.node:derive:translation-1",
         "graph.node:derive:translation-2",
       ],
@@ -180,11 +197,18 @@ test("deployment verifier cleanup uses exact identities for all durable fixture 
   }]);
   assert.deepEqual(db.collections.get("knoxx_translation_turns").finds, [{
     filter: { document: { $in: [`:${sourceDocument}`, `:${generatedDocument}`] } },
-    options: { projection: { _id: 0, turn_id: 1 } },
+    options: { projection: { _id: 0, turn_id: 1, document: 1, candidate_revision: 1 } },
   }]);
   assert.deepEqual(db.collections.get("knoxx_translation_candidate_sets").finds, [{
     filter: { turn_id: { $in: ["turn-1", "turn-2"] } },
-    options: { projection: { _id: 0, candidate_set_id: 1 } },
+    options: {
+      projection: {
+        _id: 0,
+        candidate_set_id: 1,
+        turn_id: 1,
+        candidate_revision: 1,
+      },
+    },
   }]);
   assert.deepEqual(db.collections.get("knoxx_translation_split_reviews").deletes, [{
     candidate_set_id: { $in: ["set-1", "set-2"] },
@@ -196,9 +220,49 @@ test("deployment verifier cleanup uses exact identities for all durable fixture 
     turn_id: { $in: ["turn-1", "turn-2"] },
   }]);
   assert.deepEqual(db.collections.get("knoxx_translation_turns").deletes, [{
-    turn_id: { $in: ["turn-1", "turn-2"] },
+    document: { $in: [`:${sourceDocument}`, `:${generatedDocument}`] },
   }]);
-  assert.deepEqual(db.operations.at(-1), { type: "delete", collection: "events" });
+  assert.deepEqual(
+    db.operations.filter((operation) => operation.type === "delete").at(-1),
+    { type: "delete", collection: "events" },
+  );
+  assert.deepEqual(result.candidateRevisions, ["revision-1", "revision-2"]);
+});
+
+test("deployment cleanup inspection reconstructs owners and revisions before shell ids exist", async () => {
+  const db = fakeDb({
+    events: [
+      { id: "knoxx-publication-document-indexed-a", kind: "publication.document.indexed" },
+      { id: "candidate-event", kind: "translation.segment" },
+    ],
+    knoxx_translation_turns: [
+      { turn_id: "turn-1", document: `:${sourceDocument}`, candidate_revision: "revision-from-turn" },
+    ],
+    knoxx_translation_candidate_sets: [],
+    knoxx_translation_dispatches: [
+      { document_wire_id: sourceDocument, outcome: "dispatch/accepted", batch_id: "run-1" },
+    ],
+  });
+
+  const result = await inspectDeploymentContentAdmission(db, {
+    documents: [sourceDocument],
+    eventIds: [],
+    eventsCollection: "events",
+    vectorCollection: "event_chunks",
+    graphNodeEmbeddingCollection: "graph_node_embeddings",
+  });
+
+  assert.deepEqual(result.eventIds, ["candidate-event", "knoxx-publication-document-indexed-a"]);
+  assert.deepEqual(result.ownerEventIds, [
+    "knoxx-publication-document-indexed-a",
+    "translation-needed-run-1",
+  ]);
+  assert.deepEqual(result.candidateRevisions, ["revision-from-turn"]);
+  assert.deepEqual(result.dispatches, [{
+    document: sourceDocument,
+    outcome: "dispatch/accepted",
+    batchId: "run-1",
+  }]);
 });
 
 test("deployment verifier cleanup refuses an event id not owned by its documents", async () => {
@@ -235,4 +299,62 @@ test("deployment verifier cleanup refuses an unacknowledged delete", async () =>
     /delete was not durably acknowledged/,
   );
   assert.deepEqual(db.collections.get("events").deletes, []);
+});
+
+test("deployment verifier retains ownership events when dependent residue remains", async () => {
+  const db = fakeDb({
+    events: [{ id: "source-1" }],
+    knoxx_translation_turns: [
+      { document: `:${sourceDocument}`, candidate_revision: "legacy-revision" },
+    ],
+  });
+  db.collection("knoxx_translation_turns").countDocuments = async function countDocuments(filter) {
+    this.counts.push(filter);
+    return 1;
+  };
+
+  await assert.rejects(
+    cleanupDeploymentContentAdmission(db, {
+      documents: [sourceDocument],
+      eventIds: ["source-1"],
+      eventsCollection: "events",
+      vectorCollection: "event_chunks",
+      graphNodeEmbeddingCollection: "graph_node_embeddings",
+    }),
+    /cleanup left run-owned residue: turns=1/,
+  );
+  assert.deepEqual(
+    db.collections.get("events").deletes,
+    [],
+    "the exact ownership evidence remains available for a corrected retry",
+  );
+});
+
+test("deployment verifier cleanup rejects run-owned residue after deletion", async () => {
+  const db = fakeDb({ events: [{ id: "source-1" }] });
+  db.collection("events").countDocuments = async function countDocuments(filter) {
+    this.counts.push(filter);
+    return 1;
+  };
+
+  await assert.rejects(
+    cleanupDeploymentContentAdmission(db, {
+      documents: [sourceDocument],
+      eventIds: ["source-1"],
+      eventsCollection: "events",
+      vectorCollection: "event_chunks",
+      graphNodeEmbeddingCollection: "graph_node_embeddings",
+    }),
+    /cleanup left run-owned residue: events=1/,
+  );
+  assert.deepEqual(db.collections.get("events").counts, [{
+    $or: [
+      { "extra.document_id": { $in: [sourceDocument] } },
+      {
+        id: {
+          $in: ["source-1", "graph.node:derive:source-1"],
+        },
+      },
+    ],
+  }]);
 });

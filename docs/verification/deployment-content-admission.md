@@ -53,9 +53,10 @@ scripts/with-local-resources.sh scripts/verify-deployment-content-admission.sh
 
 Default behavior is strict teardown. Keep mode retains files and durable review
 evidence only after every assertion is green and all agent turns and projections
-have settled; a red or interrupted run cleans safe owned files and never calls a
-failure a demo. The final output prints the source/generated document ids,
-review URL, and exact file cleanup command for an intentionally retained demo.
+have settled; a red or interrupted run fences its anchors, drains partial work,
+and never calls a failure a demo. The final output prints the source/generated
+document ids, review URL, and exact file cleanup command for an intentionally
+retained demo.
 
 The defaults are:
 
@@ -344,40 +345,44 @@ generated root so the review UI remains testable.
 
 In ordinary generated mode, the trap removes only the three precomputed,
 run-owned files — the generated namespace manifest, Markdown source, and
-recursive-admission completion marker — and only after both generated
-translation agents have produced their durable candidate events and exact
-vector projections. It never recursively deletes the configured generated
-root. Every process-local owner must be released first, even when another
-assertion made the run red. If the post-drafter or either translator has not
-settled, deleting those resources could race internal admission, so the trap
-leaves them intact.
+recursive-admission completion marker. It never recursively deletes the
+configured generated root. Before waiting, it moves the source fixture to a
+unique `/tmp/knoxx-deployment-admission-*` quarantine outside every resource
+root. Once the post-draft owner releases, it moves the generated anchor and its
+immutable companions into the same quarantine. This removes both capabilities
+for starting later admission while preserving their bytes until durable cleanup
+succeeds. The live resource watcher only refreshes projections, but the teardown
+does not depend on that fact: neither fenced manifest remains under a watched
+admission root.
 
 Keep mode retains those three generated files together with its source/garden
 fixture, the four exact source/generated agent translation entries, and their
-durable review evidence, and prints every file deletion target. Ordinary green
-teardown removes only exact translation files after review/event identity
-agreement and complete durable settlement, including on an otherwise red run.
-An unsettled or mismatched run retains any known translation entries; it never
-deletes the `.translations` directory or uses a glob. A failed keep-mode run
-does not retain a purported demo; other settled files are torn down using the
-same exact targets.
+durable review evidence, and prints every file deletion target. Ordinary
+teardown removes only exact translation files reconstructed from durable
+candidate revisions; it never deletes the `.translations` directory or uses a
+glob. A failed keep-mode run does not retain a purported demo and follows the
+same fenced teardown as any other failed run.
 
-Before database teardown, step 9 derives each translation owner from its exact
-completed dispatch batch and includes the generated document-indexed owner when
-the post-drafter ran. The authenticated process-local status route must report
-every owner as released. The verifier then point-polls the configured graph-node
-embedding collection for every exact run-owned event. A pending owner, missing
-projection, malformed response, or unavailable store prevents database cleanup
-so a live callback can never race deletion.
+Before database teardown, the trap posts an authenticated no-op behind the
+process-wide document-admission serializer. It then inspects Mongo by the exact
+source/generated document ids, reconstructing event owners from indexed events
+and dispatch batches even if interruption happened before the shell learned
+those ids. Every dispatch must be terminal and the authenticated process-local
+status route must report every owner released. A second admission barrier and
+an identical second inspection close recursive generated admission and the
+window before owner registration. Source/index ingestion awaits background
+indexing, and translation owners release only after candidate event projection,
+so the stable owner-free snapshot also orders vector and graph-node writes.
 
-Once settled, the Node cleanup helper authenticates every asserted event id
+Once stable, the Node cleanup helper authenticates every asserted event id
 against the exact verifier document namespace before its first deletion. It
 then follows flat turn and candidate-set relationships to remove only this
 run's vectors, graph rows, dispatch claims, split candidates/reviews, receipts,
 approvals, turns, and events. Events—the ownership evidence—are deleted last, so
 an earlier database failure remains safely retryable. Cleanup failure turns an
-otherwise green run red and preserves the exact filesystem fixtures needed to
-inspect or retry that partial teardown. Every Mongo delete must be durably
+otherwise green run red and preserves already-fenced bytes at the printed
+out-of-scope quarantine path; it does not restore an anchor into a resource
+root. Every Mongo delete must be durably
 acknowledged; an unacknowledged write is a cleanup failure rather than a zero-row
 success. No manual `mongosh` step is required. Runtime/session telemetry remains
 governed by its normal retention policy.

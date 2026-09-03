@@ -58,6 +58,8 @@
    [:document/id qualified-keyword?]
    [:document/title string?]
    [:document/source-locale Locale]
+   [:document/org-id {:optional true} NonBlankString]
+   [:document/visibility {:optional true} [:enum :public :private]]
    [:document/anchor? {:optional true} boolean?]
    [:document/generate-drafts? {:optional true} boolean?]
    [:document/derived-from {:optional true} qualified-keyword?]

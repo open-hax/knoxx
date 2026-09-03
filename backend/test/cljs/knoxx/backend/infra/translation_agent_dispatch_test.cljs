@@ -402,11 +402,14 @@
         emitted (atom [])
         candidate-events (atom [])
         settlers (atom {})
+        recovery-deadlines (atom [])
         register! (fn [event-id settle!]
                     (swap! settlers assoc event-id settle!)
                     true)
         complete!
         (fn [runtime-deps bound turn]
+          (swap! recovery-deadlines conj
+                 (:event-turn/deadline-ms runtime-deps))
           (let [split (first (get-in turn [:translation-turn/manifest
                                            :split-manifest/splits]))
                 member (first (get-in turn [:translation-turn/candidate-claim
@@ -439,6 +442,7 @@
         ;; Model the exact Ollama failure this regression exposed: the generic
         ;; turn returned prose but no structured tool call.
         (await (settle! {:event-turn/status :failed
+                         :event-turn/deadline-ms 301000
                          :event-turn/detail "required_tool_call_missing"}))
         (let [record (await (store/dispatch-for-batch! evidence-store run-id))
               receipts (await (store/completed-translations!
@@ -447,6 +451,7 @@
           (testing "only canonical sink completion satisfies the obligation"
             (is (= :dispatch/completed (:dispatch/outcome record)))
             (is (= 1 (count receipts)))
+            (is (= [301000] @recovery-deadlines))
             (is (= 1 (count @candidate-events))))))
       (finally
         (await (.rm fs temp-root #js {:recursive true :force true}))))))

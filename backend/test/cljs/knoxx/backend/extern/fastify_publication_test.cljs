@@ -259,6 +259,12 @@
     (await ((:handler route) (fake-request {}) reply))
     (is (= ["org.publications.read"] @(:checks h)))))
 
+(deftest publication-routes-project-organization-scope-only-from-auth-context
+  (is (= {:org-id "acme"}
+         (#'adapter/request-scope {:org-id "acme"})))
+  (is (= {:org-id nil}
+         (#'adapter/request-scope nil))))
+
 (deftest read-permission-is-publication-scoped
   (is (= "org.publications.read" adapter/read-permission))
   (testing "not borrowed from an unrelated surface"

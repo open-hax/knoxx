@@ -10,6 +10,7 @@
   {:document/id id
    :document/title (name id)
    :document/source-locale :en
+   :document/visibility :public
    :document/source {:path path}
    :document/anchor? anchor?})
 
@@ -142,6 +143,33 @@
           (is (= expected-code (:code (ex-data err))))
           (is (empty? @persisted)))))))
 
+(deftest ^:async out-of-scope-documents-fail-before-source-reads
+  (let [doc (assoc (document :knoxx.generated/private "drafts/private.md" true)
+                   :document/org-id "org-2"
+                   :document/visibility :private
+                   :document/derived-from :knoxx.docs/source
+                   :document/derived-source-revision "sha256-source")
+        resource-records (records [doc])
+        persisted (atom {})
+        source-reads (atom 0)
+        dependencies (assoc (deps resource-records
+                                  {(:document/id doc) "# Private"}
+                                  persisted (atom []) (atom []))
+                            :source-content!
+                            (fn [_root _document]
+                              (swap! source-reads inc)
+                              (js/Promise.resolve "# Private")))
+        err (try
+              (await (admission/admit-documents!
+                      {} dependencies scope {:document (:document/id doc)}))
+              nil
+              (catch :default error error))]
+    (is (= 404 (:status (ex-data err))))
+    (is (= "document_admission_document_not_found"
+           (:code (ex-data err))))
+    (is (zero? @source-reads))
+    (is (empty? @persisted))))
+
 (deftest ^:async unchanged-retry-reuses-event-identities
   (let [doc (document :knoxx.docs/anchor "docs/anchor.md" true)
         resource-records (records [doc])
@@ -215,6 +243,34 @@
       (is (= :recorded (:index/event-status first-row)))
       (is (= :existing (:index/source-event-status concurrent-row)))
       (is (= :existing (:index/event-status concurrent-row))))))
+
+(deftest ^:async admission-barrier-waits-for-every-previously-queued-pass
+  (let [doc (document :knoxx.docs/barrier "docs/barrier.md" true)
+        resource-records (records [doc])
+        first-insert (deferred)
+        barrier-settled? (atom false)
+        dependencies
+        (assoc (deps resource-records
+                     {(:document/id doc) "# Admission barrier"}
+                     (atom {}) (atom []) (atom []))
+               :persist-event!
+               (^:async fn [event]
+                 (await (:promise first-insert))
+                 {:ok true :ids [(:id event)]}))
+        admission-result (admission/admit-documents!
+                          {} dependencies scope {})
+        barrier-result
+        (.then (admission/await-document-admission-barrier!)
+               (fn [result]
+                 (reset! barrier-settled? true)
+                 result))]
+    (await (flush-promises!))
+    (is (false? @barrier-settled?)
+        "the barrier cannot pass a still-running admission")
+    ((:resolve! first-insert) true)
+    (is (true? (:ok (await admission-result))))
+    (is (= {:settled true} (await barrier-result)))
+    (is (true? @barrier-settled?))))
 
 (deftest ^:async exact-selection-does-not-admit-other-anchors
   (let [anchor (document :knoxx.docs/anchor "docs/anchor.md" true)
