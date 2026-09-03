@@ -83,6 +83,30 @@
     (is (thrown? js/Error
                  (adapter/decode-request (request {:documnet "knoxx.docs/probe"}))))))
 
+(deftest ^:async default-rest-event-projection-is-rejected-before-dispatch
+  (let [dispatched? (atom false)
+        config {:openplanner-base-url "http://openplanner.test"
+                :openplanner-api-key "test-key"
+                :openplanner-client-mode "rest"}]
+    (try
+      (await
+       (adapter/dispatch-selection-for-scope!
+        config
+        {:org-id "org-1" :membership-id "member-1"}
+        {}
+        {:evidence-store ::evidence-store
+         :split-store ::split-store
+         :dispatch-translations!
+         (fn [& _args]
+           (reset! dispatched? true)
+           (js/Promise.resolve {:ok true}))}))
+      (is false "REST translation dispatch must fail without projection repair")
+      (catch :default err
+        (is (= 503 (:status (ex-data err))))
+        (is (= "openplanner_event_projection_repair_unsupported"
+               (:code (ex-data err))))))
+    (is (false? @dispatched?))))
+
 (deftest ^:async a-registered-publication-command-reaches-the-facade-exactly
   (let [routes (atom [])
         app (js-obj "route" (fn [options]
@@ -211,6 +235,8 @@
         {:evidence-store evidence
          :split-store ::split-store
          :client ::client
+         :emit-candidate-events! (fn [_completion]
+                                   (js/Promise.resolve {:ok true}))
          :observe-source-revision (constantly (js/Promise.resolve nil))
          :emit! (constantly (js/Promise.resolve nil))
          :resolve-agent-contract

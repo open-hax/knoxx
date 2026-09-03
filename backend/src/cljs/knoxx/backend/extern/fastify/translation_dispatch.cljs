@@ -148,39 +148,45 @@
       :tool-ids (:tool-ids resolved)
       :tools-choice (:tools-choice resolved)})))
 
+(defn- candidate-event-emitter
+  [dependencies client]
+  (or (:emit-candidate-events! dependencies)
+      (do
+        (openplanner-client/assert-event-projection-repair-supported! client)
+        (partial translation-event-writer/emit-candidate-events! client))))
+
+(defn- default-dispatch-dependencies
+  [config dependencies evidence-store split-store client]
+  {:evidence-store evidence-store
+   :split-store split-store
+   :content-root (:publication-content-root config)
+   :emit-candidate-events! (candidate-event-emitter dependencies client)
+   :translation-execution (or (:translation-execution dependencies)
+                              (translation-execution config dependencies))
+   :client client
+   :clock (or (:clock dependencies) (fn [] (.toISOString (js/Date.))))
+   :observe-source-revision (or (:observe-source-revision dependencies)
+                                (facade/source-revision-observer! config))
+   :emit! (or (:emit! dependencies)
+              (fn [event] (event-dispatch/dispatch! config event)))
+   :register-turn-settler! (or (:register-turn-settler! dependencies)
+                               agent-runner/register-event-turn-settler!)
+   :unregister-turn-settler! (or (:unregister-turn-settler! dependencies)
+                                 agent-runner/unregister-event-turn-settler!)
+   :complete-turn! (if (contains? dependencies :complete-turn!)
+                     (:complete-turn! dependencies)
+                     (fn [runtime-deps record turn]
+                       (structured-output/complete-turn!
+                        config runtime-deps record turn)))
+   :digest-hex (or (:digest-hex dependencies) crypto/sha256-hex)})
+
 (defn- assembled-dispatch-dependencies
   [config dependencies evidence-store split-store]
-  (merge
-   dependencies
-   {:evidence-store evidence-store
-    :split-store split-store
-    :content-root (:publication-content-root config)
-    :emit-candidate-events!
-    (or (:emit-candidate-events! dependencies)
-        translation-event-writer/emit-candidate-events!)
-    :translation-execution (or (:translation-execution dependencies)
-                               (translation-execution config dependencies))
-    :client (or (:client dependencies)
-                (openplanner-client/client config))
-    :clock (or (:clock dependencies)
-               (fn [] (.toISOString (js/Date.))))
-    :observe-source-revision
-    (or (:observe-source-revision dependencies)
-        (facade/source-revision-observer! config))
-    :emit! (or (:emit! dependencies)
-               (fn [event] (event-dispatch/dispatch! config event)))
-    :register-turn-settler!
-    (or (:register-turn-settler! dependencies)
-        agent-runner/register-event-turn-settler!)
-    :unregister-turn-settler!
-    (or (:unregister-turn-settler! dependencies)
-        agent-runner/unregister-event-turn-settler!)
-    :complete-turn!
-    (if (contains? dependencies :complete-turn!)
-      (:complete-turn! dependencies)
-      (fn [runtime-deps record turn]
-        (structured-output/complete-turn! config runtime-deps record turn)))
-    :digest-hex (or (:digest-hex dependencies) crypto/sha256-hex)}))
+  (let [client (or (:client dependencies)
+                   (openplanner-client/client config))]
+    (merge dependencies
+           (default-dispatch-dependencies
+            config dependencies evidence-store split-store client))))
 
 (defn ^:async dispatch-selection-for-scope!
   "Invoke translation dispatch from an already trusted tenant scope.

@@ -20,6 +20,12 @@
 (defonce ^:private resource-watch-timer* (atom nil))
 (defonce ^:private resource-watch-running?* (atom false))
 
+(def ^:private translation-admission-permission
+  "org.translations.manage")
+
+(def ^:private publication-admission-permission
+  "org.publications.manage")
+
 (defn- normalize-resource-class
   [raw]
   (resources/resource-class raw))
@@ -577,6 +583,9 @@
   "Admit a saved document/publication through the app-owned internal hook."
   [config ctx resource-class resource admit!]
   (when-let [document-id (admission-document-id resource-class resource)]
+    (when ctx
+      (authz/ensure-permission! ctx translation-admission-permission)
+      (authz/ensure-permission! ctx publication-admission-permission))
     (let [result (await (admit! (admission-scope config ctx)
                                 {:document document-id}))]
       (when-not (and (true? (:ok result))
@@ -612,6 +621,7 @@
   (when previous
     (try
       (await previous)
+      ;; knoxx-lint/allow-silent-catch — an earlier write must not poison this resource queue.
       (catch :default _
         nil)))
   (await (task-fn)))
@@ -620,6 +630,7 @@
   [task]
   (try
     (await task)
+    ;; knoxx-lint/allow-silent-catch — only the stored recovery tail consumes this rejection.
     (catch :default _
       nil)))
 
@@ -878,47 +889,59 @@
   (do-json 200 (assoc (wire-validation (validate-contract-edn contract-class edn-text))
                       :contractClass (normalize-contract-class contract-class))))
 
+(defn- ^:async persist-agent-contract-edn!
+  [do-text config route-id edn-text ctx admit! parsed warnings]
+  (try
+    (let [admission
+          (await
+           (write-resource-and-admit!
+            config (resources/resource-file-path config "agents" route-id)
+            edn-text
+            (when admit!
+              (fn []
+                (admit-saved-publication-resource!
+                 config ctx "agents" parsed admit!)))))]
+      (do-text 200 (pr-str (cond-> {:ok true
+                                    :contractClass "agents"
+                                    :contract/id route-id
+                                    :contract parsed
+                                    :warnings warnings}
+                             admission (assoc :admission admission)))))
+    (catch :default err
+      (do-text (or (:status (ex-data err)) 500)
+               (str ";; Failed to save and admit contract: "
+                    (or (.-message err) (ex-message err)))))))
+
 (defn ^:async handle-agent-put-contract-edn
   "Compatibility PUT handler retained for agent clients during resource migration."
   ([do-text config contract-class contract-id edn-text]
    (handle-agent-put-contract-edn do-text config contract-class contract-id edn-text nil nil))
   ([do-text config contract-class contract-id edn-text ctx admit!]
    (let [klass (normalize-contract-class contract-class)
-         validation (validate-contract-edn klass edn-text)]
-     (if-not (:ok validation)
-       (do-text 422 (pr-str {:ok false
-                             :errors (:errors validation)
-                             :warnings (:warnings validation)}))
-       (let [parsed (:contract validation)
-             parsed-id (parsed-resource-id klass parsed)
-             route-id (str contract-id)]
-         (if (and parsed-id (not= route-id parsed-id))
+         route-id (str contract-id)]
+     (if-not (= "agents" klass)
+       (do-text 400 (pr-str {:ok false
+                             :error "compatibility_contract_class_not_writable"
+                             :contractClass klass}))
+       (let [validation (validate-contract-edn klass edn-text)
+             parsed (:contract validation)
+             parsed-id (parsed-resource-id klass parsed)]
+         (cond
+           (not (:ok validation))
+           (do-text 422 (pr-str {:ok false
+                                 :errors (:errors validation)
+                                 :warnings (:warnings validation)}))
+
+           (and parsed-id (not= route-id parsed-id))
            (do-text 400 (pr-str {:ok false
                                  :error "contract_id_mismatch"
                                  :routeContractId route-id
                                  :ednContractId parsed-id}))
-           (try
-             (let [admission
-                   (await
-                    (write-resource-and-admit!
-                     config
-                     (resources/resource-file-path config klass route-id)
-                     edn-text
-                     (when admit!
-                       (fn []
-                         (admit-saved-publication-resource!
-                          config ctx klass parsed admit!)))))]
-               (do-text 200 (pr-str (cond-> {:ok true
-                                             :contractClass klass
-                                             :contract/id route-id
-                                             :contract parsed
-                                             :warnings (:warnings validation)}
-                                      admission (assoc :admission admission)))))
-             (catch :default err
-               (let [status (or (:status (ex-data err)) 500)]
-                 (do-text status
-                          (str ";; Failed to save and admit contract: "
-                               (or (.-message err) (ex-message err)))))))))))))
+
+           :else
+           (await (persist-agent-contract-edn!
+                   do-text config route-id edn-text ctx admit! parsed
+                   (:warnings validation)))))))))
 
 (defn- handle-ui-actions
   [do-json config actor-id surface]

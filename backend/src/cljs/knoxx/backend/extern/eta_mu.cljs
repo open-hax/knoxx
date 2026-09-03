@@ -248,49 +248,69 @@
              str/trim
              str/lower-case)))
 
-(defn- seeded-on-payload
-  [original-on-payload]
+(defn- governed-ollama-on-payload
+  [original-on-payload seed? reasoning-off?]
   (^:async fn [payload model]
     (let [next-payload (if (fn? original-on-payload)
                          (let [result (await (original-on-payload payload model))]
                            (if (undefined? result) payload result))
                          payload)]
       (when next-payload
-        (aset next-payload "seed" 0))
+        (when seed?
+          (aset next-payload "seed" 0))
+        ;; Ollama's OpenAI-compatible endpoint ignores `think: false`; its
+        ;; supported wire control is `reasoning_effort: "none"`. pi-ai omits
+        ;; that field when a model contract declares `:reasoning false`, so
+        ;; inject it after pi builds every request in the tool loop.
+        (when reasoning-off?
+          (aset next-payload "reasoning_effort" "none")))
       next-payload)))
+
+(defn- required-tool-choice
+  [context]
+  (let [tool-names (->> (some-> context (aget "tools"))
+                        tool-seq
+                        (keep tool-runtime-name)
+                        distinct
+                        vec)]
+    ;; Production translation and drafting agents expose one save tool, so pin
+    ;; it explicitly. Retain the generic form for future multi-tool contracts.
+    (if (= 1 (count tool-names))
+      #js {:type "function"
+           :function #js {:name (first tool-names)}}
+      "required")))
+
+(defn- governed-ollama-options
+  [model context options]
+  (let [initial-user? (= "user" (last-llm-message-role context))
+        reasoning-off? (false? (aget model "reasoning"))]
+    (if (or initial-user? reasoning-off?)
+      (let [next-options (js/Object.assign #js {} (or options #js {}))]
+        (when initial-user?
+          (aset next-options "toolChoice" (required-tool-choice context))
+          (aset next-options "temperature" 0))
+        (aset next-options "onPayload"
+              (governed-ollama-on-payload
+               (some-> options (aget "onPayload"))
+               initial-user?
+               reasoning-off?))
+        next-options)
+      options)))
 
 (defn- required-first-options
   [model context options]
-  (if (and (ollama-model? model)
-           (= "user" (last-llm-message-role context)))
-    (let [tool-names (->> (some-> context (aget "tools"))
-                          tool-seq
-                          (keep tool-runtime-name)
-                          distinct
-                          vec)
-          ;; These production agents expose exactly one save tool, so pin that
-          ;; function explicitly.  This is stronger and less ambiguous than a
-          ;; generic provider-level requirement.
-          ;; Retain the generic form for any future multi-tool contract where
-          ;; `required-first` means "some tool" rather than one named tool.
-          tool-choice (if (= 1 (count tool-names))
-                        #js {:type "function"
-                             :function #js {:name (first tool-names)}}
-                        "required")
-          original-on-payload (some-> options (aget "onPayload"))]
-      (doto (js/Object.assign #js {} (or options #js {}))
-        (aset "toolChoice" tool-choice)
-        (aset "temperature" 0)
-        (aset "onPayload" (seeded-on-payload original-on-payload))))
+  (if (ollama-model? model)
+    (governed-ollama-options model context options)
     options))
 
 (defn configure-tools-choice!
   "Apply a Knoxx tools-choice policy to one raw eta-mu Agent.
 
-   `required-first` clones and augments Ollama provider options only while the
-   current last LLM message is the initiating user message. Once the agent loop
-   appends a toolResult, or for any other provider, the provider receives its
-   original options unchanged and may finish normally."
+   `required-first` forces a deterministic tool choice only while the current
+   last LLM message is the initiating user message. For an Ollama model whose
+   effective contract has reasoning disabled, every request in the tool loop
+   also carries the provider's explicit thinking-off wire field. Other models
+   and post-tool options otherwise remain unchanged."
   [raw-agent tools-choice]
   (when (= "required-first" (tools-choice-name tools-choice))
     (let [stream-fn (some-> raw-agent (aget "streamFn"))]

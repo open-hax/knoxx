@@ -3,16 +3,11 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.tools :refer [create-tool-obj maybe-tool-update!]]
+            [knoxx.backend.extern.publication-draft-tool :as xdraft-tool]
             [knoxx.backend.infra.agent.event-policy-authority :as event-policy-authority]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.infra.publication-admission-hook :as admission-hook]
             [knoxx.backend.infra.publication-draft-store :as draft-store]))
-
-(def save-draft-params
-  [:map
-   [:title {:optional true
-            :description "Optional title. When absent or blank, Knoxx derives it from the first Markdown ATX heading or the pinned source document."}
-    :string]
-   [:content {:description "Required complete Markdown body for the crafted draft post."} :string]])
 
 (defn- required-policy!
   [policies key]
@@ -34,8 +29,8 @@
    :gardens (required-policy! policies :gardens)
    :org-id (required-policy! policies :org-id)
    :project (:project policies)
-   :title (aget params "title")
-   :content (aget params "content")})
+   :title (:title params)
+   :content (:content params)})
 
 (defn- admission-scope
   [policies]
@@ -89,13 +84,14 @@
         (throw (ex-info "save_publication_draft requires server-admitted event authority"
                         {:status 403
                          :code :publication-draft-authority-required})))
-      (maybe-tool-update! on-update "Saving and admitting review-bound publication draft…")
-      (let [result (await (save-draft! config policies params))]
-        (tool-text-result
-         (str "Saved " (:draft/id result) " as an unpublished draft and admitted "
-              (:draft/publication-count result)
-              " locale relations for translation and human review.")
-         result)))))
+      (let [input (xdraft-tool/decode-save-draft-params! params)]
+        (maybe-tool-update! on-update "Saving and admitting review-bound publication draft…")
+        (let [result (await (save-draft! config policies input))]
+          (tool-text-result
+           (str "Saved " (:draft/id result) " as an unpublished draft and admitted "
+                (:draft/publication-count result)
+                " locale relations for translation and human review.")
+           result))))))
 
 (defn save-publication-draft-tool
   [auth-context]
@@ -108,10 +104,13 @@
             "When title is absent or blank, Knoxx uses the first Markdown ATX heading or a source-document fallback."
             "Document identity, source revision, gardens, locales, tenant, and publication state are server-pinned."
             "The result remains unpublished; human review and an explicit state transition are still required."]
-           save-draft-params
+           xdraft-tool/save-draft-params
            (make-save-draft-execute auth-context)))
 
 (defn create-publication-draft-tools
   [runtime config auth-context]
-  (let [build-tool (save-publication-draft-tool auth-context)]
-    (clj->js [(build-tool runtime config)])))
+  (if (or (nil? auth-context)
+          (ctx-tool-allowed? auth-context "save_publication_draft"))
+    (let [build-tool (save-publication-draft-tool auth-context)]
+      (clj->js [(build-tool runtime config)]))
+    (js/Array.)))

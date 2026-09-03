@@ -132,7 +132,10 @@
 (deftest ^:async saved-document-and-publication-trigger-exact-admission
   (let [calls (atom [])
         config {:session-project-name "knoxx-session"}
-        ctx {:orgId "org-1" :membershipId "membership-1"}
+        ctx {:orgId "org-1"
+             :membershipId "membership-1"
+             :permissions ["org.translations.manage"
+                           "org.publications.manage"]}
         admit! (fn [scope selection]
                  (swap! calls conj [scope selection])
                  (js/Promise.resolve {:ok true :admitted 1 :failed 0}))]
@@ -153,12 +156,14 @@
              {:document :knoxx.docs/entered}]]
            @calls))))
 
-(deftest ^:async compatibility-put-enters-and-admits-a-document-resource
+(deftest ^:async compatibility-put-refuses-document-resource-mutation
   (let [root (await (.mkdtemp fs (.join path (.tmpdir os) "knoxx-resource-put-")))
         response (atom nil)
         calls (atom [])
         config {:contracts-dir root :session-project-name "knoxx-session"}
-        ctx {:orgId "org-1" :membershipId "membership-1"}
+        ctx {:orgId "org-1"
+             :membershipId "membership-1"
+             :permissions ["agent.chat.use"]}
         edn-text (str "{:document/id :knoxx.docs/entered\n"
                       " :document/title \"Entered\"\n"
                       " :document/source-locale :en\n"
@@ -172,14 +177,36 @@
         (fn [scope selection]
           (swap! calls conj [scope selection])
           (js/Promise.resolve {:ok true :admitted 1 :failed 0}))))
+      (is (= 400 (first @response)))
+      (is (str/includes? (second @response)
+                         "compatibility_contract_class_not_writable"))
+      (is (empty? @calls))
+      (try
+        (await (.readFile fs (.join path root "documents" "entered.edn")
+                          "utf8"))
+        (is false "rejected compatibility mutation must not write a document")
+        (catch :default err
+          (is (= "ENOENT" (.-code err)))))
+      (finally
+        (await (.rm fs root #js {:recursive true :force true}))))))
+
+(deftest ^:async compatibility-put-still-writes-agent-resources
+  (let [root (await (.mkdtemp fs (.join path (.tmpdir os) "knoxx-agent-put-")))
+        response (atom nil)
+        edn-text (str "{:contract/id \"entered\"\n"
+                      " :contract/kind :agent\n"
+                      " :enabled true\n"
+                      " :trigger-kind :manual\n"
+                      " :agent {:role :role/developer :model \"test-model\"}\n"
+                      " :prompts {:task \"Test compatibility mutation.\"}}")]
+    (try
+      (await
+       (resource-routes/handle-agent-put-contract-edn
+        (fn [status body] (reset! response [status body]))
+        {:contracts-dir root} "agents" "entered" edn-text))
       (is (= 200 (first @response)))
-      (is (= [[{:org-id "org-1"
-                :membership-id "membership-1"
-                :project "knoxx-session"}
-               {:document :knoxx.docs/entered}]]
-             @calls))
       (is (= edn-text
-             (await (.readFile fs (.join path root "documents" "entered.edn")
+             (await (.readFile fs (.join path root "agents" "entered.edn")
                                "utf8"))))
       (finally
         (await (.rm fs root #js {:recursive true :force true}))))))
@@ -200,7 +227,10 @@
     (await
      (resource-routes/admit-saved-publication-resource!
       {:session-project-name "knoxx-session"}
-      {:orgId "org-1" :membershipId "membership-1"}
+      {:orgId "org-1"
+       :membershipId "membership-1"
+       :permissions ["org.translations.manage"
+                     "org.publications.manage"]}
       "documents"
       {:document/id :knoxx.docs/entered}
       (fn [_scope _selection]
@@ -210,6 +240,31 @@
       (is (= 503 (:status (ex-data err))))
       (is (= "document_admission_failed" (:code (ex-data err))))
       (is (= :knoxx.docs/entered (:document/id (ex-data err)))))))
+
+(deftest ^:async automatic-admission-requires-both-publication-permissions
+  (doseq [[permissions missing]
+          [[[] "org.translations.manage"]
+           [["org.translations.manage"] "org.publications.manage"]]]
+    (let [calls (atom [])
+          err (try
+                (await
+                 (resource-routes/admit-saved-publication-resource!
+                  {:session-project-name "knoxx-session"}
+                  {:orgId "org-1"
+                   :membershipId "membership-1"
+                   :permissions permissions}
+                  "documents"
+                  {:document/id :knoxx.docs/entered}
+                  (fn [_scope _selection]
+                    (swap! calls conj :admit)
+                    (js/Promise.resolve {:ok true :admitted 1 :failed 0}))))
+                nil
+                (catch :default error error))]
+      (is (= 403 (:status (ex-data err))))
+      (is (= "permission_denied" (:code (ex-data err))))
+      (is (str/includes? (ex-message err) missing))
+      (is (empty? @calls)
+          "permission failure must happen before the admission hook"))))
 
 (defn- missing-file-rejection
   []

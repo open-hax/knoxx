@@ -25,7 +25,8 @@
                                               #js {:role "assistant"}
                                               #js {:role "toolResult"}]}
         model #js {:provider "ollama"
-                   :id "gemma4:e2b"}
+                   :id "gemma4:e2b"
+                   :reasoning false}
         initial-options #js {:temperature 0.2
                              :onPayload original-on-payload}
         post-tool-options #js {:temperature 0.3}
@@ -40,7 +41,10 @@
     (let [[initial-call post-tool-call] @calls*
           forced-options (:options initial-call)
           unforced-options (:options post-tool-call)
-          seeded-payload (await ((aget forced-options "onPayload") request-payload model))]
+          seeded-payload (await ((aget forced-options "onPayload") request-payload model))
+          post-tool-payload #js {:messages #js []}
+          governed-post-tool-payload
+          (await ((aget unforced-options "onPayload") post-tool-payload model))]
       (testing "the initial user turn receives a cloned required choice"
         (is (not (identical? initial-options forced-options)))
         (is (= "function" (some-> forced-options
@@ -59,14 +63,20 @@
         (is (identical? request-payload seeded-payload))
         (is (= true (aget seeded-payload "originalHook")))
         (is (= 0 (aget seeded-payload "seed")))
+        (is (= "none" (aget seeded-payload "reasoning_effort")))
         (is (= [{:payload request-payload
                  :model model}]
                @payload-calls*)))
-      (testing "after toolResult eta-mu receives its original options unchanged"
-        (is (identical? post-tool-options unforced-options))
-        (is (nil? (aget unforced-options "toolChoice")))))))
+      (testing "post-tool Ollama calls stay unforced but keep thinking disabled"
+        (is (not (identical? post-tool-options unforced-options)))
+        (is (= 0.3 (aget unforced-options "temperature")))
+        (is (nil? (aget unforced-options "toolChoice")))
+        (is (identical? post-tool-payload governed-post-tool-payload))
+        (is (nil? (aget governed-post-tool-payload "seed")))
+        (is (= "none" (aget governed-post-tool-payload
+                             "reasoning_effort")))))))
 
-(deftest required-first-uses-the-provider-generic-choice-for-multiple-tools
+(deftest ^:async required-first-uses-the-provider-generic-choice-for-multiple-tools
   (let [seen* (atom nil)
         original-options #js {:temperature 0.1}
         raw-agent
@@ -84,7 +94,14 @@
     (is (= 0 (aget @seen* "temperature")))
     (is (not (identical? original-options @seen*)))
     (is (nil? (aget original-options "toolChoice")))
-    (is (= 0.1 (aget original-options "temperature")))))
+    (is (= 0.1 (aget original-options "temperature")))
+    (let [payload #js {}
+          next-payload (await ((aget @seen* "onPayload")
+                               payload #js {:provider "ollama"
+                                            :reasoning true}))]
+      (is (identical? payload next-payload))
+      (is (= 0 (aget next-payload "seed")))
+      (is (nil? (aget next-payload "reasoning_effort"))))))
 
 (deftest required-first-does-not-alter-non-ollama-options
   (let [seen* (atom nil)

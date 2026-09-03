@@ -10,7 +10,6 @@
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.publication-resolver :as resolver]
-            [knoxx.backend.extern.openplanner-sdk :as xsdk]
             [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
@@ -38,12 +37,27 @@
                     [(:document/id document) (:resource/file-path record)]))))
         records))
 
-(defn- direct-openplanner-mode?
-  [config]
-  (= "mongo"
-     (-> (or (:openplanner-client-mode config) "mongo")
-         name
-         str/lower-case)))
+(defn- ^:async repaired-existing-event!
+  [client event-id]
+  (openplanner-client/assert-event-projection-repair-supported! client)
+  {:ok true
+   :count 0
+   :ids [event-id]
+   :existing true
+   :index-result (await (openplanner-client/ensure-event-vectors!
+                         client [event-id]))})
+
+(defn- ^:async append-event-with-supported-projections!
+  [client event]
+  (if (openplanner-client/event-projection-repair-supported? client)
+    (let [result (await
+                  (openplanner-client/ingest-events-awaiting-projections!
+                   client [event]))]
+      (assoc result
+             :index-result
+             (await (openplanner-client/ensure-event-vectors!
+                     client [(:id event)]))))
+    (await (openplanner-client/events! client [event]))))
 
 (defn ^:async persist-openplanner-event!
   "Append one event once, awaiting detached indexing in embedded Mongo mode.
@@ -53,27 +67,19 @@
   second row with the same content-addressed identity. A concurrent-writer
   unique constraint still belongs in OpenPlanner; this read-before-write closes
   Knoxx's serialized deployment/re-admission path without mutating its schema."
-  [config event]
-  (let [query {:collection "events"
-               :filter {:id (:id event)}
-               :projection {:id 1}
-               :limit 1}
-        direct? (direct-openplanner-mode? config)
-        client (when-not direct? (openplanner-client/client config))
-        existing (if direct?
-                   (await (xsdk/mongo-query query))
-                   (await (openplanner-client/mongo-query! client query)))]
-    (if (pos? (or (:total existing) 0))
-      (let [index-result (when direct?
-                           (await (xsdk/ensure-event-vectors! [(:id event)])))]
-        {:ok true
-         :count 0
-         :ids [(:id event)]
-         :existing true
-         :index-result index-result})
-      (if direct?
-        (await (xsdk/events! [event] {:await-index? true}))
-        (await (openplanner-client/events! client [event]))))))
+  ([config event]
+   (await (persist-openplanner-event!
+           config (openplanner-client/client config) event)))
+  ([_config client event]
+   (let [existing (await
+                   (openplanner-client/mongo-query!
+                    client {:collection "events"
+                            :filter {:id (:id event)}
+                            :projection {:id 1}
+                            :limit 1}))]
+     (if (pos? (or (:total existing) 0))
+       (await (repaired-existing-event! client (:id event)))
+       (await (append-event-with-supported-projections! client event))))))
 
 (defn- duplicate-event-error?
   [err]
@@ -106,8 +112,8 @@
                    :event/id (:id event)}
                   err))))))
 
-(defn- ensure-provenance!
-  [document source-root resource-path]
+(defn- ^:async ensure-provenance!
+  [canonical-document-path! document source-root resource-path]
   (let [document-id (:document/id document)
         declared-path (get-in document [:document/source :path])]
     (when (str/blank? (str resource-path))
@@ -115,15 +121,14 @@
                       {:status 409
                        :code "document_resource_provenance_missing"
                        :document/id document-id})))
-    (when (and (not (str/starts-with? declared-path "/"))
-               (nil? source-root))
+    (when (nil? source-root)
       (throw (ex-info "publication document source root cannot be resolved from resource provenance"
                       {:status 409
                        :code "document_source_provenance_unresolved"
                        :document/id document-id
                        :document/source-path declared-path
                        :document/resource-path resource-path})))
-    {:source-path (source-revision/document-path source-root document)
+    {:source-path (await (canonical-document-path! source-root document))
      :resource-path resource-path}))
 
 (defn- assert-source-content!
@@ -164,16 +169,27 @@
    :org-id (:org-id scope)
    :project (:project scope)})
 
-(defn- ^:async preflight-document!
-  [read-source! draft-complete-fn digest-hex timestamp scope selection index roots
-   resource-paths document]
+(defn- ^:async read-admission-source!
+  [canonical-document-path! read-source! roots resource-paths document]
   (let [document-id (:document/id document)
-        provenance (ensure-provenance! document
-                                       (get roots document-id)
-                                       (get resource-paths document-id))
+        source-root (get roots document-id)
+        provenance (await (ensure-provenance!
+                           canonical-document-path! document source-root
+                           (get resource-paths document-id)))
         content (assert-source-content!
                  document-id provenance
-                 (await (read-source! (get roots document-id) document)))
+                 (await (read-source! source-root document)))]
+    {:provenance provenance :content content}))
+
+(defn- ^:async preflight-document!
+  [canonical-document-path! read-source! draft-complete-fn digest-hex timestamp
+   scope selection index roots
+   resource-paths document]
+  (let [document-id (:document/id document)
+        {:keys [provenance content]}
+        (await (read-admission-source!
+                canonical-document-path! read-source! roots resource-paths
+                document))
         revision (source-revision/content-revision content)
         gardens (admission/document-gardens
                  index document-id
@@ -195,7 +211,8 @@
            (runtime-generation-decision events needs-generation?))))
 
 (defn- ^:async preflight-documents!
-  [read-source! draft-complete? digest-hex timestamp scope selection index roots
+  [canonical-document-path! read-source! draft-complete? digest-hex timestamp
+   scope selection index roots
    resource-paths documents]
   (loop [pending documents
          prepared []]
@@ -203,8 +220,9 @@
       (recur (next pending)
              (conj prepared
                    (await (preflight-document!
-                           read-source! draft-complete? digest-hex timestamp scope
-                           selection index roots resource-paths document))))
+                           canonical-document-path! read-source! draft-complete?
+                           digest-hex timestamp scope selection index roots
+                           resource-paths document))))
       prepared)))
 
 (defn- ^:async settle-draft-generation!
@@ -217,46 +235,112 @@
 (defn- ^:async register-draft-terminal-owner!
   [runtime item]
   (when (:draft/needs-generation? item)
-    (let [event-id (get-in item [:runtime-event :event/id])]
-      (await
-       ((:register-turn-settler! runtime)
-         event-id
-        (fn [settlement]
-          (settle-draft-generation!
-           (:draft-complete? runtime) (:release-indexed-event! runtime)
-           item settlement))))
-      event-id)))
+    (let [event-id (get-in item [:runtime-event :event/id])
+          registration
+          (await
+           ((:register-turn-settler! runtime)
+            event-id
+            (fn [settlement]
+              (settle-draft-generation!
+               (:draft-complete? runtime) (:release-indexed-event! runtime)
+               item settlement))))]
+      {:event-id event-id
+       :registration registration})))
 
 (defn- unregister-draft-terminal-owner!
   [runtime event-id]
   (when event-id
     ((:unregister-turn-settler! runtime) event-id)))
 
-(defn- ^:async emit-indexed-event!
-  [runtime item document-id]
-  (let [event-id (await (register-draft-terminal-owner! runtime item))
-        result (try
-                 (await ((:emit-indexed! runtime) (:runtime-event item)))
-                 (catch :default err
-                   (unregister-draft-terminal-owner! runtime event-id)
-                   (throw
-                    (ex-info "publication document indexed event dispatch failed"
-                             {:status 500
-                              :code "document_indexed_dispatch_failed"
-                              :document/id document-id
-                              :event/id (get-in item [:indexed-event :id])}
-                             err))))]
-    (when (and (:draft/needs-generation? item)
-               (not (:skipped result))
-               (empty? (:matchedTriggers result)))
+(defn- current-draft-owner-state
+  [runtime event-id]
+  ((:draft-event-owner-state runtime) event-id))
+
+(defn- current-indexed-event-state
+  [runtime event-id]
+  ((:indexed-event-state runtime) event-id))
+
+(defn- ^:async release-stale-completed-draft!
+  [runtime item event-id owner-state dispatch-state]
+  (when (and (:draft/needs-generation? item)
+             (= :completed dispatch-state)
+             (nil? owner-state))
+    (await ((:release-indexed-event! runtime) event-id))))
+
+(defn- pending-settlement-redelivery?
+  [owner-state registration]
+  (and (= :settled owner-state)
+       (true? (:event-turn/redelivered? registration))
+       (false? (:event-turn/redelivery-accepted? registration))))
+
+(defn- live-draft-owner-result
+  [pending-redelivery?]
+  (cond-> {:matchedTriggers []
+           :skipped true
+           :dedup/status :in-flight
+           :draft-owner/existing? true}
+    pending-redelivery? (assoc :draft-owner/redelivery-pending? true)))
+
+(defn- ^:async prepare-draft-owner!
+  [runtime item]
+  (let [event-id (get-in item [:runtime-event :event/id])
+        generation? (:draft/needs-generation? item)
+        owner-state (when generation?
+                      (current-draft-owner-state runtime event-id))
+        dispatch-state (when generation?
+                         (current-indexed-event-state runtime event-id))]
+    (await (release-stale-completed-draft!
+            runtime item event-id owner-state dispatch-state))
+    (if (= :in-flight owner-state)
+      {:result (live-draft-owner-result false)}
+      (let [{:keys [registration] :as owner}
+            (await (register-draft-terminal-owner! runtime item))]
+        (if (pending-settlement-redelivery? owner-state registration)
+          {:event-id (:event-id owner)
+           :result (live-draft-owner-result true)}
+          owner)))))
+
+(defn- ^:async emit-runtime-indexed-event!
+  [runtime item document-id event-id]
+  (try
+    (await ((:emit-indexed! runtime) (:runtime-event item)))
+    (catch :default err
       (unregister-draft-terminal-owner! runtime event-id)
       (throw
-       (ex-info "publication post draft trigger is not enabled"
-                {:status 503
-                 :code "document_post_draft_trigger_missing"
+       (ex-info "publication document indexed event dispatch failed"
+                {:status 500
+                 :code "document_indexed_dispatch_failed"
                  :document/id document-id
-                 :event/id (get-in item [:indexed-event :id])})))
-    result))
+                 :event/id (get-in item [:indexed-event :id])}
+                err)))))
+
+(defn- assert-draft-dispatch!
+  [runtime item document-id event-id result]
+  (when (and (:draft/needs-generation? item)
+             (empty? (:matchedTriggers result))
+             (not (and (:skipped result)
+                       (= :in-flight (:dedup/status result)))))
+    (unregister-draft-terminal-owner! runtime event-id)
+    (throw
+     (ex-info (if (:skipped result)
+                "publication post draft dispatch is stale"
+                "publication post draft trigger is not enabled")
+              {:status 503
+               :code (if (:skipped result)
+                       "document_post_draft_dispatch_stale"
+                       "document_post_draft_trigger_missing")
+               :document/id document-id
+               :event/id (get-in item [:indexed-event :id])
+               :dedup/status (:dedup/status result)})))
+  result)
+
+(defn- ^:async emit-indexed-event!
+  [runtime item document-id]
+  (let [{:keys [event-id result]} (await (prepare-draft-owner! runtime item))
+        result (or result
+                   (await (emit-runtime-indexed-event!
+                           runtime item document-id event-id)))]
+    (assert-draft-dispatch! runtime item document-id event-id result)))
 
 (defn- ^:async persist-prepared!
   [runtime prepared]
@@ -323,33 +407,44 @@
        agent-runner/unregister-event-turn-settler!)
    :release-indexed-event!
    (or (:release-indexed-event! deps)
-       event-dispatch/release-exact-event!)})
+       event-dispatch/release-exact-event!)
+   :indexed-event-state
+   (or (:indexed-event-state deps)
+       event-dispatch/event-state)
+   :draft-event-owner-state
+   (or (:draft-event-owner-state deps)
+       agent-runner/event-turn-owner-state)})
 
 (defn- runtime-dependencies
   [config deps]
-  (merge
-  {:load-records! (or (:resource-records! deps)
-                      publications/resource-records!)
-   :build-index (or (:publication-index deps)
-                    publications/publication-index)
-   :roots-for (or (:document-source-roots deps)
-                  translation-dispatch/document-source-roots)
-   :paths-for (or (:document-resource-paths deps)
-                  document-resource-paths)
-   :read-source! (or (:source-content! deps)
-                     contract-content/source-content!)
-   :draft-complete? (or (:draft-complete? deps)
-                        (fn [policy]
-                          (draft-store/draft-complete? config policy)))
-   :digest-hex (or (:digest-hex deps) crypto/sha256-hex)
-   :clock (or (:clock deps) (fn [] (.toISOString (js/Date.))))
-   :persist-event! (or (:persist-event! deps)
-                       (partial persist-openplanner-event! config))
-   :emit-indexed! (or (:emit-indexed! deps)
-                      (fn [event] (event-dispatch/dispatch! config event)))
-   :repair-translation-events! (:repair-translation-events! deps)
-   :dispatch-document! (:dispatch-document! deps)}
-   (draft-terminal-dependencies deps)))
+  (let [client (or (:client deps)
+                   (openplanner-client/client config))]
+    (merge
+     {:load-records! (or (:resource-records! deps)
+                         publications/resource-records!)
+      :build-index (or (:publication-index deps)
+                       publications/publication-index)
+      :roots-for (or (:document-source-roots deps)
+                     translation-dispatch/document-source-roots)
+      :paths-for (or (:document-resource-paths deps)
+                     document-resource-paths)
+      :canonical-document-path!
+      (or (:canonical-document-path! deps)
+          source-revision/canonical-document-path!)
+      :read-source! (or (:source-content! deps)
+                        contract-content/source-content!)
+      :draft-complete? (or (:draft-complete? deps)
+                           (fn [policy]
+                             (draft-store/draft-complete? config policy)))
+      :digest-hex (or (:digest-hex deps) crypto/sha256-hex)
+      :clock (or (:clock deps) (fn [] (.toISOString (js/Date.))))
+      :persist-event! (or (:persist-event! deps)
+                          (partial persist-openplanner-event! config client))
+      :emit-indexed! (or (:emit-indexed! deps)
+                         (fn [event] (event-dispatch/dispatch! config event)))
+      :repair-translation-events! (:repair-translation-events! deps)
+      :dispatch-document! (:dispatch-document! deps)}
+     (draft-terminal-dependencies deps))))
 
 (defn- ^:async load-admission-snapshot!
   [config runtime scope selection]
@@ -359,6 +454,7 @@
         roots ((:roots-for runtime) config records)
         resource-paths ((:paths-for runtime) records)
         prepared (await (preflight-documents!
+                         (:canonical-document-path! runtime)
                          (:read-source! runtime) (:draft-complete? runtime)
                          (:digest-hex runtime)
                          ((:clock runtime)) scope selection index roots
@@ -413,6 +509,7 @@
   (when previous
     (try
       (await previous)
+      ;; knoxx-lint/allow-silent-catch — an earlier admission must not poison the queue.
       (catch :default _
         nil)))
   (await (task-fn)))
@@ -421,6 +518,7 @@
   [task]
   (try
     (await task)
+    ;; knoxx-lint/allow-silent-catch — only the stored recovery tail consumes this rejection.
     (catch :default _
       nil)))
 

@@ -1554,7 +1554,7 @@
                                           :session-guard session-guard})))
 
 (defn- ^:async repair-publication-translation-events!
-  [scope]
+  [client scope]
   (let [evidence-store (translation-evidence-registry/current)
         split-store (translation-split-registry/current)]
     (when-not evidence-store
@@ -1567,7 +1567,9 @@
                        :code "translation_split_persistence_unavailable"})))
     (await
      (translation-event-writer/repair-completed-event-projections!
-      {:evidence-store evidence-store :split-store split-store}
+      {:evidence-store evidence-store
+       :openplanner-client client
+       :split-store split-store}
       (select-keys scope [:org-id :project])))))
 
 (defn- register-publication-surface-routes!
@@ -1576,12 +1578,15 @@
    a hosted publishing backend being reachable — resolving desired state with
    that backend absent is the whole point."
   [app runtime config]
-  (let [helpers {:route! route!
+  (let [client (openplanner-client/client config)
+        helpers {:route! route!
                  :json-response! json-response!
                  :with-request-context! with-request-context!
                  :ensure-permission! ensure-permission!}
         admission-dependencies
-        {:repair-translation-events! repair-publication-translation-events!}
+        {:client client
+         :repair-translation-events!
+         (partial repair-publication-translation-events! client)}
         internal-admission!
         (fn [scope selection]
           (document-admission/admit-documents!
@@ -1590,7 +1595,8 @@
                   :dispatch-document!
                   (fn [document-id snapshot-deps]
                     (translation-dispatch-routes/dispatch-selection-for-scope!
-                     config scope {:document document-id} snapshot-deps)))
+                     config scope {:document document-id}
+                     (assoc snapshot-deps :client client))))
            scope selection))]
     ;; Generated draft tools call this cycle-free port. The handler derives all
     ;; model work from the server-pinned scope carried on the originating

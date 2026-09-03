@@ -49,12 +49,14 @@
         (let [retry (await (event-dispatch/dispatch!
                             fixture-config (retryable-event)))]
           (is (= ["retryable-event"] (:matchedTriggers retry)))
+          (is (= :completed (:dedup/status retry)))
           (is (= 2 @attempts))))
 
       (testing "the equal event is deduplicated after successful completion"
         (let [duplicate (await (event-dispatch/dispatch!
                                 fixture-config (retryable-event)))]
           (is (true? (:skipped duplicate)))
+          (is (= :completed (:dedup/status duplicate)))
           (is (= 2 @attempts)))))))
 
 (deftest ^:async concurrent-equal-successful-events-have-one-owner
@@ -72,12 +74,16 @@
             duplicate (await (event-dispatch/dispatch!
                               fixture-config (retryable-event)))]
         (is (true? (:skipped duplicate)))
+        (is (= :in-flight (:dedup/status duplicate)))
         (is (= 1 @attempts))
         (@release! {:ok true})
         (is (= ["retryable-event"]
                (:matchedTriggers (await owner))))
-        (is (true? (:skipped (await (event-dispatch/dispatch!
-                                     fixture-config (retryable-event))))))
+        (let [completed-duplicate
+              (await (event-dispatch/dispatch!
+                      fixture-config (retryable-event)))]
+          (is (true? (:skipped completed-duplicate)))
+          (is (= :completed (:dedup/status completed-duplicate))))
         (is (= 1 @attempts))))))
 
 (deftest ^:async an-unmatched-event-can-be-retried-after-a-trigger-is-enabled

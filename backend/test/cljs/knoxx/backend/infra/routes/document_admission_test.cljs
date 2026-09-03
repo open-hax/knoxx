@@ -96,9 +96,11 @@
   [resource-records contents persisted emitted dispatches]
   {:resource-records! (fn [_] (js/Promise.resolve resource-records))
    :document-source-roots (fn [_ _] (source-roots resource-records))
+   :canonical-document-path! (fn [root doc]
+                               (js/Promise.resolve
+                                (str root "/" (get-in doc [:document/source :path]))))
    :source-content! (fn [_root doc]
-                      (js/Promise.resolve
-                       (get contents (:document/id doc))))
+                      (js/Promise.resolve (get contents (:document/id doc))))
    :draft-complete? (fn [_policy]
                       (js/Promise.resolve false))
    :persist-event! (fn [event] (persist-once! persisted event))
@@ -530,6 +532,91 @@
       (is (= [event-id] @releases))
       (is (= [event-id event-id] @emitted))
       (is (true? (:ok retry-result))))))
+
+(deftest ^:async a-vanished-completed-draft-reclaims-its-dispatch-in-process
+  (let [doc (document :knoxx.docs/vanished-draft
+                      "docs/vanished-draft.md" true)
+        resource-records (records [doc])
+        persisted (atom {})
+        draft-complete (atom false)
+        dispatch-states (atom {})
+        settlers (atom {})
+        emitted (atom [])
+        releases (atom [])
+        dependencies
+        (merge
+         (deps resource-records
+               {(:document/id doc) "# Vanished draft"}
+               persisted (atom []) (atom []))
+         {:draft-complete?
+          (fn [_policy]
+            (js/Promise.resolve @draft-complete))
+          :indexed-event-state
+          (fn [event-id]
+            (get @dispatch-states event-id))
+          :draft-event-owner-state
+          (fn [event-id]
+            (when (contains? @settlers event-id) :in-flight))
+          :release-indexed-event!
+          (fn [event-id]
+            (swap! releases conj event-id)
+            (swap! dispatch-states dissoc event-id)
+            true)
+          :register-turn-settler!
+          (fn [event-id settle!]
+            (swap! settlers assoc event-id
+                   (^:async fn [settlement]
+                     (let [result (await (settle! settlement))]
+                       (swap! settlers dissoc event-id)
+                       result)))
+            true)
+          :unregister-turn-settler!
+          (fn [event-id]
+            (swap! settlers dissoc event-id)
+            true)
+          :emit-indexed!
+          (fn [event]
+            (let [event-id (:event/id event)]
+              (if-let [state (get @dispatch-states event-id)]
+                (js/Promise.resolve
+                 {:matchedTriggers []
+                  :skipped true
+                  :dedup/status state})
+                (do
+                  (swap! dispatch-states assoc event-id :completed)
+                  (swap! emitted conj event-id)
+                  (js/Promise.resolve
+                   {:matchedTriggers
+                    [:craft-post-from-indexed-document]
+                    :dedup/status :completed})))))})
+        first-result (await (admission/admit-documents!
+                             {} dependencies scope {:generate-drafts? true}))
+        event-id (get-in first-result [:results 0 :index/event-id])
+        first-owner (get @settlers event-id)
+        live-retry (await (admission/admit-documents!
+                           {} dependencies scope {:generate-drafts? true}))]
+    (testing "a currently owned generation is not duplicated"
+      (is (true? (:ok live-retry)))
+      (is (= [event-id] @emitted))
+      (is (identical? first-owner (get @settlers event-id))))
+
+    (reset! draft-complete true)
+    (await (first-owner {:event-turn/status :completed}))
+    (is (empty? @settlers))
+    (is (= :completed (get @dispatch-states event-id)))
+
+    ;; Model an operator removing the completion marker/immutable files after
+    ;; this process already recorded the deterministic dispatch as completed.
+    (reset! draft-complete false)
+    (let [repair (await (admission/admit-documents!
+                         {} dependencies scope {:generate-drafts? true}))]
+      (testing "the ownerless completed claim is released and dispatched again"
+        (is (true? (:ok repair)))
+        (is (= [event-id] @releases))
+        (is (= [event-id event-id] @emitted))
+        (is (= :existing (get-in repair [:results 0 :index/event-status])))
+        (is (true? (get-in repair
+                           [:results 0 :document/draft-generation-needed?])))))))
 
 (deftest ^:async re-admission-redelivers-a-transiently-rejected-draft-settlement
   (agent-runner/reset-event-turn-queue!)

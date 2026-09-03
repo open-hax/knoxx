@@ -95,6 +95,10 @@
                               (js/Promise.resolve resource-records))
          :document-source-roots (fn [_ _]
                                   {:knoxx.docs/probe "/workspace"})
+         :canonical-document-path!
+         (fn [root doc]
+           (js/Promise.resolve
+            (str root "/" (get-in doc [:document/source :path]))))
          :source-content! (fn [_ _]
                             (js/Promise.resolve "# Probe"))
          :persist-event! (fn [event]

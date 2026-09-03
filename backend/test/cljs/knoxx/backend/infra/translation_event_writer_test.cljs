@@ -1,6 +1,8 @@
 (ns knoxx.backend.infra.translation-event-writer-test
   (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.extern.openplanner-sdk :as openplanner]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.clients.openplanner-mongo :as openplanner-mongo]
             [knoxx.backend.infra.translation-evidence-store :as evidence-store]
             [knoxx.backend.infra.translation-event-writer :as writer]
             [knoxx.backend.infra.translation-split-store :as split-store]
@@ -26,6 +28,39 @@
   (await gate)
   (swap! rows into events)
   {:ok true :ids (mapv :id events)})
+
+(defn- direct-client
+  []
+  (openplanner-mongo/client {} nil))
+
+(deftest ^:async rest-client-is-rejected-before-event-store-access
+  (let [client (openplanner-client/client
+                {:openplanner-base-url "http://openplanner.test"
+                 :openplanner-api-key "test-key"
+                 :openplanner-client-mode "rest"})
+        query-count (atom 0)
+        append-count (atom 0)]
+    (with-redefs [openplanner-client/mongo-query!
+                  (fn [_client _query]
+                    (swap! query-count inc)
+                    (js/Promise.resolve {:ok true :total 0 :rows []}))
+                  openplanner-client/events!
+                  (fn [_client _events]
+                    (swap! append-count inc)
+                    (js/Promise.resolve {:ok true}))]
+      (try
+        (await (writer/emit-candidate-events!
+                client
+                {:receipt :receipt
+                 :turn :turn
+                 :candidate-set :candidate-set}))
+        (is false "REST event projection repair must fail closed")
+        (catch :default err
+          (is (= 503 (:status (ex-data err))))
+          (is (= "openplanner_event_projection_repair_unsupported"
+                 (:code (ex-data err))))))
+      (is (zero? @query-count))
+      (is (zero? @append-count)))))
 
 (deftest ^:async writer-appends-the-pure-stable-event-vector
   (let [events [{:id "translation-segment-a" :extra durable-extra}
@@ -63,6 +98,7 @@
                     (swap! ensured conj [id required])
                     (js/Promise.resolve {:ok true :event-id id}))]
       (let [result (await (writer/emit-candidate-events!
+                           (direct-client)
                            {:receipt :receipt
                             :turn :turn
                             :candidate-set :candidate-set}))]
@@ -108,6 +144,7 @@
                   (fn [id _required]
                     (js/Promise.resolve {:ok true :event-id id}))]
       (let [result (await (writer/emit-candidate-events!
+                           (direct-client)
                            {:receipt :receipt
                             :turn :turn
                             :candidate-set :candidate-set}))]
@@ -145,8 +182,9 @@
       (let [completion {:receipt :receipt
                         :turn :turn
                         :candidate-set :candidate-set}
-            first-result (writer/emit-candidate-events! completion)
-            second-result (writer/emit-candidate-events! completion)
+            client (direct-client)
+            first-result (writer/emit-candidate-events! client completion)
+            second-result (writer/emit-candidate-events! client completion)
             first-error (try
                           (await first-result)
                           nil
@@ -200,8 +238,9 @@
       (let [completion {:receipt :receipt
                         :turn :turn
                         :candidate-set :candidate-set}
-            first-result (writer/emit-candidate-events! completion)
-            second-result (writer/emit-candidate-events! completion)]
+            client (direct-client)
+            first-result (writer/emit-candidate-events! client completion)
+            second-result (writer/emit-candidate-events! client completion)]
         (await (:promise first-append-started))
         (is (= 1 @query-count)
             "the second writer waits before reading durable state")
@@ -230,6 +269,7 @@
                  :translation/revision "candidate-revision-1"}
         candidate-set {:candidate-set/id "candidate-set-1"}
         turn {:translation-turn/id "turn-1"}
+        client (direct-client)
         projected (atom [])]
     (with-redefs [evidence-store/completed-translations!
                   (fn [store actual-scope]
@@ -247,7 +287,8 @@
                     (is (= "candidate-set-1" candidate-set-id))
                     (js/Promise.resolve turn))
                   writer/emit-candidate-events!
-                  (fn [completion]
+                  (fn [actual-client completion]
+                    (is (identical? client actual-client))
                     (swap! projected conj completion)
                     (js/Promise.resolve
                      {:translation/event-ids ["translation-segment-1"]
@@ -256,7 +297,9 @@
                       ["translation-segment-1"]}))]
       (let [result (await
                     (writer/repair-completed-event-projections!
-                     {:evidence-store :evidence :split-store :splits}
+                     {:evidence-store :evidence
+                      :openplanner-client client
+                      :split-store :splits}
                      scope))]
         (is (= [{:receipt receipt
                  :turn turn

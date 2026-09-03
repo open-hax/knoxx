@@ -20,8 +20,8 @@
    :project "workspace"})
 
 (def params
-  #js {:title "Generated Post"
-       :content "# Generated Post\n\nA grounded draft."})
+  {:title "Generated Post"
+   :content "# Generated Post\n\nA grounded draft."})
 
 (def draft-policy
   (select-keys policies [:source-document-id :source-revision :source-locale
@@ -31,6 +31,29 @@
   (assoc draft-policy
          :title "Generated Post"
          :content "# Generated Post\n\nA grounded draft."))
+
+(defn- tool-names
+  [tools]
+  (into #{} (map #(aget % "name")) (array-seq tools)))
+
+(deftest publication-draft-tool-exposure-intersects-membership-policy
+  (testing "legacy nil context remains available to trusted in-process callers"
+    (is (= #{"save_publication_draft"}
+           (tool-names (tool/create-publication-draft-tools nil {} nil)))))
+  (testing "an explicit membership allow exposes the draft tool"
+    (is (= #{"save_publication_draft"}
+           (tool-names
+            (tool/create-publication-draft-tools
+             nil {} {:toolPolicies [{:toolId "save_publication_draft"
+                                      :effect "allow"}]})))))
+  (testing "an unrelated or denied membership cannot discover the draft tool"
+    (doseq [auth-context [{:toolPolicies [{:toolId "semantic_query"
+                                           :effect "allow"}]}
+                          {:toolPolicies [{:toolId "save_publication_draft"
+                                           :effect "deny"}]}]]
+      (is (empty? (tool-names
+                   (tool/create-publication-draft-tools
+                    nil {} auth-context)))))))
 
 (deftest ^:async every-generated-draft-file-uses-the-crash-safe-installer
   (let [temp-root (await (.mkdtemp fs (.join path (.tmpdir os)
@@ -89,10 +112,13 @@
   (let [temp-root (await (.mkdtemp fs (.join path (.tmpdir os) "knoxx-draft-title-")))
         config {:generated-contracts-dir (.join path temp-root "contracts")}
         draft-tool (aget (tool/create-publication-draft-tools
-                          nil config {:resourcePolicies policies})
+                          nil config {:resourcePolicies policies
+                                      :toolPolicies
+                                      [{:toolId "save_publication_draft"
+                                        :effect "allow"}]})
                          0)
         required-fields (set (js->clj (aget draft-tool "parameters" "required")))
-        content-only #js {:content "### Content-only title ###\n\nA grounded draft."}
+        content-only {:content "### Content-only title ###\n\nA grounded draft."}
         admit! (fn [_scope _selection]
                  (js/Promise.resolve
                   {:ok true :admitted 1 :failed 0 :results [{:ok true}]}))]
@@ -150,7 +176,7 @@
           (let [error (try
                         (await (tool/save-draft!
                                 config policies
-                                #js {:title "Changed" :content "Different bytes"}
+                                {:title "Changed" :content "Different bytes"}
                                 admit!))
                         nil
                         (catch :default cause cause))]
@@ -161,8 +187,8 @@
 (deftest ^:async failed-recursive-admission-leaves-materialized-bytes-retriable
   (let [temp-root (await (.mkdtemp fs (.join path (.tmpdir os) "knoxx-draft-retry-")))
         config {:generated-contracts-dir (.join path temp-root "contracts")}
-        changed-params #js {:title "A later model answer"
-                            :content "# Different\n\nNondeterministic retry bytes."}
+        changed-params {:title "A later model answer"
+                        :content "# Different\n\nNondeterministic retry bytes."}
         attempts* (atom 0)
         admit! (fn [_scope _selection]
                  (js/Promise.resolve
@@ -213,8 +239,8 @@
         identity (draft/draft-identity draft-policy)
         paths (draft-store/draft-paths config identity)
         persisted-content "# First durable title\n\nPersisted model bytes."
-        later-params #js {:title "Later nondeterministic title"
-                          :content "# Later answer\n\nDifferent model bytes."}
+        later-params {:title "Later nondeterministic title"
+                      :content "# Later answer\n\nDifferent model bytes."}
         admissions* (atom [])
         admit! (fn [scope selection]
                  (swap! admissions* conj [scope selection])

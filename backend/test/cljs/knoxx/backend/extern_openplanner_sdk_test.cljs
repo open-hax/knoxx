@@ -233,12 +233,14 @@
   (testing "mongo mode (default) returns the direct-mongo record"
     (let [built (openplanner-client/client {:openplanner-base-url "http://x"
                                             :openplanner-api-key "k"})]
-      (is (instance? openplanner-mongo/MongoOpenPlannerClient built))))
+      (is (instance? openplanner-mongo/MongoOpenPlannerClient built))
+      (is (openplanner-client/event-projection-repair-supported? built))))
   (testing "rest mode returns the fetch client"
     (let [built (openplanner-client/client {:openplanner-base-url "http://x"
                                             :openplanner-api-key "k"
                                             :openplanner-client-mode "rest"})]
-      (is (instance? openplanner-client/FetchOpenPlannerClient built))))
+      (is (instance? openplanner-client/FetchOpenPlannerClient built))
+      (is (not (openplanner-client/event-projection-repair-supported? built)))))
   (testing "explicit opts mode overrides config"
     (let [built (openplanner-client/client {:openplanner-client-mode "mongo"}
                                            {:mode "rest"})]

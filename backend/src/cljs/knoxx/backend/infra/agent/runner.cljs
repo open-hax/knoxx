@@ -272,6 +272,18 @@
   (reset! event-turn-settlers* {})
   true)
 
+(defn event-turn-owner-state
+  "Return `:in-flight`, `:settled`, or nil for one registered event owner.
+
+   A settled entry is retained only when its terminal callback still needs
+   redelivery. Callers may replace that callback to repair the durable effect;
+   they must not replace an in-flight owner's callback."
+  [event-id]
+  (when-let [entry (get @event-turn-settlers* (str event-id))]
+    (if (some? (:settlement entry))
+      :settled
+      :in-flight)))
+
 (defn event-triggered-turn?
   "True only for turns carrying normalized trigger audit metadata."
   [body]

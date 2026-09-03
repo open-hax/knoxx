@@ -17,7 +17,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.models :as models]
             [knoxx.backend.extern.fetch :as xfetch]
-            [knoxx.backend.extern.json :as xjson]
+            [knoxx.backend.extern.translation-agent-structured-output :as xstructured]
             [knoxx.backend.infra.translation-agent-sink :as sink]
             [knoxx.backend.infra.translation-split-store :as split-store]
             [knoxx.backend.law.translation-agent :as agent-law]
@@ -169,7 +169,8 @@
        :content (get-in turn [:translation-turn/execution
                               :translation-execution/system-prompt])}
       {:role "user"
-       :content (xjson/stringify (split-input turn source-split))}]
+       :content (xstructured/encode-request-content
+                 (split-input turn source-split))}]
      :stream false
      :think false
      :format translated-text-schema
@@ -236,7 +237,7 @@
   [model-id response]
   (let [body (validated-response-body! model-id response)
         content (validated-message-content! model-id body)
-        parsed (xjson/parse-object content)]
+        parsed (xstructured/decode-response-content content)]
     (when-not (map? parsed)
       (fail! :structured-output-invalid
              "Ollama assistant content is not a JSON object"
