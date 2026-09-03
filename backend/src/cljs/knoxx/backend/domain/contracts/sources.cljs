@@ -26,25 +26,39 @@
   (some-> value
           nonblank-str
           (str/replace #"^:" "")
-          (str/replace #"^source/" "")
           (str/replace #"_" "-")
           str/trim
           not-empty))
 
+(defn- namespaced-source-id
+  [namespace-part name-part]
+  (when-let [source-name (source-slug name-part)]
+    (keyword namespace-part source-name)))
+
 (defn normalize-source-id
-  "Normalize source refs to the canonical :source/<slug> keyword."
+  "Normalize source refs while preserving an explicit identity namespace.
+
+   Unqualified values remain backward compatible as :source/<slug>. Qualified
+   values such as :github/app-events remain qualified so runtime provenance does
+   not collapse unrelated providers onto :source/app-events."
   [value]
   (cond
     (keyword? value)
-    (if (= "source" (namespace value))
-      value
-      (some-> (name value) source-slug (#(keyword "source" %))))
+    (if-let [namespace-part (namespace value)]
+      (namespaced-source-id namespace-part (name value))
+      (namespaced-source-id "source" (name value)))
 
     (string? value)
-    (some-> value source-slug (#(keyword "source" %)))
+    (when-let [source-id (some-> value nonblank-str (str/replace #"^:" ""))]
+      (if (str/includes? source-id "/")
+        (let [[namespace-part name-part] (str/split source-id #"/" 2)]
+          (when (and (not (str/blank? namespace-part))
+                     (not (str/blank? name-part)))
+            (namespaced-source-id namespace-part name-part)))
+        (namespaced-source-id "source" source-id)))
 
     (nil? value) nil
-    :else (some-> value str source-slug (#(keyword "source" %)))))
+    :else (normalize-source-id (str value))))
 
 (defn source-contract-id
   "Map a canonical source id to its contract id slug."
@@ -56,9 +70,10 @@
 
    Accepts:
    - :source/openplanner-memory
+   - :github/app-events
    - source/openplanner-memory or openplanner-memory
    - {:source/ref :source/openplanner-memory ...}
-   - {:source/id :source/openplanner-memory ...}"
+   - {:source/id :github/app-events ...}"
   [source-ref]
   (cond
     (map? source-ref)
@@ -94,6 +109,11 @@
       (seq hydration) (assoc :source/hydration hydration)
       (seq render) (assoc :source/render render))))
 
+(defn- enabled?
+  [source]
+  (and (not (false? (:enabled source)))
+       (not (false? (:source/enabled? source)))))
+
 (defn- contract-source-spec
   [contract]
   (when (map? contract)
@@ -102,6 +122,7 @@
       (cond-> (select-keys contract
                            [:contract/id
                             :contract/type
+                            :enabled
                             :source/name
                             :source/type
                             :source/enabled?
@@ -147,15 +168,18 @@
   "Resolve one source ref into a normalized runtime source spec.
 
    Missing source contracts are tolerated so callers can pass run-local refs
-   before the contract exists, but disabled contracts/refs are omitted."
+   before the contract exists. A disabled contract is authoritative: a later
+   actor, agent, or run ref cannot silently re-enable it."
   [config source-ref]
   (when-let [source-id (source-ref-id source-ref)]
-    (let [base (or (contract-source-spec (source-contract config source-id))
+    (let [contract (source-contract config source-id)
+          base (or (contract-source-spec contract)
                    {:source/id source-id
                     :source/ref source-id})
-          merged (deep-merge base (source-ref-overrides source-ref))]
-      (when (and (not (false? (:enabled merged)))
-                 (not (false? (:source/enabled? merged))))
+          overrides (source-ref-overrides source-ref)
+          merged (deep-merge base overrides)]
+      (when (and (enabled? contract)
+                 (enabled? overrides))
         merged))))
 
 (defn- source-group->refs
@@ -171,7 +195,8 @@
 
    Pass groups in low -> high precedence order (actor, roles, agent, run). Later
    refs for the same :source/id deep-merge over earlier refs while preserving the
-   first position in the source vector."
+   first position in the source vector. A higher-precedence ref may disable an
+   enabled source, but no ref can re-enable a disabled source contract."
   [config & groups]
   (let [refs (mapcat source-group->refs groups)
         indexed (reduce (fn [{:keys [order by-id] :as acc} source-ref]
@@ -188,7 +213,12 @@
                             acc))
                         {:order [] :by-id {}}
                         refs)]
-    (mapv #(get-in indexed [:by-id %]) (:order indexed))))
+    (->> (:order indexed)
+         (keep (fn [source-id]
+                 (let [source (get-in indexed [:by-id source-id])]
+                   (when (enabled? source)
+                     source))))
+         vec)))
 
 (defn agent-source-refs
   [agent-spec]
