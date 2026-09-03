@@ -54,6 +54,8 @@ jobs:
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Checkout OpenPlanner SDK source
         uses: actions/checkout@v5
@@ -168,8 +170,22 @@ jobs:
       - name: Frontend typecheck (tsc)
         run: pnpm -C frontend run typecheck
 
+      - name: Frontend CLJS lint
+        env:
+          KNOXX_LINT_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}"
+        run: pnpm -C frontend run lint:cljs:changed
+
+      - name: Frontend migration manifest and ratchets
+        env:
+          KNOXX_MIGRATION_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}"
+          KNOXX_MIGRATION_INFRASTRUCTURE: "${{ github.event_name != 'pull_request' || contains(github.event.pull_request.body || '', 'Migration infrastructure: yes') }}"
+        run: pnpm -C frontend run migration:check
+
       - name: Frontend CLJS tests
         run: pnpm -C frontend run test:cljs
+
+      - name: Frontend production Shadow release (zero warnings)
+        run: pnpm -C frontend run build:cljs
 
       - name: Frontend tests + coverage (vitest)
         run: pnpm -C frontend run test:coverage
