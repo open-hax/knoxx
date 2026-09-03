@@ -35,6 +35,23 @@
                                     :policy/checked-by :contract-validator})]
     (is (:ok result) (pr-str result))))
 
+(deftest mcp-server-contract-keeps-credentials-out-of-resource-data
+  (is (:ok (validator/validate
+            "mcp_servers"
+            {:contract/kind :mcp-server
+             :contract/id "graphics"
+             :mcp-server/id "graphics"
+             :mcp-server/transport :http
+             :mcp-server/url "http://127.0.0.1:8020/mcp"
+             :mcp-server/auth-token-env "GRAPHICS_MCP_TOKEN"})))
+  (is (false? (:ok (validator/validate
+                    "mcp_servers"
+                    {:contract/kind :mcp-server
+                     :contract/id "graphics"
+                     :mcp-server/id "graphics"
+                     :mcp-server/transport :http
+                     :mcp-server/auth-token "literal-secret"})))))
+
 (deftest capability-contract-schema-accepts-user-surface-mappings
   (let [result (validator/validate "capabilities"
                                    {:cap/id :cap/read

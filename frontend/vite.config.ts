@@ -4,6 +4,22 @@ import react from "@vitejs/plugin-react";
 const VITE_BACKEND_URL =
   process.env.VITE_KNOXX_BACKEND_URL || "http://knoxx-backend:8000";
 
+const KNOXX_PROXY = {
+  "/api": {
+    target: VITE_BACKEND_URL,
+    changeOrigin: true,
+  },
+  "/ws": {
+    target: VITE_BACKEND_URL,
+    changeOrigin: true,
+    ws: true,
+  },
+  "/health": {
+    target: VITE_BACKEND_URL,
+    changeOrigin: true,
+  },
+};
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -27,20 +43,17 @@ export default defineConfig({
     host: "0.0.0.0",
     port: 5173,
     strictPort: true,
-    proxy: {
-      "/api": {
-        target: VITE_BACKEND_URL,
-        changeOrigin: true,
-      },
-      "/ws": {
-        target: VITE_BACKEND_URL,
-        changeOrigin: true,
-        ws: true,
-      },
-      "/health": {
-        target: VITE_BACKEND_URL,
-        changeOrigin: true,
-      },
-    },
+    proxy: KNOXX_PROXY,
+  },
+
+  // `vite preview` has a distinct proxy configuration from the dev server.
+  // Keep both surfaces on the same backend map so CI browser requests cannot
+  // fall through to the static preview server.
+  preview: {
+    allowedHosts: [],
+    host: "0.0.0.0",
+    port: 5173,
+    strictPort: true,
+    proxy: KNOXX_PROXY,
   },
 });

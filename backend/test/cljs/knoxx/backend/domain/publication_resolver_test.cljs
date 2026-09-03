@@ -27,7 +27,8 @@
   {:namespace :knoxx.docs
    :garden/id :promethean
    :garden/title "Promethean"
-   :garden/status :active})
+   :garden/status :active
+   :garden/locales [:en :es]})
 
 (def qualified-garden
   (assoc local-garden :garden/id :knoxx.docs/promethean))
@@ -80,6 +81,29 @@
     (testing "no namespace in scope leaves a bare id alone rather than nil-qualifying it"
       (is (= :translation-pipeline
              (resolver/canonical-id nil :translation-pipeline))))))
+
+(deftest document-projection-preserves-authored-localized-content
+  (let [localized (assoc local-document
+                         :document/translations
+                         {:es {:path "docs/translation-pipeline.es.md"}})
+        index (resolver/publication-index [localized local-garden local-intent])]
+    (is (= {:es {:path "docs/translation-pipeline.es.md"}}
+           (get-in index
+                   [:documents :knoxx.docs/translation-pipeline
+                    :document/translations])))))
+
+(deftest document-projection-preserves-and-canonicalizes-generated-lineage
+  (let [derived (assoc local-document
+                       :document/org-id "org-1"
+                       :document/visibility :private
+                       :document/derived-from :source-document
+                       :document/derived-source-revision "sha256-source")
+        projected (resolver/canonicalize-document derived)]
+    (is (= :knoxx.docs/source-document (:document/derived-from projected)))
+    (is (= "sha256-source" (:document/derived-source-revision projected)))
+    (is (= "org-1" (:document/org-id projected)))
+    (is (= :private (:document/visibility projected)))
+    (is (m/validate law/Document projected))))
 
 ;; ── 2/3 canonical identity inside payloads ────────────────────────────────
 

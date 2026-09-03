@@ -1,17 +1,227 @@
 (ns knoxx.backend.extern.mongo
-  "Extern adapter owning the MongoDB collection-handle boundary.
+  "Extern adapter owning MongoDB client, session, and collection boundaries.
 
-   Knoxx does not ship a MongoDB driver; callers inject a native collection
-   handle (any object exposing insertOne/find with a toArray cursor). All raw
-   interop with that handle is born and dies here — store records upstream
-   speak CLJS maps only."
+   Callers inject native client or collection handles. All raw interop with
+   those handles, native option encoding, result decoding, and transaction
+   session lifecycle are born and die here. Store records and transaction
+   operations upstream speak CLJS maps only."
   (:require [knoxx.backend.law.mongo :as law-mongo]))
+
+(defn collection
+  "The named collection handle on a native database handle.
+
+   Acquisition belongs here for the same reason every other driver call does:
+   `db` is an opaque JavaScript handle and `.collection` is a driver method on
+   it. A store reaching for that method itself would split MongoDB ownership
+   across two namespaces — this adapter owning reads, writes and indexes while
+   `infra.*` owned handle acquisition.
+
+   What comes back is another opaque handle, and it is only ever passed back
+   into this namespace's own functions."
+  [db collection-name]
+  (.collection db collection-name))
+
+(defn- hello->topology
+  [hello]
+  (let [set-name (some-> (aget hello "setName") str)
+        message (some-> (aget hello "msg") str)]
+    (cond
+      (and set-name (not-empty set-name))
+      {:kind :replica-set :set-name set-name}
+
+      (= "isdbgrid" message)
+      {:kind :sharded-cluster}
+
+      :else
+      {:kind :standalone})))
+
+(defn ^:async require-transaction-capable-topology!
+  "Require the native database handle to support multi-document transactions.
+
+   The native `hello` response is decoded here and only a CLJS topology map or
+   a typed exception crosses the boundary. A standalone deployment is refused:
+   bootstrap credential replacement has no safe non-transactional equivalent."
+  [db]
+  (when-not db
+    (throw (js/Error. "Mongo database handle is required for topology validation")))
+  (let [hello (await (.command db #js {:hello 1}))
+        topology (hello->topology hello)]
+    (when-not (law-mongo/transaction-capable-topology? topology)
+      (throw (ex-info
+              "MongoDB deployment must be a replica set or sharded cluster"
+              {:mongo/topology (:kind topology)
+               :mongo/transaction-capable false})))
+    topology))
 
 (defn ^:async insert-one!
   "Insert one CLJS document into a native collection handle. Returns the doc."
   [collection-handle doc]
   (await (.insertOne collection-handle (clj->js doc)))
   doc)
+
+(defn current-epoch-ms
+  "Return the host clock as a validated CLJS epoch-millisecond scalar.
+
+   Native Date access stays in this extern. Stores may carry the returned
+   number through pure CLJS operation maps and request BSON Date encoding only
+   when the mutation crosses back into the driver."
+  []
+  (let [now-ms (.now js/Date)]
+    (when-not (law-mongo/valid-epoch-ms? now-ms)
+      (throw (js/Error. "host clock returned an invalid epoch-millisecond value")))
+    now-ms))
+
+(defn- native-update-options
+  [session {:keys [upsert write-concern case-insensitive?]}]
+  (let [options #js {}]
+    (when (some? upsert)
+      (aset options "upsert" (boolean upsert)))
+    (when write-concern
+      (aset options "writeConcern" #js {:w (str write-concern)}))
+    (when case-insensitive?
+      (aset options "collation" #js {:locale "en" :strength 2}))
+    (when session
+      (aset options "session" session))
+    options))
+
+(defn- update-result->cljs [result]
+  {:matched-count (aget result "matchedCount")
+   :modified-count (aget result "modifiedCount")
+   :upserted-count (aget result "upsertedCount")})
+
+(defonce ^:private transaction-operation-by-error (js/WeakMap.))
+
+(defn- mongo-operation-error [operation err]
+  (ex-info (str "Mongo " operation " failed")
+           {:mongo/code (aget err "code")}
+           err))
+
+(defn- remember-transaction-operation! [err operation]
+  ;; MongoError inherits from js/Error, but CLJS's `object?` predicate does
+  ;; not consistently classify host Error subclasses across optimized Node
+  ;; builds. Let WeakMap perform the host-value check and leave an unusual
+  ;; primitive rejection unannotated instead of replacing the native error.
+  (try
+    (.set transaction-operation-by-error err operation)
+    (catch :default _ nil))
+  err)
+
+(defn- remembered-transaction-operation [err]
+  (try
+    (.get transaction-operation-by-error err)
+    (catch :default _ nil)))
+
+(defn- assert-mutation! [query update {:keys [bson-date-fields]}]
+  (when-not (law-mongo/valid-mutation-query? query)
+    (throw (ex-info "refusing an unsafe Mongo mutation query" {:query query})))
+  (when-not (law-mongo/valid-mutation-update? update)
+    (throw (ex-info "refusing an unsafe Mongo mutation document" {:update update})))
+  (when-not (law-mongo/valid-mutation-date-encoding?
+             update bson-date-fields)
+    (throw (ex-info "refusing an unsafe Mongo BSON Date encoding"
+                    {:update update :bson-date-fields bson-date-fields}))))
+
+(defn- native-mutation-update
+  [update bson-date-fields]
+  (let [date-field-names
+        (set (map #(if (keyword? %) (name %) %) bson-date-fields))]
+    (clj->js
+     (reduce-kv
+      (fn [native-update operator assignments]
+        (assoc native-update operator
+               (reduce-kv
+                (fn [native-assignments field value]
+                  (assoc native-assignments field
+                         (if (contains?
+                              date-field-names
+                              (if (keyword? field) (name field) field))
+                           (js/Date. value)
+                           value)))
+                {}
+                assignments)))
+      {}
+      update))))
+
+(defn- ^:async update-one-native!
+  [session collection-handle query update options]
+  (assert-mutation! query update options)
+  (try
+    (-> (await (.updateOne
+                collection-handle
+                (clj->js query)
+                (native-mutation-update update (:bson-date-fields options))
+                (native-update-options session options)))
+        update-result->cljs)
+    (catch :default err
+      (if session
+        ;; withTransaction must see the original MongoError and its
+        ;; TransientTransactionError label so the driver can retry.
+        (throw (remember-transaction-operation! err "updateOne"))
+        (throw (mongo-operation-error "updateOne" err))))))
+
+(defn- ^:async update-many-native!
+  [session collection-handle query update options]
+  (assert-mutation! query update options)
+  (try
+    (-> (await (.updateMany
+                collection-handle
+                (clj->js query)
+                (native-mutation-update update (:bson-date-fields options))
+                (native-update-options session options)))
+        update-result->cljs)
+    (catch :default err
+      (if session
+        (throw (remember-transaction-operation! err "updateMany"))
+        (throw (mongo-operation-error "updateMany" err))))))
+
+(defn ^:async update-one!
+  "Update one document from CLJS query/update maps and return decoded counts.
+
+   `options` accepts :upsert, :write-concern, :case-insensitive?, and a
+   :bson-date-fields set. Fields in that set must carry valid epoch-millisecond
+   scalars and are encoded as native Dates only here. Native Mongo option
+   names, Date values, and result objects never escape this adapter."
+  ([collection-handle query update]
+   (await (update-one-native! nil collection-handle query update {})))
+  ([collection-handle query update options]
+   (await (update-one-native! nil collection-handle query update options))))
+
+(defn- transaction-api [session]
+  {:update-one!
+   (fn [collection-handle query update options]
+     (update-one-native! session collection-handle query update options))
+   :update-many!
+   (fn [collection-handle query update options]
+     (update-many-native! session collection-handle query update options))})
+
+(defn ^:async with-transaction!
+  "Run `f` in a Mongo transaction through a CLJS-first operation map.
+
+   The callback receives :update-one! and :update-many! functions. Neither the
+   native ClientSession nor driver option/result shapes escape this adapter.
+   Knoxx's deployment contract is a replica set, so the transaction uses
+   snapshot read concern and majority write concern and lets the driver retry
+   transient write conflicts. The session is closed on every exit path."
+  [client f]
+  (when-not client
+    (throw (js/Error. "Mongo client is required for a transaction")))
+  (let [session (.startSession client)]
+    (try
+      (try
+        (await (.withTransaction
+                session
+                (^:async fn []
+                  (await (f (transaction-api session))))
+                #js {:readConcern #js {:level "snapshot"}
+                     :writeConcern #js {:w "majority"}}))
+        (catch :default err
+          ;; Translation happens only after the convenient transaction API has
+          ;; finished retrying. Arbitrary callback errors retain their identity.
+          (if-let [operation (remembered-transaction-operation err)]
+            (throw (mongo-operation-error operation err))
+            (throw err))))
+      (finally
+        (await (.endSession session))))))
 
 (defn- decoded-instant
   "A time value only when it satisfies law.mongo/EpochMillis.
@@ -110,3 +320,75 @@
                  limit (.limit limit))
         rows (await (.toArray cursor))]
     (vec (js->clj rows :keywordize-keys true))))
+
+(def duplicate-key-error-code
+  "MongoDB's duplicate-key error code.
+
+   Named rather than inlined because it is the only signal that distinguishes
+   'another writer got there first' from 'the write failed'. Read as a failure,
+   an atomic claim degrades into a retry loop that never claims anything; read
+   as a success, two writers both believe they hold the same key."
+  11000)
+
+(defn duplicate-key-error?
+  "True when `err` is Mongo refusing a write that would violate a unique index.
+
+   Both spellings are read. The driver puts the code on `code`, but a write
+   surfaced through a bulk path carries it on the first entry of
+   `writeErrors`, and a caller that checked only one of them would treat a
+   collided claim as an outage. Some SDK paths preserve only the string code or
+   canonical E11000 message, so those native representations are decoded here
+   too rather than leaking raw error inspection into ordinary infra code."
+  [err]
+  (let [data (ex-data err)
+        code (or (:code data)
+                 (when err (aget err "code"))
+                 (some-> (when err (aget err "writeErrors"))
+                         (aget 0)
+                         (aget "code")))
+        message (or (when err (aget err "message"))
+                    (ex-message err)
+                    (str err))]
+    (boolean
+     (or (= duplicate-key-error-code code)
+         (= (str duplicate-key-error-code) (str code))
+         (re-find #"(?i)(E11000|duplicate key)" (str message))))))
+
+(defn ^:async insert-one-unique!
+  "Insert one CLJS document, reporting collision rather than throwing it.
+
+   Returns `{:inserted? true :doc doc}` when this caller won the insert, and
+   `{:inserted? false}` when a unique index refused it. This is the atomic
+   claim: the insert IS the check, with no await between reading and writing,
+   which is the property `infra.publication-effects/IIdempotencyStore` spells
+   out as the reason a separate existence-check is not equivalent.
+
+   Any other error propagates. A failed write whose cause is unknown must not
+   be reported as a peaceful collision."
+  [collection-handle doc]
+  (try
+    (await (.insertOne collection-handle (clj->js doc)))
+    {:inserted? true :doc doc}
+    (catch :default err
+      (if (duplicate-key-error? err)
+        {:inserted? false}
+        (throw err)))))
+
+(defn ^:async ensure-index!
+  "Create one index on a native collection handle from CLJS data.
+
+   `keys` is an ordered vector of `[field direction]` pairs and `opts` a CLJS map
+   such as `{:unique true}`. Ordered because a compound index is direction- and
+   order-sensitive, and a CLJS map would not preserve either.
+
+   Here rather than at the store, because this is where MongoDB interop is
+   allowed to exist: `#js` construction and driver calls belong to the extern
+   adapter that owns the boundary, and a store that built native objects itself
+   would split that ownership across two namespaces."
+  [collection-handle keys opts]
+  (let [spec (reduce (fn [acc [field direction]]
+                       (doto acc (aset (name field) direction)))
+                     #js {}
+                     keys)]
+    (await (.createIndex collection-handle spec (clj->js (or opts {}))))
+    true))

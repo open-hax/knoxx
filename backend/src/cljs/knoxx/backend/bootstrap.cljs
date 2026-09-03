@@ -8,6 +8,7 @@
      dump for the whole backend."
   (:require [clojure.string :as str]
             [knoxx.backend.contract-runtime-deps :as contract-runtime-deps]
+            [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.infra.agent.resume :as agent-resume]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.clients.openplanner-mongo]
@@ -28,8 +29,12 @@
              [knoxx.backend.infra.stores.mongo-memory-sessions :as mongo-memory-sessions]
              [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp-oauth]
              [knoxx.backend.infra.stores.mongo-rate-limits :as mongo-rate-limits]
-             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+             [knoxx.backend.infra.stores.mongo-translation-evidence :as mongo-translation-evidence]
+             [knoxx.backend.infra.stores.mongo-translation-split :as mongo-translation-split]
              [knoxx.backend.infra.stores.session-flush :as session-flush]
+             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+             [knoxx.backend.infra.stores.translation-evidence-registry :as translation-evidence-registry]
+             [knoxx.backend.infra.stores.translation-split-registry :as translation-split-registry]
             [knoxx.backend.infra.routes.auth :as auth-routes]
             [knoxx.backend.infra.routes.mcp :as mcp-http]
             [knoxx.backend.infra.routes.tools.proxy :as proxy-routes]
@@ -82,6 +87,7 @@
        :bootstrapSystemAdminEmail (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL" "system-admin@open-hax.local")
        :bootstrapSystemAdminName (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME" "Knoxx System Admin")
        :bootstrapSystemAdminPassword (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD" "")
+       :bootstrapSystemAdminPreviousEmails (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PREVIOUS_EMAILS" "")
        :bootstrapAllowlistEmails (env "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS" "")
        :bootstrapAllowlistRoleSlugs (env "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS" "")})
 
@@ -127,28 +133,81 @@
   (proxy-routes/register-proxy-routes! app cfg)
   (mcp-http/register-mcp-http-routes! app runtime cfg))
 
+(defn- ^:async start-translation-evidence!
+  "Publish the durable translation evidence store, indexes first.
+
+   The unique index on `dispatch_key` IS the atomic claim that stops one revision
+   being dispatched to the worker twice, so the store is only published after
+   `setup-indexes!` has resolved. Published before the index existed, a
+   concurrent pair of dispatches could both insert and both believe they had
+   reserved the key.
+
+   Failure is contained here and never propagates. Awaited bare, a transient
+   Mongo error or an incompatible pre-existing index would reject the whole
+   index-setup step — skipping the session store, agent resume, periodic
+   recovery and session flush that follow it, so a newly added optional feature
+   would take down established persistence while the HTTP server stayed up.
+   Instead the registry is simply left nil, which the dispatch and approval
+   routes already answer 503 for, and the failure is logged. This is the same
+   reasoning `mongo-policy-store/ensure-indexes!` is called for rather than
+   `setup-indexes!` two lines down."
+  [db log]
+  (try
+    (await (mongo-translation-evidence/setup-indexes! db))
+    (reset! translation-evidence-registry/store*
+            (mongo-translation-evidence/create-store db))
+    (catch :default err
+      (.warn log "Translation evidence store unavailable; dispatch and approval routes will answer 503" err)
+      nil)))
+
+(defn- ^:async start-translation-splits!
+  "Publish the durable split store only after every immutable index exists."
+  [db log]
+  (try
+    (await (mongo-translation-split/setup-indexes! db))
+    (reset! translation-split-registry/store*
+            (mongo-translation-split/create-store db crypto/sha256-hex))
+    (catch :default err
+      (.warn log "Translation split store unavailable; split dispatch and review routes will answer 503" err)
+      nil)))
+
+(defn- ^:async start-mongo-indexes!
+  "Create every collection's indexes, then publish the stores that need them.
+
+   Extracted from `start-mongo-persistence!` so that function stays about
+   lifecycle — connect, index, resume, schedule — rather than growing one line
+   per collection."
+  [db log]
+  (mongo-session-store/setup-indexes! db)
+  (mongo-run-store/setup-indexes! db)
+  ;; Cache stores for session titles, temp memory, memory sessions
+  (mongo-session-titles/setup-indexes! db)
+  (mongo-temp-memory/setup-indexes! db)
+  (mongo-memory-sessions/setup-indexes! db)
+  ;; MCP OAuth store
+  (mongo-mcp-oauth/setup-indexes! db)
+  ;; Rate limits store
+  (mongo-rate-limits/setup-indexes! db)
+  ;; Translation dispatch bindings and completed-translation evidence. Its own
+  ;; failures stay its own — see the function.
+  (await (start-translation-evidence! db log))
+  ;; Atomic turn admission, split candidates, and review memory. Kept isolated
+  ;; so an incompatible new index cannot take established persistence down.
+  (await (start-translation-splits! db log))
+  ;; ensure-indexes! (not setup-indexes!): it catches index
+  ;; failures so a bad index spec can never crash-loop the
+  ;; process from this fire-and-forget bootstrap path.
+  (mongo-policy-store/ensure-indexes! db)
+  (reset! store-registry/session-store*
+          (mongo-run-store/create-mongo-run-store db)))
+
 (defn- ^:async start-mongo-persistence!
   [runtime app cfg log]
   (try
     (let [db (await (mongo-client/init-mongo!))]
       (when db
         (.info log "MongoDB connected for session persistence")
-        (mongo-session-store/setup-indexes! db)
-        (mongo-run-store/setup-indexes! db)
-        ;; Cache stores for session titles, temp memory, memory sessions
-        (mongo-session-titles/setup-indexes! db)
-        (mongo-temp-memory/setup-indexes! db)
-        (mongo-memory-sessions/setup-indexes! db)
-        ;; MCP OAuth store
-        (mongo-mcp-oauth/setup-indexes! db)
-        ;; Rate limits store
-        (mongo-rate-limits/setup-indexes! db)
-        ;; ensure-indexes! (not setup-indexes!): it catches index
-        ;; failures so a bad index spec can never crash-loop the
-        ;; process from this fire-and-forget bootstrap path.
-        (mongo-policy-store/ensure-indexes! db)
-        (reset! store-registry/session-store*
-                (mongo-run-store/create-mongo-run-store db))
+        (await (start-mongo-indexes! db log))
         ;; Fire-and-forget: must not block startup.
         ;; Guarded so shadow-cljs hot reload does not spawn
         ;; recovery jobs as if the Node process had restarted.
@@ -162,29 +221,84 @@
   [runtime app cfg log]
   (start-mongo-persistence! runtime app cfg log))
 
+(defn- listening-deps
+  []
+  {:remember-app! lifecycle/remember-app!
+   :install-shutdown! graceful-shutdown/install!
+   :notify-ready! notify-ready!
+   :start-persistence! start-session-persistence!})
+
 (defn- handle-app-listening!
-  [runtime app cfg]
-  (lifecycle/remember-app! app)
-  (graceful-shutdown/install! app cfg)
+  [runtime app cfg {:keys [remember-app! install-shutdown! notify-ready!
+                           start-persistence!]}]
+  (remember-app! app)
+  (install-shutdown! app cfg)
   (notify-ready!)
   (let [^js log (.-log app)]
     (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
-    (start-session-persistence! runtime app cfg log)
+    (start-persistence! runtime app cfg log)
     app))
 
+(defn- http-start-deps
+  []
+  {:remember-runtime-context! runtime-state/remember-context!
+   :create-app! http-server/create-app!
+   :ensure-json-parser! http-server/ensure-json-empty-body-parser!
+   :add-debug-hook! add-request-debug-hook!
+   :register-default-plugins! http-server/register-default-plugins!
+   :register-ws-routes! register-ws-routes-plugin!
+   :add-session-hook! add-session-hook!
+   :register-http-routes! register-http-routes!
+   :listen! http-server/listen!
+   :listening (listening-deps)})
+
 (defn ^:async start-http!
-  "Create a fresh Fastify app and bind HTTP routes around durable runtime state."
-  [runtime cfg policy-context cookie-hook?]
-  (runtime-state/remember-context! runtime cfg policy-context)
-  (let [app (http-server/create-app!)]
-    (http-server/ensure-json-empty-body-parser! app)
-    (add-request-debug-hook! app)
-    (await (http-server/register-default-plugins! app))
-    (await (register-ws-routes-plugin! runtime app))
-    (await (add-session-hook! app policy-context cookie-hook?))
-    (await (register-http-routes! runtime app cfg policy-context))
-    (await (http-server/listen! app (:host cfg) (:port cfg)))
-    (handle-app-listening! runtime app cfg)))
+  "Create a fresh Fastify app and bind HTTP routes around durable runtime state.
+
+   A CLJS policy context is a composition precondition. The dependency arity
+   makes the route/listen/readiness ordering directly testable without opening
+   a socket."
+  ([runtime cfg policy-context cookie-hook?]
+   (await (start-http! runtime cfg policy-context cookie-hook?
+                       (http-start-deps))))
+  ([runtime cfg policy-context cookie-hook?
+    {:keys [remember-runtime-context! create-app! ensure-json-parser!
+            add-debug-hook! register-default-plugins! register-ws-routes!
+            add-session-hook! register-http-routes! listen! listening]}]
+   (when-not (map? policy-context)
+     (throw (js/Error. "Knoxx policy context is required before HTTP composition")))
+   (remember-runtime-context! runtime cfg policy-context)
+   (let [app (create-app!)]
+     (ensure-json-parser! app)
+     (add-debug-hook! app)
+     (await (register-default-plugins! app))
+     (await (register-ws-routes! runtime app))
+     (await (add-session-hook! app policy-context cookie-hook?))
+     (await (register-http-routes! runtime app cfg policy-context))
+     (await (listen! app (:host cfg) (:port cfg)))
+     (handle-app-listening! runtime app cfg listening))))
+
+(defn ^:async start-policy-http!
+  "Create the policy context before allowing HTTP composition to begin.
+
+   Both rejection and an unexpected nil result leave `start-http!` untouched;
+   callers receive the failure and decide how to terminate the process."
+  ([cfg cookie-hook? options]
+   (await (start-policy-http!
+           cfg cookie-hook? options
+           {:create-policy-context! policy-db/create-policy-db
+            :remember-lifecycle-context! lifecycle/remember-context!
+            :start-http! start-http!
+            :runtime-factory (fn [] #js {})})))
+  ([cfg cookie-hook? options
+    {:keys [create-policy-context! remember-lifecycle-context! start-http!
+            runtime-factory]}]
+   (let [policy-context (await (create-policy-context! options))]
+     (when-not (map? policy-context)
+       (throw (js/Error. "Knoxx policy DB returned no usable policy context")))
+     (let [runtime (runtime-factory)]
+       (remember-lifecycle-context! runtime cfg policy-context cookie-hook?)
+       (await (start-http! runtime cfg policy-context cookie-hook?))))))
 
 (defn ^:async bootstrap!
   "Main entrypoint called by shadow-cljs."
@@ -200,10 +314,7 @@
     (graph-policy-registry/init!)
 
     (try
-      (let [policy-context (await (policy-db/create-policy-db (policy-options)))
-            runtime #js {}]
-        (lifecycle/remember-context! runtime cfg policy-context cookie-hook?)
-        (await (start-http! runtime cfg policy-context cookie-hook?)))
+      (await (start-policy-http! cfg cookie-hook? (policy-options)))
       (catch :default err
         (.error js/console "Knoxx policy DB failed to initialize" err)
         (js/process.exit 1)))))

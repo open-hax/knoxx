@@ -1,21 +1,120 @@
 (ns knoxx.backend.actions.start-agent-session-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [knoxx.backend.domain.action.start-agent-session :as start-agent-session]))
+            [knoxx.backend.domain.action.registry :as action-registry]
+            [knoxx.backend.domain.action.start-agent-session :as start-agent-session]
+            [knoxx.backend.infra.agent.runner :as agents-runner]
+            [knoxx.backend.infra.tooling :as tooling]))
 
-(deftest triggered-session-identifiers-include-trigger-scope-and-timestamp
+(def ^:private resolved-execution
+  {:model "model-a"
+   :thinking-level :medium
+   :system-prompt "Translate every admitted split."
+   :tool-ids ["save_translation"]
+   :tools-choice :required-first})
+
+(defn- execution-event
+  [overrides]
+  {:event/payload
+   {:execution
+    (merge {:translation-execution/agent-id "publication_translator"
+            :translation-execution/model "model-a"
+            :translation-execution/thinking "medium"
+            :translation-execution/system-prompt
+            "Translate every admitted split."
+            :translation-execution/tool-ids ["save_translation"]
+            :translation-execution/tools-choice :required-first
+            :translation-execution/digest "digest-a"}
+           overrides)}})
+
+(deftest execution-snapshot-pins-what-the-trigger-may-spawn
+  (testing "the exact resolved policy agrees with its pre-provider event"
+    (is (nil? (start-agent-session/event-execution-refusal
+               (execution-event {}) "publication_translator"
+               resolved-execution))))
+
+  (testing "model, prompt, tools, and agent drift are each refused"
+    (doseq [[field changed]
+            [[:translation-execution/agent-id "some-other-agent"]
+             [:translation-execution/model "model-b"]
+             [:translation-execution/thinking "high"]
+             [:translation-execution/system-prompt "Different prompt"]
+             [:translation-execution/tool-ids ["save_translation" "other"]]
+             [:translation-execution/tools-choice nil]]]
+      (let [refusal (start-agent-session/event-execution-refusal
+                     (execution-event {field changed})
+                     "publication_translator" resolved-execution)]
+        (is (= :agent-execution-drift (:refusal/type refusal))
+            (str field " drift was allowed")))))
+
+  (testing "missing execution authority is refused rather than defaulted"
+    (is (= :agent-execution-drift
+           (:refusal/type
+            (start-agent-session/event-execution-refusal
+             {:event/payload {}} "publication_translator"
+             resolved-execution))))))
+
+(deftest triggered-agent-spec-carries-required-first
+  (let [spawned* (atom nil)
+        resolved (merge resolved-execution
+                        {:actor-id "pi"
+                         :role "translator"
+                         :tool-policies [{:toolId "save_translation"
+                                          :effect "allow"}]})]
+    (with-redefs [tooling/resolve-agent-contract (fn
+                                                   ([_config _agent-id]
+                                                    resolved)
+                                                   ([_config agent-id _actor-id]
+                                                    (is (= "publication_translator" agent-id))
+                                                    resolved))
+                  agents-runner/spawn-direct! (fn
+                                                ([_config payload]
+                                                 (reset! spawned* payload)
+                                                 {:ok true})
+                                                ([_runtime _config payload]
+                                                 (reset! spawned* payload)
+                                                 {:ok true}))]
+      (action-registry/run-action!
+       {:config {}
+        :trigger {:trigger/id "translate-on-admission"}
+        :event {:event/id "event-1"
+                :event/type :publication/translation-needed
+                :event/payload {}}}
+       {:action/kind :actions/start-agent-session
+        :action/with {:agent-id "publication_translator"
+                      :task "Translate the admitted document."}})
+      (is (= "required-first"
+             (get-in @spawned* [:agent_spec :tools_choice]))))))
+
+(deftest triggered-session-identifiers-include-trigger-scope-event-and-timestamp
   (testing "normal trigger launches get unique conversation ids per run"
     (is (= {:trigger-id "ussyverse_social_creative_cron"
             :event-scope-id "1494137016303095828"
-            :run-id "trigger-ussyverse_social_creative_cron-12345"
-            :conversation-id "trigger-ussyverse_social_creative_cron-12345-1494137016303095828"
-            :session-id "trigger-session-ussyverse_social_creative_cron-1494137016303095828-12345"}
+            :run-id "trigger-ussyverse_social_creative_cron-1494137016303095828-evt_1-12345"
+            :conversation-id "trigger-ussyverse_social_creative_cron-1494137016303095828-evt_1-12345-1494137016303095828"
+            :session-id "trigger-session-ussyverse_social_creative_cron-1494137016303095828-evt_1-12345"}
            (start-agent-session/triggered-session-identifiers
             {:trigger/id "ussyverse_social_creative_cron"}
             {:event/id "evt_1"
              :event/payload {:channelId "1494137016303095828"}}
             "ussyverse_social_creative"
             12345)))))
+
+(deftest same-millisecond-events-have-distinct-run-identities
+  (testing "event identity prevents one scoped event from overwriting another run"
+    (let [trigger {:trigger/id "publication_translation"}
+          event-base {:event/payload {:channelId "publication-channel"}}
+          ids-a (start-agent-session/triggered-session-identifiers
+                 trigger (assoc event-base :event/id "document-event-a")
+                 "publication_translator" 12345)
+          ids-b (start-agent-session/triggered-session-identifiers
+                 trigger (assoc event-base :event/id "document-event-b")
+                 "publication_translator" 12345)]
+      (is (not= (:run-id ids-a) (:run-id ids-b)))
+      (is (not= (:conversation-id ids-a) (:conversation-id ids-b)))
+      (is (not= (:session-id ids-a) (:session-id ids-b)))
+      (is (str/includes? (:run-id ids-a)
+                         "publication-channel-document-event-a-12345")))))
 
 (deftest triggered-session-identifiers-honor-sticky-sessions
   (testing "sticky sources reuse one conversation/session per trigger+scope while runs stay unique"
@@ -38,6 +137,18 @@
              (:session-id ids-1)
              (:session-id ids-2)))
       (is (not= (:run-id ids-1) (:run-id ids-2)))))
+  (testing "same-millisecond events keep sticky sessions but not run identity"
+    (let [trigger {:trigger/id "sticky-trigger"}
+          event-base {:event/payload {:channelId "shared-channel"}}
+          ids-a (start-agent-session/triggered-session-identifiers
+                 trigger (assoc event-base :event/id "event-a")
+                 "sticky-agent" 12345 {:sticky? true})
+          ids-b (start-agent-session/triggered-session-identifiers
+                 trigger (assoc event-base :event/id "event-b")
+                 "sticky-agent" 12345 {:sticky? true})]
+      (is (not= (:run-id ids-a) (:run-id ids-b)))
+      (is (= (:conversation-id ids-a) (:conversation-id ids-b)))
+      (is (= (:session-id ids-a) (:session-id ids-b)))))
   (testing "different channels still get distinct sticky sessions"
     (let [ids-a (start-agent-session/triggered-session-identifiers
                  {:trigger/id "t"} {:event/payload {:channelId "chan-a"}} "agent" 1 {:sticky? true})
@@ -79,7 +190,7 @@
                67890)]
       (is (= "ussyverse_social_creative" (:trigger-id ids)))
       (is (= "ussyverse_social_creative" (:event-scope-id ids)))
-      (is (= "trigger-ussyverse_social_creative-67890-ussyverse_social_creative"
+      (is (= "trigger-ussyverse_social_creative-ussyverse_social_creative-evt_2-67890-ussyverse_social_creative"
              (:conversation-id ids)))
       (is (not (re-find #"trigger--event" (:conversation-id ids)))))))
 

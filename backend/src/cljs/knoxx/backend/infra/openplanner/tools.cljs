@@ -9,6 +9,8 @@
             [knoxx.backend.infra.http :refer [http-error]]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
             [knoxx.backend.infra.openplanner.translation-scope :as translation-scope]
+            [knoxx.backend.infra.translation-agent-runtime :as translation-agent]
+            [knoxx.backend.law.translation-agent :as translation-agent-law]
             [knoxx.backend.domain.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
@@ -47,15 +49,46 @@
    [:sessionId {:description "Knoxx conversation/session id stored in OpenPlanner."} :string]])
 
 (def translation-params
+  "`save_translation`'s parameters.
+
+  Every coordinate is optional, because `save-translation-segment` and
+  `publication-translation-pair` both default all four from the session's
+  `:resourcePolicies` — that fallback predates this schema and is what makes a
+  pinned translation session work at all. Declaring them required contradicted
+  it: the JSON-schema validator refuses the call before either handler runs, so
+  an agent that correctly omitted a coordinate its session was already pinned to
+  got a `must have required properties document_id` refusal, and its
+  translation was thrown away. Observed live: four correct translations
+  produced by the model, refused at the schema, and lost.
+
+  Optional in the schema is not unenforced. `save-openplanner-segment!` still
+  throws when `document_id` resolves blank after the policy fallback, and
+  `law.translation-agent-submission/pair-refusal` still refuses a submission
+  whose coordinates disagree with the pin. The check moved to where the
+  defaulted value is actually known, which is the only place it can be correct."
   [:map
-   [:source_text {:description "Original source text"} :string]
-   [:translated_text {:description "Translated text"} :string]
-   [:source_lang {:description "Source language code (e.g. 'en')"} :string]
-   [:target_lang {:description "Target language code (e.g. 'es')"} :string]
-   [:document_id {:description "Document ID being translated"} :string]
+   [:translated_text {:description "REQUIRED non-empty translation of source_text. Never omit this field."} :string]
+   [:source_text {:description "REQUIRED exact original source text supplied by the server."} :string]
+   [:source_lang {:optional true :description "Source language code (e.g. 'en'). Omit to use the language this session is pinned to."} :string]
+   [:target_lang {:optional true :description "Target language code (e.g. 'es'). Omit to use the language this session is pinned to."} :string]
+   [:document_id {:optional true :description "Document ID being translated. Omit to use the document this session is pinned to."} :string]
    [:garden_id {:optional true :description "Garden ID"} :string]
    [:project {:optional true :description "Project name"} :string]
-   [:segment_index {:description "0-based segment index"} :int]])
+   [:segment_index {:optional true :description "Exact 0-based split index supplied by a split-backed session."} :int]
+   [:split_id {:optional true :description "Exact server-issued source split identity."} :string]
+   [:attempt_id {:optional true :description "Exact server-issued candidate attempt identity."} :string]])
+
+(def split-translation-params
+  "The stricter save_translation schema exposed inside a split-backed session.
+
+  Unlike the shared legacy segment tool, a publication candidate cannot lawfully
+  infer these three atomic coordinates. Making them required in the schema lets
+  the provider correct an incomplete call before the sink has to reject it."
+  [:map
+   [:translated_text {:description "REQUIRED non-empty translation of the server-issued source split. Never omit this field."} :string]
+   [:segment_index {:description "REQUIRED exact 0-based split index supplied by the server."} :int]
+   [:split_id {:description "REQUIRED exact server-issued source split identity."} :string]
+   [:attempt_id {:description "REQUIRED exact server-issued candidate attempt identity."} :string]])
 
 (def create-file-params
   [:map
@@ -241,23 +274,101 @@
      :status "pending"
      :mt_model "translation-agent"}))
 
+(defn- ^:async save-openplanner-segment!
+  "Persist one translated segment into the OpenPlanner translation database.
+
+  The original and still the right sink for a CMS document whose translation
+  truth lives in OpenPlanner. Extracted unchanged so the contract-backed sink
+  beside it is a sibling rather than a branch inside one handler."
+  [auth-context config params on-update]
+  (let [segment (save-translation-segment auth-context config params)
+        translated-text (:translated_text segment)
+        segment-index (:segment_index segment)]
+    (assert-translated! {:source-text (:source_text segment)
+                         :translated-text translated-text
+                         :source-lang (:source_lang segment)
+                         :target-lang (:target_lang segment)
+                         :segment-index segment-index})
+    (when (str/blank? (str (:document_id segment)))
+      (throw (js/Error. "document_id is required for save_translation")))
+    (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
+    (let [result (await (openplanner-client/create-translation-segment! (openplanner-client/client config) segment))]
+      (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
+                        result))))
+
+(defn- publication-translation-pair
+  "The submitted pair as the contract-backed sink receives it.
+
+  Deliberately built from the same `policy-value` fallbacks
+  `save-translation-segment` uses, so the agent may omit any coordinate its
+  session was already pinned to and the two sinks agree about what a submission
+  means.
+
+  The organization comes from the pin, NOT from
+  `translation-scope/translation-org-id!`. That function negotiates a tenant
+  between a *request context* and a resource policy — an ordinary membership may
+  only target its own organization, and only a system principal may name
+  another. A triggered session has no request context at all: `spawn-direct!`
+  builds its actor from a contract rather than from an HTTP caller, so the run
+  carries `org_id`, `user_email` and `membership_id` all nil. Called here it
+  therefore threw `organization is required for save_translation` on every
+  submission, and four correct translations were lost to it.
+
+  Taking the pinned value is not a loosening, because the pinned value is not
+  caller-supplied. `law.translation-agent/session-policies` derives it from a
+  dispatch record that `reserve-dispatch!` persisted under an authenticated
+  request, and `infra.translation-agent-sink/submit-pair!` re-reads that record
+  by `run_id` and refuses unless its `:dispatch/key` matches the overlay. The
+  receipt's `:translation/org-id` is then minted from the *stored record*, never
+  from this map — so a forged overlay cannot invent a tenant, because it would
+  have to also produce a stored claim that agrees with it.
+
+  The OpenPlanner segment path is untouched and still negotiates, because it
+  really does run from request contexts."
+  [params policies]
+  {:source_text (aget params "source_text")
+   :translated_text (aget params "translated_text")
+   :source_lang (policy-value params policies "source_lang" :source_lang :source-lang)
+   :target_lang (policy-value params policies "target_lang" :target_lang :target-lang)
+   :document_id (policy-value params policies "document_id" :document_id :document-id)
+   :garden_id (policy-value params policies "garden_id" :garden_id :garden-id)
+   :org_id (policy-value params policies "org_id" :org_id :org-id)
+   :segment_index (aget params "segment_index")
+   :split_id (aget params "split_id")
+   :attempt_id (aget params "attempt_id")})
+
+(defn- ^:async save-publication-translation!
+  "Record one translated publication document as Knoxx-owned evidence.
+
+  The sink for a document declared by a deployment contract. Reports the
+  produced output revision back to the agent rather than a segment index,
+  because that is the value a human reviewer's approval will be pinned to and
+  the only identifier that distinguishes this run's output from a re-run's."
+  [config params policies on-update]
+  (maybe-tool-update! on-update "Recording translated publication document…")
+  (let [pair (publication-translation-pair params policies)
+        result (await (translation-agent/save-pair! config policies pair))
+        receipt (:translation/receipt result)
+        progress (:translation/progress result)]
+    (if receipt
+      (tool-text-result
+       (str "Recorded all translation splits for " (:document_id pair)
+            " into " (:target_lang pair)
+            " as revision " (:translation/revision receipt)
+            ". It is now awaiting split review before it can be published.")
+       receipt)
+      (tool-text-result
+       (str "Recorded translation split " (:completed progress) " of "
+            (:total progress) ". Continue with the remaining server-issued splits.")
+       progress))))
+
 (defn make-save-translation-execute [auth-context]
   (^:async fn [_runtime config _tool-call-id params a b c]
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-          segment (save-translation-segment auth-context config params)
-          translated-text (:translated_text segment)
-          segment-index (:segment_index segment)]
-      (assert-translated! {:source-text (:source_text segment)
-                           :translated-text translated-text
-                           :source-lang (:source_lang segment)
-                           :target-lang (:target_lang segment)
-                           :segment-index segment-index})
-      (when (str/blank? (str (:document_id segment)))
-        (throw (js/Error. "document_id is required for save_translation")))
-      (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
-      (let [result (await (openplanner-client/create-translation-segment! (openplanner-client/client config) segment))]
-        (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
-                          result)))))
+          policies (:resourcePolicies auth-context)]
+      (if (translation-agent-law/contract-backed? policies)
+        (await (save-publication-translation! config params policies on-update))
+        (await (save-openplanner-segment! auth-context config params on-update))))))
 
 (def graph-query-tool
   (partial create-tool-obj
@@ -314,14 +425,22 @@
            (make-memory-session-execute auth-context)))
 
 (defn save-translation-tool [auth-context]
-  (partial create-tool-obj
-           "save_translation" "Save Translation"
-           "Save a translated segment to the OpenPlanner translation database."
-           "Save each translated segment after translating."
-           ["Call save_translation for each segment you translate."
-            "Include the source_text, translated_text, language codes, document_id, and segment_index."]
-           translation-params
-           (make-save-translation-execute auth-context)))
+  (let [split-backed? (translation-agent-law/split-backed?
+                       (:resourcePolicies auth-context))]
+    (partial create-tool-obj
+             "save_translation" "Save Translation"
+             "Submit a translated source/translation pair for the document this session was started to translate."
+             "Save each translation you produce."
+             (if split-backed?
+               ["Call save_translation for each server-issued split."
+                "Submit translated_text and echo exactly the supplied split_id, attempt_id, and segment_index."
+                "Do not submit source_text or any document/locale coordinates; the server binds those authoritative values from the admitted split."
+                "Do not invent, merge, renumber, or omit split boundaries; the final accepted split completes the candidate revision a human will review."]
+               ["Call save_translation for each segment you translate."
+                "Include the source_text and translated_text for the segment."
+                "Omit document_id, garden_id, source_lang and target_lang to accept coordinates this session is already pinned to."])
+             (if split-backed? split-translation-params translation-params)
+             (make-save-translation-execute auth-context))))
 
 (defn create-new-file-tool [auth-context]
   (partial create-tool-obj

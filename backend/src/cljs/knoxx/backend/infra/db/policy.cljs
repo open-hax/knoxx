@@ -26,6 +26,7 @@
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.domain.contracts.loader :as contracts-loader]
             [knoxx.backend.domain.contracts.roles :as contracts-roles]
+            [knoxx.backend.law.bootstrap-credentials :as bootstrap-law]
             [knoxx.backend.infra.db.actors :as policy-actors]
             [knoxx.backend.domain.policy.protocol :as policy]
             [knoxx.backend.infra.registry.tools :as tool-registry]
@@ -649,6 +650,28 @@
                                                  :name (str primary-org-name)
                                                  :kind (str primary-org-kind)}))))
 
+(defn- split-bootstrap-values [value]
+  (->> (str/split (str value) #"[\s,]+")
+       (map str/trim)
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn- previous-bootstrap-system-admin-emails
+  "Canonical credential identifiers that were previously configured as the
+   bootstrap administrator. The historical default is known without operator
+   input; custom prior identities must be named explicitly during migration."
+  [opts current-email]
+  (->> (concat ["system-admin@open-hax.local"]
+               (split-bootstrap-values
+                (or (:bootstrapSystemAdminPreviousEmails opts)
+                    (:bootstrap-system-admin-previous-emails opts)
+                    "")))
+       (map str/lower-case)
+       (remove #(= % (some-> current-email str str/lower-case)))
+       distinct
+       vec))
+
 (defn ^:async ensure-bootstrap-user!
   [pool primary-org opts]
   (let [db (await (db!))
@@ -678,24 +701,26 @@
   ([db primary-org bootstrap opts]
    (ensure-bootstrap-local-password!
     db primary-org bootstrap opts
-    {:deactivate-credential! mongo-actor-creds/deactivate-actor-credential!
-     :encode-password password/hash-password
-     :upsert-credential! mongo-actor-creds/upsert-actor-credential!}))
+    {:encode-password password/hash-password
+     :reconcile-bootstrap-credential!
+     mongo-actor-creds/reconcile-bootstrap-local-password!}))
   ([db primary-org bootstrap opts
-    {:keys [deactivate-credential! encode-password upsert-credential!]}]
+    {:keys [encode-password reconcile-bootstrap-credential!]}]
    (let [configured-password (some-> (or (:bootstrapSystemAdminPassword opts)
                                          (:bootstrap-system-admin-password opts))
                                      str not-empty)
          user-id (get-in bootstrap [:user :id])
-         org-id (:id primary-org)]
-     (if configured-password
-       (await (upsert-credential!
-               db user-id org-id "local"
-               {:kind "password"
-                :account-identifier (get-in bootstrap [:user :email])
-                :secret-json (encode-password configured-password)
-                :status "active"}))
-       (await (deactivate-credential! db user-id org-id "local" "password")))
+         user-email (get-in bootstrap [:user :email])
+         org-id (:id primary-org)
+         previous-emails (previous-bootstrap-system-admin-emails opts user-email)]
+     (await (reconcile-bootstrap-credential!
+             db {:user-id user-id
+                 :org-id org-id
+                 :account-identifier user-email
+                 :previous-account-identifiers previous-emails
+                 :secret-json (when configured-password
+                                (assoc (encode-password configured-password)
+                                       :bootstrap-system-admin true))}))
      nil)))
 
 ;; ---------------------------------------------------------------------------
@@ -998,28 +1023,44 @@
     :else (js->clj value :keywordize-keys true)))
 
 (defn ^:async local-password-auth-record!
-  "Resolve the active user + default-first active membership for a local
-   password login, plus the active local/password credential. Composes the
-   directory + actor-credentials twins; preserves the PG return shape. Returns
-   nil when no active user/membership matches."
-  [_pool email]
-  (when-let [normalized (normalize-email email)]
-    (let [db (await (db!))
-          user (await (mongo-directory/find-user-by-email! db normalized))]
-      (when (and user (= "active" (:status user)))
-        (when-let [row (await (mongo-directory/find-membership-row-by-email-and-org!
-                               db {:user-email normalized :active-only true}))]
-          (when (and (= "active" (:user_status row)) (= "active" (:status row)))
-            (let [cred (await (mongo-actor-creds/get-credential-by-user-org-provider-kind!
-                               db (:user_id row) (:org_id row) "local" "password"))]
-              {:user-id (:user_id row)
-               :email (:email row)
-               :display-name (:display_name row)
-               :membership-id (:id row)
-               :org-id (:org_id row)
-               :org-slug (:org_slug row)
-               :actor-id (:actor_id row)
-               :secret-json (secret-json->clj (:secret_json cred))})))))))
+  "Resolve an active local-password authentication record.
+
+   A marked bootstrap credential owns its organization choice, so concurrent
+   primary-org updates cannot strand the committed password behind a different
+   default membership. Ordinary users without that marker retain the existing
+   default-first / primary-org membership selection."
+  ([_pool email]
+   (local-password-auth-record!
+    _pool email
+    {:get-db! db!
+     :find-user! mongo-directory/find-user-by-email!
+     :find-membership! mongo-directory/find-membership-row-by-email-and-org!
+     :find-bootstrap-credential! mongo-actor-creds/find-active-bootstrap-local-password!
+     :get-membership-credential! mongo-actor-creds/get-credential-by-user-org-provider-kind!}))
+  ([_pool email {:keys [get-db! find-user! find-membership!
+                        find-bootstrap-credential! get-membership-credential!]}]
+   (when-let [normalized (normalize-email email)]
+     (let [db (await (get-db!))
+           user (await (find-user! db normalized))]
+       (when (and user (= "active" (:status user)))
+         (let [bootstrap-credential
+               (await (find-bootstrap-credential! db (:id user) normalized))
+               membership-query (bootstrap-law/local-password-membership-query
+                                 normalized bootstrap-credential)]
+           (when-let [row (await (find-membership! db membership-query))]
+             (when (and (= "active" (:user_status row)) (= "active" (:status row)))
+               (let [credential (or bootstrap-credential
+                                    (await (get-membership-credential!
+                                            db (:user_id row) (:org_id row)
+                                            "local" "password")))]
+                 {:user-id (:user_id row)
+                  :email (:email row)
+                  :display-name (:display_name row)
+                  :membership-id (:id row)
+                  :org-id (:org_id row)
+                  :org-slug (:org_slug row)
+                  :actor-id (:actor_id row)
+                  :secret-json (secret-json->clj (:secret_json credential))})))))))))
 
 (defn ^:async list-memberships!
   [pool {:keys [org-id]}]
@@ -1413,13 +1454,22 @@
    scope narrows the membership lookup: {:org-id, :membership-id}. actor_id is
    unique nowhere — not even within an org — so an unnarrowed lookup refuses an
    ambiguous actor rather than returning some member's secret. A caller holding a
-   request context should pass its membership id, which is exact."
+   request context should pass its membership id, which is exact.
+
+   Dispatches through the context's :get-actor-credential! when it carries one,
+   the same seam :resolve-context! and :query! already use. This is the query
+   seam mongo-policy-actor-credentials names as the correct dispatch point, and
+   it is what lets a harness supply credentials without a database: until it
+   existed, every credential-backed tool was unreachable from a test, which is
+   most of the Discord and Bluesky surface."
   ([policy-context actor-id provider] (get-actor-credential! policy-context actor-id provider nil))
-  ([_policy-context actor-id provider scope]
-   (when-let [db (await (ensure-mongo-policy-db!))]
-     {:credential (mongo-actor-creds/credential-row->response
-                   (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
-                           db actor-id provider scope)))})))
+  ([policy-context actor-id provider scope]
+   (if-let [f (:get-actor-credential! policy-context)]
+     (await (f actor-id provider scope))
+     (when-let [db (await (ensure-mongo-policy-db!))]
+       {:credential (mongo-actor-creds/credential-row->response
+                     (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
+                             db actor-id provider scope)))}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation
@@ -1462,6 +1512,7 @@
   (let [db (await (ensure-mongo-policy-db!))]
     (when-not db
       (throw (js/Error. "Mongo policy store unavailable")))
+    (await (mongo-client/require-transaction-capable-topology! db))
     (let [primary-org (await (ensure-primary-org! nil opts))]
       (await (sync-contract-role-projections! nil))
       (let [bootstrap (await (ensure-bootstrap-user! nil primary-org opts))]
@@ -1472,24 +1523,15 @@
         (policy-context-map primary-org bootstrap)))))
 
 (defn ^:async create-policy-db
-  "Initialise the Mongo-backed policy DB. Returns Promise<CLJS policy context |
-   nil>; nil only when Mongo is unavailable."
+  "Initialise the Mongo-backed policy DB and return a CLJS policy context.
+
+   Security-critical initialization failures propagate. Bootstrap must never
+   compose protected routes around a nil policy context."
   [options]
   (let [opts (if (map? options)
                options
                (js->clj options :keywordize-keys true))]
-    (try
-      (await (initialise-policy-db! opts))
-      (catch :default err
-        (.error js/console "[policy-db] Mongo policy DB init failed:" (.-message err))
-        nil))))
-
-(defn- split-bootstrap-values [value]
-  (->> (str/split (str value) #"[\s,]+")
-       (map str/trim)
-       (remove str/blank?)
-       distinct
-       vec))
+    (await (initialise-policy-db! opts))))
 
 (defn- bootstrap-allowlist-emails [opts]
   (->> (split-bootstrap-values (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts) ""))

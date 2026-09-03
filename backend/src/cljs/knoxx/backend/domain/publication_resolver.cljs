@@ -40,20 +40,30 @@
 ;; desired state only"; the schema alone cannot.
 
 (def document-projection-keys
-  [:document/id :document/title :document/source-locale :document/source])
+  [:document/id :document/title :document/source-locale :document/source
+   :document/translations :document/org-id :document/visibility
+   :document/anchor? :document/generate-drafts?
+   :document/derived-from :document/derived-source-revision])
 
 (def garden-projection-keys
-  [:garden/id :garden/title :garden/status])
+  [:garden/id :garden/title :garden/status :garden/locales])
 
 (def publication-projection-keys
-  [:publication/id :publication/document :publication/garden :publication/locale
-   :publication/revision :publication/state :publication/path :translation/review])
+  ;; `:publication/target` is declared desired state (which adapter the intent
+  ;; asks for), so it projects — the reconciler resolves it through the target
+  ;; registry. Dropping it here made every loaded intent untargeted.
+  [:publication/id :publication/document :publication/garden :publication/target
+   :publication/locale :publication/revision :publication/state :publication/path
+   :translation/review])
 
 (defn canonicalize-document
   [resource]
-  (-> resource
-      (update :document/id #(canonical-id (resource-namespace resource) %))
-      (select-keys document-projection-keys)))
+  (let [resource-ns (resource-namespace resource)]
+    (-> resource
+      (update :document/id #(canonical-id resource-ns %))
+      (cond-> (:document/derived-from resource)
+        (update :document/derived-from #(canonical-id resource-ns %)))
+      (select-keys document-projection-keys))))
 
 (defn canonicalize-garden
   [resource]
@@ -313,6 +323,30 @@
                     (sort-by pr-str)
                     (mapv #(document-view index %)))
     :gardens (->> (:gardens index) vals (sort-by #(pr-str (:garden/id %))) vec)}))
+
+(defn garden-view
+  "One Garden contract plus only the publication placements that target it."
+  [index garden-id]
+  (let [garden (get-in index [:gardens garden-id])]
+    (law/assert-valid!
+     garden-id
+     law/PublicationGardenView
+     {:garden garden
+      :publications (->> (:publications index)
+                         (filter #(= garden-id (:publication/garden %)))
+                         (map #(law/hydrate-publication-intent index %))
+                         (sort-by publication-sort-key)
+                         vec)})))
+
+(defn list-garden-views
+  "Every deployed Garden contract with its publication placements."
+  [index]
+  (law/assert-valid!
+   :publication/garden-list-view
+   law/PublicationGardenListView
+   {:gardens (->> (keys (:gardens index))
+                  (sort-by pr-str)
+                  (mapv #(garden-view index %)))}))
 
 (defn target-locales
   "Distinct locales any non-archived intent targets, in stable order."

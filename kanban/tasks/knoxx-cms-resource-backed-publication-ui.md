@@ -1,11 +1,11 @@
 ---
 category: "tasks"
 labels: ["tasks", "5sp", "has-parent", "cms", "publication", "frontend"]
-write-id: "1786565796993-0.8vlcnc68xi8270jmll7"
+write-id: "1786609303933-0.zntrkso2p7rnohvl94"
 points: "5"
 title: "Make CMS read and write publication intent through Knoxx resources"
 priority: "P2"
-status: "ready"
+status: "review"
 uuid: "knoxx-cms-resource-backed-publication-ui"
 created_at: "2026-08-12T00:00:00Z"
 ---
@@ -19,6 +19,15 @@ created_at: "2026-08-12T00:00:00Z"
 Stop `CmsPage` from treating OpenPlanner garden rows and `metadata.garden_publications` as publication truth. The CMS should become an editor/view over Knoxx resource intent.
 
 This cutover happens only after `knoxx-openplanner-publication-state-migration` has imported the existing topology and conflicts have been resolved.
+
+## Translation integration boundary
+
+The CMS owns document/publication intent, not translation splits, candidate corrections, or
+review truth. The reopened `knoxx-translation-review-chat-panel` P0 card owns displaying
+translation/review state and linking from CMS resources to the restored `/translations`
+workspace. This is an integration boundary, not additional Definition of Done for this existing
+review-stage CMS-intent card. Neither surface may synthesize split rows or replace the translation
+workspace with a whole-file approval control.
 
 ## Current coupling to remove
 
@@ -286,11 +295,10 @@ Test namespaces:
 
 Wire contracts first — the review thread's regression leads:
 
-1. `state-patch-accepts-clj->js-body` — the exact body the frontend produces,
-   `{:state "published"}`, passes `PublicationStatePatchJson` and decodes to
-   `{:publication/state :published}`. Assert by round-tripping through
-   `clj->js` + `js->clj :keywordize-keys true` rather than hand-writing the map,
-   so the test fails if the helper's serialization changes.
+1. `state-patch-accepts-wire-body` — the decoded JSON body
+   `{:state "published"}` passes `PublicationStatePatchJson` and decodes to
+   `{:publication/state :published}`. Keep raw JS interop in the owning HTTP
+   adapter; the cross-boundary serialization proof belongs to test 3 below.
 2. `state-patch-rejects-qualified-wire-key` — a body carrying
    `:publication/state` fails the wire contract.
 3. `frontend-publish-request-matches-backend-contract` — the body built by
@@ -346,11 +354,8 @@ Frontend last:
 
 ---
 Ready gate 2026-08-12: sized 5sp (<=5, eligible to implement). Walked accepted -> breakdown -> ready via the Rheos promethean FSM. Scope, laws and acceptance criteria confirmed on the card; TDD plan section names the failing tests to write first. Sequencing constraint from the card: this cutover lands only after the migration card has imported the topology and conflicts are resolved.
-
 ---
 
 Pre-implementation review 2026-08-13 (CodeRabbit, not yet actioned — this card is still `ready`, not started): `document->wire` passes `:document/source` straight through instead of encoding only its allowed `:path` field, which lets future resource fields leak across the JSON boundary — map it explicitly before validating against `DocumentWireJson`. `decode-publication-wire` also doesn't restore the `:source/current` revision selector (encoded as the string `"source/current"`) back to a keyword, so the UI would receive a plain string instead of the domain value — add a symmetric revision decoder. And the state-patch acceptance test calls `clj->js`/`js->clj` directly rather than routing through `knoxx.frontend.lib.api/request` or an existing codec wrapper, which is the documented boundary for that interop per this repo's coding guidelines.
 
 Pre-implementation review 2026-08-13, cont'd (CodeRabbit): the same state-patch acceptance test (around line 351) should stub `js/fetch`, drive the assertion through the actual frontend publish helper and `knoxx.frontend.lib.api/request`, and decode the captured PATCH body with `PublicationStatePatchJson`/`decode-publication-state-patch` — asserting `{:publication/state :published}` — rather than constructing the round-trip by hand. Same underlying "keep interop inside `api/request`" concern as the note above; folding both into one fix when this card starts.
-
----

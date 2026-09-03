@@ -1,66 +1,158 @@
 ---
-uuid: knoxx-translation-work-dispatch
-title: Translation — dispatch the gate's derived work and record its receipt
-status: ready
-priority: P1
-points: 5
-labels:
-  - tasks
-  - translations
-  - publication
-  - ingestion
-  - has-parent
+category: "tasks"
+labels: ["tasks", "has-parent", "translation", "publication", "ingestion", "receipts", "wave-2"]
+write-id: "1787011200003-0.176845"
+points: "5"
+title: "Translation — dispatch gated work to ingestion"
+priority: "P1"
+status: "review"
+uuid: "knoxx-translation-work-dispatch"
+created_at: "2026-08-22T00:00:00Z"
 ---
 
-# Translation — dispatch the gate's derived work and record its receipt
+# Translation — dispatch gated work to ingestion
 
 > Parent epic: `knoxx-translated-publication-to-website`
 
 ## Purpose
 
-`domain.publication-gate` computes translation work for a resolved concrete
-revision, and nothing consumes it. The JVM ingestion worker at
-`ingestion/src/kms_ingestion/translation/worker.clj` has no publication
-awareness — a repo-wide search for "publication" under `ingestion/src` returns
-nothing. So a publication blocks on translation evidence that no process is
-producing, forever.
+Connect the publication gate's derived translation work to the ingestion worker
+and return its result as evidence. A derived work item must be dispatchable,
+revision-specific, and receipt-backed instead of being a plan that remains only
+in memory.
 
 ## Dependencies
 
-`knoxx-publication-stack-relink` (the gate is in the stranded chain). Independent
-of the target adapter — a translated document with nowhere to publish is still
-progress.
+The existing translation/publication gate and translation ingestion worker.
+`knoxx-publication-reconciler-runtime` consumes the resulting translation facts.
 
 ## Work
 
-- Carry the concrete revision through dispatch untouched. The gate resolves
-  `:source/current` exactly once and the resolved revision is the identity every
-  downstream step must use; re-resolving anywhere below is the defect
-  `one-evidence-result-supplies-every-consumer` was written to catch.
-- Dispatch to the worker over the existing seam. The worker already reads the
-  authoritative model from the translation-config resource after
-  `knoxx-translation-pipeline-config-resource`; do not introduce a second
-  authority for model selection.
-- Record the outcome as a receipt keyed by document × locale × concrete revision,
-  the same identity the gate looks evidence up by. A receipt the gate cannot find
-  is not evidence.
-- Dispatch is idempotent per identity: re-running with work already in flight or
-  already complete must not queue a second translation.
-- Model failure explicitly. A worker error is a typed failure receipt, not an
-  absent success — absence is indistinguishable from never-dispatched, and the
-  reconciler will re-dispatch forever.
-- Keep operational state out of resources. `:translating`, `:worker-failed`, job
-  ids, and timestamps are receipt facts. This is a stated non-goal of the parent
-  publication epic and stays one.
-- A superseding source revision does not cancel in-flight work; it makes the
-  result stop satisfying the new revision. Do not build cancellation.
+- Map each admissible derived translation work item into the ingestion worker's
+  input contract, carrying document identity, source and target locale, concrete
+  source revision, and a stable dispatch/idempotency identity.
+- Dispatch through the established worker boundary; do not reimplement
+  translation or make a Knoxx publication adapter call a provider directly.
+- Decode and validate the worker result into a translation receipt tied to the
+  exact derived-work and source revision that produced it.
+- Record failed, rejected, duplicate, and completed dispatches distinctly so the
+  gate can distinguish missing work from an attempted-but-unsuccessful run.
+- Reject selector revisions and stale or mismatched worker responses rather than
+  allowing them to satisfy a publication gate for a moving source.
 
 ## Definition of Done
 
-- A blocked publication produces dispatched translation work for the concrete
-  revision the gate resolved.
-- A completed translation writes a receipt the gate finds, and the blocker clears.
-- Re-dispatch for the same identity is a no-op.
-- A worker failure is a typed receipt, visible, and retryable without duplicating.
-- No workflow state appears in any resource.
-- The ingestion worker still has exactly one model authority.
+- A gated translation work item reaches the ingestion worker with a concrete
+  revision and expected locale pair.
+- A successful worker result returns a validated, revision-specific receipt that
+  the publication gate recognizes.
+- Duplicate dispatch reuses its idempotency identity and does not enqueue or
+  translate twice.
+- Tests prove failed, stale, selector, and mismatched-revision results cannot
+  satisfy the gate or cause publication.
+
+## Card premise corrections
+
+Written before the code existed, three of this card's premises turned out to be
+stale. Annotated rather than silently implemented around.
+
+1. **"Map each derived work item into the ingestion worker's input contract,
+   carrying ... concrete source revision, and a stable dispatch/idempotency
+   identity."** The two halves resolved differently, and an earlier revision of
+   this correction — written when neither crossed — said both were impossible.
+   That is now only half true.
+
+   **Idempotency crosses.** `CreateTranslationBatchRequest` carries
+   `dispatch_key`, and Knoxx's own direct-Mongo adapter upserts the batch on
+   `{org_id, dispatch_key}` under a unique sparse index, so a repeated dispatch
+   adopts the existing batch instead of enqueueing a second one. It is an
+   additive field on an `{:closed false}` contract written by a Knoxx-owned
+   adapter, not a coordinated change in another repository. A REST server that
+   has not learned the field ignores it; `observe-batch!` then treats the
+   listing as uncorrelated rather than as evidence of absence, which costs
+   recovery precision and never correctness.
+
+   **The revision does not.** There is still no revision field, and putting one
+   there would place Knoxx's revision semantics in a foreign collection where
+   nothing validates them. The binding therefore stays Knoxx-side as a
+   `DispatchRecord` keyed to the batch id the worker returns. Rationale and the
+   rejected alternative are in `law.translation-dispatch`.
+
+2. **"Decode and validate the worker result into a translation receipt."** The
+   worker never reports a translated revision, because it has no such concept.
+   The output revision is therefore minted by Knoxx from the source revision,
+   the target locale, and the producing batch id — which is also what makes it
+   change on re-translation, so later review evidence cannot be transplanted.
+   See `law.translation-dispatch/output-revision`.
+
+3. **An unstated precondition.** `domain.publication-gate`'s
+   `:current-source-revision` fact had no production provider — only test
+   stubs — so an intent declaring `:source/current` resolved to nil and derived
+   no work at all. Without it this card's first DoD line is unreachable, so
+   `infra.publication-source-revision` supplies it as a content digest of the
+   document's source file.
+
+## Known gaps left open
+
+`:source-revision-superseded?` is implemented but unreachable in the current gate
+flow, and the `:translation-stale` blocker it feeds is therefore inert. The
+blocker is really about the revision an existing *translation* was made from,
+and the gate's fact signature `[intent revision]` does not carry that. Closing
+it needs a gate-level change and its own card; the reasoning is recorded on
+`infra.publication-source-revision/revision-facts` rather than papered over with
+a policy nobody asked for.
+
+### An ambiguous send whose batch landed can strand its claim
+
+If `create-translation-batch!` throws *after* the worker committed the batch,
+Knoxx cannot tell which batch is its own: the batch record carries no dispatch
+identifier, and garden, target locale, document, project, source language and
+creation time together still do not identify the request that created it. One
+unrelated actor creating a matching batch after the claim produces exactly one
+candidate, and adopting it would let `recover-settled-batch!` mint a receipt for
+a source revision that batch never carried.
+
+So observation is used only to *refute* "the send did not land". It never binds.
+The consequence, stated rather than hidden: such a claim stays in flight, no
+later pass can bind or retry it, and that revision needs an operator. The record's
+detail says so.
+
+That is the deliberate side of the trade — fabricated evidence is worse than a
+visible stranded claim — but it is a real operational gap. Closing it needs a
+dispatch correlation value carried on the batch, which is a contract change in
+another repository and therefore its own cross-repo card.
+
+### A pinned revision must name the bytes that are there
+
+An intent may pin any nonblank revision, and nothing can resolve a historical or
+opaque token to content — there is no version authority, only the current file.
+So a pin that was never the bytes on disk is refused before a batch is created:
+the worker would translate its current document and the drift guard would compare
+the current digest against itself, agree, and mint a receipt claiming the pinned
+revision was translated.
+
+`:source/current` intents are unaffected, since the gate resolves them to exactly
+that digest. A pin naming the current content is equally fine. Anything else is
+`:dispatch/unreachable` — terminal, because no retry makes a pin resolvable.
+
+The narrowing is deliberate: pinning a revision Knoxx cannot observe is not a
+supported publication, and the alternative was a false receipt.
+
+### The drift check cannot see what the worker read — but it could
+
+`source-drift-refusal` compares digests of the *repository* source. The worker
+fetches its input from OpenPlanner's store, so a document already divergent over
+there is translated while both observations agree. The check catches every case
+where the local source moved, which is a receipt that is definitely wrong, but it
+does not establish what was translated.
+
+Reading the predecessor (`openplanner/src/routes/v1/translations.ts`) changes what
+is possible here. Each translation *segment* stores its `source_text`, so the
+bytes the worker actually translated are readable through the existing segments
+API — no contract change needed. What is not settled is how to reconcile
+segment-level source text with a whole-file digest: segmentation is the worker's,
+and concatenation order is not guaranteed to reproduce the file.
+
+So this stays open, but it is a *design* question rather than a cross-repo
+blocker, which is what it was previously carded as. Worth its own card with that
+correction.

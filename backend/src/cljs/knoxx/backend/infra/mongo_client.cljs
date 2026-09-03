@@ -1,7 +1,10 @@
 (ns knoxx.backend.infra.mongo-client
   "MongoDB client for Knoxx session/run persistence.
    Replaces Redis as the primary state store."
-  (:require ["mongodb" :refer [MongoClient]]))
+  (:require
+    [clojure.string :as str]
+    [knoxx.backend.extern.mongo :as extern-mongo]
+    ["mongodb" :refer [MongoClient]]))
 
 (defonce mongo-client* (atom nil))
 (defonce mongo-db* (atom nil))
@@ -21,6 +24,19 @@
       (aget js/process.env "OPENPLANNER_MONGODB_DB")
       "openplanner"))
 
+(defn redact-mongo-credentials
+  "Remove MongoDB userinfo anywhere it appears in diagnostic text."
+  [value]
+  (str/replace (str (or value ""))
+               #"(mongodb(?:\+srv)?://)[^/@\s]+@"
+               "$1"))
+
+(defn redacted-mongo-location
+  "Return a log-safe Mongo location with credentials and query options removed."
+  [uri]
+  (-> (redact-mongo-credentials uri)
+      (str/replace #"[?].*$" "")))
+
 (defn ^:async connect-mongo!
   "Connect to MongoDB and cache client + db. Returns the Db instance."
   []
@@ -31,13 +47,18 @@
           db (.db client (mongo-db-name))]
       (reset! mongo-client* client)
       (reset! mongo-db* db)
-      (js/console.log "[mongo-client] Connected to MongoDB:" url "/" (mongo-db-name))
+      (js/console.log "[mongo-client] Connected to MongoDB:"
+                      (redacted-mongo-location url)
+                      "database=" (mongo-db-name))
       db)
     (catch :default err
-      (js/console.error "[mongo-client] FATAL: failed to connect to MongoDB at" (mongo-url))
-      (js/console.error "[mongo-client] Error:" (.-message err))
+      (js/console.error "[mongo-client] FATAL: failed to connect to MongoDB at"
+                        (redacted-mongo-location (mongo-url)))
+      (js/console.error "[mongo-client] Error:"
+                        (redact-mongo-credentials (.-message err)))
       (when (.-stack err)
-        (js/console.error "[mongo-client] Stack:" (.-stack err)))
+        (js/console.error "[mongo-client] Stack:"
+                          (redact-mongo-credentials (.-stack err))))
       (reset! mongo-client* nil)
       (reset! mongo-db* nil)
       nil)
@@ -68,6 +89,18 @@
   "Get the current MongoDB Client instance, or nil if not connected."
   []
   @mongo-client*)
+
+(defn ^:async require-transaction-capable-topology!
+  "Validate that `db` can uphold Knoxx's atomic Mongo transaction contract."
+  [db]
+  (await (extern-mongo/require-transaction-capable-topology! db)))
+
+(defn ^:async with-transaction!
+  "Run `f` through the CLJS-first Mongo transaction boundary."
+  ([f]
+   (with-transaction! (get-client) f))
+  ([client f]
+   (await (extern-mongo/with-transaction! client f))))
 
 (defn ^:async close-mongo!
   "Close MongoDB connection."

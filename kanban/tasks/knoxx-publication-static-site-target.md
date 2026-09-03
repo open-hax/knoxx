@@ -1,15 +1,13 @@
 ---
-uuid: knoxx-publication-static-site-target
-title: Publication — the static-site target adapter
-status: ready
-priority: P1
-points: 8
-labels:
-  - tasks
-  - publication
-  - adapters
-  - website
-  - has-parent
+category: "tasks"
+labels: ["tasks", "has-parent", "publication", "adapters", "website", "static-site", "wave-1"]
+write-id: "1787011200001-0.642918"
+points: "8"
+title: "Publication — the static-site target adapter"
+priority: "P1"
+status: "ready"
+uuid: "knoxx-publication-static-site-target"
+created_at: "2026-08-22T00:00:00Z"
 ---
 
 # Publication — the static-site target adapter
@@ -25,15 +23,14 @@ is where the protocol finds out whether it was honest.
 ## Dependencies
 
 `knoxx-publication-artifact-contract`, `knoxx-publication-target-registry`, and
-`services-website-content-root` for the declared path and mount.
-
-The transport question is closed: everything deploys to DigitalOcean, so Knoxx
-and the website are compose projects on one host and this adapter writes to a
-bind-mounted directory. Rename within a filesystem is atomic, so the manifest
-swap below is a primitive rather than a protocol — one adapter, no transport.
+**`services-website-content-root`** — the transport this adapter uses is decided
+by whether Knoxx and the website share a host. Do not start before that answer.
 
 ## Work
 
+- Call `law.publication-receipts/assert-artifact!` before every write and reject
+  an artifact whose concrete revision or selector identity violates the artifact
+  contract.
 - Write an artifact to a content root at a path derived from document × locale ×
   concrete revision, and maintain a manifest that maps public paths to the
   artifact currently serving them.
@@ -42,6 +39,10 @@ swap below is a primitive rather than a protocol — one adapter, no transport.
   the artifact first, then update the manifest as the commit point.
 - Update the manifest atomically — write beside and rename — so a reader never
   observes a half-written manifest. A static file server has no read lock.
+- Set `:route/media-type` and `:route/encoding` from the validated
+  `:artifact/media-type` and `:artifact/encoding`; record `:route/artifact` as
+  the relative artifact **path**, never the artifact value held by the memory
+  target.
 - Implement `observe!` by reading the manifest, keyed on `:publication/id`, not
   on the desired path. `publication-target-memory` documents exactly why: keying
   on path means that after a path move the caller cannot see the route it is
@@ -63,6 +64,8 @@ swap below is a primitive rather than a protocol — one adapter, no transport.
 ## Definition of Done
 
 - A published document is fetchable at its manifest path with the expected bytes.
+- The written manifest contains a relative `:route/artifact` path and route media
+  type and encoding equal to their validated artifact values.
 - Replay is a `:noop` and does not rewrite the artifact.
 - A path move leaves exactly one public route.
 - A removal makes the route stop serving and is visible to `observe!`.

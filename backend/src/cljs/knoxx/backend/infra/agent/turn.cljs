@@ -52,17 +52,37 @@
   (authz/remember-conversation-access! conversation-access* ctx conversation-id))
 
 (defn- auth-context-for-agent-turn
+  "The auth context a turn's tools see, synthesized from the agent spec when the
+   turn did not arrive on a request.
+
+   `:resourcePolicies` is carried for the same reason `:toolPolicies` and
+   `:roleSlugs` are, and its absence was a real hole rather than an omission of
+   convenience. `infra.agent.runner` accepts `resource_policies` on a spec and
+   `build-initial-run` records them on the run — but nothing put them where a
+   tool could read them, and `infra.openplanner.tools` has read
+   `:resourcePolicies` off the auth context since long before any of this. So a
+   session started with a pin got its pin written to telemetry and then ran
+   unpinned: `save_translation` fell through to the OpenPlanner segment path and
+   failed with `organization is required`, discarding a finished translation.
+
+   Only synthesized when the turn has no inbound context, matching its two
+   neighbours exactly. A request that already carries resource policies keeps
+   them; this adds a path for triggered sessions rather than changing one that
+   works."
   [auth-context agent-spec]
   (let [agent-actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)
         needs-context? (or auth-context
                            agent-actor-id
                            (seq (:tool-policies agent-spec))
+                           (seq (:resource-policies agent-spec))
                            (:role agent-spec))]
     (when needs-context?
       (cond-> (or auth-context {})
         agent-actor-id (assoc :actorId agent-actor-id)
         (and (nil? auth-context) (seq (:tool-policies agent-spec)))
         (assoc :toolPolicies (vec (:tool-policies agent-spec)))
+        (and (nil? auth-context) (seq (:resource-policies agent-spec)))
+        (assoc :resourcePolicies (:resource-policies agent-spec))
         (and (nil? auth-context) (:role agent-spec))
         (assoc :roleSlugs [(:role agent-spec)])))))
 
@@ -83,6 +103,7 @@
       (:role agent-spec) (assoc :role (:role agent-spec))
       (:model agent-spec) (assoc :model (:model agent-spec))
       (:thinking-level agent-spec) (assoc :thinkingLevel (:thinking-level agent-spec))
+      (:tools-choice agent-spec) (assoc :toolsChoice (:tools-choice agent-spec))
       (:system-prompt agent-spec) (assoc :hasSystemPrompt true)
       (seq (:tool-policies agent-spec)) (assoc :toolPolicies (vec (:tool-policies agent-spec)))
       (:resource-policies agent-spec) (assoc :resourcePolicies (:resource-policies agent-spec))
@@ -299,10 +320,36 @@
        (empty? (or (:tool_receipts completed-run) []))
        (empty? (or merged-content-parts []))))
 
-(defn- ^:async finalize-empty-turn-output!
-  [config state session run-id conversation-id session-id started-ms model-id hydration memory-hydration persisted-request-messages agent-spec completed-run merged-content-parts]
-  (let [err (js/Error. "Agent turn completed without assistant text, tool calls, or content parts")
-        diagnostic (errors/log-error! :agent-turn/empty-output
+(defn- normalize-tools-choice
+  [tools-choice]
+  (when (some? tools-choice)
+    (-> (if (keyword? tools-choice)
+          (name tools-choice)
+          (str tools-choice))
+        str/trim
+        str/lower-case)))
+
+(defn- turn-output-failure
+  [answer completed-run merged-content-parts agent-spec]
+  (cond
+    (and (= "required-first" (normalize-tools-choice (:tools-choice agent-spec)))
+         (empty? (or (:tool_receipts completed-run) [])))
+    {:diagnostic-type :agent-turn/required-tool-not-called
+     :message "Agent turn completed without calling a tool required by tools-choice"
+     :reason "required_tool_not_called"}
+
+    (empty-turn-output? answer completed-run merged-content-parts)
+    {:diagnostic-type :agent-turn/empty-output
+     :message "Agent turn completed without assistant text, tool calls, or content parts"
+     :reason "empty_output"}
+
+    :else nil))
+
+(defn- ^:async finalize-refused-turn-output!
+  [config session run-id conversation-id session-id started-ms model-id persisted-request-messages agent-spec completed-run merged-content-parts output-failure]
+  (let [{:keys [diagnostic-type message reason]} output-failure
+        err (js/Error. message)
+        diagnostic (errors/log-error! diagnostic-type
                                       {:run-id run-id
                                        :conversation-id conversation-id
                                        :session-id session-id
@@ -316,7 +363,7 @@
         failed-event (tool-event-payload run-id conversation-id session-id "run_failed"
                                          {:status "failed"
                                           :error err-text
-                                          :reason "empty_output"})
+                                          :reason reason})
         failed-run (update-run! run-id
                                 (fn [run]
                                   (assoc run
@@ -324,7 +371,7 @@
                                          :status "failed"
                                          :total_time_ms (- (.now js/Date) started-ms)
                                          :error err-text
-                                         :reason "empty_output")))]
+                                         :reason reason)))]
     (append-run-event! run-id failed-event)
     (broadcast-ws-session! session-id "events" failed-event)
     (when failed-run
@@ -347,8 +394,46 @@
      :model model-id
      :content_parts merged-content-parts
      :sources (:sources completed-run)
-     :message_parts []
-     :compare nil}))
+    :message_parts []
+    :compare nil}))
+
+(defn- ^:async finalize-accepted-turn-output!
+  [config session run-id conversation-id session-id model-id answer reasoning-text
+   sources message-parts elapsed usage-tokens assistant-content-parts hydration
+   memory-hydration persisted-request-messages agent-spec completed-event]
+  (finalize-run-trace-blocks! run-id "done")
+  (let [completed-run
+        (finalize-run-record!
+         run-id answer reasoning-text sources elapsed usage-tokens
+         assistant-content-parts hydration memory-hydration)
+        merged-content-parts
+        (vec (or (:content_parts completed-run) assistant-content-parts))
+        response
+        (build-turn-completed-response
+         run-id conversation-id session-id model-id answer
+         merged-content-parts sources message-parts)
+        _ (when completed-run
+            (openplanner-memory/index-run-memory!
+             config completed-run extract-mentioned-devel-paths
+             extract-mentioned-urls))]
+    (append-run-event! run-id completed-event)
+    (broadcast-ws-session! session-id "events" completed-event)
+    (let [assistant-entry (cond-> {:role "assistant" :content answer}
+                            (seq merged-content-parts)
+                            (assoc :content-parts merged-content-parts))
+          final-messages
+          (prune-session-messages
+           agent-spec
+           (transcript/transcript-after-turn
+            session (conj persisted-request-messages assistant-entry)))]
+      (await (session-store/complete-session!
+              session-id conversation-id
+              {:status "completed"
+               :answer answer
+               :messages final-messages})))
+    (clear-event-stream-sink!)
+    (remove-agent-session! conversation-id)
+    response))
 
 (defn- ^:async finalize-turn-success!
   [config state session run-id conversation-id session-id started-ms model-id _mode
@@ -375,34 +460,29 @@
                                              :model model-id
                                              :sources_count (count sources)})]
     (record-retrieval-sample! (:retrievalMode @settings-state*) elapsed)
-    (finalize-run-trace-blocks! run-id "done")
-    (let [completed-run (finalize-run-record! run-id answer reasoning-text sources elapsed usage-tokens assistant-content-parts hydration memory-hydration)
-          merged-content-parts (vec (or (:content_parts completed-run) assistant-content-parts))
-          response (build-turn-completed-response
-                    run-id conversation-id session-id model-id answer merged-content-parts sources message-parts)
-          _ (when completed-run
-              (openplanner-memory/index-run-memory! config completed-run extract-mentioned-devel-paths extract-mentioned-urls))]
-      (if (empty-turn-output? answer completed-run merged-content-parts)
-        (await (finalize-empty-turn-output! config state session run-id conversation-id session-id started-ms model-id
-                                           hydration memory-hydration persisted-request-messages agent-spec completed-run merged-content-parts))
+    ;; Check the tool obligation against the still-running record. Stamping the
+    ;; run completed first would expose a false-success window and index the
+    ;; provider's call-shaped prose as completed memory before the guard could
+    ;; correct it to failed.
+    (let [running-run (update-run! run-id identity)
+          pending-content-parts
+          (merge-content-parts
+           assistant-content-parts
+           (content/reply-attachment-content-parts (:tool_receipts running-run)))]
+      (if-let [output-failure
+               (turn-output-failure answer running-run pending-content-parts
+                                    agent-spec)]
         (do
-          (append-run-event! run-id completed-event)
-          (broadcast-ws-session! session-id "events" completed-event)
-          (let [final-messages (prune-session-messages
-                                agent-spec
-                                (transcript/transcript-after-turn session
-                                                                  (conj persisted-request-messages
-                                                                        (cond-> {:role "assistant"
-                                                                                 :content answer}
-                                                                          (seq merged-content-parts) (assoc :content-parts merged-content-parts)))))]
-            (await (session-store/complete-session! session-id
-                                                   conversation-id
-                                                   {:status "completed"
-                                                    :answer answer
-                                                    :messages final-messages})))
-          (clear-event-stream-sink!)
-          (remove-agent-session! conversation-id)
-          response)))))
+          (finalize-run-trace-blocks! run-id "error")
+          (await (finalize-refused-turn-output!
+                  config session run-id conversation-id session-id started-ms
+                  model-id persisted-request-messages agent-spec running-run
+                  pending-content-parts output-failure)))
+        (await (finalize-accepted-turn-output!
+                config session run-id conversation-id session-id model-id answer
+                reasoning-text sources message-parts elapsed usage-tokens
+                assistant-content-parts hydration memory-hydration
+                persisted-request-messages agent-spec completed-event))))))
 
 (defn- ^:async finalize-turn-failure!
   [config state session run-id conversation-id session-id started-ms
@@ -514,17 +594,65 @@
   "Send the user message to the provider session.
 
    When `timeout-ms` is a positive number the send is raced against a rejection
-   timer. When it is nil, zero, or negative the turn runs unbounded — autonomous
-   (event/cron) agents must be allowed to run as long as they need, and chat
-   turns inherit the same policy via config. The default config sets no timeout."
+   timer. When it is nil, zero, or negative the turn runs unbounded. The event
+   runner supplies its deployment-only bound here; interactive chat keeps the
+   independent global turn setting, whose default is unbounded."
   [session content timeout-ms]
   (let [timeout-ms (when (number? timeout-ms) timeout-ms)]
     (if (and timeout-ms (pos? timeout-ms))
-      (xpromise/race
-       [(send-user-message! session content)
-        (xpromise/reject-after timeout-ms
-                               (str "Agent turn timed out after " timeout-ms "ms"))])
+      (xpromise/with-timeout-error
+       (send-user-message! session content)
+       timeout-ms
+       (ex-info (str "Agent turn timed out after " timeout-ms "ms")
+                {:error/kind :agent-turn-timeout
+                 :timeout-ms timeout-ms}))
       (send-user-message! session content))))
+
+(defn- agent-turn-timeout?
+  [err]
+  (= :agent-turn-timeout (:error/kind (ex-data err))))
+
+(defn- abort-with-grace!
+  [config abort! err {:keys [run-id conversation-id session-id]}]
+  ;; Keep provider invocation outside an `await` form. The CLJS async transform
+  ;; otherwise awaits this first argument before constructing the timeout
+  ;; wrapper, which would let a hung provider abort bypass the grace entirely.
+  (xpromise/with-timeout-error
+   (abort! (ex-message err))
+   (or (:agent-turn-abort-grace-ms config) 5000)
+   (ex-info "Provider abort did not settle before its safety grace elapsed"
+            {:error/kind :agent-turn-abort-grace-timeout
+             :run-id run-id
+             :conversation-id conversation-id
+             :session-id session-id})))
+
+(defn- ^:async abort-timed-out-turn!
+  [config abort! err {:keys [run-id conversation-id session-id] :as turn}]
+  (try
+    ;; Preserve the same clean error text in the durable failure record whether
+    ;; the provider abort succeeds or fails. request-abort! records the reason
+    ;; before delegating to the provider session.
+    (await (abort-with-grace! config abort! err turn))
+    (catch :default abort-error
+      ;; Releasing the FIFO after a failed/hung abort would let the old provider
+      ;; execute tools concurrently with the next event. Fail-stop instead:
+      ;; PM2/Compose restarts Knoxx and durable admission state drives replay.
+      (errors/log-error! :agent-turn/provider-abort-failed
+                         {:run-id run-id
+                          :conversation-id conversation-id
+                          :session-id session-id
+                          :timeout-error (ex-message err)}
+                         abort-error)
+      (xturn-node/terminate-process! 1)
+      ;; process.exit does not return in production. This throw keeps test or
+      ;; embedded runtimes that replace it from continuing into FIFO release.
+      (throw
+       (ex-info "Backend termination required after provider abort failure"
+                {:error/kind :agent-turn-provider-abort-failed
+                 :run-id run-id
+                 :conversation-id conversation-id
+                 :session-id session-id}
+                abort-error)))))
 
 (defn ^:async prompt-and-await!
   "Send the user message to the provider, stream the response, and finalize the turn.
@@ -572,6 +700,15 @@
                 session run-id conversation-id session-id started-ms model-id mode
                 hydration memory-hydration persisted-request-messages agent-spec)))
       (catch :default err
+        ;; Promise.race does not cancel its losing provider promise. Abort the
+        ;; registered provider session before failure settlement releases an
+        ;; event FIFO slot, otherwise the timed-out turn could still execute a
+        ;; late tool call concurrently with the next queued turn.
+        (when (agent-turn-timeout? err)
+          (await (abort-timed-out-turn!
+                  config abort! err {:run-id run-id
+                                     :conversation-id conversation-id
+                                     :session-id session-id})))
         (agent-ctx/clear-context!)
         (unsubscribe)
         (turn-control/unregister-active-turn! conversation-id run-id)

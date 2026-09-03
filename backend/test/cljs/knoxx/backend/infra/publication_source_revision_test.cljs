@@ -1,0 +1,291 @@
+(ns knoxx.backend.infra.publication-source-revision-test
+  (:require ["node:fs/promises" :as node-fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.domain.contracts.loader :as contract-loader]
+            [knoxx.backend.domain.node.fs :as fs]
+            [knoxx.backend.infra.publication-source-revision :as source-revision]
+            [knoxx.backend.law.translation-evidence :as evidence-law]
+            [malli.core :as m]))
+
+(defn- document
+  [id path]
+  {:document/id id
+   :document/title "Probe"
+   :document/source-locale :en
+   :document/source {:path path}})
+
+(def ^:private temp-root "/tmp/knoxx-source-revision-test")
+
+(defn- ^:async write-source!
+  [filename content]
+  (let [path (str temp-root "/" filename)]
+    (await (fs/write-file-ensure-dir! path content))
+    path))
+
+(deftest content-revision-is-stable-and-content-addressed
+  (testing "the same content is the same revision"
+    (is (= (source-revision/content-revision "hello")
+           (source-revision/content-revision "hello"))))
+
+  (testing "different content is a different revision"
+    (is (not= (source-revision/content-revision "hello")
+              (source-revision/content-revision "hello "))))
+
+  (testing "the algorithm is named inside the revision"
+    (is (= "sha256-" (subs (source-revision/content-revision "hello") 0 7))))
+
+  (testing "absent content has no revision rather than the empty digest"
+    ;; Collapsing these would give a missing file a perfectly stable revision,
+    ;; which the gate would then publish translations against.
+    (is (nil? (source-revision/content-revision nil)))
+    (is (some? (source-revision/content-revision ""))))
+
+  (testing "a content revision is admissible wherever a concrete revision is"
+    (is (m/validate evidence-law/ConcreteRevision
+                    (source-revision/content-revision "hello")))))
+
+(deftest ^:async source-revisions-read-real-files-once
+  (let [path-a (await (write-source! "a.md" "# Alpha"))
+        path-b (await (write-source! "b.md" "# Beta"))
+        revisions (await (source-revision/source-revisions!
+                          {:contracts-dir (str temp-root "/contracts")}
+                          [(document :knoxx.docs/a path-a)
+                           (document :knoxx.docs/b path-b)]))]
+    (testing "each document gets its own content-derived revision"
+      (is (= (source-revision/content-revision "# Alpha")
+             (get revisions :knoxx.docs/a)))
+      (is (= (source-revision/content-revision "# Beta")
+             (get revisions :knoxx.docs/b)))
+      (is (not= (get revisions :knoxx.docs/a) (get revisions :knoxx.docs/b))))
+
+    (testing "an unreadable source is absent rather than present with nil"
+      ;; Present-with-nil and absent read the same through `get`, but absent is
+      ;; the honest shape: the gate then reports the revision unresolved instead
+      ;; of proceeding on a guess.
+      (let [with-missing (await (source-revision/source-revisions!
+                                 {:contracts-dir (str temp-root "/contracts")}
+                                 [(document :knoxx.docs/gone
+                                            (str temp-root "/does-not-exist.md"))]))]
+        (is (not (contains? with-missing :knoxx.docs/gone)))))))
+
+(deftest relative-source-paths-resolve-against-the-checkout-not-the-process
+  ;; The regression this guards: the backend runs in `backend/`, not at the
+  ;; repository root, which is why `domain.contracts.loader` tries
+  ;; `../contracts` before `contracts`. Resolved against process cwd,
+  ;; `docs/foo.md` becomes `backend/docs/foo.md`, the read returns nil,
+  ;; `:source/current` never resolves, and no translation work is ever derived —
+  ;; silently, because a missing source is a legitimate state.
+  (testing "a relative path is joined to the root"
+    (is (= "/srv/knoxx/docs/probe.md"
+           (source-revision/document-path "/srv/knoxx"
+                                          (document :knoxx.docs/probe "docs/probe.md")))))
+
+  (testing "an absolute path is respected as written"
+    ;; This is only candidate resolution. Reads still require canonical
+    ;; containment under the resource's provenance root.
+    (is (= "/etc/knoxx/probe.md"
+           (source-revision/document-path "/srv/knoxx"
+                                          (document :knoxx.docs/probe "/etc/knoxx/probe.md")))))
+
+  (testing "with no resolvable root the path is left alone"
+    ;; Failing visibly against cwd beats inventing a root.
+    (is (= "docs/probe.md"
+           (source-revision/document-path nil
+                                          (document :knoxx.docs/probe "docs/probe.md")))))
+
+  (testing "a document with no source path has nowhere to read from"
+    (is (nil? (source-revision/document-path "/srv/knoxx" {:document/id :knoxx.docs/probe})))))
+
+(deftest ^:async canonical-source-paths-cannot-escape-resource-provenance
+  (let [sandbox (await (.mkdtemp node-fs
+                                 (.join path (.tmpdir os)
+                                        "knoxx-source-containment-")))
+        root (.join path sandbox "checkout")
+        docs-root (.join path root "docs")
+        inside (.join path docs-root "inside.md")
+        secret (.join path sandbox "secret.md")
+        symlink (.join path docs-root "escape.md")]
+    (try
+      (await (.mkdir node-fs docs-root #js {:recursive true}))
+      (await (.writeFile node-fs inside "# Inside" "utf8"))
+      (await (.writeFile node-fs secret "do not disclose" "utf8"))
+      (await (.symlink node-fs secret symlink))
+
+      (testing "ordinary relative and contained absolute sources remain valid"
+        (is (= inside
+               (await (source-revision/canonical-document-path!
+                       root (document :knoxx.docs/relative "docs/inside.md")))))
+        (is (= inside
+               (await (source-revision/canonical-document-path!
+                       root (document :knoxx.docs/absolute-inside inside))))))
+
+      (doseq [[label source-path]
+              [["absolute path outside the root" secret]
+               ["parent traversal" "../secret.md"]
+               ["symlink escape" "docs/escape.md"]]]
+        (testing label
+          (let [err (try
+                      (await (source-revision/canonical-document-path!
+                              root (document :knoxx.docs/escape source-path)))
+                      nil
+                      (catch :default error error))]
+            (is (= 409 (:status (ex-data err))))
+            (is (= "document_source_outside_provenance_root"
+                   (:code (ex-data err)))))))
+      (finally
+        (await (.rm node-fs sandbox #js {:recursive true :force true}))))))
+
+(deftest ^:async a-relative-path-is-read-through-the-root
+  (let [_ (await (write-source! "nested/probe.md" "# Nested"))
+        revisions (await (source-revision/source-revisions!
+                          ;; A configured contracts dir makes source-root
+                          ;; resolvable without depending on the real checkout.
+                          {:contracts-dir (str temp-root "/contracts")}
+                          [(document :knoxx.docs/nested "nested/probe.md")]))]
+    (testing "the file is found relative to the checkout root, not process cwd"
+      (is (= (source-revision/content-revision "# Nested")
+             (get revisions :knoxx.docs/nested))))))
+
+(def ^:private root-a (str temp-root "/checkout-a"))
+(def ^:private root-b (str temp-root "/checkout-b"))
+
+(def ^:private two-roots
+  "Both checkouts' contract roots, in the order `contract-root-paths` returns
+   them — so `root-a` is the legacy first-root view and `root-b` is the one that
+   used to be unreachable."
+  [(str root-a "/contracts") (str root-b "/contracts")])
+
+(defn- ^:async seed-two-checkouts!
+  "Two checkouts, each with a contract root and a `docs/probe.md` of its own.
+
+   The same relative path in both is the whole point: resolved against the wrong
+   root it reads a real file with different bytes, which is the silent half of
+   the regression. `only-in-b.md` covers the loud half, where the wrong root has
+   nothing to read at all."
+  []
+  (await (fs/write-file-ensure-dir! (str root-a "/contracts/.keep") ""))
+  (await (fs/write-file-ensure-dir! (str root-b "/contracts/.keep") ""))
+  (await (fs/write-file-ensure-dir! (str root-a "/docs/probe.md") "# From A"))
+  (await (fs/write-file-ensure-dir! (str root-b "/docs/probe.md") "# From B"))
+  (await (fs/write-file-ensure-dir! (str root-b "/docs/only-in-b.md") "# Only B"))
+  true)
+
+(deftest ^:async a-resources-own-path-decides-which-checkout-owns-it
+  ;; `load-all-contract-records!` scans EVERY entry `contract-root-paths`
+  ;; returns, while `contracts-dir-path` is explicitly the legacy *first*-root
+  ;; view. Selecting by provenance is what closes the gap between them.
+  (await (seed-two-checkouts!))
+  (with-redefs [contract-loader/contract-root-paths (constantly two-roots)]
+    (testing "each root claims the resources beneath it"
+      (is (= root-a (source-revision/resource-source-root
+                     {} (str root-a "/contracts/publications/probe.edn"))))
+      (is (= root-b (source-revision/resource-source-root
+                     {} (str root-b "/contracts/publications/probe.edn")))))
+
+    (testing "a contract root names itself"
+      ;; A record whose file path IS the root — the boundary case the prefix
+      ;; check has to admit rather than treat as outside it.
+      (is (= root-b (source-revision/resource-source-root
+                     {} (str root-b "/contracts")))))
+
+    (testing "a path under no known root resolves to no checkout"
+      ;; Guessing here would be the same defect wearing a different mask.
+      (is (nil? (source-revision/resource-source-root
+                 {} "/somewhere/else/contracts/probe.edn"))))
+
+    (testing "a sibling directory is not a prefix match"
+      ;; `<root>/contracts-old` starts with `<root>/contracts` as a string and
+      ;; is a different directory; only a `/` boundary counts.
+      (is (nil? (source-revision/resource-source-root
+                 {} (str root-a "/contracts-old/probe.edn")))))
+
+    (testing "the legacy view still answers with the first root"
+      ;; Named explicitly so the two are visibly different things. This is what
+      ;; every document used to be resolved against.
+      (is (= root-a (source-revision/source-root {}))))))
+
+(deftest ^:async the-owning-root-decides-which-bytes-are-hashed
+  ;; The dangerous half of the regression: both checkouts have a real
+  ;; `docs/probe.md`, so resolving against the wrong one does not fail. It
+  ;; hashes an unrelated file and that digest becomes the revision a translation
+  ;; receipt asserts.
+  (await (seed-two-checkouts!))
+  (with-redefs [contract-loader/contract-root-paths (constantly two-roots)]
+    (testing "a document owned by the second root is read from the second root"
+      (let [revisions (await (source-revision/source-revisions!
+                              {}
+                              [(document :knoxx.docs/probe "docs/probe.md")]
+                              {:knoxx.docs/probe root-b}))]
+        (is (= (source-revision/content-revision "# From B")
+               (get revisions :knoxx.docs/probe)))
+        (is (not= (source-revision/content-revision "# From A")
+                  (get revisions :knoxx.docs/probe)))))
+
+    (testing "without its owning root the same document hashes the wrong file"
+      ;; The pre-fix behavior, pinned so the regression cannot return quietly.
+      (let [revisions (await (source-revision/source-revisions!
+                              {}
+                              [(document :knoxx.docs/probe "docs/probe.md")]))]
+        (is (= (source-revision/content-revision "# From A")
+               (get revisions :knoxx.docs/probe)))))))
+
+(deftest ^:async an-unresolvable-root-leaves-the-revision-absent
+  ;; The loud half, plus the compatibility case. A partial roots map must not
+  ;; make a previously-working document stop resolving.
+  (await (seed-two-checkouts!))
+  (with-redefs [contract-loader/contract-root-paths (constantly two-roots)]
+    (testing "a document only the second root has is otherwise unreadable"
+      (let [found (await (source-revision/source-revisions!
+                          {}
+                          [(document :knoxx.docs/only-b "docs/only-in-b.md")]
+                          {:knoxx.docs/only-b root-b}))
+            missed (await (source-revision/source-revisions!
+                           {}
+                           [(document :knoxx.docs/only-b "docs/only-in-b.md")]))]
+        (is (= (source-revision/content-revision "# Only B")
+               (get found :knoxx.docs/only-b)))
+        ;; Absent, not nil-valued: the gate reports the revision unresolved and
+        ;; derives no translation work at all.
+        (is (not (contains? missed :knoxx.docs/only-b)))))
+
+    (testing "a document with no owning root falls back to the legacy root"
+      (let [revisions (await (source-revision/source-revisions!
+                              {}
+                              [(document :knoxx.docs/probe "docs/probe.md")]
+                              {:knoxx.docs/other root-b}))]
+        (is (= (source-revision/content-revision "# From A")
+               (get revisions :knoxx.docs/probe)))))))
+
+(deftest revision-facts-answer-the-gates-questions
+  (let [revisions {:knoxx.docs/probe "sha256-current00000"}
+        {:keys [current-source-revision source-revision-superseded?]}
+        (source-revision/revision-facts revisions)]
+    (testing "current-source-revision resolves a known document"
+      (is (= "sha256-current00000" (current-source-revision :knoxx.docs/probe)))
+      (is (nil? (current-source-revision :knoxx.docs/unknown))))
+
+    (testing "a pinned revision is never reported superseded"
+      ;; Reporting it superseded would block that publication permanently and
+      ;; re-derive replacement translation work on every pass.
+      (is (not (source-revision-superseded?
+                {:publication/document :knoxx.docs/probe
+                 :publication/revision "sha256-pinned00000"}
+                "sha256-pinned00000"))))
+
+    (testing "a source/current intent compares against the current revision"
+      (is (not (source-revision-superseded?
+                {:publication/document :knoxx.docs/probe
+                 :publication/revision :source/current}
+                "sha256-current00000")))
+      (is (source-revision-superseded?
+           {:publication/document :knoxx.docs/probe
+            :publication/revision :source/current}
+           "sha256-stale000000")))
+
+    (testing "an unknown document is not superseded, because nothing is known"
+      (is (not (source-revision-superseded?
+                {:publication/document :knoxx.docs/unknown
+                 :publication/revision :source/current}
+                "sha256-anything000"))))))

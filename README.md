@@ -134,6 +134,17 @@ Prerequisites:
 - OpenPlanner for durable memory/events/graph, usually on
   `http://127.0.0.1:7777`.
 
+For the local Foresight/OpenPlanner/Proxx/Ollama stack, Knoxx can discover the
+already-running application credentials without writing them into this repo:
+
+```bash
+pnpm local:check
+pnpm local:start
+```
+
+See [Local resources, MongoDB, Proxx, and Ollama](docs/verification/local-resources.md)
+for the connection contract and overrides.
+
 Install dependencies from the Knoxx root:
 
 ```bash
@@ -229,6 +240,14 @@ REDIS_URL=redis://127.0.0.1:6379
 PROXX_BASE_URL=http://127.0.0.1:8789
 PROXX_AUTH_TOKEN=...
 PROXX_DEFAULT_MODEL=glm-5
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_DEFAULT_MODEL=gemma4:e2b
+KNOXX_AGENT_MODEL_OVERRIDES=publication_translator=gemma4:e2b,publication_post_drafter=gemma4:e2b
+KNOXX_AGENT_THINKING_OVERRIDES=publication_translator=off,publication_post_drafter=off
+KNOXX_TRANSLATION_RUNNER=agent
+EMBED_PROVIDER_BASE_URL=http://127.0.0.1:11434
+EMBED_PROVIDER_MODEL=nomic-embed-text
+EMBED_PROVIDER_DIMENSIONS=768
 OPENPLANNER_BASE_URL=http://127.0.0.1:7777
 OPENPLANNER_API_KEY=...
 KMS_INGESTION_URL=http://127.0.0.1:3003
@@ -441,6 +460,10 @@ KNOXX_SKIP_PRE_PUSH=1 git push
 
 GPL-3.0-or-later; see `LICENSE`.
 
-## Testing deploys
+## Deployment ownership
 
-Adding the `testing` label to an eligible PR deploys the PR head to the shared staging slot via the open-hax/services Promethean deploy module (`.github/workflows/deploy-testing.yml`).
+Knoxx owns application validation and portable packaging. Production image
+builds, host placement, deployment, and live verification are owned by the
+DigitalOcean stack in `open-hax/services`. A reviewed Services pull request
+carrying `deploy` at merge time authorizes that stack; Knoxx pull-request labels
+do not deploy a shared staging slot.

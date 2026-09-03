@@ -322,23 +322,37 @@
                                      distinct)
         configured-providers (reduce (fn [acc provider-id]
                                        (let [base-url (provider-openai-base-url (get configured-base-urls provider-id))
-                                             api-key (get configured-auth-tokens provider-id)
+                                             configured-api-key (get configured-auth-tokens provider-id)
+                                             api-key (or configured-api-key
+                                                         (when (= "ollama" provider-id)
+                                                           "ollama"))
                                              auth-header-raw (some-> (get configured-auth-headers provider-id) str str/trim str/lower-case)
                                              auth-header? (if (some? auth-header-raw)
                                                             (not (#{"false" "0" "no" "off"} auth-header-raw))
-                                                            true)]
+                                                            (or (not= "ollama" provider-id)
+                                                                (some? configured-api-key)))]
                                          (if base-url
-                                           (assoc acc provider-id {:baseUrl base-url
-                                                                   :apiKey api-key
-                                                                   :authHeader auth-header?})
+                                           (assoc acc provider-id
+                                                  (cond-> {:baseUrl base-url
+                                                           :authHeader auth-header?}
+                                                    (some? api-key)
+                                                    (assoc :apiKey api-key)))
                                            acc)))
                                      {}
                                      configured-provider-ids)]
-    (merge
-     {"proxx" {:baseUrl (provider-openai-base-url (:proxx-base-url config))
-                :apiKey "PROXX_AUTH_TOKEN"
-                :authHeader true
-                :compat proxx-affinity-compat}}
+    (merge-with merge
+     (cond->
+      {"proxx" {:baseUrl (provider-openai-base-url (:proxx-base-url config))
+                 :apiKey "PROXX_AUTH_TOKEN"
+                 :authHeader true
+                 :compat proxx-affinity-compat}}
+       (not (str/blank? (:ollama-base-url config)))
+       (assoc "ollama" {:baseUrl (provider-openai-base-url (:ollama-base-url config))
+                         ;; Eta-mu requires an apiKey value for custom providers.
+                         ;; Its OpenAI client sends this harmless dummy bearer;
+                         ;; local Ollama ignores authentication headers.
+                         :apiKey "ollama"
+                         :authHeader false}))
      configured-providers)))
 
 (defn per-model-compat
@@ -359,7 +373,8 @@
    is unavailable or omits a contract-backed local model. Eta-mu requires every
    selected model to exist in models.json before a session can be created."
   [config]
-  (->> (concat [(:proxx-default-model config)]
+  (->> (concat [(:proxx-default-model config)
+                 (:ollama-default-model config)]
                (keep (fn [contract]
                        (when (not= false (:allowlisted contract))
                          (:id contract)))

@@ -25,7 +25,8 @@
   [^js payload t]
   (let [gpu (let [arr (.-gpu payload)]
               (if (and (array? arr) (pos? (.-length arr)))
-                (js/Number (or (some-> (aget arr 0) .-util_gpu) 0))
+                (let [^js first-gpu (aget arr 0)]
+                  (js/Number (or (.-util_gpu first-gpu) 0)))
                 0))]
     {:t t
      :cpu (js/Number (or (.-cpu_percent payload) 0))

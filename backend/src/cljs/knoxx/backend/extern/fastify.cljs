@@ -10,6 +10,11 @@
   [x]
   (or (nil? x) (= js/undefined x)))
 
+(defn decode-uri-component
+  "Decode one route-path component at the raw Fastify/JavaScript boundary."
+  [value]
+  (js/decodeURIComponent (str value)))
+
 (defn reply-already-sent?
   [reply]
   (let [raw (aget reply "raw")]
@@ -62,8 +67,21 @@
             (array-seq (.keys js/Object query)))))
 
 (defn request-params
+  "Route params as a CLJS map with keyword keys.
+
+   Copied onto a fresh object before conversion. Fastify's router builds
+   `request.params` with `Object.create(null)`, and `js->clj` only converts an
+   object whose `type` is `js/Object` — a null-prototype object falls through
+   its cond and is returned AS THE RAW JS OBJECT. Every caller then sees
+   something that is not a map: `(:documentId params)` is nil, and a closed
+   Malli shape rejects it outright as an invalid type.
+
+   Tests never caught this because a hand-built `(js-obj \"params\" ...)` has
+   the normal Object prototype and converts correctly. Only a real Fastify
+   request reaches the broken branch."
   [request]
-  (js->clj (or (aget request "params") #js {}) :keywordize-keys true))
+  (-> (js/Object.assign #js {} (or (aget request "params") #js {}))
+      (js->clj :keywordize-keys true)))
 
 (defn request-param
   [request k]
@@ -76,6 +94,18 @@
 (defn request-hostname
   [request]
   (or (aget request "hostname") "localhost"))
+
+(defn request-remote-address
+  "The peer address Fastify saw, as a string, or nil.
+
+   request.ip is Fastify's own resolution and is preferred; the raw socket is
+   the fallback for a request that never went through Fastify's ip getter, such
+   as one built by a test or replayed onto the raw server."
+  [request]
+  (let [ip (or (aget request "ip")
+               (some-> request (aget "raw") (aget "socket") (aget "remoteAddress"))
+               (some-> request (aget "socket") (aget "remoteAddress")))]
+    (when (string? ip) ip)))
 
 (defn reply-header!
   [reply name value]

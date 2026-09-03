@@ -1,29 +1,14 @@
 (fork-tax-state
-  (timestamp "2026-07-10T20:06:39Z")
+  (timestamp "2026-08-13T06:29:41Z")
   (repo "/home/err/spaces/knoxx")
-  (branch "main")
+  (branch "feat/contract-publication-e2e")
   (remote "origin" "git@github.com:open-hax/knoxx.git")
-  (base "origin/main")
-  (scope "OpenPlanner direct-client integration: in-process Mongo mode via @open-hax/openplanner-sdk; contract-runtime source path alignment; PRINCIPLE sync")
+  (base "origin/feat/contract-publication-e2e")
+  (scope "Epic completion: contract-owned publication pipeline with twelve cards implemented")
   (changes
-    (principle
-      "Modified .ημ/PRINCIPLE.edn")
-    (tooling
-      "Modified backend/.clj-kondo/config.edn"
-      "Modified backend/package.json"
-      "Modified backend/pnpm-lock.yaml"
-      "Modified pnpm-lock.yaml (root lockfile)")
-    (build
-      "Modified backend/shadow-cljs.edn (contract-runtime source path, openplanner-sdk test resolution)")
-    (runtime
-      "Modified backend/src/cljs/knoxx/backend/bootstrap.cljs"
-      "Modified backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs"
-      "Modified backend/src/cljs/knoxx/backend/infra/config.cljs")
-    (new-files
-      "Added backend/src/cljs/knoxx/backend/extern/openplanner_sdk.cljs"
-      "Added backend/src/cljs/knoxx/backend/infra/clients/openplanner_mongo.cljs"
-      "Added backend/test/cljs/knoxx/backend/extern_openplanner_sdk_test.cljs"
-      "Added backend/test/js/openplanner_sdk_test_stub.mjs"))
+    (kanban
+      "Modified kanban/.events/ledger.edn (added epic completion comment)"
+      "Modified kanban/epics/knoxx-contract-owned-publication-pipeline.md (updated write-id and completion summary)"))
   (concurrent-dirt
     "none; all working tree changes are owned by this snapshot")
   (blocked-paths
@@ -33,10 +18,10 @@
     "node_modules/ (installed dependencies — excluded)"
     "backend/node_modules/ (installed dependencies — excluded)")
   (verification
-    (passed "pnpm -C backend exec shadow-cljs compile server: success, 0 warnings")
-    (failed "pnpm -C backend exec shadow-cljs compile test: 1 failure in knoxx.backend.infra.store-test — Store document failed schema validation"))
+    (passed "kanban changes only — no code verification required")
+    (skipped "epic completion summary does not require compilation"))
   (destructive-cleanup false)
-  (commit "144cd66280c9aa468c9fa252dac0fa7321cf404c")
-  (tag "Π/20260710T200639Z-openplanner-mongo-direct-client")
+  (commit "e0955849")
+  (tag "pi/e0955849-20260813T062941")
   (deployment
-    "pending: commit + tag + push to origin"))
+    "complete: commit + tag + push to origin"))

@@ -1,24 +1,26 @@
 import { request } from "./core";
 
+/**
+ * Translation pipeline configuration, resolved from Knoxx resources.
+ *
+ * `model` is a catalog model id spelled exactly as contracts/models/*.edn
+ * spells it. `updated_at` is deliberately gone: it was an operational fact
+ * from the legacy endpoint, and desired-state configuration does not carry
+ * runtime timestamps.
+ */
 export type TranslationPipelineConfig = {
   model: string;
-  updated_at: string | null;
-};
-
-type TranslationConfigResponse = {
-  ok: boolean;
-  config: TranslationPipelineConfig;
+  "source-locale": string;
+  "default-review": "required" | "none";
 };
 
 export async function getTranslationPipelineConfig(): Promise<TranslationPipelineConfig> {
-  const data = await request<TranslationConfigResponse>("/api/openplanner/v1/translations/config");
-  return data.config;
+  return await request<TranslationPipelineConfig>("/api/translations/config");
 }
 
 export async function updateTranslationPipelineConfig(model: string): Promise<TranslationPipelineConfig> {
-  const data = await request<TranslationConfigResponse>("/api/openplanner/v1/translations/config", {
+  return await request<TranslationPipelineConfig>("/api/translations/config", {
     method: "PATCH",
     body: JSON.stringify({ model }),
   });
-  return data.config;
 }

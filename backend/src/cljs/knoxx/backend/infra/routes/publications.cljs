@@ -5,8 +5,10 @@
   CLJS data — no Fastify request or reply handle enters or leaves this
   namespace, and no external publication backend appears in its contract. The
   owning extern adapter is `knoxx.backend.extern.fastify.publications`."
-  (:require [knoxx.backend.domain.publication-resolver :as resolver]
-            [knoxx.backend.domain.resources.loader :as resources]))
+  (:require [knoxx.backend.domain.document-admission :as document-admission]
+            [knoxx.backend.domain.publication-resolver :as resolver]
+            [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.law.publication :as law]))
 
 (def ^:private kind-id-key
   {:document :document/id
@@ -84,20 +86,48 @@
        (filter :ok?)
        (mapv single-kind-definition)))
 
-(defn ^:async publication-index!
-  [config]
-  (let [records (await (resource-records! config))
-        blockers (invalid-resource-blockers records)]
+(defn publication-index
+  "Build the desired-state index from an already loaded record snapshot."
+  [records]
+  (let [blockers (invalid-resource-blockers records)]
     (when (seq blockers)
       (throw (ex-info "invalid publication resources" {:blockers blockers})))
     (resolver/publication-index (mapv single-kind-definition (filter :ok? records)))))
 
+(defn ^:async publication-index!
+  [config]
+  (publication-index (await (resource-records! config))))
+
+(defn ^:async scoped-publication-index!
+  "Load desired state and retain only explicit-public or exact-owner documents."
+  [config scope]
+  (document-admission/visible-publication-index
+   (await (publication-index! config)) scope))
+
 (defn ^:async list-publication-documents!
   "The whole desired topology: `{:documents [...] :gardens [...]}`."
-  [config]
-  (resolver/list-document-views (await (publication-index! config))))
+  [config scope]
+  (resolver/list-document-views (await (scoped-publication-index! config scope))))
+
+(def GardenDeploymentListView
+  "Deployment DTO. The public site address is adapter configuration, while the
+   nested Garden and publication values remain the pure domain projection."
+  [:map {:closed true}
+   [:site-url law/NonBlankString]
+   [:gardens [:vector law/PublicationGardenView]]])
+
+(defn ^:async list-publication-gardens!
+  "Deployed Garden contracts, publication placements, and their public site."
+  [config scope]
+  (law/assert-valid!
+   :publication/garden-deployment-list
+   GardenDeploymentListView
+   (assoc (resolver/list-garden-views
+           (await (scoped-publication-index! config scope)))
+          :site-url (:publication-site-url config))))
 
 (defn ^:async publication-document-view!
   "One document's desired topology: `{:document ... :publications [...]}`."
-  [config document-id]
-  (resolver/document-view (await (publication-index! config)) document-id))
+  [config scope document-id]
+  (resolver/document-view (await (scoped-publication-index! config scope))
+                          document-id))

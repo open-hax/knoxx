@@ -64,3 +64,151 @@
               "KNOXX_OPENPLANNER_PROJECT" "openplanner-project"}
     (fn []
       (is (= "openplanner-project" (:openplanner-mcp-project (config/cfg)))))))
+
+(deftest cfg-keeps-ollama-optional-and-accepts-local-provider-settings
+  (with-env! {"OLLAMA_BASE_URL" nil
+              "OLLAMA_DEFAULT_MODEL" nil}
+    (fn []
+      (is (= "" (:ollama-base-url (config/cfg))))
+      (is (nil? (:ollama-default-model (config/cfg))))))
+  (with-env! {"OLLAMA_BASE_URL" "http://127.0.0.1:11434"
+              "OLLAMA_DEFAULT_MODEL" "gemma4:e4b"}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= "http://127.0.0.1:11434" (:ollama-base-url cfg)))
+        (is (= "gemma4:e4b" (:ollama-default-model cfg)))))))
+
+(deftest cfg-parses-agent-deployment-overrides
+  (with-env! {"KNOXX_AGENT_MODEL_OVERRIDES" nil
+              "KNOXX_AGENT_THINKING_OVERRIDES" nil}
+    (fn []
+      (is (= {} (:agent-model-overrides (config/cfg))))
+      (is (= {} (:agent-thinking-overrides (config/cfg))))))
+  (with-env! {"KNOXX_AGENT_MODEL_OVERRIDES" " publication_translator = gemma4:e2b , other = gpt-5.5 "
+              "KNOXX_AGENT_THINKING_OVERRIDES" "publication_translator=off"}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= {"publication_translator" "gemma4:e2b"
+                "other" "gpt-5.5"}
+               (:agent-model-overrides cfg)))
+        (is (= {"publication_translator" "off"}
+               (:agent-thinking-overrides cfg)))))))
+
+(deftest cfg-bounds-event-triggered-agent-concurrency
+  (with-env! {"KNOXX_EVENT_AGENT_CONCURRENCY" nil
+              "KNOXX_EVENT_AGENT_QUEUE_LIMIT" nil}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= 1 (:event-agent-concurrency cfg)))
+        (is (= 256 (:event-agent-queue-limit cfg))))))
+  (with-env! {"KNOXX_EVENT_AGENT_CONCURRENCY" "2"
+              "KNOXX_EVENT_AGENT_QUEUE_LIMIT" "95"}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= 2 (:event-agent-concurrency cfg)))
+        (is (= 95 (:event-agent-queue-limit cfg))))))
+  (with-env! {"KNOXX_EVENT_AGENT_CONCURRENCY" "0"
+              "KNOXX_EVENT_AGENT_QUEUE_LIMIT" "-1"}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= 1 (:event-agent-concurrency cfg)))
+        (is (= 1 (:event-agent-queue-limit cfg)))))))
+
+(deftest cfg-keeps-event-turn-timeout-separate-from-interactive-timeout
+  (with-env! {"KNOXX_AGENT_TURN_TIMEOUT_MS" "1200"
+              "KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS" nil}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= 1200 (:agent-turn-timeout-ms cfg)))
+        (is (= 0 (:event-agent-turn-timeout-ms cfg))))))
+  (with-env! {"KNOXX_AGENT_TURN_TIMEOUT_MS" "1200"
+              "KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS" "300000"}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= 1200 (:agent-turn-timeout-ms cfg)))
+        (is (= 300000 (:event-agent-turn-timeout-ms cfg)))))))
+
+(deftest cfg-rejects-event-timeouts-that-node-would-clamp-or-misparse
+  (doseq [invalid ["" "   " "0" "-1" "1.5" "3000000000" "not-a-number"
+                   (apply str (repeat 400 "9"))]]
+    (with-env! {"KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS" invalid}
+      (fn []
+        (try
+          (config/cfg)
+          (is false (str "accepted invalid event timeout " invalid))
+          (catch :default err
+            (is (= :config/invalid-node-timeout
+                   (:error/kind (ex-data err)))))))))
+  (with-env! {"KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS" "2147483647"}
+    (fn []
+      (is (= 2147483647
+             (:event-agent-turn-timeout-ms (config/cfg)))))))
+
+(deftest cfg-keeps-generated-contracts-separate-from-authored-contracts
+  (with-env! {"CONTRACTS_DIR" "/app/contracts"
+              "KNOXX_GENERATED_CONTRACTS_DIR" nil}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= "/app/contracts" (:contracts-dir cfg)))
+        (is (nil? (:generated-contracts-dir cfg))))))
+  (with-env! {"CONTRACTS_DIR" "/app/contracts"
+              "KNOXX_GENERATED_CONTRACTS_DIR" "/app/workspace/.knoxx/contracts"}
+    (fn []
+      (let [cfg (config/cfg)]
+        (is (= "/app/contracts" (:contracts-dir cfg)))
+        (is (= "/app/workspace/.knoxx/contracts"
+               (:generated-contracts-dir cfg)))))))
+
+(deftest cfg-session-project-name-uses-a-nonblank-override
+  (testing "unset and blank values retain the safe session-project default"
+    (doseq [value [nil "" " "]]
+      (with-env! {"KNOXX_SESSION_PROJECT_NAME" value}
+        (fn []
+          (is (= "knoxx-session" (:session-project-name (config/cfg))))))))
+  (testing "an explicit nonblank deployment value wins"
+    (with-env! {"KNOXX_SESSION_PROJECT_NAME" "review-stage"}
+      (fn []
+        (is (= "review-stage" (:session-project-name (config/cfg))))))))
+
+(deftest publication-site-url-is-deployment-configuration
+  (with-env! {"KNOXX_PUBLICATION_SITE_URL" nil
+              "KNOXX_PUBLICATION_CONTENT_ROOT" nil}
+    (fn []
+      (is (= "http://localhost:4173" (:publication-site-url (config/cfg))))
+      (is (nil? (:publication-content-root (config/cfg))))))
+  (with-env! {"KNOXX_PUBLICATION_SITE_URL" "https://open-hax.promethean.rest"
+              "KNOXX_PUBLICATION_CONTENT_ROOT" "/srv/website-content"}
+    (fn []
+      (is (= "https://open-hax.promethean.rest"
+             (:publication-site-url (config/cfg))))
+      (is (= "/srv/website-content" (:publication-content-root (config/cfg)))))))
+
+(deftest sandbox-user-is-an-optional-host-identity-assertion
+  (testing "the runtime derives the effective uid:gid when no assertion exists"
+    (with-env! {"DOCKER_USER" nil}
+      (fn [] (is (nil? (:sandbox-user (config/cfg)))))))
+  (testing "an explicit identity remains available for fail-closed comparison"
+    (with-env! {"DOCKER_USER" "1000:1000"}
+      (fn [] (is (= "1000:1000" (:sandbox-user (config/cfg))))))))
+
+;; ── Event-runtime kill switch ──────────────────────────────────────────────
+
+(deftest event-runtimes-disabled-defaults-to-off
+  (testing "unset means event runtimes run, which is the production behavior"
+    (with-env! {"KNOXX_DISABLE_EVENT_RUNTIMES" nil}
+      (fn [] (is (false? (:event-runtimes-disabled? (config/cfg))))))))
+
+(deftest event-runtimes-disabled-needs-an-explicit-affirmative
+  (testing "only an explicit affirmative disables them"
+    (doseq [value ["1" "true" "TRUE" "yes" "on"]]
+      (with-env! {"KNOXX_DISABLE_EVENT_RUNTIMES" value}
+        (fn [] (is (true? (:event-runtimes-disabled? (config/cfg)))
+                   (str value " should disable"))))))
+  (testing "and anything else leaves them running"
+    ;; A flag that silences schedules, triggers and Discord must never be
+    ;; switchable by accident: a typo, a blank, or the string "false" all have
+    ;; to fail safe toward running.
+    (doseq [value ["" " " "false" "0" "no" "off" "disabled" "ture"]]
+      (with-env! {"KNOXX_DISABLE_EVENT_RUNTIMES" value}
+        (fn [] (is (false? (:event-runtimes-disabled? (config/cfg)))
+                   (str (pr-str value) " must NOT disable")))))))

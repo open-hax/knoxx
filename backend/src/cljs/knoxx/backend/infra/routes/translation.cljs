@@ -14,11 +14,15 @@
             [knoxx.backend.shape.app-shapes :refer [route!]]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.http :refer [http-error]]))
+            [knoxx.backend.infra.http :refer [http-error]]
+            [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
+            [knoxx.backend.infra.stores.translation-evidence-registry :as evidence-registry]))
 
 (defn- op-client
-  [config]
-  (openplanner-client/client config))
+  ([config]
+   (openplanner-client/client config))
+  ([config {:keys [client]}]
+   (client config)))
 
 (defn- openplanner-ready?
   [config]
@@ -135,14 +139,25 @@
         :domain (aget q "domain")}))))
 
 (defn- label-segment-op
-  [config]
-  (fn [request ctx {:keys [ctx-user-id ctx-user-email ctx-org-id]}]
-    (let [body (body-clj request)
-          body-with-auth (merge body {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
-                                      :labeler_email (str (or (ctx-user-email ctx) "unknown"))
-                                      :org_id (org-id! ctx ctx-org-id)})]
-      (openplanner-client/label-translation-segment!
-       (op-client config) (aget (params request) "id") body-with-auth))))
+  ([config]
+   (label-segment-op config
+                     {:client openplanner-client/client
+                      :label-translation-segment!
+                      openplanner-client/label-translation-segment!}))
+  ([config dependencies]
+   (let [label-segment-fn (:label-translation-segment! dependencies)]
+     (fn [request ctx {:keys [ctx-user-id ctx-user-email ctx-org-id]}]
+       (let [body (body-clj request)
+             body-with-auth (merge body
+                                   {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
+                                    :labeler_email (str (or (ctx-user-email ctx) "unknown"))
+                                    :org_id (org-id! ctx ctx-org-id)
+                                    :project (or (:project body)
+                                                 (:session-project-name config))})]
+         (label-segment-fn
+          (op-client config dependencies)
+          (aget (params request) "id")
+          body-with-auth))))))
 
 (defn- export-sft-op
   [config]
@@ -175,15 +190,27 @@
         :garden_id (aget q "garden_id")}))))
 
 (defn- review-document-op
-  [config]
-  (fn [request ctx {:keys [ctx-user-id ctx-user-email ctx-org-id]}]
-    (let [p (params request)
-          body-with-auth (merge (body-clj request)
-                                {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
-                                 :labeler_email (str (or (ctx-user-email ctx) "unknown"))
-                                 :org_id (org-id! ctx ctx-org-id)})]
-      (openplanner-client/review-translation-document!
-       (op-client config) (aget p "documentId") (aget p "targetLang") body-with-auth))))
+  ([config]
+   (review-document-op config
+                       {:client openplanner-client/client
+                        :review-translation-document!
+                        openplanner-client/review-translation-document!}))
+  ([config dependencies]
+   (let [review-document-fn (:review-translation-document! dependencies)]
+     (fn [request ctx {:keys [ctx-user-id ctx-user-email ctx-org-id]}]
+       (let [p (params request)
+             body (body-clj request)
+             body-with-auth (merge body
+                                   {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
+                                    :labeler_email (str (or (ctx-user-email ctx) "unknown"))
+                                    :org_id (org-id! ctx ctx-org-id)
+                                    :project (or (:project body)
+                                                 (:session-project-name config))})]
+         (review-document-fn
+          (op-client config dependencies)
+          (aget p "documentId")
+          (aget p "targetLang")
+          body-with-auth))))))
 
 (defn- batches-op
   [config]
@@ -231,11 +258,15 @@
   (register-json-route! app "GET" "/api/translations/documents/:documentId/:targetLang" runtime config handlers
                         "org.translations.read"
                         (fn [request ctx {:keys [ctx-org-id]}]
-                          (openplanner-client/translation-document!
-                           (op-client config)
-                           (aget (params request) "documentId")
-                           (aget (params request) "targetLang")
-                           (org-scope ctx ctx-org-id))))
+                          (let [q (query request)]
+                            (openplanner-client/translation-document!
+                             (op-client config)
+                             (aget (params request) "documentId")
+                             (aget (params request) "targetLang")
+                             {:org_id (org-id! ctx ctx-org-id)
+                              :project (or (aget q "project")
+                                           (:session-project-name config))
+                              :garden_id (aget q "garden_id")}))))
   (register-json-route! app "POST" "/api/translations/documents/:documentId/:targetLang/review" runtime config handlers
                         "org.translations.review" (review-document-op config)))
 
@@ -276,13 +307,91 @@
      (aget (params request) "id")
      (org-scope ctx ctx-org-id))))
 
+(defn worker-principal?
+  "Whether `ctx` is the worker identity that may produce translation evidence.
+
+  `org.translations.manage` guards this route, and org admins hold it too — the
+  same gap `next-batch-op` already closed for batch claiming. Without this check
+  an org admin could dispatch work and immediately POST `completed_document` for
+  it, minting a completed-translation receipt for a translation that was never
+  produced, and that fabricated receipt is exactly what a publication gate is
+  waiting on. Evidence production is therefore restricted to a system-admin
+  worker principal, which is the identity the ingestion worker actually runs as.
+
+  Deliberately narrower than the route: an org admin may still update batch
+  status, because that is the worker queue's own business. They simply cannot
+  make Knoxx believe a translation exists."
+  [ctx]
+  (boolean (and ctx (authz/system-admin? ctx))))
+
+(defn- ^:async resolve-evidence-safely!
+  "Resolve the report, turning any failure into reportable evidence.
+
+  The catch is what keeps this step from failing the status update it hangs off:
+  see `resolve-translation-evidence!` for why that update must not be retried."
+  [config evidence-store report]
+  (try
+    (await (translation-dispatch/resolve-batch-status!
+            {:evidence-store evidence-store
+             :clock (fn [] (.toISOString (js/Date.)))
+             ;; Built here rather than inside the facade: the observer needs the
+             ;; runtime config, and a facade that constructs its own
+             ;; dependencies cannot be given a different one by a test.
+             :observe-source-revision (translation-dispatch/source-revision-observer! config)}
+            report))
+    (catch :default err
+      {:translation/error (or (not-empty (str (ex-message err)))
+                              "translation evidence resolution failed")})))
+
+(defn ^:async resolve-translation-evidence!
+  "Turn the worker's status report into Knoxx-side translation evidence.
+
+  This is the completion half of `knoxx-translation-work-dispatch`, and it hangs
+  off this route deliberately rather than off a new endpoint. The worker already
+  calls here after every document; a dedicated Knoxx callback would have meant
+  teaching another repository a new call for no behavioral gain.
+
+  Never allowed to fail the status update. The batch status belongs to the
+  worker's own queue and has already been recorded by the time this runs, so
+  throwing would make the worker retry a status transition that already
+  succeeded — and `next` has no path back from `processing` to `queued`, so a
+  retry storm here could strand the batch. The outcome travels in the response
+  instead, which keeps it observable rather than silent: an operator debugging a
+  translation that never produced a receipt can see the refusal that stopped it."
+  [config ctx report]
+  (let [evidence-store (evidence-registry/current)]
+    (cond
+      (not (worker-principal? ctx))
+      {:translation/skipped {:reason :worker-principal-required}}
+
+      (nil? evidence-store)
+      {:translation/skipped {:reason :translation-evidence-unavailable}}
+
+      :else
+      (await (resolve-evidence-safely! config evidence-store report)))))
+
+(defn- ^:async update-batch-status!
+  "Record the batch status with its owner, then resolve Knoxx's own evidence.
+
+  Strictly in that order. The status transition belongs to the worker's queue
+  and must not be made conditional on Knoxx's bookkeeping succeeding."
+  [config request ctx ctx-org-id]
+  (let [batch-id (aget (params request) "id")
+        body (body-clj request)
+        response (await (openplanner-client/update-translation-batch-status!
+                         (op-client config)
+                         batch-id
+                         (assoc body :org_id (org-id! ctx ctx-org-id))))
+        ;; The report carries the batch id from the route, not the body: the
+        ;; worker does not repeat it, and the binding is keyed by it.
+        evidence (await (resolve-translation-evidence!
+                         config ctx (assoc body :batch_id batch-id)))]
+    (assoc response :translation evidence)))
+
 (defn- update-batch-status-op
   [config]
   (fn [request ctx {:keys [ctx-org-id]}]
-    (openplanner-client/update-translation-batch-status!
-     (op-client config)
-     (aget (params request) "id")
-     (assoc (body-clj request) :org_id (org-id! ctx ctx-org-id)))))
+    (update-batch-status! config request ctx ctx-org-id)))
 
 (defn- register-translation-batch-routes!
   [app runtime config handlers]

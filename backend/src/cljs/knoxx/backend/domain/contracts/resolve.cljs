@@ -5,12 +5,13 @@
             [knoxx.backend.domain.contracts.loader :as loader]
             [knoxx.backend.domain.contracts.roles :as roles]
             [knoxx.backend.domain.contracts.sources :as sources]
+            [knoxx.backend.domain.models :as models]
             [knoxx.backend.infra.registry.tools :as tool-registry]))
 
 (def known-actor-keys #{:id :kind :default-agent :role-slugs :capability-ids :system-prompt :task-prompt :thinking-level :model :contract-id :model-profile :tool-policies :ui/actions :actor/sources :sources})
 (def known-role-keys #{:id :role/capabilities :role/permissions :role/prompts :role/sources :sources})
 (def known-capability-keys #{:id :capability/description :capability/tools})
-(def known-agent-keys #{:id :enabled :agent/model :agent/thinking :prompts/task :prompts/system :trigger-kind :contract/actor :contract/actors :contract/uses :ui/actions :agent/sources :sources :tool-deny})
+(def known-agent-keys #{:id :enabled :agent/model :agent/thinking :prompts/task :prompts/system :trigger-kind :contract/actor :contract/actors :contract/uses :ui/actions :agent/sources :sources :tool-deny :tools/choice})
 
 (defn contract-extras
   [contract-data known-set]
@@ -320,21 +321,73 @@
        (remove str/blank?)
        (into #{})))
 
+(defn- allowed-tool-ids
+  "The allowlist an agent contract narrows its granted set to, or nil for none.
+
+   `:tool-deny` above is subtractive — it sheds one tool from an otherwise-fine
+   set. This is the opposite shape, for an agent whose whole job is one call: it
+   states the entire surface, so a role granting anything else cannot widen it.
+
+   It was already being written and was doing nothing. `:tools/allowed` is read
+   by `domain.policy.tools/tool-call-contract-denied`, which loads only contracts
+   whose `:contract/kind` is `:policy`, and nothing in this namespace looked at
+   it — so an agent contract could declare an allowlist and get the full role
+   surface anyway. `contracts/agents/broadcast_studio_audio_transcriber.edn`
+   declares one, which is how the belief that it worked got into the repo.
+
+   Empty means no restriction, matching the semantics
+   `tool-call-contract-denied` already documents for the policy-contract case.
+   That is also what keeps this change from silently muzzling the transcriber,
+   whose declaration is the empty vector.
+
+   Deny is applied before this, so a contract cannot allow back a tool it also
+   denied — the stricter of the two wins, which is the only composition order
+   that cannot surprise a reviewer."
+  [contract]
+  (let [ids (->> (concat (or (:tools/allowed contract) [])
+                         (or (get-in contract [:data :tools/allowed]) []))
+                 (map tool-registry/normalize-tool-id)
+                 (remove str/blank?)
+                 (into #{}))]
+    (when (seq ids) ids)))
+
 (defn- tool-context
   [config role-slugs capability-ids contract]
   (let [role-tool-ids (collect-role-tool-ids config role-slugs)
         capability-tool-ids (collect-capability-tool-ids config capability-ids)
         explicit-tool-ids (legacy-explicit-tool-ids contract)
         denied (denied-tool-ids contract)
+        allowed (allowed-tool-ids contract)
+        ;; Deny first, then the allowlist, so the stricter of the two always
+        ;; wins and a contract cannot allow back what it denied.
+        grantable? (fn [tool-id]
+                     (and (not (denied tool-id))
+                          (or (nil? allowed) (contains? allowed tool-id))))
         tool-ids (->> (concat role-tool-ids capability-tool-ids explicit-tool-ids)
                       distinct
-                      (remove denied)
+                      (filter grantable?)
                       sort
                       vec)]
     {:tool-ids tool-ids
      :tool-policies (mapv (fn [tool-id]
                             {:toolId tool-id :effect "allow"})
                           tool-ids)}))
+
+(def ^:private supported-tools-choices
+  #{:required-first})
+
+(defn- resolve-tools-choice
+  [contract tool-ids]
+  (when (contains? contract :tools/choice)
+    (let [choice (:tools/choice contract)]
+      (when-not (contains? supported-tools-choices choice)
+        (throw (ex-info "unsupported agent tools choice"
+                        {:tools/choice choice
+                         :tools/supported-choices supported-tools-choices})))
+      (when (and (= :required-first choice) (empty? tool-ids))
+        (throw (ex-info "required-first agent contract exposes no tools"
+                        {:tools/choice choice})))
+      choice)))
 
 (defn- role-source-refs
   [config role-slugs]
@@ -381,36 +434,105 @@
                    (:task-prompt actor-spec)
                    agent-task-prompt)}))
 
+(defn- exact-model-contract
+  [config model-id]
+  (some (fn [model]
+          (when (= model-id (:id model))
+            model))
+        (models/model-contracts config)))
+
+(defn- model-provider-configured?
+  [config model-contract]
+  (let [provider-id (or (:provider model-contract) "proxx")
+        configured-url (case provider-id
+                         "proxx" (:proxx-base-url config)
+                         "ollama" (or (some-> (:ollama-base-url config)
+                                               str
+                                               str/trim
+                                               not-empty)
+                                      (some-> (get (:provider-base-urls config) "ollama")
+                                              str
+                                              str/trim
+                                              not-empty))
+                         (get (:provider-base-urls config) provider-id))]
+    (not (str/blank? (str (or configured-url ""))))))
+
+(defn- deployment-model
+  [config agent-id authored-model]
+  (if-let [override (get (:agent-model-overrides config) agent-id)]
+    (let [model-id (some-> override str str/trim not-empty)
+          model-contract (when model-id (exact-model-contract config model-id))]
+      (when-not model-contract
+        (throw (ex-info "unknown agent model override"
+                        {:agent-id agent-id
+                         :model model-id})))
+      (when-not (models/allowlisted-model-id? config model-id)
+        (throw (ex-info "agent model override is not allowlisted"
+                        {:agent-id agent-id
+                         :model model-id})))
+      (when-not (model-provider-configured? config model-contract)
+        (throw (ex-info "agent model override provider is not configured"
+                        {:agent-id agent-id
+                         :model model-id
+                         :provider (:provider model-contract)})))
+      model-id)
+    authored-model))
+
+(defn- deployment-thinking-level
+  [config agent-id model-id authored-thinking]
+  (let [override (get (:agent-thinking-overrides config) agent-id)
+        model-overridden? (contains? (or (:agent-model-overrides config) {}) agent-id)
+        thinking-overridden? (contains? (or (:agent-thinking-overrides config) {}) agent-id)]
+    (if (or model-overridden? thinking-overridden?)
+      (let [requested (or override authored-thinking)
+            normalized (models/normalize-thinking-level requested)
+            effective (models/effective-thinking-level config model-id requested)]
+        (when (and thinking-overridden?
+                   (or (nil? normalized) (not= normalized effective)))
+          (throw (ex-info "unsupported agent thinking override"
+                          {:agent-id agent-id
+                           :model model-id
+                           :thinking override})))
+        effective)
+      authored-thinking)))
+
 (defn- resolved-agent-map
-  [record contract contract-actors actor-spec role-ctx capability-ctx tool-ctx prompt-ctx runtime-sources all-extras enabled?]
-  {:id (:id record)
-   :enabled enabled?
-   :contract contract
-   :contract-actors contract-actors
-   :contract-actor-ids (actor-scope/actor-claims->wire contract-actors)
-   :actor-id (:id actor-spec)
-   :actor-kind (:kind actor-spec)
-   :actor-role-slugs (:actor-role-slugs role-ctx)
-   :role-slugs (:role-slugs role-ctx)
-   :capability-ids (:capability-ids capability-ctx)
-   :role (:primary-role role-ctx)
-   :model (some-> (get-in contract [:agent :model]) str str/trim not-empty)
-   :thinking-level (some-> (get-in contract [:agent :thinking]) keywordish->role-slug)
-   :role-system-prompt (:role-system-prompt prompt-ctx)
-   :role-task-prompt (:role-task-prompt prompt-ctx)
-   :actor-system-prompt (:system-prompt actor-spec)
-   :actor-task-prompt (:task-prompt actor-spec)
-   :agent-system-prompt (:agent-system-prompt prompt-ctx)
-   :agent-task-prompt (:agent-task-prompt prompt-ctx)
-   :system-prompt (:system-prompt prompt-ctx)
-   :task-prompt (:task-prompt prompt-ctx)
-   :trigger-kind (some-> (:trigger-kind contract) keywordish->role-slug)
-   :memory-hydration (memory-hydration-from-contract contract)
-   :context-policy (context-policy-from-contract contract)
-   :sources runtime-sources
-   :tool-ids (:tool-ids tool-ctx)
-   :tool-policies (:tool-policies tool-ctx)
-   :extras all-extras})
+  [config record contract contract-actors actor-spec role-ctx capability-ctx tool-ctx prompt-ctx runtime-sources all-extras enabled?]
+  (let [agent-id (:id record)
+        authored-model (some-> (get-in contract [:agent :model]) str str/trim not-empty)
+        model (deployment-model config agent-id authored-model)
+        authored-thinking (some-> (get-in contract [:agent :thinking]) keywordish->role-slug)
+        thinking-level (deployment-thinking-level config agent-id model authored-thinking)
+        tools-choice (resolve-tools-choice contract (:tool-ids tool-ctx))]
+    (cond-> {:id agent-id
+             :enabled enabled?
+             :contract contract
+             :contract-actors contract-actors
+             :contract-actor-ids (actor-scope/actor-claims->wire contract-actors)
+             :actor-id (:id actor-spec)
+             :actor-kind (:kind actor-spec)
+             :actor-role-slugs (:actor-role-slugs role-ctx)
+             :role-slugs (:role-slugs role-ctx)
+             :capability-ids (:capability-ids capability-ctx)
+             :role (:primary-role role-ctx)
+             :model model
+             :thinking-level thinking-level
+             :role-system-prompt (:role-system-prompt prompt-ctx)
+             :role-task-prompt (:role-task-prompt prompt-ctx)
+             :actor-system-prompt (:system-prompt actor-spec)
+             :actor-task-prompt (:task-prompt actor-spec)
+             :agent-system-prompt (:agent-system-prompt prompt-ctx)
+             :agent-task-prompt (:agent-task-prompt prompt-ctx)
+             :system-prompt (:system-prompt prompt-ctx)
+             :task-prompt (:task-prompt prompt-ctx)
+             :trigger-kind (some-> (:trigger-kind contract) keywordish->role-slug)
+             :memory-hydration (memory-hydration-from-contract contract)
+             :context-policy (context-policy-from-contract contract)
+             :sources runtime-sources
+             :tool-ids (:tool-ids tool-ctx)
+             :tool-policies (:tool-policies tool-ctx)
+             :extras all-extras}
+      tools-choice (assoc :tools-choice tools-choice))))
 
 (defn resolve-agent-contract
   ([config contract-id]
@@ -439,7 +561,7 @@
                                               (:role-task-prompts role-ctx))
                    runtime-sources (runtime-sources-for-agent config actor-spec (:role-slugs role-ctx) contract)
                    all-extras (all-contract-extras config actor-spec (:role-slugs role-ctx) (:capability-ids capability-ctx) contract)]
-                (resolved-agent-map record contract contract-actors actor-spec role-ctx capability-ctx tool-ctx prompt-ctx runtime-sources all-extras enabled?)))))))))
+                (resolved-agent-map config record contract contract-actors actor-spec role-ctx capability-ctx tool-ctx prompt-ctx runtime-sources all-extras enabled?)))))))))
 
 (defn- manual-agent-contract?
   [entry]

@@ -13,7 +13,7 @@
 ;; ── Constants ──────────────────────────────────────────────────────────────
 
 (def contract-class-order
-  ["agents" "actors" "roles" "capabilities" "policies"
+  ["agents" "actors" "roles" "capabilities" "policies" "authentication" "mcp_servers"
    "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "triggers" "stores" "sub_agents" "cms" "documents" "gardens" "publications"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
@@ -36,12 +36,14 @@
 
 (defn- contract-root-candidates
   [config]
-  (let [configured (configured-contracts-dir config)]
-    (if (default-configured-contracts-dir? configured)
-      ["../contracts" "contracts"
-       "packages/agents/knoxx/contracts"
-       "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
-      [configured])))
+  (let [configured (configured-contracts-dir config)
+        authored (if (default-configured-contracts-dir? configured)
+                   ["../contracts" "contracts"
+                    "packages/agents/knoxx/contracts"
+                    "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
+                   [configured])
+        generated (some-> (:generated-contracts-dir config) str str/trim not-empty)]
+    (cond-> authored generated (conj generated))))
 
 (defn contract-root-paths
   [config]
@@ -70,6 +72,41 @@
       (throw (js/Error. (str "Invalid " kind " segment: " segment))))
     s))
 
+(def ^:private class-aliases
+  "Every spelling that names a contract class, mapped to the canonical one.
+
+   Data rather than a `case` so adding a class is a line in a table instead of
+   a branch, and so the table stays readable as it grows past twenty classes."
+  (into {}
+        (mapcat (fn [[canonical & aliases]]
+                  (map (fn [alias] [alias canonical]) (cons canonical aliases))))
+        [["agents" "agent" "contract" "contracts" nil ""]
+         ["actors" "actor" "user" "users" "human" "humans"]
+         ["roles" "role"]
+         ["capabilities" "cap" "caps" "capability"]
+         ["policies" "policy"]
+         ["authentication" "auth" "auth-method" "auth-methods" "auth_method" "auth_methods"]
+         ["mcp_servers" "mcp-server" "mcp-servers" "mcp_server"]
+         ["generators" "generator"]
+         ["schedules" "schedule"]
+         ["source_modes" "source-mode" "source-modes" "source_mode"]
+         ["sources" "source" "runtime-source" "runtime-sources" "runtime_source" "runtime_sources"]
+         ["runtime_features" "runtime-feature" "runtime-features" "runtime_feature" "runtime"]
+         ["model_families" "model-family" "model-families" "model_family"]
+         ["models" "model"]
+         ["ingest_sources" "ingest-source" "ingest-sources" "ingest_source"]
+         ["cms" "cms-config" "cms-configs" "cms_config" "cms_configs"
+          "cms-block-registry" "cms-block-registries" "cms-template-registry"
+          "cms-template-registries" "cms-templates" "cms-template" "cms-templates-registry"]
+         ["actions" "action"]
+         ["pipelines" "pipeline"]
+         ["triggers" "trigger"]
+         ["stores" "store"]
+         ["sub_agents" "sub-agent" "sub-agents" "sub_agent"]
+         ["documents" "document"]
+         ["gardens" "garden"]
+         ["publications" "publication"]]))
+
 (defn normalize-contract-class
   [value]
   (let [raw (some-> value
@@ -77,32 +114,8 @@
                             (not (keyword? value)) str)
                     str/trim
                     str/lower-case)]
-    (case raw
-      ("agent" "agents" "contract" "contracts" nil "") "agents"
-      ("actor" "actors" "user" "users" "human" "humans") "actors"
-      ("role" "roles") "roles"
-      ("cap" "caps" "capability" "capabilities") "capabilities"
-      ("policy" "policies") "policies"
-      ("generator" "generators") "generators"
-      ("schedule" "schedules") "schedules"
-      ("source-mode" "source-modes" "source_mode" "source_modes") "source_modes"
-      ("source" "sources" "runtime-source" "runtime-sources" "runtime_source" "runtime_sources") "sources"
-      ("runtime-feature" "runtime-features" "runtime_feature" "runtime_features" "runtime") "runtime_features"
-      ("model-family" "model-families" "model_family" "model_families") "model_families"
-      ("model" "models") "models"
-      ("ingest-source" "ingest-sources" "ingest_source" "ingest_sources") "ingest_sources"
-      ("cms" "cms-config" "cms-configs" "cms_config" "cms_configs"
-       "cms-block-registry" "cms-block-registries" "cms-template-registry"
-       "cms-template-registries" "cms-templates" "cms-template" "cms-templates-registry") "cms"
-      ("action" "actions") "actions"
-      ("pipeline" "pipelines") "pipelines"
-      ("trigger" "triggers") "triggers"
-      ("store" "stores") "stores"
-      ("sub-agent" "sub-agents" "sub_agent" "sub_agents") "sub_agents"
-      ("document" "documents") "documents"
-      ("garden" "gardens") "gardens"
-      ("publication" "publications") "publications"
-      (throw (js/Error. (str "Unknown contract class: " value))))))
+    (or (get class-aliases raw)
+        (throw (js/Error. (str "Unknown contract class: " value))))))
 
 ;; ── Stderr logging ─────────────────────────────────────────────────────────
 

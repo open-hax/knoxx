@@ -1,69 +1,58 @@
 ---
-uuid: knoxx-website-publication-live-verification
-title: Publication — one live run to the website, end to end
-status: ready
-priority: P2
-points: 2
-labels:
-  - tasks
-  - publication
-  - translations
-  - verification
-  - website
-  - has-parent
+category: "tasks"
+labels: ["tasks", "has-parent", "publication", "website", "verification", "https", "wave-4"]
+write-id: "1787011200006-0.249681"
+points: "2"
+title: "Website publication — live verification"
+priority: "P2"
+status: "ready"
+uuid: "knoxx-website-publication-live-verification"
+created_at: "2026-08-22T00:00:00Z"
 ---
 
-# Publication — one live run to the website, end to end
+# Website publication — live verification
 
 > Parent epic: `knoxx-translated-publication-to-website`
 
 ## Purpose
 
-The epic's E2E proves the whole journey with no hosted backend running, which is
-exactly the right thing for a test and is not evidence that anything reached
-production. This card is the one live run: a real document, translated, approved,
-materialized, and fetched over HTTPS from `open-hax.promethean.rest`.
-
-## Why this is separate from the E2E
-
-The stack's own history is the argument. `scripts/verify-publication-epic.sh`
-found, on its first live execution, that **every** publication route answered 500
-to every real request: Fastify builds `request.params` with `Object.create(null)`,
-`js->clj` returns a null-prototype object unchanged, and the closed
-`DecodedRequest` schema rejected it. 980 tests passed over it because every
-fixture built params with `clj->js`, which produces an ordinary `Object`.
-
-A test that constructs its own inputs cannot find that class of defect. Only a
-live run can.
+Prove the full seam once against deployed services: publication intent becomes a
+translation, an authorized revision approval, a materialized artifact and
+manifest entry, and a document fetched from the website over HTTPS.
 
 ## Dependencies
 
-Everything. This is the last card.
+`knoxx-publication-reconciler-runtime`, `knoxx-translation-work-dispatch`,
+`knoxx-translation-approval-surface`, `knoxx-publication-locale-catalog`,
+`services-website-as-gated-service`, `website-published-content-source`, and
+`website-manifest-contract-tests`.
 
 ## Work
 
-- Extend `scripts/verify-publication-epic.sh` rather than writing a second
-  verifier, and keep it aligned with
-  `knoxx-publication-live-verification-contract`'s rules: explicit PASS / WARN /
-  FAIL, restricted success sets, proof of which deployment is under test, and
-  nonzero exit on signal and internal-error paths.
-- The run: create intent → observe the blockers → dispatch translation → record
-  the translation receipt → approve the revision → reconcile → fetch the public
-  URL over HTTPS and assert the translated bytes and the `lang` attribute.
-- Then replay: reconcile again, assert `:noop` and that nothing was rewritten.
-- Then remove: withdraw the intent, reconcile, assert the URL stops serving.
-- Bound the side effects and clean up the fixture publication, or retain it
-  deliberately and say so — a permanent test document on a public site is a
-  decision, not a leftover.
-- Record the receipt chain from the run as the evidence artifact, and the exact
-  commands, so the result is reproducible rather than reported.
+- Add a repeatable, environment-safe live verification procedure that seeds a
+  unique publication intent, waits for the translation receipt, records an
+  authorized revision-specific approval, triggers reconciliation, and cleans up
+  its test data when possible.
+- Fetch the resulting website route and `manifest.edn` over HTTPS, asserting the
+  route's locale, revision, bytes, media type, and manifest artifact path agree
+  with the materialization receipt.
+- Verify the cross-repo contract's reader rules in the live environment: an
+  absent or empty manifest serves the site, while malformed required fields and
+  unsupported versions fail loudly.
+- Explicitly verify or file completion follow-ups for the website verifier's
+  known findings: artifact insertion via `innerHTML` can lose `<head>` content,
+  and the missing-manifest response has Content-Type asymmetry.
+- Record URLs, non-secret correlation identities, observed receipts, and any
+  environment preconditions so a reviewer can reproduce the run.
 
 ## Definition of Done
 
-- A translated document is fetched over HTTPS from the production hostname,
-  published through the contract path.
-- The receipt chain from intent to served bytes is walkable with no gap.
-- Replay changes nothing.
-- Withdrawal makes the URL stop serving.
-- The verifier fails on any unexpected 4xx/5xx and cannot false-green.
-- Evidence and commands are recorded.
+- One recorded live run proves intent → translation → authorized approval →
+  materialization → HTTPS fetch for a non-default locale.
+- The fetched route's bytes and locale agree with the manifest and materialized
+  artifact receipt; it never exposes an artifact with a disagreeing locale.
+- The verification output proves the website made no request to a Knoxx origin.
+- The `innerHTML` head-content and missing-manifest Content-Type findings are
+  each verified as fixed/acceptable or linked to an explicit follow-up card.
+- The procedure fails non-zero on a missing receipt, failed authorization,
+  malformed manifest, incorrect HTTPS response, or leftover seeded public route.

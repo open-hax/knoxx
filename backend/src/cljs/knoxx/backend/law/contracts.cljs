@@ -142,6 +142,62 @@
    [:policy/required {:optional true} [:vector PolicyCheck]]
    [:policy/checked-by {:optional true} keyword?]])
 
+(def AuthenticationMethod
+  "One way a surface may authenticate a caller.
+
+   :auth-method/grants is what the method hands to the request when it accepts:
+   the identity calls resolve under and the tools they may reach. A method that
+   accepts callers but grants nothing is a configuration mistake rather than a
+   safe default, so a grant is required of anything enabled."
+  [:map {:closed false}
+   [:auth-method/id [:enum :oauth-bearer :trusted-loopback]]
+   [:auth-method/enabled {:optional true} boolean?]
+   [:auth-method/doc {:optional true} string?]
+   ;; Only meaningful for :trusted-loopback. Named rather than assumed, so a
+   ;; reader of the contract can see that the guard exists and is on.
+   [:auth-method/require-loopback {:optional true} boolean?]
+   [:auth-method/require-non-production {:optional true} boolean?]
+   [:auth-method/token-env {:optional true} string?]
+   [:auth-method/min-token-length {:optional true} [:int {:min 1}]]
+   [:auth-method/grants {:optional true}
+    [:map {:closed false}
+     [:grant/user-email {:optional true} string?]
+     [:grant/org-slug {:optional true} string?]
+     [:grant/actor-id {:optional true} string?]
+     ;; :all is the only wildcard, and it is still intersected with what the
+     ;; resolved membership can reach — a grant is not an authorization.
+     [:grant/tools {:optional true} [:or [:= :all] [:vector string?]]]]]])
+
+(def AuthenticationContract
+  "Which authentication methods a surface accepts.
+
+   Exists so the answer is reviewable data rather than a scattering of env
+   reads: before this, whether an unauthenticated local caller could reach /mcp
+   was a property of process environment, invisible to anyone reading the
+   repository. A surface with no contract accepts only :oauth-bearer."
+  [:map {:closed false}
+   [:contract/kind [:= :authentication]]
+   [:contract/id ContractId]
+   [:contract/doc {:optional true} string?]
+   [:auth/surface [:enum :mcp]]
+   [:auth/methods [:vector AuthenticationMethod]]])
+
+(def McpServerContract
+  "A declared MCP server Knoxx may connect to.
+
+   Credentials are referenced by environment-variable name. Resource files may
+   describe the admission boundary, but must never contain the credential."
+  [:map {:closed true}
+   [:contract/kind [:= :mcp-server]]
+   [:contract/id ContractId]
+   [:mcp-server/id string?]
+   [:mcp-server/transport [:enum :http :stdio]]
+   [:mcp-server/url {:optional true} string?]
+   [:mcp-server/command {:optional true} string?]
+   [:mcp-server/args {:optional true} [:vector string?]]
+   [:mcp-server/auth-token-env {:optional true} string?]
+   [:enabled {:optional true} boolean?]])
+
 (def ModelFamilyContract
   [:map {:closed false}
    [:model-family/id string?]
@@ -390,6 +446,8 @@
   [value]
   (case (:contract/kind value)
     :policy "policies"
+    :authentication "authentication"
+    :mcp-server "mcp_servers"
     :sub-agent "sub_agents"
     :action "actions"
     :pipeline "pipelines"
@@ -438,6 +496,8 @@
     "roles" RoleContract
     "capabilities" CapabilityContract
     "policies" PolicyContract
+    "authentication" AuthenticationContract
+    "mcp_servers" McpServerContract
     "generators" GeneratorContract
     "schedules" ScheduleContract
     "source_modes" SourceModeContract

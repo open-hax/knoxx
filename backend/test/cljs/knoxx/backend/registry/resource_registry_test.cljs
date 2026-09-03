@@ -45,6 +45,9 @@
   (testing "resource names are singular even when storage directories are plural"
     (is (= :action (resources/normalize-resource-kind "actions")))
     (is (= :agent (resources/normalize-resource-kind :agent-specs)))
+    (is (= :authentication (resources/normalize-resource-kind "authentication")))
+    (is (= :mcp-server (resources/normalize-resource-kind :mcp-servers)))
+    (is (= "mcp_servers" (resources/resource-class :mcp-server)))
     (is (= "schedules" (resources/resource-class :schedule)))))
 
 (deftest source-drivers-are-code-protocols

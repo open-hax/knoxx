@@ -7,7 +7,7 @@
 
 (ns knoxx.backend.domain.node.fs
   (:refer-clojure :exclude [exists?])
-  (:require [clojure.string :as str]
+  (:require ["node:crypto"       :as node-crypto]
             ["node:fs"           :as node-fs]
             ["node:fs/promises"  :as fs]
             ["node:path"         :as path]))
@@ -110,3 +110,147 @@
     (catch :default err
       (when-not (= "ENOENT" (.-code err))
         (throw err)))))
+
+;; ── Publication-target additions ──────────────────────────────────────────
+;; Atomic create/rename and synchronous variants, added for the static-site
+;; publication target. Same boundary: node objects never leave this file.
+
+(defn join
+  "Join path segments with the platform separator, normalizing the result."
+  [& parts]
+  (.apply (.-join path) path (into-array (map str parts))))
+
+(defn parent
+  "The parent directory of path `p`."
+  [p]
+  (.dirname path (str p)))
+
+(defn ^:async real-path-or-nil!
+  "Canonical absolute path with symlinks resolved, or nil when absent."
+  [p]
+  (try
+    (await (.realpath fs (str p)))
+    (catch :default err
+      (when-not (= "ENOENT" (.-code err))
+        (throw err))
+      nil)))
+
+(defn canonical-path-contained?
+  "Whether canonical `candidate` is `root` itself or one of its descendants.
+
+  Callers must realpath both inputs first. `path.relative` plus the platform
+  separator avoids sibling-prefix mistakes such as `/srv/site-old` being
+  treated as a child of `/srv/site`."
+  [root candidate]
+  (let [relative (.relative path (str root) (str candidate))
+        parent-prefix (str ".." (.-sep path))]
+    (and (not (.isAbsolute path relative))
+         (not= ".." relative)
+         (not (.startsWith relative parent-prefix)))))
+
+(defn ^:async rename!
+  "Promise<nil>. Atomically rename `from` to `to` (same filesystem)."
+  [from to]
+  (.rename fs (str from) (str to)))
+
+(defn ^:async read-file-or-nil!
+  "Promise<string|nil>. UTF-8 file contents, or nil when the file is absent."
+  [p]
+  (try
+    (await (.readFile fs (str p) "utf8"))
+    (catch :default err
+      (when-not (= "ENOENT" (.-code err))
+        (throw err))
+      nil)))
+
+(defn write-file-encoded!
+  "Promise<nil>. Write `text` to `p` using the named character encoding
+   (e.g. \"utf-8\"). Dirs must already exist."
+  [p text encoding]
+  (.writeFile fs (str p) (str text) (str encoding)))
+
+(defn write-bytes!
+  "Promise<nil>. Write a Uint8Array to `p` verbatim. Dirs must already exist."
+  [p bytes]
+  (.writeFile fs (str p) bytes))
+
+(defn write-file-exclusive-sync!
+  "Atomically create `p` with `content`, failing if it exists. Returns true
+   when this call created the file, false when it already existed; any other
+   error is thrown. One `open(2)` with O_EXCL — there is no separate
+   check-then-create for a concurrent caller to slip between."
+  [p content]
+  (try
+    (.writeFileSync node-fs (str p) (str content) #js {:flag "wx"})
+    true
+    (catch :default err
+      (if (= "EEXIST" (.-code err))
+        false
+        (throw err)))))
+
+(declare unlink-sync!)
+
+(defn- fsync-file-sync!
+  [p]
+  (let [fd (.openSync node-fs (str p) "r")]
+    (try
+      (.fsyncSync node-fs fd)
+      (finally
+        (.closeSync node-fs fd)))))
+
+(defn- link-file-exclusive-sync!
+  [from to]
+  (try
+    (.linkSync node-fs (str from) (str to))
+    true
+    (catch :default err
+      (if (= "EEXIST" (.-code err))
+        false
+        (throw err)))))
+
+(defn install-file-exclusive-sync!
+  "Crash-safely install complete UTF-8 `content` at an absent final path.
+
+   The payload is first written and fsynced under a unique sibling name, then a
+   hard link atomically claims `p` without overwriting an incumbent. A crash or
+   ENOSPC during the write can therefore leave only disposable temp debris,
+   never a torn final file that poisons every immutable retry. A crash after the
+   link leaves a complete final inode (and at worst an extra sibling link).
+
+   Returns true when this call installed the final path and false when another
+   writer already owns it. Any other error is propagated. Temp cleanup is best
+   effort only for absence; real cleanup failures are surfaced."
+  [p content]
+  (let [final-path (str p)
+        temp-path (str final-path ".tmp-" (.randomUUID node-crypto))]
+    (try
+      (.writeFileSync node-fs temp-path (str content)
+                      #js {:flag "wx" :encoding "utf8"})
+      (fsync-file-sync! temp-path)
+      (link-file-exclusive-sync! temp-path final-path)
+      (finally
+        (unlink-sync! temp-path)))))
+
+(defn write-file-sync!
+  "Synchronously write `content` to `p` as UTF-8, creating or overwriting."
+  [p content]
+  (.writeFileSync node-fs (str p) (str content) "utf8"))
+
+(defn rename-sync!
+  "Synchronously and atomically rename `from` to `to` (same filesystem)."
+  [from to]
+  (.renameSync node-fs (str from) (str to)))
+
+(defn unlink-sync!
+  "Synchronously delete `p`. Never throws on an already-absent file."
+  [p]
+  (try
+    (.unlinkSync node-fs (str p))
+    (catch :default err
+      (when-not (= "ENOENT" (.-code err))
+        (throw err)))))
+
+(defn mkdir-sync!
+  "Synchronously create `p` and all parents. Safe to call if it exists."
+  [p]
+  (.mkdirSync node-fs (str p) #js {:recursive true}))

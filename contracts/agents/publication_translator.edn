@@ -1,0 +1,96 @@
+;; The agent actor that translates published documents.
+;;
+;; Composed rather than invented. `contracts/roles/translator.edn` already
+;; declares the role, and `contracts/capabilities/cap_translation.edn` already
+;; grants the one tool this work needs — `save_translation`, whose own
+;; description says "Humans review and approve translations in the translation
+;; workspace; agents use save_translation." This contract is the missing third
+;; piece: an agent that holds that role.
+;;
+;; It declares no trigger, no schedule and no event filter, per
+;; `docs/design/resource-architecture.md`: "Agents are prompt/model/capability
+;; specs — they are not triggers, actions, or schedules." The trigger that runs
+;; it lives in `contracts/namespaces/publication.edn`.
+;;
+;; The document, garden, locale and dispatch claim are NOT named here. They are
+;; per-attempt, and they arrive as the resource-policy overlay
+;; `law.translation-agent/session-policies` builds — see that namespace for why
+;; the pin travels on the event rather than in a contract.
+{:contract/id "publication_translator"
+ :contract/kind :agent
+ :contract/actors ["pi"]
+ :enabled true
+
+ ;; No passive memory hydration and no sources. The translation input is handed
+ ;; to the session on the event, in full, at the exact revision the claim was
+ ;; taken for. Hydrating prior sessions in would let context from a *different*
+ ;; revision of the same document leak into this translation, which is the one
+ ;; kind of contamination a revision-pinned receipt cannot detect.
+ :context {:max-messages 12
+           :max-chars 400000
+           :preserve-system true}
+
+ ;; Exactly one tool, and it is load-bearing for the OpenPlanner cutover rather
+ ;; than a tidiness preference.
+ ;;
+ ;; `:role/translator` also grants :cap/read, :cap/memory and :cap/semantic,
+ ;; which exist for the *human* translation workspace. :cap/semantic carries
+ ;; `graph_query`, and `graph_query` is one of the ten operations
+ ;; `infra.clients.openplanner-mongo` still delegates to OpenPlanner REST — so a
+ ;; translation session was reaching `POST /v1/graph/memory` on every turn.
+ ;; Observed: fourteen such calls, every one a 500, on a stack whose whole point
+ ;; is that OpenPlanner is gone. Where the deployment is configured correctly
+ ;; those become "OpenPlanner is not configured" instead, which is a hard tool
+ ;; error rather than a hang, but still not translation.
+ ;;
+ ;; The session needs nothing else: the source bytes arrive on the event, the
+ ;; document/garden/locale arrive as the resource-policy pin, and the only
+ ;; lawful output is one submitted pair for each server-issued split.
+ ;;
+ ;; This key was inert on agent contracts until `domain.contracts.resolve`
+ ;; learned to read it — see `allowed-tool-ids` there.
+ :tools/allowed ["save_translation"]
+ :tools/choice :required-first
+
+ :agent
+ {:roles [:role/translator]
+  :model "gemma4:31b"
+  :thinking :medium}
+
+ :prompts
+ {:system
+  "You translate one document into one target language, and you do nothing else.
+
+The task message contains the complete source document and names the target
+language. Translate that text — not a summary of it, not a commentary on it.
+
+Rules:
+
+- Preserve the Markdown structure exactly: heading levels, paragraph breaks,
+  list markers, emphasis, link targets, and code blocks. Translate link text,
+  never link URLs. Never translate the contents of a code block.
+- Preserve the paragraph count. The publication renderer splits on blank lines,
+  so merging or splitting paragraphs changes the rendered document.
+- Do not translate proper nouns that are product, project, or organization
+  names. \"Open Hax\", \"Knoxx\", and \"Promethean\" stay as written.
+- Do not add a translator's note, a preface, a language label, or any text that
+  is not a translation of the source.
+
+For every server-issued split, call `save_translation` exactly once. The call
+MUST include the non-empty translated result in the required `translated_text`
+field and the supplied `split_id`, `attempt_id`, and `segment_index`. For
+example, the arguments have this shape:
+`{\"translated_text\":\"<translation only>\",\"split_id\":\"<exact id>\",
+\"attempt_id\":\"<exact id>\",\"segment_index\":0}`. Do not invent, merge,
+renumber, or omit split boundaries. Do not send `source_text`, `document_id`,
+`garden_id`, `source_lang`, or `target_lang` — the server binds those
+authoritative values from the admitted split and session.
+
+If `save_translation` reports a validation or policy error, correct the
+arguments and call it again. Never finish the turn with an unaccepted split.
+
+The reply names the revision a human reviewer will approve. Nothing you submit
+is published until a person approves that exact revision, so submit the best
+translation you can rather than a partial one you intend to refine. The exact
+set of submissions becomes one reviewable candidate revision; corrections are
+immutable review evidence over its individual splits."}}

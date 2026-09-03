@@ -1,77 +1,150 @@
 (ns knoxx.frontend.pages.gardens.logic
-  "Pure logic for the gardens admin page. CLJS port of the helpers and
-   request construction in src/pages/GardensPage.tsx."
+  "Pure projection helpers for the deploy-owned Garden review surface.
+
+   A Garden owns identity and locale membership. Publication intents own paths.
+   Content and Puck presentation contracts deliberately do not enter this
+   model."
   (:require [clojure.string :as str]))
 
-(def themes
-  [{:value "monokai" :label "Monokai"
-    :colors {:bg "#272822" :text "#f8f8f2" :accent "#a6e22e"}}
-   {:value "night-owl" :label "Night Owl"
-    :colors {:bg "#011627" :text "#d6deeb" :accent "#82aaff"}}
-   {:value "proxy-console" :label "Proxy Console"
-    :colors {:bg "#0a0a0a" :text "#e0e0e0" :accent "#00d4ff"}}])
-
-(defn theme-info [theme]
-  (first (filter #(= theme (:value %)) themes)))
-
 (def available-languages
-  [{:code "es" :name "Español"} {:code "fr" :name "Français"}
-   {:code "de" :name "Deutsch"} {:code "ja" :name "日本語"}
-   {:code "zh" :name "中文"} {:code "ko" :name "한국어"}
-   {:code "pt" :name "Português"} {:code "ru" :name "Русский"}
-   {:code "it" :name "Italiano"} {:code "ar" :name "العربية"}
-   {:code "hi" :name "हिन्दी"} {:code "nl" :name "Nederlands"}
-   {:code "pl" :name "Polski"} {:code "tr" :name "Türkçe"}
-   {:code "vi" :name "Tiếng Việt"}])
+  {"en" "English" "es" "Español" "fr" "Français" "de" "Deutsch"
+   "ja" "日本語" "zh" "中文" "ko" "한국어" "pt" "Português"
+   "ru" "Русский" "it" "Italiano" "ar" "العربية" "hi" "हिन्दी"
+   "nl" "Nederlands" "pl" "Polski" "tr" "Türkçe" "vi" "Tiếng Việt"})
 
 (defn language-name [code]
-  (or (:name (first (filter #(= code (:code %)) available-languages)))
-      code))
+  (get available-languages code code))
 
-(defn toggle-language [langs code]
-  (if (some #{code} langs)
-    (filterv #(not= code %) langs)
-    (conj (vec langs) code)))
+(defn- trim-trailing-slash [value]
+  (str/replace (or value "") #"/+$" ""))
 
-(def blank-form
-  {:garden-id "" :title "" :description "" :theme "monokai"
-   :status "active" :target-languages [] :auto-translate true})
+(defn public-url
+  "Join a deployment base URL and a contract-owned publication path."
+  [site-url publication-path]
+  (str (trim-trailing-slash site-url)
+       (if (str/starts-with? publication-path "/") "" "/")
+       publication-path))
 
-(defn form-from-garden
-  "Edit-form state prefilled from an existing garden."
+(defn normalize-deployment
+  "Make the backend deployment DTO convenient for the UI without inventing
+   mutable Garden state."
+  [{:keys [site-url gardens]}]
+  {:site-url site-url
+   :gardens
+   (mapv (fn [{:keys [garden publications]}]
+           {:id (:id garden)
+            :title (:title garden)
+            :status (:status garden)
+            :locales (vec (:locales garden))
+            :placements
+            (->> publications
+                 (map (fn [publication]
+                        {:id (:id publication)
+                         :locale (:locale publication)
+                         :path (:path publication)
+                         :state (:state publication)
+                         :url (public-url site-url (:path publication))}))
+                 (sort-by (juxt :locale :path))
+                 vec)})
+         gardens)})
+
+(defn- noop-summary
+  "Distinguish convergence from a reasoned refusal to publish."
+  [reason]
+  (case reason
+    "publication-not-public"
+    "Not published: the contract does not ask for this to be public."
+    "garden-not-active"
+    "Not published: the garden is not active."
+    nil "Already published at this revision; nothing changed."
+    (str "Nothing was done: " reason ".")))
+
+(defn- blocked-summary [blockers]
+  (str "Blocked: "
+       (if-let [values (seq blockers)]
+         (str/join ", " values)
+         "the plan is not admissible")))
+
+(defn receipt-summary
+  "Describe one full namespaced receipt wire type without inventing success."
+  [receipt]
+  (case (:type receipt)
+    "publication/materialized" "Published."
+    "publication/noop" (noop-summary (:reason receipt))
+    "publication/removed" "Withdrawn from publication."
+    "publication/blocked" (blocked-summary (:blockers receipt))
+    "publication/failed" "Reconciliation failed; see the receipt journal."
+    (str "Reconciliation recorded"
+         (when-let [receipt-type (:type receipt)] (str ": " receipt-type))
+         ".")))
+
+(defn placement-published?
+  "Whether a placement's contract state asks for publication. `:state` is the
+   DESIRED state from the contract, never a materialization fact — a placement
+   can read `published` and have no bytes behind it, which is exactly the case
+   the publish action exists to resolve."
+  [placement]
+  (= "published" (:state placement)))
+
+(defn receipt-tone
+  "How a reconciliation receipt should be presented: `:success`, `:warning` or
+   `:error`.
+
+   Separate from `receipt-summary` because the words and the colour must agree,
+   and a banner that paints every outcome emerald contradicts a summary written
+   precisely so a blocked plan does not read as a published one. A receipt this
+   function does not recognize is a warning rather than a success: the
+   reconciler emits receipts for outcomes that are not wins, and the unknown
+   case is far likelier to be one of those than a success nobody named."
+  [receipt]
+  (case (:type receipt)
+    ("publication/materialized" "publication/removed") :success
+    ;; A noop is a success only when it means "already converged", which
+    ;; `converge` signals by emitting NO reason. A noop carrying one came from
+    ;; `takedown` — the contract does not ask for this to be public, or the
+    ;; garden is not active — and those are refusals to publish. Painting them
+    ;; emerald tells a reviewer their content is live when the planner has
+    ;; declined to make it so.
+    "publication/noop" (if (:reason receipt) :warning :success)
+    "publication/blocked" :warning
+    "publication/failed" :error
+    :warning))
+
+(defn publishable-placements
+  "The placements a publish-all run would attempt, in listed order."
   [garden]
-  {:garden-id (:garden_id garden)
-   :title (:title garden)
-   :description (or (:description garden) "")
-   :theme (or (:theme garden) "monokai")
-   :status (:status garden)
-   :target-languages (vec (or (:target_languages garden) []))
-   :auto-translate (if (some? (:auto_translate garden)) (:auto_translate garden) true)})
+  (filterv placement-published? (:placements garden)))
 
-(defn validate-form [{:keys [garden-id title]}]
-  (when (or (str/blank? garden-id) (str/blank? title))
-    "Garden ID and title are required"))
+(defn run-summary
+  "One line for a completed publish-all run, counted by what actually happened.
 
-(defn build-save-request
-  "Save request {:url :method :body} — POST to create, PATCH to update."
-  [{:keys [garden-id title description theme status target-languages auto-translate]} editing?]
-  (if editing?
-    {:url (str "/api/openplanner/v1/gardens/" (js/encodeURIComponent garden-id))
-     :method "PATCH"
-     :body {:title title
-            :description description
-            :theme theme
-            :status status
-            :target_languages target-languages
-            :auto_translate auto-translate}}
-    {:url "/api/openplanner/v1/gardens"
-     :method "POST"
-     :body {:garden_id (str/trim garden-id)
-            :title title
-            :description description
-            :theme theme
-            :target_languages target-languages
-            :auto_translate auto-translate}}))
+   Counts by outcome rather than reporting only successes, because most of a
+   garden is usually NOT publishable yet — a locale awaiting translation or
+   approval answers `blocked`, and a run that mentioned only what it published
+   would read as though the rest had quietly worked."
+  [receipts]
+  (let [published (count (filter #(= "publication/materialized" (:type %)) receipts))
+        converged (count (filter #(and (= "publication/noop" (:type %))
+                                       (nil? (:reason %)))
+                                 receipts))
+        blocked (count (filter #(= "publication/blocked" (:type %)) receipts))
+        failed (count (filter #(= "publication/failed" (:type %)) receipts))
+        other (- (count receipts) published converged blocked failed)]
+    (str/join ", "
+              (cond-> []
+                (pos? published) (conj (str published " published"))
+                (pos? converged) (conj (str converged " already current"))
+                (pos? blocked) (conj (str blocked " blocked"))
+                (pos? failed) (conj (str failed " failed"))
+                (pos? other) (conj (str other " not published"))
+                (empty? receipts) (conj "nothing to publish")
+                true (conj (str "(" (count receipts) " attempted)"))))))
 
-(defn garden-html-url [garden-id]
-  (str "/api/openplanner/v1/public/gardens/" garden-id "/html"))
+(defn run-tone
+  "The worst tone in a run. A single failure must not be hidden behind a
+   majority of successes."
+  [receipts]
+  (let [tones (set (map receipt-tone receipts))]
+    (cond (contains? tones :error) :error
+          (contains? tones :warning) :warning
+          :else :success)))

@@ -21,7 +21,9 @@
 
 (def TenantScopeRequest
   [:map {:closed false}
-   [:org_id NonBlankString]])
+   [:org_id NonBlankString]
+   [:project {:optional true} OptionalString]
+   [:garden_id {:optional true} OptionalString]])
 
 (def ScopeOrgId
   "An organization identifier carried by authorization data: absent, or a nonblank string.
@@ -129,6 +131,8 @@
    [:editor_notes {:optional true} OptionalString]
    [:labeler_id {:optional true} OptionalString]
    [:labeler_email {:optional true} OptionalString]
+   [:project NonBlankString]
+   [:garden_id {:optional true} OptionalString]
    [:org_id NonBlankString]])
 
 (def LabelTranslationSegmentResponse
@@ -215,6 +219,8 @@
   [:map {:closed false}
    [:overall LabelOverall]
    [:org_id NonBlankString]
+   [:project NonBlankString]
+   [:garden_id {:optional true} OptionalString]
    [:editor_notes {:optional true} OptionalString]
    [:labeler_email {:optional true} OptionalString]
    [:labeler_id {:optional true} OptionalString]
@@ -244,7 +250,8 @@
    [:source_lang {:optional true} OptionalString]
    [:project {:optional true} OptionalString]
    [:org_id NonBlankString]
-   [:membership_id NonBlankString]])
+   [:membership_id NonBlankString]
+   [:dispatch_key {:optional true} OptionalString]])
 
 (def CreateTranslationBatchResponse
   [:map {:closed false}
@@ -259,6 +266,7 @@
    [:garden_id {:optional true} OptionalString]
    [:target_lang {:optional true} OptionalString]
    [:status {:optional true} OptionalString]
+   [:dispatch_key {:optional true} OptionalString]
    [:org_id NonBlankString]])
 
 (def TranslationBatchesResponse

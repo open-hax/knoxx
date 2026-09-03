@@ -82,11 +82,46 @@ const cmsDoc = {
   content: "Initial CMS body",
   source_path: "docs/existing.md",
   visibility: "internal",
-  metadata: { garden_publications: [{ garden_id: "garden-a" }] },
+  // No `garden_publications`. Publication state is no longer read from document
+  // metadata — it comes from the resource-backed publication topology.
+  metadata: {},
 };
 
-function installCmsFetchMock(doc = cmsDoc) {
+function publicationTopology(desired: "published" | "withheld") {
+  return {
+    documents: [
+      {
+        document: {
+          id: "knoxx.docs/existing",
+          title: "Existing CMS Doc",
+          "source-locale": "en",
+          source: { path: "docs/existing.md" },
+        },
+        publications: [
+          {
+            id: "knoxx.docs/existing-en",
+            document: "knoxx.docs/existing",
+            garden: "garden-a",
+            locale: "en",
+            revision: "source/current",
+            path: "/existing",
+            desired,
+            observed: desired === "published" ? "abc123" : null,
+            blockers: [],
+          },
+        ],
+      },
+    ],
+    gardens: [{ id: "garden-a", title: "Garden A", status: "active" }],
+  };
+}
+
+function installCmsFetchMock(doc = cmsDoc, initialDesired: "published" | "withheld" = "published") {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
+  // Stateful on purpose: a PATCH changes the resource, and the page re-reads the
+  // topology rather than predicting the new state locally. A fixed-response mock
+  // would let a page that never re-read still pass.
+  let desired = initialDesired;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     requests.push({ url, init });
@@ -94,8 +129,15 @@ function installCmsFetchMock(doc = cmsDoc) {
     if (url.startsWith("/api/ingestion/browse")) {
       return jsonResponse({ current_path: ".", entries: [] });
     }
-    if (url === "/api/openplanner/v1/gardens") {
-      return jsonResponse({ ok: true, gardens: [{ garden_id: "garden-a", title: "Garden A", status: "active" }] });
+    if (url === "/api/cms/publications/documents") {
+      return jsonResponse(publicationTopology(desired));
+    }
+    if (url.startsWith("/api/cms/publications/intents/")) {
+      const patched = JSON.parse(String(init?.body ?? "{}")) as { state?: string };
+      if (patched.state === "published" || patched.state === "withheld") {
+        desired = patched.state;
+      }
+      return jsonResponse(publicationTopology(desired).documents[0].publications[0]);
     }
     if (url === "/api/ingestion/sources") {
       return jsonResponse([{ source_id: "workspace", name: "workspace", config: { root_path: "/app/workspace", workspace_source: true } }]);
@@ -174,23 +216,51 @@ describe("CmsPage CMS document backend interactions", () => {
       content: "Updated CMS body",
       source_path: "docs/existing.md",
       visibility: "public",
-      metadata: { garden_publications: [{ garden_id: "garden-a" }] },
     });
     expect(screen.getByDisplayValue("Updated CMS body")).toBeInTheDocument();
   });
 
-  it("publishes and unpublishes the selected CMS document for the selected garden", async () => {
-    const unpublishedDoc = { ...cmsDoc, metadata: { garden_publications: [] } };
-    const publishedHarness = installCmsFetchMock(unpublishedDoc);
+  it("reads publication state from the resource topology, not from the legacy surface", async () => {
+    const harness = installCmsFetchMock(cmsDoc, "published");
+    renderCmsPage();
+
+    // Badge state comes from the topology's `desired`, and the fixture document
+    // carries NO garden_publications metadata at all — so if the page still read
+    // metadata for publication state, this badge could not say "Published".
+    await screen.findByText("Published");
+    expect(cmsDoc.metadata).toEqual({});
+
+    await waitFor(() => expect(harness.requests.some((request) => (
+      request.url === "/api/cms/publications/documents"
+    ))).toBe(true));
+
+    // The legacy garden surface is never consulted.
+    expect(harness.requests.some((request) => (
+      request.url === "/api/openplanner/v1/gardens"
+    ))).toBe(false);
+  });
+
+  it("publishes and unpublishes through the publication intent resource", async () => {
+    const publishedHarness = installCmsFetchMock(cmsDoc, "withheld");
 
     const { unmount } = renderCmsPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
     await screen.findByText("Published");
-    expect(publishedHarness.requests.some((request) => (
-      request.url === "/api/openplanner/v1/cms/publish/cms-doc-1/garden-a?skip_translation=true&defer_index=true"
-      && request.init?.method === "POST"
-    ))).toBe(true);
+
+    // The semantic result is a state change on the publication RESOURCE, not a
+    // write into document metadata.
+    const patchIntent = publishedHarness.requests.find((request) => (
+      request.url.startsWith("/api/cms/publications/intents/")
+      && request.init?.method === "PATCH"
+    ));
+    expect(patchIntent).toBeTruthy();
+    expect(JSON.parse(String(patchIntent?.init?.body))).toEqual({ state: "published" });
+    // Identity must not travel in a state edit.
+    const patchedBody = JSON.parse(String(patchIntent?.init?.body));
+    for (const identityField of ["document", "garden", "locale", "revision"]) {
+      expect(patchedBody).not.toHaveProperty(identityField);
+    }
 
     unmount();
     const unpublishedHarness = installCmsFetchMock(cmsDoc);

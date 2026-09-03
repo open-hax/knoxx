@@ -1,59 +1,53 @@
 ---
-uuid: knoxx-publication-reconciler-runtime
-title: Publication — something that actually reconciles
-status: ready
-priority: P1
-points: 3
-labels:
-  - tasks
-  - publication
-  - runtime
-  - has-parent
+category: "tasks"
+labels: ["tasks", "has-parent", "publication", "reconciliation", "runtime", "receipts", "wave-1"]
+write-id: "1787011200002-0.914627"
+points: "3"
+title: "Publication — reconciler runtime"
+priority: "P1"
+status: "ready"
+uuid: "knoxx-publication-reconciler-runtime"
+created_at: "2026-08-22T00:00:00Z"
 ---
 
-# Publication — something that actually reconciles
+# Publication — reconciler runtime
 
 > Parent epic: `knoxx-translated-publication-to-website`
 
 ## Purpose
 
-`infra/publication_effects.cljs` is required by two files: the memory target and
-its tests. Nothing in the running backend calls plan → effects. Desired state is
-served, observed state is never produced, and drift is therefore always the whole
-of desired state.
+Make the proven pure plan and replaceable adapter effects run on a real trigger.
+The runtime translates a trigger into plan → effects and records evidence of what
+actually happened; it does not turn operational receipt state into desired state.
 
 ## Dependencies
 
-`knoxx-publication-static-site-target`, `knoxx-publication-target-registry`. It
-can be built against the memory target and switched over.
+`knoxx-publication-target-registry`, `knoxx-publication-static-site-target`,
+`knoxx-translation-work-dispatch`, and `knoxx-translation-approval-surface`.
 
 ## Work
 
-- Add a reconcile entry point: resolve desired intents, compute the plan, execute
-  it through the effect boundary, and append receipts.
-- Triggers, in increasing order of ambition — deliver the first two:
-  explicit invocation through an authorized route, and after a publication intent
-  changes. A periodic sweep is optional and must be separately disableable.
-- One reconcile at a time per target. Two concurrent runs against one content
-  root is the case the idempotency store exists for, and it should not be the
-  normal path.
-- A failing publish surfaces as drift and must not mutate desired state, matching
-  what `memory-target`'s `:fail?` mode already proves at the boundary.
-- One intent's failure does not abandon the rest of the run. Report per-intent
-  outcomes.
-- Bound the run. A hung adapter must fail the reconcile, not hold it open — the
-  same rule the deploy gates already apply to every probe.
-- Emit a run summary: attempted, materialized, noop, removed, blocked, failed.
-  Blocked is not failed, and a run that is all-blocked is a success.
-- Respect `knoxx-http-event-runtime-lifecycle-separation`: HTTP-only startup must
-  not implicitly begin reconciling.
+- Define the runtime entry point and trigger payload that load resources,
+  publication intent, relevant translation/review facts, and a concrete artifact
+  before invoking the existing pure reconciliation law.
+- Resolve the declared target through the registry, execute the resulting plan,
+  and preserve the planner's operation identities when effects are retried.
+- Persist or emit a validated receipt for every attempted effect, including
+  blocked, noop, materialized, removed, and failed outcomes, with enough
+  correlation data to trace the triggering publication identity and revision.
+- Ensure one failed target effect is observable and does not fabricate a
+  materialized receipt; desired resource state remains unchanged by runtime
+  observation.
+- Provide an explicit trigger integration (event, scheduled job, or authorized
+  runtime route) rather than a library function that no production path calls.
 
 ## Definition of Done
 
-- A publication intent reaches the target without a human calling a REPL.
-- Running twice with no change materializes nothing and reports all `:noop`.
-- An adapter failure appears as drift, leaves desired state untouched, and does
-  not abort the run.
-- Blocked intents are reported as blocked and are not retried as failures.
-- Concurrent runs against one target cannot double-publish.
-- An HTTP-only process performs no reconciliation until asked.
+- An integration test triggers reconciliation and proves the runtime calls pure
+  planning before adapter effects.
+- A materialization, noop, blocker, removal, and adapter failure each produce a
+  receipt with the expected outcome and correlation identity.
+- A retry of the same operation preserves idempotency and yields no duplicate
+  publication.
+- Tests prove a receipt cannot mutate desired resource declarations or bypass a
+  translation/review blocker.

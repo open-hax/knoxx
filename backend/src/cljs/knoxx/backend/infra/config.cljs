@@ -33,6 +33,37 @@
       parsed
       default)))
 
+(def ^:private max-node-timeout-ms 2147483647)
+
+(defn- env-node-timeout-ms
+  "Read an optional Node.js timer duration. Unset means default; an explicitly
+   invalid value is a startup error rather than silently becoming unbounded or
+   being clamped by Node to a near-immediate timeout."
+  [k default]
+  (let [raw-value (aget js/process.env k)]
+    (if (nil? raw-value)
+      default
+      (let [raw (-> raw-value str str/trim)
+            parsed (js/Number raw)]
+        (if (and (re-matches #"[1-9][0-9]*" raw)
+                 (js/Number.isSafeInteger parsed)
+                 (<= parsed max-node-timeout-ms))
+          parsed
+          (throw
+           (ex-info
+            (str k " must be an integer between 1 and " max-node-timeout-ms)
+            {:error/kind :config/invalid-node-timeout
+             :env/name k
+             :maximum max-node-timeout-ms})))))))
+
+(defn- env-flag
+  "True only for an explicit affirmative. Anything else — unset, empty, \"false\",
+   \"0\", a typo — is false, so a flag that disables production behavior can
+   never be switched on by accident."
+  [k]
+  (contains? #{"1" "true" "yes" "on"}
+             (some-> (aget js/process.env k) str str/trim str/lower-case)))
+
 (defn- env-kv-map
   [k]
   (let [raw (some-> (aget js/process.env k) str str/trim)]
@@ -60,8 +91,19 @@
    :knoxx-default-actor-id (env "KNOXX_DEFAULT_ACTOR_ID" "chat_primary")
    :knoxx-default-agent-contract (env "KNOXX_DEFAULT_AGENT_CONTRACT" "knoxx_default")
    :contracts-dir (env "CONTRACTS_DIR" "contracts")
+   ;; Generated publication drafts are runtime output, never written into the
+   ;; authored/read-only deployment contracts. When configured, the resource
+   ;; loader treats this as a lower-priority second root.
+   :generated-contracts-dir
+   (some-> (aget js/process.env "KNOXX_GENERATED_CONTRACTS_DIR") str str/trim not-empty)
    :shutdown-grace-ms (env-int "KNOXX_SHUTDOWN_GRACE_MS" 25000)
-   :shutdown-poll-ms (env-int "KNOXX_SHUTDOWN_POLL_MS" 250)})
+   :shutdown-poll-ms (env-int "KNOXX_SHUTDOWN_POLL_MS" 250)
+   ;; Boot the HTTP surface WITHOUT schedules, triggers, or Discord actor
+   ;; gateways. Exists so a developer can run a local Knoxx for the human
+   ;; verification scripts (AGENTS.md) without a real bot joining real guilds
+   ;; and answering real messages. Never set this in production — see
+   ;; knoxx-event-runtime-boot-coupling.
+   :event-runtimes-disabled? (env-flag "KNOXX_DISABLE_EVENT_RUNTIMES")})
 
 (defn- workspace-config
   []
@@ -71,7 +113,7 @@
                          (when-not (str/blank? (or value ""))
                            value))
    :project-name (env-first ["WORKSPACE_PROJECT_NAME" "KNOXX_WORKSPACE_PROJECT"] "workspace")
-   :session-project-name (env "KNOXX_SESSION_PROJECT_NAME" "knoxx-session")
+   :session-project-name (env-first ["KNOXX_SESSION_PROJECT_NAME"] "knoxx-session")
    :collection-name (env "KNOXX_COLLECTION_NAME" "workspace_docs")
    :ingestion-base-url (env "KMS_INGESTION_URL" "http://127.0.0.1:3003")
    :openplanner-base-url (or (aget js/process.env "OPENPLANNER_BASE_URL")
@@ -81,6 +123,20 @@
    ;; "mongo" = data plane in-process via @open-hax/openplanner-sdk (direct
    ;; MongoDB + self-sourced embeddings); "rest" = force the fetch client.
    :openplanner-client-mode (env "KNOXX_OPENPLANNER_CLIENT_MODE" "mongo")})
+
+(defn- publication-config
+  []
+  {:publication-site-url
+   (env "KNOXX_PUBLICATION_SITE_URL" "http://localhost:4173")
+   :publication-content-root
+   (some-> (aget js/process.env "KNOXX_PUBLICATION_CONTENT_ROOT") str str/trim not-empty)
+   ;; Which producer a translation dispatch asks. See
+   ;; `infra.routes.translation-dispatch/runner-kinds` for the two, and
+   ;; `default-runner` there for why the agent is the default: this deployment
+   ;; does not run the `ingestion/` worker, so defaulting to it queued batches
+   ;; nothing would ever pick up.
+   :translation-runner
+   (some-> (aget js/process.env "KNOXX_TRANSLATION_RUNNER") str str/trim not-empty)})
 
 (defn- provider-config
   []
@@ -93,6 +149,12 @@
                           (when (and (string? value) (not (str/blank? value)))
                             value))
    :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")
+   ;; Ollama exposes an OpenAI-compatible API under /v1. Keep it optional in
+   ;; deployment config; the local launcher opts in with 127.0.0.1:11434.
+   :ollama-base-url (env "OLLAMA_BASE_URL" "")
+   :ollama-default-model (let [value (aget js/process.env "OLLAMA_DEFAULT_MODEL")]
+                           (when (and (string? value) (not (str/blank? value)))
+                             value))
    :provider-base-urls (env-kv-map "KNOXX_PROVIDER_BASE_URLS")
    :provider-auth-tokens (env-kv-map "KNOXX_PROVIDER_AUTH_TOKENS")
    :provider-auth-headers (env-kv-map "KNOXX_PROVIDER_AUTH_HEADERS")
@@ -120,10 +182,24 @@
    :voxx-default-speed (env "KNOXX_VOXX_DEFAULT_SPEED" (env "VOICE_GATEWAY_TTS_DEFAULT_SPEED" "1.15"))
    :stt-base-url (env "KNOXX_STT_BASE_URL" "")})
 
+(defn- agent-deployment-config
+  []
+  ;; Deployment overlays select local/provider-specific models without
+  ;; rewriting the authored agent contracts. The limiter applies only to
+  ;; event-triggered turns; interactive chat stays on its existing path.
+  {:agent-model-overrides (env-kv-map "KNOXX_AGENT_MODEL_OVERRIDES")
+   :agent-thinking-overrides (env-kv-map "KNOXX_AGENT_THINKING_OVERRIDES")
+   :event-agent-concurrency (max 1 (env-int "KNOXX_EVENT_AGENT_CONCURRENCY" 1))
+   :event-agent-queue-limit (max 1 (env-int "KNOXX_EVENT_AGENT_QUEUE_LIMIT" 256))
+   :event-agent-turn-timeout-ms
+   (env-node-timeout-ms "KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS" 0)})
+
 (defn- agent-config
   []
-  {:agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
-    :agent-compaction-enabled? (not= "false" (str/lower-case (env "KNOXX_AGENT_COMPACTION_ENABLED" "true")))
+  (merge
+   {:agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")}
+   (agent-deployment-config)
+   {:agent-compaction-enabled? (not= "false" (str/lower-case (env "KNOXX_AGENT_COMPACTION_ENABLED" "true")))
     :agent-compaction-reserve-tokens (env-int "KNOXX_AGENT_COMPACTION_RESERVE_TOKENS" 16384)
     :agent-compaction-keep-recent-tokens (env-int "KNOXX_AGENT_COMPACTION_KEEP_RECENT_TOKENS" 20000)
     ;; 0 (the default) means no per-turn timeout: agents run as long as they
@@ -143,13 +219,15 @@
                           "Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, "
                           "use semantic_query, semantic_read, and graph_query instead of guessing. "
                           "Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, "
-                          "prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember."))})
+                          "prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember."))}))
 
 (defn- sandbox-config
   []
   {:sandbox-docker-bin (env "KNOXX_SANDBOX_DOCKER_BIN" "docker")
    :sandbox-image (env "KNOXX_SANDBOX_IMAGE" "knoxx-sandbox:latest")
-   :sandbox-user (env "DOCKER_USER" "1000:1000")
+   ;; When unset, the sandbox runtime derives the current effective uid:gid.
+   ;; An explicit value is a fail-closed assertion that must match that owner.
+   :sandbox-user (env "DOCKER_USER" nil)
    :sandbox-workdir (env "KNOXX_SANDBOX_WORKDIR" "/workspace")
    :sandbox-root-dir (env "KNOXX_SANDBOX_ROOT_DIR" "/tmp/knoxx-agent/sandboxes")
    :sandbox-dockerfile (env "KNOXX_SANDBOX_DOCKERFILE" "docker/sandbox/Dockerfile")
@@ -178,6 +256,7 @@
   (merge
    (base-server-config)
    (workspace-config)
+   (publication-config)
    (provider-config)
    (integration-config)
    (voice-config)

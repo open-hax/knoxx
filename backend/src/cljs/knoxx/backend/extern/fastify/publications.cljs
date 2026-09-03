@@ -7,10 +7,11 @@
   synchronous facade stays compatible if it later becomes effectful without
   introducing a `.then`.
 
-  Both routes authorize. The projection reads document titles, garden
+  Every route authorizes. The projection reads document titles, garden
   membership, and publication paths off the filesystem, so an unauthenticated
   caller must not be able to enumerate it."
   (:require [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
@@ -111,6 +112,10 @@
   ((:ensure-permission! handlers) ctx read-permission)
   (await (operation)))
 
+(defn- request-scope
+  [ctx]
+  {:org-id (some-> (authz/ctx-org-id ctx) str not-empty)})
+
 (defn- authorized-route
   "One shape for both routes: enter the request context, authorize, run the
    projection, send it. `operation` receives the decoded request."
@@ -123,7 +128,8 @@
           (await
            (send-projection!
             reply
-            #(guarded! handlers ctx (fn [] (operation decoded)))))))))))
+            #(guarded! handlers ctx
+                        (fn [] (operation (request-scope ctx) decoded)))))))))))
 
 (defn register-publication-routes!
   [app runtime config handlers]
@@ -132,14 +138,24 @@
    {:method "GET"
     :url "/api/publications/documents"
     :handler (authorized-route runtime handlers
-                               (fn [_decoded]
-                                 (publications/list-publication-documents! config)))})
+                               (fn [scope _decoded]
+                                 (publications/list-publication-documents!
+                                  config scope)))})
   (fastify/route!
    app
    {:method "GET"
     :url "/api/publications/documents/:documentId"
     :handler (authorized-route runtime handlers
-                               (fn [decoded]
+                               (fn [scope decoded]
                                  (publications/publication-document-view!
-                                  config (get-in decoded [:params :documentId]))))})
+                                  config scope
+                                  (get-in decoded [:params :documentId]))))})
+  (fastify/route!
+   app
+   {:method "GET"
+    :url "/api/publications/gardens"
+    :handler (authorized-route runtime handlers
+                               (fn [scope _decoded]
+                                 (publications/list-publication-gardens!
+                                  config scope)))})
   nil)

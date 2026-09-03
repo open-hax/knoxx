@@ -9,6 +9,13 @@
   []
   (.randomUUID crypto))
 
+(defn terminate-process!
+  "Fail-stop the current backend after an unrecoverable provider lifecycle
+   failure. The deployment supervisor restarts the process; durable event work
+   is then recovered instead of overlapping a still-live provider turn."
+  [exit-code]
+  (js/process.exit exit-code))
+
 (defn ^:async file-data-url-with-fs!
   [^js node-fs absolute-path mime-type label max-bytes]
   (let [mime-type (or mime-type "application/octet-stream")

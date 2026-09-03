@@ -2,7 +2,7 @@
 
 > Hub: **[eta-mu/ROADMAP.md](https://github.com/open-hax/eta-mu/blob/main/ROADMAP.md)** — read that for the seam, the ownership
 > table, and the sequencing rule. This file is only knoxx's slice.
-> Board: `kanban/{epics,tasks}/`. Last surveyed: 2026-08-04.
+> Board: `kanban/{epics,tasks}/`. Last surveyed: 2026-08-29.
 >
 > That link 404s until [eta-mu#167](https://github.com/open-hax/eta-mu/pull/167)
 > merges — the hub is written and on that branch, not yet on `main`. The path is
@@ -31,8 +31,10 @@ until the upstream criteria close.
 Everything achievable **without moving code**: become internally lawful and
 actor-aware, so extraction later is mechanical rather than archaeological.
 
-Epic: **`knoxx-decouple-into-katamorph-contracts`** (misleading name kept for
-card-link stability; scope is compliance, extraction is a listed non-goal).
+The compliance catch-all and the domain capability work are separate. Epic
+**`knoxx-decouple-into-katamorph-contracts`** keeps its misleading name for
+card-link stability, but owns only constitutional compliance; extraction is a
+listed non-goal.
 
 | Card | Why |
 |---|---|
@@ -40,62 +42,26 @@ card-link stability; scope is compliance, extraction is a listed non-goal).
 | `knoxx-mcp-actor-ascription` (P1) | Discord/Bluesky over MCP have **no owning actor**, so credentials throw. Fails safe, but those tools are non-functional remotely. |
 | `knoxx-deploy-actor-owning-local-credentials` (P1) | The above is useless in production without an actor that holds credentials. |
 | `knoxx-tool-namespace-boundary-audit` | Name each tool set's boundary before anything moves. |
-| `knoxx-translations-event-sourced` | Translations are a destructive upsert today. |
-| `knoxx-translation-pipeline-validation` | Never validated end to end; on the deploy health gate. |
-| `knoxx-cms-contract-validation` | Contracts never tested; deploy gate **skips** the CMS check every deploy. |
 | `knoxx-voice-tools-remote-transport` | Written for an owned realtime harness; MCP cannot steer. |
 | `knoxx-tool-vocabulary-rename` | "semantic" names a technique, not a subject. Do after the boundaries exist. |
 | `knoxx-mcp-consent-permission-groups` | **Blocked** on `eta-mu:capability-schema-reconciliation` — tool groups *are* capabilities. |
 
-## Publication: desired state shipped, the effect edge did not
+### Parallel bounded capability work
 
-The `knoxx-contract-owned-publication-pipeline` epic is built and correct, and it
-publishes nothing. Two facts, both checkable on the stack's tip branch:
+These epics may consume one another's immutable artifacts and receipts, but none owns
+another's semantics. In particular, candidate generation is not review, repository
+storage is not publication, and concrete layout/rendering is not content authority.
 
-- `infra/publication_effects.cljs` — the effect boundary — is required by exactly
-  two files: `infra/publication_target_memory.cljs` and its tests. Nothing in the
-  running backend calls plan → effects.
-- There is one `IPublicationTarget` implementation and it is in memory.
+| Capability epic | First bounded cards | Owns |
+|---|---|---|
+| **`knoxx-transduction-provider-pipeline`** (P1) | `knoxx-translation-transduction-boundary`, `knoxx-translation-config-publication-dependency-removal`, `knoxx-translation-config-trusted-auth-context`, `knoxx-versioned-resolved-translation-config`, `knoxx-translation-pipeline-validation`, `knoxx-translations-event-sourced` | Typed candidate generation, trusted scope, provider policy, immutable attempts, and provenance. |
+| **`knoxx-evaluation-review-system`** (P0) | Reopened `knowledge-ops-translation-document-review-v2`, `knoxx-translation-split-memory-feedback`, `knoxx-evaluation-case-contracts`, `knoxx-evaluation-mcp-review-flow`, and `knoxx-translation-review-chat-panel`; headless and UI paths share receipts | Real persisted translation splits, rubrics, SME judgments/corrections, translation memory, and durable evaluation receipts over the resource CMS. |
+| **`knoxx-resource-repository-cms`** (P2) | `knoxx-cms-contract-validation`, `knoxx-file-resource-repository-provider`, `knoxx-resource-repository-snapshot-observation` | Provider-neutral resource identity, validation, versioned CRUD, and atomic observations. |
+| **`knoxx-representation-output-boundary`** (P3) | `knoxx-react-ssr-representation-provider` | Conversion of resolved semantic/view artifacts into HTML, React, Markdown, PDF, or other concrete forms. |
 
-The routes are registered through `infra/routes/app.cljs` and answer, so desired
-state is genuinely readable in production. Observed state has no producer, which
-means drift is permanently the whole of desired state. The translation half
-matches: the gate derives work, and `ingestion/src/kms_ingestion/translation/
-worker.clj` contains no reference to publication.
-
-`knoxx-translated-publication-to-website` (breakdown, 26 cards) closes that
-against one real target — `open-hax/website`, chosen because it is the smallest
-honest target and nothing depends on it.
-
-**Resolved 2026-08-21 — the ladder is on `main`.** `#247` → `#233` → `#234` →
-`#235` → `#236` → `#237` → `#239` → `#240` → `#241` → `#243` → `#242`, merged in
-order with no conflicts. `#243` went before `#242` so `main` never carried the
-publication surface in the state where every route answered 500. What follows is
-the record of why it was stuck.
-
-**The bottom of the stack could not be reopened.** `#230`
-merged and its branch was deleted; `#232` (`feat/publication-state-migration`),
-which targeted it, is closed and unmerged. GitHub refuses both repairs —
-`Cannot change the base branch of a closed pull request` and `state cannot be
-changed. The feat/publication-intent-resolver branch has been deleted`. This is
-not the platform's documented behaviour, which retargets dependent PRs onto the
-merged PR's base; the fourteen other open PRs kept their bases and are fine. It
-is what happened here.
-
-The nine PRs from `#233` upward each report `mergeable_state: clean` against
-their immediate base, so nothing is visible from any single PR page — the ladder
-is green and its bottom rung is a closed PR. `#247` reopens that branch against
-`main` with the same head commit; the whole ladder then merges in order with no
-conflicts. `knoxx-publication-stack-relink` is P0 for that reason.
-
-The deployment side is `open-hax/services`:
-[`docs/deployment-model.md`](https://github.com/open-hax/services/blob/main/docs/deployment-model.md)
-defines the service descriptor, the promotion rule, the gate contract, and the
-one-writer rule for a service that serves content another service publishes.
-Everything deploys to the DigitalOcean lane — the Promethean lane accepts no new
-services and is being retired — so Knoxx and the website end up compose projects
-on one host and the publication adapter is a filesystem adapter over a
-bind-mounted content root.
+Publication remains an integration consumer: it resolves publication intent, requires
+the relevant evaluation evidence, selects representations, performs effects, and emits
+its own receipts without absorbing transduction, evaluation, repository, or layout law.
 
 ## Knoxx's position in the drift ledger
 

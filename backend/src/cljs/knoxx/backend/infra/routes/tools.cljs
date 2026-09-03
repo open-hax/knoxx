@@ -9,6 +9,7 @@
             [knoxx.backend.domain.text :refer [sanitize-svg-content]]
             [knoxx.backend.infra.control-config :as control-config]
             [knoxx.backend.infra.event-runtime :as event-runtime]
+            [knoxx.backend.infra.auth.authz :as authz]
             ["node:child_process" :refer [execFile]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]
@@ -55,6 +56,17 @@
   (->> (:results result)
        (filter :failed)
        vec))
+
+(defn operator-dispatch-event
+  "Bind a synthetic event to its authenticated actor.
+
+  Canonical `:event/actor` wins normalization; removing aliases makes the
+  boundary explicit and prevents a later precedence change from restoring a
+  caller-supplied emitter identity."
+  [ctx body]
+  (-> body
+      (dissoc :actorId :actor-id)
+      (assoc :event/actor (authz/ctx-actor-id ctx))))
 
 (defn- trigger-fire-response!
   [reply trigger-id result]
@@ -356,8 +368,14 @@
                         (assoc live-config :event-control body))]
       (swap! runtime-state/config* (fn [c] (assoc (or c config) :event-control next-control)))
       (control-config/persist-event-control! next-control)
-      (event-runtime/reload! live-config)
-      (json-response! reply 200 (assoc (events-control-response config) :ok true)))
+      ;; `:ok true` refers to persisting the control config, which did happen.
+      ;; The reload is a side effect and can be refused on a flagged process, so
+      ;; its outcome is reported rather than absorbed — otherwise the response
+      ;; implies the runtime picked up the change when it did not.
+      (let [reload (await (event-runtime/reload! live-config))]
+        (json-response! reply 200 (assoc (events-control-response config)
+                                         :ok true
+                                         :reload reload))))
     (catch :default err
       (error-response! reply err))))
 
@@ -371,7 +389,7 @@
       (if (str/blank? trigger-id)
         (json-response! reply 400 {:detail "triggerId is required"})
         (try
-          (let [result (await (event-runtime/fire-trigger! config trigger-id))]
+          (let [result (await (event-runtime/fire-trigger-external! config trigger-id))]
             (trigger-fire-response! reply trigger-id result))
           (catch :default err
             (error-response! reply err)))))
@@ -386,7 +404,8 @@
     (ensure-permission! ctx "org.events.control")
     (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
       (try
-        (let [result (await (event-dispatch/dispatch! config body))
+        (let [result (await (event-dispatch/dispatch-external!
+                             config (operator-dispatch-event ctx body)))
               failures (failed-trigger-results result)
               failed? (seq failures)]
           (json-response! reply (if failed? 500 202)
@@ -414,8 +433,17 @@
   "POST" "/api/admin/config/events/runtime/start"
   [session-guard]
   (ensure-permission! ctx "org.events.control")
-  (event-runtime/start! config)
-  (json-response! reply 200 (assoc (events-control-response config) :ok true :action "started")))
+  ;; `start!` refuses when the process is flagged, so reporting ok/started
+  ;; unconditionally would tell an operator the runtime came up when nothing
+  ;; did. Answer 409 instead: the request is well-formed, the process state
+  ;; forbids it.
+  (if (= :disabled (event-runtime/start! config))
+    (json-response! reply 409
+                    (assoc (events-control-response config)
+                           :ok false
+                           :action "refused"
+                           :reason "KNOXX_DISABLE_EVENT_RUNTIMES is set on this process"))
+    (json-response! reply 200 (assoc (events-control-response config) :ok true :action "started"))))
 
 (defroute register-events-runtime-reset-route!
   []
@@ -424,12 +452,22 @@
   (try
     (ensure-permission! ctx "org.events.control")
     (try
+      ;; Same contract as the start route: a disabled process must not report a
+      ;; successful reset. `reload!` declines and says so; this surfaces it
+      ;; rather than merging :ok true over the top of a refusal.
       (let [summary (await (event-runtime/reset-runtime! config))]
-        (json-response! reply 200
-                        (merge (events-control-response config)
-                               {:ok true
-                                :action "reset"
-                                :reset summary})))
+        (if (= :disabled (:status summary))
+          (json-response! reply 409
+                          (merge (events-control-response config)
+                                 {:ok false
+                                  :action "refused"
+                                  :reason "KNOXX_DISABLE_EVENT_RUNTIMES is set on this process"
+                                  :reset summary}))
+          (json-response! reply 200
+                          (merge (events-control-response config)
+                                 {:ok true
+                                  :action "reset"
+                                  :reset summary}))))
       (catch :default err
         (error-response! reply err)))
     (catch :default err
@@ -447,7 +485,8 @@
       (if (str/blank? trigger-id)
         (json-response! reply 400 {:detail "triggerId is required"})
         (try
-          (let [result (await (event-runtime/fire! trigger-id))]
+          (let [result (await (event-runtime/fire-trigger-external!
+                               config trigger-id))]
             (trigger-fire-response! reply trigger-id result))
           (catch :default err
             (error-response! reply err)))))

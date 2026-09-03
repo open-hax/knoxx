@@ -14,6 +14,7 @@
    :project (or (:project request) "devel")
    :org_id org-id
    :membership_id (:membership_id request)
+   :dispatch_key (:dispatch_key request)
    :status "queued"
    :document_ids document-ids
    :completed_documents []
@@ -33,11 +34,22 @@
         document-ids (mapv str (:document_ids request))
         batch (queued-batch request org-id document-ids (js/Date.))
         {:keys [batches]} (common/collections (await (common/db!)))
-        inserted (await (.insertOne batches (clj->js batch)))
+        dispatch-key (:dispatch_key request)
+        inserted-row (if dispatch-key
+                       (await (.findOneAndUpdate
+                               batches
+                               #js {"org_id" org-id "dispatch_key" dispatch-key}
+                               #js {"$setOnInsert" (clj->js batch)}
+                               #js {"upsert" true "returnDocument" "after"}))
+                       (let [inserted (await (.insertOne batches (clj->js batch)))]
+                         (assoc batch :_id (common/jget inserted "insertedId"))))
         response {:ok true
-                  :batch_id (:batch_id batch)
-                  :id (some-> inserted (common/jget "insertedId") .toString)
-                  :status "queued"
+                  :batch_id (or (common/jget inserted-row "batch_id")
+                                (:batch_id inserted-row))
+                  :id (or (common/string-id inserted-row)
+                          (some-> (:_id inserted-row) str))
+                  :status (or (common/jget inserted-row "status")
+                              (:status inserted-row))
                   :document_ids document-ids}]
     (common/assert-response! :create-translation-batch/response
                              contract/CreateTranslationBatchResponse
@@ -52,7 +64,7 @@
                                         (or opts {}))
         org-id (common/required-org-id! (:org_id request))
         selector (assoc (common/filter-map request
-                                           [:garden_id :target_lang :status])
+                                           [:garden_id :target_lang :status :dispatch_key])
                         :org_id org-id)
         {:keys [batches]} (common/collections (await (common/db!)))
         rows (await (.toArray

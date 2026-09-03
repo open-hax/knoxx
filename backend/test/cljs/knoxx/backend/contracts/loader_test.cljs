@@ -16,6 +16,7 @@
   (is (= "roles"        (sut/normalize-contract-class "roles")))
   (is (= "capabilities" (sut/normalize-contract-class "capabilities")))
   (is (= "policies"     (sut/normalize-contract-class "policies")))
+  (is (= "mcp_servers"  (sut/normalize-contract-class "mcp_servers")))
   (is (= "source_modes" (sut/normalize-contract-class "source_modes")))
   (is (= "sources"      (sut/normalize-contract-class "sources")))
   (is (= "model_families" (sut/normalize-contract-class "model_families")))
@@ -43,7 +44,16 @@
   (testing "source-mode -> source_modes"
     (is (= "source_modes" (sut/normalize-contract-class "source-mode"))))
   (testing "runtime-source -> sources"
-    (is (= "sources" (sut/normalize-contract-class "runtime-source")))))
+    (is (= "sources" (sut/normalize-contract-class "runtime-source"))))
+  (testing "mcp-server -> mcp_servers"
+    (is (= "mcp_servers" (sut/normalize-contract-class "mcp-server")))))
+
+(deftest parse-contract-file-mcp-server
+  (let [edn-text "{:contract/kind :mcp-server :contract/id \"graphics\" :mcp-server/id \"graphics\" :mcp-server/transport :http :mcp-server/url \"http://127.0.0.1:8020/mcp\" :mcp-server/auth-token-env \"GRAPHICS_MCP_TOKEN\"}"
+        result (first (sut/parse-contract-file-records! "/fake/mcp_servers/graphics.edn" edn-text))]
+    (is (:ok? result))
+    (is (= "graphics" (:id result)))
+    (is (= "mcp_servers" (:contractClass result)))))
 
 (deftest normalize-contract-class-rejects-unknown
   (is (thrown? js/Error (sut/normalize-contract-class "weasel"))))
