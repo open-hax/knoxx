@@ -14,14 +14,17 @@ labels:
 
 # Services — knoxx staging slot on DigitalOcean
 
-> Parent: `services-promethean-lane-retirement`
+> Parent epic: `knoxx-translated-publication-to-website`
 > Repository: `open-hax/services`
 
 ## Purpose
 
-`knoxx-staging` exists only on the Promethean host. Knoxx production already
-deploys through the DigitalOcean lane, so this is the phase that is missing —
-and it is the one the promotion rule depends on. Without it, every production
+Knoxx has **no staging phase at all**. It had one on the second deploy lane;
+`services#67` removed that lane and nothing replaced the slot, so today there is
+no `digitalocean/services/` definition and no hostname for it. This is a
+creation, not a migration.
+
+It is the phase the promotion rule depends on. Without it, every production
 deploy of the busiest service in the constellation ships code that has run
 nowhere but CI.
 
@@ -29,7 +32,7 @@ nowhere but CI.
 
 `services-staging-slot-pattern`. Also interacts with `knoxx`'s own
 `deploy-staging.yml` and the label-gated `deploy-testing.yml`, which currently
-target the shared Promethean staging slot.
+targeted the removed lane's shared staging slot.
 
 ## Work
 

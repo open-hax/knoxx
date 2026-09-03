@@ -13,7 +13,7 @@ labels:
 
 # Services — reopen the certificate decision before hostnames grow
 
-> Parent: `services-promethean-lane-retirement`
+> Parent epic: `knoxx-translated-publication-to-website`
 > Repository: `open-hax/services`
 
 ## Purpose

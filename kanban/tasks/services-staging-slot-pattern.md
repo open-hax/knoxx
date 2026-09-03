@@ -13,12 +13,12 @@ labels:
 
 # Services — what a staging slot is on a single host
 
-> Parent: `services-promethean-lane-retirement`
+> Parent epic: `knoxx-translated-publication-to-website`
 > Repository: `open-hax/services`
 
 ## Purpose
 
-Staging on Promethean was a second set of compose projects on the same machine —
+Staging on the removed lane was a second set of compose projects on one machine —
 `proxx-staging`, `knoxx-staging`, `openplanner-staging`, `axxium-staging`, each
 with its own runtime root, project name, published port and `staging-` hostname.
 That shape is worth carrying across rather than reinventing per service, and it
