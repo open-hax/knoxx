@@ -1055,12 +1055,12 @@ if [ -n "$SOURCE_EVENT_ID" ] && [ -n "$INDEX_EVENT_ID" ]; then
       projection:{_id:0,parent_id:1,embedding_model:1,embedding_dimensions:1,embedding:1},limit:10}')"
   vectors="$(mongo_query "$vector_query")"
   expect_status "the exact admission vectors are queryable" "200" "$vectors"
-  expect_jq "both events have exact nomic 768-dimensional embedding vectors" \
+  expect_jq "both events have exact qwen3 1024-dimensional embedding vectors" \
     '.ok == true and .total == 2 and
-     (.rows | all(.embedding_model == "nomic-embed-text" and
-                  .embedding_dimensions == 768 and
+     (.rows | all(.embedding_model == "qwen3-embedding:8b" and
+                  .embedding_dimensions == 1024 and
                   (.embedding | type) == "array" and
-                  (.embedding | length) == 768))' \
+                  (.embedding | length) == 1024))' \
     "$vectors"
 else
   fail "event/vector checks require the two admission ids" "ids were absent"
@@ -1136,23 +1136,23 @@ while [ "$SECONDS" -lt "$candidate_vector_deadline" ]; do
      && body_of "$candidate_vectors" | jq -e --argjson ids "$CANDIDATE_EVENT_IDS" \
           '($ids | length) > 0 and
            ([.rows[].parent_id] | unique | sort) == ($ids | sort) and
-           (.rows | all(.embedding_model == "nomic-embed-text" and
-                        .embedding_dimensions == 768 and
+           (.rows | all(.embedding_model == "qwen3-embedding:8b" and
+                        .embedding_dimensions == 1024 and
                         (.embedding | type) == "array" and
-                        (.embedding | length) == 768))' >/dev/null 2>&1; then
+                        (.embedding | length) == 1024))' >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
 expect_status "candidate translation vectors are queryable by stable event id" \
   "200" "$candidate_vectors"
-expect_jq "every candidate event has an exact nomic 768-dimensional vector" \
+expect_jq "every candidate event has an exact qwen3 1024-dimensional vector" \
   '.ok == true and ($ids | length) > 0 and
    ([.rows[].parent_id] | unique | sort) == ($ids | sort) and
-   (.rows | all(.embedding_model == "nomic-embed-text" and
-                .embedding_dimensions == 768 and
+   (.rows | all(.embedding_model == "qwen3-embedding:8b" and
+                .embedding_dimensions == 1024 and
                 (.embedding | type) == "array" and
-                (.embedding | length) == 768))' \
+                (.embedding | length) == 1024))' \
   "$candidate_vectors" --argjson ids "$CANDIDATE_EVENT_IDS"
 
 step "6. unchanged redeployment reuses events and translation claims"
@@ -1361,13 +1361,13 @@ if [ "$RUN_GENERATED_DRAFTS" -eq 1 ]; then
   generation_request_vectors="$(mongo_query "$generation_request_vector_query")"
   expect_status "generation-request admission vectors are queryable" \
     "200" "$generation_request_vectors"
-  expect_jq "both generation-request events have exact nomic 768-dimensional vectors" \
+  expect_jq "both generation-request events have exact qwen3 1024-dimensional vectors" \
     '($ids | length) == 2 and
      ([.rows[].parent_id] | unique | sort) == ($ids | sort) and
-     (.rows | all(.embedding_model == "nomic-embed-text" and
-                  .embedding_dimensions == 768 and
+     (.rows | all(.embedding_model == "qwen3-embedding:8b" and
+                  .embedding_dimensions == 1024 and
                   (.embedding | type) == "array" and
-                  (.embedding | length) == 768))' \
+                  (.embedding | length) == 1024))' \
     "$generation_request_vectors" --argjson ids "$generation_request_ids"
 
   generated_deadline=$((SECONDS + AGENT_WAIT_SECONDS))
@@ -1467,22 +1467,22 @@ if [ "$RUN_GENERATED_DRAFTS" -eq 1 ]; then
        && body_of "$generated_vectors" | jq -e --argjson ids "$generated_admission_ids" \
             '($ids | length) == 2 and
              ([.rows[].parent_id] | unique | sort) == ($ids | sort) and
-             (.rows | all(.embedding_model == "nomic-embed-text" and
-                          .embedding_dimensions == 768 and
+             (.rows | all(.embedding_model == "qwen3-embedding:8b" and
+                          .embedding_dimensions == 1024 and
                           (.embedding | type) == "array" and
-                          (.embedding | length) == 768))' >/dev/null 2>&1; then
+                          (.embedding | length) == 1024))' >/dev/null 2>&1; then
       break
     fi
     sleep 2
   done
   expect_status "generated admission vectors are queryable" "200" "$generated_vectors"
-  expect_jq "both generated admission events have exact nomic 768-dimensional vectors" \
+  expect_jq "both generated admission events have exact qwen3 1024-dimensional vectors" \
     '.ok == true and ($ids | length) == 2 and
      ([.rows[].parent_id] | unique | sort) == ($ids | sort) and
-     (.rows | all(.embedding_model == "nomic-embed-text" and
-                  .embedding_dimensions == 768 and
+     (.rows | all(.embedding_model == "qwen3-embedding:8b" and
+                  .embedding_dimensions == 1024 and
                   (.embedding | type) == "array" and
-                  (.embedding | length) == 768))' \
+                  (.embedding | length) == 1024))' \
     "$generated_vectors" --argjson ids "$generated_admission_ids"
 
   generated_candidate_query="$(jq -cn --arg collection "$EVENTS_COLLECTION" \
@@ -1549,10 +1549,10 @@ if [ "$RUN_GENERATED_DRAFTS" -eq 1 ]; then
             --argjson ids "$GENERATED_CANDIDATE_EVENT_IDS" \
             '($ids | length) > 0 and
              ([.rows[].parent_id] | unique | sort) == ($ids | sort) and
-             (.rows | all(.embedding_model == "nomic-embed-text" and
-                          .embedding_dimensions == 768 and
+             (.rows | all(.embedding_model == "qwen3-embedding:8b" and
+                          .embedding_dimensions == 1024 and
                           (.embedding | type) == "array" and
-                          (.embedding | length) == 768))' >/dev/null 2>&1; then
+                          (.embedding | length) == 1024))' >/dev/null 2>&1; then
       GENERATED_ARTIFACTS_SETTLED=1
       break
     fi
@@ -1560,13 +1560,13 @@ if [ "$RUN_GENERATED_DRAFTS" -eq 1 ]; then
   done
   expect_status "generated candidate vectors are queryable by stable event id" \
     "200" "$generated_candidate_vectors"
-  expect_jq "every generated candidate event has an exact nomic 768-dimensional vector" \
+  expect_jq "every generated candidate event has an exact qwen3 1024-dimensional vector" \
     '.ok == true and ($ids | length) > 0 and
      ([.rows[].parent_id] | unique | sort) == ($ids | sort) and
-     (.rows | all(.embedding_model == "nomic-embed-text" and
-                  .embedding_dimensions == 768 and
+     (.rows | all(.embedding_model == "qwen3-embedding:8b" and
+                  .embedding_dimensions == 1024 and
                   (.embedding | type) == "array" and
-                  (.embedding | length) == 768))' \
+                  (.embedding | length) == 1024))' \
     "$generated_candidate_vectors" --argjson ids "$GENERATED_CANDIDATE_EVENT_IDS"
 
   generated_reviews="$(http GET "$REVIEWS_URL" auth)"
