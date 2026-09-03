@@ -3,10 +3,8 @@
   (:require [cljs.reader :as reader]
             [clojure.string :as str]
             [knoxx.backend.domain.contracts.loader :as contract-loader]
-            [knoxx.backend.domain.node.fs :as node-fs]
             [knoxx.backend.domain.publication-draft :as draft]
-            ["node:fs/promises" :as fs]
-            ["node:path" :as path]))
+            [knoxx.backend.extern.publication-draft-store :as xdraft-store]))
 
 (defn- generated-contract-root!
   [config]
@@ -14,29 +12,14 @@
     (when-not configured
       (throw (ex-info "KNOXX_GENERATED_CONTRACTS_DIR is required for generated drafts"
                       {:code :generated-contracts-dir-unconfigured})))
-    (.resolve path (.cwd js/process) configured)))
+    configured))
 
 (defn draft-paths
   [config resources]
   (let [contracts-root (generated-contract-root! config)
-        generated-root (.dirname path contracts-root)
         local-id (name (:draft/id resources))]
-    {:content-path (.join path generated-root (:draft/source-path resources))
-     :manifest-path (.join path contracts-root "namespaces"
-                          (str local-id ".edn"))
-     :completion-path (.join path generated-root ".knoxx"
-                            "draft-admission-completions"
-                            (str local-id ".edn"))}))
-
-(defn- ^:async file-exists?
-  [file-path]
-  (try
-    (await (.access fs file-path))
-    true
-    (catch :default err
-      (if (= "ENOENT" (.-code err))
-        false
-        (throw err)))))
+    (xdraft-store/draft-paths contracts-root local-id
+                              (:draft/source-path resources))))
 
 (defn ^:async draft-materialized?
   "True when immutable source and manifest bytes have been materialized.
@@ -45,8 +28,8 @@
   [config input]
   (let [identity (draft/draft-identity input)
         {:keys [content-path manifest-path]} (draft-paths config identity)]
-    (and (await (file-exists? content-path))
-         (await (file-exists? manifest-path)))))
+    (and (await (xdraft-store/file-exists? content-path))
+         (await (xdraft-store/file-exists? manifest-path)))))
 
 (defn- completion-marker
   [resources]
@@ -65,20 +48,17 @@
    manifest files still exist."
   [config input]
   (let [identity (draft/draft-identity input)
-        completion-path (:completion-path (draft-paths config identity))]
-    (try
-      (let [existing (str (await (.readFile fs completion-path "utf8")))
-            expected (completion-text identity)]
-        (if (= expected existing)
-          true
-          (throw
-           (ex-info "generated draft completion marker has conflicting bytes"
-                    {:code :generated-draft-completion-conflict
-                     :path completion-path}))))
-      (catch :default err
-        (if (= "ENOENT" (.-code err))
-          false
-          (throw err))))))
+        completion-path (:completion-path (draft-paths config identity))
+        existing (await (xdraft-store/read-text-or-nil! completion-path))
+        expected (completion-text identity)]
+    (cond
+      (nil? existing) false
+      (= expected existing) true
+      :else
+      (throw
+       (ex-info "generated draft completion marker has conflicting bytes"
+                {:code :generated-draft-completion-conflict
+                 :path completion-path})))))
 
 (defn ^:async draft-complete?
   "True only when the exact topology has a valid recursive-admission marker
@@ -89,8 +69,8 @@
 
 (defn- ^:async same-file-result
   [file-path content]
-  (let [existing (await (.readFile fs file-path "utf8"))]
-    (if (= (str existing) content)
+  (let [existing (await (xdraft-store/read-text! file-path))]
+    (if (= existing content)
       {:path file-path :created? false}
       (throw (ex-info "generated draft identity already has different bytes"
                       {:code :generated-draft-conflict
@@ -103,8 +83,7 @@
    written and fsynced. A killed or ENOSPC-failed writer can therefore leave
    temp debris, but cannot expose a torn source, manifest, or completion file."
   [file-path content]
-  (await (.mkdir fs (.dirname path file-path) #js {:recursive true}))
-  (if (node-fs/install-file-exclusive-sync! file-path content)
+  (if (await (xdraft-store/install-text-exclusive! file-path content))
     {:path file-path :created? true}
     (await (same-file-result file-path content))))
 
@@ -160,8 +139,8 @@
   (let [identity (draft/draft-identity input)
         {:keys [content-path manifest-path] :as paths}
         (draft-paths config identity)
-        content (str (await (.readFile fs content-path "utf8")))
-        manifest-text (str (await (.readFile fs manifest-path "utf8")))
+        content (await (xdraft-store/read-text! content-path))
+        manifest-text (await (xdraft-store/read-text! manifest-path))
         manifest (parse-manifest! manifest-text manifest-path)
         title (persisted-title! manifest (:draft/id identity) manifest-path)
         resources (draft/draft-resources (assoc input
@@ -188,7 +167,7 @@
   (let [identity (draft/draft-identity input)
         {:keys [content-path manifest-path]}
         (draft-paths config identity)
-        content (str (await (.readFile fs content-path "utf8")))
+        content (await (xdraft-store/read-text! content-path))
         recovered-input (assoc input :title nil :content content)
         resources (draft/draft-resources recovered-input)
         manifest-text (str (pr-str (:draft/manifest resources)) "\n")]
@@ -226,8 +205,8 @@
   (let [identity (draft/draft-identity input)
         {:keys [content-path manifest-path]} (draft-paths config identity)
         marked? (await (completion-marked? config input))
-        content? (await (file-exists? content-path))
-        manifest? (await (file-exists? manifest-path))]
+        content? (await (xdraft-store/file-exists? content-path))
+        manifest? (await (xdraft-store/file-exists? manifest-path))]
     (cond
       (and marked? content? manifest?) (await (persist! config input))
       marked? (conflict! "completed generated draft is missing immutable files"

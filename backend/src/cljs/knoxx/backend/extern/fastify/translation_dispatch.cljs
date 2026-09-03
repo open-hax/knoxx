@@ -4,13 +4,13 @@
   Native request and reply handles are born and die here; the facade this
   adapter calls receives decoded CLJS data and returns CLJS data.
 
-  One route: an authorized operator asks Knoxx to dispatch whatever translation
-  work the publication gate currently derives. The other direction — the
-  worker's answer becoming evidence — is not a route of its own. The worker
-  already reports batch status to `POST /api/translations/batches/:id/status`,
-  and adding a second endpoint it would have to learn to call would be a
-  coordinated change to another repository for no gain. See
-  `infra.routes.translation` for where that report is resolved."
+  One route lets an authorized operator dispatch whatever translation work the
+  publication gate currently derives. A second, process-local route reports
+  whether the exact event turns named by a deployment verifier have released
+  their settlement owners. The worker's answer becoming durable evidence is
+  not a route of its own: the worker already reports batch status to
+  `POST /api/translations/batches/:id/status`. See `infra.routes.translation`
+  for where that report is resolved."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.contracts.resolve :as contracts-resolve]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
@@ -34,6 +34,38 @@
    the same permission as creating a batch directly —
    `infra.routes.translation`'s batch routes already gate on this."
   "org.translations.manage")
+
+(def ^:private event-turn-id-pattern
+  #"^(translation-needed-translation-run|knoxx-publication-document-indexed)-[0-9a-f]{64}$")
+
+(defn- exact-event-turn-id?
+  [value]
+  (and (string? value)
+       (boolean (re-matches event-turn-id-pattern value))))
+
+(def EventTurnStatusRequestBody
+  "Closed wire contract for the process-local event-turn settlement query.
+
+   Only event identities emitted by publication translation and document
+   admission are queryable. Bounding the vector prevents this observability
+   endpoint from becoming an unscoped process-state scanner."
+  [:map {:closed true}
+   [:event_ids
+    [:vector {:min 1 :max 16}
+     [:and
+      :string
+      [:fn {:error/message "must be an exact publication event-turn id"}
+       exact-event-turn-id?]]]]])
+
+(def EventTurnStatusResponse
+  "Wire response for exact process-local event-turn owner states."
+  [:map {:closed true}
+   [:settled :boolean]
+   [:events
+    [:vector
+     [:map {:closed true}
+      [:event_id :string]
+      [:state [:enum "in_flight" "redelivery_pending" "released"]]]]]])
 
 (def RequestBody
   "Contract for the raw wire body, checked BEFORE anything is reshaped.
@@ -90,6 +122,46 @@
 
        (contains? body :publication)
        (assoc :publication (resource-identity/decode-keyword (:publication body)))))))
+
+(defn decode-event-turn-status-request
+  "Validate an exact, bounded list of event-turn identities from the wire."
+  [request]
+  (:event_ids
+   (publication-law/assert-valid!
+    :translation-event-turn-status/body
+    EventTurnStatusRequestBody
+    (fastify/request-body request))))
+
+(defn- owner-state->wire-status
+  [event-id owner-state]
+  (case owner-state
+    :in-flight "in_flight"
+    :settled "redelivery_pending"
+    nil "released"
+    (throw
+     (ex-info "event turn owner returned an unknown state"
+              {:event-id event-id
+               :owner-state owner-state}))))
+
+(defn event-turn-status
+  "Return the process-local settlement state for each supplied event id.
+
+   An absent owner is released. A retained terminal result is not released: its
+   callback still needs redelivery before cleanup may delete durable fixtures."
+  [event-ids dependencies]
+  (let [owner-state (or (:event-turn-owner-state dependencies)
+                        agent-runner/event-turn-owner-state)
+        states (mapv (fn [event-id]
+                       [event-id (owner-state event-id)])
+                     event-ids)]
+    (publication-law/assert-valid!
+     :translation-event-turn-status/response
+     EventTurnStatusResponse
+     {:settled (every? (comp nil? second) states)
+      :events (mapv (fn [[event-id state]]
+                      {:event_id event-id
+                       :state (owner-state->wire-status event-id state)})
+                    states)})))
 
 (defn- scope
   "The acting principal's dispatch scope, plus the project batches are filed in.
@@ -255,6 +327,42 @@
           (fastify/log-unclassified-failure! "translation-dispatch" err))
         (fastify/send-json! reply status (error-body/error-body err status))))))
 
+(defn- dispatch-route
+  [runtime config handlers dependencies]
+  {:method "POST"
+   :url "/api/publications/translations/dispatch"
+   :handler
+   (^:async fn [request reply]
+     (await
+      ((:with-request-context! handlers) runtime request reply
+       (^:async fn [ctx]
+         (await
+          (send-result!
+           reply
+           (fn []
+             ;; Authorization is unconditional; a nil context is not access.
+             ((:ensure-permission! handlers) ctx dispatch-permission)
+             (dispatch-selection! config ctx (decode-request request)
+                                  dependencies))))))))})
+
+(defn- event-turn-status-route
+  [runtime handlers dependencies]
+  {:method "POST"
+   :url "/api/publications/translations/event-turn-status"
+   :handler
+   (^:async fn [request reply]
+     (await
+      ((:with-request-context! handlers) runtime request reply
+       (^:async fn [ctx]
+         (await
+          (send-result!
+           reply
+           (fn []
+             ((:ensure-permission! handlers) ctx dispatch-permission)
+             (event-turn-status
+              (decode-event-turn-status-request request)
+              dependencies))))))))})
+
 (defn register-translation-dispatch-routes!
   "Register the route with optional registration-scoped dependencies.
 
@@ -264,21 +372,6 @@
   ([app runtime config handlers]
    (register-translation-dispatch-routes! app runtime config handlers {}))
   ([app runtime config handlers dependencies]
-   (fastify/route!
-    app
-    {:method "POST"
-     :url "/api/publications/translations/dispatch"
-     :handler
-     (^:async fn [request reply]
-       (await
-        ((:with-request-context! handlers) runtime request reply
-         (^:async fn [ctx]
-           (await
-            (send-result!
-             reply
-             (fn []
-               ;; Authorization is unconditional; a nil context is not access.
-               ((:ensure-permission! handlers) ctx dispatch-permission)
-               (dispatch-selection! config ctx (decode-request request)
-                                    dependencies))))))))})
+   (fastify/route! app (dispatch-route runtime config handlers dependencies))
+   (fastify/route! app (event-turn-status-route runtime handlers dependencies))
    nil))

@@ -23,7 +23,7 @@ From the Knoxx repository root, with a backend running from this checkout:
 KNOXX_BASE_URL=http://localhost:8000 \
 KNOXX_API_KEY=<the key used by the running backend> \
 KNOXX_VERIFY_PUBLICATION_CONTENT_ROOT=/absolute/path/to/publication-content \
-scripts/verify-deployment-content-admission.sh
+scripts/with-local-resources.sh scripts/verify-deployment-content-admission.sh
 ```
 
 To add the isolated generated-post path (one post-drafter followed by its two
@@ -36,7 +36,7 @@ KNOXX_API_KEY=<the key used by the running backend> \
 KNOXX_VERIFY_GENERATED_DRAFTS=true \
 KNOXX_GENERATED_CONTRACTS_DIR=/absolute/path/to/generated-contracts \
 KNOXX_VERIFY_PUBLICATION_CONTENT_ROOT=/absolute/path/to/publication-content \
-scripts/verify-deployment-content-admission.sh
+scripts/with-local-resources.sh scripts/verify-deployment-content-admission.sh
 ```
 
 To leave a green, clearly titled local fixture available to the translation
@@ -48,14 +48,14 @@ KNOXX_API_KEY=<the key used by the running backend> \
 KNOXX_VERIFY_KEEP_REVIEW_DEMO=true \
 KNOXX_GENERATED_CONTRACTS_DIR=/absolute/path/to/generated-contracts \
 KNOXX_VERIFY_PUBLICATION_CONTENT_ROOT=/absolute/path/to/publication-content \
-scripts/verify-deployment-content-admission.sh
+scripts/with-local-resources.sh scripts/verify-deployment-content-admission.sh
 ```
 
-Default behavior is still strict teardown. Keep mode retains files only after
-every assertion is green and the generated translations/vectors have settled;
-a red or interrupted run cleans safe owned files and never calls a failure a
-demo. The final output prints the source/generated document ids, review URL,
-and exact file and Mongo cleanup commands.
+Default behavior is strict teardown. Keep mode retains files and durable review
+evidence only after every assertion is green and all agent turns and projections
+have settled; a red or interrupted run cleans safe owned files and never calls a
+failure a demo. The final output prints the source/generated document ids,
+review URL, and exact file cleanup command for an intentionally retained demo.
 
 The defaults are:
 
@@ -67,6 +67,13 @@ The defaults are:
 - `KNOXX_VERIFY_KEEP_REVIEW_DEMO=false`
 - `MONGODB_EVENTS_COLLECTION=events`
 - `MONGODB_VECTOR_HOT_COLLECTION=event_chunks`
+- `MONGODB_GRAPH_NODE_EMBEDDING_COLLECTION=graph_node_embeddings`
+
+The cleanup helper uses `MONGODB_URI`, then `OPENPLANNER_MONGODB_URI`, then the
+loopback default; its database selection similarly uses `MONGODB_DB`, then
+`OPENPLANNER_MONGODB_DB`, then `openplanner`. Running through
+`scripts/with-local-resources.sh` supplies the same local MongoDB configuration
+as the backend without printing its credential.
 
 `KNOXX_VERIFY_PUBLICATION_CONTENT_ROOT` has no default. It must explicitly name
 the running backend's publication content root so the verifier can authenticate
@@ -77,7 +84,7 @@ disables proxies for every request, so a proxy cannot receive the API key.
 
 ## Preconditions
 
-- `curl`, `jq`, `sha256sum`, and `realpath` are installed.
+- `curl`, `jq`, `node`, `sha256sum`, and `realpath` are installed.
 - `KNOXX_API_KEY` resolves to a principal with
   `org.translations.manage`, `org.publications.manage`, and read access to
   publication/CMS projections.
@@ -337,39 +344,50 @@ generated root so the review UI remains testable.
 
 In ordinary generated mode, the trap removes only the three precomputed,
 run-owned files — the generated namespace manifest, Markdown source, and
-recursive-admission completion marker — and
-only after both generated translation agents have produced their durable
-candidate events and exact vector projections. If
-the post-drafter or either translator has not settled, deleting those resources
-could race the internal admission, so the trap leaves them intact and prints an
-exact three-file `rm -f` command for use after settlement. It never recursively
-deletes the configured generated root.
+recursive-admission completion marker — and only after both generated
+translation agents have produced their durable candidate events and exact
+vector projections. It never recursively deletes the configured generated
+root. Every process-local owner must be released first, even when another
+assertion made the run red. If the post-drafter or either translator has not
+settled, deleting those resources could race internal admission, so the trap
+leaves them intact.
 
 Keep mode retains those three generated files together with its source/garden
-fixture and the four exact source/generated agent translation entries, and
-prints every deletion target. Ordinary green teardown removes only those exact
-translation files after review/event identity agreement and complete vector
-settlement. A partial, mismatched, failed, or interrupted run retains any known
-translation entries and prints their exact paths; it never deletes the
-`.translations` directory or uses a glob. A failed keep-mode run does not retain
-a purported demo; other safe files are torn down using the same exact targets.
+fixture, the four exact source/generated agent translation entries, and their
+durable review evidence, and prints every file deletion target. Ordinary green
+teardown removes only exact translation files after review/event identity
+agreement and complete durable settlement, including on an otherwise red run.
+An unsettled or mismatched run retains any known translation entries; it never
+deletes the `.translations` directory or uses a glob. A failed keep-mode run
+does not retain a purported demo; other settled files are torn down using the
+same exact targets.
 
-Admission events and translation claims are different: they are immutable or
-may still be in use by asynchronous agent sessions. Deleting them in the trap
-could corrupt a legitimate completion, so the script prints one explicit WARN
-and a narrowly scoped `mongosh` command keyed by its source and optional
-generated document/event ids. Run that command only after all agent sessions
-settle. Runtime/session telemetry remains governed by its normal retention
-policy; the cleanup command
-targets only admission/index, translation evidence, review, and graph/vector
-rows attributable to the fixture.
+Before database teardown, step 9 derives each translation owner from its exact
+completed dispatch batch and includes the generated document-indexed owner when
+the post-drafter ran. The authenticated process-local status route must report
+every owner as released. The verifier then point-polls the configured graph-node
+embedding collection for every exact run-owned event. A pending owner, missing
+projection, malformed response, or unavailable store prevents database cleanup
+so a live callback can never race deletion.
 
-The warning is not a skipped assertion. Durable residue is an acknowledged
-operational boundary; authentication, missing-source atomicity, indexing,
-embedding, completed `gemma4:e2b` output events, replay identity, translation
-claim deduplication, authenticated pending review, and non-publication are all required to
-exit zero. In generated mode the same is true of lineage, terminal generation,
-translated-locale review policy, exact files/vectors, and absent materialization.
+Once settled, the Node cleanup helper authenticates every asserted event id
+against the exact verifier document namespace before its first deletion. It
+then follows flat turn and candidate-set relationships to remove only this
+run's vectors, graph rows, dispatch claims, split candidates/reviews, receipts,
+approvals, turns, and events. Events—the ownership evidence—are deleted last, so
+an earlier database failure remains safely retryable. Cleanup failure turns an
+otherwise green run red and preserves the exact filesystem fixtures needed to
+inspect or retry that partial teardown. Every Mongo delete must be durably
+acknowledged; an unacknowledged write is a cleanup failure rather than a zero-row
+success. No manual `mongosh` step is required. Runtime/session telemetry remains
+governed by its normal retention policy.
+
+Authentication, missing-source atomicity, indexing, embedding, completed
+`gemma4:e2b` output events, replay identity, translation claim deduplication,
+authenticated pending review, owner release, automatic teardown, and
+non-publication are all required to exit zero. In generated mode the same is
+true of lineage, terminal generation, translated-locale review policy, exact
+files/vectors, and absent materialization.
 
 ## Reading a failure
 

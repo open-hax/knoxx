@@ -1,8 +1,8 @@
 (ns knoxx.backend.infra.publication-draft-tool-test
   (:require [cljs.reader :as reader]
             [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.domain.node.fs :as node-fs]
             [knoxx.backend.domain.publication-draft :as draft]
+            [knoxx.backend.extern.publication-draft-store :as xdraft-store]
             [knoxx.backend.infra.publication-draft-tool :as tool]
             [knoxx.backend.infra.publication-draft-store :as draft-store]
             ["node:fs/promises" :as fs]
@@ -60,9 +60,9 @@
                                              "knoxx-draft-atomic-")))
         config {:generated-contracts-dir (.join path temp-root "contracts")}
         installed* (atom [])
-        install! node-fs/install-file-exclusive-sync!]
+        install! xdraft-store/install-text-exclusive!]
     (try
-      (with-redefs [node-fs/install-file-exclusive-sync!
+      (with-redefs [xdraft-store/install-text-exclusive!
                     (fn [file-path content]
                       (swap! installed* conj file-path)
                       (install! file-path content))]
@@ -90,7 +90,7 @@
         paths (draft-store/draft-paths config
                                        (draft/draft-identity draft-input))]
     (try
-      (let [error (with-redefs [node-fs/install-file-exclusive-sync!
+      (let [error (with-redefs [xdraft-store/install-text-exclusive!
                                 (fn [_file-path _content]
                                   (throw (ex-info "simulated interrupted install"
                                                   {:code :simulated-enospc})))]
@@ -103,8 +103,10 @@
         (testing "no final path is published before the atomic installer succeeds"
           (is (false? (await (draft-store/draft-materialized?
                               config draft-policy))))
-          (is (false? (node-fs/exists? (:content-path paths))))
-          (is (false? (node-fs/exists? (:manifest-path paths))))))
+          (is (false? (await (xdraft-store/file-exists?
+                              (:content-path paths)))))
+          (is (false? (await (xdraft-store/file-exists?
+                              (:manifest-path paths)))))))
       (finally
         (await (.rm fs temp-root #js {:recursive true :force true}))))))
 

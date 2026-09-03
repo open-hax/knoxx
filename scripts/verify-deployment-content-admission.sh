@@ -14,11 +14,10 @@
 # It deliberately never calls POST /api/publications/reconcile. Its only CMS
 # PATCH is the idempotent state {"state":"draft"}, proving that the draft wire
 # value is accepted without requesting publication. Unless explicit keep-demo
-# mode is green, files are removed by the EXIT/INT/TERM trap once their agent
-# work has settled. Immutable admission
-# events and asynchronous agent evidence cannot safely be deleted while a live
-# translation may still be using them; every identity is unique and the script
-# prints a narrowly scoped post-settlement cleanup command.
+# mode is green, filesystem and database fixtures are removed by the
+# EXIT/INT/TERM trap once their agent work has settled. Durable admission events
+# and asynchronous agent evidence are retained only while a live translation
+# may still be using them.
 #
 # Usage:
 #   KNOXX_API_KEY=... scripts/verify-deployment-content-admission.sh
@@ -32,7 +31,8 @@
 #     scripts/verify-deployment-content-admission.sh
 #
 # Exit code is zero only when every required assertion passed and the owned
-# filesystem fixture was removed.
+# filesystem and durable database fixtures were removed, or explicit keep-demo
+# mode retained them.
 
 # jq receives its `$name` variables through `--arg`; single quotes are required
 # to keep Bash from expanding them first.
@@ -65,8 +65,10 @@ SOURCE_REL="${CONTRACTS_NAME}/_verify_deployment_content_admission/source-${RUN_
 SOURCE_FILE="${CONTRACTS_PARENT}/${SOURCE_REL}"
 EVENTS_COLLECTION="${MONGODB_EVENTS_COLLECTION:-events}"
 VECTOR_COLLECTION="${MONGODB_VECTOR_HOT_COLLECTION:-event_chunks}"
+GRAPH_NODE_EMBEDDING_COLLECTION="${MONGODB_GRAPH_NODE_EMBEDDING_COLLECTION:-graph_node_embeddings}"
 ADMISSION_URL="/api/publications/documents/admit"
 REVIEWS_URL="/api/publications/translations/reviews"
+EVENT_TURN_STATUS_URL="/api/publications/translations/event-turn-status"
 MONGO_QUERY_URL="/api/data/mongo/query"
 CMS_URL="/api/cms/publications/documents/${NS}%2F${DOC_LOCAL}"
 CMS_INTENT_ES_URL="/api/cms/publications/intents/${NS}%2F${DOC_LOCAL}-es"
@@ -105,6 +107,8 @@ ADMISSION_ORG_ID=""
 ADMISSION_PROJECT=""
 SOURCE_TRANSLATION_CONTENT_SETTLED=0
 GENERATED_TRANSLATION_CONTENT_SETTLED=0
+GRAPH_NODE_EMBEDDINGS_SETTLED=0
+EVENT_TURNS_SETTLED=0
 TRANSLATION_CONTENT_FILES=()
 
 if [ -t 1 ]; then
@@ -221,8 +225,133 @@ track_translation_content() {
   return 1
 }
 
+durable_agent_work_settled() {
+  [ "$SOURCE_TRANSLATION_CONTENT_SETTLED" -eq 1 ] \
+    && [ "$GRAPH_NODE_EMBEDDINGS_SETTLED" -eq 1 ] \
+    && [ "$EVENT_TURNS_SETTLED" -eq 1 ] \
+    && { [ "$RUN_GENERATED_DRAFTS" -eq 0 ] \
+         || { [ "$GENERATED_ARTIFACTS_SETTLED" -eq 1 ] \
+              && [ "$GENERATED_TRANSLATION_CONTENT_SETTLED" -eq 1 ]; }; }
+}
+
+# Called from the EXIT/INT/TERM cleanup path.
+# shellcheck disable=SC2329
+cleanup_durable_fixtures() {
+  local documents_json event_ids_json
+  documents_json="$(jq -cn \
+    --arg source "$DOC_ID" \
+    --arg generated "$GENERATED_DOC_ID" \
+    '[$source,$generated] | map(select(length > 0))')" || return 1
+  event_ids_json="$(jq -cn \
+    --arg source "$SOURCE_EVENT_ID" \
+    --arg indexed "$INDEX_EVENT_ID" \
+    --arg generation_source "$GENERATION_REQUEST_SOURCE_EVENT_ID" \
+    --arg generation_indexed "$GENERATION_REQUEST_INDEX_EVENT_ID" \
+    --arg generated_source "$GENERATED_SOURCE_EVENT_ID" \
+    --arg generated_indexed "$GENERATED_INDEX_EVENT_ID" \
+    --argjson candidates "$CANDIDATE_EVENT_IDS" \
+    --argjson generated_candidates "$GENERATED_CANDIDATE_EVENT_IDS" \
+    '([$source,$indexed,$generation_source,$generation_indexed,
+       $generated_source,$generated_indexed] + $candidates +
+       $generated_candidates) |
+     map(select(type == "string" and length > 0)) | unique')" || return 1
+
+  KNOXX_VERIFY_CLEANUP_DOCUMENTS_JSON="$documents_json" \
+  KNOXX_VERIFY_CLEANUP_EVENT_IDS_JSON="$event_ids_json" \
+  MONGODB_EVENTS_COLLECTION="$EVENTS_COLLECTION" \
+  MONGODB_VECTOR_HOT_COLLECTION="$VECTOR_COLLECTION" \
+  MONGODB_GRAPH_NODE_EMBEDDING_COLLECTION="$GRAPH_NODE_EMBEDDING_COLLECTION" \
+    node "${REPO_ROOT}/backend/scripts/cleanup-deployment-content-admission.mjs"
+}
+
 mongo_query() {
   http POST "$MONGO_QUERY_URL" auth "$1"
+}
+
+wait_for_graph_node_embeddings() {
+  local event_ids="$1" deadline id query response missing_json='[]'
+  if ! printf '%s' "$event_ids" | jq -e \
+       'type == "array" and length > 0 and all(type == "string" and length > 0)' \
+       >/dev/null 2>&1; then
+    fail "graph-node embedding settlement requires exact event ids" "$event_ids"
+    return 1
+  fi
+
+  deadline=$((SECONDS + AGENT_WAIT_SECONDS))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    missing_json='[]'
+    while IFS= read -r id; do
+      query="$(jq -cn \
+        --arg collection "$GRAPH_NODE_EMBEDDING_COLLECTION" \
+        --arg event_id "$id" \
+        '{collection:$collection,filter:{source_event_id:$event_id},
+          projection:{_id:0,source_event_id:1},limit:1}')"
+      response="$(mongo_query "$query")"
+      if [ "$(status_of "$response")" != "200" ] \
+         || ! body_of "$response" | jq -e --arg id "$id" \
+              '.ok == true and .total >= 1 and
+               (.rows | any(.source_event_id == $id))' >/dev/null 2>&1; then
+        missing_json="$(jq -cn --argjson missing "$missing_json" \
+          --arg id "$id" '$missing + [$id]')"
+      fi
+    done < <(printf '%s' "$event_ids" | jq -r '.[]')
+
+    if printf '%s' "$missing_json" | jq -e 'length == 0' >/dev/null 2>&1; then
+      pass "every verifier event has completed its graph-node embedding projection"
+      return 0
+    fi
+    sleep 2
+  done
+
+  fail "graph-node embeddings did not settle before cleanup" "$missing_json"
+  return 1
+}
+
+wait_for_event_turn_release() {
+  local event_ids="$1" deadline payload response status last_body=''
+  if ! printf '%s' "$event_ids" | jq -e \
+       'type == "array" and length > 0 and
+        all(type == "string" and length > 0) and
+        length == (unique | length)' >/dev/null 2>&1; then
+    fail "event-turn settlement requires unique exact owner ids" "$event_ids"
+    return 1
+  fi
+
+  payload="$(jq -cn --argjson event_ids "$event_ids" '{event_ids:$event_ids}')"
+  deadline=$((SECONDS + AGENT_WAIT_SECONDS))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    response="$(http POST "$EVENT_TURN_STATUS_URL" auth "$payload")"
+    status="$(status_of "$response")"
+    last_body="$(body_of "$response")"
+    if [ "$status" != "200" ]; then
+      fail "event-turn settlement status is queryable — expected 200, got ${status}" \
+        "$(printf '%s' "$last_body" | head -c 500)"
+      return 1
+    fi
+    if ! printf '%s' "$last_body" | jq -e --argjson ids "$event_ids" \
+         'type == "object" and (.settled | type) == "boolean" and
+          (.events | type) == "array" and
+          ([.events[].event_id] | length) == ($ids | length) and
+          ([.events[].event_id] | unique | sort) == ($ids | sort) and
+          (.events | all(.state == "in_flight" or
+                         .state == "redelivery_pending" or
+                         .state == "released"))' >/dev/null 2>&1; then
+      fail "event-turn settlement returned a malformed identity or state set" \
+        "$(printf '%s' "$last_body" | jq -c . 2>/dev/null | head -c 500)"
+      return 1
+    fi
+    if printf '%s' "$last_body" | jq -e \
+         '.settled == true and (.events | all(.state == "released"))' \
+         >/dev/null 2>&1; then
+      pass "every verifier-owned agent turn released its settlement callback"
+      return 0
+    fi
+    sleep 2
+  done
+
+  fail "agent turns did not release their settlement callbacks before cleanup" \
+    "$(printf '%s' "$last_body" | jq -c . 2>/dev/null | head -c 500)"
+  return 1
 }
 
 admission_row() {
@@ -277,16 +406,36 @@ EDN
 # ShellCheck cannot see invocations made through EXIT/INT/TERM traps.
 # shellcheck disable=SC2329
 cleanup() {
-  local code=$? signalled="${1:-}" cleanup_failed=0 translation_file
+  local code=$? signalled="${1:-}" cleanup_failed=0 translation_file cleanup_summary deleted_total
   [ -n "$signalled" ] && code="$signalled"
+
+  if [ "$REVIEW_DEMO_READY" -eq 1 ] && [ "$code" -eq 0 ]; then
+    note "retained the exact run-scoped database fixtures for review"
+  elif durable_agent_work_settled; then
+    if cleanup_summary="$(cleanup_durable_fixtures)"; then
+      deleted_total="$(printf '%s' "$cleanup_summary" | jq -r '.deletedTotal // 0')"
+      note "torn down the exact run-scoped database fixtures (${deleted_total} rows)"
+    else
+      printf '%s   FAIL%s  could not remove the exact run-scoped database fixtures\n' \
+        "$C_RED" "$C_RESET" >&2
+      cleanup_failed=1
+    fi
+  elif [ -n "$SOURCE_EVENT_ID" ] || [ -n "$INDEX_EVENT_ID" ]; then
+    printf '%s   WARN%s  database fixtures were retained because agent work had not settled\n' \
+      "$C_YELLOW" "$C_RESET" >&2
+  fi
+
+  if [ "$cleanup_failed" -eq 1 ]; then
+    printf '%s   WARN%s  filesystem fixtures were retained because database teardown did not complete\n' \
+      "$C_YELLOW" "$C_RESET" >&2
+    [ "$code" -eq 0 ] && code=1
+    exit "$code"
+  fi
 
   if [ "${#TRANSLATION_CONTENT_FILES[@]}" -gt 0 ]; then
     if [ "$REVIEW_DEMO_READY" -eq 1 ] && [ "$code" -eq 0 ]; then
       note "retained the exact agent translation entries for review"
-    elif [ "$code" -eq 0 ] \
-         && [ "$SOURCE_TRANSLATION_CONTENT_SETTLED" -eq 1 ] \
-         && { [ "$RUN_GENERATED_DRAFTS" -eq 0 ] \
-              || [ "$GENERATED_TRANSLATION_CONTENT_SETTLED" -eq 1 ]; }; then
+    elif durable_agent_work_settled; then
       for translation_file in "${TRANSLATION_CONTENT_FILES[@]}"; do
         if [ -e "$translation_file" ] && ! rm -f -- "$translation_file"; then
           printf '%s   FAIL%s  could not remove owned translation entry %s\n' \
@@ -307,7 +456,7 @@ cleanup() {
      || [ -n "$GENERATED_COMPLETION_FILE" ]; then
     if [ "$REVIEW_DEMO_READY" -eq 1 ] && [ "$code" -eq 0 ]; then
       note "retained the generated post bytes and admission-completion marker for review"
-    elif [ "$GENERATED_ARTIFACTS_SETTLED" -eq 1 ]; then
+    elif durable_agent_work_settled; then
       for generated_file in "$GENERATED_MANIFEST_FILE" "$GENERATED_SOURCE_FILE" \
                             "$GENERATED_COMPLETION_FILE"; do
         [ -n "$generated_file" ] || continue
@@ -361,9 +510,11 @@ note "base url       ${BASE_URL}"
 note "run id         ${RUN_ID}"
 note "contracts dir  ${CONTRACTS_DIR}"
 
-for tool in curl jq sha256sum realpath; do
+for tool in curl jq node sha256sum realpath; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: ${tool}"
 done
+[ -r "${REPO_ROOT}/backend/scripts/cleanup-deployment-content-admission.mjs" ] \
+  || die "missing durable fixture cleanup helper"
 
 case "$VERIFY_GENERATED_DRAFTS" in
   1|true|TRUE|yes|YES) RUN_GENERATED_DRAFTS=1 ;;
@@ -423,10 +574,12 @@ case "$PUBLICATION_CONTENT_ROOT" in
 esac
 [ -d "$PUBLICATION_CONTENT_ROOT" ] \
   || die "publication content root does not exist: ${PUBLICATION_CONTENT_ROOT}"
-[[ "$EVENTS_COLLECTION" =~ ^[A-Za-z0-9._-]+$ ]] \
+[[ "$EVENTS_COLLECTION" =~ ^[A-Za-z][A-Za-z0-9._-]{0,127}$ ]] \
   || die "MONGODB_EVENTS_COLLECTION is not a safe Mongo collection name"
-[[ "$VECTOR_COLLECTION" =~ ^[A-Za-z0-9._-]+$ ]] \
+[[ "$VECTOR_COLLECTION" =~ ^[A-Za-z][A-Za-z0-9._-]{0,127}$ ]] \
   || die "MONGODB_VECTOR_HOT_COLLECTION is not a safe Mongo collection name"
+[[ "$GRAPH_NODE_EMBEDDING_COLLECTION" =~ ^[A-Za-z][A-Za-z0-9._-]{0,127}$ ]] \
+  || die "MONGODB_GRAPH_NODE_EMBEDDING_COLLECTION is not a safe Mongo collection name"
 [ -d "$CONTRACTS_DIR" ] || die "contracts directory not found: ${CONTRACTS_DIR}"
 [ ! -e "$FIXTURE_DIR" ] \
   || die "fixture directory already exists: ${FIXTURE_DIR}; remove the stale verifier fixture first"
@@ -1159,7 +1312,61 @@ else
   note "Set KNOXX_VERIFY_GENERATED_DRAFTS=true and KNOXX_GENERATED_CONTRACTS_DIR to enable the isolated bounded proof."
 fi
 
-step "9. immutable residue is named, scoped, and never mistaken for cleanup"
+step "9. run-scoped cleanup is bounded and automatic after settlement"
+settlement_documents="$(jq -cn \
+  --arg source "$DOC_ID" --arg generated "$GENERATED_DOC_ID" \
+  '[$source,$generated] | map(select(length > 0))')"
+settlement_claim_count=2
+[ "$RUN_GENERATED_DRAFTS" -eq 1 ] && settlement_claim_count=4
+settlement_claim_query="$(jq -cn \
+  --argjson documents "$settlement_documents" \
+  '{collection:"knoxx_translation_dispatches",
+    filter:{document_wire_id:{"$in":$documents}},
+    projection:{_id:0,document_wire_id:1,outcome:1,batch_id:1},limit:20}')"
+settlement_claims="$(mongo_query "$settlement_claim_query")"
+settlement_claims_valid=1
+expect_status "settlement-bound translation claims are queryable" "200" \
+  "$settlement_claims" || settlement_claims_valid=0
+if [ "$settlement_claims_valid" -eq 1 ]; then
+  expect_jq "every expected translation claim completed with an exact agent run" \
+    '.ok == true and .total == $count and (.rows | length) == $count and
+     (.rows | all(.outcome == "dispatch/completed" and
+                  (.batch_id | type) == "string" and
+                  (.batch_id | length) > 0))' \
+    "$settlement_claims" --argjson count "$settlement_claim_count" \
+    || settlement_claims_valid=0
+fi
+if [ "$settlement_claims_valid" -eq 1 ]; then
+  translation_owner_event_ids="$(body_of "$settlement_claims" | jq -c \
+    '[.rows[].batch_id | "translation-needed-" + .] | unique')"
+  if [ "$RUN_GENERATED_DRAFTS" -eq 1 ]; then
+    settlement_owner_event_ids="$(jq -cn \
+      --argjson translations "$translation_owner_event_ids" \
+      --arg post_drafter "$GENERATION_REQUEST_INDEX_EVENT_ID" \
+      '$translations + [$post_drafter] | unique')"
+  else
+    settlement_owner_event_ids="$translation_owner_event_ids"
+  fi
+  if wait_for_event_turn_release "$settlement_owner_event_ids"; then
+    EVENT_TURNS_SETTLED=1
+  fi
+fi
+settlement_event_ids="$(jq -cn \
+  --arg source "$SOURCE_EVENT_ID" \
+  --arg indexed "$INDEX_EVENT_ID" \
+  --arg generation_source "$GENERATION_REQUEST_SOURCE_EVENT_ID" \
+  --arg generation_indexed "$GENERATION_REQUEST_INDEX_EVENT_ID" \
+  --arg generated_source "$GENERATED_SOURCE_EVENT_ID" \
+  --arg generated_indexed "$GENERATED_INDEX_EVENT_ID" \
+  --argjson candidates "$CANDIDATE_EVENT_IDS" \
+  --argjson generated_candidates "$GENERATED_CANDIDATE_EVENT_IDS" \
+  '([$source,$indexed,$generation_source,$generation_indexed,
+     $generated_source,$generated_indexed] + $candidates +
+     $generated_candidates) |
+   map(select(type == "string" and length > 0)) | unique')"
+if wait_for_graph_node_embeddings "$settlement_event_ids"; then
+  GRAPH_NODE_EMBEDDINGS_SETTLED=1
+fi
 expected_translation_content_count=2
 [ "$RUN_GENERATED_DRAFTS" -eq 1 ] && expected_translation_content_count=4
 if [ "${#TRANSLATION_CONTENT_FILES[@]}" -eq "$expected_translation_content_count" ]; then
@@ -1182,34 +1389,13 @@ if [ "$RETAIN_REVIEW_DEMO" -eq 1 ] && [ "$FAIL_COUNT" -eq 0 ] \
     "$GENERATED_COMPLETION_FILE"
   print_translation_content_cleanup
 else
-  warn "admission events and asynchronous translation evidence remain after the file fixture is removed"
+  if durable_agent_work_settled; then
+    pass "the exit trap will remove the settled run's events, vectors, dispatches, candidates, receipts, and reviews"
+  else
+    warn "durable fixtures cannot be removed until all tracked agent work settles"
+  fi
 fi
-note "Deleting live claims while their agent sessions may still be running can corrupt completion."
-note "After those runs settle, an operator may remove only this verifier identity:"
-cat <<CLEANUP
-  mongosh "\${MONGODB_URI:-mongodb://localhost:27017}/\${MONGODB_DB:-openplanner}" --quiet --eval '
-    const docs = ["${DOC_ID}", "${GENERATED_DOC_ID}"].filter(Boolean);
-    const ids = ["${SOURCE_EVENT_ID}", "${INDEX_EVENT_ID}",
-                 "${GENERATION_REQUEST_SOURCE_EVENT_ID}", "${GENERATION_REQUEST_INDEX_EVENT_ID}",
-                 "${GENERATED_SOURCE_EVENT_ID}", "${GENERATED_INDEX_EVENT_ID}"].filter(Boolean);
-    const translationIds = db.getCollection("${EVENTS_COLLECTION}")
-      .find({kind:"translation.segment","extra.document_id":{\$in:docs}},{id:1,_id:0})
-      .toArray().map(x => x.id);
-    const eventIds = ids.concat(translationIds);
-    db.getCollection("${EVENTS_COLLECTION}").deleteMany({\$or:[{id:{\$in:eventIds}},{id:{\$in:eventIds.map(x => "graph.node:derive:" + x)}}]});
-    db.getCollection("${VECTOR_COLLECTION}").deleteMany({parent_id:{\$in:eventIds}});
-    db.graph_node_embeddings.deleteMany({source_event_id:{\$in:eventIds}});
-    db.graph_edges.deleteMany({\$or:[{source_node_id:{\$in:eventIds}},{target_node_id:{\$in:eventIds}}]});
-    db.knoxx_translation_dispatches.deleteMany({document_wire_id:{\$in:docs}});
-    const docPattern = docs.map(x => x.split(".").join(String.fromCharCode(92) + ".")).join("|");
-    db.knoxx_translation_turns.deleteMany({turn_edn:{\$regex:docPattern}});
-    db.knoxx_translation_candidate_splits.deleteMany({candidate_edn:{\$regex:docPattern}});
-    db.knoxx_translation_candidate_sets.deleteMany({candidate_set_edn:{\$regex:docPattern}});
-    db.knoxx_translation_split_reviews.deleteMany({review_edn:{\$regex:docPattern}});
-    db.knoxx_translation_receipts.deleteMany({document:{\$in:docs.map(x => ":" + x)}});
-    db.knoxx_translation_approvals.deleteMany({document:{\$in:docs.map(x => ":" + x)}});
-  '
-CLEANUP
+note "The trap retains durable facts only while deleting them could race a live agent session."
 
 printf '\n%s====================================================================%s\n' "$C_BOLD" "$C_RESET"
 printf '%s%s passed%s' "$C_GREEN$C_BOLD" "$PASS_COUNT" "$C_RESET"
