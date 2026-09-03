@@ -25,6 +25,35 @@
   [body]
   (js-obj "body" body))
 
+(def ^:private translation-event-id-a
+  (str "translation-needed-translation-run-" (apply str (repeat 64 "a"))))
+
+(def ^:private translation-event-id-b
+  (str "translation-needed-translation-run-" (apply str (repeat 64 "b"))))
+
+(def ^:private indexed-event-id
+  (str "knoxx-publication-document-indexed-" (apply str (repeat 64 "c"))))
+
+(defn- route-by-url
+  "Find one native Fastify route option object by its wire URL."
+  [routes url]
+  (some #(when (= url (aget % "url")) %) routes))
+
+(defn- recording-reply
+  "Build a native reply handle that records status and decoded JSON body."
+  [response]
+  (let [reply (js-obj)]
+    (aset reply "code" (fn [status]
+                          (swap! response assoc :status status)
+                          reply))
+    (aset reply "type" (fn [_content-type] reply))
+    (aset reply "send" (fn [body]
+                          (swap! response assoc :body
+                                 (js->clj body :keywordize-keys true))
+                          reply))
+    (aset reply "sent" false)
+    reply))
+
 (deftest an-omitted-document-means-the-whole-corpus
   (testing "an empty body is the ordinary operator sweep"
     (is (= {} (adapter/decode-request (request {}))))))
@@ -83,6 +112,143 @@
     (is (thrown? js/Error
                  (adapter/decode-request (request {:documnet "knoxx.docs/probe"}))))))
 
+(deftest event-turn-status-body-is-closed-bounded-and-exact
+  (testing "the two exact publication event forms preserve request order"
+    (is (= [indexed-event-id translation-event-id-a]
+           (adapter/decode-event-turn-status-request
+            (request {:event_ids [indexed-event-id translation-event-id-a]})))))
+
+  (testing "empty, over-broad, malformed, and open bodies are refused"
+    (doseq [body [{:event_ids []}
+                  {:event_ids (vec (repeat 17 translation-event-id-a))}
+                  {:event_ids ["translation-needed-translation-run-short"]}
+                  {:event_ids [(str "translation-needed-translation-run-"
+                                    (apply str (repeat 64 "A")))]}
+                  {:event_ids [translation-event-id-a] :document "secret"}]]
+      (is (thrown? js/Error
+                   (adapter/decode-event-turn-status-request
+                    (request body)))))))
+
+(deftest ^:async event-turn-status-reports-owner-state-in-request-order
+  (let [routes (atom [])
+        app (js-obj "route" (fn [options] (swap! routes conj options)))
+        response (atom {})
+        reply (recording-reply response)
+        checks (atom [])
+        owner-lookups (atom [])
+        owner-states (atom {translation-event-id-a :in-flight
+                            indexed-event-id :settled})
+        ctx {:org-id "org-1" :membership-id "member-1"}
+        handlers
+        {:with-request-context! (fn [_runtime _request _reply operation]
+                                  (operation ctx))
+         :ensure-permission! (fn [actual-ctx permission]
+                               (swap! checks conj [actual-ctx permission]))}
+        dependencies
+        {:event-turn-owner-state
+         (fn [event-id]
+           (swap! owner-lookups conj event-id)
+           (get @owner-states event-id))}]
+    (adapter/register-translation-dispatch-routes!
+     app {} {} handlers dependencies)
+    (let [route (route-by-url
+                 @routes
+                 "/api/publications/translations/event-turn-status")]
+      (is (= "POST" (aget route "method")))
+      (await
+       ((aget route "handler")
+        (request {:event_ids [indexed-event-id
+                              translation-event-id-b
+                              translation-event-id-a]})
+        reply))
+
+      (testing "each state is classified without reordering the supplied ids"
+        (is (= 200 (:status @response)))
+        (is (false? (get-in @response [:body :settled])))
+        (is (= [{:event_id indexed-event-id
+                 :state "redelivery_pending"}
+                {:event_id translation-event-id-b
+                 :state "released"}
+                {:event_id translation-event-id-a
+                 :state "in_flight"}]
+               (get-in @response [:body :events])))
+        (is (= [indexed-event-id
+                translation-event-id-b
+                translation-event-id-a]
+               @owner-lookups)))
+
+      (testing "the aggregate settles only when every owner is absent"
+        (reset! owner-states {})
+        (reset! response {})
+        (await
+         ((aget route "handler")
+          (request {:event_ids [translation-event-id-a indexed-event-id]})
+          reply))
+        (is (true? (get-in @response [:body :settled])))
+        (is (= ["released" "released"]
+               (mapv :state (get-in @response [:body :events])))))
+
+      (testing "the process-state query requires translation management"
+        (is (= [[ctx adapter/dispatch-permission]
+                [ctx adapter/dispatch-permission]]
+               @checks))))))
+
+(deftest ^:async event-turn-status-authorizes-before-reading-process-state
+  (let [routes (atom [])
+        app (js-obj "route" (fn [options] (swap! routes conj options)))
+        response (atom {})
+        reply (recording-reply response)
+        owner-read? (atom false)
+        permission-checks (atom [])
+        handlers
+        {:with-request-context! (fn [_runtime _request _reply operation]
+                                  (operation nil))
+         :ensure-permission! (fn [ctx permission]
+                               (swap! permission-checks conj [ctx permission])
+                               (throw (ex-info "forbidden"
+                                               {:status 403
+                                                :code "permission_denied"})))}]
+    (adapter/register-translation-dispatch-routes!
+     app {} {} handlers
+     {:event-turn-owner-state
+      (fn [_event-id]
+        (reset! owner-read? true)
+        nil)})
+    (let [route (route-by-url
+                 @routes
+                 "/api/publications/translations/event-turn-status")]
+      (await
+       ((aget route "handler")
+        (request {:event_ids [translation-event-id-a]})
+        reply))
+      (is (= 403 (:status @response)))
+      (is (= [[nil adapter/dispatch-permission]] @permission-checks))
+      (is (false? @owner-read?)))))
+
+(deftest ^:async default-rest-event-projection-is-rejected-before-dispatch
+  (let [dispatched? (atom false)
+        config {:openplanner-base-url "http://openplanner.test"
+                :openplanner-api-key "test-key"
+                :openplanner-client-mode "rest"}]
+    (try
+      (await
+       (adapter/dispatch-selection-for-scope!
+        config
+        {:org-id "org-1" :membership-id "member-1"}
+        {}
+        {:evidence-store ::evidence-store
+         :split-store ::split-store
+         :dispatch-translations!
+         (fn [& _args]
+           (reset! dispatched? true)
+           (js/Promise.resolve {:ok true}))}))
+      (is false "REST translation dispatch must fail without projection repair")
+      (catch :default err
+        (is (= 503 (:status (ex-data err))))
+        (is (= "openplanner_event_projection_repair_unsupported"
+               (:code (ex-data err))))))
+    (is (false? @dispatched?))))
+
 (deftest ^:async a-registered-publication-command-reaches-the-facade-exactly
   (let [routes (atom [])
         app (js-obj "route" (fn [options]
@@ -97,7 +263,9 @@
                                   (operation ctx))
          :ensure-permission! (fn [actual-ctx permission]
                                (swap! checks conj [actual-ctx permission]))}
+        candidate-event-emitter (fn [_] (js/Promise.resolve {:ok true}))
         config {:session-project-name "review-stage"
+                :publication-content-root "/translation-content"
                 :openplanner-client-mode "rest"}
         dependencies
         {:evidence-store ::evidence-store
@@ -105,6 +273,7 @@
          :client ::client
          :observe-source-revision (constantly (js/Promise.resolve nil))
          :emit! (constantly (js/Promise.resolve nil))
+         :emit-candidate-events! candidate-event-emitter
          :resolve-agent-contract
          (fn [_config _agent-id]
            {:model "gemma4:31b"
@@ -145,7 +314,11 @@
                 :membership-id "member-1"
                 :project "review-stage"}
                (:scope @facade-call)))
-        (is (= ::split-store (get-in @facade-call [:deps :split-store]))))
+        (is (= ::split-store (get-in @facade-call [:deps :split-store])))
+        (is (= "/translation-content"
+               (get-in @facade-call [:deps :content-root])))
+        (is (identical? candidate-event-emitter
+                        (get-in @facade-call [:deps :emit-candidate-events!]))))
 
       (testing "authorization still precedes dispatch and the response succeeds"
         (is (= [[ctx adapter/dispatch-permission]] @checks))
@@ -155,6 +328,7 @@
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
+                  :document/visibility :public
                   :document/source {:path "docs/probe.md"}}
         garden (fn [id]
                  {:garden/id id
@@ -204,6 +378,8 @@
         {:evidence-store evidence
          :split-store ::split-store
          :client ::client
+         :emit-candidate-events! (fn [_completion]
+                                   (js/Promise.resolve {:ok true}))
          :observe-source-revision (constantly (js/Promise.resolve nil))
          :emit! (constantly (js/Promise.resolve nil))
          :resolve-agent-contract

@@ -171,6 +171,7 @@
     (testing "the event validates and names one document, locale pair and revision"
       (is (m/validate law/TranslationNeededEvent event))
       (is (= law/event-type (:event/type event)))
+      (is (= law/event-actor (:event/actor event)))
       (is (= :open-hax.documents/promethean (:document payload)))
       (is (= :en (:source-locale payload)))
       (is (= :de (:locale payload)))

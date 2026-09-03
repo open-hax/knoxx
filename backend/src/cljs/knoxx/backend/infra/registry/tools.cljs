@@ -93,6 +93,7 @@
    "memory_search" {:id "memory_search" :label "Memory Search" :description "Search prior Knoxx sessions in OpenPlanner" :risk-level "low"}
    "memory_session" {:id "memory_session" :label "Memory Session" :description "Load a specific Knoxx session from OpenPlanner" :risk-level "low"}
    "save_translation" {:id "save_translation" :label "Save Translation" :description "Save translated content to database" :risk-level "low"}
+   "save_publication_draft" {:id "save_publication_draft" :label "Save Publication Draft" :description "Persist and admit an immutable, review-bound publication draft" :risk-level "low"}
    "create_new_file" {:id "create_new_file" :label "Create New File" :description "Create a new file-backed artifact for the Knoxx canvas editor" :risk-level "low"}
 
    "contract.list" {:id "contract.list" :label "Contract List" :description "List contract IDs by class before reading or writing" :risk-level "low"}

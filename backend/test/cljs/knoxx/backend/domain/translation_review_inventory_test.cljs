@@ -129,6 +129,30 @@
         (t/is (nil? (inventory/dispatch-key-input scope item)))
         (t/is (nil? (inventory/dispatch-lookup-key scope item)))))))
 
+(t/deftest draft-relations-enter-review-work-without-admitting-withheld-history
+  (let [base (publication-index 3)
+        index (update base :publications
+                      (fn [intents]
+                        (mapv (fn [publication]
+                                (cond
+                                  (= (publication-id 0)
+                                     (:publication/id publication))
+                                  (assoc publication :publication/state :draft)
+
+                                  (= (publication-id 1)
+                                     (:publication/id publication))
+                                  (assoc publication :publication/state :withheld)
+
+                                  :else publication))
+                              intents)))
+        work (inventory/desired-work index (source-revisions 3))]
+    (t/is (= #{(publication-id 0) (publication-id 2)}
+             (set (map :publication/id work))))
+    (t/is (some #(= (publication-id 0) (:publication/id %)) work)
+          "a draft must be translated before review")
+    (t/is (not-any? #(= (publication-id 1) (:publication/id %)) work)
+          "withheld history must not create new model work")))
+
 (t/deftest a-reserved-explicit-revision-remains-visible-but-not-dispatchable
   (let [index (publication-resolver/publication-index
                [{:garden/id garden-id

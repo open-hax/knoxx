@@ -1,7 +1,9 @@
 (ns knoxx.backend.extern.fastify-translation-config-test
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
+            [knoxx.backend.domain.translation-config :as domain-config]
             [knoxx.backend.extern.fastify.translation-config :as adapter]
+            [knoxx.backend.infra.routes.translation-config :as facade]
             ["node:fs" :as node-fs]
             ["node:path" :as path]))
 
@@ -91,6 +93,49 @@
     (await ((:handler get-route) (js-obj "method" "GET") (js-obj)))
     (is (= ["org.translations.read"] @(:checks h)))))
 
+(deftest ^:async deployment-model-overlay-is-visible-without-rewriting-policy
+  (let [authored {:namespace :knoxx.translation
+                  :policy/id :pipeline-default
+                  :translation/model "glm-5"
+                  :translation/source-locale :en
+                  :translation/default-review :required}
+        index (domain-config/index-resources
+               [authored
+                {:model/id "glm-5"}
+                {:model/id "gemma4:e2b"}])]
+    (with-redefs [facade/config-index!
+                  (fn [_config] (js/Promise.resolve index))]
+      (let [effective (await
+                       (facade/resolved-config!
+                        {:agent-model-overrides
+                         {"publication_translator" "gemma4:e2b"}}
+                        {}))]
+        (is (= "gemma4:e2b" (:translation/model effective)))
+        (is (= "glm-5"
+               (:translation/model (domain-config/resolve-config index {})))
+            "the environment overlay must not mutate authored policy")))))
+
+(deftest ^:async deployment-managed-model-refuses-a-misleading-patch
+  (let [loaded? (atom false)
+        caught (atom nil)]
+    (with-redefs [facade/config-records!
+                  (fn [_config]
+                    (reset! loaded? true)
+                    (js/Promise.resolve []))]
+      (try
+        (await
+         (facade/patch-config!
+          {:agent-model-overrides
+           {"publication_translator" "gemma4:e2b"}}
+          {:translation/model "glm-5"}))
+        (catch :default error
+          (reset! caught error))))
+    (is (= 409 (:status (ex-data @caught))))
+    (is (= "translation_model_deployment_managed"
+           (:code (ex-data @caught))))
+    (is (false? @loaded?)
+        "a deployment-managed patch must fail before reading or writing policy")))
+
 (deftest ^:async unauthorized-read-is-refused
   (let [h (harness #{})
         routes (register! h)
@@ -167,4 +212,3 @@
       (testing "the check ran despite the absent context"
         (is (= [[nil "platform.translations.manage"]] @checks)))
       (is (= 403 (:status (first @responses)))))))
-

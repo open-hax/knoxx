@@ -62,6 +62,7 @@
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
+                  :document/visibility :public
                   :document/source {:path "docs/probe.md"}}
         intent (fn [publication garden]
                  {:publication/id publication
@@ -76,16 +77,73 @@
                :publications [(intent :knoxx.docs/probe-es-a :knoxx.docs/garden-a)
                               (intent :knoxx.docs/probe-es-b :knoxx.docs/garden-b)]}
         selected (facade/selected-hydrated-intents
-                  index {:publication :knoxx.docs/probe-es-b})]
+                  index evidence-scope
+                  {:publication :knoxx.docs/probe-es-b})]
     (is (= [:knoxx.docs/probe-es-b] (mapv :publication/id selected)))
     (is (= 2 (count (facade/selected-hydrated-intents
-                     index {:document :knoxx.docs/probe})))
+                     index evidence-scope
+                     {:document :knoxx.docs/probe})))
         "the older document command intentionally remains the broader action")))
+
+(deftest translation-selection-enforces-document-ownership
+  (let [document (fn [id]
+                   {:document/id id
+                    :document/title (name id)
+                    :document/source-locale :en
+                    :document/source {:path (str "docs/" (name id) ".md")}})
+        public (assoc (document :knoxx.docs/public)
+                      :document/visibility :public)
+        owned (assoc (document :knoxx.generated/owned)
+                     :document/org-id "org-1"
+                     :document/visibility :private)
+        other (assoc (document :knoxx.generated/other)
+                     :document/org-id "org-2"
+                     :document/visibility :private)
+        legacy (document :knoxx.generated/legacy)
+        intent (fn [document]
+                 {:publication/id (keyword "knoxx.publications"
+                                           (name (:document/id document)))
+                  :publication/document (:document/id document)
+                  :publication/garden :knoxx.gardens/main
+                  :publication/locale :es
+                  :publication/revision :source/current
+                  :publication/state :draft
+                  :publication/path (str "/" (name (:document/id document)))
+                  :translation/review :required})
+        documents [public owned other legacy]
+        index {:documents (into {} (map (juxt :document/id identity)) documents)
+               :publications (mapv intent documents)}]
+    (testing "a corpus sweep sees only explicit public and exact-owner documents"
+      (is (= #{:knoxx.docs/public :knoxx.generated/owned}
+             (set (map :publication/document
+                       (facade/selected-hydrated-intents
+                        index evidence-scope {}))))))
+
+    (testing "an exact private or legacy document is indistinguishable from absence"
+      (doseq [document-id [:knoxx.generated/other :knoxx.generated/legacy]]
+        (let [error (try
+                      (facade/selected-hydrated-intents
+                       index evidence-scope {:document document-id})
+                      nil
+                      (catch :default cause cause))]
+          (is (= 404 (:status (ex-data error))))
+          (is (= "translation_document_not_found" (:code (ex-data error)))))))
+
+    (testing "an exact publication cannot bypass its document owner"
+      (let [publication-id (:publication/id (intent other))
+            error (try
+                    (facade/selected-hydrated-intents
+                     index evidence-scope {:publication publication-id})
+                    nil
+                    (catch :default cause cause))]
+        (is (= 404 (:status (ex-data error))))
+        (is (= "translation_publication_not_found" (:code (ex-data error))))))))
 
 (deftest invalid-facade-selections-are-refused-before-dispatch
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
+                  :document/visibility :public
                   :document/source {:path "docs/probe.md"}}
         intent {:publication/id :knoxx.publications/probe-es
                 :publication/document :knoxx.docs/probe
@@ -99,25 +157,29 @@
                :publications [intent]}]
     (testing "unknown keys cannot silently become a corpus sweep"
       (is (thrown? js/Error
-                   (facade/selected-hydrated-intents index {:locale :es}))))
+                   (facade/selected-hydrated-intents
+                    index evidence-scope {:locale :es}))))
 
     (testing "a present selector must name a qualified identity"
       (is (thrown? js/Error
-                   (facade/selected-hydrated-intents index {:document nil})))
+                   (facade/selected-hydrated-intents
+                    index evidence-scope {:document nil})))
       (is (thrown? js/Error
-                   (facade/selected-hydrated-intents index {:publication nil}))))
+                   (facade/selected-hydrated-intents
+                    index evidence-scope {:publication nil}))))
 
     (testing "document and publication are alternatives, not precedence rules"
       (is (thrown? js/Error
                    (facade/selected-hydrated-intents
-                    index
+                    index evidence-scope
                     {:document :knoxx.docs/probe
                      :publication :knoxx.publications/probe-es}))))
 
     (testing "an exact publication miss is a typed not-found error"
       (let [error (try
                     (facade/selected-hydrated-intents
-                     index {:publication :knoxx.publications/missing})
+                     index evidence-scope
+                     {:publication :knoxx.publications/missing})
                     nil
                     (catch :default err err))]
         (is (some? error))
@@ -128,6 +190,7 @@
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
+                  :document/visibility :public
                   :document/source {:path "docs/probe.md"}}
         garden (fn [id]
                  {:garden/id id
@@ -198,6 +261,7 @@
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
+                  :document/visibility :public
                   :document/source {:path "docs/probe.md"}}
         garden {:garden/id :knoxx.gardens/promethean
                 :garden/title "Promethean"
@@ -550,6 +614,15 @@
       (is (empty? (facade/admissible-intents
                    (index {:status :active :locales [:es]})
                    [(assoc intent :publication/state :archived)]))))
+
+    (testing "a draft is translatable but a withheld intent is not"
+      (is (= [(assoc intent :publication/state :draft)]
+             (facade/admissible-intents
+              (index {:status :active :locales [:es]})
+              [(assoc intent :publication/state :draft)])))
+      (is (empty? (facade/admissible-intents
+                   (index {:status :active :locales [:es]})
+                   [(assoc intent :publication/state :withheld)]))))
 
     (testing "a dangling garden reference is not"
       (is (empty? (facade/admissible-intents

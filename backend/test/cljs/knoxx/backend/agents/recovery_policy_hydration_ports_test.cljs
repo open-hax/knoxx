@@ -2,7 +2,19 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.agent.hydration-sources :as hydration-sources]
             [knoxx.backend.infra.agent.policy :as policy]
+            [knoxx.backend.infra.agent.recovery :as recovery]
             [knoxx.backend.infra.agent.recovery-coordinator :as recovery-coordinator]))
+
+(deftest recovered-agent-spec-preserves-tools-choice-aliases
+  (doseq [[session-key choice-key choice]
+          [[:agent_spec :toolsChoice "required-first"]
+           [:agent-spec :tools_choice :required-first]
+           [:agentSpec :tools-choice "required-first"]]]
+    (is (= "required-first"
+           (:tools-choice
+            (recovery/recovered-agent-spec
+             {session-key {:contractId "publication_translator"
+                           choice-key choice}}))))))
 
 (deftest ^:async policy-engine-can-be-faked-and-default-preserves-model-check
   (testing "fake policy engine supports turn orchestration tests without store/authz"

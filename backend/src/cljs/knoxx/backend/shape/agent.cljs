@@ -20,6 +20,7 @@
    [:task-prompt {:optional true} [:maybe :string]]
    [:model {:optional true} [:maybe :string]]
    [:thinking-level {:optional true} [:maybe :string]]
+   [:tools-choice {:optional true} [:maybe [:enum "required-first"]]]
    [:tool-policies {:optional true} [:maybe [:vector ToolPolicy]]]
    [:resource-policies {:optional true} any?]
    [:sources {:optional true} any?]

@@ -6,6 +6,7 @@
    content into an artifact, and selects the static-site target configured by
    deployment. No desired state is written here."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.node.fs :as fs]
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
             [knoxx.backend.domain.translation-review-inventory :as review-inventory]
@@ -160,7 +161,8 @@
                                            {:status 503
                                             :code "translation_evidence_unavailable"})))
         records (await (publications/resource-records! config))
-        index (publications/publication-index records)
+        index (document-admission/visible-publication-index
+               (publications/publication-index records) scope)
         documents (vec (vals (:documents index)))
         roots (translation/document-source-roots config records)
         source-revisions (await (source-revision/source-revisions!

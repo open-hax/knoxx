@@ -118,3 +118,9 @@
               — clj->js renders a keyword with `name`, which would have sent
               \"probe-es\" and merged every namespace onto one wire id"
       (is (= "knoxx.docs/probe-es" (:publication/id (:body @sent)))))))
+
+(deftest cms-routes-project-organization-scope-only-from-the-auth-context
+  (is (= {:org-id "org-1"}
+         (#'adapter/request-scope {:org-id "org-1"})))
+  (is (= {:org-id nil}
+         (#'adapter/request-scope nil))))

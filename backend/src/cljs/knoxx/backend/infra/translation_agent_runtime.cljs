@@ -14,10 +14,12 @@
   an agent turn rather than on a reconcile request, and the two have no shared
   lifecycle."
   (:require [knoxx.backend.domain.node.crypto :as crypto]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
             [knoxx.backend.infra.stores.translation-evidence-registry :as evidence-registry]
             [knoxx.backend.infra.stores.translation-split-registry :as split-registry]
-            [knoxx.backend.infra.translation-agent-sink :as sink]))
+            [knoxx.backend.infra.translation-agent-sink :as sink]
+            [knoxx.backend.infra.translation-event-writer :as event-writer]))
 
 (defn unavailable
   "Why the contract-backed sink cannot run, or nil when it can.
@@ -50,16 +52,22 @@
    at completion, not at assembly, and a captured instant would date every
    translation in a long-lived process to when the process started."
   [config]
-  {:content-root (:publication-content-root config)
-   :evidence-store (evidence-registry/current)
-   :split-store (split-registry/current)
-   :digest-hex crypto/sha256-hex
-   :clock (fn [] (.toISOString (js/Date.)))
-   ;; Built here rather than inside the sink, for the reason
-   ;; `routes.translation.resolve-evidence-safely!` gives about its own copy:
-   ;; the observer needs runtime config, and a component that constructs its own
-   ;; dependencies cannot be given a different one by a test.
-   :observe-source-revision (translation-dispatch/source-revision-observer! config)})
+  (let [client (-> (openplanner-client/client config)
+                   openplanner-client/assert-event-projection-repair-supported!)]
+    {:content-root (:publication-content-root config)
+     :evidence-store (evidence-registry/current)
+     :split-store (split-registry/current)
+     :digest-hex crypto/sha256-hex
+     :clock (fn [] (.toISOString (js/Date.)))
+     ;; The receipt is persisted before this projection is called. A failed event
+     ;; write therefore fails the tool call, and the agent's equal retry repairs it
+     ;; with the same stable OpenPlanner event ids.
+     :emit-candidate-events! (partial event-writer/emit-candidate-events! client)
+     ;; Built here rather than inside the sink, for the reason
+     ;; `routes.translation.resolve-evidence-safely!` gives about its own copy:
+     ;; the observer needs runtime config, and a component that constructs its own
+     ;; dependencies cannot be given a different one by a test.
+     :observe-source-revision (translation-dispatch/source-revision-observer! config)}))
 
 (defn ^:async save-pair!
   "Record one agent-submitted pair, or throw the refusal the agent should read.

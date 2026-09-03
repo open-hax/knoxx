@@ -1,6 +1,7 @@
 (ns knoxx.backend.extern-tools-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.domain.tools :as tools]))
+            [knoxx.backend.domain.tools :as tools]
+            [knoxx.backend.infra.openplanner.tools :as openplanner-tools]))
 
 (defn- sample-execute
   [_runtime _config _tool-call-id params]
@@ -23,6 +24,27 @@
       (is (= "first guideline" (aget tool "promptGuidelines" 0)))
       (is (= "object" (aget tool "parameters" "type")))
       (is (fn? (aget tool "execute"))))))
+
+(defn- save-translation-required-fields
+  [resource-policies]
+  (let [factory (openplanner-tools/save-translation-tool
+                 {:resourcePolicies resource-policies})
+        tool (factory {} {})]
+    (set (js->clj (aget tool "parameters" "required")))))
+
+(deftest split-backed-save-translation-requires-atomic-coordinates
+  (testing "legacy sessions retain coordinate fallbacks"
+    (is (= #{"translated_text" "source_text"}
+           (save-translation-required-fields {}))))
+  (testing "a split-backed publication exposes every non-inferable coordinate as required"
+    (is (= #{"translated_text" "segment_index" "split_id" "attempt_id"}
+           (save-translation-required-fields
+            {:dispatch_key "dispatch"
+             :run_id "run"
+             :translation_turn_id "turn"
+             :split_manifest_id "manifest"
+             :candidate_claim_id "claim"
+             :execution_digest "digest"})))))
 
 (deftest maybe-tool-update-sends-runtime-content-payload
   (testing "update callbacks still receive the expected JS content array"

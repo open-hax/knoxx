@@ -168,23 +168,28 @@
 ;; ── Receipts ───────────────────────────────────────────────────────────────
 
 (defn- materialized-receipt
-  "Evidence of the materialization the op requested. Same shape the memory
-   target returns, so adapters stay interchangeable upward."
-  [adapter-id op]
+  "Evidence of the route the adapter committed. Same shape the memory target
+   returns, so adapters stay interchangeable upward."
+  [adapter-id op route]
   (let [intent (:intent op)
-        revision (:concrete-revision op)
-        path (:publication/path intent)]
-    {:receipt/type :publication/materialized
-     :publication/id (:publication/id intent)
-     :adapter/id adapter-id
-     :idempotency/key (:idempotency/key op)
-     :document/id (:publication/document intent)
-     :target (:publication/garden intent)
-     :locale (:publication/locale intent)
-     :revision revision
-     :path path
-     :materialized/revision revision
-     :materialized/path path}))
+        revision (:route/revision route)
+        path (:route/path route)]
+    ;; Describe the route that was actually committed. In particular, copying
+    ;; its optional title prevents the receipt from contradicting the manifest
+    ;; after a titled publication succeeds.
+    (cond-> {:receipt/type :publication/materialized
+             :publication/id (:publication/id intent)
+             :adapter/id adapter-id
+             :idempotency/key (:idempotency/key op)
+             :document/id (:publication/document intent)
+             :target (:publication/garden intent)
+             :locale (:publication/locale intent)
+             :revision revision
+             :path path
+             :materialized/revision revision
+             :materialized/path path}
+      (:route/title route)
+      (assoc :materialized/title (:route/title route)))))
 
 ;; ── Protocol methods ───────────────────────────────────────────────────────
 
@@ -221,7 +226,7 @@
     (await (with-manifest-lock! root
                                 (^:async fn []
                                   (await (commit-route! root route artifact)))))
-    (materialized-receipt adapter-id op)))
+    (materialized-receipt adapter-id op route)))
 
 (defn- ^:async remove-publication!
   "Take the publication's route out of the manifest (the commit), then

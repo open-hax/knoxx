@@ -50,6 +50,11 @@
    "create_new_file"  {:readOnlyHint false :destructiveHint true
                        :idempotentHint true :openWorldHint false}
 
+   ;; Source-revision-derived paths are create-only. Equal replay adds nothing;
+   ;; conflicting bytes are refused instead of replacing the existing draft.
+   "save_publication_draft" {:readOnlyHint false :destructiveHint false
+                             :idempotentHint true :openWorldHint false}
+
    ;; Genuinely append-only: the event id is "claim:" plus a fresh randomUUID
    ;; per call, so each call adds a claim and repeating adds another.
    "push_claim"       {:readOnlyHint false :destructiveHint false

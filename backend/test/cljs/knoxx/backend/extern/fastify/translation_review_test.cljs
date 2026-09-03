@@ -134,6 +134,7 @@
   {:document/id :knoxx.docs/probe
    :document/title "Probe"
    :document/source-locale :en
+   :document/visibility :public
    :document/source {:path "docs/probe.md"}})
 
 (def ^:private hydration-source "Source text")
@@ -477,13 +478,30 @@
         documents [{:document/id alpha
                     :document/title "Alpha"
                     :document/source-locale :en
+                    :document/visibility :public
                     :document/source {:path "docs/alpha.md"}}
                    {:document/id beta
                     :document/title "Beta"
                     :document/source-locale :en
+                    :document/visibility :public
                     :document/source {:path "docs/beta.md"}}]
-        index {:documents (into {} (map (juxt :document/id identity)) documents)}
-        roots {alpha "/contracts-a" beta "/contracts-b"}
+        hidden {:document/id :knoxx.docs/hidden
+                :document/title "Hidden"
+                :document/source-locale :en
+                :document/org-id "org-2"
+                :document/visibility :private
+                :document/source {:path "docs/hidden.md"}}
+        legacy {:document/id :knoxx.docs/legacy
+                :document/title "Legacy ownerless"
+                :document/source-locale :en
+                :document/source {:path "docs/legacy.md"}}
+        index {:documents (into {}
+                                (map (juxt :document/id identity))
+                                (conj documents hidden legacy))}
+        roots {alpha "/contracts-a"
+               beta "/contracts-b"
+               (:document/id hidden) "/contracts-hidden"
+               (:document/id legacy) "/contracts-legacy"}
         revisions {alpha "sha256-alpha" beta "sha256-beta"}
         observed-source-call (atom nil)
         observed-receipt-call (atom nil)
@@ -555,6 +573,8 @@
         (is (= config (:config @observed-source-call)))
         (is (= (set documents) (set (:documents @observed-source-call))))
         (is (= roots (:roots @observed-source-call)))
+        (is (= #{alpha beta}
+               (set (keys (:documents (:index @observed-receipt-call))))))
         (is (= revisions (:source-revisions @observed-receipt-call))))
 
       (testing "that exact map crosses the extern/facade boundary intact"
