@@ -288,16 +288,26 @@
         (is (true? (await (draft-store/draft-complete?
                            config draft-policy))))
         (await (.rm fs content-path #js {:force true}))
-        (testing "a marker without content is not completion"
-          (is (false? (await (draft-store/draft-complete?
-                              config draft-policy)))))
+        (testing "a marker without content fails preflight before another model turn"
+          (let [error (try
+                        (await (draft-store/draft-complete?
+                                config draft-policy))
+                        nil
+                        (catch :default cause cause))]
+            (is (= :generated-draft-conflict (:code (ex-data error))))
+            (is (= content-path (:path (ex-data error))))))
         (await (.writeFile fs content-path content "utf8"))
         (is (true? (await (draft-store/draft-complete?
                            config draft-policy))))
         (await (.rm fs manifest-path #js {:force true}))
-        (testing "a marker without its manifest is not completion"
-          (is (false? (await (draft-store/draft-complete?
-                              config draft-policy)))))
+        (testing "a marker without its manifest also fails preflight"
+          (let [error (try
+                        (await (draft-store/draft-complete?
+                                config draft-policy))
+                        nil
+                        (catch :default cause cause))]
+            (is (= :generated-draft-conflict (:code (ex-data error))))
+            (is (= manifest-path (:path (ex-data error))))))
         (await (.writeFile fs manifest-path manifest "utf8"))
         (is (true? (await (draft-store/draft-complete?
                            config draft-policy)))))

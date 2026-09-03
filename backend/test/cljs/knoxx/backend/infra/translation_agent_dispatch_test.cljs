@@ -320,6 +320,43 @@
       (is (= (dispatch/event-id run-id)
              (:event/id (first @emitted)))))))
 
+(deftest ^:async an-agent-runner-fails-a-claim-bound-to-a-legacy-worker
+  (let [evidence-store (store/memory-store)
+        translation-store (split-store/memory-store digest-hex)
+        emitted (atom [])
+        record (dispatch-law/dispatch-record
+                work context :dispatch/accepted
+                "2026-08-26T16:00:00.000Z"
+                :attempt-id "legacy-worker-attempt")
+        _ (await (store/reserve-dispatch! evidence-store record))
+        legacy-batch-id "legacy-worker-batch"
+        bound (await (store/bind-dispatch-batch!
+                      evidence-store record legacy-batch-id))
+        first-agent-pass (await (dispatch/dispatch-work!
+                                 (deps evidence-store emitted
+                                       :translation-store translation-store)
+                                 work context source))]
+    (testing "the incompatible owner becomes an explicit retriable failure"
+      (is (= :dispatch/failed (:dispatch/outcome first-agent-pass)))
+      (is (= legacy-batch-id
+             (get-in first-agent-pass [:dispatch/record :dispatch/batch-id])))
+      (is (re-find #"non-agent producer run"
+                   (:dispatch/detail first-agent-pass)))
+      (is (= :dispatch/failed
+             (:dispatch/outcome
+              (await (store/dispatch-for-key!
+                      evidence-store (:dispatch/key bound))))))
+      (is (empty? @emitted)))
+
+    (testing "the next admission replaces the failed worker attempt"
+      (let [retry (await (dispatch/dispatch-work!
+                          (deps evidence-store emitted
+                                :translation-store translation-store)
+                          work context source))]
+        (is (= :dispatch/accepted (:dispatch/outcome retry)))
+        (is (not= legacy-batch-id (:translation/run-id retry)))
+        (is (= 1 (count @emitted)))))))
+
 (deftest ^:async a-rejected-provider-turn-makes-the-exact-claim-retriable
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)

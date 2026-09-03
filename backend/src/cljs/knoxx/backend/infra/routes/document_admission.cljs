@@ -10,6 +10,7 @@
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.publication-resolver :as resolver]
+            [knoxx.backend.extern.mongo :as extern-mongo]
             [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
@@ -81,17 +82,6 @@
        (await (repaired-existing-event! client (:id event)))
        (await (append-event-with-supported-projections! client event))))))
 
-(defn- duplicate-event-error?
-  [err]
-  (let [data (ex-data err)
-        native-code (when err (aget err "code"))
-        code (or (:code data) native-code)
-        message (or (when err (aget err "message")) (str err))]
-    (boolean
-     (or (= 11000 code)
-         (= "11000" (str code))
-         (re-find #"(?i)(E11000|duplicate key)" (str message))))))
-
 (defn- ^:async persist-one!
   [persist-event! document-id phase event]
   (try
@@ -100,7 +90,7 @@
        :event/status (if (:existing result) :existing :recorded)
        :event/result result})
     (catch :default err
-      (if (duplicate-event-error? err)
+      (if (extern-mongo/duplicate-key-error? err)
         {:event/id (:id event)
          :event/status :existing}
         (throw
@@ -228,9 +218,16 @@
 (defn- ^:async settle-draft-generation!
   [draft-complete? release-indexed-event! item _settlement]
   (let [event-id (get-in item [:runtime-event :event/id])]
-    (when-not (await (draft-complete? (:draft/policy item)))
-      (await (release-indexed-event! event-id)))
-    true))
+    (try
+      (when-not (await (draft-complete? (:draft/policy item)))
+        (await (release-indexed-event! event-id)))
+      true
+      (catch :default err
+        ;; The runner retains the rejected settlement for redelivery. Release
+        ;; its dispatch claim now so that retained result can actually be
+        ;; retried instead of remaining pinned behind an in-flight event.
+        (await (release-indexed-event! event-id))
+        (throw err)))))
 
 (defn- ^:async register-draft-terminal-owner!
   [runtime item]

@@ -1166,9 +1166,36 @@
   "GET" "/api/data/mongo/list"
   (send-json-promise! reply (openplanner-client/mongo-collections! (openplanner-client/client config))))
 
+(def data-mongo-read-permission
+  "org.datalakes.read")
+
+(defn authorize-mongo-query!
+  "Authorize raw data exploration and tenant-scope publication source events.
+
+   Policy-disabled local mode is an explicitly trusted workstation boundary.
+   Once an authenticated context exists, however, even a caller-supplied
+   `extra.org_id` is replaced with the server-derived tenant before the query
+   reaches OpenPlanner. Other collections retain their established query shape;
+   this predicate closes the source-event disclosure introduced by document
+   admission without guessing at unrelated collection schemas."
+  [ctx ensure-permission-fn body]
+  (if-not ctx
+    body
+    (do
+      (ensure-permission-fn ctx data-mongo-read-permission)
+      (if-not (= "events" (:collection body))
+        body
+        (let [org-id (some-> (ctx-org-id ctx) str str/trim not-empty)]
+          (when-not org-id
+            (throw (http-error 403 "org_scope_denied"
+                               "Event queries require an authenticated organization")))
+          (assoc body :filter
+                 (assoc (or (:filter body) {}) :extra.org_id org-id)))))))
+
 (defroute api-data-mongo-query! []
   "POST" "/api/data/mongo/query"
-  (let [body (request-body request)]
+  (let [body (authorize-mongo-query! ctx ensure-permission!
+                                     (request-body request))]
     (send-json-promise! reply (openplanner-client/mongo-query! (openplanner-client/client config) body))))
 
 (defroute api-data-pg-tables! []

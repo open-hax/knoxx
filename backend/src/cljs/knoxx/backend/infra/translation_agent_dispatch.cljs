@@ -403,11 +403,11 @@
         bound-run-id (:dispatch/batch-id record)]
     (cond
       (and bound-run-id (not= expected-run-id bound-run-id))
-      {:dispatch/outcome :dispatch/duplicate
-       :dispatch/record record
-       :dispatch/detail
-       (str "the accepted claim is bound to a non-agent producer run and cannot"
-            " be replayed through the translation agent")}
+      (await
+       (fail-run!
+        evidence-store record
+        (str "the accepted claim is bound to a non-agent producer run and cannot"
+             " be replayed through the translation agent")))
 
       bound-run-id
       (try

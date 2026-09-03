@@ -60,12 +60,32 @@
                 {:code :generated-draft-completion-conflict
                  :path completion-path})))))
 
+(defn- conflict!
+  [message file-path]
+  (throw (ex-info message
+                  {:code :generated-draft-conflict
+                   :path file-path})))
+
 (defn ^:async draft-complete?
   "True only when the exact topology has a valid recursive-admission marker
-   and both immutable draft files still exist."
+   and both immutable draft files still exist.
+
+   A marker is the durable assertion that recursive admission completed. If an
+   immutable file later vanishes, returning false would authorize another model
+   turn that can only collide with that marker. Surface the corruption during
+   admission preflight instead, before any event or provider work is started."
   [config input]
-  (and (await (completion-marked? config input))
-       (await (draft-materialized? config input))))
+  (let [identity (draft/draft-identity input)
+        {:keys [content-path manifest-path]} (draft-paths config identity)
+        marked? (await (completion-marked? config input))]
+    (if-not marked?
+      false
+      (let [content? (await (xdraft-store/file-exists? content-path))
+            manifest? (await (xdraft-store/file-exists? manifest-path))]
+        (if (and content? manifest?)
+          true
+          (conflict! "completed generated draft is missing immutable files"
+                     (if-not content? content-path manifest-path)))))))
 
 (defn- ^:async same-file-result
   [file-path content]
@@ -103,12 +123,6 @@
     (merge resources paths
            {:draft/created? (or (:created? content-write)
                                 (:created? manifest-write))})))
-
-(defn- conflict!
-  [message file-path]
-  (throw (ex-info message
-                  {:code :generated-draft-conflict
-                   :path file-path})))
 
 (defn- persisted-title!
   [manifest document-id manifest-path]

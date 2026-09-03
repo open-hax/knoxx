@@ -472,6 +472,36 @@
       (is (false? (get-in retry-event [:event/payload
                                        :document/generate-drafts?]))))))
 
+(deftest ^:async completed-draft-corruption-fails-before-events-or-model-work
+  (let [doc (document :knoxx.docs/corrupt-draft
+                      "docs/corrupt-draft.md" true)
+        resource-records (records [doc])
+        persisted (atom {})
+        emitted (atom [])
+        dispatches (atom [])
+        error (try
+                (await
+                 (admission/admit-documents!
+                  {}
+                  (assoc (deps resource-records
+                               {(:document/id doc) "# Corrupt draft"}
+                               persisted emitted dispatches)
+                         :draft-complete?
+                         (fn [_policy]
+                           (js/Promise.reject
+                            (ex-info
+                             "completed generated draft is missing immutable files"
+                             {:code :generated-draft-conflict
+                              :path "/generated/missing.md"}))))
+                  scope {:generate-drafts? true}))
+                nil
+                (catch :default cause cause))]
+    (is (= :generated-draft-conflict (:code (ex-data error))))
+    (testing "preflight rejects before durable events or provider dispatch"
+      (is (empty? @persisted))
+      (is (empty? @emitted))
+      (is (empty? @dispatches)))))
+
 (defn- draft-owner-dependencies
   [doc draft-complete settlers]
   {:draft-complete?
@@ -566,7 +596,7 @@
       (is (= [event-id event-id] @emitted))
       (is (true? (:ok retry-result))))))
 
-(deftest ^:async a-vanished-completed-draft-reclaims-its-dispatch-in-process
+(deftest ^:async an-explicitly-reset-draft-reclaims-its-dispatch-in-process
   (let [doc (document :knoxx.docs/vanished-draft
                       "docs/vanished-draft.md" true)
         resource-records (records [doc])
@@ -638,8 +668,9 @@
     (is (empty? @settlers))
     (is (= :completed (get @dispatch-states event-id)))
 
-    ;; Model an operator removing the completion marker/immutable files after
-    ;; this process already recorded the deterministic dispatch as completed.
+    ;; Model an operator explicitly removing the completion marker before its
+    ;; immutable files. Unlike a surviving marker with missing files, removing
+    ;; the marker deliberately reopens generation.
     (reset! draft-complete false)
     (let [repair (await (admission/admit-documents!
                          {} dependencies scope {:generate-drafts? true}))]
@@ -693,12 +724,14 @@
     (await (flush-promises!))
     (is (= 2 @checks)
         "the first terminal draft check rejected and remained cached")
+    (is (= [event-id] @releases)
+        "a rejected completion read immediately releases the event claim")
 
     (let [retry-result (await (admission/admit-documents!
                                {} dependencies scope
                                {:generate-drafts? true}))]
       (testing "registration redelivers before the equal event is emitted"
-        (is (= [event-id] @releases))
+        (is (= [event-id event-id] @releases))
         (is (= [event-id event-id] @emitted)))
       (testing "the same admission pass retries against existing durable facts"
         (is (true? (:ok retry-result)))
@@ -716,7 +749,7 @@
                      :event-id event-id}}
        (fn [] (js/Promise.resolve {:ok true})))
       (await (flush-promises!))
-      (is (= [event-id event-id] @releases)))
+      (is (= [event-id event-id event-id] @releases)))
     (agent-runner/reset-event-turn-queue!)
     (agent-runner/reset-event-turn-settlers!)))
 
@@ -759,6 +792,8 @@
                    :event-id event-id}}
      (fn [] (js/Promise.resolve {:ok true})))
     (await (flush-promises!))
+    (is (= [event-id] @releases)
+        "the first rejected completion read releases its exact event")
 
     (let [error (try
                   (await (admission/admit-documents!
@@ -770,7 +805,7 @@
         (is (= "document_post_draft_settlement_redelivery_failed"
                (:code (ex-data error))))
         (is (= [event-id] @emitted))
-        (is (empty? @releases))
+        (is (= [event-id event-id] @releases))
         (is (= :settled (agent-runner/event-turn-owner-state event-id)))))
 
     (let [retry-result (await (admission/admit-documents!
@@ -778,7 +813,7 @@
                                {:generate-drafts? true}))]
       (testing "the retained settlement remains recoverable on a later pass"
         (is (true? (:ok retry-result)))
-        (is (= [event-id] @releases))
+        (is (= [event-id event-id event-id] @releases))
         (is (= [event-id event-id] @emitted))))
     (agent-runner/reset-event-turn-queue!)
     (agent-runner/reset-event-turn-settlers!)))
