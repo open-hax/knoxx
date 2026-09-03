@@ -74,9 +74,11 @@
                   openplanner/mongo-query (fn [query]
                                             (swap! queries conj query)
                                             (js/Promise.resolve
-                                             {:ok true
-                                              :total 1
-                                              :rows [{:id "translation-segment-a"}]}))
+                                             (if (= "translation-segment-a"
+                                                    (get-in query [:filter :id]))
+                                               {:ok true :total 1
+                                                :rows [{:id "translation-segment-a"}]}
+                                               {:ok true :total 0 :rows []})))
                   ;; Match the production var's multi-arity shape. CLJS emits
                   ;; direct arity dispatch for that var even while it is
                   ;; temporarily rebound by with-redefs.
@@ -107,12 +109,15 @@
                (:translation/event-existing-ids result)))
         (is (= ["translation-segment-b"]
                (:translation/event-recorded-ids result)))
-        (is (= {:collection "events"
-                :filter {:id {:$in ["translation-segment-a"
-                                    "translation-segment-b"]}}
-                :projection {:id 1}
-                :limit 2}
-               (first @queries)))
+        (is (= [{:collection "events"
+                 :filter {:id "translation-segment-a"}
+                 :projection {:id 1}
+                 :limit 1}
+                {:collection "events"
+                 :filter {:id "translation-segment-b"}
+                 :projection {:id 1}
+                 :limit 1}]
+               @queries))
         (is (= ["translation-segment-a" "translation-segment-b"]
                (:translation/event-ids result)))
         (is (= ["translation-segment-a" "translation-segment-b"] @verified))
@@ -124,12 +129,19 @@
 (deftest ^:async writer-does-not-append-an-equal-durable-replay
   (let [events [{:id "translation-segment-a" :extra durable-extra}
                 {:id "translation-segment-b" :extra durable-extra}]
-        append-count (atom 0)]
+        append-count (atom 0)
+        queries (atom [])]
     (with-redefs [event/candidate-events (fn [_digest _receipt _turn _candidate-set]
                                           events)
-                  openplanner/mongo-query (fn [_]
-                                            (js/Promise.resolve
-                                             {:ok true :total 2 :rows events}))
+                  openplanner/mongo-query
+                  (fn [query]
+                    (swap! queries conj query)
+                    (let [event-id (get-in query [:filter :id])]
+                      (js/Promise.resolve
+                       {:ok true
+                        ;; Model duplicate historical rows for the first id.
+                        :total (if (= event-id "translation-segment-a") 7 1)
+                        :rows [{:id event-id}]})))
                   openplanner/events! (fn
                                         ([_]
                                          (swap! append-count inc)
@@ -149,6 +161,8 @@
                             :turn :turn
                             :candidate-set :candidate-set}))]
         (is (zero? @append-count))
+        (is (= ["translation-segment-a" "translation-segment-b"]
+               (mapv #(get-in % [:filter :id]) @queries)))
         (is (empty? (:translation/event-recorded-ids result)))
         (is (= true (get-in result [:translation/event-result :existing])))))))
 
@@ -242,8 +256,8 @@
             first-result (writer/emit-candidate-events! client completion)
             second-result (writer/emit-candidate-events! client completion)]
         (await (:promise first-append-started))
-        (is (= 1 @query-count)
-            "the second writer waits before reading durable state")
+        (is (= (count events) @query-count)
+            "the second writer waits while the first performs every point lookup")
         (is (= 1 @append-count)
             "only the first append reaches the forced overlap gate")
         ((:resolve! release-first-append))

@@ -198,6 +198,32 @@
    (str "the translation event is already owned by this live process; durable"
         " replay will enqueue it after a restart")})
 
+(defn- settlement-redelivery-failure
+  [record run-id detail]
+  {:dispatch/outcome :dispatch/failed
+   :dispatch/record record
+   :translation/run-id run-id
+   :dispatch/detail detail})
+
+(defn- settled-redelivery-run
+  [bound run-id current]
+  (case (:dispatch/outcome current)
+    :dispatch/completed
+    {:dispatch/outcome :dispatch/completed
+     :dispatch/record current
+     :translation/run-id run-id}
+
+    :dispatch/failed
+    (settlement-redelivery-failure
+     current run-id
+     (or (:dispatch/detail current)
+         "the cached translation settlement failed"))
+
+    (throw
+     (ex-info "cached translation settlement redelivery left the claim unresolved"
+              {:dispatch/batch-id (:dispatch/batch-id bound)
+               :dispatch/outcome (:dispatch/outcome current)}))))
+
 (defn- turn-settlement-detail
   [settlement]
   (if (= :failed (:event-turn/status settlement))
@@ -282,6 +308,21 @@
   (when (and registered? unregister-turn-settler!)
     (await (unregister-turn-settler! event-id))))
 
+(defn- ^:async redelivered-settlement-run!
+  [{:keys [evidence-store] :as deps} bound run-id event-id registered?]
+  (if (:event-turn/redelivery-accepted? registered?)
+    (do
+      ;; Successful delivery clears the cached result, but registration re-arms
+      ;; the callback for a replay that the sealed event will never enqueue.
+      (await (unregister-bound-turn-settler! deps event-id registered?))
+      (settled-redelivery-run
+       bound run-id
+       (await (store/dispatch-for-batch!
+               evidence-store (:dispatch/batch-id bound)))))
+    (settlement-redelivery-failure
+     bound run-id
+     "cached translation settlement could not be redelivered")))
+
 (defn- ^:async handle-emission-result!
   [{:keys [evidence-store] :as deps} bound run-id event-id' registered? dispatched]
   (cond
@@ -289,13 +330,9 @@
     (accepted-run bound run-id)
 
     (:skipped dispatched)
-    (do
-      ;; Cached settlement may resolve this old attempt during registration. A
-      ;; sealed event enqueues nothing, so the re-armed callback has no owner.
-      (when (and (:event-turn/redelivered? registered?)
-                 (:event-turn/redelivery-accepted? registered?))
-        (await (unregister-bound-turn-settler!
-                deps event-id' registered?)))
+    (if (:event-turn/redelivered? registered?)
+      (await (redelivered-settlement-run!
+              deps bound run-id event-id' registered?))
       (duplicate-run bound run-id))
 
     :else

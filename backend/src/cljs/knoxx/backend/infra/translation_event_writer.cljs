@@ -60,19 +60,35 @@
                              client (:id event) required)))))
       results)))
 
+(defn- ^:async event-id-exists?
+  [client event-id]
+  (let [result (await
+                (openplanner-client/mongo-query!
+                 client
+                 {:collection "events"
+                  :filter {:id event-id}
+                  :projection {:id 1}
+                  :limit 1}))]
+    (boolean (some #(= event-id (:id %)) (:rows result)))))
+
+(defn- ^:async existing-event-ids!
+  [client event-ids]
+  (loop [remaining (seq event-ids)
+         existing []]
+    (if-let [event-id (first remaining)]
+      (recur (next remaining)
+             (cond-> existing
+               (await (event-id-exists? client event-id)) (conj event-id)))
+      existing)))
+
 (defn- ^:async emit-candidate-events-once!
   [client {:keys [receipt turn candidate-set]}]
   (let [events (event/candidate-events crypto/sha256-hex receipt turn candidate-set)
         ids (mapv :id events)
-        existing (await
-                  (openplanner-client/mongo-query!
-                   client
-                   {:collection "events"
-                    :filter {:id {:$in ids}}
-                    :projection {:id 1}
-                    :limit (count ids)}))
-        existing-id-set (into #{} (keep :id) (:rows existing))
-        existing-ids (filterv #(contains? existing-id-set %) ids)
+        ;; Exact point queries prevent duplicate rows for one stable id from
+        ;; consuming a shared cursor limit and hiding another existing id.
+        existing-ids (await (existing-event-ids! client ids))
+        existing-id-set (set existing-ids)
         missing (filterv #(not (contains? existing-id-set (:id %))) events)
         result (if (empty? missing)
                  {:ok true :count 0 :ids ids :existing true}

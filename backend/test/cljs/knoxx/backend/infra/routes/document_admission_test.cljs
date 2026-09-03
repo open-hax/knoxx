@@ -383,6 +383,39 @@
     (is (false? (:ok row)))
     (is (= 1 (:failed row)))))
 
+(deftest ^:async unreachable-or-refused-translation-fails-admission
+  (let [doc (document :knoxx.docs/nonproductive-translation
+                      "docs/nonproductive-translation.md" true)
+        resource-records (records [doc])]
+    (doseq [[label dispatch-result]
+            [[:unreachable
+              {:dispatch/outcome :dispatch/unreachable
+               :translation/refusal
+               {:refusal/type :dispatch-source-revision-mismatch}}]
+             [:refused
+              {:dispatch/outcome :dispatch/duplicate
+               :translation/refusal
+               {:refusal/type :dispatch-already-resolved}}]]]
+      (let [dependencies
+            (assoc (deps resource-records
+                         {(:document/id doc) "# Nonproductive translation"}
+                         (atom {}) (atom []) (atom []))
+                   :dispatch-document!
+                   (fn [_document-id _snapshot-deps]
+                     (js/Promise.resolve
+                      {:considered 1
+                       :admissible 1
+                       :runner :agent
+                       :dispatched [dispatch-result]})))
+            result (await (admission/admit-documents! {} dependencies scope {}))
+            row (first (:results result))]
+        (testing (str (name label) " terminal result is deployment-visible")
+          (is (false? (:ok result)))
+          (is (= 1 (:failed result)))
+          (is (= 1 (get-in result [:translations :failed])))
+          (is (false? (:ok row)))
+          (is (= 1 (:failed row))))))))
+
 (deftest ^:async a-completed-source-revision-draft-reuses-durable-event-identities
   (let [doc (document :knoxx.docs/already-drafted "docs/drafted.md" true)
         resource-records (records [doc])
@@ -684,6 +717,69 @@
        (fn [] (js/Promise.resolve {:ok true})))
       (await (flush-promises!))
       (is (= [event-id event-id] @releases)))
+    (agent-runner/reset-event-turn-queue!)
+    (agent-runner/reset-event-turn-settlers!)))
+
+(deftest ^:async repeatedly-rejected-draft-settlement-fails-admission
+  (agent-runner/reset-event-turn-queue!)
+  (agent-runner/reset-event-turn-settlers!)
+  (let [doc (document :knoxx.docs/repeated-draft-redelivery
+                      "docs/repeated-draft-redelivery.md" true)
+        resource-records (records [doc])
+        checks (atom 0)
+        emitted (atom [])
+        releases (atom [])
+        dependencies
+        (merge (deps resource-records
+                     {(:document/id doc) "# Repeated draft redelivery"}
+                     (atom {}) (atom []) (atom []))
+               (indexed-event-dedup-dependencies
+                (atom #{}) emitted releases)
+               {:draft-complete?
+                (fn [_policy]
+                  (if (contains? #{2 4} (swap! checks inc))
+                    (js/Promise.reject
+                     (js/Error. "persistent draft-store read failure"))
+                    (js/Promise.resolve false)))
+                :register-turn-settler!
+                agent-runner/register-event-turn-settler!
+                :unregister-turn-settler!
+                agent-runner/unregister-event-turn-settler!})
+        first-result (await (admission/admit-documents!
+                             {} dependencies scope {:generate-drafts? true}))
+        event-id (get-in first-result [:results 0 :index/event-id])
+        run-id "draft-settlement-repeated-redelivery"]
+    (agent-runner/enqueue-event-turn!
+     {:llmModel "test-model" :collection-name "test"}
+     {:run-id run-id
+      :conversation-id run-id
+      :session-id run-id
+      :message "craft the draft"
+      :agent-spec {:trigger-id "craft-post-from-indexed-document"
+                   :event-id event-id}}
+     (fn [] (js/Promise.resolve {:ok true})))
+    (await (flush-promises!))
+
+    (let [error (try
+                  (await (admission/admit-documents!
+                          {} dependencies scope {:generate-drafts? true}))
+                  nil
+                  (catch :default err err))]
+      (testing "a second rejected callback cannot masquerade as a live owner"
+        (is (= 503 (:status (ex-data error))))
+        (is (= "document_post_draft_settlement_redelivery_failed"
+               (:code (ex-data error))))
+        (is (= [event-id] @emitted))
+        (is (empty? @releases))
+        (is (= :settled (agent-runner/event-turn-owner-state event-id)))))
+
+    (let [retry-result (await (admission/admit-documents!
+                               {} dependencies scope
+                               {:generate-drafts? true}))]
+      (testing "the retained settlement remains recoverable on a later pass"
+        (is (true? (:ok retry-result)))
+        (is (= [event-id] @releases))
+        (is (= [event-id event-id] @emitted))))
     (agent-runner/reset-event-turn-queue!)
     (agent-runner/reset-event-turn-settlers!)))
 

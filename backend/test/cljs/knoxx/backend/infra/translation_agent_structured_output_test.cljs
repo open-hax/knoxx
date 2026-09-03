@@ -125,6 +125,7 @@
     :evidence-store evidence
     :split-store splits
     :digest-hex digest-hex
+    :now-ms (constantly 0)
     :clock (constantly "2026-09-02T12:05:00.000Z")
     :emit-candidate-events! emit-candidate-events!
     :observe-source-revision
@@ -214,6 +215,106 @@
                    :source_text "Source term"
                    :translated_text "Quellbegriff"}]
                  (:reviewed_memory_examples input))))))))
+
+(deftest ^:async production-event-timeout-caps-structured-completion
+  (let [{:keys [turn] :as state}
+        (await (admitted! {:parts [(first source-parts)]}))
+        requests (atom [])
+        production-config (-> config
+                              (dissoc :translation-agent-structured-output-timeout-ms)
+                              (assoc :event-agent-turn-timeout-ms 300000
+                                     :agent-turn-timeout-ms 0))
+        deps (assoc
+              (base-deps
+               "/tmp/knoxx-translation-structured-output/event-timeout"
+               state)
+              :request!
+              (fn [request]
+                (swap! requests conj request)
+                (js/Promise.resolve
+                 (ollama-response (first translations)))))
+        result (await (sut/complete-turn!
+                       production-config deps (:record state) turn))]
+    (is (some? (:translation/receipt result)))
+    (is (= [300000] (mapv :timeout-ms @requests)))))
+
+(deftest ^:async every-missing-split-shares-one-completion-deadline
+  (let [{:keys [turn splits] :as state} (await (admitted!))
+        requests (atom [])
+        times (atom [1000 1000 2000 301001])
+        production-config (-> config
+                              (dissoc :translation-agent-structured-output-timeout-ms)
+                              (assoc :event-agent-turn-timeout-ms 300000
+                                     :agent-turn-timeout-ms 0))
+        deps (assoc
+              (base-deps
+               "/tmp/knoxx-translation-structured-output/shared-deadline"
+               state)
+              :now-ms (fn []
+                        (let [value (first @times)]
+                          (swap! times subvec 1)
+                          value))
+              :request!
+              (fn [request]
+                (swap! requests conj request)
+                (js/Promise.resolve
+                 (ollama-response (nth translations (dec (count @requests)))))))
+        error (try
+                (await (sut/complete-turn!
+                        production-config deps (:record state) turn))
+                nil
+                (catch :default err err))]
+    (is (= :completion-timeout
+           (:translation-agent-structured-output/error (ex-data error))))
+    (is (= [300000] (mapv :timeout-ms @requests))
+        "the expired shared budget prevents a fresh timeout for split two")
+    (is (= 1 (count (await (split-store/candidate-splits-for-turn!
+                            splits (:translation-turn/id turn))))))))
+
+(deftest ^:async provider-that-ignores-request-timeout-is-still-bounded
+  (let [{:keys [turn splits] :as state}
+        (await (admitted! {:parts [(first source-parts)]}))
+        bounded-config (-> config
+                           (dissoc :translation-agent-structured-output-timeout-ms)
+                           (assoc :event-agent-turn-timeout-ms 10
+                                  :agent-turn-timeout-ms 0))
+        deps (assoc
+              (base-deps
+               "/tmp/knoxx-translation-structured-output/provider-hang"
+               state)
+              :request! (fn [_]
+                          (js/Promise. (fn [_resolve _reject]))))
+        error (try
+                (await (sut/complete-turn!
+                        bounded-config deps (:record state) turn))
+                nil
+                (catch :default err err))]
+    (is (= :completion-timeout
+           (:translation-agent-structured-output/error (ex-data error))))
+    (is (= 10 (:timeout-ms (ex-data error))))
+    (is (empty? (await (split-store/candidate-splits-for-turn!
+                        splits (:translation-turn/id turn)))))))
+
+(deftest ^:async explicit-structured-timeout-can-tighten-the-event-budget
+  (let [{:keys [turn] :as state}
+        (await (admitted! {:parts [(first source-parts)]}))
+        requests (atom [])
+        tighter-config (assoc config
+                              :event-agent-turn-timeout-ms 300000
+                              :translation-agent-structured-output-timeout-ms
+                              120000)
+        deps (assoc
+              (base-deps
+               "/tmp/knoxx-translation-structured-output/tighter-timeout"
+               state)
+              :request!
+              (fn [request]
+                (swap! requests conj request)
+                (js/Promise.resolve
+                 (ollama-response (first translations)))))
+        result (await (sut/complete-turn! tighter-config deps (:record state) turn))]
+    (is (some? (:translation/receipt result)))
+    (is (= [120000] (mapv :timeout-ms @requests)))))
 
 (deftest ^:async durable-prefix-skips-provider-work-and-keeps-first-bytes
   (let [{:keys [record turn splits] :as state} (await (admitted!))

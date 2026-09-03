@@ -274,12 +274,11 @@
        (false? (:event-turn/redelivery-accepted? registration))))
 
 (defn- live-draft-owner-result
-  [pending-redelivery?]
-  (cond-> {:matchedTriggers []
-           :skipped true
-           :dedup/status :in-flight
-           :draft-owner/existing? true}
-    pending-redelivery? (assoc :draft-owner/redelivery-pending? true)))
+  []
+  {:matchedTriggers []
+   :skipped true
+   :dedup/status :in-flight
+   :draft-owner/existing? true})
 
 (defn- ^:async prepare-draft-owner!
   [runtime item]
@@ -292,12 +291,19 @@
     (await (release-stale-completed-draft!
             runtime item event-id owner-state dispatch-state))
     (if (= :in-flight owner-state)
-      {:result (live-draft-owner-result false)}
+      {:result (live-draft-owner-result)}
       (let [{:keys [registration] :as owner}
             (await (register-draft-terminal-owner! runtime item))]
         (if (pending-settlement-redelivery? owner-state registration)
-          {:event-id (:event-id owner)
-           :result (live-draft-owner-result true)}
+          ;; The prior turn is terminal and no replacement was enqueued. Keep
+          ;; its cached settlement for a later retry, but fail this admission;
+          ;; calling it in-flight would let deployment pass with no draft owner.
+          (throw
+           (ex-info "publication post draft settlement could not be reconciled"
+                    {:status 503
+                     :code "document_post_draft_settlement_redelivery_failed"
+                     :document/id (get-in item [:document :document/id])
+                     :event/id event-id}))
           owner)))))
 
 (defn- ^:async emit-runtime-indexed-event!
@@ -366,7 +372,9 @@
 (defn- translation-failure?
   [result]
   (or (:failed result)
-      (= :dispatch/failed (:dispatch/outcome result))
+      (contains? #{:dispatch/failed :dispatch/unreachable}
+                 (:dispatch/outcome result))
+      (some? (:translation/refusal result))
       (= "failed" (:status result))))
 
 (defn- translation-summary

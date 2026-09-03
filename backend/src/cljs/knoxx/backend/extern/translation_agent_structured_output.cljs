@@ -9,3 +9,8 @@
 (defn decode-response-content
   [value]
   (xjson/parse-object value))
+
+(defn now-ms
+  "Current epoch milliseconds for structured-completion deadline accounting."
+  []
+  (.now js/Date))

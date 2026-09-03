@@ -17,6 +17,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.models :as models]
             [knoxx.backend.extern.fetch :as xfetch]
+            [knoxx.backend.extern.promise :as xpromise]
             [knoxx.backend.extern.translation-agent-structured-output :as xstructured]
             [knoxx.backend.infra.translation-agent-sink :as sink]
             [knoxx.backend.infra.translation-split-store :as split-store]
@@ -118,12 +119,35 @@
   [value]
   (when (and (number? value) (pos? value)) value))
 
-(defn- request-timeout-ms
+(defn- completion-timeout-ms
   [config]
-  (or (positive-number
-       (:translation-agent-structured-output-timeout-ms config))
-      (positive-number (:agent-turn-timeout-ms config))
-      default-timeout-ms))
+  (let [event-timeout (positive-number (:event-agent-turn-timeout-ms config))
+        structured-timeout
+        (positive-number (:translation-agent-structured-output-timeout-ms config))]
+    (if event-timeout
+      ;; Recovery still owns the event FIFO slot. Its total budget may be made
+      ;; stricter explicitly, but never wider than the deployment's event turn.
+      (min event-timeout (or structured-timeout event-timeout))
+      (or structured-timeout
+          (positive-number (:agent-turn-timeout-ms config))
+          default-timeout-ms))))
+
+(defn- timeout-error
+  [timeout-ms]
+  (ex-info (str "Structured translation completion timed out after " timeout-ms "ms")
+           {:translation-agent-structured-output/error :completion-timeout
+            :timeout-ms timeout-ms}))
+
+(defn- now-ms
+  [deps]
+  ((or (:now-ms deps) xstructured/now-ms)))
+
+(defn- remaining-timeout-ms!
+  [deps deadline-ms timeout-ms]
+  (let [remaining (- deadline-ms (now-ms deps))]
+    (when-not (pos? remaining)
+      (throw (timeout-error timeout-ms)))
+    remaining))
 
 (defn- reviewed-memory-example
   [example]
@@ -155,7 +179,7 @@
            (:translation-memory-snapshot/examples memory))}))
 
 (defn- native-request
-  [config model-id turn source-split]
+  [config model-id turn source-split timeout-ms]
   {:url (native-chat-url! config)
    :opts
    {:method "POST"
@@ -175,7 +199,7 @@
      :think false
      :format translated-text-schema
      :options {:temperature 0 :seed 0}}}
-   :timeout-ms (request-timeout-ms config)})
+   :timeout-ms timeout-ms})
 
 (defn- ^:async request-json!
   [deps request]
@@ -335,13 +359,19 @@
              deps policies (stored-pair policies last-item candidate))))))
 
 (defn- ^:async complete-missing!
-  [config deps model-id turn policies missing]
+  [config deps model-id turn policies missing deadline-ms timeout-ms]
   (loop [remaining (seq missing)]
     (let [item (first remaining)
+          request-timeout (remaining-timeout-ms!
+                           deps deadline-ms timeout-ms)
           response (await (request-json!
                            deps
                            (native-request config model-id turn
-                                           (:source-split item))))
+                                           (:source-split item)
+                                           request-timeout)))
+          ;; An injected provider may ignore its request timeout. Refuse its
+          ;; late bytes before they can cross the durable sink boundary.
+          _ (remaining-timeout-ms! deps deadline-ms timeout-ms)
           translated-text (validated-translation! model-id response)
           result (await (submit-pair-with-replay!
                          deps policies
@@ -351,9 +381,9 @@
         (next remaining) (recur (next remaining))
         :else (completion-result! result)))))
 
-(defn ^:async complete-turn!
-  "Complete an admitted turn via native Ollama JSON schema; return a receipt or throw."
-  [config {:keys [split-store digest-hex] :as deps} record turn]
+(defn- ^:async complete-turn-before-deadline!
+  [config {:keys [split-store digest-hex] :as deps} record turn
+   deadline-ms timeout-ms]
   (let [checked-record (dispatch-law/assert-record! record)
         checked-turn (split-law/assert-turn-integrity! digest-hex turn)
         _ (assert-record-turn-binding! checked-record checked-turn)
@@ -378,4 +408,21 @@
       (await (finish-durable-prefix!
               deps policies checked-turn items candidates-by-attempt))
       (await (complete-missing!
-              config deps model-id checked-turn policies missing)))))
+              config deps model-id checked-turn policies missing
+              deadline-ms timeout-ms)))))
+
+(defn complete-turn!
+  "Complete an admitted turn via native Ollama JSON schema; return a receipt or throw.
+
+   Every missing split shares one deadline. Event-triggered recovery is capped by
+   the event turn timeout; an explicit structured timeout can only tighten it."
+  [config deps record turn]
+  (let [timeout-ms (completion-timeout-ms config)
+        deadline-ms (+ (now-ms deps) timeout-ms)]
+    ;; Keep the operation expression outside an async `await` form so the timer
+    ;; is installed while provider work is still pending.
+    (xpromise/with-timeout-error
+     (complete-turn-before-deadline!
+      config deps record turn deadline-ms timeout-ms)
+     timeout-ms
+     (timeout-error timeout-ms))))

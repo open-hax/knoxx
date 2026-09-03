@@ -535,7 +535,9 @@
     (let [reconciliation (await (dispatch/dispatch-work!
                                  d work context source))]
       (testing "reconciliation redelivers the cached provider failure"
-        (is (= :dispatch/duplicate (:dispatch/outcome reconciliation)))
+        (is (= :dispatch/failed (:dispatch/outcome reconciliation)))
+        (is (re-find #"provider unavailable"
+                     (:dispatch/detail reconciliation)))
         (is (= :dispatch/failed
                (:dispatch/outcome
                 (await (store/dispatch-for-key!
