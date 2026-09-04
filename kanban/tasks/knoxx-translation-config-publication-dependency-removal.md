@@ -3,7 +3,7 @@ uuid: "knoxx-translation-config-publication-dependency-removal"
 title: "Remove translation config's transitive dependency on publication"
 status: incoming
 priority: P1
-labels: ["tasks", "5sp", "has-parent", "translations", "transduction", "config", "boundaries"]
+labels: tasks, 5sp, has-parent, translations, transduction, config, boundaries
 created_at: "2026-08-29T18:03:05Z"
 points: 5
 category: tasks

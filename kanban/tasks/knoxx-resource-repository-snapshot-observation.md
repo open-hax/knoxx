@@ -3,7 +3,7 @@ uuid: "knoxx-resource-repository-snapshot-observation"
 title: "Add provider-neutral multi-resource snapshot observations"
 status: incoming
 priority: P1
-labels: ["tasks", "5sp", "has-parent", "cms", "resources", "repository", "snapshots"]
+labels: tasks, 5sp, has-parent, cms, resources, repository, snapshots
 created_at: "2026-08-29T19:05:49Z"
 points: 5
 category: tasks
