@@ -90,3 +90,23 @@
              :current [legacy-route]
              :changed-paths ["frontend/src/pages/LegacyPage.tsx"]
              :infrastructure? false})))))
+
+(t/deftest migration-integration-changes-require-infrastructure-declaration
+  (doseq [path ["frontend/.clj-kondo/config.edn"
+               "scripts/pre-push-checks.sh"
+               "scripts/lint-frontend-cljs-changed.sh"]]
+    (t/testing path
+      (let [inputs {:baseline [legacy-file legacy-route]
+                    :current [legacy-file legacy-route]
+                    :changed-paths [path]
+                    :infrastructure? false}]
+        (t/is (= [:migration-slice/must-progress]
+                 (mapv :law (law/ratchet-violations inputs))))
+        (t/is (empty? (law/ratchet-violations
+                       (assoc inputs :infrastructure? true)))))))
+  (t/testing "an unrelated path has no migration progress obligation"
+    (t/is (empty? (law/ratchet-violations
+                   {:baseline [legacy-file legacy-route]
+                    :current [legacy-file legacy-route]
+                    :changed-paths ["docs/verification/example.md"]
+                    :infrastructure? false})))))

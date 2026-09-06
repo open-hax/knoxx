@@ -34,6 +34,13 @@
       (t/is (thrown-with-msg? js/Error #"Unsupported Shadow route syntax"
                              (fixture-records {:route-source route-source}))))))
 
+(t/deftest route-census-rejects-props-hidden-in-path-identity
+  (doseq [route-source ["($ Route {:path \"/chat\" :element ($ app/ChatPage)})"
+                        "($ Route {:path (str \"/chat\" \"/*\") :element ($ app/ChatPage)})"]]
+    (t/testing route-source
+      (t/is (thrown? js/Error
+                    (fixture-records {:route-source route-source}))))))
+
 (t/deftest route-census-preserves-supported-routes-and-component-boundaries
   (let [records (fixture-records
                  {:route-source
@@ -55,6 +62,29 @@
               js/Error #"Unsupported bridge export syntax"
               (fixture-records
                 {:bridge-source (str indentation "export const Foo = 1;\n")}))))))
+
+(t/deftest bridge-census-rejects-local-exports-without-a-source
+  (doseq [bridge-source ["const Foo = 1;\nexport { Foo };\n"
+                         "const Foo = 1;\nexport{Foo};\n"
+                         "import { Foo } from 'fixture'; export { Foo };\n"
+                         "const Foo = 1;\n/* comment */ export { Foo };\n"
+                         (str "const Foo = 1;\n"
+                              "export { Bar } from 'fixture'; export { Foo };\n")
+                         (str "const Foo = 1;\nexport { Foo };\n"
+                              "export { Bar } from 'fixture';\n")]]
+    (t/testing bridge-source
+      (t/is (thrown-with-msg? js/Error #"Unsupported bridge export syntax"
+                             (fixture-records {:bridge-source bridge-source}))))))
+
+(t/deftest bridge-census-counts-declarations-not-export-words
+  (let [records (fixture-records
+                 {:bridge-source
+                  (str "// export is only commentary.\n"
+                       "export { Foo as export } from 'export';\n")})]
+    (t/is (= [{:symbol "export" :source "export"}]
+             (->> records
+                  (filter #(= :bridge-export (:kind %)))
+                  (mapv #(select-keys % [:symbol :source])))))))
 
 (t/deftest bridge-census-preserves-indented-supported-exports
   (doseq [indentation ["  " "\t"]]
@@ -80,17 +110,36 @@
       (finally
         (fs/rmSync root #js {:recursive true :force true})))))
 
-(t/deftest file-walk-rejects-external-and-special-file-symlinks
+(t/deftest file-walk-rejects-unsafe-source-roots
+  (let [outer (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))
+        directory (node-path/join outer "directory")
+        linked-root (node-path/join outer "linked-root")
+        source-file (node-path/join directory "source.ts")]
+    (try
+      (fs/mkdirSync directory)
+      (fs/writeFileSync source-file "export const value = 1;\n")
+      (fs/symlinkSync directory linked-root "dir")
+      (doseq [root [linked-root source-file]]
+        (t/testing root
+          (t/is (thrown-with-msg? js/Error #"Unsafe migration source root"
+                                 (manifest/walk-files root)))))
+      (finally
+        (fs/rmSync outer #js {:recursive true :force true})))))
+
+(t/deftest file-walk-rejects-external-special-file-and-directory-symlinks
   (let [outer (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))
         root (node-path/join outer "root")
         special-root (node-path/join outer "special")
+        directory-root (node-path/join outer "directory")
         external-source (node-path/join outer "external.ts")]
     (try
       (fs/mkdirSync root)
       (fs/mkdirSync special-root)
+      (fs/mkdirSync directory-root)
       (fs/writeFileSync external-source "export const external = true;\n")
       (fs/symlinkSync external-source (node-path/join root "external.ts") "file")
       (fs/symlinkSync "/dev/zero" (node-path/join special-root "blocked.ts") "file")
+      (fs/symlinkSync directory-root (node-path/join directory-root "self") "dir")
       (t/is (try
               (manifest/walk-files root)
               false
@@ -101,6 +150,9 @@
               false
               (catch js/Error error
                 (boolean (re-find #"Unsafe symbolic link" (.-message error))))))
+      (t/is (thrown-with-msg? js/Error #"Unsafe symbolic link"
+                             (manifest/walk-files directory-root))
+            "A self-directory symlink must be rejected before recursive traversal")
       (finally
         (fs/rmSync outer #js {:recursive true :force true})))))
 

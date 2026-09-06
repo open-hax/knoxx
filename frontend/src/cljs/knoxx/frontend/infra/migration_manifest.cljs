@@ -3,6 +3,7 @@
   (:require ["node:child_process" :as child-process]
             ["node:fs" :as fs]
             ["node:path" :as node-path]
+            ["typescript" :as ts]
             [cljs.tools.reader.edn :as edn]
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
@@ -50,7 +51,11 @@
 (defn walk-files
   "Return sorted absolute file paths without following unsafe symbolic links."
   [root]
-  (walk-files-under (fs/realpathSync root) root))
+  (let [stat (fs/lstatSync root)]
+    (when (or (.isSymbolicLink stat) (not (.isDirectory stat)))
+      (throw (ex-info "Unsafe migration source root" {:path root}))))
+  (let [canonical-root (fs/realpathSync root)]
+    (walk-files-under canonical-root canonical-root)))
 
 (defn- repository-root []
   (let [cwd (.cwd js/process)]
@@ -72,8 +77,24 @@
                  {:path path
                   :source (fs/readFileSync absolute-path "utf8")})))))
 
+(def ^:private bridge-export-pattern
+  "One complete supported re-export, bounded by its own closing brace."
+  #"(?m)^\s*export\s*\{([^}]*)\}\s*from\s*[\"']([^\"']+)[\"'];?")
+
+(defn- export-declaration-count [path source]
+  (let [module (ts/createSourceFile path source (.-Latest ts/ScriptTarget))]
+    (when (seq (array-seq (.-parseDiagnostics module)))
+      (throw (ex-info "Unsupported bridge export syntax" {:path path})))
+    (->> (array-seq (.-statements module))
+         (filter (fn [statement]
+                   (or (ts/isExportDeclaration statement)
+                       (ts/isExportAssignment statement)
+                       (some #(= (.-kind %) (.-ExportKeyword ts/SyntaxKind))
+                             (some-> statement .-modifiers array-seq)))))
+         count)))
+
 (defn- export-symbols [source]
-  (let [pattern (js/RegExp. "export\\s*\\{([\\s\\S]*?)\\}\\s*from\\s*[\\\"']([^\\\"']+)[\\\"'];?" "g")]
+  (let [pattern (js/RegExp. bridge-export-pattern "gm")]
     (loop [exports []]
       (if-let [match (.exec pattern source)]
         (let [body (-> (aget match 1)
@@ -99,8 +120,8 @@
        (mapcat (fn [{:keys [bridge path]}]
                  (let [absolute-path (node-path/join root path)
                        source (fs/readFileSync absolute-path "utf8")]
-                   (when-not (= (count (re-seq #"(?m)^\s*export\s+" source))
-                                (count (re-seq #"(?m)^\s*export\s*\{" source)))
+                   (when-not (= (export-declaration-count path source)
+                                (count (re-seq bridge-export-pattern source)))
                      (throw (ex-info "Unsupported bridge export syntax"
                                      {:path path})))
                    (map (fn [export-entry]
@@ -155,6 +176,13 @@
   [bridge-alias implementation]
   (str/starts-with? implementation (str bridge-alias "/")))
 
+(defn- route-identity [path source]
+  (let [route (str/trim source)]
+    (when-not (= route (pr-str (edn/read-string route)))
+      (throw (ex-info "Unsupported Shadow route syntax"
+                      {:path path :route route})))
+    route))
+
 (defn- route-records [root]
   (let [path "frontend/src/cljs/knoxx/frontend/app.cljs"
         source (fs/readFileSync (node-path/join root path) "utf8")
@@ -164,7 +192,7 @@
     (loop [matches []]
       (if-let [match (.exec pattern source)]
         (recur (conj matches {:index (.-index match)
-                              :route (str/trim (aget match 1))}))
+                              :route (route-identity path (aget match 1))}))
         (do
           (when-not (= route-count (count matches))
             (throw (ex-info "Unsupported Shadow route syntax"

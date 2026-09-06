@@ -142,6 +142,9 @@
   (boolean
    (or (re-find #"^frontend/src/.*\.(?:ts|tsx|cljs|cljc)$" path)
        (re-find #"^frontend/(?:migration/|shadow-cljs\.edn$|package\.json$)" path)
+       (contains? #{"frontend/.clj-kondo/config.edn"
+                    "scripts/pre-push-checks.sh"
+                    "scripts/lint-frontend-cljs-changed.sh"} path)
        (= path ".github/workflows/ci.yml"))))
 
 (defn- ratchet-context
