@@ -7,7 +7,7 @@
     {:root "/repository"
      :source-root "/repository/frontend/src"
      :options #js {}
-     :aliases {}}
+     :aliases {"@" "/repository/frontend/src"}}
     "frontend/src/pages/page.ts" source))
 
 (t/deftest vite-globs-cannot-conceal-relocated-source
@@ -32,4 +32,40 @@
                   "const help = `import.meta.glob('../../legacy/*.ts')`;"
                   "const mode = import.meta.env.MODE; const url = import.meta.url;"
                   "const pages = other.glob('../../legacy/*.ts');"]]
+    (t/is (nil? (inspect-imports! source)))))
+
+(t/deftest worker-url-dependencies-cannot-leave-the-governed-source-tree
+  (doseq [constructor ["Worker" "SharedWorker"]
+          target ["'../../legacy/worker.ts'" "`../../legacy/worker.ts`"
+                  "'@/../../legacy/worker.ts'"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Local import leaves governed frontend source tree"
+            (inspect-imports!
+              (str "new " constructor "(new URL(" target
+                   ", import.meta.url), {type: 'module'});"))))))
+
+(t/deftest root-relative-worker-urls-use-the-vite-project-root
+  (t/is (nil? (inspect-imports! "new Worker(new URL('/src/workers/task.ts', import.meta.url));")))
+  (t/is (thrown-with-msg?
+          js/Error #"Local import leaves governed frontend source tree"
+          (inspect-imports! "new Worker(new URL('/legacy/task.ts', import.meta.url));"))))
+
+(t/deftest contained-worker-urls-retain-supported-source-boundaries
+  (doseq [source ["new Worker(new URL('./worker.ts', import.meta.url));"
+                  "new SharedWorker(new URL('../workers/task.ts', import.meta.url));"
+                  "new Worker(new URL('@/workers/task.ts', import.meta.url));"
+                  "new Worker(new URL(`./worker.ts`, import.meta.url));"]]
+    (t/is (nil? (inspect-imports! source)))))
+
+(t/deftest dynamic-worker-urls-fail-explicitly
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported dynamic worker URL in migration source"
+          (inspect-imports! "new Worker(new URL(`./${name}.ts`, import.meta.url));"))))
+
+(t/deftest ordinary-url-values-and-worker-example-text-remain-supported
+  (doseq [source ["const url = new URL(base);"
+                  "const worker = new Worker(new URL(absoluteUrl));"
+                  "const url = new URL(url, window.location.origin);"
+                  "// new Worker(new URL('../../legacy/worker.ts', import.meta.url))"
+                  "const help = \"new Worker(new URL('../../legacy/worker.ts', import.meta.url))\";"]]
     (t/is (nil? (inspect-imports! source)))))

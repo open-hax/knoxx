@@ -13,6 +13,8 @@ entries must match the governed bridge files; dynamic configurations that
 cannot be inspected without execution are rejected.
 Vite glob imports are not supported by the inventory and fail explicitly;
 comments and string literals that merely mention glob syntax are ignored.
+Worker and SharedWorker URL dependencies must also stay in `frontend/src`;
+dynamic worker URLs that cannot be inspected are rejected.
 
 Run from `frontend/`:
 

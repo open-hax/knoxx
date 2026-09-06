@@ -67,24 +67,50 @@
       (or (resolved-target source-root options path vite-target) vite-target)
       (or typescript-target lexical-target))))
 
-(defn- vite-glob-reference? [^js node]
-  (when (or (ts/isPropertyAccessExpression node) (ts/isElementAccessExpression node))
+(defn- import-meta-property [^js node]
+  (when (and node (or (ts/isPropertyAccessExpression node) (ts/isElementAccessExpression node)))
     (let [^js receiver (.-expression node)
           ^js property (if (ts/isPropertyAccessExpression node)
                          (.-name node)
                          (.-argumentExpression node))]
-      (and (ts/isMetaProperty receiver)
-           (= (.-ImportKeyword ts/SyntaxKind) (.-keywordToken receiver))
-           (= "meta" (.-text ^js (.-name receiver)))
-           property (or (ts/isIdentifier property) (ts/isStringLiteral property))
-           (contains? #{"glob" "globEager"} (.-text property))))))
+      (when (and (ts/isMetaProperty receiver)
+                  (= (.-ImportKeyword ts/SyntaxKind) (.-keywordToken receiver))
+                  (= "meta" (.-text ^js (.-name receiver)))
+                  property (or (ts/isIdentifier property) (ts/isStringLiteral property)))
+        (.-text property)))))
 
-(defn- assert-no-glob-imports! [path source]
+(defn- new-constructor [^js node]
+  (when (ts/isNewExpression node)
+    (let [^js constructor (.-expression node)]
+      (when (ts/isIdentifier constructor)
+        (.-text constructor)))))
+
+(defn- assert-worker-url! [{:keys [root source-root] :as resolution} path ^js node]
+  (when (contains? #{"Worker" "SharedWorker"} (new-constructor node))
+    (let [^js url (first (array-seq (.-arguments node)))]
+      (when (and url (= "URL" (new-constructor url)))
+        (let [[^js specifier base] (array-seq (.-arguments url))]
+          (when (= "url" (import-meta-property base))
+            (when-not (and specifier
+                           (or (ts/isStringLiteral specifier)
+                               (ts/isNoSubstitutionTemplateLiteral specifier)))
+              (throw (ex-info "Unsupported dynamic worker URL in migration source"
+                              {:path path})))
+            (let [source (.-text specifier)
+                  module-source (if (str/starts-with? source "/")
+                                  (node-path/join root "frontend" source)
+                                  source)
+                  target (or (resolve-target resolution path module-source)
+                             (node-path/resolve (node-path/dirname path) module-source))]
+              (assert-target! source-root path source target))))))))
+
+(defn- assert-vite-dependencies! [resolution path source]
   (let [module (ts/createSourceFile path source (.-Latest ts/ScriptTarget) true)]
     (letfn [(inspect [node]
-              (when (vite-glob-reference? node)
+              (when (contains? #{"glob" "globEager"} (import-meta-property node))
                 (throw (ex-info "Vite glob imports are outside the supported migration grammar"
                                 {:path path})))
+              (assert-worker-url! resolution path node)
               (ts/forEachChild node inspect)
               nil)]
       (inspect module))))
@@ -94,7 +120,7 @@
   [{:keys [root source-root] :as resolution} path source]
   (let [absolute-path (node-path/join root path)
         ^js information (ts/preProcessFile source true true)]
-    (assert-no-glob-imports! absolute-path source)
+    (assert-vite-dependencies! resolution absolute-path source)
     (doseq [^js reference (array-seq (.-importedFiles information))]
       (resolve-target resolution absolute-path (.-fileName reference)))
     (doseq [^js reference (array-seq (.-referencedFiles information))]

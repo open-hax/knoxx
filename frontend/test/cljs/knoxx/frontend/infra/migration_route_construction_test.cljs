@@ -65,3 +65,23 @@
   (doseq [wrapper ["comment" "quote"]]
     (t/is (= [] (fixture-routes
                   (str "(" wrapper " (react/createElement Route #js {:path \"/parked\"}))"))))))
+
+(t/deftest constructor-aliases-cannot-hide-route-references
+  (doseq [invocation ["(make-element Route {:path \"/chat\" :element ($ app/ChatPage)})"
+                      "((identity make-element) Route {:path \"/chat\" :element ($ app/ChatPage)})"
+                      "(apply make-element Route [#js {:path \"/chat\" :element ($ app/ChatPage)}])"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-routes (str "(def make-element react/createElement)\n" invocation))))))
+
+(t/deftest constructor-aliases-cannot-hide-inside-definition-bodies
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported Shadow route syntax"
+          (fixture-routes
+            (str "(def make-element react/createElement)\n"
+                 "(def app-route (make-element Route {:path \"/chat\" :element ($ app/ChatPage)}))")))))
+
+(t/deftest parked-route-references-do-not-become-call-candidates
+  (doseq [wrapper ["comment" "quote"]
+          body ["Route" "(make-element Route {:path \"/parked\"})"]]
+    (t/is (= [] (fixture-routes (str "(" wrapper " " body ")"))))))

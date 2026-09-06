@@ -157,16 +157,14 @@
         sources))
 
 ;; Explicit non-evaluated bodies cannot establish routes or implementation ownership.
+(defn- non-evaluated-form? [node]
+  (and (seq? node)
+       (contains? '#{comment quote cljs.core/comment cljs.core/quote
+                     clojure.core/comment clojure.core/quote}
+                  (first node))))
+
 (defn- route-inspection-nodes [form]
-  (tree-seq (fn [node]
-              (and (coll? node)
-                   (not (and (seq? node)
-                             (contains? '#{comment quote
-                                           cljs.core/comment cljs.core/quote
-                                           clojure.core/comment clojure.core/quote}
-                                        (first node))))))
-            seq
-            form))
+  (tree-seq #(and (coll? %) (not (non-evaluated-form? %))) seq form))
 
 (defn- parse-route-form [block]
   (try
@@ -243,22 +241,28 @@
                       {:path path :route route})))
     route))
 
-;; Census Helix and direct React route creation independently of supported grammar.
+;; Route references in calls cannot disappear when their constructor is aliased.
+;; Definitions bind names; evaluated calls within their bodies are inspected separately.
+(defn- route-call? [form]
+  (and (seq? form)
+       (not (non-evaluated-form? form))
+       (not (contains? '#{def defonce defn defn- declare
+                         cljs.core/def cljs.core/defonce cljs.core/defn cljs.core/defn- cljs.core/declare
+                         clojure.core/def clojure.core/defonce clojure.core/defn clojure.core/defn-
+                         clojure.core/declare}
+                      (first form)))
+       (or (some #(and (symbol? %) (= "Route" (name %))) form)
+           (and (symbol? (first form))
+                (contains? #{"$" "createElement"} (name (first form)))
+                (let [props (nth form 2 nil)]
+                  (and (map? props)
+                       (some #(contains? props %) [:path :element :index :Component])))))))
+
 ;; Shared :id/:children props do not identify routes; route markers identify aliases.
 (defn- route-forms [path source]
   (->> (source-forms path source)
        route-inspection-nodes
-       (filter (fn [form]
-                 (and (seq? form)
-                      (symbol? (first form))
-                      (contains? #{"$" "createElement"} (name (first form)))
-                      (let [component (second form)
-                            props (nth form 2 nil)]
-                        (or (and (symbol? component)
-                                 (= "Route" (name component)))
-                            (and (map? props)
-                                 (some #(contains? props %)
-                                       [:path :element :index :Component])))))))))
+       (filter route-call?)))
 
 (defn- checked-route-forms [path source]
   (let [forms (vec (route-forms path source))]
