@@ -119,6 +119,7 @@
 (defn- bridge-records [root]
   (->> [{:bridge :frontend :path "frontend/src/bridge/index.ts"}
         {:bridge :app :path "frontend/src/bridge/app.ts"}]
+       (filter #(fs/existsSync (node-path/join root (:path %))))
        (mapcat (fn [{:keys [bridge path]}]
                  (let [absolute-path (node-path/join root path)
                        source (fs/readFileSync absolute-path "utf8")]
@@ -182,7 +183,8 @@
     (when (seq unknown)
       (throw (ex-info "Unsupported Shadow route implementation"
                       {:components (vec unknown)})))
-    (or (some #(when (= bridge-alias (namespace %)) (str %)) symbols)
+    (or (when bridge-alias
+          (some #(when (= bridge-alias (namespace %)) (str %)) symbols))
         (some #(when (namespace %) (str %)) symbols)
         (some #(when (contains? #{"LegacyOpsRedirect" "Navigate" "PlaceholderPage"} (str %))
                  (str %)) symbols)
@@ -202,29 +204,32 @@
         (throw (ex-info "Unsupported Shadow route syntax" {:path path}))))))
 
 (defn app-bridge-alias
-  "Read the complete alias from the application's actual namespace declaration."
+  "Read a declared bridge alias, or nil after its namespace require is retired."
   [source]
   (let [namespaces (->> (source-forms "frontend/src/cljs/knoxx/frontend/app.cljs" source)
                         (filter #(and (seq? %) (= 'ns (first %)))))
         specifications (->> (drop 2 (first namespaces))
                              (filter #(and (seq? %) (= :require (first %))))
                              (mapcat rest)
-                             (filter #(and (vector? %)
-                                           (= "@open-hax/knoxx-app-bridge" (first %)))))]
-    (when-not (and (= 1 (count namespaces)) (= 1 (count specifications)))
+                             (filter #(= "@open-hax/knoxx-app-bridge"
+                                         (if (sequential? %) (first %) %))))]
+    (when-not (and (= 1 (count namespaces)) (<= (count specifications) 1))
       (throw (ex-info "Expected exactly one application bridge alias" {})))
-    (let [options (rest (first specifications))
-          pairs (partition 2 options)
-          aliases (map second (filter #(= :as (first %)) pairs))
-          alias (first aliases)]
-      (when-not (and (even? (count options))
-                     (every? (comp keyword? first) pairs)
-                     (= 1 (count aliases))
-                     (symbol? alias)
-                     (nil? (namespace alias)))
-        (throw (ex-info "Expected exactly one application bridge alias"
-                        {:aliases (vec aliases)})))
-      (str alias))))
+    (when-let [specification (first specifications)]
+      (when-not (vector? specification)
+        (throw (ex-info "Expected exactly one application bridge alias" {})))
+      (let [options (rest specification)
+            pairs (partition 2 options)
+            aliases (map second (filter #(= :as (first %)) pairs))
+            alias (first aliases)]
+        (when-not (and (even? (count options))
+                       (every? (comp keyword? first) pairs)
+                       (= 1 (count aliases))
+                       (symbol? alias)
+                       (nil? (namespace alias)))
+          (throw (ex-info "Expected exactly one application bridge alias"
+                          {:aliases (vec aliases)})))
+        (str alias)))))
 
 (defn- route-identity [path source]
   (let [route (str/trim source)]

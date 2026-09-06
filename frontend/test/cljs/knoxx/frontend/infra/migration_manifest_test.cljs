@@ -8,8 +8,8 @@
 
 (defn- fixture-records
   "Read the real inventory from a synchronous, disposable repository fixture."
-  [{:keys [route-source bridge-source app-alias extra-files]
-    :or {route-source "" bridge-source "" app-alias "app" extra-files {}}}]
+  [{:keys [route-source bridge-source app-alias extra-files omit-files]
+    :or {route-source "" bridge-source "" app-alias "app" extra-files {} omit-files #{}}}]
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))
         original-cwd (.cwd js/process)
         files (merge
@@ -17,11 +17,14 @@
                  "frontend/src/bridge/index.ts" bridge-source
                  "frontend/src/bridge/app.ts" ""
                  "frontend/src/cljs/knoxx/frontend/app.cljs"
-                 (str "(ns fixture (:require [\"@open-hax/knoxx-app-bridge\" :as " app-alias "]))\n"
+                 (str (if app-alias
+                        (str "(ns fixture (:require [\"@open-hax/knoxx-app-bridge\" :as " app-alias "]))\n")
+                        "(ns fixture)\n")
                       route-source)}
                 extra-files)]
     (try
-      (doseq [[path source] files]
+      (doseq [[path source] files
+              :when (not (contains? omit-files path))]
         (let [absolute-path (node-path/join root path)]
           (fs/mkdirSync (node-path/dirname absolute-path) #js {:recursive true})
           (fs/writeFileSync absolute-path source)))
@@ -132,6 +135,26 @@
                   (filter #(= :route (:kind %)))
                   (map (juxt :route :implementation :status))
                   set)))))
+
+(t/deftest bridge-retirement-preserves-the-remaining-inventory
+  (let [frontend-path "frontend/src/bridge/index.ts"
+        app-path "frontend/src/bridge/app.ts"]
+    (doseq [omitted [#{frontend-path} #{app-path} #{frontend-path app-path}]]
+      (let [records (fixture-records
+                      {:omit-files omitted
+                       :app-alias (when-not (contains? omitted app-path) "app")
+                       :bridge-source "export { Foo } from 'fixture';\n"
+                       :extra-files {app-path "export { Bar } from 'fixture';\n"}
+                       :route-source "($ Route {:path \"/native\"\n :element ($ native/Page)})"})]
+        (t/is (not-any? #(contains? omitted (:path %)) records))
+        (t/is (= (cond-> #{}
+                   (not (contains? omitted frontend-path)) (conj [:frontend "Foo"])
+                   (not (contains? omitted app-path)) (conj [:app "Bar"]))
+                 (->> records (filter #(= :bridge-export (:kind %)))
+                      (map (juxt :bridge :symbol)) set)))
+        (t/is (= [{:implementation "native/Page" :status :native}]
+                 (->> records (filter #(= :route (:kind %)))
+                      (mapv #(select-keys % [:implementation :status])))))))))
 
 (t/deftest bridge-census-rejects-indented-unsupported-exports
   (doseq [indentation ["  " "\t"]]
@@ -252,6 +275,17 @@
   (let [source "(ns example (:require [\"@open-hax/knoxx-app-bridge\" :as legacy-app]))"
         bridge-alias (manifest/app-bridge-alias source)]
     (t/is (= "legacy-app" bridge-alias))))
+
+(t/deftest bridge-alias-rejects-present-but-unsupported-requires
+  (doseq [specification ["[\"@open-hax/knoxx-app-bridge\"]"
+                         "[\"@open-hax/knoxx-app-bridge\" :as]"
+                         "\"@open-hax/knoxx-app-bridge\""
+                         "(\"@open-hax/knoxx-app-bridge\" :as app)"
+                         (str "[\"@open-hax/knoxx-app-bridge\" :as app] "
+                              "[\"@open-hax/knoxx-app-bridge\" :as other]")]]
+    (t/is (thrown-with-msg?
+            js/Error #"Expected exactly one application bridge alias"
+            (manifest/app-bridge-alias (str "(ns fixture (:require " specification "))"))))))
 
 (t/deftest newline-edn-admits-exactly-one-canonical-form-per-line
   (let [line "{:record/id \"one\", :kind :route}"]
