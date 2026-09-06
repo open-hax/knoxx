@@ -76,6 +76,18 @@
                                :extra-files {"relocated.config.ts" (config-source "include:['legacy/**/*.test.ts']")}}))))
   (t/is (nil? (inspect-fixture! {}))))
 
+(t/deftest vitest-aliases-cannot-relocate-imported-legacy-helpers
+  (doseq [alias ["{'legacy-helper':'/tmp/legacy/helper.ts'}"
+                 "[{find:'legacy-helper',replacement:'/tmp/legacy/helper.ts'}]"
+                 "aliases"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vitest migration configuration"
+            (inspect-fixture!
+              {:config (config-source (str current-scope ",alias:" alias))
+               :extra-files
+               {"src/helper.test.ts" "import { helper } from 'legacy-helper'; test('helper', () => expect(helper()).toBe(1));"
+                "legacy/helper.ts" "export const helper = () => 1;"}})))))
+
 (t/deftest automatically-selected-workspaces-cannot-expand-test-scope
   (doseq [path ["vitest.workspace.ts" "vitest.projects.json"]]
     (t/testing path

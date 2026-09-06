@@ -117,6 +117,17 @@
                        :placement placement}))))
   facts)
 
+(defn assert-vitest-config-admission!
+  "Reject parsed Vitest fields that can redirect uninspected source loading."
+  [{:keys [path root-fields test-fields] :as facts}]
+  (when-not (every? #{"test" "cacheDir"} root-fields)
+    (throw (ex-info "Unsupported Vitest migration configuration"
+                    {:path path :detail "Root overrides and uninspected Vite configuration fields are not supported"})))
+  (when (some #{"root" "dir" "workspace" "projects" "typecheck" "alias"} test-fields)
+    (throw (ex-info "Unsupported Vitest migration configuration"
+                    {:path path :detail "Root, directory, project, workspace, typecheck and alias overrides are not supported"})))
+  facts)
+
 (defn assert-vitest-scope!
   "Require a parsed Vitest source scope to remain under frontend/src."
   [file field scope]

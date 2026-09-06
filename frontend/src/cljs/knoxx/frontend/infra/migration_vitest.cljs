@@ -67,11 +67,10 @@
           entries)))
 
 (defn- assert-test-scopes! [file configuration]
-  (when-not (every? #{"test" "cacheDir"} (keys configuration))
-    (unsupported! file "Root overrides and uninspected Vite configuration fields are not supported"))
   (let [test-settings (object-properties file (get configuration "test"))]
-    (when (some #(contains? test-settings %) ["root" "dir" "workspace" "projects" "typecheck"])
-      (unsupported! file "Root, directory, project, workspace and typecheck overrides are not supported"))
+    (law/assert-vitest-config-admission! {:path file
+                                         :root-fields (set (keys configuration))
+                                         :test-fields (set (keys test-settings))})
     (doseq [scope (literal-scopes file (get test-settings "include") false)]
       (law/assert-vitest-scope! file "include" scope))
     (doseq [field ["includeSource" "setupFiles" "globalSetup"]
