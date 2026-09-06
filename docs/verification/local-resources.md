@@ -24,7 +24,7 @@ credentials.
   one-field JSON schema when the compatibility layer returns prose instead of a
   real `save_translation` call; Knoxx never interprets call-shaped prose.
 - OpenPlanner embeddings go directly to that same Ollama endpoint with
-  `nomic-embed-text` and an explicit 768-dimensional contract. No Proxx bearer
+  `qwen3-embedding:8b` and an explicit 1024-dimensional contract. No Proxx bearer
   token is sent to the local embedding endpoint.
 
 Explicit connection values always win. Set `KNOXX_LOCAL_WORKSPACE_ROOT` to
@@ -40,7 +40,7 @@ No discovered credential is printed or written to disk.
 
 The verifier is read-only. It checks the workspace and contracts paths, MongoDB
 ping, Proxx health plus authenticated model discovery, Ollama health, both
-configured Ollama models, and one real finite 768-dimensional embedding. Every
+configured Ollama models, and one real finite 1024-dimensional embedding. Every
 failed precondition exits non-zero.
 
 ## Run
@@ -70,7 +70,7 @@ Common overrides:
 KNOXX_OPENPLANNER_CONTAINER=my-openplanner \
 PROXX_ENV_FILE=/path/to/proxx/.env \
 OLLAMA_DEFAULT_MODEL=gemma4:e2b \
-EMBED_PROVIDER_MODEL=nomic-embed-text \
-EMBED_PROVIDER_DIMENSIONS=768 \
+EMBED_PROVIDER_MODEL=qwen3-embedding:8b \
+EMBED_PROVIDER_DIMENSIONS=1024 \
 ./scripts/verify-local-resources.sh
 ```

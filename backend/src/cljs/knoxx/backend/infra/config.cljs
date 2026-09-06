@@ -148,7 +148,7 @@
    :session-title-model (let [value (aget js/process.env "KNOXX_SESSION_TITLE_MODEL")]
                           (when (and (string? value) (not (str/blank? value)))
                             value))
-   :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")
+   :proxx-embed-model (env "PROXX_EMBED_MODEL" "qwen3-embedding:8b")
    ;; Ollama exposes an OpenAI-compatible API under /v1. Keep it optional in
    ;; deployment config; the local launcher opts in with 127.0.0.1:11434.
    :ollama-base-url (env "OLLAMA_BASE_URL" "")

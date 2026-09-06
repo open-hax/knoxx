@@ -99,8 +99,8 @@
        (mapcat (fn [{:keys [bridge path]}]
                  (let [absolute-path (node-path/join root path)
                        source (fs/readFileSync absolute-path "utf8")]
-                   (when-not (= (count (re-seq #"(?m)^export\s+" source))
-                                (count (re-seq #"(?m)^export\s*\{" source)))
+                   (when-not (= (count (re-seq #"(?m)^\s*export\s+" source))
+                                (count (re-seq #"(?m)^\s*export\s*\{" source)))
                      (throw (ex-info "Unsupported bridge export syntax"
                                      {:path path})))
                    (map (fn [export-entry]
@@ -160,7 +160,7 @@
         source (fs/readFileSync (node-path/join root path) "utf8")
         bridge-alias (app-bridge-alias source)
         pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
-        route-count (count (re-seq #"\(\$ Route \{:path" source))]
+        route-count (count (re-seq #"\(\$\s+Route(?=\s|\))" source))]
     (loop [matches []]
       (if-let [match (.exec pattern source)]
         (recur (conj matches {:index (.-index match)

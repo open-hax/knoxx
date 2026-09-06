@@ -26,5 +26,5 @@ regression.
 
 Malli schemas and monotonicity laws live in
 `knoxx.frontend.law.migration`; deterministic source classification lives in
-`knoxx.frontend.shape.migration`. The CLI prints summaries derived from the
+`knoxx.frontend.domain.migration`. The CLI prints summaries derived from the
 line records so no second inventory needs manual synchronization.

@@ -85,8 +85,8 @@ configure_knoxx_local_runtime() {
   export KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS="${KNOXX_EVENT_AGENT_TURN_TIMEOUT_MS-300000}"
   export EMBED_PROVIDER_BASE_URL="${EMBED_PROVIDER_BASE_URL:-$OLLAMA_BASE_URL}"
   export EMBED_PROVIDER_API_KEY="${EMBED_PROVIDER_API_KEY:-}"
-  export EMBED_PROVIDER_MODEL="${EMBED_PROVIDER_MODEL:-nomic-embed-text}"
-  export EMBED_PROVIDER_DIMENSIONS="${EMBED_PROVIDER_DIMENSIONS:-768}"
+  export EMBED_PROVIDER_MODEL="${EMBED_PROVIDER_MODEL:-qwen3-embedding:8b}"
+  export EMBED_PROVIDER_DIMENSIONS="${EMBED_PROVIDER_DIMENSIONS:-1024}"
   export MONGODB_DB="${MONGODB_DB:-openplanner}"
 
   # Reject an invalid deployment liveness bound before credential discovery or
