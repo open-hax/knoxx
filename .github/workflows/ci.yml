@@ -122,6 +122,9 @@ jobs:
             --check \
             --base HEAD^1 \
             --manifest "$RUNNER_TEMP/knoxx-frontend-migration.ndedn"
+          pnpm -C frontend exec shadow-cljs compile migration-validator
+          node frontend/dist/migration/validate-manifest.cjs \
+            "$RUNNER_TEMP/knoxx-frontend-migration.ndedn"
 
       - name: Upload frontend migration manifest
         if: always()

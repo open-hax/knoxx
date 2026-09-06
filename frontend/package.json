@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint:size": "node ../scripts/lint-file-sizes.mjs frontend/src",
     "migration:check": "node scripts/check-cljs-migration-ratchet.mjs --self-test && node scripts/check-cljs-migration-ratchet.mjs --check",
-    "migration:manifest": "node scripts/check-cljs-migration-ratchet.mjs --manifest migration/frontend-surface.ndedn",
+    "migration:manifest": "node scripts/check-cljs-migration-ratchet.mjs --manifest dist/migration/frontend-surface.ndedn && shadow-cljs compile migration-validator && node dist/migration/validate-manifest.cjs dist/migration/frontend-surface.ndedn",
     "watch:cljs": "shadow-cljs watch app",
     "build:cljs": "shadow-cljs release app",
     "compile:legacy": "tsc -p tsconfig.legacy.json",

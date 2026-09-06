@@ -45,6 +45,13 @@
    {:output-feature-set :es-next
     :source-map true}}
 
+  :migration-validator
+  {:target :node-script
+   :main knoxx.frontend.infra.migration-manifest/main
+   :output-to "dist/migration/validate-manifest.cjs"
+   :compiler-options
+   {:output-feature-set :es-next}}
+
   :e2e
   {:target :node-script
    :main knoxx.frontend.e2e.ava-runner/main
