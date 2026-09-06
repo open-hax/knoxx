@@ -17,7 +17,12 @@ compares the exact base revision and rejects:
 - new governed TypeScript paths or increased `.ts`/`.tsx` counts;
 - new frontend/application bridge exports;
 - a native route returning to an application-bridge implementation;
+- new legacy route identities, including expression-only legacy route renames;
 - a migration-surface change that does not reduce the legacy surface.
+
+Route IDs use canonical source expressions. A new legacy ID is rejected to
+prevent an expression change from hiding a rollback. Native route IDs may be
+added or renamed.
 
 An infrastructure-only pull request may retain the legacy count by placing
 the exact declaration `Migration infrastructure: yes` in its body. The

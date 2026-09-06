@@ -4,6 +4,10 @@
             [malli.core :as m]
             [malli.error :as me]))
 
+(def legacy-source-pattern
+  "The production tree governed by the TypeScript non-growth ratchet."
+  #"^frontend/src/.*\.tsx?$")
+
 (def NonBlankString
   "Schema for nonempty manifest string values."
   [:string {:min 1}])
@@ -166,6 +170,8 @@
      :tsx-after (count-kind current :tsx)
      :added-files (sort (set/difference current-files baseline-files))
      :added-exports (sort (set/difference current-exports baseline-exports))
+     :added-legacy-routes (sort (set/difference current-legacy-routes
+                                               (ids-of-kind baseline #{:route})))
      :regressed-routes (sort (set/intersection baseline-native-routes
                                                current-legacy-routes))
      :touched? (some migration-surface-path? changed-paths)
@@ -173,12 +179,24 @@
      :after (legacy-surface-count current)
      :infrastructure? infrastructure?}))
 
+(defn- route-identity-violations
+  "Reject backslides without evaluating route expressions or trusting legacy renames."
+  [{:keys [regressed-routes added-legacy-routes]}]
+  (cond-> []
+    (seq regressed-routes)
+    (conj {:law :native-routes/no-regression :routes regressed-routes})
+    ;; IDs retain source expressions, so equivalent URL values are unproven.
+    ;; New legacy IDs, including ambiguous legacy renames, must fail closed.
+    (seq added-legacy-routes)
+    (conj {:law :legacy-routes/no-new-identities :routes added-legacy-routes})))
+
 (defn ratchet-violations
   "Return regressions; touched migration surfaces must shrink or declare infrastructure."
   [inputs]
   (let [{:keys [ts-before ts-after tsx-before tsx-after added-files
-                added-exports regressed-routes touched? before after
-                infrastructure?]} (ratchet-context inputs)]
+                added-exports touched? before after infrastructure?]
+         :as context} (ratchet-context inputs)
+        route-violations (route-identity-violations context)]
     (cond-> []
       (> ts-after ts-before)
       (conj {:law :typescript-count/non-growth
@@ -194,8 +212,8 @@
       (seq added-exports)
       (conj {:law :bridge-exports/monotonic :added added-exports})
 
-      (seq regressed-routes)
-      (conj {:law :native-routes/no-regression :routes regressed-routes})
+      (seq route-violations)
+      (into route-violations)
 
       (and touched? (>= after before) (not infrastructure?))
       (conj {:law :migration-slice/must-progress

@@ -67,6 +67,47 @@
                   set)]
     (t/is (not (contains? laws :native-routes/no-regression)))))
 
+(t/deftest renamed-native-routes-cannot-reenter-under-new-legacy-identities
+  (let [renamed (assoc native-route
+                       :record/id "route:routes/renamed-route"
+                       :route "routes/renamed-route"
+                       :implementation "app/NativePage"
+                       :status :legacy)]
+    (doseq [infrastructure? [false true]]
+      (t/is (= [{:law :legacy-routes/no-new-identities
+                 :routes [(:record/id renamed)]}]
+               (law/ratchet-violations
+                 {:baseline [legacy-file legacy-route native-route]
+                  :current [renamed]
+                  :changed-paths ["frontend/src/cljs/knoxx/frontend/app.cljs"]
+                  :infrastructure? infrastructure?}))
+            "Neither other legacy deletions nor infrastructure admission can mask a renamed regression"))))
+
+(t/deftest ambiguous-legacy-route-renames-fail-closed
+  (let [renamed (assoc legacy-route
+                       :record/id "route:routes/renamed-legacy-route"
+                       :route "routes/renamed-legacy-route")]
+    (t/is (= [:legacy-routes/no-new-identities]
+             (mapv :law
+                   (law/ratchet-violations
+                     {:baseline [legacy-file legacy-route]
+                      :current [renamed]
+                      :changed-paths ["frontend/src/cljs/knoxx/frontend/app.cljs"]
+                      :infrastructure? false})))
+          "An unchanged bridge implementation cannot prove the renamed expression has the same URL")))
+
+(t/deftest native-route-identities-may-change-or-grow-with-legacy-progress
+  (let [renamed (assoc native-route
+                       :record/id "route:routes/renamed-native-route"
+                       :route "routes/renamed-native-route")]
+    (doseq [current [[renamed] [native-route renamed]]]
+      (t/is (empty?
+              (law/ratchet-violations
+                {:baseline [legacy-file native-route]
+                 :current current
+                 :changed-paths ["frontend/src/cljs/knoxx/frontend/app.cljs"]
+                 :infrastructure? false}))))))
+
 (t/deftest migration-slice-must-delete-or-declare-infrastructure
   (t/testing "an unchanged touched surface fails"
     (t/is (= [:migration-slice/must-progress]

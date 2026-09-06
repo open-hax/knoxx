@@ -2,10 +2,6 @@
   "Pure structural record construction for the frontend strangler manifest."
   (:require [clojure.string :as str]))
 
-(def legacy-source-pattern
-  "The production tree governed by the TypeScript non-growth ratchet."
-  #"^frontend/src/.*\.tsx?$")
-
 (def test-source-pattern
   "Pattern identifying governed Vitest source paths."
   #"\.(?:test|spec)\.tsx?$")

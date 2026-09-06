@@ -8,14 +8,15 @@
 
 (defn- fixture-records
   "Read the real inventory from a synchronous, disposable repository fixture."
-  [{:keys [route-source bridge-source] :or {route-source "" bridge-source ""}}]
+  [{:keys [route-source bridge-source app-alias]
+    :or {route-source "" bridge-source "" app-alias "app"}}]
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))
         original-cwd (.cwd js/process)
         files {"frontend/package.json" "{}"
                "frontend/src/bridge/index.ts" bridge-source
                "frontend/src/bridge/app.ts" ""
                "frontend/src/cljs/knoxx/frontend/app.cljs"
-               (str "(ns fixture (:require [\"@open-hax/knoxx-app-bridge\" :as app]))\n"
+               (str "(ns fixture (:require [\"@open-hax/knoxx-app-bridge\" :as " app-alias "]))\n"
                     route-source)}]
     (try
       (doseq [[path source] files]
@@ -41,19 +42,19 @@
   (doseq [route-source ["($ Route {:path \"/chat\" :element ($ app/ChatPage)})"
                         "($ Route {:path (str \"/chat\" \"/*\") :element ($ app/ChatPage)})"]]
     (t/testing route-source
-      (t/is (thrown? js/Error
-                    (fixture-records {:route-source route-source}))))))
+      (t/is (thrown-with-msg? js/Error #"Unsupported Shadow route syntax"
+                             (fixture-records {:route-source route-source}))))))
 
 (t/deftest route-census-rejects-unknown-aliased-components
   (doseq [element ["($ LegacyPage)"
                    "($ ProtectedSurface {:children ($ LegacyPage)})"
                    "($ auth/RequireAuth {} ($ LegacyPage))"]]
     (t/testing element
-      (t/is (thrown? js/Error
-                    (fixture-records
-                      {:route-source
-                       (str "(def LegacyPage app/ChatPage)\n"
-                            "($ Route {:path \"/chat\"\n :element " element "})")}))))))
+      (t/is (thrown-with-msg? js/Error #"Unsupported Shadow route implementation"
+                             (fixture-records
+                               {:route-source
+                                (str "(def LegacyPage app/ChatPage)\n"
+                                     "($ Route {:path \"/chat\"\n :element " element "})")}))))))
 
 (t/deftest route-census-rejects-renamed-route-constructors
   (let [legacy-route "($ RouterRoute {:path \"/chat\"\n :element ($ app/ChatPage)})"]
@@ -67,8 +68,18 @@
                               "($ Route {:path \"/native\"\n :element ($ native/Page)})\n"
                               legacy-route)]]
       (t/testing route-source
-        (t/is (thrown? js/Error
-                      (fixture-records {:route-source route-source})))))))
+        (t/is (thrown-with-msg? js/Error #"Unsupported Shadow route syntax"
+                               (fixture-records {:route-source route-source})))))))
+
+(t/deftest route-ownership-retains-complete-dotted-bridge-alias
+  (let [records (fixture-records
+                 {:app-alias "legacy.app"
+                  :route-source
+                  "($ Route {:path \"/alias\"\n :element ($ legacy.app/ChatPage)})"})]
+    (t/is (= [{:implementation "legacy.app/ChatPage" :status :legacy}]
+             (->> records
+                  (filter #(= :route (:kind %)))
+                  (mapv #(select-keys % [:implementation :status])))))))
 
 (t/deftest route-census-preserves-supported-routes-and-component-boundaries
   (let [records (fixture-records

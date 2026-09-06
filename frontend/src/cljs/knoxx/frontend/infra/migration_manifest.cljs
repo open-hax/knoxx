@@ -9,6 +9,7 @@
             [cljs.tools.reader.reader-types :as reader-types]
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
+            [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
 
 (def manifest-relative-path
@@ -74,7 +75,7 @@
          (map (fn [absolute-path]
                 {:path (repository-path root absolute-path)
                  :absolute-path absolute-path}))
-         (filter (comp #(re-find shape/legacy-source-pattern %) :path))
+         (filter (comp #(re-find law/legacy-source-pattern %) :path))
          (mapv (fn [{:keys [path absolute-path]}]
                  {:path path
                   :source (fs/readFileSync absolute-path "utf8")})))))
@@ -175,29 +176,6 @@
                  (str %)) symbols)
         (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
-(defn app-bridge-alias
-  "Read the local alias bound to the application compatibility bridge."
-  [source]
-  (let [aliases (map second
-                     (re-seq #"\[\"@open-hax/knoxx-app-bridge\"\s+:as\s+([A-Za-z0-9_-]+)"
-                             source))]
-    (when-not (= 1 (count aliases))
-      (throw (ex-info "Expected exactly one application bridge alias"
-                      {:aliases (vec aliases)})))
-    (first aliases)))
-
-(defn bridge-owned-implementation?
-  "Whether a parsed route implementation is owned by the bridge alias."
-  [bridge-alias implementation]
-  (str/starts-with? implementation (str bridge-alias "/")))
-
-(defn- route-identity [path source]
-  (let [route (str/trim source)]
-    (when-not (= route (pr-str (edn/read-string route)))
-      (throw (ex-info "Unsupported Shadow route syntax"
-                      {:path path :route route})))
-    route))
-
 (defn- source-forms [path source]
   (let [input (reader-types/string-push-back-reader source)
         eof (js/Object.)]
@@ -210,6 +188,43 @@
               (recur (conj forms form))))))
       (catch :default _
         (throw (ex-info "Unsupported Shadow route syntax" {:path path}))))))
+
+(defn app-bridge-alias
+  "Read the complete alias from the application's actual namespace declaration."
+  [source]
+  (let [namespaces (->> (source-forms "frontend/src/cljs/knoxx/frontend/app.cljs" source)
+                        (filter #(and (seq? %) (= 'ns (first %)))))
+        specifications (->> (drop 2 (first namespaces))
+                             (filter #(and (seq? %) (= :require (first %))))
+                             (mapcat rest)
+                             (filter #(and (vector? %)
+                                           (= "@open-hax/knoxx-app-bridge" (first %)))))]
+    (when-not (and (= 1 (count namespaces)) (= 1 (count specifications)))
+      (throw (ex-info "Expected exactly one application bridge alias" {})))
+    (let [options (rest (first specifications))
+          pairs (partition 2 options)
+          aliases (map second (filter #(= :as (first %)) pairs))
+          alias (first aliases)]
+      (when-not (and (even? (count options))
+                     (every? (comp keyword? first) pairs)
+                     (= 1 (count aliases))
+                     (symbol? alias)
+                     (nil? (namespace alias)))
+        (throw (ex-info "Expected exactly one application bridge alias"
+                        {:aliases (vec aliases)})))
+      (str alias))))
+
+(defn bridge-owned-implementation?
+  "Whether a parsed route implementation is owned by the bridge alias."
+  [bridge-alias implementation]
+  (str/starts-with? implementation (str bridge-alias "/")))
+
+(defn- route-identity [path source]
+  (let [route (str/trim source)]
+    (when-not (= route (pr-str (edn/read-string route)))
+      (throw (ex-info "Unsupported Shadow route syntax"
+                      {:path path :route route})))
+    route))
 
 ;; Census the supported literal route grammar independently of constructor spelling.
 ;; Shared :id/:children props do not identify routes; route markers identify aliases.
