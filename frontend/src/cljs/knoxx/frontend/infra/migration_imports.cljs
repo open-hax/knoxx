@@ -67,11 +67,34 @@
       (or (resolved-target source-root options path vite-target) vite-target)
       (or typescript-target lexical-target))))
 
+(defn- vite-glob-reference? [^js node]
+  (when (or (ts/isPropertyAccessExpression node) (ts/isElementAccessExpression node))
+    (let [^js receiver (.-expression node)
+          ^js property (if (ts/isPropertyAccessExpression node)
+                         (.-name node)
+                         (.-argumentExpression node))]
+      (and (ts/isMetaProperty receiver)
+           (= (.-ImportKeyword ts/SyntaxKind) (.-keywordToken receiver))
+           (= "meta" (.-text ^js (.-name receiver)))
+           property (or (ts/isIdentifier property) (ts/isStringLiteral property))
+           (contains? #{"glob" "globEager"} (.-text property))))))
+
+(defn- assert-no-glob-imports! [path source]
+  (let [module (ts/createSourceFile path source (.-Latest ts/ScriptTarget) true)]
+    (letfn [(inspect [node]
+              (when (vite-glob-reference? node)
+                (throw (ex-info "Vite glob imports are outside the supported migration grammar"
+                                {:path path})))
+              (ts/forEachChild node inspect)
+              nil)]
+      (inspect module))))
+
 (defn assert-contained!
   "Reject local module imports and file references outside the governed tree."
   [{:keys [root source-root] :as resolution} path source]
   (let [absolute-path (node-path/join root path)
         ^js information (ts/preProcessFile source true true)]
+    (assert-no-glob-imports! absolute-path source)
     (doseq [^js reference (array-seq (.-importedFiles information))]
       (resolve-target resolution absolute-path (.-fileName reference)))
     (doseq [^js reference (array-seq (.-referencedFiles information))]

@@ -74,6 +74,7 @@
 (defn- legacy-sources [root resolution]
   (let [source-root (node-path/join root "frontend" "src")]
     (->> (walk-files source-root)
+         (map law/assert-governed-extension!)
          (map (fn [absolute-path]
                 {:path (repository-path root absolute-path)
                  :absolute-path absolute-path}))
@@ -242,7 +243,7 @@
                       {:path path :route route})))
     route))
 
-;; Census the supported literal route grammar independently of constructor spelling.
+;; Census Helix and direct React route creation independently of supported grammar.
 ;; Shared :id/:children props do not identify routes; route markers identify aliases.
 (defn- route-forms [path source]
   (->> (source-forms path source)
@@ -250,7 +251,7 @@
        (filter (fn [form]
                  (and (seq? form)
                       (symbol? (first form))
-                      (= "$" (name (first form)))
+                      (contains? #{"$" "createElement"} (name (first form)))
                       (let [component (second form)
                             props (nth form 2 nil)]
                         (or (and (symbol? component)

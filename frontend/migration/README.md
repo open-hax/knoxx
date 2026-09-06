@@ -4,11 +4,15 @@
 strangler migration. Each line is one canonical EDN record for a governed
 `.ts`/`.tsx`/`.mts`/`.cts` file, bridge export, Shadow route, or legacy Vitest suite.
 The `:ts` count includes `.ts`, `.mts`, and `.cts` files.
+JavaScript variants (`.js`, `.jsx`, `.mjs`, and `.cjs`) under `frontend/src`
+are rejected so a language-only rename cannot count as CLJS migration.
 Local imports and file references from governed TypeScript must remain within
 `frontend/src` so relocating a dependency cannot remove it from the inventory.
 This includes TypeScript path mappings and static Vite aliases. Vite bridge
 entries must match the governed bridge files; dynamic configurations that
 cannot be inspected without execution are rejected.
+Vite glob imports are not supported by the inventory and fail explicitly;
+comments and string literals that merely mention glob syntax are ignored.
 
 Run from `frontend/`:
 
@@ -35,6 +39,8 @@ the inventory rejects route declarations extracted into other source files.
 The conservative census treats Route-named components and literal
 `:path`, `:element`, `:index`, or `:Component` props as route candidates.
 Explicit comment and quote bodies cannot contribute routes or implementation ownership.
+Direct React `createElement` route construction is detected and rejected as
+unsupported syntax rather than silently dropping the route.
 
 An infrastructure-only pull request may retain the legacy count by placing
 the exact declaration `Migration infrastructure: yes` in its body. The

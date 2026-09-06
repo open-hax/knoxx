@@ -8,6 +8,14 @@
   "The production tree governed by the TypeScript non-growth ratchet."
   #"^frontend/src/[\s\S]*\.(?:tsx?|mts|cts)$")
 
+(defn assert-governed-extension!
+  "Reject JavaScript source variants that the TypeScript ledger cannot count."
+  [path]
+  (when (re-find #"\.(?:jsx?|mjs|cjs)$" path)
+    (throw (ex-info "Ungoverned JavaScript source in migration source tree"
+                    {:path path})))
+  path)
+
 (def NonBlankString
   "Schema for nonempty manifest string values."
   [:string {:min 1}])
