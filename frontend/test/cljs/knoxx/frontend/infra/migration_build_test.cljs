@@ -36,6 +36,14 @@
    "vite.bridge.config.ts" (vite-config "build:{lib:{entry:'src/bridge/index.ts'}}")
    "vite.app-bridge.config.ts" (vite-config "build:{lib:{entry:'src/bridge/app.ts'}}")})
 
+(defn- shadow-config [modules]
+  (pr-str {:builds {:app {:target :browser
+                          :js-options
+                          {:resolve (into {} (map (fn [module]
+                                                   [module {:target :file
+                                                            :file "dist/bridge/output.es.js"}]))
+                                          modules)}}}}))
+
 (defn- resolve-alias! [specifier]
   (with-configs
     {"vite.config.ts" (vite-config (str "resolve:{alias:{'@':path.resolve(__dirname,'src'),"
@@ -94,6 +102,37 @@
                          {"build:bridge" "vite build --config vite.bridge.config.ts"
                           "build" "vite build --config vite.bridge.config.ts && shadow-cljs release app"})
                        "vite.app-bridge.config.ts")))))
+
+(t/deftest shadow-bridge-consumers-prevent-wrapper-builds-from-hiding-retirement
+  (doseq [module ["@open-hax/knoxx-app-bridge" "@open-hax/knoxx-frontend-bridge"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-configs!
+              {"shadow-cljs.edn" (shadow-config [module])
+               "package.json" (package-with-scripts
+                                {"build" "node build-legacy.mjs && shadow-cljs release app"})
+               "build-legacy.mjs"
+               "import { build } from 'vite'; await build({configFile:'renamed.config.ts'});"})))))
+
+(t/deftest active-shadow-bridges-retain-their-governed-builds
+  (t/is (= {} (inspect-configs!
+               (assoc (bridge-configs
+                        {"build:bridge" "vite build --config vite.bridge.config.ts"
+                         "build:app-bridge" "vite build --config vite.app-bridge.config.ts"})
+                      "shadow-cljs.edn"
+                      (shadow-config ["@open-hax/knoxx-app-bridge"
+                                      "@open-hax/knoxx-frontend-bridge"]))))))
+
+(t/deftest shadow-bridge-retirement-removes-the-corresponding-build-obligation
+  (t/is (= {} (inspect-configs!
+               {"shadow-cljs.edn" (shadow-config [])
+                "package.json" (package-with-scripts {"build" "shadow-cljs release app"})})))
+  (t/is (= {} (inspect-configs!
+               (-> (bridge-configs
+                     {"build:bridge" "vite build --config vite.bridge.config.ts"})
+                   (dissoc "vite.app-bridge.config.ts")
+                   (assoc "shadow-cljs.edn"
+                          (shadow-config ["@open-hax/knoxx-frontend-bridge"])))))))
 
 (t/deftest later-config-flags-cannot-override-the-inspected-build
   (t/is (thrown-with-msg?

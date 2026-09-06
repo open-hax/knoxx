@@ -2,7 +2,8 @@
   "TypeScript dependency syntax inspection for the governed source boundary."
   (:require ["node:path" :as node-path]
             ["typescript" :as ts]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [knoxx.frontend.infra.migration-packages :as packages]))
 
 (defn- assert-target! [source-root path specifier target]
   (let [relative (node-path/relative source-root target)]
@@ -34,6 +35,7 @@
   {:root root
    :source-root (node-path/join root "frontend" "src")
    :aliases aliases
+   :packages (packages/resolver root)
    :options (compiler-options root)})
 
 (defn- alias-target [source-root aliases path specifier]
@@ -48,23 +50,28 @@
     (when-let [target (first targets)]
       (assert-target! source-root path specifier target))))
 
-(defn- resolved-target [source-root options path specifier]
+(defn- resolved-target [source-root options package-context path specifier]
   (let [^js result (ts/resolveModuleName specifier path options ts/sys)
         ^js resolved (.-resolvedModule result)]
-    (when (and resolved (not (.-isExternalLibraryImport resolved)))
-      (assert-target! source-root path specifier (.-resolvedFileName resolved)))))
+    (when resolved
+      (when-let [target (packages/resolved-target package-context path specifier
+                                                  (.-resolvedFileName resolved)
+                                                  (.-isExternalLibraryImport resolved))]
+        (assert-target! source-root path specifier target)))))
 
 (defn resolve-target
   "Resolve and validate a local module or project alias; packages return nil."
-  [{:keys [source-root options aliases]} path specifier]
+  [{:keys [source-root options aliases packages]} path specifier]
   (let [local? (or (str/starts-with? specifier ".") (node-path/isAbsolute specifier))
         lexical-target (when local? (node-path/resolve (node-path/dirname path) specifier))
         vite-target (alias-target source-root aliases path specifier)
-        typescript-target (resolved-target source-root options path specifier)]
+        typescript-target (resolved-target source-root options packages path specifier)]
+    (when-let [target (packages/declared-target packages path specifier)]
+      (assert-target! source-root path specifier target))
     (when local?
       (assert-target! source-root path specifier lexical-target))
     (if vite-target
-      (or (resolved-target source-root options path vite-target) vite-target)
+      (or (resolved-target source-root options packages path vite-target) vite-target)
       (or typescript-target lexical-target))))
 
 (defn- import-meta-property [^js node]

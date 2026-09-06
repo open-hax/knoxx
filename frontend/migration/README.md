@@ -8,11 +8,15 @@ JavaScript variants (`.js`, `.jsx`, `.mjs`, and `.cjs`) under `frontend/src`
 are rejected so a language-only rename cannot count as CLJS migration.
 Local imports and file references from governed TypeScript must remain within
 `frontend/src` so relocating a dependency cannot remove it from the inventory.
+This also applies to local file, link, and workspace packages, even when the
+TypeScript resolver marks them as external libraries.
 This includes TypeScript path mappings and static Vite aliases. Vite bridge
 entries must match the governed bridge files; dynamic configurations that
 cannot be inspected without execution are rejected.
 Active Vite build commands must select an existing governed bridge config;
 retiring a bridge also requires removing its build commands.
+An active Shadow bridge resolution requires its corresponding governed build
+script and config, including when other build commands use a wrapper.
 Vite glob imports are not supported by the inventory and fail explicitly;
 comments and string literals that merely mention glob syntax are ignored.
 Worker and SharedWorker URL dependencies must also stay in `frontend/src`;

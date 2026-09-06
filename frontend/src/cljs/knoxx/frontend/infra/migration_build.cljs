@@ -3,6 +3,7 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as node-path]
             ["typescript" :as ts]
+            [cljs.tools.reader.edn :as edn]
             [clojure.string :as str]))
 
 (defn- unsupported! [file detail]
@@ -184,12 +185,36 @@
       (unsupported! file (str "Vite builds require an explicit static config: " script-name)))
     (mapv second configured)))
 
+(defn- shadow-resolutions [file]
+  (if (fs/existsSync file)
+    (let [configuration (edn/read-string (fs/readFileSync file "utf8"))]
+      (when-not (map? configuration)
+        (unsupported! file "Shadow configuration must be an EDN map"))
+      (->> (tree-seq coll? seq configuration)
+           (filter map?)
+           (keep :resolve)
+           (mapcat keys)
+           set))
+    #{}))
+
+(defn- assert-shadow-bridge-builds! [frontend-root scripts]
+  (let [file (node-path/join frontend-root "shadow-cljs.edn")
+        resolutions (shadow-resolutions file)]
+    (doseq [[module script-name]
+            [["@open-hax/knoxx-frontend-bridge" "build:bridge"]
+             ["@open-hax/knoxx-app-bridge" "build:app-bridge"]]
+            :when (contains? resolutions module)]
+      (when-not (contains? scripts script-name)
+        (unsupported! file (str "Active Shadow bridge requires its governed build script: " script-name))))))
+
 (defn- assert-active-configs! [frontend-root]
   (let [file (node-path/join frontend-root "package.json")
+        scripts (package-scripts file)
         bridges {"build:bridge" "vite.bridge.config.ts"
                  "build:app-bridge" "vite.app-bridge.config.ts"}
         allowed (set (map #(node-path/resolve frontend-root %) (vals bridges)))]
-    (doseq [[script-name command] (package-scripts file)]
+    (assert-shadow-bridge-builds! frontend-root scripts)
+    (doseq [[script-name command] scripts]
       (let [configs (mapv #(node-path/resolve frontend-root %)
                           (script-configs file script-name command))]
         (when-let [expected (get bridges script-name)]
