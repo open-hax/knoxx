@@ -16,6 +16,31 @@
                     {:path path})))
   path)
 
+(defn required-bridge-builds
+  "Derive governed build obligations from active Shadow bridge resolutions."
+  [resolutions]
+  (->> [["@open-hax/knoxx-frontend-bridge" "build:bridge"]
+        ["@open-hax/knoxx-app-bridge" "build:app-bridge"]]
+       (keep (fn [[module script-name]]
+               (when (contains? resolutions module) script-name)))
+       vec))
+
+(defn assert-production-build!
+  "Validate script presence and bridge ordering in parsed production build facts."
+  [{:keys [phases required-bridges available-scripts] :as facts}]
+  (when-not (every? available-scripts required-bridges)
+    (throw (ex-info "Unsupported Vite migration configuration"
+                    (assoc facts :detail "Active Shadow bridges require their governed build scripts"))))
+  (let [bridges (take-while #{"build:bridge" "build:app-bridge"} phases)
+        remaining (vec (drop (count bridges) phases))]
+    (when-not (and (contains? #{[:shadow] [:shadow :css]} remaining)
+                   (= (count bridges) (count (set bridges)))
+                   (every? (set bridges) required-bridges))
+      (throw (ex-info "Unsupported Vite migration configuration"
+                      (assoc facts :detail
+                             "Production build must compile every active bridge before Shadow release")))))
+  facts)
+
 (def NonBlankString
   "Schema for nonempty manifest string values."
   [:string {:min 1}])

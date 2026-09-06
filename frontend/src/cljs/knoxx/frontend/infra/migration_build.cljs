@@ -4,7 +4,8 @@
             ["node:path" :as node-path]
             ["typescript" :as ts]
             [cljs.tools.reader.edn :as edn]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [knoxx.frontend.law.migration :as law]))
 
 (defn- unsupported! [file detail]
   (throw (ex-info "Unsupported Vite migration configuration"
@@ -210,26 +211,16 @@
                   (unsupported! file (str "Unsupported production build phase: " phase)))))
           (str/split command #"&&" -1))))
 
-(defn- assert-production-build! [file scripts required-bridges]
-  (let [phases (production-phases file (get scripts "build"))
-        bridges (take-while #{"build:bridge" "build:app-bridge"} phases)
-        remaining (vec (drop (count bridges) phases))]
-    (when-not (and (contains? #{[:shadow] [:shadow :css]} remaining)
-                   (= (count bridges) (count (set bridges)))
-                   (every? (set bridges) required-bridges))
-      (unsupported! file "Production build must compile every active bridge before Shadow release"))))
-
 (defn- assert-shadow-bridge-builds! [frontend-root scripts]
-  (let [file (node-path/join frontend-root "shadow-cljs.edn")
-        resolutions (shadow-resolutions file)
-        active (filter #(contains? resolutions (first %))
-                       [["@open-hax/knoxx-frontend-bridge" "build:bridge"]
-                        ["@open-hax/knoxx-app-bridge" "build:app-bridge"]])]
-    (doseq [[_module script-name] active]
-      (when-not (contains? scripts script-name)
-        (unsupported! file (str "Active Shadow bridge requires its governed build script: " script-name))))
-    (when (seq active)
-      (assert-production-build! (node-path/join frontend-root "package.json") scripts (map second active)))))
+  (let [shadow-file (node-path/join frontend-root "shadow-cljs.edn")
+        required-bridges (law/required-bridge-builds (shadow-resolutions shadow-file))]
+    (when (seq required-bridges)
+      (let [file (node-path/join frontend-root "package.json")]
+        (law/assert-production-build!
+          {:path file
+           :available-scripts (set (keys scripts))
+           :required-bridges required-bridges
+           :phases (production-phases file (get scripts "build"))})))))
 
 (defn- assert-active-configs! [frontend-root]
   (let [file (node-path/join frontend-root "package.json")

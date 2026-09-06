@@ -3,6 +3,34 @@
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
 
+(t/deftest active-bridge-resolutions-establish-only-their-build-obligations
+  (t/is (= [] (law/required-bridge-builds #{"react"})))
+  (t/is (= ["build:app-bridge"]
+           (law/required-bridge-builds #{"@open-hax/knoxx-app-bridge"})))
+  (t/is (= ["build:bridge" "build:app-bridge"]
+           (law/required-bridge-builds #{"@open-hax/knoxx-app-bridge"
+                                        "@open-hax/knoxx-frontend-bridge"}))))
+
+(t/deftest production-build-contract-admits-active-and-retired-bridge-states
+  (doseq [[phases required]
+          [[["build:bridge" "build:app-bridge" :shadow :css] ["build:bridge" "build:app-bridge"]]
+           [["build:app-bridge" :shadow] ["build:app-bridge"]]
+           [[:shadow] []]]]
+    (let [facts {:phases phases :required-bridges required :available-scripts (set required)}]
+      (t/is (= facts (law/assert-production-build! facts))))))
+
+(t/deftest production-build-contract-rejects-missing-late-and-duplicate-bridges
+  (let [facts {:phases ["build:app-bridge" :shadow]
+               :required-bridges ["build:app-bridge"]
+               :available-scripts #{"build:app-bridge"}}]
+    (doseq [override [{:available-scripts #{}}
+                      {:phases [:shadow]}
+                      {:phases [:shadow "build:app-bridge"]}
+                      {:phases ["build:app-bridge" "build:app-bridge" :shadow]}
+                      {:phases ["build:app-bridge" :css :shadow]}]]
+      (t/is (thrown-with-msg? js/Error #"Unsupported Vite migration configuration"
+                             (law/assert-production-build! (merge facts override)))))))
+
 (def legacy-file
   "Representative legacy file fixture."
   (shape/legacy-file-record
