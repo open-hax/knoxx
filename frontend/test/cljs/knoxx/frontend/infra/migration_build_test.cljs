@@ -44,6 +44,11 @@
                                                             :file "dist/bridge/output.es.js"}]))
                                           modules)}}}}))
 
+(defn- production-build []
+  (str "vite build --config vite.bridge.config.ts && "
+       "vite build --config vite.app-bridge.config.ts && shadow-cljs release app && "
+       "tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css"))
+
 (defn- resolve-alias! [specifier]
   (with-configs
     {"vite.config.ts" (vite-config (str "resolve:{alias:{'@':path.resolve(__dirname,'src'),"
@@ -118,7 +123,8 @@
   (t/is (= {} (inspect-configs!
                (assoc (bridge-configs
                         {"build:bridge" "vite build --config vite.bridge.config.ts"
-                         "build:app-bridge" "vite build --config vite.app-bridge.config.ts"})
+                         "build:app-bridge" "vite build --config vite.app-bridge.config.ts"
+                         "build" (production-build)})
                       "shadow-cljs.edn"
                       (shadow-config ["@open-hax/knoxx-app-bridge"
                                       "@open-hax/knoxx-frontend-bridge"]))))))
@@ -129,10 +135,44 @@
                 "package.json" (package-with-scripts {"build" "shadow-cljs release app"})})))
   (t/is (= {} (inspect-configs!
                (-> (bridge-configs
-                     {"build:bridge" "vite build --config vite.bridge.config.ts"})
+                     {"build:bridge" "vite build --config vite.bridge.config.ts"
+                      "build" "vite build --config vite.bridge.config.ts && shadow-cljs release app"})
                    (dissoc "vite.app-bridge.config.ts")
                    (assoc "shadow-cljs.edn"
                           (shadow-config ["@open-hax/knoxx-frontend-bridge"])))))))
+
+(t/deftest unused-governed-scripts-cannot-hide-an-opaque-production-build
+  (let [scripts {"build:app-bridge" "vite build --config vite.app-bridge.config.ts"
+                 "build" "vite build --config vite.app-bridge.config.ts && shadow-cljs release app"}]
+    (with-configs
+      (assoc (bridge-configs scripts)
+             "shadow-cljs.edn" (shadow-config ["@open-hax/knoxx-app-bridge"])
+             "src/bridge/app.ts" ""
+             "legacy-entry.js" "export const ChatPage = () => null;"
+             "renamed.config.ts" (vite-config "build:{lib:{entry:'legacy-entry.js'}}")
+             "build-legacy.mjs"
+             "import { build } from 'vite'; await build({configFile:'renamed.config.ts'});")
+      (fn [root]
+        (t/is (= {} (build/assert-configs! root)))
+        (fs/writeFileSync (node-path/join root "frontend/package.json")
+                          (package-with-scripts
+                            (assoc scripts "build" "node build-legacy.mjs && shadow-cljs release app")))
+        (t/is (thrown-with-msg? js/Error #"Unsupported Vite migration configuration"
+                               (build/assert-configs! root)))))))
+
+(t/deftest production-build-phases-must-execute-the-active-bridge-before-shadow
+  (doseq [command ["echo 'vite build --config vite.app-bridge.config.ts' && shadow-cljs release app"
+                   "vite build --config vite.app-bridge.config.ts && shadow-cljs release app && node build-legacy.mjs"
+                   "shadow-cljs release app && vite build --config vite.app-bridge.config.ts"
+                   "shadow-cljs release app"
+                   "vite build --config vite.app-bridge.config.ts && shadow-cljs release app &&"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-configs!
+              (assoc (bridge-configs
+                       {"build:app-bridge" "vite build --config vite.app-bridge.config.ts"
+                        "build" command})
+                     "shadow-cljs.edn" (shadow-config ["@open-hax/knoxx-app-bridge"])))))))
 
 (t/deftest later-config-flags-cannot-override-the-inspected-build
   (t/is (thrown-with-msg?

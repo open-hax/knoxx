@@ -11,6 +11,7 @@
             [knoxx.frontend.infra.migration-build :as build]
             [knoxx.frontend.infra.migration-git :as git]
             [knoxx.frontend.infra.migration-imports :as imports]
+            [knoxx.frontend.infra.migration-vitest :as vitest]
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
 
@@ -332,6 +333,7 @@
   "Read the repository and return the canonical generated records."
   []
   (let [root (repository-root)
+        _ (vitest/assert-config! root)
         resolution (imports/resolver root (build/assert-configs! root))
         bridge-records* (bridge-records root resolution)
         bridge-index (direct-bridge-index root bridge-records*)

@@ -197,15 +197,39 @@
            set))
     #{}))
 
+(defn- production-phases [file command]
+  (when-not (string? command)
+    (unsupported! file "Active Shadow bridges require a production build command"))
+  (let [known {"vite build --config vite.bridge.config.ts" "build:bridge"
+               "vite build --config vite.app-bridge.config.ts" "build:app-bridge"
+               "shadow-cljs release app" :shadow
+               "tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css" :css}]
+    (mapv (fn [phase]
+            (let [normalized (str/join " " (str/split (str/trim phase) #"\s+"))]
+              (or (get known normalized)
+                  (unsupported! file (str "Unsupported production build phase: " phase)))))
+          (str/split command #"&&" -1))))
+
+(defn- assert-production-build! [file scripts required-bridges]
+  (let [phases (production-phases file (get scripts "build"))
+        bridges (take-while #{"build:bridge" "build:app-bridge"} phases)
+        remaining (vec (drop (count bridges) phases))]
+    (when-not (and (contains? #{[:shadow] [:shadow :css]} remaining)
+                   (= (count bridges) (count (set bridges)))
+                   (every? (set bridges) required-bridges))
+      (unsupported! file "Production build must compile every active bridge before Shadow release"))))
+
 (defn- assert-shadow-bridge-builds! [frontend-root scripts]
   (let [file (node-path/join frontend-root "shadow-cljs.edn")
-        resolutions (shadow-resolutions file)]
-    (doseq [[module script-name]
-            [["@open-hax/knoxx-frontend-bridge" "build:bridge"]
-             ["@open-hax/knoxx-app-bridge" "build:app-bridge"]]
-            :when (contains? resolutions module)]
+        resolutions (shadow-resolutions file)
+        active (filter #(contains? resolutions (first %))
+                       [["@open-hax/knoxx-frontend-bridge" "build:bridge"]
+                        ["@open-hax/knoxx-app-bridge" "build:app-bridge"]])]
+    (doseq [[_module script-name] active]
       (when-not (contains? scripts script-name)
-        (unsupported! file (str "Active Shadow bridge requires its governed build script: " script-name))))))
+        (unsupported! file (str "Active Shadow bridge requires its governed build script: " script-name))))
+    (when (seq active)
+      (assert-production-build! (node-path/join frontend-root "package.json") scripts (map second active)))))
 
 (defn- assert-active-configs! [frontend-root]
   (let [file (node-path/join frontend-root "package.json")

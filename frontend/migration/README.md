@@ -16,13 +16,18 @@ cannot be inspected without execution are rejected.
 Active Vite build commands must select an existing governed bridge config;
 retiring a bridge also requires removing its build commands.
 An active Shadow bridge resolution requires its corresponding governed build
-script and config, including when other build commands use a wrapper.
+script and config.
+While a bridge remains active, the production build must execute its governed
+Vite phase before Shadow release, followed only by the optional CSS phase.
+Opaque build wrappers and decoy commands are rejected.
 Vite glob imports are not supported by the inventory and fail explicitly;
 comments and string literals that merely mention glob syntax are ignored.
 Worker and SharedWorker URL dependencies must also stay in `frontend/src`;
 dynamic worker URLs that cannot be inspected are rejected.
 Dynamic `import()` calls must use literal module paths; variable imports are
 rejected because their dependency set cannot be read from a literal specifier.
+Vitest source scopes must stay within `frontend/src`; active test commands
+must select the inspected static Vitest configuration.
 
 Run from `frontend/`:
 
