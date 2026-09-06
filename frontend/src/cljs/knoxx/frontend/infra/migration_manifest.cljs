@@ -211,8 +211,8 @@
       (catch :default _
         (throw (ex-info "Unsupported Shadow route syntax" {:path path}))))))
 
-;; Census literal route props independently of constructor spelling so the
-;; narrow extractor rejects unsupported forms instead of silently omitting them.
+;; Census the supported literal route grammar independently of constructor spelling.
+;; Shared :id/:children props do not identify routes; route markers identify aliases.
 (defn- route-form-count [path source]
   (let [route-forms (->> (source-forms path source)
                          (tree-seq coll? seq)
@@ -220,10 +220,13 @@
                                    (and (seq? form)
                                         (symbol? (first form))
                                         (= "$" (name (first form)))
-                                        (let [props (nth form 2 nil)]
-                                          (and (map? props)
-                                               (or (contains? props :path)
-                                                   (contains? props :element))))))))]
+                                        (let [component (second form)
+                                              props (nth form 2 nil)]
+                                          (or (and (symbol? component)
+                                                   (= "Route" (name component)))
+                                              (and (map? props)
+                                                   (some #(contains? props %)
+                                                         [:path :element :index :Component]))))))))]
     (doseq [form route-forms]
       (when-not (and (= '$ (first form)) (= 'Route (second form)))
         (throw (ex-info "Unsupported Shadow route syntax"
@@ -315,20 +318,24 @@
     (catch :default _ false)))
 
 (defn base-manifest
-  "Read and parse the migration ledger at a Git revision, or return nil."
+  "Read a baseline; only an absent ledger or omitted revision returns nil."
   [sha]
   (when (seq sha)
     (when-not (git-commit-exists? sha)
       (throw (ex-info "Git cannot resolve the migration baseline revision"
                       {:base-sha sha})))
-    (try
-      (-> (child-process/execFileSync
-           "git" #js ["show" (str sha ":" manifest-relative-path)]
-           #js {:cwd (repository-root)
-                :encoding "utf8"
-                :stdio #js ["ignore" "pipe" "pipe"]})
-          parse-records)
-      (catch :default _ nil))))
+    (let [entries (child-process/execFileSync
+                   "git" #js ["ls-tree" "-z" "--name-only" sha "--" manifest-relative-path]
+                   #js {:cwd (repository-root)
+                        :encoding "utf8"
+                        :stdio #js ["ignore" "pipe" "pipe"]})]
+      (when (seq entries)
+        (-> (child-process/execFileSync
+             "git" #js ["show" (str sha ":" manifest-relative-path)]
+             #js {:cwd (repository-root)
+                  :encoding "utf8"
+                  :stdio #js ["ignore" "pipe" "pipe"]})
+            parse-records)))))
 
 (defn changed-paths
   "Return repository paths changed between a Git revision and HEAD."

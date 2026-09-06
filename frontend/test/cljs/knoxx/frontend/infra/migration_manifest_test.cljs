@@ -1,5 +1,6 @@
 (ns knoxx.frontend.infra.migration-manifest-test
-  (:require ["node:fs" :as fs]
+  (:require ["node:child_process" :as child-process]
+            ["node:fs" :as fs]
             ["node:os" :as os]
             ["node:path" :as node-path]
             [cljs.test :as t]
@@ -59,6 +60,9 @@
     (doseq [route-source [(str "(def RouterRoute (.-Route rr))\n" legacy-route)
                          (str "(def RouterRoute Route)\n" legacy-route)
                          "($ rr/Route {:path \"/chat\"\n :element ($ app/ChatPage)})"
+                         "($ rr/Route {:index true :Component app/ChatPage})"
+                         (str "(def RouterRoute Route)\n"
+                              "($ RouterRoute {:index true :Component app/ChatPage})")
                          (str "(def RouterRoute Route)\n"
                               "($ Route {:path \"/native\"\n :element ($ native/Page)})\n"
                               legacy-route)]]
@@ -233,3 +237,34 @@
           (catch js/Error error
             (boolean (re-find #"cannot resolve the migration baseline"
                               (.-message error)))))))
+
+(defn- fixture-git!
+  "Run Git with a fixture identity inside a disposable repository."
+  [root arguments]
+  (child-process/execFileSync
+    "git" (into-array (concat ["-C" root
+                              "-c" "user.name=Migration Fixture"
+                              "-c" "user.email=migration-fixture@example.invalid"
+                              "-c" "commit.gpgsign=false"]
+                             arguments))
+    #js {:encoding "utf8" :stdio #js ["ignore" "pipe" "pipe"]}))
+
+(t/deftest git-baselines-distinguish-absent-and-invalid-manifests
+  (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-git-"))
+        original-cwd (.cwd js/process)
+        manifest-path (node-path/join root manifest/manifest-relative-path)]
+    (try
+      (fs/mkdirSync (node-path/dirname manifest-path) #js {:recursive true})
+      (fs/writeFileSync (node-path/join root "frontend" "package.json") "{}")
+      (fixture-git! root ["init" "--quiet" "--initial-branch=main"])
+      (fixture-git! root ["commit" "--quiet" "--allow-empty" "-m" "Absent ledger"])
+      (.chdir js/process root)
+      (t/is (nil? (manifest/base-manifest "HEAD")))
+      (fs/writeFileSync manifest-path " {:record/id \"one\", :kind :route}\n")
+      (fixture-git! root ["add" manifest/manifest-relative-path])
+      (fixture-git! root ["commit" "--quiet" "-m" "Noncanonical ledger"])
+      (t/is (thrown-with-msg? js/Error #"canonical single-form EDN"
+                             (manifest/base-manifest "HEAD")))
+      (finally
+        (.chdir js/process original-cwd)
+        (fs/rmSync root #js {:recursive true :force true})))))
