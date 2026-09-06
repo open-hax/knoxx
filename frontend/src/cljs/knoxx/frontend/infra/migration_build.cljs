@@ -65,13 +65,35 @@
     {:placement placement :static? (or (nil? node) array-node?)
      :plugins (if array-node? (mapv #(plugin-facts bindings %) (array-seq (.-elements node))) [])}))
 
-(defn- configuration-plugin-lists [file bindings configuration]
+(defn- scalar-value [^js node]
+  (cond
+    (ts/isStringLiteral node) (.-text node)
+    (= (.-TrueKeyword ts/SyntaxKind) (.-kind node)) true
+    (= (.-FalseKeyword ts/SyntaxKind) (.-kind node)) false
+    :else :dynamic))
+
+(defn- option-values [properties]
+  (reduce-kv (fn [result field node] (assoc result field (scalar-value node))) {} properties))
+
+(defn- output-values [file properties]
+  (let [^js globals (get properties "globals")]
+    (cond-> (option-values properties)
+      (and globals (ts/isObjectLiteralExpression globals))
+      (assoc "globals" (option-values (object-properties file globals))))))
+
+(defn- configuration-facts [file bindings configuration]
   (let [build-settings (when-let [node (get configuration "build")] (object-properties file node))
         rollup (when-let [node (get build-settings "rollupOptions")] (object-properties file node))
-        output (when-let [node (get rollup "output")] (object-properties file node))]
-    [(plugin-list-facts bindings :vite (get configuration "plugins"))
-     (plugin-list-facts bindings :rollup (get rollup "plugins"))
-     (plugin-list-facts bindings :output (get output "plugins"))]))
+        output (when-let [node (get rollup "output")] (object-properties file node))
+        worker (when-let [node (get configuration "worker")] (object-properties file node))
+        esbuild (when-let [node (get configuration "esbuild")] (object-properties file node))]
+    {:path file :root-override? (contains? configuration "root")
+     :options {:output (output-values file output) :worker (option-values worker)
+               :esbuild (option-values esbuild)}
+     :plugin-lists [(plugin-list-facts bindings :vite (get configuration "plugins"))
+                    (plugin-list-facts bindings :rollup (get rollup "plugins"))
+                    (plugin-list-facts bindings :output (get output "plugins"))
+                    (plugin-list-facts bindings :worker (get worker "plugins"))]}))
 
 (defn- exported-config [file ^js source bindings]
   (let [exports (filter ts/isExportAssignment (array-seq (.-statements source)))]
@@ -181,8 +203,7 @@
           (unsupported! file "Configuration syntax could not be parsed"))
         (let [configuration (exported-config file source bindings)]
           (law/assert-vite-config-admission!
-            {:path file :root-override? (contains? configuration "root")
-             :plugin-lists (configuration-plugin-lists file bindings configuration)})
+            (configuration-facts file bindings configuration))
           (let [aliases (assert-aliases! file frontend-root bindings configuration)]
             (when expected
               (assert-bridge! file frontend-root bindings expected configuration))

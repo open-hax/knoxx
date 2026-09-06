@@ -331,3 +331,41 @@
   (t/is (thrown-with-msg?
           js/Error #"Unsupported Vite migration configuration"
           (inspect-config! "vite.config.ts" (vite-config "root:'legacy'")))))
+
+(t/deftest inspected-output-and-transform-settings-remain-supported
+  (doseq [output ["{}" "{globals:{react:'React','react-dom':'ReactDOM'}}"
+                  "{inlineDynamicImports:true}" "{inlineDynamicImports:false,plugins:[]}"]
+          jsx-dev ["true" "false"]]
+    (t/is (= {} (inspect-config!
+                  "vite.app-bridge.config.ts"
+                  (vite-config (str "worker:{plugins:[]},esbuild:{jsxDev:" jsx-dev "},"
+                                    "build:{lib:{entry:'src/bridge/app.ts'},rollupOptions:{output:"
+                                    output "}}")))))))
+
+(t/deftest output-hooks-cannot-restore-relocated-source
+  (doseq [hook ["banner" "intro" "outro" "footer"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-configs!
+              {"legacy.ts" "export const ChatPage = () => 'legacy';"
+               "vite.app-bridge.config.ts"
+               (str "import fs from 'node:fs';\n"
+                    (vite-config (str "build:{lib:{entry:'src/bridge/app.ts'},rollupOptions:{output:{"
+                                      hook ":()=>fs.readFileSync('legacy.ts','utf8')}}}")))})))))
+
+(t/deftest output-values-and-related-source-hooks-must-be-inspected
+  (doseq [output ["{banner:'export const ChatPage=1'}" "{globals:()=>legacyGlobals}"
+                  "{globals:{react:()=>legacySource}}" "{globals:legacyGlobals}"
+                  "{inlineDynamicImports:()=>true}" "{inlineDynamicImports:'true'}"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-config! "vite.config.ts"
+                             (vite-config (str "build:{rollupOptions:{output:" output "}}"))))))
+  (doseq [properties ["worker:{plugins:()=>[{name:'legacy',load:()=>legacySource}]}"
+                      "worker:{plugins:[legacyPlugin()]}"
+                      "worker:{rollupOptions:{output:{banner:()=>legacySource}}}"
+                      "esbuild:{jsxInject:'import Page from \\\"../legacy.ts\\\"'}"
+                      "esbuild:{jsxDev:()=>false}" "esbuild:{jsxDev:'false'}"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-config! "vite.config.ts" (vite-config properties))))))

@@ -88,12 +88,25 @@
       (throw (ex-info "Unsupported Vite migration configuration" {:path path :detail detail}))))
   facts)
 
+(defn- assert-vite-options! [path options]
+  (let [contracts {:output {"globals" #(and (map? %) (every? string? (mapcat identity %)))
+                            "inlineDynamicImports" boolean? "plugins" (constantly true)}
+                   :esbuild {"jsxDev" boolean?}
+                   :worker {"plugins" (constantly true)}}]
+    (doseq [[placement settings] options
+            [field value] settings]
+      (when-not (when-let [accept? (get-in contracts [placement field])] (accept? value))
+        (throw (ex-info "Unsupported Vite migration configuration"
+                        {:path path :detail "Uninspected Vite code-producing options are not supported"
+                         :placement placement :field field}))))))
+
 (defn assert-vite-config-admission!
-  "Reject root overrides and plugin hooks outside the inspected framework configuration."
-  [{:keys [path root-override? plugin-lists] :as facts}]
+  "Reject root overrides and source hooks outside the inspected framework configuration."
+  [{:keys [path root-override? plugin-lists options] :as facts}]
   (when root-override?
     (throw (ex-info "Unsupported Vite migration configuration"
                     {:path path :detail "Vite root overrides are not supported"})))
+  (assert-vite-options! path options)
   (doseq [{:keys [placement static? plugins]} plugin-lists]
     (when-not (and static?
                    (every? #(and (= placement :vite)

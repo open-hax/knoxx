@@ -277,3 +277,20 @@
     (t/is (thrown-with-msg? js/Error #"Unsupported Vite migration configuration"
                            (law/assert-vite-config-admission!
                              (assoc-in facts [:plugin-lists 0 :placement] :output))))))
+
+(t/deftest vite-output-and-transform-option-admission-is-pure
+  (let [facts {:path "frontend/vite.config.ts"
+               :options {:output {"globals" {"react" "React"} "inlineDynamicImports" false}
+                         :esbuild {"jsxDev" false} :worker {}}}]
+    (t/is (= facts (law/assert-vite-config-admission! facts)))
+    (doseq [[placement field value] [[:output "banner" "export const Page = 1"]
+                                     [:output "globals" :dynamic]
+                                     [:output "globals" {"react" :dynamic}]
+                                     [:output "inlineDynamicImports" "true"]
+                                     [:esbuild "jsxInject" "legacy source"]
+                                     [:esbuild "jsxDev" :dynamic]
+                                     [:worker "rollupOptions" :dynamic]]]
+      (t/is (thrown-with-msg?
+              js/Error #"Unsupported Vite migration configuration"
+              (law/assert-vite-config-admission!
+                (assoc-in facts [:options placement field] value)))))))

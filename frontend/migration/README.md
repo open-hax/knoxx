@@ -15,6 +15,8 @@ entries must match the governed bridge files; dynamic configurations that
 cannot be inspected without execution are rejected.
 Vite plugins are limited to the existing zero-argument `@vitejs/plugin-react`
 factory; additional Vite or Rollup hooks require explicit inventory support.
+Rollup output, worker, and esbuild settings must use inspected static forms;
+output text hooks and injected source are rejected.
 Active Vite build commands must select an existing governed bridge config;
 retiring a bridge also requires removing its build commands.
 An active Shadow bridge resolution requires its corresponding governed build
