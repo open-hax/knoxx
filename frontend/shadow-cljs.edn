@@ -1,6 +1,7 @@
 {:source-paths ["src/cljs" "src/dev" "src/e2e" "test/cljs"
                 "../shared/src/cljs"]
- :dependencies [[lilactown/helix "0.2.2"]]
+ :dependencies [[lilactown/helix "0.2.2"]
+                [metosin/malli "0.16.4"]]
  :nrepl {:port 4501}
 
  ;; Make shadow-cljs the dev entrypoint:

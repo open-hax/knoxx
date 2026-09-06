@@ -54,6 +54,10 @@ jobs:
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
+        with:
+          # The migration ratchet compares the checked revision to its first
+          # parent so it can reject added TS/TSX paths, not just net count growth.
+          fetch-depth: 2
 
       - name: Checkout OpenPlanner SDK source
         uses: actions/checkout@v5
@@ -110,6 +114,22 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm -C backend install --frozen-lockfile
           pnpm -C frontend install --frozen-lockfile
+
+      - name: Frontend CLJS migration ratchet
+        run: |
+          node frontend/scripts/check-cljs-migration-ratchet.mjs --self-test
+          node frontend/scripts/check-cljs-migration-ratchet.mjs \
+            --check \
+            --base HEAD^1 \
+            --manifest "$RUNNER_TEMP/knoxx-frontend-migration.ndedn"
+
+      - name: Upload frontend migration manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knoxx-frontend-migration-manifest
+          path: ${{ runner.temp }}/knoxx-frontend-migration.ndedn
+          if-no-files-found: warn
 
       - name: Shared markup lint
         run: pnpm -C backend run lint:shared-markup

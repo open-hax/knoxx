@@ -16,6 +16,8 @@
     "test:e2e": "npm --prefix e2e install --no-audit --no-fund && vite build --config vite.bridge.config.ts && vite build --config vite.app-bridge.config.ts && shadow-cljs release app && NODE_PATH=./e2e/node_modules shadow-cljs compile e2e && NODE_PATH=./e2e/node_modules ./e2e/node_modules/.bin/ava dist/e2e/knoxx-e2e.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint:size": "node ../scripts/lint-file-sizes.mjs frontend/src",
+    "migration:check": "node scripts/check-cljs-migration-ratchet.mjs --self-test && node scripts/check-cljs-migration-ratchet.mjs --check",
+    "migration:manifest": "node scripts/check-cljs-migration-ratchet.mjs --manifest migration/frontend-surface.ndedn",
     "watch:cljs": "shadow-cljs watch app",
     "build:cljs": "shadow-cljs release app",
     "compile:legacy": "tsc -p tsconfig.legacy.json",
