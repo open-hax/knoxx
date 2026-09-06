@@ -1,7 +1,6 @@
 (ns knoxx.frontend.infra.migration-manifest
   "Node filesystem and Git adapters for the generated migration ledger."
-  (:require ["node:child_process" :as child-process]
-            ["node:fs" :as fs]
+  (:require ["node:fs" :as fs]
             ["node:path" :as node-path]
             ["typescript" :as ts]
             [cljs.tools.reader :as reader]
@@ -9,6 +8,7 @@
             [cljs.tools.reader.reader-types :as reader-types]
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
+            [knoxx.frontend.infra.migration-git :as git]
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
 
@@ -111,10 +111,14 @@
                            (array-seq (.-elements clause))))))
          vec)))
 
-(defn- resolve-local-export [bridge-path source]
-  (when (str/starts-with? source ".")
-    (-> (node-path/resolve (node-path/dirname bridge-path) source)
-        shape/normalize-path)))
+(defn- resolve-local-export [root bridge-path source]
+  (when (or (str/starts-with? source ".") (node-path/isAbsolute source))
+    (let [target (node-path/resolve (node-path/dirname bridge-path) source)
+          source-root (node-path/join root "frontend" "src")]
+      (when-not (path-inside-root? source-root target)
+        (throw (ex-info "Local bridge export leaves governed frontend source tree"
+                        {:path bridge-path :source source :target target})))
+      (shape/normalize-path target))))
 
 (defn- bridge-records [root]
   (->> [{:bridge :frontend :path "frontend/src/bridge/index.ts"}
@@ -132,7 +136,7 @@
                                      :source source-path
                                      :symbol export-name})
                                    :resolved-source
-                                   (resolve-local-export absolute-path source-path))))
+                                   (resolve-local-export root absolute-path source-path))))
                         (export-symbols path source)))))
        vec))
 
@@ -355,45 +359,13 @@
     (fs/mkdirSync (node-path/dirname path) #js {:recursive true})
     (fs/writeFileSync path text "utf8")))
 
-(defn- git-commit-exists?
-  "Whether Git can resolve a revision to a commit in the local checkout."
-  [sha]
-  (try
-    (child-process/execFileSync
-     "git" #js ["cat-file" "-e" (str sha "^{commit}")]
-     #js {:cwd (repository-root)
-          :stdio #js ["ignore" "ignore" "ignore"]})
-    true
-    (catch :default _ false)))
-
 (defn base-manifest
   "Read and validate a baseline; only an absent ledger or omitted revision returns nil."
   [sha]
-  (when (seq sha)
-    (when-not (git-commit-exists? sha)
-      (throw (ex-info "Git cannot resolve the migration baseline revision"
-                      {:base-sha sha})))
-    (let [entries (child-process/execFileSync
-                   "git" #js ["ls-tree" "-z" "--name-only" sha "--" manifest-relative-path]
-                   #js {:cwd (repository-root)
-                        :encoding "utf8"
-                        :stdio #js ["ignore" "pipe" "pipe"]})]
-      (when (seq entries)
-        (-> (child-process/execFileSync
-             "git" #js ["show" (str sha ":" manifest-relative-path)]
-             #js {:cwd (repository-root)
-                  :encoding "utf8"
-                  :stdio #js ["ignore" "pipe" "pipe"]})
-            parse-records
-            law/assert-manifest!)))))
+  (when-let [text (git/baseline-text (repository-root) manifest-relative-path sha)]
+    (-> text parse-records law/assert-manifest!)))
 
 (defn changed-paths
   "Return repository paths changed between a Git revision and HEAD."
   [sha]
-  (if (seq sha)
-    (-> (child-process/execFileSync
-         "git" #js ["diff" "--name-only" (str sha "...HEAD")]
-         #js {:cwd (repository-root) :encoding "utf8"})
-        str/split-lines
-        (->> (remove str/blank?) vec))
-    []))
+  (git/changed-paths (repository-root) sha))

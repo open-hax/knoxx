@@ -219,6 +219,28 @@
                     (filter #(= :bridge-export (:kind %)))
                     (mapv #(select-keys % [:bridge :symbol :source :status]))))))))
 
+(t/deftest bridge-exports-reject-local-targets-outside-the-governed-source-tree
+  (doseq [source ["../../legacy/ChatPage" "/legacy/ChatPage"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Local bridge export leaves governed frontend source tree"
+            (fixture-records
+              {:bridge-source (str "export { ChatPage } from '" source "';\n")
+               :extra-files {"frontend/legacy/ChatPage.tsx"
+                             "export const ChatPage = () => null;\n"}})))))
+
+(t/deftest bridge-exports-retain-local-targets-inside-the-governed-source-tree
+  (let [records (fixture-records
+                  {:bridge-source "export { ChatPage } from '../pages/ChatPage';\n"
+                   :extra-files {"frontend/src/pages/ChatPage.tsx"
+                                 "export const ChatPage = () => null;\n"}})]
+    (t/is (= :frontend
+             (:bridge (first (filter #(= "frontend/src/pages/ChatPage.tsx" (:path %))
+                                     records)))))
+    (t/is (= [{:symbol "ChatPage" :source "../pages/ChatPage"}]
+             (->> records
+                  (filter #(= :bridge-export (:kind %)))
+                  (mapv #(select-keys % [:symbol :source])))))))
+
 (t/deftest file-walk-retains-in-root-file-symlinks
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))
         nested (node-path/join root "nested")
