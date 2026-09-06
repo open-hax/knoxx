@@ -291,3 +291,43 @@
             (inspect-configs!
               {"vite.app-bridge.config.ts" app-config
                "vite.config.ts" (vite-config "resolve:{alias:{'@':path.resolve(__dirname,'src/bridge')}}")})))))
+
+(t/deftest current-framework-plugins-remain-supported
+  (doseq [[config-name build-properties]
+          [["vite.config.ts" "build:{outDir:'dist'}"]
+           ["vite.bridge.config.ts" "build:{lib:{entry:'src/bridge/index.ts'}}"]
+           ["vite.app-bridge.config.ts" "build:{lib:{entry:'src/bridge/app.ts'}}"]]]
+    (t/is (= {} (inspect-config!
+                  config-name
+                  (str "import framework from '@vitejs/plugin-react';\n"
+                       (vite-config (str "plugins:[framework()]," build-properties))))))))
+
+(t/deftest plugin-hooks-cannot-restore-untracked-legacy-source
+  (doseq [properties
+          ["plugins:[{name:'legacy',resolveId(){return '../legacy/page.ts';},load(){return 'export const Page=1';},transform(code){return code;}}],build:{lib:{entry:'src/bridge/app.ts'}}"
+           "build:{lib:{entry:'src/bridge/app.ts'},rollupOptions:{plugins:[{name:'legacy',load(){return 'export const Page=1';}}]}}"
+           "build:{lib:{entry:'src/bridge/app.ts'},rollupOptions:{output:{plugins:[{name:'legacy',renderChunk(){return 'export const Page=1';}}]}}}"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-config! "vite.app-bridge.config.ts" (vite-config properties))))))
+
+(t/deftest plugin-factories-cannot-hide-behind-trusted-names-or-options
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported Vite migration configuration"
+          (inspect-configs!
+            {"vite.app-bridge.config.ts"
+             (str "import react from './legacy-plugin.ts';\n"
+                  (vite-config "plugins:[react()],build:{lib:{entry:'src/bridge/app.ts'}}"))
+             "legacy-plugin.ts" "export default () => ({name:'legacy',load(){return 'export const Page=1';}});"})))
+  (doseq [plugins ["customPlugins" "[...customPlugins]" "[react({babel:{plugins:[customPlugin]}})]"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-config!
+              "vite.app-bridge.config.ts"
+              (str "import react from '@vitejs/plugin-react';\n"
+                   (vite-config (str "plugins:" plugins ",build:{lib:{entry:'src/bridge/app.ts'}}"))))))))
+
+(t/deftest parsed-vite-root-overrides-remain-inadmissible
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported Vite migration configuration"
+          (inspect-config! "vite.config.ts" (vite-config "root:'legacy'")))))

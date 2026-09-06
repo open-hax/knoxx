@@ -88,6 +88,22 @@
       (throw (ex-info "Unsupported Vite migration configuration" {:path path :detail detail}))))
   facts)
 
+(defn assert-vite-config-admission!
+  "Reject root overrides and plugin hooks outside the inspected framework configuration."
+  [{:keys [path root-override? plugin-lists] :as facts}]
+  (when root-override?
+    (throw (ex-info "Unsupported Vite migration configuration"
+                    {:path path :detail "Vite root overrides are not supported"})))
+  (doseq [{:keys [placement static? plugins]} plugin-lists]
+    (when-not (and static?
+                   (every? #(and (= placement :vite)
+                                  (= "@vitejs/plugin-react" (:factory-module %))
+                                  (= 0 (:argument-count %))) plugins))
+      (throw (ex-info "Unsupported Vite migration configuration"
+                      {:path path :detail "Uninspected Vite plugins are not supported"
+                       :placement placement}))))
+  facts)
+
 (defn assert-vitest-scope!
   "Require a parsed Vitest source scope to remain under frontend/src."
   [file field scope]

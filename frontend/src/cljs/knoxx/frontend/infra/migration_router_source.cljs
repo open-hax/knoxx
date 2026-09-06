@@ -30,3 +30,18 @@
        (symbol? (first form))
        (contains? #{"aget" "get" "getValueByKeys" "Reflect.get"} (name (first form)))
        (contains? router-aliases (second form))))
+
+(defn element-components
+  "Read component positions from Helix and direct React element-construction forms."
+  [nodes]
+  (->> nodes
+       (filter #(and (seq? %) (symbol? (first %))
+                     (contains? #{"$" "createElement" ".createElement"} (name (first %)))))
+       (map #(nth % (if (= ".createElement" (name (first %))) 2 1) nil))))
+
+(defn symbol-references
+  "Decode source symbols into plain reference names and namespace facts."
+  [nodes]
+  (->> nodes
+       (filter symbol?)
+       (mapv (fn [reference] {:name (str reference) :namespace (namespace reference)}))))

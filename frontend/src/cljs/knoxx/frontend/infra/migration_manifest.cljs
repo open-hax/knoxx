@@ -182,24 +182,21 @@
       (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
 (defn- route-implementation [bridge-alias route-form]
-  (let [components (->> (route-inspection-nodes route-form)
-                        (filter #(and (seq? %) (= '$ (first %))))
-                        (map second))
+  (let [nodes (route-inspection-nodes route-form)
+        components (router/element-components nodes)
         unknown (remove #(or (keyword? %)
                              (and (symbol? %)
                                   (or (namespace %)
                                       (contains? #{"Route" "ProtectedSurface" "LegacyOpsRedirect"
                                                    "Navigate" "PlaceholderPage"} (name %)))))
-                        components)
-        symbols (filter symbol? components)]
+                        components)]
     (when (seq unknown)
       (throw (ex-info "Unsupported Shadow route implementation"
                       {:components (vec unknown)})))
-    (or (when bridge-alias
-          (some #(when (= bridge-alias (namespace %)) (str %)) symbols))
-        (some #(when (namespace %) (str %)) symbols)
-        (some #(when (contains? #{"LegacyOpsRedirect" "Navigate" "PlaceholderPage"} (str %))
-                 (str %)) symbols)
+    (or (domain/route-implementation
+          {:bridge-alias bridge-alias
+           :live-references (router/symbol-references nodes)
+           :rendered-components (router/symbol-references components)})
         (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
 (defn- source-forms [path source]

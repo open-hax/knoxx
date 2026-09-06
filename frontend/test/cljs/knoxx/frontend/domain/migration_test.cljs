@@ -2,6 +2,25 @@
   (:require [cljs.test :as t]
             [knoxx.frontend.domain.migration :as migration]))
 
+(t/deftest route-ownership-prioritizes-live-legacy-dependencies-over-native-wrappers
+  (let [wrapper {:name "react/Fragment" :namespace "react"}
+        legacy {:name "app/ChatPage" :namespace "app"}
+        facts {:bridge-alias "app" :live-references [wrapper legacy]
+               :rendered-components [wrapper]}]
+    (t/is (= "app/ChatPage" (migration/route-implementation facts)))
+    (t/is (= "react/Fragment"
+             (migration/route-implementation (assoc facts :live-references [wrapper]))))))
+
+(t/deftest retired-bridges-and-native-controls-retain-their-ownership-fallbacks
+  (t/is (= "native/Page"
+           (migration/route-implementation
+             {:bridge-alias nil :live-references [{:name "app/ChatPage" :namespace "app"}]
+              :rendered-components [{:name "native/Page" :namespace "native"}]})))
+  (t/is (= "Navigate"
+           (migration/route-implementation
+             {:bridge-alias "app" :live-references []
+              :rendered-components [{:name "Navigate" :namespace nil}]}))))
+
 (t/deftest chooses-terminal-actions-from-migration-semantics
   (t/is (= :delete
            (migration/file-disposition

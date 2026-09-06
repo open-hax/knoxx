@@ -13,6 +13,8 @@ TypeScript resolver marks them as external libraries.
 This includes TypeScript path mappings and static Vite aliases. Vite bridge
 entries must match the governed bridge files; dynamic configurations that
 cannot be inspected without execution are rejected.
+Vite plugins are limited to the existing zero-argument `@vitejs/plugin-react`
+factory; additional Vite or Rollup hooks require explicit inventory support.
 Active Vite build commands must select an existing governed bridge config;
 retiring a bridge also requires removing its build commands.
 An active Shadow bridge resolution requires its corresponding governed build
@@ -59,6 +61,8 @@ The conservative census treats Route-named components and literal
 Explicit comment and quote bodies cannot contribute routes or implementation ownership.
 Direct React `createElement` route construction is detected and rejected as
 unsupported syntax rather than silently dropping the route.
+Within canonical Route elements, any live application-bridge reference keeps
+ownership legacy, including mixed React constructors inside native wrappers.
 The canonical `(def Route (.-Route router-alias))` binding is supported;
 copying Route values into other definitions or bindings is rejected.
 Computed router API access is rejected when it could hide a route constructor.

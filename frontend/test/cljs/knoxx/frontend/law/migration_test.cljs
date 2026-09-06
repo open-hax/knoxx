@@ -266,3 +266,14 @@
                        {:baseline [legacy-file] :current [legacy-file]
                         :changed-paths [path] :infrastructure? false})))
             "A newline in the filename cannot exempt an edit from progress"))))
+
+(t/deftest vite-configuration-admission-owns-root-and-plugin-policy
+  (let [facts {:path "frontend/vite.config.ts" :root-override? false
+               :plugin-lists [{:placement :vite :static? true
+                               :plugins [{:factory-module "@vitejs/plugin-react" :argument-count 0}]}]}]
+    (t/is (= facts (law/assert-vite-config-admission! facts)))
+    (t/is (thrown-with-msg? js/Error #"Unsupported Vite migration configuration"
+                           (law/assert-vite-config-admission! (assoc facts :root-override? true))))
+    (t/is (thrown-with-msg? js/Error #"Unsupported Vite migration configuration"
+                           (law/assert-vite-config-admission!
+                             (assoc-in facts [:plugin-lists 0 :placement] :output))))))

@@ -172,3 +172,32 @@
                   "(aget payload \"Route\")"
                   "(cljs.core/aget payload route-key)"]]
     (t/is (= [] (fixture-routes source)))))
+
+(t/deftest mixed-element-constructors-preserve-live-legacy-route-dependencies
+  (doseq [child ["(react/createElement app/ChatPage nil)"
+                 "(createElement app/ChatPage nil)"
+                 "(.createElement react app/ChatPage nil)"
+                 "(make-element app/ChatPage nil)"
+                 "((aget react \"createElement\") app/ChatPage nil)"
+                 "(let [page app/ChatPage] (make-element page nil))"]]
+    (t/is (= [{:route "\"/mixed\"" :implementation "app/ChatPage" :status :legacy}]
+             (fixture-routes
+               (str "(def make-element react/createElement)\n"
+                    "($ Route {:path \"/mixed\"\n"
+                    " :element ($ react/Fragment " child ")})"))))))
+
+(t/deftest direct-react-elements-preserve-native-route-ownership
+  (doseq [element ["(react/createElement native/Page nil)"
+                   "(createElement native/Page nil)"
+                   "(.createElement react native/Page nil)"]]
+    (t/is (= [{:route "\"/native\"" :implementation "native/Page" :status :native}]
+             (fixture-routes
+               (str "($ Route {:path \"/native\"\n :element " element "})"))))))
+
+(t/deftest inert-legacy-references-do-not-change-native-element-ownership
+  (doseq [wrapper ["comment" "quote"]]
+    (t/is (= [{:route "\"/native\"" :implementation "native/Page" :status :native}]
+             (fixture-routes
+               (str "($ Route {:path \"/native\"\n :element (do (" wrapper
+                    " (react/createElement app/ChatPage nil))"
+                    " (react/createElement native/Page nil))})"))))))

@@ -90,6 +90,16 @@
     (re-find heavy-widget-pattern path) :wrap
     :else :port))
 
+(defn route-implementation
+  "Select a live legacy dependency before a native rendered component or control."
+  [{:keys [bridge-alias live-references rendered-components]}]
+  (or (when bridge-alias
+        (some #(when (= bridge-alias (:namespace %)) (:name %)) live-references))
+      (some #(when (:namespace %) (:name %)) rendered-components)
+      (some #(when (contains? #{"LegacyOpsRedirect" "Navigate" "PlaceholderPage"} (:name %))
+               (:name %))
+            rendered-components)))
+
 (defn- route-record
   "Classify parsed route ownership before constructing its structural record."
   [{:keys [bridge-alias implementation] :as route}]
