@@ -246,7 +246,7 @@
 (t/deftest bridge-exports-reject-local-targets-outside-the-governed-source-tree
   (doseq [source ["../../legacy/ChatPage" "/legacy/ChatPage"]]
     (t/is (thrown-with-msg?
-            js/Error #"Local bridge export leaves governed frontend source tree"
+            js/Error #"Local import leaves governed frontend source tree"
             (fixture-records
               {:bridge-source (str "export { ChatPage } from '" source "';\n")
                :extra-files {"frontend/legacy/ChatPage.tsx"
@@ -264,6 +264,29 @@
              (->> records
                   (filter #(= :bridge-export (:kind %)))
                   (mapv #(select-keys % [:symbol :source])))))))
+
+(t/deftest configured-aliases-cannot-hide-direct-or-transitive-relocations
+  (doseq [bridge-source ["export { ChatPage } from 'legacy/ChatPage';"
+                         "export { ChatPage } from '../pages/ChatPage';"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Local import leaves governed frontend source tree"
+            (fixture-records
+              {:bridge-source bridge-source
+               :extra-files
+               {"frontend/tsconfig.json"
+                "{\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"legacy/*\":[\"legacy/*\"]}}}"
+                "frontend/src/pages/ChatPage.tsx" "export { ChatPage } from 'legacy/ChatPage';"
+                "frontend/legacy/ChatPage.tsx" "export const ChatPage = () => null;"}})))))
+
+(t/deftest configured-aliases-retain-governed-source-associations
+  (let [records (fixture-records
+                  {:bridge-source "export { ChatPage } from 'pages/ChatPage';"
+                   :extra-files
+                   {"frontend/tsconfig.json"
+                    "{\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"pages/*\":[\"src/pages/*\"]}}}"
+                    "frontend/src/pages/ChatPage.tsx" "export const ChatPage = () => null;"}})]
+    (t/is (= :frontend
+             (:bridge (first (filter #(= "frontend/src/pages/ChatPage.tsx" (:path %)) records)))))))
 
 (t/deftest file-walk-retains-in-root-file-symlinks
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))

@@ -8,6 +8,7 @@
             [cljs.tools.reader.reader-types :as reader-types]
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
+            [knoxx.frontend.infra.migration-build :as build]
             [knoxx.frontend.infra.migration-git :as git]
             [knoxx.frontend.infra.migration-imports :as imports]
             [knoxx.frontend.law.migration :as law]
@@ -70,7 +71,7 @@
 (defn- repository-path [root absolute-path]
   (shape/normalize-path (node-path/relative root absolute-path)))
 
-(defn- legacy-sources [root]
+(defn- legacy-sources [root resolution]
   (let [source-root (node-path/join root "frontend" "src")]
     (->> (walk-files source-root)
          (map (fn [absolute-path]
@@ -79,7 +80,7 @@
          (filter (comp #(re-find law/legacy-source-pattern %) :path))
          (mapv (fn [{:keys [path absolute-path]}]
                  (let [source (fs/readFileSync absolute-path "utf8")]
-                   (imports/assert-contained! root path source)
+                   (imports/assert-contained! resolution path source)
                    {:path path :source source}))))))
 
 (defn- export-statement? [^js statement]
@@ -113,16 +114,11 @@
                            (array-seq (.-elements clause))))))
          vec)))
 
-(defn- resolve-local-export [root bridge-path source]
-  (when (or (str/starts-with? source ".") (node-path/isAbsolute source))
-    (let [target (node-path/resolve (node-path/dirname bridge-path) source)
-          source-root (node-path/join root "frontend" "src")]
-      (when-not (path-inside-root? source-root target)
-        (throw (ex-info "Local bridge export leaves governed frontend source tree"
-                        {:path bridge-path :source source :target target})))
-      (shape/normalize-path target))))
+(defn- resolve-local-export [resolution bridge-path source]
+  (some-> (imports/resolve-target resolution bridge-path source)
+          shape/normalize-path))
 
-(defn- bridge-records [root]
+(defn- bridge-records [root resolution]
   (->> [{:bridge :frontend :path "frontend/src/bridge/index.ts"}
         {:bridge :app :path "frontend/src/bridge/app.ts"}]
        (filter #(fs/existsSync (node-path/join root (:path %))))
@@ -138,7 +134,7 @@
                                      :source source-path
                                      :symbol export-name})
                                    :resolved-source
-                                   (resolve-local-export root absolute-path source-path))))
+                                   (resolve-local-export resolution absolute-path source-path))))
                         (export-symbols path source)))))
        vec))
 
@@ -322,9 +318,10 @@
   "Read the repository and return the canonical generated records."
   []
   (let [root (repository-root)
-        bridge-records* (bridge-records root)
+        resolution (imports/resolver root (build/assert-configs! root))
+        bridge-records* (bridge-records root resolution)
         bridge-index (direct-bridge-index root bridge-records*)
-        sources (attach-direct-bridges (legacy-sources root) bridge-index)
+        sources (attach-direct-bridges (legacy-sources root resolution) bridge-index)
         exports (mapv #(dissoc % :resolved-source) bridge-records*)]
     (domain/assemble-records {:sources sources
                               :bridge-exports exports

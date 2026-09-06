@@ -4,24 +4,77 @@
             ["typescript" :as ts]
             [clojure.string :as str]))
 
-(defn- assert-local-target! [source-root path specifier]
-  (let [target (node-path/resolve (node-path/dirname path) specifier)
-        relative (node-path/relative source-root target)]
+(defn- assert-target! [source-root path specifier target]
+  (let [relative (node-path/relative source-root target)]
     (when (or (node-path/isAbsolute relative)
               (= relative "..")
               (str/starts-with? relative (str ".." node-path/sep)))
       (throw (ex-info "Local import leaves governed frontend source tree"
-                      {:path path :source specifier :target target})))))
+                      {:path path :source specifier :target target}))))
+  target)
+
+(defn- compiler-options [root]
+  (let [directory (node-path/join root "frontend")
+        config-path (node-path/join directory "tsconfig.json")]
+    (if ((.-fileExists ts/sys) config-path)
+      (let [^js config (ts/readConfigFile config-path (.-readFile ts/sys))]
+        (when (.-error config)
+          (throw (ex-info "Unsupported TypeScript module configuration" {:path config-path})))
+        (let [^js parsed (ts/parseJsonConfigFileContent (.-config config) ts/sys directory)
+              errors (remove #(contains? #{18002 18003} (.-code ^js %))
+                             (array-seq (.-errors parsed)))]
+          (when (seq errors)
+            (throw (ex-info "Unsupported TypeScript module configuration" {:path config-path})))
+          (.-options parsed)))
+      #js {:moduleResolution (.-Bundler ts/ModuleResolutionKind)})))
+
+(defn resolver
+  "Load the project's TypeScript module-resolution configuration once per inventory."
+  [root aliases]
+  {:root root
+   :source-root (node-path/join root "frontend" "src")
+   :aliases aliases
+   :options (compiler-options root)})
+
+(defn- alias-target [source-root aliases path specifier]
+  (let [targets (->> aliases
+                     (keep (fn [[prefix replacement]]
+                             (when (or (= prefix specifier)
+                                       (str/starts-with? specifier (str prefix "/")))
+                               (node-path/resolve (str replacement (subs specifier (count prefix)))))))
+                     distinct vec)]
+    (when (> (count targets) 1)
+      (throw (ex-info "Ambiguous Vite migration alias" {:path path :source specifier})))
+    (when-let [target (first targets)]
+      (assert-target! source-root path specifier target))))
+
+(defn- resolved-target [source-root options path specifier]
+  (let [^js result (ts/resolveModuleName specifier path options ts/sys)
+        ^js resolved (.-resolvedModule result)]
+    (when (and resolved (not (.-isExternalLibraryImport resolved)))
+      (assert-target! source-root path specifier (.-resolvedFileName resolved)))))
+
+(defn resolve-target
+  "Resolve and validate a local module or project alias; packages return nil."
+  [{:keys [source-root options aliases]} path specifier]
+  (let [local? (or (str/starts-with? specifier ".") (node-path/isAbsolute specifier))
+        lexical-target (when local? (node-path/resolve (node-path/dirname path) specifier))
+        vite-target (alias-target source-root aliases path specifier)
+        typescript-target (resolved-target source-root options path specifier)]
+    (when local?
+      (assert-target! source-root path specifier lexical-target))
+    (if vite-target
+      (or (resolved-target source-root options path vite-target) vite-target)
+      (or typescript-target lexical-target))))
 
 (defn assert-contained!
   "Reject local module imports and file references outside the governed tree."
-  [root path source]
-  (let [source-root (node-path/join root "frontend" "src")
-        absolute-path (node-path/join root path)
+  [{:keys [root source-root] :as resolution} path source]
+  (let [absolute-path (node-path/join root path)
         ^js information (ts/preProcessFile source true true)]
-    (doseq [^js reference (array-seq (.-importedFiles information))
-            :let [specifier (.-fileName reference)]
-            :when (or (str/starts-with? specifier ".") (node-path/isAbsolute specifier))]
-      (assert-local-target! source-root absolute-path specifier))
+    (doseq [^js reference (array-seq (.-importedFiles information))]
+      (resolve-target resolution absolute-path (.-fileName reference)))
     (doseq [^js reference (array-seq (.-referencedFiles information))]
-      (assert-local-target! source-root absolute-path (.-fileName reference)))))
+      (let [specifier (.-fileName reference)]
+        (assert-target! source-root absolute-path specifier
+                        (node-path/resolve (node-path/dirname absolute-path) specifier))))))

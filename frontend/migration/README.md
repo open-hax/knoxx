@@ -6,6 +6,9 @@ strangler migration. Each line is one canonical EDN record for a governed
 The `:ts` count includes `.ts`, `.mts`, and `.cts` files.
 Local imports and file references from governed TypeScript must remain within
 `frontend/src` so relocating a dependency cannot remove it from the inventory.
+This includes TypeScript path mappings and static Vite aliases. Vite bridge
+entries must match the governed bridge files; dynamic configurations that
+cannot be inspected without execution are rejected.
 
 Run from `frontend/`:
 
