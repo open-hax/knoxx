@@ -3,7 +3,8 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as node-path]
             ["typescript" :as ts]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [knoxx.frontend.law.migration :as law]))
 
 (defn- unsupported! [file detail]
   (throw (ex-info "Unsupported Vitest migration configuration" {:path file :detail detail})))
@@ -104,16 +105,20 @@
       (or scripts {}))
     {}))
 
+(defn- runner-facts [frontend-root file command]
+  (let [invocation (re-matches #"(?:NODE_ENV=test\s+)?(?:(?:pnpm(?:\s+exec)?|npx)\s+)?(?:\./node_modules/\.bin/)?vitest(?:\s+(?:run|watch))?\s+(?:--config(?:=|\s+)|-c\s+)([^\s\"';&|]+)(?:\s+--coverage)?\s*" command)]
+    {:mentions-vitest? (boolean (re-find #"\bvitest\b" command))
+     :direct? (boolean (and invocation
+                            (= file (node-path/resolve frontend-root (second invocation)))))}))
+
 (defn- assert-runner-scripts! [frontend-root file]
-  (let [package-path (node-path/join frontend-root "package.json")]
-    (doseq [[script-name command] (package-scripts package-path)
-            :when (re-find #"\bvitest\b" command)]
-      (let [invocation (re-matches #"(?:NODE_ENV=test\s+)?(?:(?:pnpm(?:\s+exec)?|npx)\s+)?(?:\./node_modules/\.bin/)?vitest(?:\s+(?:run|watch))?\s+(?:--config(?:=|\s+)|-c\s+)([^\s\"';&|]+)(?:\s+--coverage)?\s*" command)]
-        (when-not (and invocation
-                       (= file (node-path/resolve frontend-root (second invocation))))
-          (unsupported! package-path (str "Vitest scripts require the explicit governed config: " script-name)))
-        (when-not (fs/existsSync file)
-          (unsupported! file "The active Vitest config is missing"))))))
+  (let [package-path (node-path/join frontend-root "package.json")
+        runners (into {} (map (fn [[script-name command]]
+                                [script-name (runner-facts frontend-root file command)]))
+                      (package-scripts package-path))]
+    (law/assert-vitest-runners! {:path package-path
+                                :config-present? (fs/existsSync file)
+                                :runners runners})))
 
 (defn- assert-no-workspaces! [frontend-root]
   (when (fs/existsSync frontend-root)

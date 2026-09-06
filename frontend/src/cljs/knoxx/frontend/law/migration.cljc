@@ -165,6 +165,22 @@
                     "scripts/lint-frontend-cljs-changed.sh"} path)
        (= path ".github/workflows/ci.yml"))))
 
+(defn assert-vitest-runners!
+  "Require governed test entrypoints to use direct runners, or retire their config together."
+  [{:keys [path config-present? runners] :as facts}]
+  (let [governed #{"test" "test:coverage" "test:watch"}
+        present (filter governed (keys runners))]
+    (doseq [[script-name {:keys [direct? mentions-vitest?]}] runners
+            :when (or (contains? governed script-name) mentions-vitest?)]
+      (when-not (and direct? config-present?)
+        (throw (ex-info "Unsupported Vitest migration configuration"
+                        {:path path :script script-name
+                         :detail "Governed test scripts require the direct runner and its existing config"}))))
+    (when (and config-present? (empty? present))
+      (throw (ex-info "Unsupported Vitest migration configuration"
+                      {:path path :detail "Retire the Vitest config and governed test scripts together"}))))
+  facts)
+
 (defn- ratchet-context
   [{:keys [baseline current changed-paths infrastructure?]}]
   (let [file-kinds #{:ts :tsx}

@@ -5,17 +5,18 @@
             [cljs.test :as t]
             [knoxx.frontend.infra.migration-manifest :as manifest]))
 
-(defn- fixture-routes [route-source]
+(defn- fixture-routes [route-source & [router-alias]]
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-route-construction-"))
         original-cwd (.cwd js/process)
+        router-alias (or router-alias "rr")
         files {"frontend/package.json" "{}"
                "frontend/src/bridge/app.ts" ""
                "frontend/src/bridge/index.ts" ""
                "frontend/src/cljs/knoxx/frontend/app.cljs"
                (str "(ns fixture (:require [\"react\" :as react]\n"
-                    " [\"react-router-dom\" :as rr]\n"
+                    " [\"react-router-dom\" :as " router-alias "]\n"
                     " [\"@open-hax/knoxx-app-bridge\" :as app]))\n"
-                    "(def Route (.-Route rr))\n"
+                    "(def Route (.-Route " router-alias "))\n"
                     "(def createElement react/createElement)\n" route-source)}]
     (try
       (doseq [[path source] files]
@@ -139,4 +140,35 @@
   (doseq [source ["(comment (rr/useRoutes routes))"
                   "(quote (rr/createBrowserRouter routes))"
                   "(def example \"rr/createHashRouter rr/createMemoryRouter\")"]]
+    (t/is (= [] (fixture-routes source)))))
+
+(t/deftest computed-router-components-cannot-hide-behind-constructor-and-props-aliases
+  (doseq [getter ["aget" "cljs.core/aget"]
+          router-alias ["rr" "router"]
+          key-form ["\"Route\"" "route-key" "(str \"Ro\" \"ute\")"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-routes
+              (str "(def route-key \"Route\")\n"
+                   "(def RouterRoute (" getter " " router-alias " " key-form "))\n"
+                   "(def route-props #js {:path \"/chat\" :element ($ app/ChatPage)})\n"
+                   "($ RouterRoute route-props)")
+              router-alias)))))
+
+(t/deftest computed-router-api-getters-remain-visible-to-the-census
+  (doseq [getter ["goog.object/get" "gobj/get" "js/Reflect.get"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-routes
+              (str "(def route-key \"useRoutes\")\n"
+                   "(def create-routes (" getter " rr route-key))\n"
+                   "(create-routes route-definitions)"))))))
+
+(t/deftest computed-access-examples-and-unrelated-objects-remain-inert
+  (doseq [source ["(comment (def RouterRoute (aget rr route-key)))"
+                  "(quote (aget rr \"Route\"))"
+                  "(def example \"(aget rr \\\"Route\\\")\")"
+                  "(def label \"Route\")"
+                  "(aget payload \"Route\")"
+                  "(cljs.core/aget payload route-key)"]]
     (t/is (= [] (fixture-routes source)))))

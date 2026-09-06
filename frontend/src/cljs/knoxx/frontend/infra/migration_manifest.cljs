@@ -11,6 +11,7 @@
             [knoxx.frontend.infra.migration-build :as build]
             [knoxx.frontend.infra.migration-git :as git]
             [knoxx.frontend.infra.migration-imports :as imports]
+            [knoxx.frontend.infra.migration-router-source :as router]
             [knoxx.frontend.infra.migration-vitest :as vitest]
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
@@ -252,16 +253,12 @@
 
 ;; Route values may not escape through aliases in definitions, bindings or calls.
 ;; Only the canonical Route binding is exempt; alias dataflow is not interpreted.
-(defn- route-api-reference? [value]
-  (and (symbol? value)
-       (re-matches #"(?:\.|-|\.-)?(?:Route|useRoutes|createBrowserRouter|createHashRouter|createMemoryRouter)"
-                   (name value))))
-
-(defn- route-candidate? [form]
+(defn- route-candidate? [router-aliases form]
   (and (coll? form)
        (not (non-evaluated-form? form))
        (not (canonical-route-binding? form))
-       (or (some route-api-reference? form)
+       (or (some router/api-reference? form)
+           (router/computed-access? router-aliases form)
            (and (symbol? (first form))
                 (contains? #{"$" "createElement"} (name (first form)))
                 (let [props (nth form 2 nil)]
@@ -270,9 +267,10 @@
 
 ;; Shared :id/:children props do not identify routes; route markers identify aliases.
 (defn- route-forms [path source]
-  (->> (source-forms path source)
-       route-inspection-nodes
-       (filter route-candidate?)))
+  (let [forms (source-forms path source)
+        router-aliases (router/aliases forms)]
+    (->> forms route-inspection-nodes
+         (filter (partial route-candidate? router-aliases)))))
 
 (defn- checked-route-forms [path source]
   (let [forms (vec (route-forms path source))]

@@ -6,9 +6,10 @@
             [knoxx.frontend.infra.migration-vitest :as vitest]))
 
 (defn- inspect-fixture! [{:keys [config scripts extra-files]
-                         :or {scripts {} extra-files {}}}]
+                         :or {extra-files {}}}]
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-vitest-scope-"))
-        files (cond-> (merge {"package.json" (js/JSON.stringify (clj->js {:scripts scripts}))}
+        commands (or scripts (if config {"test" "vitest run --config vitest.config.ts"} {}))
+        files (cond-> (merge {"package.json" (js/JSON.stringify (clj->js {:scripts commands}))}
                               extra-files)
                 config (assoc "vitest.config.ts" config))]
     (try
@@ -82,3 +83,24 @@
               js/Error #"Unsupported Vitest migration configuration"
               (inspect-fixture! {:config (config-source current-scope)
                                  :extra-files {path "[]"}}))))))
+
+(t/deftest governed-test-entrypoints-cannot-hide-the-runner-behind-node
+  (doseq [script-name ["test" "test:coverage" "test:watch"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vitest migration configuration"
+            (inspect-fixture!
+              {:config (config-source current-scope)
+               :scripts {script-name "node scripts/run-tests.mjs"}
+               :extra-files
+               {"scripts/run-tests.mjs"
+                "import { spawnSync } from 'node:child_process'; spawnSync('pnpm', ['exec','vitest','run','--config','relocated.config.ts']);"
+                "relocated.config.ts" (config-source "include:['legacy/**/*.test.ts']")
+                "legacy/relocated.test.ts" "import { test } from 'vitest'; test('legacy', () => {});"}})))))
+
+(t/deftest vitest-retirement-requires-removing-config-and-governed-entrypoints-together
+  (t/is (nil? (inspect-fixture! {:scripts {"test:cljs" "shadow-cljs compile test"}})))
+  (doseq [fixture [{:config (config-source current-scope) :scripts {}}
+                   {:scripts {"test:coverage" "node scripts/run-tests.mjs"}}]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vitest migration configuration"
+            (inspect-fixture! fixture)))))

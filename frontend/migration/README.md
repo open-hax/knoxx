@@ -28,6 +28,8 @@ Dynamic `import()` calls must use literal module paths; variable imports are
 rejected because their dependency set cannot be read from a literal specifier.
 Vitest source scopes must stay within `frontend/src`; active test commands
 must select the inspected static Vitest configuration.
+The `test`, `test:coverage`, and `test:watch` entrypoints cannot hide the runner
+behind wrappers; retiring Vitest removes these entrypoints and its config together.
 
 Run from `frontend/`:
 
@@ -58,6 +60,7 @@ Direct React `createElement` route construction is detected and rejected as
 unsupported syntax rather than silently dropping the route.
 The canonical `(def Route (.-Route router-alias))` binding is supported;
 copying Route values into other definitions or bindings is rejected.
+Computed router API access is rejected when it could hide a route constructor.
 Route-object APIs (`useRoutes` and the browser/hash/memory router factories)
 are detected and rejected outside this grammar.
 
