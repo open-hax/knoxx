@@ -54,6 +54,18 @@
                        (str "(def LegacyPage app/ChatPage)\n"
                             "($ Route {:path \"/chat\"\n :element " element "})")}))))))
 
+(t/deftest route-census-rejects-renamed-route-constructors
+  (let [legacy-route "($ RouterRoute {:path \"/chat\"\n :element ($ app/ChatPage)})"]
+    (doseq [route-source [(str "(def RouterRoute (.-Route rr))\n" legacy-route)
+                         (str "(def RouterRoute Route)\n" legacy-route)
+                         "($ rr/Route {:path \"/chat\"\n :element ($ app/ChatPage)})"
+                         (str "(def RouterRoute Route)\n"
+                              "($ Route {:path \"/native\"\n :element ($ native/Page)})\n"
+                              legacy-route)]]
+      (t/testing route-source
+        (t/is (thrown? js/Error
+                      (fixture-records {:route-source route-source})))))))
+
 (t/deftest route-census-preserves-supported-routes-and-component-boundaries
   (let [records (fixture-records
                  {:route-source

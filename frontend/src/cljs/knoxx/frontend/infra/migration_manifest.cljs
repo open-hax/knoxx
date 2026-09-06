@@ -4,7 +4,9 @@
             ["node:fs" :as fs]
             ["node:path" :as node-path]
             ["typescript" :as ts]
+            [cljs.tools.reader :as reader]
             [cljs.tools.reader.edn :as edn]
+            [cljs.tools.reader.reader-types :as reader-types]
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
             [knoxx.frontend.shape.migration :as shape]))
@@ -196,21 +198,55 @@
                       {:path path :route route})))
     route))
 
+(defn- source-forms [path source]
+  (let [input (reader-types/string-push-back-reader source)
+        eof (js/Object.)]
+    (try
+      (binding [reader/*data-readers* {'js identity}]
+        (loop [forms []]
+          (let [form (reader/read {:eof eof :read-cond :allow :features #{:cljs}} input)]
+            (if (identical? eof form)
+              forms
+              (recur (conj forms form))))))
+      (catch :default _
+        (throw (ex-info "Unsupported Shadow route syntax" {:path path}))))))
+
+;; Census literal route props independently of constructor spelling so the
+;; narrow extractor rejects unsupported forms instead of silently omitting them.
+(defn- route-form-count [path source]
+  (let [route-forms (->> (source-forms path source)
+                         (tree-seq coll? seq)
+                         (filter (fn [form]
+                                   (and (seq? form)
+                                        (symbol? (first form))
+                                        (= "$" (name (first form)))
+                                        (let [props (nth form 2 nil)]
+                                          (and (map? props)
+                                               (or (contains? props :path)
+                                                   (contains? props :element))))))))]
+    (doseq [form route-forms]
+      (when-not (and (= '$ (first form)) (= 'Route (second form)))
+        (throw (ex-info "Unsupported Shadow route syntax"
+                        {:path path :constructor (second form)}))))
+    (count route-forms)))
+
 (defn- route-records [root]
   (let [path "frontend/src/cljs/knoxx/frontend/app.cljs"
         source (fs/readFileSync (node-path/join root path) "utf8")
         bridge-alias (app-bridge-alias source)
         pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
-        route-count (count (re-seq #"\(\s*\$\s+Route(?=\s|\))" source))]
+        route-count (count (re-seq #"\(\s*\$\s+Route(?=\s|\))" source))
+        declared-route-count (route-form-count path source)]
     (loop [matches []]
       (if-let [match (.exec pattern source)]
         (recur (conj matches {:index (.-index match)
                               :route (route-identity path (aget match 1))}))
         (do
-          (when-not (= route-count (count matches))
+          (when-not (= route-count declared-route-count (count matches))
             (throw (ex-info "Unsupported Shadow route syntax"
                             {:path path
                              :route-forms route-count
+                             :declared-routes declared-route-count
                              :parsed-routes (count matches)})))
           (mapv (fn [position next-position]
                   (let [block (subs source (:index position)
