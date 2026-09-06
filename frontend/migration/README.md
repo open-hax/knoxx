@@ -24,6 +24,11 @@ Route IDs use canonical source expressions. A new legacy ID is rejected to
 prevent an expression change from hiding a rollback. Native route IDs may be
 added or renamed.
 
+Route declarations currently belong in `frontend/src/cljs/knoxx/frontend/app.cljs`;
+the inventory rejects route declarations extracted into other source files.
+The conservative census treats Route-named components and literal
+`:path`, `:element`, `:index`, or `:Component` props as route candidates.
+
 An infrastructure-only pull request may retain the legacy count by placing
 the exact declaration `Migration infrastructure: yes` in its body. The
 declaration is not an escape hatch for new TypeScript, bridge growth, or route

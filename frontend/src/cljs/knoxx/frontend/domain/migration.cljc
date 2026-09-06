@@ -70,6 +70,13 @@
     (re-find heavy-widget-pattern path) :wrap
     :else :port))
 
+(defn- route-record
+  "Classify parsed route ownership before constructing its structural record."
+  [{:keys [bridge-alias implementation] :as route}]
+  (shape/route-record
+    (assoc route :legacy?
+                 (str/starts-with? implementation (str bridge-alias "/")))))
+
 (defn assemble-records
   "Build, validate, and deterministically order all manifest records."
   [{:keys [sources bridge-exports routes]}]
@@ -92,7 +99,8 @@
                                    {:path (:path record)
                                     :island (:island record)
                                     :disposition (:disposition record)}))))
-        records (concat file-records bridge-exports routes suite-records)]
+        route-records (map route-record routes)
+        records (concat file-records bridge-exports route-records suite-records)]
     (->> records
          (sort-by :record/id)
          vec

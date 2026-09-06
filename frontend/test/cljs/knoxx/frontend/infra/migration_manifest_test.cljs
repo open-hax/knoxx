@@ -8,16 +8,18 @@
 
 (defn- fixture-records
   "Read the real inventory from a synchronous, disposable repository fixture."
-  [{:keys [route-source bridge-source app-alias]
-    :or {route-source "" bridge-source "" app-alias "app"}}]
+  [{:keys [route-source bridge-source app-alias extra-files]
+    :or {route-source "" bridge-source "" app-alias "app" extra-files {}}}]
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-"))
         original-cwd (.cwd js/process)
-        files {"frontend/package.json" "{}"
-               "frontend/src/bridge/index.ts" bridge-source
-               "frontend/src/bridge/app.ts" ""
-               "frontend/src/cljs/knoxx/frontend/app.cljs"
-               (str "(ns fixture (:require [\"@open-hax/knoxx-app-bridge\" :as " app-alias "]))\n"
-                    route-source)}]
+        files (merge
+                {"frontend/package.json" "{}"
+                 "frontend/src/bridge/index.ts" bridge-source
+                 "frontend/src/bridge/app.ts" ""
+                 "frontend/src/cljs/knoxx/frontend/app.cljs"
+                 (str "(ns fixture (:require [\"@open-hax/knoxx-app-bridge\" :as " app-alias "]))\n"
+                      route-source)}
+                extra-files)]
     (try
       (doseq [[path source] files]
         (let [absolute-path (node-path/join root path)]
@@ -80,6 +82,21 @@
              (->> records
                   (filter #(= :route (:kind %)))
                   (mapv #(select-keys % [:implementation :status])))))))
+
+(t/deftest route-census-rejects-routes-extracted-outside-the-app
+  (doseq [path ["frontend/src/cljs/knoxx/frontend/extracted_routes.cljs"
+               "frontend/src/cljs/knoxx/frontend/extracted_routes.cljc"
+               "shared/src/cljs/knoxx/frontend/extracted_routes.cljs"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route location"
+            (fixture-records
+              {:extra-files
+               {path
+                (str "(ns knoxx.frontend.extracted-routes\n"
+                     " (:require [\"react-router-dom\" :as rr]\n"
+                     "           [\"@open-hax/knoxx-app-bridge\" :as app]))\n"
+                     "(def Route (.-Route rr))\n"
+                     "($ Route {:path \"/moved\"\n :element ($ app/ChatPage)})")}})))))
 
 (t/deftest route-census-preserves-supported-routes-and-component-boundaries
   (let [records (fixture-records
@@ -213,11 +230,7 @@
 (t/deftest route-ownership-follows-the-declared-bridge-alias
   (let [source "(ns example (:require [\"@open-hax/knoxx-app-bridge\" :as legacy-app]))"
         bridge-alias (manifest/app-bridge-alias source)]
-    (t/is (= "legacy-app" bridge-alias))
-    (t/is (manifest/bridge-owned-implementation? bridge-alias
-                                                 "legacy-app/ChatPage"))
-    (t/is (not (manifest/bridge-owned-implementation? bridge-alias
-                                                      "app/ChatPage")))))
+    (t/is (= "legacy-app" bridge-alias))))
 
 (t/deftest newline-edn-admits-exactly-one-canonical-form-per-line
   (let [line "{:record/id \"one\", :kind :route}"]

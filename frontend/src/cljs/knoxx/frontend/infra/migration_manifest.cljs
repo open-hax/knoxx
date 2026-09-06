@@ -214,11 +214,6 @@
                         {:aliases (vec aliases)})))
       (str alias))))
 
-(defn bridge-owned-implementation?
-  "Whether a parsed route implementation is owned by the bridge alias."
-  [bridge-alias implementation]
-  (str/starts-with? implementation (str bridge-alias "/")))
-
 (defn- route-identity [path source]
   (let [route (str/trim source)]
     (when-not (= route (pr-str (edn/read-string route)))
@@ -228,25 +223,40 @@
 
 ;; Census the supported literal route grammar independently of constructor spelling.
 ;; Shared :id/:children props do not identify routes; route markers identify aliases.
+(defn- route-forms [path source]
+  (->> (source-forms path source)
+       (tree-seq coll? seq)
+       (filter (fn [form]
+                 (and (seq? form)
+                      (symbol? (first form))
+                      (= "$" (name (first form)))
+                      (let [component (second form)
+                            props (nth form 2 nil)]
+                        (or (and (symbol? component)
+                                 (= "Route" (name component)))
+                            (and (map? props)
+                                 (some #(contains? props %)
+                                       [:path :element :index :Component])))))))))
+
 (defn- route-form-count [path source]
-  (let [route-forms (->> (source-forms path source)
-                         (tree-seq coll? seq)
-                         (filter (fn [form]
-                                   (and (seq? form)
-                                        (symbol? (first form))
-                                        (= "$" (name (first form)))
-                                        (let [component (second form)
-                                              props (nth form 2 nil)]
-                                          (or (and (symbol? component)
-                                                   (= "Route" (name component)))
-                                              (and (map? props)
-                                                   (some #(contains? props %)
-                                                         [:path :element :index :Component]))))))))]
-    (doseq [form route-forms]
+  (let [forms (route-forms path source)]
+    (doseq [form forms]
       (when-not (and (= '$ (first form)) (= 'Route (second form)))
         (throw (ex-info "Unsupported Shadow route syntax"
                         {:path path :constructor (second form)}))))
-    (count route-forms)))
+    (count forms)))
+
+(defn- assert-route-locations! [root app-path]
+  (doseq [source-path ["frontend/src" "shared/src/cljs"]
+          :let [source-root (node-path/join root source-path)]
+          :when (fs/existsSync source-root)
+          absolute-path (walk-files source-root)
+          :when (re-find #"\.clj[sc]$" absolute-path)
+          :let [path (repository-path root absolute-path)]
+          :when (not= app-path path)]
+    (when (seq (route-forms path (fs/readFileSync absolute-path "utf8")))
+      (throw (ex-info "Unsupported Shadow route location"
+                      {:path path :supported-path app-path})))))
 
 (defn- route-records [root]
   (let [path "frontend/src/cljs/knoxx/frontend/app.cljs"
@@ -255,6 +265,7 @@
         pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
         route-count (count (re-seq #"\(\s*\$\s+Route(?=\s|\))" source))
         declared-route-count (route-form-count path source)]
+    (assert-route-locations! root path)
     (loop [matches []]
       (if-let [match (.exec pattern source)]
         (recur (conj matches {:index (.-index match)
@@ -270,11 +281,10 @@
                   (let [block (subs source (:index position)
                                     (or (:index next-position) (count source)))
                         implementation (route-implementation bridge-alias block)]
-                    (shape/route-record {:path path
-                                         :route (:route position)
-                                         :implementation implementation
-                                         :legacy? (bridge-owned-implementation?
-                                                   bridge-alias implementation)})))
+                    {:path path
+                     :route (:route position)
+                     :implementation implementation
+                     :bridge-alias bridge-alias}))
                 matches
                 (concat (rest matches) [nil])))))))
 

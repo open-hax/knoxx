@@ -32,3 +32,22 @@
           (catch js/Error error
             (boolean (re-find #"No migration island rule matches governed path"
                               (.-message error)))))))
+
+(t/deftest assembled-route-ownership-follows-the-declared-dotted-bridge-alias
+  (let [route-facts (mapv
+                     (fn [[route implementation]]
+                       {:path "frontend/src/cljs/knoxx/frontend/app.cljs"
+                        :route route
+                        :implementation implementation
+                        :bridge-alias "legacy.app"})
+                     [["routes/legacy" "legacy.app/LegacyPage"]
+                      ["routes/native" "native/Page"]
+                      ["routes/prefix-lookalike" "legacy.application/Page"]
+                      ["routes/unbound-alias" "app/Page"]])
+        records (migration/assemble-records
+                  {:sources [] :bridge-exports [] :routes route-facts})]
+    (t/is (= {"legacy.app/LegacyPage" :legacy
+               "native/Page" :native
+               "legacy.application/Page" :native
+               "app/Page" :native}
+             (into {} (map (juxt :implementation :status)) records)))))
