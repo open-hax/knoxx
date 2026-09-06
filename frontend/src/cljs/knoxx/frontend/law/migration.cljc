@@ -1,6 +1,7 @@
 (ns knoxx.frontend.law.migration
   "Malli contracts and monotonicity laws for the frontend migration ledger."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [malli.core :as m]
             [malli.error :as me]))
 
@@ -15,6 +16,87 @@
     (throw (ex-info "Ungoverned JavaScript source in migration source tree"
                     {:path path})))
   path)
+
+(defn contained-path?
+  "Whether platform-relative path facts remain inside their source root."
+  [{:keys [relative-path absolute? separator]}]
+  (and (not absolute?)
+       (not= relative-path "..")
+       (not (str/starts-with? relative-path (str ".." separator)))))
+
+(defn assert-source-root!
+  "Admit only a real directory as the governed source root."
+  [{:keys [path symbolic-link? directory?] :as facts}]
+  (when (or symbolic-link? (not directory?))
+    (throw (ex-info "Unsafe migration source root" {:path path})))
+  facts)
+
+(defn assert-source-symlink!
+  "Admit only symbolic links to regular files inside the source root."
+  [{:keys [path target file?] :as facts}]
+  (when-not (and file? (contained-path? target))
+    (throw (ex-info "Unsafe symbolic link in migration source tree" {:path path})))
+  facts)
+
+(defn assert-route-location!
+  "Require parsed route declarations to remain in the supported application file."
+  [{:keys [path supported-path route-count] :as facts}]
+  (when (and (pos? route-count) (not= path supported-path))
+    (throw (ex-info "Unsupported Shadow route location"
+                    {:path path :supported-path supported-path})))
+  facts)
+
+(defn assert-import-target!
+  "Admit a contained resolved import target and preserve its source evidence."
+  [{:keys [target] :as facts}]
+  (when-not (contained-path? facts)
+    (throw (ex-info "Local import leaves governed frontend source tree"
+                    (select-keys facts [:path :source :target]))))
+  target)
+
+(defn assert-vite-alias-target!
+  "Admit an alias whose lexical and available canonical targets stay contained."
+  [{:keys [target lexical canonical] :as facts}]
+  (when (or (not (contained-path? lexical))
+            (and canonical (not (contained-path? canonical))))
+    (throw (ex-info "Vite alias leaves governed frontend source tree"
+                    (select-keys facts [:path :target]))))
+  target)
+
+(defn assert-vite-entry!
+  "Require a resolved bridge entry to match its governed inventory target."
+  [{:keys [expected-target actual] :as facts}]
+  (when-not (= expected-target actual)
+    (throw (ex-info "Vite bridge entry leaves governed inventory"
+                    (select-keys facts [:path :expected :actual]))))
+  actual)
+
+(defn assert-vite-script-configs!
+  "Admit resolved Vite script configs against their governed names and presence."
+  [{:keys [path script-name expected-config allowed-configs configs] :as facts}]
+  (let [paths (mapv :config-path configs)
+        detail (or (when (and expected-config (not= [expected-config] paths))
+                     (str "Bridge build script must use its governed config: " script-name))
+                   (some (fn [{:keys [config-path] config-present? :exists?}]
+                           (cond
+                             (not (contains? allowed-configs config-path))
+                             (str "Active Vite build config leaves governed inventory: " config-path)
+                             (not config-present?)
+                             (str "Active Vite build config is missing: " config-path)))
+                         configs))]
+    (when detail
+      (throw (ex-info "Unsupported Vite migration configuration" {:path path :detail detail}))))
+  facts)
+
+(defn assert-vitest-scope!
+  "Require a parsed Vitest source scope to remain under frontend/src."
+  [file field scope]
+  (let [relative (str/replace scope #"^(?:\./)+" "")]
+    (when-not (and (str/starts-with? relative "src/")
+                   (not (str/includes? relative ".."))
+                   (not (str/includes? relative "\\")))
+      (throw (ex-info "Vitest source scope leaves governed frontend source tree"
+                      {:path file :field field :scope scope})))))
 
 (defn required-bridge-builds
   "Derive governed build obligations from active Shadow bridge resolutions."

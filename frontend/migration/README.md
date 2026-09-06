@@ -17,8 +17,9 @@ Active Vite build commands must select an existing governed bridge config;
 retiring a bridge also requires removing its build commands.
 An active Shadow bridge resolution requires its corresponding governed build
 script and config.
-While a bridge remains active, the production build must execute its governed
-Vite phase before Shadow release, followed only by the optional CSS phase.
+The production build may contain governed Vite phases, then Shadow release and
+the optional CSS phase. Every active bridge must be compiled before Shadow.
+The pipeline remains checked after bridge resolutions are retired.
 Opaque build wrappers and decoy commands are rejected.
 Vite glob imports are not supported by the inventory and fail explicitly;
 comments and string literals that merely mention glob syntax are ignored.
@@ -73,6 +74,7 @@ declaration is not an escape hatch for new TypeScript, bridge growth, or route
 regression.
 
 Malli schemas and monotonicity laws live in
-`knoxx.frontend.law.migration`; deterministic source classification lives in
+`knoxx.frontend.law.migration`, along with source-containment and runner/build
+admission contracts; deterministic source classification lives in
 `knoxx.frontend.domain.migration`. The CLI prints summaries derived from the
 line records so no second inventory needs manual synchronization.

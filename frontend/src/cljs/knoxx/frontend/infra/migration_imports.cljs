@@ -3,16 +3,16 @@
   (:require ["node:path" :as node-path]
             ["typescript" :as ts]
             [clojure.string :as str]
-            [knoxx.frontend.infra.migration-packages :as packages]))
+            [knoxx.frontend.infra.migration-packages :as packages]
+            [knoxx.frontend.law.migration :as law]))
 
 (defn- assert-target! [source-root path specifier target]
   (let [relative (node-path/relative source-root target)]
-    (when (or (node-path/isAbsolute relative)
-              (= relative "..")
-              (str/starts-with? relative (str ".." node-path/sep)))
-      (throw (ex-info "Local import leaves governed frontend source tree"
-                      {:path path :source specifier :target target}))))
-  target)
+    (law/assert-import-target!
+      {:path path :source specifier :target target
+       :relative-path relative
+       :absolute? (node-path/isAbsolute relative)
+       :separator node-path/sep})))
 
 (defn- compiler-options [root]
   (let [directory (node-path/join root "frontend")

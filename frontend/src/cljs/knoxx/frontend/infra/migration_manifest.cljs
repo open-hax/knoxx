@@ -20,22 +20,22 @@
   "Repository-relative path to the generated migration ledger."
   "frontend/migration/manifest.ndedn")
 
-(defn- path-inside-root?
-  "Whether target resolves within the canonical root directory."
+(defn- relative-path-facts
+  "Read platform-relative path facts for the source boundary contract."
   [root target]
   (let [relative (node-path/relative root target)]
-    (and (not (node-path/isAbsolute relative))
-         (not= relative "..")
-         (not (str/starts-with? relative (str ".." node-path/sep))))))
+    {:relative-path relative
+     :absolute? (node-path/isAbsolute relative)
+     :separator node-path/sep}))
 
-(defn- safe-file-symlink?
-  "Whether path resolves to a regular file contained by root."
+(defn- symlink-facts
+  "Read a symbolic link's target facts without admitting it into the inventory."
   [root path]
   (try
     (let [target (fs/realpathSync path)]
-      (and (path-inside-root? root target)
-           (.isFile (fs/statSync target))))
-    (catch :default _ false)))
+      {:path path :target (relative-path-facts root target)
+       :file? (.isFile (fs/statSync target))})
+    (catch :default _ {:path path :file? false})))
 
 (defn- walk-files-under
   "Return file paths under directory without leaving the canonical root."
@@ -46,10 +46,8 @@
                        stat (fs/lstatSync path)]
                    (cond
                      (.isSymbolicLink stat)
-                     (if (safe-file-symlink? root path)
-                       [path]
-                       (throw (ex-info "Unsafe symbolic link in migration source tree"
-                                       {:path path})))
+                     (do (law/assert-source-symlink! (symlink-facts root path))
+                         [path])
 
                      (.isDirectory stat) (walk-files-under root path)
                      :else [path]))))
@@ -59,8 +57,9 @@
   "Return sorted absolute file paths without following unsafe symbolic links."
   [root]
   (let [stat (fs/lstatSync root)]
-    (when (or (.isSymbolicLink stat) (not (.isDirectory stat)))
-      (throw (ex-info "Unsafe migration source root" {:path root}))))
+    (law/assert-source-root! {:path root
+                              :symbolic-link? (.isSymbolicLink stat)
+                              :directory? (.isDirectory stat)}))
   (let [canonical-root (fs/realpathSync root)]
     (walk-files-under canonical-root canonical-root)))
 
@@ -288,9 +287,9 @@
           :when (re-find #"\.clj[sc]$" absolute-path)
           :let [path (repository-path root absolute-path)]
           :when (not= app-path path)]
-    (when (seq (route-forms path (fs/readFileSync absolute-path "utf8")))
-      (throw (ex-info "Unsupported Shadow route location"
-                      {:path path :supported-path app-path})))))
+    (law/assert-route-location!
+      {:path path :supported-path app-path
+       :route-count (count (route-forms path (fs/readFileSync absolute-path "utf8")))})))
 
 (defn- extract-route-forms [source matches]
   (mapv (fn [position next-position]

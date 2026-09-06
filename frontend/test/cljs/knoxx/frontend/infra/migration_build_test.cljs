@@ -174,6 +174,37 @@
                         "build" command})
                      "shadow-cljs.edn" (shadow-config ["@open-hax/knoxx-app-bridge"])))))))
 
+(t/deftest path-qualified-vite-builds-cannot-hide-relocated-source
+  (doseq [executable ["./node_modules/.bin/vite" "node_modules/.bin/vite" "/opt/tools/vite"
+                      "\"./node_modules/.bin/vite\"" "'./node_modules/.bin/vite'"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-configs!
+              {"shadow-cljs.edn" (shadow-config [])
+               "package.json" (package-with-scripts
+                                {"build:legacy" (str executable " build --config vite.legacy.config.ts")})
+               "vite.legacy.config.ts" (vite-config "build:{lib:{entry:'legacy-entry.js'}}")
+               "legacy-entry.js" "export const ChatPage = () => null;"})))))
+
+(t/deftest path-qualified-governed-vite-builds-remain-supported
+  (t/is (= {} (inspect-configs!
+               (bridge-configs
+                 {"build:app-bridge" "./node_modules/.bin/vite build --config vite.app-bridge.config.ts"
+                  "build" "./node_modules/.bin/vite build --config vite.app-bridge.config.ts && shadow-cljs release app"})))))
+
+(t/deftest retired-shadow-resolutions-do-not-hide-opaque-production-builds
+  (doseq [command ["./node_modules/.bin/vite build --config vite.legacy.config.ts && shadow-cljs release app"
+                   "node build-legacy.mjs && shadow-cljs release app"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-configs!
+              {"shadow-cljs.edn" (shadow-config [])
+               "package.json" (package-with-scripts {"build" command})
+               "vite.legacy.config.ts" (vite-config "build:{lib:{entry:'legacy-entry.js'}}")
+               "legacy-entry.js" "export const ChatPage = () => null;"
+               "build-legacy.mjs"
+               "import { build } from 'vite'; await build({configFile:'vite.legacy.config.ts'});"})))))
+
 (t/deftest later-config-flags-cannot-override-the-inspected-build
   (t/is (thrown-with-msg?
           js/Error #"Unsupported Vite migration configuration"

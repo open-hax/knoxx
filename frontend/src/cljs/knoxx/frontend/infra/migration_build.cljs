@@ -91,20 +91,19 @@
     (dirname-path file frontend-root bindings expression)
     :else (unsupported! file "Expected a literal path or path.resolve call")))
 
-(defn- outside? [source-root target]
+(defn- containment-facts [source-root target]
   (let [relative (node-path/relative source-root target)]
-    (or (node-path/isAbsolute relative) (= relative "..")
-        (str/starts-with? relative (str ".." node-path/sep)))))
+    {:relative-path relative :absolute? (node-path/isAbsolute relative) :separator node-path/sep}))
 
 (defn- assert-alias-target! [file frontend-root target]
   (when-not (node-path/isAbsolute target)
     (unsupported! file "Alias replacements must be absolute filesystem paths"))
   (let [source-root (node-path/join frontend-root "src")]
-    (when (or (outside? source-root target)
-              (and (fs/existsSync target)
-                   (outside? (fs/realpathSync source-root) (fs/realpathSync target))))
-      (throw (ex-info "Vite alias leaves governed frontend source tree"
-                      {:path file :target target})))))
+    (law/assert-vite-alias-target!
+      {:path file :target target
+       :lexical (containment-facts source-root target)
+       :canonical (when (and (fs/existsSync source-root) (fs/existsSync target))
+                    (containment-facts (fs/realpathSync source-root) (fs/realpathSync target)))})))
 
 (defn- alias-entries [file ^js alias]
   (if (ts/isArrayLiteralExpression alias)
@@ -137,11 +136,10 @@
       {})))
 
 (defn- assert-entry! [file frontend-root bindings expected ^js entry]
-  (let [actual (node-path/resolve frontend-root
-                                 (static-path file frontend-root bindings entry))]
-    (when-not (= (node-path/resolve frontend-root expected) actual)
-      (throw (ex-info "Vite bridge entry leaves governed inventory"
-                      {:path file :expected expected :actual actual})))))
+  (law/assert-vite-entry!
+    {:path file :expected expected
+     :expected-target (node-path/resolve frontend-root expected)
+     :actual (node-path/resolve frontend-root (static-path file frontend-root bindings entry))}))
 
 (defn- assert-bridge! [file frontend-root bindings expected configuration]
   (let [build (object-properties file (get configuration "build"))
@@ -179,8 +177,8 @@
     {}))
 
 (defn- script-configs [file script-name command]
-  (let [invocations (re-seq #"(?:^|[\s\"';&|])vite\s+build(?=$|[\s\"';&|])" command)
-        configured (re-seq #"(?:^|[\s\"';&|])vite\s+build\s+(?:--config(?:=|\s+)|-c\s+)([^\s\"';&|]+)(?:[ \t]+--watch)?[ \t]*(?=$|[\"';&|\r\n])"
+  (let [invocations (re-seq #"(?:^|[\s\"';&|])(?:[^\s\"';&|]*/)?vite[\"']?\s+build(?=$|[\s\"';&|])" command)
+        configured (re-seq #"(?:^|[\s\"';&|])(?:[^\s\"';&|]*/)?vite[\"']?\s+build\s+(?:--config(?:=|\s+)|-c\s+)([^\s\"';&|]+)(?:[ \t]+--watch)?[ \t]*(?=$|[\"';&|\r\n])"
                            command)]
     (when-not (= (count invocations) (count configured))
       (unsupported! file (str "Vite builds require an explicit static config: " script-name)))
@@ -206,7 +204,8 @@
                "shadow-cljs release app" :shadow
                "tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css" :css}]
     (mapv (fn [phase]
-            (let [normalized (str/join " " (str/split (str/trim phase) #"\s+"))]
+            (let [normalized (-> (str/join " " (str/split (str/trim phase) #"\s+"))
+                                 (str/replace #"^(?:\./)?node_modules/\.bin/vite(?=\s)" "vite"))]
               (or (get known normalized)
                   (unsupported! file (str "Unsupported production build phase: " phase)))))
           (str/split command #"&&" -1))))
@@ -214,7 +213,7 @@
 (defn- assert-shadow-bridge-builds! [frontend-root scripts]
   (let [shadow-file (node-path/join frontend-root "shadow-cljs.edn")
         required-bridges (law/required-bridge-builds (shadow-resolutions shadow-file))]
-    (when (seq required-bridges)
+    (when (or (seq required-bridges) (contains? scripts "build"))
       (let [file (node-path/join frontend-root "package.json")]
         (law/assert-production-build!
           {:path file
@@ -232,14 +231,11 @@
     (doseq [[script-name command] scripts]
       (let [configs (mapv #(node-path/resolve frontend-root %)
                           (script-configs file script-name command))]
-        (when-let [expected (get bridges script-name)]
-          (when-not (= [(node-path/resolve frontend-root expected)] configs)
-            (unsupported! file (str "Bridge build script must use its governed config: " script-name))))
-        (doseq [config configs]
-          (when-not (contains? allowed config)
-            (unsupported! file (str "Active Vite build config leaves governed inventory: " config)))
-          (when-not (fs/existsSync config)
-            (unsupported! file (str "Active Vite build config is missing: " config))))))))
+        (law/assert-vite-script-configs!
+          {:path file :script-name script-name :allowed-configs allowed
+           :expected-config (when-let [expected (get bridges script-name)]
+                              (node-path/resolve frontend-root expected))
+           :configs (mapv (fn [config] {:config-path config :exists? (fs/existsSync config)}) configs)})))))
 
 (defn assert-configs!
   "Validate static Vite entries and return contained alias mappings without execution."

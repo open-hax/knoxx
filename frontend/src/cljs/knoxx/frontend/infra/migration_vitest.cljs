@@ -3,7 +3,6 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as node-path]
             ["typescript" :as ts]
-            [clojure.string :as str]
             [knoxx.frontend.law.migration :as law]))
 
 (defn- unsupported! [file detail]
@@ -67,14 +66,6 @@
             (.-text entry))
           entries)))
 
-(defn- assert-scope! [file field scope]
-  (let [relative (str/replace scope #"^(?:\./)+" "")]
-    (when-not (and (str/starts-with? relative "src/")
-                   (not (str/includes? relative ".."))
-                   (not (str/includes? relative "\\")))
-      (throw (ex-info "Vitest source scope leaves governed frontend source tree"
-                      {:path file :field field :scope scope})))))
-
 (defn- assert-test-scopes! [file configuration]
   (when-not (every? #{"test" "cacheDir"} (keys configuration))
     (unsupported! file "Root overrides and uninspected Vite configuration fields are not supported"))
@@ -82,12 +73,12 @@
     (when (some #(contains? test-settings %) ["root" "dir" "workspace" "projects" "typecheck"])
       (unsupported! file "Root, directory, project, workspace and typecheck overrides are not supported"))
     (doseq [scope (literal-scopes file (get test-settings "include") false)]
-      (assert-scope! file "include" scope))
+      (law/assert-vitest-scope! file "include" scope))
     (doseq [field ["includeSource" "setupFiles" "globalSetup"]
             :let [node (get test-settings field)]
             :when node
             scope (literal-scopes file node (not= field "includeSource"))]
-      (assert-scope! file field scope))))
+      (law/assert-vitest-scope! file field scope))))
 
 (defn- assert-static-config! [file]
   (let [^js source (ts/createSourceFile file (fs/readFileSync file "utf8")

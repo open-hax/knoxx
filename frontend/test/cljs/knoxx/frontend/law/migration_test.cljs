@@ -3,6 +3,61 @@
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
 
+(t/deftest import-containment-contract-preserves-platform-path-semantics
+  (doseq [[relative separator absolute? admitted?]
+          [["pages/Page.tsx" "/" false true]
+           ["" "/" false true]
+           ["..named.ts" "/" false true]
+           ["..\\named.ts" "/" false true]
+           [".." "/" false false]
+           ["../legacy/Page.tsx" "/" false false]
+           ["..\\legacy\\Page.tsx" "\\" false false]
+           ["D:\\legacy\\Page.tsx" "\\" true false]]]
+    (let [facts {:path "frontend/src/bridge/app.ts" :source "../pages/Page"
+                 :target "/resolved/target" :relative-path relative
+                 :absolute? absolute? :separator separator}]
+      (t/is (= admitted? (law/contained-path? facts)))
+      (if admitted?
+        (t/is (= (:target facts) (law/assert-import-target! facts)))
+        (t/is (thrown-with-msg? js/Error #"Local import leaves governed frontend source tree"
+                               (law/assert-import-target! facts)))))))
+
+(t/deftest vite-alias-contract-checks-lexical-and-canonical-containment
+  (let [inside {:relative-path "pages" :absolute? false :separator "/"}
+        outside (assoc inside :relative-path "../legacy")
+        facts {:path "vite.config.ts" :target "/frontend/src/pages" :lexical inside}]
+    (t/is (= (:target facts) (law/assert-vite-alias-target! facts)))
+    (t/is (= (:target facts) (law/assert-vite-alias-target! (assoc facts :canonical inside))))
+    (doseq [field [:lexical :canonical]]
+      (t/is (thrown-with-msg? js/Error #"Vite alias leaves governed frontend source tree"
+                             (law/assert-vite-alias-target! (assoc facts field outside)))))))
+
+(t/deftest vitest-scope-contract-preserves-supported-source-boundaries
+  (doseq [scope ["src/**/*.{test,spec}.{ts,tsx}" "./src/test/setup.ts"]]
+    (t/is (nil? (law/assert-vitest-scope! "vitest.config.ts" "include" scope))))
+  (doseq [scope ["../legacy/**/*" "/frontend/src/**/*" "src/../legacy/**/*" "src\\test.ts"]]
+    (t/is (thrown-with-msg? js/Error #"Vitest source scope leaves governed frontend source tree"
+                           (law/assert-vitest-scope! "vitest.config.ts" "include" scope)))))
+
+(t/deftest vite-entry-contract-preserves-the-governed-bridge-target
+  (let [facts {:path "vite.app-bridge.config.ts" :expected "src/bridge/app.ts"
+               :expected-target "/frontend/src/bridge/app.ts" :actual "/frontend/src/bridge/app.ts"}]
+    (t/is (= (:actual facts) (law/assert-vite-entry! facts)))
+    (t/is (thrown-with-msg? js/Error #"Vite bridge entry leaves governed inventory"
+                           (law/assert-vite-entry! (assoc facts :actual "/frontend/legacy/app.ts"))))))
+
+(t/deftest vite-script-config-contract-preserves-name-and-file-obligations
+  (let [config "/frontend/vite.app-bridge.config.ts"
+        facts {:path "/frontend/package.json" :script-name "build:app-bridge"
+               :expected-config config :allowed-configs #{config}
+               :configs [{:config-path config :exists? true}]}]
+    (t/is (= facts (law/assert-vite-script-configs! facts)))
+    (doseq [override [{:configs []}
+                      {:expected-config nil :configs [{:config-path "/renamed.ts" :exists? true}]}
+                      {:configs [{:config-path config :exists? false}]}]]
+      (t/is (thrown-with-msg? js/Error #"Unsupported Vite migration configuration"
+                             (law/assert-vite-script-configs! (merge facts override)))))))
+
 (t/deftest active-bridge-resolutions-establish-only-their-build-obligations
   (t/is (= [] (law/required-bridge-builds #{"react"})))
   (t/is (= ["build:app-bridge"]
