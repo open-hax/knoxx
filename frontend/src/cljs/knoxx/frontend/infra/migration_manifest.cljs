@@ -251,11 +251,16 @@
 
 ;; Route values may not escape through aliases in definitions, bindings or calls.
 ;; Only the canonical Route binding is exempt; alias dataflow is not interpreted.
+(defn- route-api-reference? [value]
+  (and (symbol? value)
+       (re-matches #"(?:\.|-|\.-)?(?:Route|useRoutes|createBrowserRouter|createHashRouter|createMemoryRouter)"
+                   (name value))))
+
 (defn- route-candidate? [form]
   (and (coll? form)
        (not (non-evaluated-form? form))
        (not (canonical-route-binding? form))
-       (or (some #(and (symbol? %) (contains? #{"Route" ".-Route" "-Route"} (name %))) form)
+       (or (some route-api-reference? form)
            (and (symbol? (first form))
                 (contains? #{"$" "createElement"} (name (first form)))
                 (let [props (nth form 2 nil)]
@@ -362,10 +367,14 @@
 (defn write-manifest!
   "Replace the checked-in migration ledger with canonical text."
   [text]
-  (let [root (repository-root)
+  (let [records (-> text parse-records law/assert-manifest!)
+        canonical (->> records (sort-by :record/id) render-records)
+        root (repository-root)
         path (node-path/join root manifest-relative-path)]
+    (when-not (= text canonical)
+      (throw (ex-info "Manifest text is not canonical" {})))
     (fs/mkdirSync (node-path/dirname path) #js {:recursive true})
-    (fs/writeFileSync path text "utf8")))
+    (fs/writeFileSync path canonical "utf8")))
 
 (defn base-manifest
   "Read and validate a baseline; only an absent ledger or omitted revision returns nil."

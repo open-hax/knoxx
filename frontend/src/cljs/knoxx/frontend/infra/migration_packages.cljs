@@ -26,12 +26,12 @@
       (or declared {}))))
 
 (defn- declaration [{:keys [root cache]} path specifier]
-  (when-let [name (package-name specifier)]
+  (when-let [dependency-name (package-name specifier)]
     (loop [directory (node-path/dirname path)]
       (let [declared (dependencies cache directory)
             parent (node-path/dirname directory)]
-        (if (contains? declared name)
-          {:name name :directory directory :version (get declared name)}
+        (if (contains? declared dependency-name)
+          {:name dependency-name :directory directory :version (get declared dependency-name)}
           (when-not (or (= directory root) (= directory parent))
             (recur parent)))))))
 

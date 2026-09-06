@@ -53,6 +53,11 @@ Direct React `createElement` route construction is detected and rejected as
 unsupported syntax rather than silently dropping the route.
 The canonical `(def Route (.-Route router-alias))` binding is supported;
 copying Route values into other definitions or bindings is rejected.
+Route-object APIs (`useRoutes` and the browser/hash/memory router factories)
+are detected and rejected outside this grammar.
+
+Manifest writes validate record schemas, unique IDs, and canonical sorted text
+before creating directories or replacing the ledger.
 
 An infrastructure-only pull request may retain the legacy count by placing
 the exact declaration `Migration infrastructure: yes` in its body. The

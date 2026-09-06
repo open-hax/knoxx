@@ -116,3 +116,27 @@
     (t/is (= [] (fixture-routes
                   (str "(" wrapper " (do (def RouterRoute Route)"
                        " (let [LocalRoute Route] (make-element LocalRoute nil))))"))))))
+
+(t/deftest route-object-apis-cannot-consume-untracked-route-definitions
+  (doseq [api ["useRoutes" "createBrowserRouter" "createHashRouter" "createMemoryRouter"]
+          call [(str "(rr/" api " app-route-objects)")
+                (str "(." api " rr app-route-objects)")
+                (str "(def build-routes (.-" api " rr))\n(build-routes app-route-objects)")]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-routes
+              (str "(def app-route-objects #js [#js {:path \"/chat\" :element ($ app/ChatPage)}])\n"
+                   call))))))
+
+(t/deftest route-object-apis-cannot-hide-beside-supported-routes
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported Shadow route syntax"
+          (fixture-routes
+            (str "($ Route {:path \"/native\"\n :element ($ native/Page)})\n"
+                 "(rr/createBrowserRouter #js [#js {:path \"/chat\" :element ($ app/ChatPage)}])")))))
+
+(t/deftest route-object-api-examples-remain-inert
+  (doseq [source ["(comment (rr/useRoutes routes))"
+                  "(quote (rr/createBrowserRouter routes))"
+                  "(def example \"rr/createHashRouter rr/createMemoryRouter\")"]]
+    (t/is (= [] (fixture-routes source)))))
