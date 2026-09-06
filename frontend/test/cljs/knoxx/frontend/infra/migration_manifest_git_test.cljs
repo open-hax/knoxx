@@ -4,7 +4,10 @@
             ["node:os" :as os]
             ["node:path" :as node-path]
             [cljs.test :as t]
-            [knoxx.frontend.infra.migration-manifest :as manifest]))
+            [clojure.string :as str]
+            [knoxx.frontend.infra.migration-git :as git]
+            [knoxx.frontend.infra.migration-manifest :as manifest]
+            [knoxx.frontend.law.migration :as law]))
 
 (t/deftest unreadable-git-baselines-fail-closed
   (t/is (try
@@ -24,6 +27,40 @@
                               "-c" "commit.gpgsign=false"]
                              arguments))
     #js {:encoding "utf8" :stdio #js ["ignore" "pipe" "pipe"]}))
+
+(t/deftest changed-git-paths-preserve-quoted-and-multiline-filenames
+  (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-paths-"))
+        paths ["frontend/src/pages/Écran.tsx"
+               "frontend/src/pages/quoted\"name.tsx"
+               "frontend/src/pages/back\\slash.tsx"
+               "frontend/src/pages/line\nbreak.tsx"
+               "frontend/src/cljs/tab\tand\nline.cljc"]]
+    (try
+      (fixture-git! root ["init" "--quiet" "--initial-branch=main"])
+      (doseq [path paths]
+        (let [absolute-path (node-path/join root path)]
+          (fs/mkdirSync (node-path/dirname absolute-path) #js {:recursive true})
+          (fs/writeFileSync absolute-path "initial")))
+      (fixture-git! root ["add" "--all"])
+      (fixture-git! root ["commit" "--quiet" "-m" "Initial sources"])
+      (let [base-sha (str/trim (fixture-git! root ["rev-parse" "HEAD"]))]
+        (doseq [path paths]
+          (fs/writeFileSync (node-path/join root path) "changed"))
+        (fixture-git! root ["add" "--all"])
+        (fixture-git! root ["commit" "--quiet" "-m" "Change unusual source paths"])
+        (let [changed (git/changed-paths root base-sha)]
+          (t/is (= (set paths) (set changed)))
+          (doseq [path changed]
+            (t/testing (pr-str path)
+              (t/is (law/migration-surface-path? path))
+              (t/is (= [:migration-slice/must-progress]
+                       (mapv :law (law/ratchet-violations
+                                   {:baseline [] :current []
+                                    :changed-paths [path]
+                                    :infrastructure? false})))))))
+        (t/is (= [] (git/changed-paths root "HEAD"))))
+      (finally
+        (fs/rmSync root #js {:recursive true :force true})))))
 
 (t/deftest git-baselines-distinguish-absent-and-invalid-manifests
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-git-"))

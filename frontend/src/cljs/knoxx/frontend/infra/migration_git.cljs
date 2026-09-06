@@ -30,13 +30,25 @@
          #js {:cwd root :encoding "utf8"
               :stdio #js ["ignore" "pipe" "pipe"]})))))
 
+(defn- parse-changed-paths
+  "Validate Git's NUL-terminated path records without trimming filename characters."
+  [output]
+  (if (empty? output)
+    []
+    (do
+      (when-not (str/ends-with? output "\u0000")
+        (throw (ex-info "Git changed paths must be NUL-terminated" {})))
+      (let [paths (str/split (subs output 0 (dec (count output))) #"\u0000" -1)]
+        (when (some empty? paths)
+          (throw (ex-info "Git changed paths cannot contain empty records" {})))
+        paths))))
+
 (defn changed-paths
   "Return repository paths changed between a Git revision and HEAD."
   [root sha]
   (if (seq sha)
     (-> (child-process/execFileSync
-         "git" #js ["diff" "--name-only" (str sha "...HEAD")]
+         "git" #js ["diff" "--name-only" "-z" (str sha "...HEAD")]
          #js {:cwd root :encoding "utf8"})
-        str/split-lines
-        (->> (remove str/blank?) vec))
+        parse-changed-paths)
     []))

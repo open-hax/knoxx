@@ -4,6 +4,8 @@
 strangler migration. Each line is one canonical EDN record for a governed
 `.ts`/`.tsx`/`.mts`/`.cts` file, bridge export, Shadow route, or legacy Vitest suite.
 The `:ts` count includes `.ts`, `.mts`, and `.cts` files.
+Local imports and file references from governed TypeScript must remain within
+`frontend/src` so relocating a dependency cannot remove it from the inventory.
 
 Run from `frontend/`:
 

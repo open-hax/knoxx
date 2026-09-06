@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
             [knoxx.frontend.infra.migration-git :as git]
+            [knoxx.frontend.infra.migration-imports :as imports]
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
 
@@ -77,8 +78,9 @@
                  :absolute-path absolute-path}))
          (filter (comp #(re-find law/legacy-source-pattern %) :path))
          (mapv (fn [{:keys [path absolute-path]}]
-                 {:path path
-                  :source (fs/readFileSync absolute-path "utf8")})))))
+                 (let [source (fs/readFileSync absolute-path "utf8")]
+                   (imports/assert-contained! root path source)
+                   {:path path :source source}))))))
 
 (defn- export-statement? [^js statement]
   (or (ts/isExportDeclaration statement)

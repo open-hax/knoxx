@@ -6,7 +6,7 @@
 
 (def legacy-source-pattern
   "The production tree governed by the TypeScript non-growth ratchet."
-  #"^frontend/src/.*\.(?:tsx?|mts|cts)$")
+  #"^frontend/src/[\s\S]*\.(?:tsx?|mts|cts)$")
 
 (def NonBlankString
   "Schema for nonempty manifest string values."
@@ -125,7 +125,7 @@
   [path]
   (boolean
    (or (re-find legacy-source-pattern path)
-       (re-find #"^frontend/src/.*\.(?:cljs|cljc)$" path)
+       (re-find #"^frontend/src/[\s\S]*\.(?:cljs|cljc)$" path)
        (re-find #"^frontend/(?:migration/|shadow-cljs\.edn$|package\.json$)" path)
        (contains? #{"frontend/.clj-kondo/config.edn"
                     "scripts/pre-push-checks.sh"

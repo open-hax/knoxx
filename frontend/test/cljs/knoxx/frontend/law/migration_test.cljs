@@ -170,3 +170,16 @@
                  (mapv :law
                        (law/ratchet-violations
                          (assoc inputs :baseline [] :infrastructure? true)))))))))
+
+(t/deftest source-paths-with-linebreaks-remain-governed
+  (doseq [extension ["ts" "tsx" "mts" "cts" "cljs" "cljc"]]
+    (let [path (str "frontend/src/lib/legacy\nmodule." extension)]
+      (when (contains? #{"ts" "tsx" "mts" "cts"} extension)
+        (t/is (some? (re-find law/legacy-source-pattern path))
+              "A newline in the filename cannot remove TypeScript from inventory"))
+      (t/is (= [:migration-slice/must-progress]
+               (mapv :law
+                     (law/ratchet-violations
+                       {:baseline [legacy-file] :current [legacy-file]
+                        :changed-paths [path] :infrastructure? false})))
+            "A newline in the filename cannot exempt an edit from progress"))))

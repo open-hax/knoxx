@@ -229,6 +229,20 @@
                (->> records (filter #(= path (:path %))) first
                     (#(select-keys % [:path :kind :bridge]))))))))
 
+(t/deftest transitive-local-imports-cannot-hide-relocated-typescript
+  (doseq [source ["import { Pane } from '../../legacy/Pane';"
+                  "export { Pane } from '../../legacy/Pane';"
+                  "import Pane = require('../../legacy/Pane');"
+                  "const Pane = require('../../legacy/Pane');"
+                  "const load = () => import('../../legacy/Pane');"
+                  "/// <reference path=\"../../legacy/Pane.tsx\" />"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Local import leaves governed frontend source tree"
+            (fixture-records
+              {:bridge-source "export { ChatPage } from '../pages/ChatPage';\n"
+               :extra-files {"frontend/src/pages/ChatPage.tsx" source
+                             "frontend/legacy/Pane.tsx" "export const Pane = () => null;\n"}})))))
+
 (t/deftest bridge-exports-reject-local-targets-outside-the-governed-source-tree
   (doseq [source ["../../legacy/ChatPage" "/legacy/ChatPage"]]
     (t/is (thrown-with-msg?
