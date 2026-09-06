@@ -29,7 +29,9 @@
 
 (t/deftest route-census-rejects-unparsed-invocations
   (doseq [route-source ["($ Route\n {:path \"/chat\"\n :element ($ app/ChatPage)})"
-                        "($  Route {:path \"/chat\"\n :element ($ app/ChatPage)})"]]
+                        "($  Route {:path \"/chat\"\n :element ($ app/ChatPage)})"
+                        "( $ Route {:path \"/chat\"\n :element ($ app/ChatPage)})"
+                        "(\n$ Route {:path \"/chat\"\n :element ($ app/ChatPage)})"]]
     (t/testing route-source
       (t/is (thrown-with-msg? js/Error #"Unsupported Shadow route syntax"
                              (fixture-records {:route-source route-source}))))))
@@ -40,6 +42,17 @@
     (t/testing route-source
       (t/is (thrown? js/Error
                     (fixture-records {:route-source route-source}))))))
+
+(t/deftest route-census-rejects-unknown-aliased-components
+  (doseq [element ["($ LegacyPage)"
+                   "($ ProtectedSurface {:children ($ LegacyPage)})"
+                   "($ auth/RequireAuth {} ($ LegacyPage))"]]
+    (t/testing element
+      (t/is (thrown? js/Error
+                    (fixture-records
+                      {:route-source
+                       (str "(def LegacyPage app/ChatPage)\n"
+                            "($ Route {:path \"/chat\"\n :element " element "})")}))))))
 
 (t/deftest route-census-preserves-supported-routes-and-component-boundaries
   (let [records (fixture-records
@@ -70,11 +83,25 @@
                          "const Foo = 1;\n/* comment */ export { Foo };\n"
                          (str "const Foo = 1;\n"
                               "export { Bar } from 'fixture'; export { Foo };\n")
+                         (str "/* export { Ghost } from 'fake'; */\n"
+                              "const Foo = 1;\nexport { Foo };\n")
+                         (str "const template = `export { Ghost } from 'fake';`;\n"
+                              "const Foo = 1;\nexport { Foo };\n")
                          (str "const Foo = 1;\nexport { Foo };\n"
                               "export { Bar } from 'fixture';\n")]]
     (t/testing bridge-source
       (t/is (thrown-with-msg? js/Error #"Unsupported bridge export syntax"
                              (fixture-records {:bridge-source bridge-source}))))))
+
+(t/deftest bridge-census-ignores-commented-fake-reexports
+  (let [records (fixture-records
+                 {:bridge-source
+                  (str "/* export { Ghost } from 'fake'; */\n"
+                       "export { Foo } from 'fixture';\n")})]
+    (t/is (= [{:symbol "Foo" :source "fixture"}]
+             (->> records
+                  (filter #(= :bridge-export (:kind %)))
+                  (mapv #(select-keys % [:symbol :source])))))))
 
 (t/deftest bridge-census-counts-declarations-not-export-words
   (let [records (fixture-records

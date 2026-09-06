@@ -77,37 +77,36 @@
                  {:path path
                   :source (fs/readFileSync absolute-path "utf8")})))))
 
-(def ^:private bridge-export-pattern
-  "One complete supported re-export, bounded by its own closing brace."
-  #"(?m)^\s*export\s*\{([^}]*)\}\s*from\s*[\"']([^\"']+)[\"'];?")
+(defn- export-statement? [^js statement]
+  (or (ts/isExportDeclaration statement)
+      (ts/isExportAssignment statement)
+      (some #(= (.-kind %) (.-ExportKeyword ts/SyntaxKind))
+            (some-> statement .-modifiers array-seq))))
 
-(defn- export-declaration-count [path source]
-  (let [module (ts/createSourceFile path source (.-Latest ts/ScriptTarget))]
+(defn- export-symbols [path source]
+  (let [^js module (ts/createSourceFile path source (.-Latest ts/ScriptTarget))]
     (when (seq (array-seq (.-parseDiagnostics module)))
       (throw (ex-info "Unsupported bridge export syntax" {:path path})))
     (->> (array-seq (.-statements module))
-         (filter (fn [statement]
-                   (or (ts/isExportDeclaration statement)
-                       (ts/isExportAssignment statement)
-                       (some #(= (.-kind %) (.-ExportKeyword ts/SyntaxKind))
-                             (some-> statement .-modifiers array-seq)))))
-         count)))
-
-(defn- export-symbols [source]
-  (let [pattern (js/RegExp. bridge-export-pattern "gm")]
-    (loop [exports []]
-      (if-let [match (.exec pattern source)]
-        (let [body (-> (aget match 1)
-                       (str/replace #"//[^\n]*" ""))
-              source-path (aget match 2)
-              symbols (->> (str/split body #",")
-                           (map str/trim)
-                           (remove str/blank?)
-                           (map #(last (str/split % #"\s+as\s+"))))]
-          (recur (into exports (map (fn [export-name]
-                                      {:symbol export-name :source source-path})
-                                    symbols))))
-        exports))))
+         (filter export-statement?)
+         (mapcat (fn [^js statement]
+                   (let [^js clause (.-exportClause statement)
+                         ^js module-specifier (.-moduleSpecifier statement)]
+                     (when-not (and (ts/isExportDeclaration statement)
+                                    (not (.-isTypeOnly statement))
+                                    clause
+                                    (ts/isNamedExports clause)
+                                    module-specifier
+                                    (ts/isStringLiteral module-specifier))
+                       (throw (ex-info "Unsupported bridge export syntax" {:path path})))
+                     (mapv (fn [^js specifier]
+                             (when (.-isTypeOnly specifier)
+                               (throw (ex-info "Unsupported bridge export syntax" {:path path})))
+                             (let [^js exported-name (.-name specifier)]
+                               {:symbol (.-text exported-name)
+                                :source (.-text module-specifier)}))
+                           (array-seq (.-elements clause))))))
+         vec)))
 
 (defn- resolve-local-export [bridge-path source]
   (when (str/starts-with? source ".")
@@ -120,10 +119,6 @@
        (mapcat (fn [{:keys [bridge path]}]
                  (let [absolute-path (node-path/join root path)
                        source (fs/readFileSync absolute-path "utf8")]
-                   (when-not (= (export-declaration-count path source)
-                                (count (re-seq bridge-export-pattern source)))
-                     (throw (ex-info "Unsupported bridge export syntax"
-                                     {:path path})))
                    (map (fn [export-entry]
                           (let [source-path (:source export-entry)
                                 export-name (:symbol export-entry)]
@@ -134,7 +129,7 @@
                                      :symbol export-name})
                                    :resolved-source
                                    (resolve-local-export absolute-path source-path))))
-                        (export-symbols source)))))
+                        (export-symbols path source)))))
        vec))
 
 (defn- direct-bridge-index [root records]
@@ -154,11 +149,29 @@
             source))
         sources))
 
-(defn- route-implementation [block]
-  (or (second (re-find #"\(\$\s+(app/[A-Za-z0-9_-]+)" block))
-      (second (re-find #"\(\$\s+([A-Za-z0-9_-]+/[A-Za-z0-9_-]+)" block))
-      (second (re-find #"\(\$\s+(LegacyOpsRedirect|Navigate|PlaceholderPage)" block))
-      "inline"))
+(defn- route-implementation [bridge-alias block]
+  (let [route-form (try
+                     (edn/read-string block)
+                     (catch :default _
+                       (throw (ex-info "Unsupported Shadow route implementation" {}))))
+        components (->> (tree-seq coll? seq route-form)
+                        (filter #(and (seq? %) (= '$ (first %))))
+                        (map second))
+        unknown (remove #(or (keyword? %)
+                             (and (symbol? %)
+                                  (or (namespace %)
+                                      (contains? #{"Route" "ProtectedSurface" "LegacyOpsRedirect"
+                                                   "Navigate" "PlaceholderPage"} (name %)))))
+                        components)
+        symbols (filter symbol? components)]
+    (when (seq unknown)
+      (throw (ex-info "Unsupported Shadow route implementation"
+                      {:components (vec unknown)})))
+    (or (some #(when (= bridge-alias (namespace %)) (str %)) symbols)
+        (some #(when (namespace %) (str %)) symbols)
+        (some #(when (contains? #{"LegacyOpsRedirect" "Navigate" "PlaceholderPage"} (str %))
+                 (str %)) symbols)
+        (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
 (defn app-bridge-alias
   "Read the local alias bound to the application compatibility bridge."
@@ -188,7 +201,7 @@
         source (fs/readFileSync (node-path/join root path) "utf8")
         bridge-alias (app-bridge-alias source)
         pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
-        route-count (count (re-seq #"\(\$\s+Route(?=\s|\))" source))]
+        route-count (count (re-seq #"\(\s*\$\s+Route(?=\s|\))" source))]
     (loop [matches []]
       (if-let [match (.exec pattern source)]
         (recur (conj matches {:index (.-index match)
@@ -202,7 +215,7 @@
           (mapv (fn [position next-position]
                   (let [block (subs source (:index position)
                                     (or (:index next-position) (count source)))
-                        implementation (route-implementation block)]
+                        implementation (route-implementation bridge-alias block)]
                     (shape/route-record {:path path
                                          :route (:route position)
                                          :implementation implementation
