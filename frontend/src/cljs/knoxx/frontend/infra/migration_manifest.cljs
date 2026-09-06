@@ -165,12 +165,14 @@
             seq
             form))
 
-(defn- route-implementation [bridge-alias block]
-  (let [route-form (try
-                     (edn/read-string block)
-                     (catch :default _
-                       (throw (ex-info "Unsupported Shadow route implementation" {}))))
-        components (->> (route-inspection-nodes route-form)
+(defn- parse-route-form [block]
+  (try
+    (edn/read-string block)
+    (catch :default _
+      (throw (ex-info "Unsupported Shadow route implementation" {})))))
+
+(defn- route-implementation [bridge-alias route-form]
+  (let [components (->> (route-inspection-nodes route-form)
                         (filter #(and (seq? %) (= '$ (first %))))
                         (map second))
         unknown (remove #(or (keyword? %)
@@ -255,13 +257,13 @@
                                  (some #(contains? props %)
                                        [:path :element :index :Component])))))))))
 
-(defn- route-form-count [path source]
-  (let [forms (route-forms path source)]
+(defn- checked-route-forms [path source]
+  (let [forms (vec (route-forms path source))]
     (doseq [form forms]
       (when-not (and (= '$ (first form)) (= 'Route (second form)))
         (throw (ex-info "Unsupported Shadow route syntax"
                         {:path path :constructor (second form)}))))
-    (count forms)))
+    forms))
 
 (defn- assert-route-locations! [root app-path]
   (doseq [source-path ["frontend/src" "shared/src/cljs"]
@@ -275,35 +277,40 @@
       (throw (ex-info "Unsupported Shadow route location"
                       {:path path :supported-path app-path})))))
 
+(defn- extract-route-forms [source matches]
+  (mapv (fn [position next-position]
+          (parse-route-form
+            (subs source (:index position)
+                  (or (:index next-position) (count source)))))
+        matches (concat (rest matches) [nil])))
+
 (defn- route-records [root]
   (let [path "frontend/src/cljs/knoxx/frontend/app.cljs"
         source (fs/readFileSync (node-path/join root path) "utf8")
         bridge-alias (app-bridge-alias source)
         pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
         route-count (count (re-seq #"\(\s*\$\s+Route(?=\s|\))" source))
-        declared-route-count (route-form-count path source)]
+        declared-route-forms (checked-route-forms path source)]
     (assert-route-locations! root path)
     (loop [matches []]
       (if-let [match (.exec pattern source)]
         (recur (conj matches {:index (.-index match)
                               :route (route-identity path (aget match 1))}))
-        (do
-          (when-not (= route-count declared-route-count (count matches))
+        (let [extracted-route-forms (extract-route-forms source matches)]
+          (when-not (and (= route-count (count declared-route-forms) (count matches))
+                         (= declared-route-forms extracted-route-forms))
             (throw (ex-info "Unsupported Shadow route syntax"
                             {:path path
                              :route-forms route-count
-                             :declared-routes declared-route-count
+                             :declared-routes (count declared-route-forms)
                              :parsed-routes (count matches)})))
-          (mapv (fn [position next-position]
-                  (let [block (subs source (:index position)
-                                    (or (:index next-position) (count source)))
-                        implementation (route-implementation bridge-alias block)]
-                    {:path path
-                     :route (:route position)
-                     :implementation implementation
-                     :bridge-alias bridge-alias}))
+          (mapv (fn [position route-form]
+                  {:path path
+                   :route (:route position)
+                   :implementation (route-implementation bridge-alias route-form)
+                   :bridge-alias bridge-alias})
                 matches
-                (concat (rest matches) [nil])))))))
+                extracted-route-forms))))))
 
 (defn current-records
   "Read the repository and return the canonical generated records."
@@ -360,7 +367,7 @@
     (catch :default _ false)))
 
 (defn base-manifest
-  "Read a baseline; only an absent ledger or omitted revision returns nil."
+  "Read and validate a baseline; only an absent ledger or omitted revision returns nil."
   [sha]
   (when (seq sha)
     (when-not (git-commit-exists? sha)
@@ -377,7 +384,8 @@
              #js {:cwd (repository-root)
                   :encoding "utf8"
                   :stdio #js ["ignore" "pipe" "pipe"]})
-            parse-records)))))
+            parse-records
+            law/assert-manifest!)))))
 
 (defn changed-paths
   "Return repository paths changed between a Git revision and HEAD."

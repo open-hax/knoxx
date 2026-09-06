@@ -2,6 +2,8 @@ name: knoxx-ci
 
 on:
   pull_request:
+    # Infrastructure admission depends on the current PR body.
+    types: [opened, synchronize, reopened, edited]
     branches:
       - main
   push:
