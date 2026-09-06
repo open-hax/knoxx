@@ -6,7 +6,7 @@
 
 (def test-source-pattern
   "Pattern identifying governed Vitest source paths."
-  #"\.(?:test|spec)\.tsx?$")
+  #"\.(?:test|spec)\.(?:tsx?|mts|cts)$")
 
 (defn test-source?
   "Whether a governed TypeScript path is a Vitest suite."
@@ -28,8 +28,8 @@
   "Remove TypeScript and test suffixes for sibling test association."
   [path]
   (-> path
-      (str/replace #"\.(?:test|spec)\.tsx?$" "")
-      (str/replace #"\.tsx?$" "")))
+      (str/replace test-source-pattern "")
+      (str/replace #"\.(?:tsx?|mts|cts)$" "")))
 
 (defn tests-by-source
   "Index legacy test suites by their probable sibling source stem."

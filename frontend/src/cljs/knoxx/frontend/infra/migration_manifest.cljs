@@ -140,15 +140,15 @@
                         (export-symbols path source)))))
        vec))
 
+(defn- strip-extension [path]
+  (str/replace path #"\.(?:tsx?|mts|cts)$" ""))
+
 (defn- direct-bridge-index [root records]
   (->> records
        (keep (fn [{:keys [bridge resolved-source]}]
                (when resolved-source
-                 [(repository-path root resolved-source) bridge])))
+                 [(strip-extension (repository-path root resolved-source)) bridge])))
        (into {})))
-
-(defn- strip-extension [path]
-  (str/replace path #"\.tsx?$" ""))
 
 (defn- attach-direct-bridges [sources bridge-index]
   (mapv (fn [{:keys [path] :as source}]

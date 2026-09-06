@@ -53,14 +53,19 @@
              (into {} (map (juxt :implementation :status)) records)))))
 
 (t/deftest assembly-classifies-file-roles-and-associates-legacy-tests
-  (let [page-path "frontend/src/pages/OrdinaryPage.tsx"
-        test-path "frontend/src/pages/OrdinaryPage.test.tsx"
-        records (migration/assemble-records
-                  {:sources [{:path page-path :source ""}
-                             {:path test-path :source ""}]
-                   :bridge-exports [] :routes []})
-        file-records (filter :role records)]
-    (t/is (= {page-path :route test-path :test}
-             (into {} (map (juxt :path :role)) file-records)))
-    (t/is (= [test-path]
-             (:tests (first (filter #(= page-path (:path %)) file-records)))))))
+  (doseq [[source-suffix test-suffix]
+          [["ts" "test.ts"] ["tsx" "test.tsx"]
+           ["mts" "test.mts"] ["cts" "spec.cts"] ["mts" "spec.cts"]]]
+    (let [page-path (str "frontend/src/pages/OrdinaryPage." source-suffix)
+          test-path (str "frontend/src/pages/OrdinaryPage." test-suffix)
+          records (migration/assemble-records
+                    {:sources [{:path page-path :source ""}
+                               {:path test-path :source ""}]
+                     :bridge-exports [] :routes []})
+          file-records (filter :role records)]
+      (t/is (= {page-path :route test-path :test}
+               (into {} (map (juxt :path :role)) file-records)))
+      (t/is (= [test-path]
+               (:tests (first (filter #(= page-path (:path %)) file-records)))))
+      (t/is (= [test-path]
+               (mapv :path (filter #(= :legacy-test-suite (:kind %)) records)))))))

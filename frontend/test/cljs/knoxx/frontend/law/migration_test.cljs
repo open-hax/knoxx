@@ -153,3 +153,20 @@
                     :current [legacy-file legacy-route]
                     :changed-paths ["docs/verification/example.md"]
                     :infrastructure? false})))))
+
+(t/deftest modern-typescript-modules-remain-subject-to-the-ratchet
+  (doseq [extension ["mts" "cts"]]
+    (let [path (str "frontend/src/lib/legacy." extension)
+          modern-file (shape/legacy-file-record
+                        {:path path :role :library :island :shared
+                         :blocked-by [] :disposition :port :tests []})
+          inputs {:baseline [modern-file] :current [modern-file]
+                  :changed-paths [path] :infrastructure? false}]
+      (t/testing "editing an existing module requires migration progress"
+        (t/is (= [:migration-slice/must-progress]
+                 (mapv :law (law/ratchet-violations inputs)))))
+      (t/testing "an infrastructure declaration cannot admit a new legacy module"
+        (t/is (= [:typescript-count/non-growth :legacy-source/no-new-paths]
+                 (mapv :law
+                       (law/ratchet-violations
+                         (assoc inputs :baseline [] :infrastructure? true)))))))))

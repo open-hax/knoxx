@@ -2,7 +2,8 @@
 
 `manifest.ndedn` is generated source-of-truth for the TypeScript-to-CLJS
 strangler migration. Each line is one canonical EDN record for a governed
-`.ts`/`.tsx` file, bridge export, Shadow route, or legacy Vitest suite.
+`.ts`/`.tsx`/`.mts`/`.cts` file, bridge export, Shadow route, or legacy Vitest suite.
+The `:ts` count includes `.ts`, `.mts`, and `.cts` files.
 
 Run from `frontend/`:
 
@@ -14,7 +15,7 @@ pnpm migration:check
 The check regenerates the ledger and fails on drift. In pull requests it also
 compares the exact base revision and rejects:
 
-- new governed TypeScript paths or increased `.ts`/`.tsx` counts;
+- new governed TypeScript paths or increased `:ts`/`:tsx` counts;
 - new frontend/application bridge exports;
 - a native route returning to an application-bridge implementation;
 - new legacy route identities, including expression-only legacy route renames;

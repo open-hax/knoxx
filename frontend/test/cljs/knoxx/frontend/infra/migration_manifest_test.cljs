@@ -219,6 +219,16 @@
                     (filter #(= :bridge-export (:kind %)))
                     (mapv #(select-keys % [:bridge :symbol :source :status]))))))))
 
+(t/deftest inventory-retains-all-typescript-module-extensions-and-bridge-associations
+  (doseq [extension ["ts" "tsx" "mts" "cts"]]
+    (let [path (str "frontend/src/lib/Helper." extension)
+          records (fixture-records
+                    {:bridge-source (str "export { Helper } from '../lib/Helper." extension "';\n")
+                     :extra-files {path "export const Helper = 1;\n"}})]
+      (t/is (= {:path path :kind (if (= extension "tsx") :tsx :ts) :bridge :frontend}
+               (->> records (filter #(= path (:path %))) first
+                    (#(select-keys % [:path :kind :bridge]))))))))
+
 (t/deftest bridge-exports-reject-local-targets-outside-the-governed-source-tree
   (doseq [source ["../../legacy/ChatPage" "/legacy/ChatPage"]]
     (t/is (thrown-with-msg?
