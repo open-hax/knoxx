@@ -69,3 +69,24 @@
                   "// new Worker(new URL('../../legacy/worker.ts', import.meta.url))"
                   "const help = \"new Worker(new URL('../../legacy/worker.ts', import.meta.url))\";"]]
     (t/is (nil? (inspect-imports! source)))))
+
+(t/deftest variable-dynamic-imports-cannot-conceal-relocated-source
+  (doseq [source ["import(`../../legacy/${name}.ts`);"
+                  "import('../../legacy/' + name + '.ts');"
+                  "import(modulePath);"
+                  "import(`./${name}.ts`);"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Non-literal dynamic imports are outside the supported migration grammar"
+            (inspect-imports! source)))))
+
+(t/deftest literal-dynamic-imports-retain-source-containment
+  (doseq [source ["import('../../legacy/page.ts');"
+                  "import(`../../legacy/page.ts`);"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Local import leaves governed frontend source tree"
+            (inspect-imports! source))))
+  (doseq [source ["import('./page.ts');" "import(`./page.ts`);"
+                  "const help = 'import(`../../legacy/${name}.ts`)';"
+                  "// import(`../../legacy/${name}.ts`)\nexport const Page = 1;"
+                  "type Page = import('./page').Page;"]]
+    (t/is (nil? (inspect-imports! source)))))

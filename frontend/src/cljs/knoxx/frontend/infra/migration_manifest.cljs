@@ -163,8 +163,16 @@
                      clojure.core/comment clojure.core/quote}
                   (first node))))
 
+(defn- canonical-route-binding? [form]
+  (and (seq? form) (= 3 (count form))
+       (= 'def (first form)) (= 'Route (second form))
+       (let [initializer (nth form 2)]
+         (and (seq? initializer) (= 2 (count initializer))
+              (= '.-Route (first initializer)) (symbol? (second initializer))))))
+
 (defn- route-inspection-nodes [form]
-  (tree-seq #(and (coll? %) (not (non-evaluated-form? %))) seq form))
+  (tree-seq #(and (coll? %) (not (non-evaluated-form? %))
+                  (not (canonical-route-binding? %))) seq form))
 
 (defn- parse-route-form [block]
   (try
@@ -241,17 +249,13 @@
                       {:path path :route route})))
     route))
 
-;; Route references in calls cannot disappear when their constructor is aliased.
-;; Definitions bind names; evaluated calls within their bodies are inspected separately.
-(defn- route-call? [form]
-  (and (seq? form)
+;; Route values may not escape through aliases in definitions, bindings or calls.
+;; Only the canonical Route binding is exempt; alias dataflow is not interpreted.
+(defn- route-candidate? [form]
+  (and (coll? form)
        (not (non-evaluated-form? form))
-       (not (contains? '#{def defonce defn defn- declare
-                         cljs.core/def cljs.core/defonce cljs.core/defn cljs.core/defn- cljs.core/declare
-                         clojure.core/def clojure.core/defonce clojure.core/defn clojure.core/defn-
-                         clojure.core/declare}
-                      (first form)))
-       (or (some #(and (symbol? %) (= "Route" (name %))) form)
+       (not (canonical-route-binding? form))
+       (or (some #(and (symbol? %) (contains? #{"Route" ".-Route" "-Route"} (name %))) form)
            (and (symbol? (first form))
                 (contains? #{"$" "createElement"} (name (first form)))
                 (let [props (nth form 2 nil)]
@@ -262,7 +266,7 @@
 (defn- route-forms [path source]
   (->> (source-forms path source)
        route-inspection-nodes
-       (filter route-call?)))
+       (filter route-candidate?)))
 
 (defn- checked-route-forms [path source]
   (let [forms (vec (route-forms path source))]

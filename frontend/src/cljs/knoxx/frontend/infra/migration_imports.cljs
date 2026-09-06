@@ -104,6 +104,17 @@
                              (node-path/resolve (node-path/dirname path) module-source))]
               (assert-target! source-root path source target))))))))
 
+(defn- assert-dynamic-import! [resolution path ^js node]
+  (when (and (ts/isCallExpression node)
+             (= (.-ImportKeyword ts/SyntaxKind) (.-kind ^js (.-expression node))))
+    (let [^js specifier (first (array-seq (.-arguments node)))]
+      (when-not (and specifier
+                     (or (ts/isStringLiteral specifier)
+                         (ts/isNoSubstitutionTemplateLiteral specifier)))
+        (throw (ex-info "Non-literal dynamic imports are outside the supported migration grammar"
+                        {:path path})))
+      (resolve-target resolution path (.-text specifier)))))
+
 (defn- assert-vite-dependencies! [resolution path source]
   (let [module (ts/createSourceFile path source (.-Latest ts/ScriptTarget) true)]
     (letfn [(inspect [node]
@@ -111,6 +122,7 @@
                 (throw (ex-info "Vite glob imports are outside the supported migration grammar"
                                 {:path path})))
               (assert-worker-url! resolution path node)
+              (assert-dynamic-import! resolution path node)
               (ts/forEachChild node inspect)
               nil)]
       (inspect module))))

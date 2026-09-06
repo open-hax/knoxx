@@ -28,6 +28,14 @@
   (str "import { defineConfig } from 'vite'; import path from 'node:path';\n"
        "export default defineConfig({" properties "});"))
 
+(defn- package-with-scripts [scripts]
+  (js/JSON.stringify (clj->js {:scripts scripts})))
+
+(defn- bridge-configs [scripts]
+  {"package.json" (package-with-scripts scripts)
+   "vite.bridge.config.ts" (vite-config "build:{lib:{entry:'src/bridge/index.ts'}}")
+   "vite.app-bridge.config.ts" (vite-config "build:{lib:{entry:'src/bridge/app.ts'}}")})
+
 (defn- resolve-alias! [specifier]
   (with-configs
     {"vite.config.ts" (vite-config (str "resolve:{alias:{'@':path.resolve(__dirname,'src'),"
@@ -40,7 +48,60 @@
                  (node-path/relative root))))))
 
 (t/deftest missing-vite-configs-allow-retired-builds
-  (t/is (= {} (inspect-config! "vite.config.ts" nil))))
+  (t/is (= {} (inspect-config! "vite.config.ts" nil)))
+  (t/is (= {} (inspect-configs! {"package.json" "{}"})))
+  (t/is (= {} (inspect-configs!
+               {"package.json" (package-with-scripts {"build" "shadow-cljs release app"
+                                                       "dev" "shadow-cljs watch app"})}))))
+
+(t/deftest active-package-scripts-use-the-inspected-bridge-configs
+  (let [bridge "vite build --config vite.bridge.config.ts"
+        app-bridge "vite build --config vite.app-bridge.config.ts"]
+    (t/is (= {} (inspect-configs!
+                 (bridge-configs
+                   {"build:bridge" bridge "build:app-bridge" app-bridge
+                    "build" (str bridge " && " app-bridge " && shadow-cljs release app")
+                    "dev" (str "concurrently -k -n BRIDGE,APP_BRIDGE \"" bridge
+                                " --watch\" \"" app-bridge " --watch\"")
+                    "test:e2e" (str "npm --prefix e2e install && " bridge " && " app-bridge)}))))))
+
+(t/deftest active-config-renaming-cannot-hide-a-bridge-build
+  (with-configs
+    (bridge-configs {"build:app-bridge" "vite build --config vite.app-bridge.config.ts"})
+    (fn [root]
+      (t/is (= {} (build/assert-configs! root)))
+      (fs/renameSync (node-path/join root "frontend/vite.app-bridge.config.ts")
+                     (node-path/join root "frontend/renamed.config.ts"))
+      (fs/writeFileSync (node-path/join root "frontend/package.json")
+                        (package-with-scripts
+                          {"build:app-bridge" "vite build --config renamed.config.ts"}))
+      (t/is (thrown-with-msg? js/Error #"Unsupported Vite migration configuration"
+                             (build/assert-configs! root))))))
+
+(t/deftest missing-active-configs-and-aggregate-replacements-fail-closed
+  (doseq [scripts [{"build:bridge" "vite build --config vite.bridge.config.ts"}
+                   {"build" "vite build --config renamed.config.ts && shadow-cljs release app"}
+                   {"dev" "concurrently \"vite build --config renamed.config.ts --watch\""}
+                   {"build:app-bridge" "node scripts/renamed-build.mjs"}
+                   {"build" "vite build"}]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Vite migration configuration"
+            (inspect-configs! {"package.json" (package-with-scripts scripts)})))))
+
+(t/deftest one-bridge-can-retire-with-its-active-scripts
+  (t/is (= {} (inspect-configs!
+               (dissoc (bridge-configs
+                         {"build:bridge" "vite build --config vite.bridge.config.ts"
+                          "build" "vite build --config vite.bridge.config.ts && shadow-cljs release app"})
+                       "vite.app-bridge.config.ts")))))
+
+(t/deftest later-config-flags-cannot-override-the-inspected-build
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported Vite migration configuration"
+          (inspect-configs!
+            (bridge-configs
+              {"build:app-bridge"
+               "vite build --config vite.app-bridge.config.ts --config renamed.config.ts"})))))
 
 (t/deftest bridge-entry-must-match-the-governed-inventory
   (doseq [[config-name expected] [["vite.app-bridge.config.ts" "app"]

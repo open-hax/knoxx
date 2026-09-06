@@ -16,7 +16,6 @@
                     " [\"react-router-dom\" :as rr]\n"
                     " [\"@open-hax/knoxx-app-bridge\" :as app]))\n"
                     "(def Route (.-Route rr))\n"
-                    "(def RouterRoute Route)\n"
                     "(def createElement react/createElement)\n" route-source)}]
     (try
       (doseq [[path source] files]
@@ -37,7 +36,8 @@
     (t/is (thrown-with-msg?
             js/Error #"Unsupported Shadow route syntax"
             (fixture-routes
-              (str "(" constructor " " component
+              (str (when (= component "RouterRoute") "(def RouterRoute Route)\n")
+                   "(" constructor " " component
                    " #js {:path \"/legacy\" :element (react/createElement app/ChatPage nil)})"))))))
 
 (t/deftest direct-react-routes-cannot-hide-beside-supported-routes
@@ -85,3 +85,34 @@
   (doseq [wrapper ["comment" "quote"]
           body ["Route" "(make-element Route {:path \"/parked\"})"]]
     (t/is (= [] (fixture-routes (str "(" wrapper " " body ")"))))))
+
+(t/deftest component-aliases-cannot-hide-routes-with-computed-props
+  (doseq [declaration ["(def RouterRoute Route)"
+                       "(defonce RouterRoute Route)"
+                       "(def RouterRoute (.-Route rr))"
+                       "(def RouterRoute rr/Route)"]
+          constructor ["react/createElement" "make-element"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-routes
+              (str declaration "\n(def make-element react/createElement)\n"
+                   "(def route-props #js {:path \"/chat\" :element ($ app/ChatPage)})\n"
+                   "(" constructor " RouterRoute route-props)"))))))
+
+(t/deftest lexical-component-aliases-cannot-hide-route-values
+  (doseq [binding-form ["[RouterRoute Route]"
+                        "[RouterRoute (.-Route rr)]"
+                        "[route-values [Route] RouterRoute (first route-values)]"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-routes
+              (str "(def make-element react/createElement)\n"
+                   "(def route-props #js {:path \"/chat\" :element ($ app/ChatPage)})\n"
+                   "(let " binding-form
+                   " (make-element RouterRoute route-props))"))))))
+
+(t/deftest parked-component-aliases-remain-inert
+  (doseq [wrapper ["comment" "quote"]]
+    (t/is (= [] (fixture-routes
+                  (str "(" wrapper " (do (def RouterRoute Route)"
+                       " (let [LocalRoute Route] (make-element LocalRoute nil))))"))))))

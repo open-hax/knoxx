@@ -166,10 +166,46 @@
             aliases)))
       {})))
 
+(defn- package-scripts [file]
+  (if (fs/existsSync file)
+    (let [^js package-data (js/JSON.parse (fs/readFileSync file "utf8"))
+          scripts (js->clj (.-scripts package-data))]
+      (when-not (or (nil? scripts)
+                    (and (map? scripts) (every? string? (vals scripts))))
+        (unsupported! file "Package scripts must be command strings"))
+      (or scripts {}))
+    {}))
+
+(defn- script-configs [file script-name command]
+  (let [invocations (re-seq #"(?:^|[\s\"';&|])vite\s+build(?=$|[\s\"';&|])" command)
+        configured (re-seq #"(?:^|[\s\"';&|])vite\s+build\s+(?:--config(?:=|\s+)|-c\s+)([^\s\"';&|]+)(?:[ \t]+--watch)?[ \t]*(?=$|[\"';&|\r\n])"
+                           command)]
+    (when-not (= (count invocations) (count configured))
+      (unsupported! file (str "Vite builds require an explicit static config: " script-name)))
+    (mapv second configured)))
+
+(defn- assert-active-configs! [frontend-root]
+  (let [file (node-path/join frontend-root "package.json")
+        bridges {"build:bridge" "vite.bridge.config.ts"
+                 "build:app-bridge" "vite.app-bridge.config.ts"}
+        allowed (set (map #(node-path/resolve frontend-root %) (vals bridges)))]
+    (doseq [[script-name command] (package-scripts file)]
+      (let [configs (mapv #(node-path/resolve frontend-root %)
+                          (script-configs file script-name command))]
+        (when-let [expected (get bridges script-name)]
+          (when-not (= [(node-path/resolve frontend-root expected)] configs)
+            (unsupported! file (str "Bridge build script must use its governed config: " script-name))))
+        (doseq [config configs]
+          (when-not (contains? allowed config)
+            (unsupported! file (str "Active Vite build config leaves governed inventory: " config)))
+          (when-not (fs/existsSync config)
+            (unsupported! file (str "Active Vite build config is missing: " config))))))))
+
 (defn assert-configs!
   "Validate static Vite entries and return contained alias mappings without execution."
   [root]
   (let [frontend-root (node-path/resolve root "frontend")]
+    (assert-active-configs! frontend-root)
     (reduce (fn [aliases [config-name expected]]
               (reduce-kv (partial merge-alias! config-name) aliases
                          (assert-configuration! frontend-root config-name expected)))

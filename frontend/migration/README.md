@@ -11,10 +11,14 @@ Local imports and file references from governed TypeScript must remain within
 This includes TypeScript path mappings and static Vite aliases. Vite bridge
 entries must match the governed bridge files; dynamic configurations that
 cannot be inspected without execution are rejected.
+Active Vite build commands must select an existing governed bridge config;
+retiring a bridge also requires removing its build commands.
 Vite glob imports are not supported by the inventory and fail explicitly;
 comments and string literals that merely mention glob syntax are ignored.
 Worker and SharedWorker URL dependencies must also stay in `frontend/src`;
 dynamic worker URLs that cannot be inspected are rejected.
+Dynamic `import()` calls must use literal module paths; variable imports are
+rejected because their dependency set cannot be read from a literal specifier.
 
 Run from `frontend/`:
 
@@ -43,6 +47,8 @@ The conservative census treats Route-named components and literal
 Explicit comment and quote bodies cannot contribute routes or implementation ownership.
 Direct React `createElement` route construction is detected and rejected as
 unsupported syntax rather than silently dropping the route.
+The canonical `(def Route (.-Route router-alias))` binding is supported;
+copying Route values into other definitions or bindings is rejected.
 
 An infrastructure-only pull request may retain the legacy count by placing
 the exact declaration `Migration infrastructure: yes` in its body. The
