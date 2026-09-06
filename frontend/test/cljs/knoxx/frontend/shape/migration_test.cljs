@@ -6,6 +6,7 @@
   (t/testing "preclassified contracts retain their dependencies"
     (let [record (shape/legacy-file-record
                   {:path "frontend/src/pages/ContractsPage.tsx"
+                   :role :route
                    :island :contracts
                    :blocked-by [:chat-workspace :codemirror-adapter]
                    :disposition :port
@@ -17,6 +18,7 @@
 (t/deftest loader-shims-delete-with-their-final-consumer
   (let [record (shape/legacy-file-record
                 {:path "frontend/src/pages/SettingsPage.tsx"
+                 :role :route
                  :island :routes
                  :blocked-by []
                  :disposition :delete

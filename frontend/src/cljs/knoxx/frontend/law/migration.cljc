@@ -103,26 +103,6 @@
                                            sort vec)}))))
   records)
 
-(defn records-summary
-  "Derive the tracker summary; the ND-EDN records remain the only inventory."
-  [records]
-  {:files {:ts (count (filter #(= :ts (:kind %)) records))
-           :tsx (count (filter #(= :tsx (:kind %)) records))}
-   :bridge-exports (->> records (filter #(= :bridge-export (:kind %)))
-                        (group-by :bridge)
-                        (map (fn [[bridge exports]] [bridge (count exports)]))
-                        (into (sorted-map)))
-   :routes {:legacy (count (filter #(and (= :route (:kind %))
-                                        (= :legacy (:status %))) records))
-            :native (count (filter #(and (= :route (:kind %))
-                                        (= :native (:status %))) records))}
-   :legacy-test-suites (count (filter #(= :legacy-test-suite (:kind %)) records))
-   :by-island (->> records
-                   (keep (fn [record]
-                           (when-let [island (:island record)] island)))
-                   frequencies
-                   (into (sorted-map)))})
-
 (defn- records-of-kind [records kinds]
   (filter #(contains? kinds (:kind %)) records))
 

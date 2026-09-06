@@ -4,6 +4,26 @@
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
 
+(def test-source-pattern
+  "Pattern identifying governed Vitest source paths."
+  #"\.(?:test|spec)\.tsx?$")
+
+(defn test-source?
+  "Whether a governed TypeScript path is a Vitest suite."
+  [path]
+  (boolean (re-find test-source-pattern path)))
+
+(defn file-role
+  "Classify a governed file by its migration responsibility."
+  [path]
+  (cond
+    (test-source? path) :test
+    (str/includes? path "/bridge/") :bridge
+    (str/includes? path "/src/lib/") :library
+    (str/includes? path "/src/pages/") :route
+    (str/includes? path "/src/components/") :component
+    :else :support))
+
 (defn source-stem
   "Remove TypeScript and test suffixes for sibling test association."
   [path]
@@ -15,7 +35,7 @@
   "Index legacy test suites by their probable sibling source stem."
   [sources]
   (->> sources
-       (filter (comp shape/test-source? :path))
+       (filter (comp test-source? :path))
        (group-by (comp source-stem :path))
        (map (fn [[stem tests]] [stem (mapv :path tests)]))
        (into {})))
@@ -86,9 +106,10 @@
                               (shape/legacy-file-record
                                (assoc source
                                       :island island
+                                      :role (file-role path)
                                       :blocked-by (get island-blockers island [])
                                       :disposition (file-disposition path (:source source))
-                                      :tests (if (shape/test-source? path)
+                                      :tests (if (test-source? path)
                                                []
                                                (get test-index (source-stem path) []))))))
                           sources)

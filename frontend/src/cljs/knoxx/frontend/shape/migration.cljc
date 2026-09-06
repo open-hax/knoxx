@@ -2,41 +2,21 @@
   "Pure structural record construction for the frontend strangler manifest."
   (:require [clojure.string :as str]))
 
-(def test-source-pattern
-  "Pattern identifying governed Vitest source paths."
-  #"\.(?:test|spec)\.tsx?$")
-
 (defn normalize-path
   "Return a repository path with POSIX separators."
   [path]
   (str/replace path "\\" "/"))
 
-(defn test-source?
-  "Whether a governed TypeScript path is a Vitest suite."
-  [path]
-  (boolean (re-find test-source-pattern path)))
-
-(defn file-role
-  "Classify a governed file by its migration responsibility."
-  [path]
-  (cond
-    (test-source? path) :test
-    (str/includes? path "/bridge/") :bridge
-    (str/includes? path "/src/lib/") :library
-    (str/includes? path "/src/pages/") :route
-    (str/includes? path "/src/components/") :component
-    :else :support))
-
 (defn legacy-file-record
   "Construct one file record from classified migration attributes."
-  [{:keys [path bridge tests disposition island blocked-by]}]
+  [{:keys [path bridge tests disposition island blocked-by role]}]
   (let [path (normalize-path path)
         kind (if (str/ends-with? path ".tsx") :tsx :ts)]
     (cond-> {:record/id (str "file:" path)
              :path path
              :kind kind
              :island island
-             :role (file-role path)
+             :role role
              :disposition disposition
              :status :legacy
              :tests (vec (sort tests))
@@ -74,3 +54,23 @@
    :island island
    :disposition disposition
    :status :legacy})
+
+(defn records-summary
+  "Derive the tracker summary; the ND-EDN records remain the only inventory."
+  [records]
+  {:files {:ts (count (filter #(= :ts (:kind %)) records))
+           :tsx (count (filter #(= :tsx (:kind %)) records))}
+   :bridge-exports (->> records (filter #(= :bridge-export (:kind %)))
+                        (group-by :bridge)
+                        (map (fn [[bridge exports]] [bridge (count exports)]))
+                        (into (sorted-map)))
+   :routes {:legacy (count (filter #(and (= :route (:kind %))
+                                        (= :legacy (:status %))) records))
+            :native (count (filter #(and (= :route (:kind %))
+                                        (= :native (:status %))) records))}
+   :legacy-test-suites (count (filter #(= :legacy-test-suite (:kind %)) records))
+   :by-island (->> records
+                   (keep (fn [record]
+                           (when-let [island (:island record)] island)))
+                   frequencies
+                   (into (sorted-map)))})

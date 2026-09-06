@@ -47,6 +47,27 @@
       (t/is (thrown-with-msg? js/Error #"Unsupported Shadow route syntax"
                              (fixture-records {:route-source route-source}))))))
 
+(t/deftest route-census-rejects-parked-route-declarations
+  (doseq [wrapper ["comment" "cljs.core/comment" "quote"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-records
+              {:route-source
+               (str "(" wrapper " ($ Route {:path \"/parked\"\n"
+                    " :element ($ app/ChatPage)}))")})))))
+
+(t/deftest parked-components-do-not-determine-live-route-ownership
+  (doseq [wrapper ["comment" "quote"]]
+    (let [records (fixture-records
+                    {:route-source
+                     (str "($ Route {:path \"/native\"\n"
+                          " :element (do (" wrapper " ($ app/ChatPage))"
+                          " ($ native/Page))})")})]
+      (t/is (= [{:implementation "native/Page" :status :native}]
+               (->> records
+                    (filter #(= :route (:kind %)))
+                    (mapv #(select-keys % [:implementation :status]))))))))
+
 (t/deftest route-census-rejects-unknown-aliased-components
   (doseq [element ["($ LegacyPage)"
                    "($ ProtectedSurface {:children ($ LegacyPage)})"

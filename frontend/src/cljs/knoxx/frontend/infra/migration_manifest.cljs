@@ -152,12 +152,24 @@
             source))
         sources))
 
+;; Explicit non-evaluated bodies cannot establish routes or implementation ownership.
+(defn- route-inspection-nodes [form]
+  (tree-seq (fn [node]
+              (and (coll? node)
+                   (not (and (seq? node)
+                             (contains? '#{comment quote
+                                           cljs.core/comment cljs.core/quote
+                                           clojure.core/comment clojure.core/quote}
+                                        (first node))))))
+            seq
+            form))
+
 (defn- route-implementation [bridge-alias block]
   (let [route-form (try
                      (edn/read-string block)
                      (catch :default _
                        (throw (ex-info "Unsupported Shadow route implementation" {}))))
-        components (->> (tree-seq coll? seq route-form)
+        components (->> (route-inspection-nodes route-form)
                         (filter #(and (seq? %) (= '$ (first %))))
                         (map second))
         unknown (remove #(or (keyword? %)
@@ -225,7 +237,7 @@
 ;; Shared :id/:children props do not identify routes; route markers identify aliases.
 (defn- route-forms [path source]
   (->> (source-forms path source)
-       (tree-seq coll? seq)
+       route-inspection-nodes
        (filter (fn [form]
                  (and (seq? form)
                       (symbol? (first form))

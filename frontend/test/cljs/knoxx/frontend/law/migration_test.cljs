@@ -7,6 +7,7 @@
   "Representative legacy file fixture."
   (shape/legacy-file-record
    {:path "frontend/src/pages/LegacyPage.tsx"
+    :role :route
     :island :routes
     :blocked-by []
     :disposition :port
@@ -39,6 +40,7 @@
 (t/deftest ratchet-rejects-new-legacy-and-route-regression
   (let [new-file (shape/legacy-file-record
                   {:path "frontend/src/pages/NewLegacyPage.tsx"
+                   :role :route
                    :island :routes
                    :blocked-by []
                    :disposition :port

@@ -2,7 +2,8 @@
   "CLI composition root for writing and checking the frontend migration ledger."
   (:require [clojure.string :as str]
             [knoxx.frontend.infra.migration-manifest :as infra]
-            [knoxx.frontend.law.migration :as law]))
+            [knoxx.frontend.law.migration :as law]
+            [knoxx.frontend.shape.migration :as shape]))
 
 (defn- fail! [message evidence]
   (.error js/console message)
@@ -47,11 +48,11 @@
           rendered (infra/render-records records)]
       (case command
         "--write" (do (infra/write-manifest! rendered)
-                       (println (pr-str (law/records-summary records))))
+                       (println (pr-str (shape/records-summary records))))
         "--check" (when (check-current! records rendered)
                     (check-ratchet! records)
                     (when-not (= 1 (.-exitCode js/process))
-                      (println (pr-str (law/records-summary records)))))
+                      (println (pr-str (shape/records-summary records)))))
         (fail! "Usage: frontend-migration-manifest [--write|--check]" {:command command})))
     (catch :default error
       (fail! "Frontend migration manifest command failed."
