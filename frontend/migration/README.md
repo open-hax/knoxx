@@ -97,6 +97,15 @@ compares the exact base revision and rejects:
 - new legacy route identities, including expression-only legacy route renames;
 - a migration-surface change that does not reduce the legacy surface.
 
+The same check also compares live `.cljs` files under `frontend/src` to the
+exact `KNOXX_MIGRATION_BASE_SHA` tree (or `HEAD` for a local working-tree check).
+Each CLJS count gain becomes the next floor. Renames and equal-count
+reorganizations remain allowed; removing a file requires a replacement in the
+same change. This is a file-count contract, not proof of preserved behavior.
+The base count comes directly from Git; no historical scalar baseline is kept.
+An unreadable base fails closed, and the infrastructure declaration cannot
+waive a CLJS count decrease.
+
 Route IDs use canonical source expressions. A new legacy ID is rejected to
 prevent an expression change from hiding a rollback. Native route IDs may be
 added or renamed.

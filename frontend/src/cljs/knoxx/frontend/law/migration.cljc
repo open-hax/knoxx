@@ -397,3 +397,17 @@
              :before before
              :after after
              :declaration "Add `Migration infrastructure: yes` to the PR body only for infrastructure work."}))))
+
+(def NativeSourceCounts
+  "Closed evidence shape for the revision-relative native CLJS floor."
+  [:map {:closed true} [:before nat-int?] [:after nat-int?]])
+
+(defn assert-native-source-counts!
+  "Reject a CLJS count decrease; infrastructure declarations do not waive this law."
+  [{:keys [before after] :as counts}]
+  (when-not (m/validate NativeSourceCounts counts)
+    (throw (ex-info "Invalid native CLJS count evidence" {:counts counts})))
+  (when (< after before)
+    (throw (ex-info "Native CLJS source count regressed"
+                    (assoc counts :law :native-source/non-regression))))
+  counts)

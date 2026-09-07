@@ -191,6 +191,14 @@ jobs:
           export KNOXX_MIGRATION_INFRASTRUCTURE
           pnpm -C frontend run migration:check
 
+      - name: Upload frontend migration manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knoxx-frontend-migration-manifest
+          path: frontend/migration/manifest.ndedn
+          if-no-files-found: error
+
       - name: Frontend CLJS tests
         run: pnpm -C frontend run test:cljs
 

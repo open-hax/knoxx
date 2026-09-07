@@ -52,3 +52,13 @@
          #js {:cwd root :encoding "utf8"})
         parse-changed-paths)
     []))
+
+(defn native-source-count
+  "Count native CLJS file paths in the exact base tree, independent of its ledger."
+  [root sha]
+  (->> (child-process/execFileSync
+         "git" #js ["ls-tree" "-r" "--name-only" "-z" sha "--" "frontend/src/"]
+         #js {:cwd root :encoding "utf8"})
+       parse-changed-paths
+       (filter #(str/ends-with? % ".cljs"))
+       count))

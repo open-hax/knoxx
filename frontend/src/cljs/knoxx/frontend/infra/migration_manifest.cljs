@@ -389,3 +389,12 @@
   "Return repository paths changed between a Git revision and HEAD."
   [sha]
   (git/changed-paths (repository-root) sha))
+
+(defn native-source-counts
+  "Read base and live frontend CLJS counts through the existing safe file walker."
+  [sha]
+  (let [root (repository-root)]
+    {:before (git/native-source-count root sha)
+     :after (->> (walk-files (node-path/join root "frontend" "src"))
+                 (filter #(str/ends-with? % ".cljs"))
+                 count)}))

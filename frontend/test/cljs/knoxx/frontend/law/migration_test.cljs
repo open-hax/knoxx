@@ -310,3 +310,14 @@
               js/Error #"Unsupported Vite migration configuration"
               (law/assert-vite-config-admission!
                 (assoc-in facts [:options placement field] value)))))))
+
+(t/deftest native-count-floor-validates-evidence-and-preserves-reorganizations
+  (doseq [counts [{:before 65 :after 65} {:before 65 :after 66}
+                  {:before 0 :after 0}]]
+    (t/is (= counts (law/assert-native-source-counts! counts))))
+  (t/is (thrown-with-msg? js/Error #"Native CLJS source count regressed"
+                         (law/assert-native-source-counts! {:before 66 :after 65})))
+  (doseq [counts [{:before -1 :after 0} {:before 1 :after "1"}
+                  {:before 1} {:before 66 :after 65 :infrastructure? true}]]
+    (t/is (thrown-with-msg? js/Error #"Invalid native CLJS count evidence"
+                           (law/assert-native-source-counts! counts)))))

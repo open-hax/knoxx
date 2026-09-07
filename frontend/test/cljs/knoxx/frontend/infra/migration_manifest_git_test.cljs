@@ -102,3 +102,46 @@
       (finally
         (.chdir js/process original-cwd)
         (fs/rmSync root #js {:recursive true :force true})))))
+
+(t/deftest native-cljs-gains-become-the-next-floor
+  (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-native-count-"))
+        original-cwd (.cwd js/process)
+        source-dir (node-path/join root "frontend/src")
+        removed-path (node-path/join source-dir "file65.cljs")]
+    (try
+      (fs/mkdirSync source-dir #js {:recursive true})
+      (fs/writeFileSync (node-path/join root "frontend/package.json") "{}")
+      (doseq [index (range 66)]
+        (fs/writeFileSync (node-path/join source-dir (str "file" index ".cljs")) ""))
+      (doseq [path ["backend/ignored.cljs" "frontend/src/folder.cljs/readme.txt"
+                    "frontend/src/shared.cljc" "frontend/src/line\nbreak.cljs"]]
+        (fs/mkdirSync (node-path/dirname (node-path/join root path)) #js {:recursive true})
+        (fs/writeFileSync (node-path/join root path) ""))
+      (fixture-git! root ["init" "--quiet" "--initial-branch=main"])
+      (fixture-git! root ["add" "--all"])
+      (fixture-git! root ["commit" "--quiet" "-m" "67 native files"])
+      (.chdir js/process root)
+      (let [base (str/trim (fixture-git! root ["rev-parse" "HEAD"]))]
+        (t/is (= {:before 67 :after 67} (manifest/native-source-counts base)))
+        (fs/unlinkSync removed-path)
+        (t/is (= {:before 67 :after 66} (manifest/native-source-counts base)))
+        (t/is (thrown-with-msg? js/Error #"Native CLJS source count regressed"
+                               (law/assert-native-source-counts! (manifest/native-source-counts base))))
+        (fs/writeFileSync (node-path/join source-dir "replacement.cljs") "")
+        (fs/renameSync (node-path/join source-dir "file0.cljs")
+                       (node-path/join source-dir "renamed.cljs"))
+        (t/is (= {:before 67 :after 67}
+                 (law/assert-native-source-counts! (manifest/native-source-counts base))))
+        (fs/writeFileSync (node-path/join source-dir "gain.cljs") "")
+        (t/is (= {:before 67 :after 68}
+                 (law/assert-native-source-counts! (manifest/native-source-counts base))))
+        (fixture-git! root ["add" "--all"])
+        (fixture-git! root ["commit" "--quiet" "-m" "68 native files"])
+        (fs/unlinkSync (node-path/join source-dir "gain.cljs"))
+        (t/is (= {:before 68 :after 67} (manifest/native-source-counts "HEAD")))
+        (t/is (thrown-with-msg? js/Error #"Native CLJS source count regressed"
+                               (law/assert-native-source-counts! (manifest/native-source-counts "HEAD"))))
+        (t/is (thrown? js/Error (manifest/native-source-counts "missing-revision"))))
+      (finally
+        (.chdir js/process original-cwd)
+        (fs/rmSync root #js {:recursive true :force true})))))

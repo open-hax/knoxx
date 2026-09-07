@@ -50,6 +50,10 @@
         "--write" (do (infra/write-manifest! rendered)
                        (println (pr-str (shape/records-summary records))))
         "--check" (when (check-current! records rendered)
+                    (-> (infra/native-source-counts
+                          (let [base (.. js/process -env -KNOXX_MIGRATION_BASE_SHA)]
+                            (if (str/blank? base) "HEAD" base)))
+                        law/assert-native-source-counts!)
                     (check-ratchet! records)
                     (when-not (= 1 (.-exitCode js/process))
                       (println (pr-str (shape/records-summary records)))))
