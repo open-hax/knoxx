@@ -1,10 +1,26 @@
 (ns knoxx.frontend.infra.migration-html
-  "Read authored HTML through a nonexecuting parser before admitting runtime inputs."
+  "Read authored browser documents without executing scripts or loading resources."
   (:require ["jsdom" :as jsdom]
             ["node:fs" :as fs]
             ["node:path" :as node-path]
             [clojure.string :as str]
             [knoxx.frontend.law.migration-html :as law]))
+
+(def ^:private document-types
+  {".html" "text/html" ".htm" "text/html" ".svg" "image/svg+xml"
+   ".xml" "application/xml" ".xhtml" "application/xhtml+xml"})
+
+(defn- browser-element? [^js element]
+  (contains? #{"http://www.w3.org/1999/xhtml" "http://www.w3.org/2000/svg"
+               "http://www.w3.org/1998/Math/MathML"}
+             (.-namespaceURI element)))
+
+(defn- browser-attribute-name [^js attribute]
+  (case (.-namespaceURI attribute)
+    nil (.-localName attribute)
+    "http://www.w3.org/1999/xlink" (str "xlink:" (.-localName attribute))
+    "http://www.w3.org/XML/1998/namespace" (str "xml:" (.-localName attribute))
+    nil))
 
 (def ^:private javascript-types
   #{"application/ecmascript" "application/javascript"
@@ -22,8 +38,9 @@
                          (some? script-type) (str/trim script-type)
                          (str/blank? language) "text/javascript"
                          :else (str "text/" language))]
-    (or (not= "http://www.w3.org/1999/xhtml" (.-namespaceURI element))
-        (contains? javascript-types (str/lower-case effective-type)))))
+    (or (= "http://www.w3.org/2000/svg" (.-namespaceURI element))
+        (and (= "http://www.w3.org/1999/xhtml" (.-namespaceURI element))
+             (contains? javascript-types (str/lower-case effective-type))))))
 
 (defn- normalized-url [value]
   (-> value
@@ -42,7 +59,7 @@
 (defn- html-facts [path elements attributes]
   {:path path
    :scripts (vec (for [^js element elements
-                       :when (and (= "script" (str/lower-case (.-localName element)))
+                       :when (and (= "script" (.-localName element))
                                   (executable-script? element))]
                    {:source (.getAttribute element "src")
                     :html? (= "http://www.w3.org/1999/xhtml" (.-namespaceURI element))
@@ -53,45 +70,51 @@
                                                  (:name %))
                                       (and (= "object" (:element %)) (= "data" (:name %))))
                                   (javascript-url? (:value %))) attributes))
-   :base-hrefs (vec (filter #(and (= "base" (:element %)) (= "href" (:name %)))
+   :base-hrefs (vec (filter #(or (= "xml:base" (:name %))
+                                (and (= "base" (:element %)) (= "href" (:name %))))
                             attributes))})
 
 (defn assert-html!
-  "Parse HTML with jsdom defaults: no script execution or resource loading."
-  [path source]
-  (let [dom (jsdom/JSDOM. source)
+  "Parse HTML or XML without script execution or resource loading."
+  ([path source] (assert-html! path source "text/html"))
+  ([path source content-type]
+  (let [dom (jsdom/JSDOM. source #js {:contentType content-type})
         window (.-window dom)]
     (try
-      (let [elements (array-seq (.querySelectorAll (.-document window) "*"))
+      (let [elements (filter browser-element?
+                             (array-seq (.querySelectorAll (.-document window) "*")))
             attributes (for [^js element elements
-                             ^js attribute (array-seq (.-attributes element))]
+                             ^js attribute (array-seq (.-attributes element))
+                             :let [attribute-key (browser-attribute-name attribute)]
+                             :when attribute-key]
                          {:element (.-localName element)
-                          :name (str/lower-case (.-name attribute))
+                          :name attribute-key
                           :value (.-value attribute)})]
         (law/assert-entrypoint! (html-facts path elements attributes))
         (doseq [{:keys [element value] attribute-name :name} attributes
                 :when (and (= "iframe" element) (= "srcdoc" attribute-name))]
           (assert-html! (str path "#srcdoc") value)))
-      (finally (.close window)))))
+      (finally (.close window))))))
 
-(defn- public-html-files [root seen]
+(defn- public-document-files [root seen]
   (let [canonical (fs/realpathSync root)]
     (when-not (contains? seen canonical)
       (let [seen (conj seen canonical)]
         (mapcat (fn [entry]
                   (let [path (node-path/join root entry)]
                     (cond
-                      (.isDirectory (fs/statSync path)) (public-html-files path seen)
-                      (re-find #"\.html?$" (str/lower-case path)) [path]
+                      (.isDirectory (fs/statSync path)) (public-document-files path seen)
+                      (contains? document-types (str/lower-case (node-path/extname path))) [path]
                       :else [])))
                 (sort (array-seq (fs/readdirSync root))))))))
 
 (defn assert-entrypoints!
-  "Inspect the Shadow/Vite HTML entry and copied public HTML, preserving generated JS."
+  "Inspect the HTML entry and copied public browser documents, preserving generated JS."
   [root]
   (let [index (node-path/join root "frontend/index.html")
         public (node-path/join root "frontend/public")
         paths (concat (when (fs/existsSync index) [index])
-                      (when (fs/existsSync public) (public-html-files public #{})))]
+                      (when (fs/existsSync public) (public-document-files public #{})))]
     (doseq [path paths]
-      (assert-html! (node-path/relative root path) (fs/readFileSync path "utf8")))))
+      (assert-html! (node-path/relative root path) (fs/readFileSync path "utf8")
+                    (get document-types (str/lower-case (node-path/extname path)))))))

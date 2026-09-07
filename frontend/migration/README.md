@@ -43,6 +43,9 @@ Authored entry and public HTML may load the canonical `/cljs/app.js` bootstrap;
 additional executable scripts, event handlers, JavaScript URLs, and base URL
 redirection require inventory support. Inert markup and data scripts remain
 supported, and generated public CLJS JavaScript is preserved.
+Copied public SVG, XML, and XHTML documents use the same execution boundary,
+with XML parsing that preserves namespaces and case. Static graphics and foreign
+namespace metadata remain supported.
 HTML/XML data URLs in document navigation attributes require inventory support;
 image resources, plain-text data documents, and inert data attributes remain supported.
 The production build may contain governed Vite phases, then Shadow release and

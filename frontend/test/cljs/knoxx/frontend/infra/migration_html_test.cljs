@@ -37,6 +37,7 @@
 (t/deftest active-attributes-and-base-redirection-cannot-hide-html-code
   (doseq [source ["<body ONLOAD='window.legacy=true'>"
                   "<svg onload='window.legacy=true'></svg>"
+                  "<math><mi onclick='1+1'>x</mi></math>"
                   "<a href='java&#x73;cript:legacy()'>Run</a>"
                   "<a href=' &#9;java&#10;script:legacy()'>Run</a>"
                   "<base href='https://example.invalid/'><script src='/cljs/app.js'></script>"]]
@@ -79,3 +80,26 @@
     (with-files {path "<script src='/legacy.js'></script>"
                  "frontend/public/legacy.js" "window.legacy=true;"}
       (fn [root] (t/is (thrown? js/Error (html/assert-entrypoints! root)) path)))))
+
+(t/deftest copied-xml-browser-documents-use-the-same-execution-contract
+  (doseq [[extension source]
+          [["svg" "<svg xmlns='http://www.w3.org/2000/svg'><script>1+1</script></svg>"]
+           ["SVG" "<svg xmlns='http://www.w3.org/2000/svg' onload='1+1'/>"]
+           ["svg" "<svg xmlns='http://www.w3.org/2000/svg'><script href='/legacy.js'/></svg>"]
+           ["svg" "<svg xmlns='http://www.w3.org/2000/svg' xmlns:l='http://www.w3.org/1999/xlink'><a l:href='javascript:1+1'/></svg>"]
+           ["xml" "<h:html xmlns:h='http://www.w3.org/1999/xhtml'><h:script>1+1</h:script></h:html>"]
+           ["xhtml" "<html xmlns='http://www.w3.org/1999/xhtml'><body onload='1+1'/></html>"]
+           ["xhtml" "<html xmlns='http://www.w3.org/1999/xhtml' xml:base='https://example.invalid/'><script src='/cljs/app.js'/></html>"]
+           ["xml" "<svg xmlns='http://www.w3.org/2000/svg'><a href='data:text/html,&lt;script&gt;1+1&lt;/script&gt;'/></svg>"]]]
+    (let [path (str "frontend/public/nested/legacy." extension)]
+      (with-files {"frontend/index.html" "<iframe src='/nested/legacy.svg'></iframe>"
+                   path source}
+        (fn [root] (t/is (thrown? js/Error (html/assert-entrypoints! root)) source))))))
+
+(t/deftest static-svg-and-xml-metadata-remain-admissible
+  (with-files {"frontend/index.html" "<img src='/logo.svg'>"
+               "frontend/public/logo.svg" "<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0h10v10z'/><metadata><m:script xmlns:m='urn:metadata' onclick='documentation'>Description</m:script></metadata><SCRIPT>Case-sensitive metadata</SCRIPT></svg>"
+               "frontend/public/metadata.xml" "<metadata><script onclick='documentation'>Description</script></metadata>"
+               "frontend/public/help.xhtml" "<html xmlns='http://www.w3.org/1999/xhtml'><body><p>Help</p><script type='application/json'>{}</script></body></html>"
+               "frontend/public/cljs/app.js" "generatedShadowCode();"}
+    (fn [root] (t/is (nil? (html/assert-entrypoints! root))))))
