@@ -6,7 +6,8 @@
             [cljs.tools.reader.edn :as edn]
             [clojure.string :as str]
             [knoxx.frontend.infra.migration-config-source :as config-source]
-            [knoxx.frontend.law.migration :as law]))
+            [knoxx.frontend.law.migration :as law]
+            [knoxx.frontend.law.migration-shadow :as shadow-law]))
 
 (defn- unsupported! [file detail]
   (throw (ex-info "Unsupported Vite migration configuration"
@@ -258,8 +259,9 @@
 
 (defn- assert-shadow-bridge-builds! [frontend-root scripts]
   (let [shadow-file (node-path/join frontend-root "shadow-cljs.edn")
-        facts (law/assert-shadow-bridge-resolutions!
-                {:path shadow-file :resolutions (shadow-resolutions shadow-file)})
+        facts (-> {:path shadow-file :resolutions (shadow-resolutions shadow-file)}
+                  law/assert-shadow-bridge-resolutions!
+                  shadow-law/assert-file-resolutions!)
         required-bridges (law/required-bridge-builds (set (map first (:resolutions facts))))]
     (when (or (seq required-bridges) (contains? scripts "build"))
       (let [file (node-path/join frontend-root "package.json")]

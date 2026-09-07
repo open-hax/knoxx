@@ -260,6 +260,7 @@
 
 (t/deftest parked-threaded-router-values-and-unrelated-threading-remain-inert
   (doseq [source ["(comment (some-> rr (aget \"Route\")))"
+                  "(comment (def router rr))" "(quote (def router rr))"
                   "(quote (-> rr (aget \"Route\")))"
                   "(some-> payload (aget \"Route\"))"]]
     (t/is (= [] (fixture-routes source)))))
@@ -383,3 +384,13 @@
                       (str "(ns fixture (:require [\"@open-hax/knoxx-app-bridge\" :as app " binding-source "]))\n"
                            "(defnc WrappedPage [] ($ " local-name "))\n"
                            "($ Route {:path \"/chat\"\n :element ($ fixture/WrappedPage)})")))))))
+
+(t/deftest router-module-values-cannot-escape-into-untracked-aliases
+  (doseq [declaration ["(def router rr)" "(defonce router rr)"
+                       "(def router (identity rr))" "(def router (let [module rr] module))"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-routes
+              (str declaration "\n(def RouterComponent (aget router \"Route\"))\n"
+                   "(def route-props #js {:path \"/chat\" :element ($ app/ChatPage)})\n"
+                   "($ RouterComponent route-props)"))))))

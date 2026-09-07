@@ -33,6 +33,15 @@
                   (name (first form)))
        (contains? router-aliases (second form))))
 
+(defn unresolved-module-value?
+  "Recognize router module values escaping their statically named member access."
+  [router-aliases form]
+  (and (coll? form)
+       (some router-aliases form)
+       (not (and (seq? form) (= 2 (count form)) (symbol? (first form))
+                 (re-matches #"\.-[A-Za-z_$][-A-Za-z0-9_$]*" (name (first form)))
+                 (contains? router-aliases (second form))))))
+
 (defn element-components
   "Read component positions from Helix and direct React element-construction forms."
   [nodes]
@@ -59,6 +68,7 @@
               module (str (first specification))
               options (into {} (map vec (partition 2 (rest specification))))]]
     {:module module
+     :string-module? (string? (first specification))
      :alias (some-> (:as options) str)
      :referred (into {} (for [export (:refer options)]
                           [(str (get (:rename options) export export)) (str export)]))}))
@@ -79,6 +89,7 @@
                          (namespace reference)))
         bridge-module "@open-hax/knoxx-app-bridge"]
     {:namespace (some #(when (namespace-form? %) (str (second %))) forms)
+     :module-imports (mapv :module (filter :string-module? bindings))
      :aliases namespace-aliases
      :referred-names (into {} (map (fn [[local-name value]] [local-name (:module value)])) referred)
      :bridge-referred-names (into {} (keep (fn [[local-name {:keys [module export]}]]

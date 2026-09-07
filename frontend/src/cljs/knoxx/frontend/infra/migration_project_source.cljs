@@ -3,6 +3,7 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as node-path]
             [cljs.tools.reader.edn :as edn]
+            [knoxx.frontend.infra.migration-imports :as imports]
             [knoxx.frontend.infra.migration-router-source :as router]
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
@@ -47,9 +48,15 @@
     (distinct (concat [(node-path/join root "frontend/src") (node-path/join root "shared/src/cljs")]
                       (map #(node-path/resolve frontend-root %) paths)))))
 
-(defn- assert-project-macros! [{:keys [root walk-files read-forms inspect-nodes]}]
-  (doseq [source-root (configured-source-roots root) :when (fs/existsSync source-root)
-          absolute-path (walk-files source-root) :when (re-find #"\.clj[sc]?$" absolute-path)
+(defn- configured-source-files [root walk-files]
+  (->> (configured-source-roots root)
+       (filter fs/existsSync)
+       (mapcat walk-files)
+       distinct
+       (mapv law/assert-governed-extension!)))
+
+(defn- assert-project-macros! [{:keys [root files read-forms inspect-nodes]}]
+  (doseq [absolute-path files :when (re-find #"\.clj[sc]?$" absolute-path)
           :let [path (shape/normalize-path (node-path/relative root absolute-path))
                 source (fs/readFileSync absolute-path "utf8")
                 forms (read-forms path source (if (re-find #"\.cljs$" path) #{:cljs} #{:clj}))
@@ -63,22 +70,26 @@
       (update :bridge-exports into (:bridge-exports prior))
       (update :unresolved-bridge? #(or % (:unresolved-bridge? prior)))))
 
+(defn- assert-package-imports! [resolution path facts]
+  (doseq [module (:module-imports facts)
+          :when (not (re-find #"^(?:\.|/)" module))]
+    (imports/resolve-target resolution path module)))
+
 (defn read-namespaces
   "Read governed project namespaces and validate the existing route-location boundary."
   [{:keys [root app-path walk-files read-forms route-forms inspect-nodes] :as options}]
-  (assert-project-macros! options)
-  (reduce
-    (fn [result absolute-path]
-      (let [path (shape/normalize-path (node-path/relative root absolute-path))
-            source (fs/readFileSync absolute-path "utf8")
-            facts (router/namespace-facts (read-forms path source) inspect-nodes)]
-        (law/assert-route-location!
-          {:path path :supported-path app-path
-           :route-count (count (route-forms path source))})
-        (update result (:namespace facts) merge-source-facts facts)))
-    {}
-    (for [source-root (configured-source-roots root)
-          :when (fs/existsSync source-root)
-          absolute-path (walk-files source-root)
-          :when (re-find #"\.clj[sc]$" absolute-path)]
-      absolute-path)))
+  (let [files (configured-source-files root walk-files)
+        resolution (imports/resolver root {})]
+    (assert-project-macros! (assoc options :files files))
+    (reduce
+      (fn [result absolute-path]
+        (let [path (shape/normalize-path (node-path/relative root absolute-path))
+              source (fs/readFileSync absolute-path "utf8")
+              facts (router/namespace-facts (read-forms path source) inspect-nodes)]
+          (assert-package-imports! resolution absolute-path facts)
+          (law/assert-route-location!
+            {:path path :supported-path app-path
+             :route-count (count (route-forms path source))})
+          (update result (:namespace facts) merge-source-facts facts)))
+      {}
+      (filter #(re-find #"\.clj[sc]$" %) files))))

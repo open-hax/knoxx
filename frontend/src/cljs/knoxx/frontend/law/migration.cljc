@@ -306,7 +306,7 @@
   (boolean
    (or (re-find legacy-source-pattern path)
        (re-find #"^frontend/src/[\s\S]*\.(?:cljs|cljc)$" path)
-       (re-find #"^frontend/(?:migration/|shadow-cljs\.edn$|package\.json$)" path)
+       (re-find #"^frontend/(?:migration/|public/|index\.html$|shadow-cljs\.edn$|package\.json$)" path)
        (contains? #{"frontend/.clj-kondo/config.edn"
                     "scripts/pre-push-checks.sh"
                     "scripts/lint-frontend-cljs-changed.sh"} path)

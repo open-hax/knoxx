@@ -11,6 +11,7 @@
             [knoxx.frontend.infra.migration-build :as build]
             [knoxx.frontend.infra.migration-export-source :as export-source]
             [knoxx.frontend.infra.migration-git :as git]
+            [knoxx.frontend.infra.migration-html :as html]
             [knoxx.frontend.infra.migration-imports :as imports]
             [knoxx.frontend.infra.migration-project-source :as project-source]
             [knoxx.frontend.infra.migration-router-source :as router]
@@ -256,6 +257,7 @@
        (not (canonical-route-binding? form))
        (or (some router/api-reference? form)
            (router/computed-access? router-aliases form)
+           (router/unresolved-module-value? router-aliases form)
            (and (symbol? (first form))
                 (contains? #{"$" "createElement"} (name (first form)))
                 (let [props (nth form 2 nil)]
@@ -266,7 +268,9 @@
 (defn- route-forms [path source]
   (let [forms (source-forms path source)
         router-aliases (router/aliases forms)]
-    (->> forms route-inspection-nodes
+    (->> forms
+         (remove #(and (seq? %) (= 'ns (first %))))
+         route-inspection-nodes
          (filter (partial route-candidate? router-aliases)))))
 
 (defn- checked-route-forms [path source]
@@ -325,6 +329,7 @@
   "Read the repository and return the canonical generated records."
   []
   (let [root (repository-root)
+        _ (html/assert-entrypoints! root)
         _ (vitest/assert-config! root)
         resolution (imports/resolver root (build/assert-configs! root))
         bridge-records* (export-source/with-provenance root resolution (bridge-records root resolution))

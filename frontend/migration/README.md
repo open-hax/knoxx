@@ -4,7 +4,8 @@
 strangler migration. Each line is one canonical EDN record for a governed
 `.ts`/`.tsx`/`.mts`/`.cts` file, bridge export, Shadow route, or legacy Vitest suite.
 The `:ts` count includes `.ts`, `.mts`, and `.cts` files.
-JavaScript variants (`.js`, `.jsx`, `.mjs`, and `.cjs`) under `frontend/src`
+JavaScript variants (`.js`, `.jsx`, `.mjs`, and `.cjs`) under configured Shadow
+source roots or `frontend/src`
 are rejected so a language-only rename cannot count as CLJS migration.
 Local imports and file references from governed TypeScript must remain within
 `frontend/src` so relocating a dependency cannot remove it from the inventory.
@@ -27,6 +28,12 @@ retiring a bridge also requires removing its build commands.
 An active Shadow bridge resolution requires its corresponding governed build
 script, config, and exact `dist/bridge` output mapping; release overrides cannot
 redirect that mapping.
+Other Shadow file resolutions require explicit inventory support. Local package
+imports from CLJS pass through the same source-containment boundary as TypeScript.
+Authored entry and public HTML may load the canonical `/cljs/app.js` bootstrap;
+additional executable scripts, event handlers, JavaScript URLs, and base URL
+redirection require inventory support. Inert markup and data scripts remain
+supported, and generated public CLJS JavaScript is preserved.
 The production build may contain governed Vite phases, then Shadow release and
 the optional CSS phase. Every active bridge must be compiled before Shadow.
 The pipeline remains checked after bridge resolutions are retired.
@@ -85,7 +92,8 @@ Shadow source root as well as the governed frontend and shared source trees.
 Bridge export provenance follows TypeScript export aliases to their declaration
 files, so an intervening re-export file cannot retire legacy page ownership.
 The canonical `(def Route (.-Route router-alias))` binding is supported;
-copying Route values into other definitions or bindings is rejected.
+copying Route values or router module values into other definitions or bindings
+is rejected. Statically named router property reads remain supported.
 Computed and threaded router API access is rejected when it could hide a route constructor.
 Route-object APIs (`useRoutes` and the browser/hash/memory router factories)
 are detected and rejected outside this grammar.

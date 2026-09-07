@@ -3,6 +3,10 @@
             [knoxx.frontend.law.migration :as law]
             [knoxx.frontend.shape.migration :as shape]))
 
+(t/deftest authored-browser-entrypoints-activate-the-migration-surface-contract
+  (doseq [path ["frontend/index.html" "frontend/public/legacy.js" "frontend/public/page.html"]]
+    (t/is (law/migration-surface-path? path))))
+
 (t/deftest import-containment-contract-preserves-platform-path-semantics
   (doseq [[relative separator absolute? admitted?]
           [["pages/Page.tsx" "/" false true]
