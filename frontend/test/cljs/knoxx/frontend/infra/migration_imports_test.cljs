@@ -59,8 +59,23 @@
 
 (t/deftest dynamic-worker-urls-fail-explicitly
   (t/is (thrown-with-msg?
-          js/Error #"Unsupported dynamic worker URL in migration source"
+          js/Error #"Unsupported dynamic Vite asset URL in migration source"
           (inspect-imports! "new Worker(new URL(`./${name}.ts`, import.meta.url));"))))
+
+(t/deftest non-worker-asset-urls-cannot-conceal-relocated-source
+  (doseq [source ["navigator.serviceWorker.register(new URL('../../legacy/sw.ts', import.meta.url), {type:'module'});"
+                  "const script = new URL(`../../legacy/sw.ts`, import.meta.url);"
+                  "const script = new URL('/legacy/sw.ts', import.meta.url);"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Local import leaves governed frontend source tree"
+            (inspect-imports! source))))
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported dynamic Vite asset URL in migration source"
+          (inspect-imports! "const script = new URL(`./${name}.ts`, import.meta.url);")))
+  (doseq [source ["navigator.serviceWorker.register(new URL('../workers/sw.ts', import.meta.url), {type:'module'});"
+                  "const icon = new URL('./icon.svg', import.meta.url);"
+                  "const script = new URL('/src/workers/sw.ts', import.meta.url);"]]
+    (t/is (nil? (inspect-imports! source)))))
 
 (t/deftest ordinary-url-values-and-worker-example-text-remain-supported
   (doseq [source ["const url = new URL(base);"

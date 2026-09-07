@@ -92,24 +92,22 @@
       (when (ts/isIdentifier constructor)
         (.-text constructor)))))
 
-(defn- assert-worker-url! [{:keys [root source-root] :as resolution} path ^js node]
-  (when (contains? #{"Worker" "SharedWorker"} (new-constructor node))
-    (let [^js url (first (array-seq (.-arguments node)))]
-      (when (and url (= "URL" (new-constructor url)))
-        (let [[^js specifier base] (array-seq (.-arguments url))]
-          (when (= "url" (import-meta-property base))
-            (when-not (and specifier
-                           (or (ts/isStringLiteral specifier)
-                               (ts/isNoSubstitutionTemplateLiteral specifier)))
-              (throw (ex-info "Unsupported dynamic worker URL in migration source"
-                              {:path path})))
-            (let [source (.-text specifier)
-                  module-source (if (str/starts-with? source "/")
-                                  (node-path/join root "frontend" source)
-                                  source)
-                  target (or (resolve-target resolution path module-source)
-                             (node-path/resolve (node-path/dirname path) module-source))]
-              (assert-target! source-root path source target))))))))
+(defn- assert-asset-url! [{:keys [root source-root] :as resolution} path ^js node]
+  (when (= "URL" (new-constructor node))
+    (let [[^js specifier base] (array-seq (.-arguments node))]
+      (when (= "url" (import-meta-property base))
+        (when-not (and specifier
+                       (or (ts/isStringLiteral specifier)
+                           (ts/isNoSubstitutionTemplateLiteral specifier)))
+          (throw (ex-info "Unsupported dynamic Vite asset URL in migration source"
+                          {:path path})))
+        (let [source (.-text specifier)
+              module-source (if (str/starts-with? source "/")
+                              (node-path/join root "frontend" source)
+                              source)
+              target (or (resolve-target resolution path module-source)
+                         (node-path/resolve (node-path/dirname path) module-source))]
+          (assert-target! source-root path source target))))))
 
 (defn- assert-dynamic-import! [resolution path ^js node]
   (when (and (ts/isCallExpression node)
@@ -128,7 +126,7 @@
               (when (contains? #{"glob" "globEager"} (import-meta-property node))
                 (throw (ex-info "Vite glob imports are outside the supported migration grammar"
                                 {:path path})))
-              (assert-worker-url! resolution path node)
+              (assert-asset-url! resolution path node)
               (assert-dynamic-import! resolution path node)
               (ts/forEachChild node inspect)
               nil)]
