@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [knoxx.frontend.domain.migration :as domain]
             [knoxx.frontend.infra.migration-build :as build]
+            [knoxx.frontend.infra.migration-export-source :as export-source]
             [knoxx.frontend.infra.migration-git :as git]
             [knoxx.frontend.infra.migration-imports :as imports]
             [knoxx.frontend.infra.migration-project-source :as project-source]
@@ -199,13 +200,13 @@
                  :rendered-components (router/symbol-references components)))
         (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
-(defn- source-forms [path source]
+(defn- source-forms [path source & [features]]
   (let [input (reader-types/string-push-back-reader source)
         eof (js/Object.)]
     (try
       (binding [reader/*data-readers* {'js identity}]
         (loop [forms []]
-          (let [form (reader/read {:eof eof :read-cond :allow :features #{:cljs}} input)]
+          (let [form (reader/read {:eof eof :read-cond :allow :features (or features #{:cljs})} input)]
             (if (identical? eof form)
               forms
               (recur (conj forms form))))))
@@ -326,17 +327,13 @@
   (let [root (repository-root)
         _ (vitest/assert-config! root)
         resolution (imports/resolver root (build/assert-configs! root))
-        bridge-records* (bridge-records root resolution)
+        bridge-records* (export-source/with-provenance root resolution (bridge-records root resolution))
         bridge-index (direct-bridge-index root bridge-records*)
         sources (attach-direct-bridges (legacy-sources root resolution) bridge-index)
-        exports (mapv #(dissoc % :resolved-source) bridge-records*)]
+        exports (mapv shape/bridge-export-record bridge-records*)]
     (domain/assemble-records {:sources sources
                               :bridge-exports exports
-                              :routes (route-records root
-                                        (domain/legacy-route-exports
-                                          (map #(update % :resolved-source
-                                                         (fn [source] (when source (repository-path root source))))
-                                               bridge-records*)))})))
+                              :routes (route-records root (domain/legacy-route-exports bridge-records*))})))
 
 (defn render-records
   "Render one EDN map per line with a terminal newline."

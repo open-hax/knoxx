@@ -75,11 +75,18 @@ External project namespaces cannot establish native ownership when their live
 dependencies reach an application-bridge export backed by a legacy route file
 or an unresolved bridge module value. Shared bridge widgets and hooks remain
 supported in native pages.
+Bridge export provenance follows TypeScript export aliases to their declaration
+files, so an intervening re-export file cannot retire legacy page ownership.
 The canonical `(def Route (.-Route router-alias))` binding is supported;
 copying Route values into other definitions or bindings is rejected.
 Computed and threaded router API access is rejected when it could hide a route constructor.
 Route-object APIs (`useRoutes` and the browser/hash/memory router factories)
 are detected and rejected outside this grammar.
+Project macros require explicit inventory support before admission. The census
+rejects explicit macro imports and evaluated macro definitions, including the
+`:clj` branch of `.cljc` files and macros in configured Shadow source paths.
+Installed libraries' implicit macros, such as Helix, remain supported; the
+inventory does not execute custom macros to discover their generated routes.
 
 Manifest writes validate record schemas, unique IDs, and canonical sorted text
 before creating directories or replacing the ledger.

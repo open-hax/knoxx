@@ -81,6 +81,8 @@
     {:namespace (some #(when (namespace-form? %) (str (second %))) forms)
      :aliases namespace-aliases
      :referred-names (into {} (map (fn [[local-name value]] [local-name (:module value)])) referred)
+     :bridge-referred-names (into {} (keep (fn [[local-name {:keys [module export]}]]
+                                            (when (= bridge-module module) [local-name export]))) referred)
      :dependencies (set (keep module-for references))
      :bridge-exports (set (keep (fn [reference]
                                  (when (= bridge-module (module-for reference))

@@ -46,6 +46,13 @@
                     {:path path :supported-path supported-path})))
   facts)
 
+(defn assert-project-macros!
+  "Require explicit inventory support before project macros can generate frontend code."
+  [{:keys [path definitions imports]}]
+  (when (or (seq definitions) (seq imports))
+    (throw (ex-info "Project macros require explicit migration inventory support"
+                    {:path path :definitions definitions :imports imports}))))
+
 (defn assert-import-target!
   "Admit a contained resolved import target and preserve its source evidence."
   [{:keys [target] :as facts}]

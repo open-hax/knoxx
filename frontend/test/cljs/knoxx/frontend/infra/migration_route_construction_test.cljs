@@ -321,3 +321,65 @@
              (str "(def Navigate (.-Navigate rr)) (defnc LegacyOpsRedirect [] ($ Navigate))\n"
                   "($ Route {:path \"/legacy\"\n :element ($ app/ChatPage)})\n"
                   "($ Route {:path \"/native\"\n :element ($ fixture/LegacyOpsRedirect)})")))))
+
+(t/deftest project-macros-cannot-remove-live-routes-from-the-census
+  (doseq [[path source] [["frontend/src/cljs/fixture/macros.clj"
+                         "(ns fixture.macros) (defmacro hidden-route [] '($ Route {:path \"/chat\" :element ($ app/ChatPage)}))"]
+                        ["frontend/src/cljs/fixture/macros.cljc"
+                         "(ns fixture.macros) #?(:clj (defmacro hidden-route [] '($ Route {:path \"/chat\" :element ($ app/ChatPage)})))"]
+                        ["frontend/src/cljs/fixture/macros.clj"
+                         "(ns fixture.macros) (defn ^:macro hidden-route [form env] '($ Route {:path \"/chat\" :element ($ app/ChatPage)}))"]
+                        ["frontend/src/cljs/fixture/macros.clj"
+                         "(ns fixture.macros) (defn hidden-route \"Route macro\" {:macro true} [form env] '($ Route {:path \"/chat\" :element ($ app/ChatPage)}))"]
+                        ["frontend/src/cljs/fixture/macros.clj"
+                         "(ns fixture.macros) (defn hidden-route ([form env] '($ Route {:path \"/chat\" :element ($ app/ChatPage)})) {:macro true})"]
+                        ["frontend/test/cljs/fixture/macros.cljc"
+                         "(ns fixture.macros) #?(:clj (defmacro hidden-route [] '($ Route {:path \"/chat\" :element ($ app/ChatPage)})))"]]]
+    (t/is (thrown-with-msg?
+            js/Error #"Project macros require explicit migration inventory support"
+            (fixture-routes "(hidden-route)" nil
+                            {path source "frontend/shadow-cljs.edn" "{:source-paths [\"src/cljs\" \"test/cljs\"]}"})))))
+
+(t/deftest explicit-macro-imports-require-inventory-support
+  (doseq [require-clause ["(:require-macros [fixture.macros :refer [hidden-route]])"
+                         "(:require [fixture.macros :refer-macros [hidden-route]])"
+                         "(:require [fixture.macros :include-macros true])"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Project macros require explicit migration inventory support"
+            (fixture-routes "" nil
+                            {"frontend/src/cljs/knoxx/frontend/app.cljs"
+                             (str "(ns fixture " require-clause ") (hidden-route)")})))))
+
+(t/deftest inert-macro-examples-and-ordinary-clojure-sources-remain-supported
+  (t/is (= [] (fixture-routes "" nil
+                             {"frontend/src/cljs/fixture/macros.clj"
+                              "(ns fixture.macros) (comment (defmacro parked [] nil)) (quote (defmacro parked [] nil)) (defn ordinary [] {:macro true}) (def data {:macro true})"}))))
+
+(t/deftest bridge-reexport-adapters-retain-terminal-page-ownership
+  (doseq [adapter ["export { ChatPage as ForwardedPage } from '../pages/ChatPage';"
+                   "import { ChatPage as OriginalPage } from '../pages/ChatPage'; export { OriginalPage as ForwardedPage };"
+                   "export { default as ForwardedPage } from './default-page';"
+                   "export { ChatPage as ForwardedPage } from './barrel';"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route implementation"
+            (fixture-routes
+              "($ Route {:path \"/chat\"\n :element ($ wrapper/ChatPage)})" nil
+              (assoc project-bridge-files
+                     "frontend/src/bridge/app.ts" "export { ForwardedPage as ChatPage } from '../components/Adapter';"
+                     "frontend/src/components/Adapter.ts" adapter
+                     "frontend/src/components/barrel.ts" "export * from '../pages/ChatPage';"
+                     "frontend/src/components/default-page.ts" "export { ChatPage as default } from '../pages/ChatPage';"
+                     "frontend/src/cljs/knoxx/frontend/pages/wrapper.cljs"
+                     "(ns knoxx.frontend.pages.wrapper (:require [\"@open-hax/knoxx-app-bridge\" :as legacy])) (defnc ChatPage [] ($ legacy/ChatPage))")
+              " [knoxx.frontend.pages.wrapper :as wrapper]")))))
+
+(t/deftest referred-bridge-exports-retain-root-local-wrapper-ownership
+  (doseq [[binding-source local-name] [[":refer [ChatPage]" "ChatPage"]
+                                       [":refer [ChatPage] :rename {ChatPage ForwardedPage}" "ForwardedPage"]]]
+    (t/is (= [{:route "\"/chat\"" :implementation "app/ChatPage" :status :legacy}]
+             (fixture-routes
+               "" nil
+               (assoc project-bridge-files "frontend/src/cljs/knoxx/frontend/app.cljs"
+                      (str "(ns fixture (:require [\"@open-hax/knoxx-app-bridge\" :as app " binding-source "]))\n"
+                           "(defnc WrappedPage [] ($ " local-name "))\n"
+                           "($ Route {:path \"/chat\"\n :element ($ fixture/WrappedPage)})")))))))

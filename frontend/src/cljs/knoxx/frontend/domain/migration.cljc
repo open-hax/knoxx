@@ -104,11 +104,12 @@
       references)))
 
 (defn legacy-route-exports
-  "Identify app bridge exports whose governed implementation file owns a route."
+  "Identify app route exports and unresolved exports that cannot prove native ownership."
   [exports]
   (->> exports
-       (filter #(and (= :app (:bridge %)) (:resolved-source %)
-                     (= :route (file-role (:resolved-source %)))))
+       (filter #(and (= :app (:bridge %))
+                     (or (empty? (:origin-paths %))
+                         (some (fn [path] (= :route (file-role path))) (:origin-paths %)))))
        (map :symbol)
        set))
 
@@ -132,9 +133,13 @@
   [{:keys [bridge-alias live-references rendered-components local-definitions
            source-namespace project-namespaces]
     route-exports :legacy-route-exports}]
-  (let [references (reachable-references live-references local-definitions)]
+  (let [references (reachable-references live-references local-definitions)
+        bridge-referred-names (get-in project-namespaces [source-namespace :bridge-referred-names])]
     (or (when bridge-alias
-          (some #(when (= bridge-alias (:namespace %)) (:name %)) references))
+          (some #(or (when (= bridge-alias (:namespace %)) (:name %))
+                     (when-let [export (and (nil? (:namespace %))
+                                             (get bridge-referred-names (:name %)))]
+                       (str bridge-alias "/" export))) references))
         (when-not (or (and bridge-alias
                             (some #(and (nil? (:namespace %)) (= bridge-alias (:name %))) references))
                       (unresolved-project-ownership? source-namespace project-namespaces
