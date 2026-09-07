@@ -146,7 +146,7 @@
 
 ;; ── 7/8/9 desired state gates queueing ────────────────────────────────────
 
-(deftest only-published-intent-derives-translation-work
+(deftest published-and-draft-intents-derive-translation-work
   (let [{:keys [facts]} (recording-facts {:revision "probe-revision"
                                           :translated? false :approved? true})]
     (doseq [[state expected] [[:archived nil] [:withheld nil]]]
@@ -156,11 +156,15 @@
           (is (contains? (set (:blockers evidence)) :translation-missing))
           (is (= expected (gate/translation-work intent evidence)))
           (is (false? (gate/admissible? intent evidence))))))
-    (testing "the otherwise identical published intent does derive work"
-      (let [intent (assoc spanish-intent :publication/state :published)
-            evidence (gate/publication-evidence intent facts)
-            work (gate/translation-work intent evidence)]
-        (is (= :actions/request-translation (:action/id work)))))))
+    (doseq [state [:published :draft]]
+      (testing (str "the otherwise identical " state " intent derives work")
+        (let [intent (assoc spanish-intent :publication/state state)
+              evidence (gate/publication-evidence intent facts)
+              work (gate/translation-work intent evidence)]
+          (is (= :actions/request-translation (:action/id work)))
+          (when (= :draft state)
+            (is (false? (gate/admissible? intent evidence))
+                "draft evidence cannot authorize publication")))))))
 
 ;; ── 10 work is keyed to the concrete revision ─────────────────────────────
 
@@ -222,7 +226,7 @@
 (deftest the-gate-and-the-contract-layer-cannot-drift-on-what-publish-means
   (testing "which state means publish is owned by the law, not restated here"
     (is (true? (law/publishes? {:publication/state :published})))
-    (doseq [state [:withheld :archived nil :publish "published"]]
+    (doseq [state [:draft :withheld :archived nil :publish "published"]]
       (is (false? (law/publishes? {:publication/state state}))
           (str (pr-str state) " must not read as a request to publish"))))
   (testing "publishing states are a strict subset of the reconcilable ones —
@@ -233,10 +237,9 @@
                      law/reconcilable-publication-states))))
   (testing "and the gate's evidential admissibility agrees with it: no amount of
             clean evidence admits a state the law says does not publish"
-    (doseq [state [:withheld :archived nil]]
+    (doseq [state [:draft :withheld :archived nil]]
       (is (false? (gate/admissible? {:publication/state state}
                                     {:concrete-revision "rev-1" :blockers []}))
           (str (pr-str state) " must never be admissible")))
     (is (true? (gate/admissible? {:publication/state :published}
                                  {:concrete-revision "rev-1" :blockers []})))))
-

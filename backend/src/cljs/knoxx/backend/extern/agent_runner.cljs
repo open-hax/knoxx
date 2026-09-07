@@ -17,6 +17,10 @@
   (let [value (to-cljs value)]
     (if (map? value) value {})))
 
+(defn now-ms
+  []
+  (.now js/Date))
+
 (defn err-prop
   [err prop]
   (try

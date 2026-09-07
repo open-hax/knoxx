@@ -103,11 +103,11 @@
        true))
 
 (defn translation-work-eligible?
-  "Only an intent that actually wants publication derives work. The resolver
-   deliberately keeps `:archived` and `:withheld` intents in its projection as
-   history, so an evidence-only check would queue obsolete content forever."
+  "Published and draft cross-locale intents derive work. Draft work feeds the
+   review queue but can never satisfy `admissible?`; archived and withheld
+   intents remain desired-state history rather than work to enqueue."
   [intent]
-  (and (law/publishes? intent)
+  (and (law/requests-translation? intent)
        (translation-required? intent)))
 
 (defn translation-work

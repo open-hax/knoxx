@@ -55,8 +55,9 @@
 
 (defn ^:async source-content!
   [root document]
-  (await (fs/read-file-or-nil!
-          (source-revision/document-path root document))))
+  (when-let [source-path (await (source-revision/canonical-document-path!
+                                 root document))]
+    (await (fs/read-file-or-nil! source-path))))
 
 (defn- receipt
   [scope intent source-revision content]

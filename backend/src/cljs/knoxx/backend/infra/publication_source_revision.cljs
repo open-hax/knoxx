@@ -82,9 +82,8 @@
 (defn source-root
   "The directory a document's relative source path resolves against.
 
-   The parent of the contract root the resources were loaded from. Nil when no
-   contract root resolves, in which case `document-path` leaves the path alone
-   and the read fails visibly rather than against a guessed root."
+   The parent of the contract root the resources were loaded from. A caller
+   without this provenance cannot perform a contained source read."
   [config]
   (some-> (contract-loader/contracts-dir-path config) fs/parent))
 
@@ -104,10 +103,10 @@
 (defn document-path
   "Where to actually read `document`'s source from.
 
-   An absolute path is respected as written — an operator who wrote one meant
-   it. A relative path is joined to `root`. With no root, the path is returned
-   unchanged: reading it against process cwd and failing is more honest than
-   inventing a root, and it is the behavior that existed before."
+   This is raw path resolution only. `canonical-document-path!` is the security
+   boundary used before reads: it resolves symlinks and proves containment.
+   A relative path is joined to `root`; an absolute path remains a candidate
+   that still has to pass that containment check."
   [root document]
   (let [path (get-in document [:document/source :path])]
     (cond
@@ -116,6 +115,48 @@
       (nil? root) path
       :else (fs/join root path))))
 
+(defn- fail-source-provenance!
+  [message code document extra]
+  (throw (ex-info message
+                  (merge {:status 409
+                          :code code
+                          :document/id (:document/id document)
+                          :document/source-path
+                          (get-in document [:document/source :path])}
+                         extra))))
+
+(defn- assert-canonical-source-contained!
+  [document canonical-root canonical-source]
+  (when-not (fs/canonical-path-contained? canonical-root canonical-source)
+    (fail-source-provenance!
+     "publication document source escapes its resource provenance root"
+     "document_source_outside_provenance_root" document
+     {:document/source-root canonical-root
+      :document/resolved-source-path canonical-source}))
+  canonical-source)
+
+(defn ^:async canonical-document-path!
+  "Resolve one document source and prove it remains within its provenance root.
+
+   Both paths are realpathed before comparison, so `..`, sibling-prefix tricks,
+   and symlinks cannot escape the checkout that owns the Document resource.
+   A missing source returns nil so existing callers can report their established
+   missing-source result; a missing provenance root fails closed."
+  [root document]
+  (when (nil? root)
+    (fail-source-provenance!
+     "publication document source root cannot be resolved from resource provenance"
+     "document_source_provenance_unresolved" document {}))
+  (let [canonical-root (await (fs/real-path-or-nil! root))]
+    (when (nil? canonical-root)
+      (fail-source-provenance!
+       "publication document source root is missing or unreadable"
+       "document_source_root_missing" document {:document/source-root root}))
+    (when-let [canonical-source
+               (await (fs/real-path-or-nil! (document-path root document)))]
+      (assert-canonical-source-contained!
+       document canonical-root canonical-source))))
+
 (defn- ^:async document-revision!
   "Read one document's source and digest it, or nil when it cannot be read.
 
@@ -123,7 +164,9 @@
    keys receipts and idempotency by this value, and `law.publication`'s own
    contract is the one that decides what is admissible there."
   [root document]
-  (let [content (await (fs/read-file-or-nil! (document-path root document)))]
+  (let [source-path (await (canonical-document-path! root document))
+        content (when source-path
+                  (await (fs/read-file-or-nil! source-path)))]
     (some->> (content-revision content)
              (law/assert-valid! :publication/concrete-revision law/ConcreteRevision))))
 

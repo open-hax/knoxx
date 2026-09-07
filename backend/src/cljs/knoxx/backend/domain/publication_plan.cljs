@@ -26,14 +26,14 @@
             [knoxx.backend.law.publication :as law]))
 
 (def non-public-states
-  "States that can only remove or no-op. `:withheld` means \"deliberately not
-   public\"; `:archived` means \"terminal\". Neither can publish.
+  "States that can only remove or no-op. `:draft` and `:withheld` mean
+   \"not public\"; `:archived` means \"terminal\". None can publish.
 
    A *recognized* non-public state. An unrecognized one is a third case and is
    deliberately not folded in here: taking a live route down on the strength of
    a state nobody can read would be destroying content on the basis of a value
    we have already decided not to trust."
-  #{:withheld :archived})
+  #{:draft :withheld :archived})
 
 (defn desired-materialization
   [intent revision]

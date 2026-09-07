@@ -13,6 +13,7 @@
   work actually queued. A facade that let the gate's predicates go read a file
   or a collection per call would put that drift straight back."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.translation-review-inventory :as review-inventory]
             [knoxx.backend.law.publication :as publication-law]
@@ -77,14 +78,24 @@
   "Hydrated intents selected by exact publication, document, or whole corpus.
 
    A qualified keyword remains the legacy document form. Map input is closed
-   here as well as at HTTP, so a misspelling can never become a corpus sweep."
-  [index selection]
+   here as well as at HTTP, so a misspelling can never become a corpus sweep.
+   Only explicit public or exact-owner documents enter the view: generated
+   drafts share one filesystem index across organizations, and manual dispatch
+   must not bypass document admission's tenant boundary."
+  [index scope selection]
   (let [{:keys [document publication]} (normalized-selection selection)
-        intents (hydrated-intents index document)]
+        visible-index (document-admission/visible-publication-index index scope)
+        visible-documents (:documents visible-index)
+        _ (when (and document (not (contains? visible-documents document)))
+            (throw (ex-info "translation document selection was not found"
+                            {:status 404
+                             :code "translation_document_not_found"
+                             :document document})))
+        intents (hydrated-intents visible-index document)]
     (if publication (select-publication intents publication) intents)))
 
 (defn admissible-intents
-  "The intents that could actually reconcile to a public materialization.
+  "The intents that may derive translation work.
 
    `domain.publication-gate` states outright that it decides only the
    *evidential* half of admissibility and assumes the structural half holds
@@ -95,11 +106,13 @@
    it: it asks only whether the intent publishes and needs translating, which
    both remain true.
 
-   `law.publication/admissible-publication?` is the contract that owns this
-   question, so it is called rather than re-derived. Filtering here rather than
-   inside the gate keeps the two halves where their own docstrings put them."
+   `law.publication/translatable-publication?` owns this question. It admits
+   review-bound drafts without making them reconcilable, and refuses withheld,
+   archived, dangling, inactive, or unsupported-locale relations. Filtering
+   here rather than inside the gate keeps structural and evidential decisions
+   at their respective boundaries."
   [index intents]
-  (filterv #(publication-law/admissible-publication? index %) intents))
+  (filterv #(publication-law/translatable-publication? index %) intents))
 
 (defn- referenced-documents
   "The document records the given intents point at.
@@ -389,7 +402,7 @@
                              dispatch/dispatch-intents!)
         records (await (load-records! config))
         index (build-index records)
-        hydrated (selected-hydrated-intents index selection)
+        hydrated (selected-hydrated-intents index scope selection)
         intents (admissible-intents index hydrated)
         documents (referenced-documents index intents)
         roots (document-source-roots config records)

@@ -34,6 +34,7 @@ fixture_write_valid() {
  [{:document/id :probe
    :document/title "Publication Verification Probe"
    :document/source-locale :en
+   :document/visibility :public
    :document/source {:path "docs/verify-probe.md"}}
 
   ;; :garden/locales is REQUIRED — `law.publication/Garden` has demanded a

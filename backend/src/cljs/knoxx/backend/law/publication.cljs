@@ -58,6 +58,12 @@
    [:document/id qualified-keyword?]
    [:document/title string?]
    [:document/source-locale Locale]
+   [:document/org-id {:optional true} NonBlankString]
+   [:document/visibility {:optional true} [:enum :public :private]]
+   [:document/anchor? {:optional true} boolean?]
+   [:document/generate-drafts? {:optional true} boolean?]
+   [:document/derived-from {:optional true} qualified-keyword?]
+   [:document/derived-source-revision {:optional true} NonBlankString]
    [:document/source
     [:map
      [:path NonBlankString]]]
@@ -97,7 +103,7 @@
    and `publishing-publication-states` further down are deliberately *narrower*
    subsets of this — a state can be lawful to declare and still not be a lawful
    input to reconciliation."
-  [:enum :published :withheld :archived])
+  [:enum :draft :published :withheld :archived])
 
 ;; Raw declarative relation stored in resource data.
 (def PublicationIntentResource
@@ -230,6 +236,16 @@
    \"publish\" — they read one vocabulary rather than each restating it."
   #{:published})
 
+(def translation-requesting-publication-states
+  "Desired states whose cross-locale relations should be translated.
+
+   A draft deliberately belongs here but not in
+   `reconcilable-publication-states`: it may accumulate translation and review
+   evidence while remaining structurally unable to materialize publicly.
+   Withheld and archived relations request neither new translations nor a
+   public artifact."
+  #{:draft :published})
+
 (defn publishes?
   "True when the intent asks for a public materialization at all.
 
@@ -240,6 +256,27 @@
    admissibility from receipts. Receipts never enter this layer."
   [intent]
   (contains? publishing-publication-states (:publication/state intent)))
+
+(defn requests-translation?
+  "True when the desired state asks Knoxx to establish translation evidence.
+
+   This is intentionally broader than `publishes?`: translated drafts are the
+   review queue's input, but review is still incapable of turning the resource
+   into a public artifact until its desired state is explicitly changed."
+  [intent]
+  (contains? translation-requesting-publication-states
+             (:publication/state intent)))
+
+(defn- active-target-relation?
+  [resource-index intent]
+  (and (contains? (:documents resource-index) (:publication/document intent))
+       (contains? (:gardens resource-index) (:publication/garden intent))
+       (= :active
+          (:garden/status
+           (get-in resource-index [:gardens (:publication/garden intent)])))
+       (contains? (set (:garden/locales
+                        (get-in resource-index [:gardens (:publication/garden intent)])))
+                  (:publication/locale intent))))
 
 (defn admissible-publication?
   "True when the intent's desired state is reconcilable, both the document and
@@ -252,14 +289,19 @@
   [resource-index intent]
   (boolean
    (and (contains? reconcilable-publication-states (:publication/state intent))
-        (contains? (:documents resource-index) (:publication/document intent))
-         (contains? (:gardens resource-index) (:publication/garden intent))
-         (= :active
-            (:garden/status
-             (get-in resource-index [:gardens (:publication/garden intent)])))
-         (contains? (set (:garden/locales
-                          (get-in resource-index [:gardens (:publication/garden intent)])))
-                    (:publication/locale intent)))))
+        (active-target-relation? resource-index intent))))
+
+(defn translatable-publication?
+  "True when the resource relation may derive translation work.
+
+   Draft and published relations share the same resolved document, active
+   garden, and accepted-locale requirements. This predicate does not mean the
+   relation may reconcile or publish; `:draft` is intentionally excluded from
+   both of those decisions."
+  [resource-index intent]
+  (boolean
+   (and (requests-translation? intent)
+        (active-target-relation? resource-index intent))))
 
 (defn publication-locale-blocker
   "Return the explicit reconciliation blocker when `intent` asks a target for an

@@ -7,20 +7,24 @@
 (defn- execution-digest-input
   "Return a portable order for every executable policy coordinate."
   [execution]
-  [(:translation-execution/agent-id execution)
-   (:translation-execution/model execution)
-   (:translation-execution/thinking execution)
-   (:translation-execution/system-prompt execution)
-   (:translation-execution/tool-ids execution)])
+  (cond-> [(:translation-execution/agent-id execution)
+           (:translation-execution/model execution)
+           (:translation-execution/thinking execution)
+           (:translation-execution/system-prompt execution)
+           (:translation-execution/tool-ids execution)]
+    (contains? execution :translation-execution/tools-choice)
+    (conj (:translation-execution/tools-choice execution))))
 
 (defn execution-snapshot
   "Authenticate and digest the exact agent policy this turn will execute."
-  [digest-hex {:keys [agent-id model thinking system-prompt tool-ids]}]
-  (let [facts {:translation-execution/agent-id agent-id
-               :translation-execution/model model
-               :translation-execution/thinking (name thinking)
-               :translation-execution/system-prompt system-prompt
-               :translation-execution/tool-ids (vec tool-ids)}]
+  [digest-hex {:keys [agent-id model thinking system-prompt tool-ids tools-choice]}]
+  (let [facts (cond-> {:translation-execution/agent-id agent-id
+                       :translation-execution/model model
+                       :translation-execution/thinking (name thinking)
+                       :translation-execution/system-prompt system-prompt
+                       :translation-execution/tool-ids (vec tool-ids)}
+                tools-choice
+                (assoc :translation-execution/tools-choice tools-choice))]
     (schema/assert-valid!
      :translation-split/execution-snapshot
      schema/TranslationExecutionSnapshot

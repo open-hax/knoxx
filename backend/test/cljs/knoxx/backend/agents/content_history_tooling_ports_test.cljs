@@ -129,7 +129,7 @@
                                                   (is (= {:role "assistant"
                                                           :contract-id "agent/default"
                                                           :actor-id "actor/default"}
-                                                         agent-spec))
+                                                         (dissoc agent-spec :tools-choice)))
                                                   #{"read" "memory.search"})
                   tool-catalog/builtin-tools (fn [_runtime _config tool-auth-context agent-spec]
                                                (is (= [{:toolId "memory.search" :effect "allow"}
@@ -141,14 +141,20 @@
                                               nil)]
       (let [agent-spec {:role "assistant"
                         :contract-id "agent/default"
-                        :actor-id "actor/default"}
+                        :actor-id "actor/default"
+                        :tools-choice :required-first}
             resolver (tool-catalog/tool-policy-resolver {})
             catalog (tool-catalog/tool-catalog #js {} {})
             allowed (tool-catalog/allowed-tools resolver {:userId "user-1"} agent-spec nil)
             visible (tool-catalog/available-tools catalog {:auth-context {:userId "user-1"}
                                                            :agent-spec agent-spec})
-            signature (tool-catalog/visible-session-signature #js {} {} {:userId "user-1"} agent-spec)]
+            signature (tool-catalog/visible-session-signature #js {} {} {:userId "user-1"} agent-spec)
+            unforced-signature (tool-catalog/visible-session-signature
+                                #js {} {} {:userId "user-1"}
+                                (dissoc agent-spec :tools-choice))]
         (is (= #{"read" "memory.search"} allowed))
         (is (= ["read"] (:builtin-tools visible)))
         (is (= #{"read" "memory.search"} (:allowed-tool-ids visible)))
-        (is (re-find #":tools \[\"read\"\]" signature))))))
+        (is (re-find #":tools \[\"read\"\]" signature))
+        (is (re-find #":tools-choice \"required-first\"" signature))
+        (is (not= signature unforced-signature))))))

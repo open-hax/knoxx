@@ -81,7 +81,15 @@
   (v1-json! [_ method path body]
     (openplanner-client/v1-json! rest-client method path body))
   (forward-v1! [_ request]
-    (openplanner-client/forward-v1! rest-client request)))
+    (openplanner-client/forward-v1! rest-client request))
+
+  openplanner-client/IOpenPlannerEventProjectionRepair
+  (ingest-events-awaiting-projections! [_ events]
+    (xsdk/events! events {:await-index? true}))
+  (ensure-event-extra-fields! [_ event-id required]
+    (xsdk/ensure-event-extra-fields! event-id required))
+  (ensure-event-vectors! [_ event-ids]
+    (xsdk/ensure-event-vectors! event-ids)))
 
 (defn client
   "Build a direct-mongo OpenPlanner client. Translation stays in Knoxx CLJS;

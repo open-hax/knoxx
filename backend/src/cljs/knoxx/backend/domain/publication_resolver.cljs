@@ -41,7 +41,9 @@
 
 (def document-projection-keys
   [:document/id :document/title :document/source-locale :document/source
-   :document/translations])
+   :document/translations :document/org-id :document/visibility
+   :document/anchor? :document/generate-drafts?
+   :document/derived-from :document/derived-source-revision])
 
 (def garden-projection-keys
   [:garden/id :garden/title :garden/status :garden/locales])
@@ -56,9 +58,12 @@
 
 (defn canonicalize-document
   [resource]
-  (-> resource
-      (update :document/id #(canonical-id (resource-namespace resource) %))
-      (select-keys document-projection-keys)))
+  (let [resource-ns (resource-namespace resource)]
+    (-> resource
+      (update :document/id #(canonical-id resource-ns %))
+      (cond-> (:document/derived-from resource)
+        (update :document/derived-from #(canonical-id resource-ns %)))
+      (select-keys document-projection-keys))))
 
 (defn canonicalize-garden
   [resource]

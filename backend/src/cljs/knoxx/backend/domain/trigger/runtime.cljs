@@ -32,24 +32,36 @@
   []
   (reset! running?* false))
 
+(defn- ^:async fire-with!
+  [dispatch! config trigger-id payload]
+  (let [trigger (load-trigger-sync config trigger-id)]
+    (if trigger
+      (let [event-type (first (:trigger/events trigger))]
+        (when-not (event-trigger? trigger)
+          (throw (js/Error. (str "Trigger is not an event trigger: " trigger-id))))
+        (when-not event-type
+          (throw (js/Error. (str "Trigger has no observed events: " trigger-id))))
+        (await (dispatch! config
+                          {:event/type event-type
+                           :event/generator {:kind :manual
+                                             :trigger/id trigger-id}
+                           :event/payload (merge (get-in trigger [:data :context])
+                                                 payload)})))
+      (throw (js/Error. (str "Unknown trigger: " trigger-id))))))
+
 (defn ^:async fire!
   "Dispatch one of a trigger's observed events for manual testing."
   ([config trigger-id] (fire! config trigger-id {}))
   ([config trigger-id payload]
-   (let [trigger (load-trigger-sync config trigger-id)]
-     (if trigger
-       (let [event-type (first (:trigger/events trigger))]
-         (when-not (event-trigger? trigger)
-           (throw (js/Error. (str "Trigger is not an event trigger: " trigger-id))))
-         (when-not event-type
-           (throw (js/Error. (str "Trigger has no observed events: " trigger-id))))
-         (await (event-dispatch/dispatch! config
-                                          {:event/type event-type
-                                           :event/generator {:kind :manual
-                                                             :trigger/id trigger-id}
-                                           :event/payload (merge (get-in trigger [:data :context])
-                                                                 payload)})))
-       (throw (js/Error. (str "Unknown trigger: " trigger-id)))))))
+   (await (fire-with! event-dispatch/dispatch! config trigger-id payload))))
+
+(defn ^:async fire-external!
+  "Exercise a trigger from an operator boundary without trusted event policy."
+  ([config trigger-id]
+   (fire-external! config trigger-id {}))
+  ([config trigger-id payload]
+   (await (fire-with! event-dispatch/dispatch-external!
+                      config trigger-id payload))))
 
 (defn status
   [config]

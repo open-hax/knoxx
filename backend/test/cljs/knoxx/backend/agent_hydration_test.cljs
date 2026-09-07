@@ -43,6 +43,17 @@
       (is (contains? canonical-ids "sandbox_container.destroy"))
       (is (not (contains? canonical-ids "sandbox_container.commit"))))))
 
+(deftest knoxx-tool-suite-exposes-the-policy-pinned-publication-draft-tool
+  (let [tools (agent-hydration/create-knoxx-custom-tools
+               #js {} {}
+               {:resourcePolicies {:publication-draft? true}
+                :toolPolicies [{:toolId "save_publication_draft" :effect "allow"}]}
+               #{"save_publication_draft"})
+        canonical-ids (set (keep #(or (aget % "originalName")
+                                      (eta-mu-extern/tool-runtime-name %))
+                                 (eta-mu-extern/tool-seq tools)))]
+    (is (= #{"save_publication_draft"} canonical-ids))))
+
 (deftest ^:async passive-memory-hydration-failure-is-non-fatal
   (testing "OpenPlanner outage must not abort an agent turn before tools can run"
     (with-redefs [openplanner-client/enabled? (fn [_] true)

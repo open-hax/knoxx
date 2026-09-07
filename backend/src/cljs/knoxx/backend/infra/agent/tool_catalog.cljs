@@ -73,6 +73,12 @@
              :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
              :actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)
              :role (some-> (:role agent-spec) str str/trim not-empty)
+             :tools-choice (some-> (if (keyword? (:tools-choice agent-spec))
+                                     (name (:tools-choice agent-spec))
+                                     (:tools-choice agent-spec))
+                                   str
+                                   str/trim
+                                   not-empty)
              :system-prompt (some-> (:system-prompt agent-spec) str str/trim not-empty)
              :task-prompt (some-> (:task-prompt agent-spec) str str/trim not-empty)})))
 

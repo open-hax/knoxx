@@ -1,0 +1,7 @@
+{:actor/id "pi"
+ :actor/kind :user
+ :actor/email "pi@open-hax.local"
+ :actor/username "pi@open-hax.local"
+ :actor/org "open-hax"
+ :actor/label "Pi"
+ :actor/roles []}

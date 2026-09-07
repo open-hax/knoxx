@@ -11,7 +11,7 @@
 ;; inspect what actually went over the wire, so the assertion breaks if
 ;; `api/request`'s serialization ever changes.
 
-(defn- with-fetch-stub
+(defn- ^:async with-fetch-stub
   "Replace js/fetch with a recorder, run `body`, restore. Returns a promise of
    `{:calls [...] :result r}`."
   [response body]
@@ -27,13 +27,11 @@
                   :status 200
                   :json (fn [] (js/Promise.resolve (clj->js response)))
                   :text (fn [] (js/Promise.resolve ""))})))
-    (-> (js/Promise.resolve (body))
-        (.then (fn [result]
-                 (set! js/fetch original)
-                 {:calls @calls :result result}))
-        (.catch (fn [err]
-                  (set! js/fetch original)
-                  (throw err))))))
+    (try
+      (let [result (await (body))]
+        {:calls @calls :result result})
+      (finally
+        (set! js/fetch original)))))
 
 (defn- sent-body
   "The parsed JSON body of the single recorded call, keywordized exactly the way
@@ -102,6 +100,23 @@
         (is (= (wire/encode-state expected) (get body wire/state-patch-key)))
         (is (contains? (set wire/state-wire-values)
                        (get body wire/state-patch-key)))))))
+
+(deftest ^:async draft-round-trips-through-cms-get-and-state-patch
+  (let [draft-response (assoc-in list-response
+                                 [:documents 0 :publications 0 :desired]
+                                 "draft")
+        {:keys [result]} (await (with-fetch-stub draft-response #(pw/load-cms!)))]
+    (testing "a draft row returned by CMS GET is decoded as desired state"
+      (is (= :draft (get-in result [:documents 0 :publications 0 :desired])))))
+  (let [{:keys [calls]} (await (with-fetch-stub
+                                {}
+                                #(pw/set-publication-state!
+                                  :knoxx.docs/probe-es
+                                  :draft)))
+        body (sent-body calls)]
+    (testing "the generic state PATCH sends the shared draft spelling"
+      (is (= {:state "draft"} body))
+      (is (= :draft (wire/decode-state (:state body)))))))
 
 (deftest ^:async patch-url-carries-no-encoded-colon
   (let [{:keys [calls]} (await (with-fetch-stub {} #(pw/publish! :knoxx.docs/probe-es)))

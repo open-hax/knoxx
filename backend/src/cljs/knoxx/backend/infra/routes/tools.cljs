@@ -9,6 +9,7 @@
             [knoxx.backend.domain.text :refer [sanitize-svg-content]]
             [knoxx.backend.infra.control-config :as control-config]
             [knoxx.backend.infra.event-runtime :as event-runtime]
+            [knoxx.backend.infra.auth.authz :as authz]
             ["node:child_process" :refer [execFile]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]
@@ -55,6 +56,17 @@
   (->> (:results result)
        (filter :failed)
        vec))
+
+(defn operator-dispatch-event
+  "Bind a synthetic event to its authenticated actor.
+
+  Canonical `:event/actor` wins normalization; removing aliases makes the
+  boundary explicit and prevents a later precedence change from restoring a
+  caller-supplied emitter identity."
+  [ctx body]
+  (-> body
+      (dissoc :actorId :actor-id)
+      (assoc :event/actor (authz/ctx-actor-id ctx))))
 
 (defn- trigger-fire-response!
   [reply trigger-id result]
@@ -377,7 +389,7 @@
       (if (str/blank? trigger-id)
         (json-response! reply 400 {:detail "triggerId is required"})
         (try
-          (let [result (await (event-runtime/fire-trigger! config trigger-id))]
+          (let [result (await (event-runtime/fire-trigger-external! config trigger-id))]
             (trigger-fire-response! reply trigger-id result))
           (catch :default err
             (error-response! reply err)))))
@@ -392,7 +404,8 @@
     (ensure-permission! ctx "org.events.control")
     (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
       (try
-        (let [result (await (event-dispatch/dispatch! config body))
+        (let [result (await (event-dispatch/dispatch-external!
+                             config (operator-dispatch-event ctx body)))
               failures (failed-trigger-results result)
               failed? (seq failures)]
           (json-response! reply (if failed? 500 202)
@@ -472,7 +485,8 @@
       (if (str/blank? trigger-id)
         (json-response! reply 400 {:detail "triggerId is required"})
         (try
-          (let [result (await (event-runtime/fire! trigger-id))]
+          (let [result (await (event-runtime/fire-trigger-external!
+                               config trigger-id))]
             (trigger-fire-response! reply trigger-id result))
           (catch :default err
             (error-response! reply err)))))

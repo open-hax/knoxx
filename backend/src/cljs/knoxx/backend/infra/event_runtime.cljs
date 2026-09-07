@@ -99,6 +99,10 @@
   ([config trigger-id]
    (trigger-runtime/fire! config trigger-id)))
 
+(defn fire-trigger-external!
+  [config trigger-id]
+  (trigger-runtime/fire-external! config trigger-id))
+
 (defn fire!
   ([trigger-id]
    (fire-trigger! trigger-id))

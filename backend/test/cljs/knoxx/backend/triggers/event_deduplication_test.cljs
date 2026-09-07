@@ -10,29 +10,102 @@
 (def fixture-config
   {:contracts-dir "test/fixtures/trigger-contracts"})
 
-(deftest ^:async same-event-id-is-deduplicated
-  (testing "dispatching the same event twice should skip the second"
-    (driver-builtin/register-built-in-drivers!)
-    (condition-builtins/register-builtins!)
-    (event-dispatch/reset-dedup!)
-    (let [event {:event/type :discord.message
-                 :event/id "same-id"
-                 :event/actor "discord_automation"
-                 :event/payload {:content "hey frankie"
-                                 :gatewayBotUserId "12345"
-                                 :gatewayActorId "discord_automation"
-                                 :channelId "123"}}]
-      ;; First dispatch throws because runtime is unavailable
-      (try
-        (await (source-runtime/dispatch-driver-event!
-                fixture-config :driver/discord "discord_automation" event))
-        (is false "Should have thrown")
-        (catch :default _ nil))
-      ;; Second dispatch should be deduplicated (same event ID)
-      (let [result2 (await (source-runtime/dispatch-driver-event!
-                           fixture-config :driver/discord "discord_automation" event))]
-        (is (true? (:skipped result2))
-            "Second dispatch with same ID should be skipped")))))
+(defn- trigger-record
+  [action]
+  {:resource/id "retryable-event"
+   :resource/kind :trigger
+   :resource/class "triggers"
+   :resource/definition
+   {:contract/id "retryable-event"
+    :trigger/kind :event
+    :trigger/events [:test/retryable]
+    :trigger/action :test/retryable-action
+    :action/fn action
+    :enabled true}})
+
+(defn- retryable-event
+  []
+  {:event/type :test/retryable
+   :event/id "same-id"
+   :event/payload {:content "one deterministic event"}})
+
+(deftest ^:async failed-event-id-is-released-but-a-success-remains-deduplicated
+  (event-dispatch/reset-dedup!)
+  (let [attempts (atom 0)]
+    (with-redefs [resources/load-all-resources-sync
+                  (fn [_]
+                    [(trigger-record
+                      (fn [_ctx _action]
+                        (if (= 1 (swap! attempts inc))
+                          (js/Promise.reject
+                           (js/Error. "transient action failure"))
+                          (js/Promise.resolve {:ok true}))))])]
+      (testing "the failed owner releases the id for a real retry"
+        (try
+          (await (event-dispatch/dispatch! fixture-config (retryable-event)))
+          (is false "the first action should fail")
+          (catch :default err
+            (is (= "transient action failure" (ex-message err)))))
+        (let [retry (await (event-dispatch/dispatch!
+                            fixture-config (retryable-event)))]
+          (is (= ["retryable-event"] (:matchedTriggers retry)))
+          (is (= :completed (:dedup/status retry)))
+          (is (= 2 @attempts))))
+
+      (testing "the equal event is deduplicated after successful completion"
+        (let [duplicate (await (event-dispatch/dispatch!
+                                fixture-config (retryable-event)))]
+          (is (true? (:skipped duplicate)))
+          (is (= :completed (:dedup/status duplicate)))
+          (is (= 2 @attempts)))))))
+
+(deftest ^:async concurrent-equal-successful-events-have-one-owner
+  (event-dispatch/reset-dedup!)
+  (let [attempts (atom 0)
+        release! (atom nil)]
+    (with-redefs [resources/load-all-resources-sync
+                  (fn [_]
+                    [(trigger-record
+                      (fn [_ctx _action]
+                        (swap! attempts inc)
+                        (js/Promise. (fn [resolve _reject]
+                                       (reset! release! resolve)))))])]
+      (let [owner (event-dispatch/dispatch! fixture-config (retryable-event))
+            duplicate (await (event-dispatch/dispatch!
+                              fixture-config (retryable-event)))]
+        (is (true? (:skipped duplicate)))
+        (is (= :in-flight (:dedup/status duplicate)))
+        (is (= 1 @attempts))
+        (@release! {:ok true})
+        (is (= ["retryable-event"]
+               (:matchedTriggers (await owner))))
+        (let [completed-duplicate
+              (await (event-dispatch/dispatch!
+                      fixture-config (retryable-event)))]
+          (is (true? (:skipped completed-duplicate)))
+          (is (= :completed (:dedup/status completed-duplicate))))
+        (is (= 1 @attempts))))))
+
+(deftest ^:async an-unmatched-event-can-be-retried-after-a-trigger-is-enabled
+  (event-dispatch/reset-dedup!)
+  (let [trigger-enabled? (atom false)
+        attempts (atom 0)]
+    (with-redefs [resources/load-all-resources-sync
+                  (fn [_]
+                    (if @trigger-enabled?
+                      [(trigger-record
+                        (fn [_ctx _action]
+                          (swap! attempts inc)
+                          (js/Promise.resolve {:ok true})))]
+                      []))]
+      (is (empty? (:matchedTriggers
+                   (await (event-dispatch/dispatch!
+                           fixture-config (retryable-event))))))
+      (reset! trigger-enabled? true)
+      (let [retry (await (event-dispatch/dispatch!
+                          fixture-config (retryable-event)))]
+        (is (= ["retryable-event"] (:matchedTriggers retry)))
+        (is (= 1 @attempts))))))
 
 (deftest ^:async different-event-ids-are-not-deduplicated
   (testing "dispatching different events should not be deduplicated"

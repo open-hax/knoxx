@@ -12,7 +12,7 @@
 
 (deftest worker-and-facade-select-same-model
   (testing "the worker reports exactly the model the Knoxx config wire carries"
-    (doseq [model-id ["glm-5" "gpt-5.5" "xiaomi/mimo-v2-pro" "gemma4:31b"]]
+    (doseq [model-id ["glm-5" "gpt-5.5" "xiaomi/mimo-v2-pro" "gemma4:31b" "gemma4:e2b"]]
       (testing model-id
         (reset-cache!)
         (with-redefs [worker/fetch-translation-config-model (constantly model-id)]

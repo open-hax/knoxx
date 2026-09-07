@@ -223,6 +223,106 @@
      (.setAfterToolCall (aget raw-session "agent") on-tool-call))
    (->EtaMuSession raw-session)))
 
+(defn- tools-choice-name
+  [value]
+  (some-> (if (keyword? value) (name value) value)
+          str
+          str/trim
+          not-empty))
+
+(defn- last-llm-message-role
+  [context]
+  (some-> context
+          (aget "messages")
+          js-array-seq
+          last
+          (aget "role")
+          str))
+
+(defn- ollama-model?
+  [model]
+  (= "ollama"
+     (some-> model
+             (aget "provider")
+             str
+             str/trim
+             str/lower-case)))
+
+(defn- governed-ollama-on-payload
+  [original-on-payload seed? reasoning-off?]
+  (^:async fn [payload model]
+    (let [next-payload (if (fn? original-on-payload)
+                         (let [result (await (original-on-payload payload model))]
+                           (if (undefined? result) payload result))
+                         payload)]
+      (when next-payload
+        (when seed?
+          (aset next-payload "seed" 0))
+        ;; Ollama's OpenAI-compatible endpoint ignores `think: false`; its
+        ;; supported wire control is `reasoning_effort: "none"`. pi-ai omits
+        ;; that field when a model contract declares `:reasoning false`, so
+        ;; inject it after pi builds every request in the tool loop.
+        (when reasoning-off?
+          (aset next-payload "reasoning_effort" "none")))
+      next-payload)))
+
+(defn- required-tool-choice
+  [context]
+  (let [tool-names (->> (some-> context (aget "tools"))
+                        tool-seq
+                        (keep tool-runtime-name)
+                        distinct
+                        vec)]
+    ;; Production translation and drafting agents expose one save tool, so pin
+    ;; it explicitly. Retain the generic form for future multi-tool contracts.
+    (if (= 1 (count tool-names))
+      #js {:type "function"
+           :function #js {:name (first tool-names)}}
+      "required")))
+
+(defn- governed-ollama-options
+  [model context options]
+  (let [initial-user? (= "user" (last-llm-message-role context))
+        reasoning-off? (false? (aget model "reasoning"))]
+    (if (or initial-user? reasoning-off?)
+      (let [next-options (js/Object.assign #js {} (or options #js {}))]
+        (when initial-user?
+          (aset next-options "toolChoice" (required-tool-choice context))
+          (aset next-options "temperature" 0))
+        (aset next-options "onPayload"
+              (governed-ollama-on-payload
+               (some-> options (aget "onPayload"))
+               initial-user?
+               reasoning-off?))
+        next-options)
+      options)))
+
+(defn- required-first-options
+  [model context options]
+  (if (ollama-model? model)
+    (governed-ollama-options model context options)
+    options))
+
+(defn configure-tools-choice!
+  "Apply a Knoxx tools-choice policy to one raw eta-mu Agent.
+
+   `required-first` forces a deterministic tool choice only while the current
+   last LLM message is the initiating user message. For an Ollama model whose
+   effective contract has reasoning disabled, every request in the tool loop
+   also carries the provider's explicit thinking-off wire field. Other models
+   and post-tool options otherwise remain unchanged."
+  [raw-agent tools-choice]
+  (when (= "required-first" (tools-choice-name tools-choice))
+    (let [stream-fn (some-> raw-agent (aget "streamFn"))]
+      (when-not (fn? stream-fn)
+        (throw (js/Error.
+                "eta-mu Agent.streamFn is unavailable for required-first tools choice")))
+      (aset raw-agent "streamFn"
+            (fn [model context options]
+              (stream-fn model context
+                         (required-first-options model context options))))))
+  raw-agent)
+
 (defn ^:async create-session!
   "Create and wrap an eta-mu agent session from CLJS options. Returns a Promise
    because the eta-mu SDK creates sessions asynchronously."
@@ -242,5 +342,7 @@
                              :model (:model opts)
                              :thinkingLevel (:thinking-level opts)
                              :tools (clj->js (or (:tool-name-allowlist opts) []))
-                             :customTools (:custom-tools opts)}))]
-    (wrap-eta-mu-session (aget created "session") hook)))
+                             :customTools (:custom-tools opts)}))
+        raw-session (aget created "session")]
+    (configure-tools-choice! (aget raw-session "agent") (:tools-choice opts))
+    (wrap-eta-mu-session raw-session hook)))

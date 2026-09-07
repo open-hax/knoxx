@@ -4,6 +4,7 @@
             [knoxx.backend.domain.action.registry :refer [run-action!]]
             [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.infra.agent.runner :as agents-runner]
+            [knoxx.backend.infra.agent.event-policy-authority :as event-policy-authority]
             [knoxx.backend.infra.tooling :as tooling]))
 
 (defn- nonblank
@@ -140,14 +141,40 @@
    (or (get-in action [:action/with :execution-snapshot-from-event])
        (get-in action [:action/with :executionSnapshotFromEvent]))))
 
+(defn- event-overlay-requested?
+  [action]
+  (or (get-in action [:action/with :resource-policies-from-event])
+      (get-in action [:action/with :resourcePoliciesFromEvent])
+      (execution-snapshot-from-event? action)))
+
+(defn- assert-trusted-event-overlay!
+  "Refuse caller-carried agent authority outside a trusted runtime dispatch.
+
+  This check is on dispatch context plus the normalized trigger/event
+  participant binding, not payload data. A trusted generic source therefore
+  cannot lend authority to an overlay trigger unless the trigger names its
+  server-owned emitter and that emitter produced this event."
+  [ctx action]
+  (when (event-overlay-requested? action)
+    (let [emitter (nonblank (get-in ctx [:trigger :trigger/emitter]))
+          event-actor (nonblank (get-in ctx [:event :event/actor]))]
+      (when-not (and (true? (:event/trusted? ctx))
+                     emitter
+                     (= emitter event-actor))
+        (throw (ex-info "event-carried agent policy requires a trusted, emitter-bound runtime dispatch"
+                        {:status 403
+                         :code "untrusted_event_policy_overlay"}))))))
+
 (defn- resolved-execution
   "Project resolved agent policy into the portable snapshot comparison shape."
   [agent-id resolved]
-  {:translation-execution/agent-id agent-id
-   :translation-execution/model (:model resolved)
-   :translation-execution/thinking (some-> (:thinking-level resolved) name)
-   :translation-execution/system-prompt (:system-prompt resolved)
-   :translation-execution/tool-ids (vec (:tool-ids resolved))})
+  (cond-> {:translation-execution/agent-id agent-id
+           :translation-execution/model (:model resolved)
+           :translation-execution/thinking (some-> (:thinking-level resolved) name)
+           :translation-execution/system-prompt (:system-prompt resolved)
+           :translation-execution/tool-ids (vec (:tool-ids resolved))}
+    (:tools-choice resolved)
+    (assoc :translation-execution/tools-choice (:tools-choice resolved))))
 
 (defn event-execution-refusal
   "Describe contract drift between an event snapshot and resolved agent policy."
@@ -200,6 +227,19 @@
       (id-segment (:event/id event))
       "event"))
 
+(defn- event-run-coordinate
+  "Identify one normalized event inside its session scope.
+
+  Event dispatch guarantees `:event/id`; the scope fallback only preserves the
+  helper's behavior for direct callers that have not normalized their event.
+  Omitting the event id here lets two events for one trigger and channel share a
+  run id when they are spawned in the same millisecond."
+  [event scope-id]
+  (let [event-id (or (id-segment (:event/id event)) scope-id)]
+    (if (= scope-id event-id)
+      scope-id
+      (str scope-id "-" event-id))))
+
 (defn agent-source-config
   "Source/session config declared on the agent contract under :data :source."
   [resolved]
@@ -235,7 +275,9 @@
 (defn triggered-session-identifiers
   "Return run, conversation, and session ids for event-triggered agent actions.
 
-   Default ids embed the spawn timestamp so concurrent runs never collide.
+   Default ids embed the event's scope, normalized identity, and spawn timestamp
+   so distinct events cannot collide merely because they start in the same
+   millisecond.
    With {:sticky? true} the conversation and session ids drop the timestamp so
    every event for the same trigger+scope (e.g. Discord channel) continues one
    persistent session; only the run id stays unique per spawn."
@@ -244,7 +286,8 @@
   ([trigger event agent-id ts {:keys [sticky?]}]
    (let [trigger-id' (trigger-id trigger event agent-id)
          scope-id (event-scope-id event)
-         run-id (str "trigger-" trigger-id' "-" ts)]
+         event-coordinate (event-run-coordinate event scope-id)
+         run-id (str "trigger-" trigger-id' "-" event-coordinate "-" ts)]
      {:trigger-id trigger-id'
       :event-scope-id scope-id
       :run-id run-id
@@ -253,7 +296,7 @@
                          (str run-id "-" scope-id))
       :session-id (if sticky?
                     (str "trigger-session-" trigger-id' "-" scope-id)
-                    (str "trigger-session-" trigger-id' "-" scope-id "-" ts))})))
+                    (str "trigger-session-" trigger-id' "-" event-coordinate "-" ts))})))
 
 (defn triggered-audit-metadata
   "Return audit metadata that should follow an event-triggered run into the run store and OpenPlanner."
@@ -273,6 +316,7 @@
 
 (defmethod run-action! :actions/start-agent-session
   [{:keys [config event trigger] :as ctx} action]
+  (assert-trusted-event-overlay! ctx action)
   (let [agent-id (action-agent-id ctx action)
         resolved (tooling/resolve-agent-contract config agent-id (actor-id ctx nil))
         actor-id' (actor-id ctx resolved)
@@ -298,6 +342,10 @@
       :session_id (:session-id ids)
       :run_id (:run-id ids)
       :message rendered-message
+      :auth_context (when (some? resource-policies)
+                      (event-policy-authority/authorized-context
+                       resource-policies actor-id' (:role resolved)
+                       (:tool-policies resolved)))
       :agent_spec (merge (cond-> {:contract_id agent-id
                                   :actor_id actor-id'
                                   :role (:role resolved)
@@ -311,6 +359,9 @@
                                   :task_source (some-> (:task-source task-input) qualified-name)
                                   :rendered_task_prompt (:task task-input)
                                   :deprecated_agent_task_fallback (:deprecated-agent-task-fallback? task-input)}
+                           (:tools-choice resolved)
+                           (assoc :tools_choice (name (:tools-choice resolved)))
+
                            (some? resource-policies)
                            (assoc :resource_policies resource-policies))
                          (triggered-audit-metadata trigger event ids))

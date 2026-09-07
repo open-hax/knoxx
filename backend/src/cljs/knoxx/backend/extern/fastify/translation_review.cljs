@@ -20,6 +20,7 @@
      would let an anonymous caller manufacture the review evidence a publication
      gate is waiting on."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.translation-review-inventory :as inventory]
             [knoxx.backend.extern.fastify :as fastify]
@@ -261,7 +262,8 @@
         ensure-receipts! (or (:ensure-contract-receipts! dependencies)
                              contract-content/ensure-receipts!)
         records (await (load-records! config))
-        index (build-index records)
+        global-index (build-index records)
+        index (document-admission/visible-publication-index global-index scope)
         documents (vec (vals (:documents index)))
         roots (source-roots config records)
         revisions (await (load-revisions! config documents roots))

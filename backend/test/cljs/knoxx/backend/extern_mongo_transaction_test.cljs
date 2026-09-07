@@ -2,6 +2,20 @@
   (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.extern.mongo :as extern-mongo]))
 
+(deftest duplicate-key-classification-stays-inside-the-mongo-boundary
+  (let [numeric (doto (js/Error. "write collision")
+                  (aset "code" 11000))
+        string-code (doto (js/Error. "write collision")
+                      (aset "code" "11000"))
+        message-only (js/Error. "E11000 duplicate key error")
+        wrapped (ex-info "duplicate key" {:code 11000})]
+    (is (true? (extern-mongo/duplicate-key-error? numeric)))
+    (is (true? (extern-mongo/duplicate-key-error? string-code)))
+    (is (true? (extern-mongo/duplicate-key-error? message-only)))
+    (is (true? (extern-mongo/duplicate-key-error? wrapped)))
+    (is (false? (extern-mongo/duplicate-key-error?
+                 (js/Error. "connection reset"))))))
+
 (deftest ^:async transaction-topology-boundary-test
   (let [commands* (atom [])
         replica-db

@@ -92,6 +92,19 @@
                    [:documents :knoxx.docs/translation-pipeline
                     :document/translations])))))
 
+(deftest document-projection-preserves-and-canonicalizes-generated-lineage
+  (let [derived (assoc local-document
+                       :document/org-id "org-1"
+                       :document/visibility :private
+                       :document/derived-from :source-document
+                       :document/derived-source-revision "sha256-source")
+        projected (resolver/canonicalize-document derived)]
+    (is (= :knoxx.docs/source-document (:document/derived-from projected)))
+    (is (= "sha256-source" (:document/derived-source-revision projected)))
+    (is (= "org-1" (:document/org-id projected)))
+    (is (= :private (:document/visibility projected)))
+    (is (m/validate law/Document projected))))
+
 ;; ── 2/3 canonical identity inside payloads ────────────────────────────────
 
 (deftest indexed-payload-identity-is-canonical

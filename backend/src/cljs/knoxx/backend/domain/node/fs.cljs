@@ -125,6 +125,29 @@
   [p]
   (.dirname path (str p)))
 
+(defn ^:async real-path-or-nil!
+  "Canonical absolute path with symlinks resolved, or nil when absent."
+  [p]
+  (try
+    (await (.realpath fs (str p)))
+    (catch :default err
+      (when-not (= "ENOENT" (.-code err))
+        (throw err))
+      nil)))
+
+(defn canonical-path-contained?
+  "Whether canonical `candidate` is `root` itself or one of its descendants.
+
+  Callers must realpath both inputs first. `path.relative` plus the platform
+  separator avoids sibling-prefix mistakes such as `/srv/site-old` being
+  treated as a child of `/srv/site`."
+  [root candidate]
+  (let [relative (.relative path (str root) (str candidate))
+        parent-prefix (str ".." (.-sep path))]
+    (and (not (.isAbsolute path relative))
+         (not= ".." relative)
+         (not (.startsWith relative parent-prefix)))))
+
 (defn ^:async rename!
   "Promise<nil>. Atomically rename `from` to `to` (same filesystem)."
   [from to]

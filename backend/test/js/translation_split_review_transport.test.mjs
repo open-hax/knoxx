@@ -15,6 +15,14 @@ const browserTour = readFileSync(
   "utf8",
 );
 
+function sectionBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  assert.notEqual(start, -1, `missing section start: ${startMarker}`);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.notEqual(end, -1, `missing section end: ${endMarker}`);
+  return source.slice(start, end);
+}
+
 test("translation review credentials admit HTTPS and exact loopback HTTP", () => {
   const admitted = new Map([
     ["http://localhost:8000", "loopback-http"],
@@ -63,4 +71,47 @@ test("credential-bearing verifier clients pin curl and loopback proxy policy", (
     /SESSION="knoxx-translation-split-review-tour-\$\{RUN_ID\}"/);
   assert.match(browserTour,
     /NO_PROXY='\*' no_proxy='\*' HTTP_PROXY='' HTTPS_PROXY='' ALL_PROXY=''/);
+});
+
+test("HTTP verifier pins the revision-bound review blocker wire contract", () => {
+  const causalGate = sectionBetween(
+    httpVerifier,
+    'step "4. pending human review causally blocks public materialization"',
+    'step "5. granular review persists scores, notes, correction and retry identity"',
+  );
+
+  assert.match(causalGate, /\.type == "publication\/blocked"/);
+  assert.match(causalGate,
+    /\.blockers == \["translation-review-required"\]/);
+  assert.match(causalGate, /\.publication == \$publication/);
+  assert.match(causalGate, /\.revision == \$revision/);
+  assert.match(causalGate,
+    /--arg publication "\$TRANSLATION_FIXTURE_PUBLICATION_ID"/);
+  assert.match(causalGate, /--arg revision "\$current_source_revision"/);
+  assert.match(causalGate, /\.materialized == false/);
+});
+
+test("HTTP verifier fail-closes its publication content cleanup root", () => {
+  assert.match(httpVerifier,
+    /for tool in curl jq clojure unzip node realpath; do/);
+
+  const rootPreflight = sectionBetween(
+    httpVerifier,
+    '[ -n "$KNOXX_PUBLICATION_CONTENT_ROOT" ]',
+    '[ -d "$CONTRACTS_DIR" ]',
+  );
+
+  assert.ok(rootPreflight.includes('/*) ;;'), "absolute-path guard is absent");
+  assert.ok(
+    rootPreflight.includes('[ -d "$KNOXX_PUBLICATION_CONTENT_ROOT" ]'),
+    "existing-directory guard is absent",
+  );
+  assert.ok(
+    rootPreflight.includes('realpath -e -- "$KNOXX_PUBLICATION_CONTENT_ROOT"'),
+    "canonical-path guard is absent",
+  );
+  assert.ok(
+    rootPreflight.includes('/|"$REPO_ROOT"|"$REPO_ROOT"/*)'),
+    "filesystem-root and repository containment guard is absent",
+  );
 });

@@ -76,13 +76,16 @@
       {:evidence evidence :splits splits :record bound :turn admitted-turn})))
 
 (defn- deps
-  [root {:keys [evidence splits]}]
-  {:content-root root
-   :evidence-store evidence
-   :split-store splits
-   :digest-hex digest-hex
-   :clock (constantly "2026-08-26T16:05:00.000Z")
-   :observe-source-revision (fn [_] (js/Promise.resolve "sha256-abc123"))})
+  ([root state]
+   (deps root state (fn [_] (js/Promise.resolve nil))))
+  ([root {:keys [evidence splits]} emit-candidate-events!]
+   {:content-root root
+    :evidence-store evidence
+    :split-store splits
+    :digest-hex digest-hex
+    :clock (constantly "2026-08-26T16:05:00.000Z")
+    :emit-candidate-events! emit-candidate-events!
+    :observe-source-revision (fn [_] (js/Promise.resolve "sha256-abc123"))}))
 
 (defn- pair
   [admitted-turn index & {:as overrides}]
@@ -133,6 +136,68 @@
       (testing "content is composed in manifest order, not arrival order"
         (is (= (apply str translations)
                (await (content/content-for-receipt! root receipt))))))))
+
+(deftest ^:async partial-crash-replay-preserves-first-bytes-and-finishes-missing-splits
+  (let [{:keys [turn record splits] :as state} (await (admitted!))
+        root "/tmp/knoxx-translation-agent-sink-test/partial-crash-replay"
+        policies (agent-law/session-policies record turn)
+        first (await (sink/submit-pair! (deps root state) policies
+                                        (pair turn 0)))
+        replayed (await
+                  (sink/submit-pair!
+                   (deps root state) policies
+                   (pair turn 0 :translated_text
+                         "# Später abweichender Modelltext\n\n")))
+        stored (await (split-store/candidate-splits-for-turn!
+                       splits (:translation-turn/id turn)))]
+    (testing "a nondeterministic replay adopts the first durable partial member"
+      (is (= {:completed 1 :total 2}
+             (select-keys (:translation/progress first) [:completed :total])))
+      (is (= {:completed 1 :total 2}
+             (select-keys (:translation/progress replayed)
+                          [:completed :total])))
+      (is (nil? (:translation/refusal replayed)))
+      (is (= 1 (count stored)))
+      (is (= (first translations) (:candidate/text (first stored)))))
+    (let [completed (await (sink/submit-pair! (deps root state) policies
+                                               (pair turn 1)))
+          receipt (:translation/receipt completed)]
+      (testing "the replay can supply its missing member and settle normally"
+        (is (some? receipt))
+        (is (= (apply str translations)
+               (await (content/content-for-receipt! root receipt))))))))
+
+(deftest ^:async admitted-source-bytes-fill-an-omitted-model-echo
+  (let [{:keys [turn record splits] :as state} (await (admitted!))
+        policies (agent-law/session-policies record turn)
+        without-source (dissoc (pair turn 0) :source_text)
+        result (await
+                (sink/submit-pair!
+                 (deps "/tmp/knoxx-translation-agent-sink-test/server-source" state)
+                 policies
+                 without-source))]
+    (is (= {:completed 1 :total 2}
+           (select-keys (:translation/progress result) [:completed :total])))
+    (is (= 1 (count (await (split-store/candidate-splits-for-turn!
+                            splits (:translation-turn/id turn))))))))
+
+(deftest ^:async server-filled-source-still-refuses-an-untranslated-pair
+  (let [{:keys [turn record splits] :as state} (await (admitted!))
+        policies (agent-law/session-policies record turn)
+        source-text (get-in turn [:translation-turn/manifest
+                                  :split-manifest/splits 0
+                                  :split/source-text])
+        pair (-> (pair turn 0 :translated_text source-text)
+                 (dissoc :source_text))
+        result (await
+                (sink/submit-pair!
+                 (deps "/tmp/knoxx-translation-agent-sink-test/server-source-untranslated" state)
+                 policies
+                 pair))]
+    (is (= :pair-translation-untranslated
+           (get-in result [:translation/refusal :refusal/type])))
+    (is (empty? (await (split-store/candidate-splits-for-turn!
+                        splits (:translation-turn/id turn)))))))
 
 (deftest ^:async out-of-order-splits-compose-in-server-order
   (let [{:keys [turn record] :as state} (await (admitted!))
@@ -194,6 +259,57 @@
              (get-in changed [:translation/refusal :refusal/type])))
       (is (= (apply str translations) stored-after-refusal)
           "a refused changed replay leaves the first materialized bytes intact"))))
+
+(deftest ^:async candidate-events-follow-the-durable-receipt
+  (let [{:keys [turn record evidence] :as state} (await (admitted!))
+        emitted (atom [])
+        emitter (fn [projection]
+                  ((^:async fn []
+                    (let [receipts
+                          (await (evidence-store/completed-translations!
+                                  evidence
+                                  {:org-id "open-hax" :project "promethean"}))]
+                      (is (= (:receipt/type (:receipt projection))
+                             (:receipt/type (first receipts)))
+                          "the event boundary runs only after receipt persistence")
+                      (swap! emitted conj projection)))))
+        runtime-deps (deps "/tmp/knoxx-translation-agent-sink-test/events"
+                           state emitter)
+        policies (agent-law/session-policies record turn)]
+    (await (sink/submit-pair! runtime-deps policies (pair turn 0)))
+    (is (empty? @emitted) "partial split coverage emits no completion event")
+    (await (sink/submit-pair! runtime-deps policies (pair turn 1)))
+    (is (= 1 (count @emitted)))
+    (is (= (:translation-turn/id turn)
+           (get-in @emitted [0 :turn :translation-turn/id])))))
+
+(deftest ^:async equal-terminal-replay-repairs-a-failed-event-write
+  (let [{:keys [turn record evidence] :as state} (await (admitted!))
+        root "/tmp/knoxx-translation-agent-sink-test/event-repair"
+        policies (agent-law/session-policies record turn)
+        attempts (atom 0)
+        flaky-emitter
+        (fn [_]
+          (swap! attempts inc)
+          (if (= 1 @attempts)
+            (js/Promise.reject (js/Error. "OpenPlanner unavailable"))
+            (js/Promise.resolve {:ok true})))
+        runtime-deps (deps root state flaky-emitter)]
+    (await (sink/submit-pair! runtime-deps policies (pair turn 0)))
+    (let [first-outcome
+          (try
+            (await (sink/submit-pair! runtime-deps policies (pair turn 1)))
+            :unexpected-success
+            (catch :default err (.-message err)))]
+      (is (= "OpenPlanner unavailable" first-outcome))
+      (is (= 1 (count (await (evidence-store/completed-translations!
+                              evidence
+                              {:org-id "open-hax" :project "promethean"}))))
+          "event failure cannot roll back or duplicate the receipt")
+      (is (some? (:translation/receipt
+                  (await (sink/submit-pair! runtime-deps policies (pair turn 1)))))
+          "the same terminal split repairs the projection without retranslating")
+      (is (= 2 @attempts)))))
 
 (deftest ^:async split-authority-is-checked-before-any-candidate-is-written
   (let [{:keys [turn record splits] :as state} (await (admitted!))

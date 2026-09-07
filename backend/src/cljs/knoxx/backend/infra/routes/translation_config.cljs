@@ -35,10 +35,25 @@
        (mapv :resource/definition)
        translation-config/index-resources))
 
+(defn- deployment-model-override
+  [config]
+  (get (:agent-model-overrides config) "publication_translator"))
+
 (defn ^:async resolved-config!
-  "The resolved, catalog-validated configuration for a request context."
+  "The resolved, catalog-validated configuration for a request context.
+
+   A deployment model override follows the same validated patch path as an
+   authored policy, but remains ephemeral: this read does not rewrite EDN. The
+   publication translator and the ingestion worker therefore report the same
+   effective local model without changing the canonical cross-deployment
+   default."
   [config context]
-  (translation-config/resolve-config (await (config-index! config)) context))
+  (let [index (await (config-index! config))
+        model-override (deployment-model-override config)]
+    (if model-override
+      (translation-config/apply-patch index context
+                                      {:translation/model model-override})
+      (translation-config/resolve-config index context))))
 
 (defn ^:async config-response!
   "Wire-encoded configuration, as both the UI and the worker consume it."
@@ -56,6 +71,11 @@
    caller whose org holds an override is never told their effective config moved
    when it did not."
   [config domain-patch]
+  (when-let [model-override (deployment-model-override config)]
+    (throw (ex-info "translation model is managed by the deployment"
+                    {:status 409
+                     :code "translation_model_deployment_managed"
+                     :model model-override})))
   (let [records (await (config-records! config))
         index (translation-config/index-resources (mapv :resource/definition records))
         patched (translation-config/apply-global-patch index domain-patch)

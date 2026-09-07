@@ -67,8 +67,8 @@
   whose coordinates disagree with the pin. The check moved to where the
   defaulted value is actually known, which is the only place it can be correct."
   [:map
-   [:source_text {:description "Original source text"} :string]
-   [:translated_text {:description "Translated text"} :string]
+   [:translated_text {:description "REQUIRED non-empty translation of source_text. Never omit this field."} :string]
+   [:source_text {:description "REQUIRED exact original source text supplied by the server."} :string]
    [:source_lang {:optional true :description "Source language code (e.g. 'en'). Omit to use the language this session is pinned to."} :string]
    [:target_lang {:optional true :description "Target language code (e.g. 'es'). Omit to use the language this session is pinned to."} :string]
    [:document_id {:optional true :description "Document ID being translated. Omit to use the document this session is pinned to."} :string]
@@ -77,6 +77,18 @@
    [:segment_index {:optional true :description "Exact 0-based split index supplied by a split-backed session."} :int]
    [:split_id {:optional true :description "Exact server-issued source split identity."} :string]
    [:attempt_id {:optional true :description "Exact server-issued candidate attempt identity."} :string]])
+
+(def split-translation-params
+  "The stricter save_translation schema exposed inside a split-backed session.
+
+  Unlike the shared legacy segment tool, a publication candidate cannot lawfully
+  infer these three atomic coordinates. Making them required in the schema lets
+  the provider correct an incomplete call before the sink has to reject it."
+  [:map
+   [:translated_text {:description "REQUIRED non-empty translation of the server-issued source split. Never omit this field."} :string]
+   [:segment_index {:description "REQUIRED exact 0-based split index supplied by the server."} :int]
+   [:split_id {:description "REQUIRED exact server-issued source split identity."} :string]
+   [:attempt_id {:description "REQUIRED exact server-issued candidate attempt identity."} :string]])
 
 (def create-file-params
   [:map
@@ -413,16 +425,22 @@
            (make-memory-session-execute auth-context)))
 
 (defn save-translation-tool [auth-context]
-  (partial create-tool-obj
-           "save_translation" "Save Translation"
-           "Submit a translated source/translation pair for the document this session was started to translate."
-           "Save each translation you produce."
-           ["Call save_translation for each segment you translate."
-            "For a split-backed publication session, echo each supplied split_id, attempt_id, segment_index, and exact source_text; submit one translated_text per split."
-            "Do not invent, merge, renumber, or omit server-issued split boundaries; the final accepted split completes the candidate revision a human will review."
-            "Omit document_id, garden_id, source_lang and target_lang to accept the document and locale this session was pinned to; supplying a different one is refused."]
-           translation-params
-           (make-save-translation-execute auth-context)))
+  (let [split-backed? (translation-agent-law/split-backed?
+                       (:resourcePolicies auth-context))]
+    (partial create-tool-obj
+             "save_translation" "Save Translation"
+             "Submit a translated source/translation pair for the document this session was started to translate."
+             "Save each translation you produce."
+             (if split-backed?
+               ["Call save_translation for each server-issued split."
+                "Submit translated_text and echo exactly the supplied split_id, attempt_id, and segment_index."
+                "Do not submit source_text or any document/locale coordinates; the server binds those authoritative values from the admitted split."
+                "Do not invent, merge, renumber, or omit split boundaries; the final accepted split completes the candidate revision a human will review."]
+               ["Call save_translation for each segment you translate."
+                "Include the source_text and translated_text for the segment."
+                "Omit document_id, garden_id, source_lang and target_lang to accept coordinates this session is already pinned to."])
+             (if split-backed? split-translation-params translation-params)
+             (make-save-translation-execute auth-context))))
 
 (defn create-new-file-tool [auth-context]
   (partial create-tool-obj

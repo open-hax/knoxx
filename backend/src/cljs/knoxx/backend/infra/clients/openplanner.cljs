@@ -47,6 +47,35 @@
   (forward-v1! [client request]
     "Proxy compatibility for the frontend /api/openplanner/v1/* route."))
 
+(defprotocol IOpenPlannerEventProjectionRepair
+  "Optional capability for repairing derived fields beside immutable events.
+
+   The REST API does not currently expose these operations. Keeping them in a
+   separate protocol lets a caller reject an unsupported selected client
+   before it queries or appends to a different store as a fallback."
+  (ingest-events-awaiting-projections! [client events]
+    "Append events and await their derived projections before returning.")
+  (ensure-event-extra-fields! [client event-id required]
+    "Ensure required query metadata is present on one existing event.")
+  (ensure-event-vectors! [client event-ids]
+    "Ensure every named event has a valid vector projection."))
+
+(defn event-projection-repair-supported?
+  "True when `client` can await and repair event projections."
+  [client]
+  (satisfies? IOpenPlannerEventProjectionRepair client))
+
+(defn assert-event-projection-repair-supported!
+  "Return `client` when it can repair event metadata and vectors, else fail
+  before a projection writer performs any durable operation."
+  [client]
+  (when-not (event-projection-repair-supported? client)
+    (throw
+     (ex-info "selected OpenPlanner client cannot repair event projections"
+              {:status 503
+               :code "openplanner_event_projection_repair_unsupported"})))
+  client)
+
 (defn trim-trailing-slashes
   [s]
   (str/replace (str (or s "")) #"/+$" ""))

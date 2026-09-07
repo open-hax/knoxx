@@ -62,6 +62,13 @@
   [& _]
   false)
 
+(defn condition-publication-generate-draft
+  "True only for a document admission event whose trusted resource snapshot
+   explicitly requests post generation. Missing and truthy non-booleans fail
+   closed so an ordinary indexed document cannot accidentally spend model work."
+  [event]
+  (true? (get-in event [:event/payload :document/generate-drafts?])))
+
 ;; ─── Registration ─────────────────────────────────────────────────────
 
 (defn register-builtins!
@@ -72,4 +79,6 @@
   (registry/register-condition! :conditions/discord.channel condition-discord-channel)
   (registry/register-condition! :conditions/discord.author condition-discord-author)
   (registry/register-condition! :conditions/always condition-always)
-  (registry/register-condition! :conditions/never condition-never))
+  (registry/register-condition! :conditions/never condition-never)
+  (registry/register-condition! :conditions/publication.generate-draft
+                                condition-publication-generate-draft))

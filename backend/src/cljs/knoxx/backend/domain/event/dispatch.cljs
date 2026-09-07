@@ -2,19 +2,17 @@
   "Contract-native event dispatcher."
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [knoxx.backend.domain.action.interpreter :as action-interpreter]
             [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.action.start-agent-session]
             [knoxx.backend.domain.action.run-pipeline]
             [knoxx.backend.domain.condition.registry :as condition-registry]
-            [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.domain.event.normalize :as event-normalize]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
             [knoxx.backend.infra.config :as runtime-config]
             [knoxx.backend.domain.models :as runtime-models]))
 
-(defonce dispatched-event-ids* (atom #{}))
+(defonce dispatched-event-states* (atom {}))
 (defonce recent-events* (atom []))
 
 (defn- cfg
@@ -33,10 +31,62 @@
                 (take-last 30)
                 vec))))
 
-(defn- mark-event-dispatched!
+(defn- normalized-event-states
+  "Upgrade the pre-status hot-reload set to completed state without losing
+  process-local dedup evidence. Fresh processes always hold a map."
+  [states]
+  (if (map? states)
+    states
+    (into {} (map (fn [event-id] [event-id :completed])) states)))
+
+(defn event-state
+  "Return the process-local dispatch state for one exact event id."
   [event-id]
-  (let [[before] (swap-vals! dispatched-event-ids* conj event-id)]
-    (not (contains? before event-id))))
+  (some->> (nonblank event-id)
+           (get (normalized-event-states @dispatched-event-states*))))
+
+(defn- claim-event!
+  [event-id]
+  (let [[before] (swap-vals!
+                  dispatched-event-states*
+                  (fn [current-states]
+                    (let [normalized (normalized-event-states current-states)]
+                      (if (contains? normalized event-id)
+                        normalized
+                        (assoc normalized event-id :in-flight)))))
+        prior-state (get (normalized-event-states before) event-id)]
+    {:claimed? (nil? prior-state)
+     :prior-state prior-state}))
+
+(defn- mark-event-completed!
+  [event-id]
+  (swap! dispatched-event-states*
+         (fn [current-states]
+           (let [normalized (normalized-event-states current-states)]
+             (if (= :in-flight (get normalized event-id))
+               (assoc normalized event-id :completed)
+               normalized))))
+  true)
+
+(defn release-exact-event!
+  "Release one exact event id whose trigger execution is retriable.
+
+   The status map is both the in-flight claim and the completed-event dedup
+   ledger. A throw cannot remain in that ledger: doing so turns a transient
+   action failure into a permanent false success on every retry. Equal callers
+   that arrive while the owner is still running remain deduplicated; only the
+   owner that observes the failure releases its claim.
+
+   Terminal effect owners may also call this with their own deterministic event
+   id when the asynchronously queued work settles without producing its durable
+   success fact. This intentionally has no bulk or predicate form."
+  [event-id]
+  (let [event-id (nonblank event-id)]
+    (when event-id
+      (swap! dispatched-event-states*
+             (fn [current-states]
+               (dissoc (normalized-event-states current-states) event-id))))
+    true))
 
 (defn- load-trigger-resources
   [config]
@@ -83,9 +133,13 @@
        (condition-matches? trigger event)))
 
 (defn- actor-context
-  [config trigger event]
+  [config trigger event trusted?]
   {:config config
    :event event
+   ;; Dispatch provenance is deliberately outside the normalized event. A
+   ;; caller can forge every event field, but cannot change which entry point
+   ;; admitted it.
+   :event/trusted? trusted?
    :trigger trigger
    :actor/id (or (nonblank (:trigger/actor trigger))
                  (nonblank (:trigger/listener trigger)))
@@ -93,54 +147,80 @@
    :trigger-ctx (merge (get-in trigger [:data :context]) {}
                        (get-in event [:event/payload]) {})})
 
-(defn- trigger-failure-result
-  [trigger event err]
-  (let [diagnostic (errors/log-error!
-                    :event-dispatch/trigger-action
-                    {:trigger/id (:trigger/id trigger)
-                     :event/id (:event/id event)
-                     :event/types (:event/types event)}
-                    err)]
-    {:ok false
-     :failed true
-     :reason (or (:code diagnostic) "action_error")
-     :error (:message diagnostic)
-     :trigger (:trigger/id trigger)
-     :event/id (:event/id event)}))
+(defn- matching-triggers
+  [config event]
+  (let [all-triggers (load-trigger-resources config)]
+    (js/console.log "[event-dispatch] loaded triggers:" (count all-triggers))
+    (->> all-triggers
+         (map trigger-normalize/normalize-trigger)
+         (filter #(trigger-matches? % event))
+         vec)))
+
+(defn- ^:async run-trigger!
+  [config event trigger trusted?]
+  (try
+    (await (action-registry/run-action!
+            (actor-context config trigger event trusted?)
+            (action-registry/action-map trigger)))
+    (catch :default err
+      (js/console.error "[event-dispatch] action failed for trigger"
+                        (:trigger/id trigger) ":" (.-message err))
+      (throw err))))
+
+(defn- ^:async dispatch-claimed-event!
+  [config event trusted?]
+  (let [event-id (:event/id event)]
+    (try
+      (let [matched (matching-triggers config event)
+            _ (js/console.log "[event-dispatch] matching triggers:"
+                              (count matched) "for event"
+                              (pr-str (:event/type event)))
+            results (await (js/Promise.all
+                            (clj->js
+                             (mapv #(run-trigger! config event % trusted?)
+                                   matched))))]
+        ;; An unmatched id must remain retryable after its trigger is enabled.
+        (if (seq matched)
+          (mark-event-completed! event-id)
+          (release-exact-event! event-id))
+        {:matchedTriggers (mapv :trigger/id matched)
+         :event event
+         :results (js->clj results :keywordize-keys true)
+         :dedup/status (when (seq matched) :completed)})
+      (catch :default err
+        (release-exact-event! event-id)
+        (throw err)))))
+
+(defn- ^:async dispatch-with-provenance!
+  [config event trusted?]
+  (let [normalized-event (event-normalize/normalize-event event)
+        event-id (:event/id normalized-event)
+        _ (append-recent-event! normalized-event)
+        {:keys [claimed? prior-state]} (claim-event! event-id)]
+    (if claimed?
+      (await (dispatch-claimed-event! config normalized-event trusted?))
+      (do
+        (js/console.log "[event-dispatch] event deduplicated:" event-id)
+        {:matchedTriggers []
+         :event normalized-event
+         :skipped true
+         :dedup/status prior-state}))))
 
 (defn ^:async dispatch!
+  "Dispatch an event produced by an in-process source, schedule, or domain.
+
+  Trust here is capability provenance, not a claim made inside `event`."
   ([event]
    (dispatch! (cfg) event))
   ([config event]
-   (let [event' (event-normalize/normalize-event event)
-         event-id (:event/id event')]
-      (append-recent-event! event')
-      (if-not (mark-event-dispatched! event-id)
-        (do (js/console.log "[event-dispatch] event deduplicated:" event-id)
-            {:matchedTriggers []
-             :event event'
-             :skipped true})
-        (let [all-triggers (load-trigger-resources config)
-              _ (js/console.log "[event-dispatch] loaded triggers:" (count all-triggers))
-              matching-triggers (->> all-triggers
-                                     (map trigger-normalize/normalize-trigger)
-                                     (filter #(trigger-matches? % event'))
-                                     vec)
-               _ (js/console.log "[event-dispatch] matching triggers:" (count matching-triggers) "for event" (pr-str (:event/type event')))
-               results (await (js/Promise.all
-                               (clj->js
-                                 (mapv (^:async fn [trigger]
-                                         (try
-                                           (await (action-registry/run-action!
-                                                   (actor-context config trigger event')
-                                                   (action-registry/action-map trigger)))
-                                           (catch :default err
-                                             (js/console.error "[event-dispatch] action failed for trigger" (:trigger/id trigger) ":" (.-message err))
-                                             (throw err))))
-                                       matching-triggers))))]
-           {:matchedTriggers (mapv :trigger/id matching-triggers)
-            :event event'
-            :results (js->clj results :keywordize-keys true)})))))
+   (await (dispatch-with-provenance! config event true))))
+
+(defn ^:async dispatch-external!
+  "Dispatch an operator-supplied event without event-policy authority."
+  ([event]
+   (dispatch-external! (cfg) event))
+  ([config event]
+   (await (dispatch-with-provenance! config event false))))
 
 (defn status-snapshot
   [config]
@@ -157,10 +237,20 @@
                         :events (:trigger/events trigger)
                         :action (:trigger/action trigger)
                         :agent (get-in trigger [:trigger/with :agent-id])
-                        :listener (:trigger/listener trigger)})
+                        :listener (:trigger/listener trigger)
+                        :emitter (:trigger/emitter trigger)
+                        :condition (some? (:trigger/condition trigger))
+                        :resourcePoliciesFromEvent
+                        (true? (get-in trigger
+                                       [:trigger/with
+                                        :resource-policies-from-event]))
+                        :executionSnapshotFromEvent
+                        (true? (get-in trigger
+                                       [:trigger/with
+                                        :execution-snapshot-from-event]))})
                      triggers)}))
 
 (defn reset-dedup!
   []
-  (reset! dispatched-event-ids* #{})
+  (reset! dispatched-event-states* {})
   (reset! recent-events* []))

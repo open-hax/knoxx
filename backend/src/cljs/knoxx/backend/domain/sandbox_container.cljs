@@ -211,10 +211,10 @@
 (defn- ^:async sandbox-inspect!
   [runtime config sandbox-id]
   (let [container-name (sandbox-container-name sandbox-id)
-        {:keys [ok stdout stderr error]} (await (docker-command! runtime config ["inspect" container-name] {:timeout 30000}))]
+        result (await (docker-command! runtime config ["inspect" container-name] {:timeout 30000}))
+        {:keys [ok stdout stderr error]} result]
     (if-not ok
-      (if (or (str/includes? stderr "No such object")
-              (str/includes? stderr "No such container"))
+      (if (sandbox-law/docker-container-missing? result)
         nil
         (throw (js/Error. (str "docker inspect failed: " (or error stderr)))))
       (let [items (.parse js/JSON stdout)

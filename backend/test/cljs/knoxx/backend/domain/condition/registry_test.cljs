@@ -97,6 +97,20 @@
                    '(conditions/discord.channel event ["123"])
                    event nil nil nil))))))
 
+(deftest builtin-publication-draft-condition-fails-closed
+  (builtin/register-builtins!)
+  (doseq [[value expected] [[true true]
+                            [false false]
+                            [nil false]
+                            ["true" false]
+                            [1 false]]]
+    (let [event {:event/payload {:document/generate-drafts? value}}]
+      (is (= expected
+             (registry/evaluate
+              '(conditions/publication.generate-draft event)
+              event nil nil nil))
+          (pr-str value)))))
+
 (deftest complex-condition-expression
   (testing "or of mention and keyword"
     (builtin/register-builtins!)

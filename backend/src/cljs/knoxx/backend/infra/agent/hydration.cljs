@@ -16,6 +16,7 @@
             [knoxx.backend.domain.event.tools :as events]
             [knoxx.backend.domain.actor.tools :as actors]
             [knoxx.backend.infra.openplanner.tools :as openplanner]
+            [knoxx.backend.infra.publication-draft-tool :as publication-draft]
             [knoxx.backend.domain.music :as music]
             [knoxx.backend.domain.voice.tools :as voice]
             [knoxx.backend.domain.media.blaze :as blaze]
@@ -221,6 +222,7 @@
             (.concat (events/create-events-custom-tools runtime config auth-context))
             (.concat (actors/create-actors-custom-tools runtime config auth-context))
             (.concat (openplanner/create-openplanner-custom-tools runtime config auth-context))
+            (.concat (publication-draft/create-publication-draft-tools runtime config auth-context))
             (.concat (music/create-music-custom-tools runtime config auth-context))
             (.concat (voice/create-voice-synth-custom-tools runtime config auth-context))
             (.concat (blaze/create-blaze-custom-tools runtime config auth-context))

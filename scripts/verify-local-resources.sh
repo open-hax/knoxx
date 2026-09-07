@@ -69,12 +69,41 @@ else
   fail "Ollama version returned HTTP ${ollama_version_status:-unreachable}"
 fi
 
-if curl -fsS --max-time 10 "$OLLAMA_BASE_URL/api/tags" \
+ollama_tags="$(curl -fsS --max-time 10 "$OLLAMA_BASE_URL/api/tags" || true)"
+if printf '%s' "$ollama_tags" \
   | jq -e --arg model "$OLLAMA_DEFAULT_MODEL" \
-      '.models | any(.name == $model)' >/dev/null; then
+      '.models | any(.name == $model or .model == $model)' >/dev/null; then
   pass "Ollama has the configured Knoxx model $OLLAMA_DEFAULT_MODEL"
 else
   fail "Ollama does not list the configured Knoxx model $OLLAMA_DEFAULT_MODEL"
+fi
+
+if printf '%s' "$ollama_tags" \
+  | jq -e --arg model "$EMBED_PROVIDER_MODEL" '
+      .models | any(
+        .name == $model or .model == $model or
+        (.name | startswith($model + ":")) or
+        (.model | startswith($model + ":")))' >/dev/null; then
+  pass "Ollama has the configured embedding model $EMBED_PROVIDER_MODEL"
+else
+  fail "Ollama does not list the configured embedding model $EMBED_PROVIDER_MODEL"
+fi
+
+embedding_payload="$(jq -cn --arg model "$EMBED_PROVIDER_MODEL" \
+  '{model:$model,input:"Knoxx local embedding verification"}')"
+embedding_response="$(curl -fsS --max-time 120 \
+  -H 'Content-Type: application/json' \
+  -d "$embedding_payload" \
+  "$EMBED_PROVIDER_BASE_URL/v1/embeddings" || true)"
+if printf '%s' "$embedding_response" \
+  | jq -e --argjson dimensions "$EMBED_PROVIDER_DIMENSIONS" '
+      (.data | type) == "array" and (.data | length) == 1 and
+      (.data[0].embedding | type) == "array" and
+      (.data[0].embedding | length) == $dimensions and
+      (.data[0].embedding | all(type == "number" and isfinite))' >/dev/null; then
+  pass "Ollama produced one finite ${EMBED_PROVIDER_DIMENSIONS}-dimensional embedding"
+else
+  fail "Ollama did not produce the configured ${EMBED_PROVIDER_DIMENSIONS}-dimensional embedding"
 fi
 
 if (( failures > 0 )); then

@@ -78,6 +78,27 @@
     (is (= "1001:127"
            (sandbox-law/sandbox-user-for-effective-identity "  " 1001 127)))))
 
+(deftest docker-container-missing-law-test
+  (testing "Docker absence diagnostics are normalized across CLI versions"
+    (doseq [result [{:ok false
+                     :stderr "Error: No such object: knoxx-sandbox-id"}
+                    {:ok false
+                     :stderr "error: no such object: knoxx-sandbox-id"}
+                    {:ok false
+                     :error (str "Command failed: docker inspect knoxx-sandbox-id\n"
+                                 "Error response from daemon: No such container: "
+                                 "knoxx-sandbox-id")}]]
+      (is (true? (sandbox-law/docker-container-missing? result))
+          (str "expected missing-container classification for " (pr-str result)))))
+
+  (testing "success and unrelated Docker failures are not absence"
+    (doseq [result [{:ok true :stderr ""}
+                    {:ok false :stderr "permission denied"}
+                    {:ok false :error "Cannot connect to the Docker daemon"}
+                    {:ok false :stderr "Error: No such image: missing:latest"}]]
+      (is (false? (sandbox-law/docker-container-missing? result))
+          (str "expected operational classification for " (pr-str result))))))
+
 (deftest internal-command-failure-law-test
   (testing "successful structured results pass through the classifier"
     (is (nil? (sandbox-law/internal-command-failure

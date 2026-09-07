@@ -5,8 +5,9 @@
 # The run creates exactly eighteen publication work rows, seeds one
 # production-shaped three-split candidate through Knoxx's real laws and Mongo
 # adapters, drives granular + document review over HTTP, verifies corrected
-# text is future translation memory, records whole-output approval, then proves
-# a later rejection revokes that approval. Every filesystem and Mongo fact is
+# text is future translation memory, proves an unapproved translated output is
+# blocked from publication, records whole-output approval, then proves a later
+# rejection revokes that approval. Every filesystem and Mongo fact is
 # run-scoped and removed from the EXIT/INT/TERM trap.
 #
 # This deliberately does not call a model. It proves the review and memory seam,
@@ -147,7 +148,7 @@ trap cleanup EXIT
 trap 'trap - EXIT; cleanup 130' INT
 trap 'trap - EXIT; cleanup 143' TERM
 
-for tool in curl jq clojure unzip node; do
+for tool in curl jq clojure unzip node realpath; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: ${tool}"
 done
 transport_kind="$(knoxx_credential_transport_kind "$BASE_URL" 2>/dev/null)" \
@@ -167,6 +168,19 @@ note "contracts dir ${CONTRACTS_DIR}"
   || die "VERIFY_ORG_ID (or KNOXX_VERIFY_ORG_ID) must name the API key's organization"
 [ -n "$KNOXX_PUBLICATION_CONTENT_ROOT" ] \
   || die "KNOXX_PUBLICATION_CONTENT_ROOT must equal the running backend's content root"
+case "$KNOXX_PUBLICATION_CONTENT_ROOT" in
+  /*) ;;
+  *) die "KNOXX_PUBLICATION_CONTENT_ROOT must be an absolute path" ;;
+esac
+[ -d "$KNOXX_PUBLICATION_CONTENT_ROOT" ] \
+  || die "publication content root does not exist: ${KNOXX_PUBLICATION_CONTENT_ROOT}"
+KNOXX_PUBLICATION_CONTENT_ROOT="$(realpath -e -- "$KNOXX_PUBLICATION_CONTENT_ROOT")" \
+  || die "publication content root cannot be resolved: ${KNOXX_PUBLICATION_CONTENT_ROOT}"
+case "$KNOXX_PUBLICATION_CONTENT_ROOT" in
+  /|"$REPO_ROOT"|"$REPO_ROOT"/*)
+    die "verification publication content must live outside the Knoxx repository: ${KNOXX_PUBLICATION_CONTENT_ROOT}"
+    ;;
+esac
 [ -d "$CONTRACTS_DIR" ] || die "contracts directory not found: ${CONTRACTS_DIR}"
 [ ! -e "$FIXTURE_DIR" ] \
   || die "fixture directory already exists: ${FIXTURE_DIR}; remove the stale verifier fixture first"
@@ -271,8 +285,34 @@ expect_jq "the candidate exposes its real persisted three-split set in order" \
 row="$(fixture_row "$inventory")"
 first_split_id="$(printf '%s' "$row" | jq -r '.split_review.splits[0].split_id')"
 second_split_id="$(printf '%s' "$row" | jq -r '.split_review.splits[1].split_id')"
+current_source_revision="$(printf '%s' "$row" | jq -r '.revision // empty')"
+[ -n "$current_source_revision" ] \
+  || die "the hydrated fixture row has no concrete source revision"
 
-step "4. granular review persists scores, notes, correction and retry identity"
+step "4. pending human review causally blocks public materialization"
+reconcile_body="$(jq -cn --arg publication "$TRANSLATION_FIXTURE_PUBLICATION_ID" \
+  '{publicationId:$publication}')"
+blocked_reconciliation="$(http POST "$RECONCILE_URL" auth "$reconcile_body")"
+expect_status "the unapproved published intent reconciles to an explicit decision" "200" \
+  "$blocked_reconciliation"
+expect_jq "the exact current translation is blocked only by required review" \
+  '.type == "publication/blocked" and
+   .blockers == ["translation-review-required"] and
+   .publication == $publication and
+   .revision == $revision' \
+  "$blocked_reconciliation" \
+  --arg publication "$TRANSLATION_FIXTURE_PUBLICATION_ID" \
+  --arg revision "$current_source_revision"
+
+materialization="$(translation_fixture_helper materialization)" \
+  || die "the static-site target could not be inspected after blocked reconciliation"
+if printf '%s' "$materialization" | jq -e '.materialized == false' >/dev/null 2>&1; then
+  pass "blocked reconciliation wrote no public static artifact"
+else
+  fail "review-blocked reconciliation materialized public bytes" "$materialization"
+fi
+
+step "5. granular review persists scores, notes, correction and retry identity"
 in_review_payload="$(jq -cn \
   --arg set "$candidate_set_id" --arg split "$first_split_id" --arg correction "$CORRECTION_A" \
   '{candidate_set_id:$set, split_id:$split, status:"in-review",
@@ -331,7 +371,7 @@ else
   fail "approved correction was not returned by the production memory projection" "$memory"
 fi
 
-step "5. incomplete and rejected split sets cannot authorize whole output"
+step "6. incomplete and rejected split sets cannot authorize whole output"
 inventory="$(http GET "$REVIEWS_URL" auth)"
 row="$(fixture_row "$inventory")"
 approval_body="$(printf '%s' "$row" | jq -c \
@@ -352,7 +392,7 @@ expect_jq "the rejection is visible beside the still-approved corrected split" \
    index("approved") != null and index("rejected") != null' \
   "$inventory" --arg publication "$TRANSLATION_FIXTURE_PUBLICATION_ID"
 
-step "6. document fast paths operate on the server-owned persisted set"
+step "7. document fast paths operate on the server-owned persisted set"
 bulk_base="$(jq -cn --arg set "$candidate_set_id" \
   '{candidate_set_id:$set,adequacy:"good",fluency:"good",
     terminology:"correct",risk:"safe",editor_notes:"Document fast path."}')"
@@ -403,7 +443,7 @@ bulk_retry="$(http POST "$BULK_REVIEWS_URL" auth "$approve_all")"
 expect_status "an exact Approve All replay is idempotent" "200" "$bulk_retry"
 expect_jq "the bulk replay reports existing review facts" '.status == "existing"' "$bulk_retry"
 
-step "7. whole approval succeeds only for the current fully-reviewed output"
+step "8. whole approval succeeds only for the current fully-reviewed output"
 inventory="$(http GET "$REVIEWS_URL" auth)"
 row="$(fixture_row "$inventory")"
 approval_body="$(printf '%s' "$row" | jq -c \
@@ -421,8 +461,6 @@ expect_jq "the inventory now reports the exact resource work approved" \
    .approved == true and .work_state == "approved"' \
   "$inventory" --arg publication "$TRANSLATION_FIXTURE_PUBLICATION_ID"
 
-reconcile_body="$(jq -cn --arg publication "$TRANSLATION_FIXTURE_PUBLICATION_ID" \
-  '{publicationId:$publication}')"
 reconciliation="$(http POST "$RECONCILE_URL" auth "$reconcile_body")"
 expect_status "the approved resource reconciles through the production target" "200" \
   "$reconciliation"
@@ -461,7 +499,7 @@ revoked_body="$(printf '%s' "$row" | jq -c \
 expect_status "the rejected current projection cannot be whole-approved" "409" \
   "$(http POST "$APPROVALS_URL" auth "$revoked_body")"
 
-step "8. known live-service boundary"
+step "9. known live-service boundary"
 warn "the verifier seeds a production-shaped candidate directly; it does not prove model/provider quality"
 note "Run the dispatch verifier separately to watch agent dispatch and worker availability."
 note "This run does prove the 18-row inventory, canonical persisted splits, granular"

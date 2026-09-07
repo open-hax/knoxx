@@ -78,6 +78,15 @@
         (is (= :remove (:op result)))
         (is (= :publication-not-public (:reason result)))))))
 
+(deftest draft-with-observation-removes
+  (let [result (plan-for {:publication/state :draft}
+                         {:observed converged-observation})]
+    (is (= :remove (:op result)))
+    (is (= :publication-not-public (:reason result)))
+    (is (= converged-observation (:observed result))))
+  (testing "a draft that was never materialized is already converged"
+    (is (= :noop (:op (plan-for {:publication/state :draft} {}))))))
+
 ;; ── 4 garden archive dominates ────────────────────────────────────────────
 
 (deftest archived-garden-removes
@@ -95,7 +104,7 @@
 ;; ── 5 removal is never blocked ────────────────────────────────────────────
 
 (deftest removal-is-never-blocked
-  (doseq [state [:withheld :archived]
+  (doseq [state [:draft :withheld :archived]
           evidence blocker-matrix
           observed [nil converged-observation]]
     (let [result (plan-for {:publication/state state}
@@ -180,7 +189,7 @@
 ;; ── 10 no publish plan carries a nil revision ─────────────────────────────
 
 (deftest no-publish-plan-has-nil-revision
-  (let [results (for [state [:published :withheld :archived]
+  (let [results (for [state [:published :draft :withheld :archived]
                       garden [:knoxx.docs/promethean :knoxx.docs/legacy]
                       revision ["probe-revision" nil]
                       evidence blocker-matrix
@@ -260,4 +269,5 @@
     (is (= :remove (:op (plan-for {:publication/state :withheld}
                                   {:observed converged-observation}))))
     (is (= :noop (:op (plan-for {:publication/state :withheld} {}))))
+    (is (= :noop (:op (plan-for {:publication/state :draft} {}))))
     (is (= :noop (:op (plan-for {:publication/state :archived} {}))))))

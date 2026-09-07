@@ -57,15 +57,15 @@
   item with a nil `:translation/source-revision`; silent omission would make an
   unreadable source indistinguishable from a resource that never existed.
 
-  Only structurally admissible, publishing, cross-locale intents derive work.
-  Withheld and archived publications remain desired-state history, not work a
-  translator should be asked to perform."
+  Only structurally translatable, cross-locale intents derive work. Published
+  and draft relations appear; withheld and archived publications remain
+  desired-state history, not work a translator should be asked to perform."
   [publication-index source-revisions]
   (->> (:publications publication-index)
        (keep (fn [intent]
                (let [hydrated (publication-law/hydrate-publication-intent
                                publication-index intent)]
-                 (when (and (publication-law/admissible-publication?
+                 (when (and (publication-law/translatable-publication?
                              publication-index hydrated)
                             (publication-gate/translation-work-eligible? hydrated))
                    {:publication/id (:publication/id hydrated)

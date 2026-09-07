@@ -133,6 +133,13 @@
       (is (false? (:destructiveHint a)) "it only appends")
       (is (false? (:idempotentHint a)) "repeating adds another claim"))))
 
+(deftest generated-draft-write-is-create-only-and-idempotent
+  (let [a (ann/for-tool "save_publication_draft")]
+    (is (false? (:readOnlyHint a)))
+    (is (false? (:destructiveHint a)))
+    (is (true? (:idempotentHint a)))
+    (is (false? (:openWorldHint a)))))
+
 (deftest an-undeclared-tool-gets-no-annotations
   (testing "nil leaves the client on its conservative defaults"
     ;; Deliberate: asserting readOnly for a tool nobody has checked would be

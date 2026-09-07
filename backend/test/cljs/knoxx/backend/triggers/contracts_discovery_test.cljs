@@ -17,6 +17,14 @@
       (is (every? #(.existsSync (js/require "node:fs") %) roots)
           (str "Configured contract root should exist. Roots: " (pr-str roots))))))
 
+(deftest generated-contract-root-is-lower-priority-and-opt-in
+  (let [config (assoc fixture-config
+                      :generated-contracts-dir "test/fixtures/empty-contracts")
+        roots (contract-loader/contract-root-paths config)]
+    (is (= 2 (count roots)))
+    (is (.endsWith (first roots) "test/fixtures/trigger-contracts"))
+    (is (.endsWith (second roots) "test/fixtures/empty-contracts"))))
+
 (deftest trigger-files-are-discoverable
   (testing "trigger files can be discovered under the configured root"
     (let [roots (contract-loader/contract-root-paths fixture-config)

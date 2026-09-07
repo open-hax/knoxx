@@ -27,7 +27,21 @@
 
 (defn recovered-agent-spec
   [session]
-  (:agent_spec session))
+  (when-let [agent-spec (or (:agent_spec session)
+                            (:agent-spec session)
+                            (:agentSpec session))]
+    (let [tools-choice-value (or (:tools-choice agent-spec)
+                                 (:tools_choice agent-spec)
+                                 (:toolsChoice agent-spec)
+                                 (:tools/choice agent-spec))
+          tools-choice (some-> (if (keyword? tools-choice-value)
+                                 (name tools-choice-value)
+                                 tools-choice-value)
+                               str
+                               str/trim
+                               not-empty)]
+      (cond-> agent-spec
+        tools-choice (assoc :tools-choice tools-choice)))))
 
 (defn restored-conversation-access!
   [session]

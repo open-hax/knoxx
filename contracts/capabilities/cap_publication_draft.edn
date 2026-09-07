@@ -1,0 +1,3 @@
+{:cap/id :cap/publication-draft
+ :cap/tools [:save_publication_draft]
+ :cap/user-surfaces []}

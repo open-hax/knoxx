@@ -53,18 +53,22 @@ meaningful evidence.
    Export the same `MONGODB_URI`/`MONGODB_DB` (or
    `OPENPLANNER_MONGODB_URI`/`OPENPLANNER_MONGODB_DB`) to the verifier.
 3. Set `KNOXX_PUBLICATION_CONTENT_ROOT` to the exact filesystem root mounted in
-   the backend. The helper writes and later removes immutable candidate content
-   there, and the walkthrough inspects the static-site manifest and artifact
-   written by production reconciliation. A backend without this production
-   target fails the walkthrough instead of treating approval as publication.
+   the backend. It must be an existing absolute directory outside the Knoxx
+   checkout, and it cannot be the filesystem root. The verifier canonicalizes
+   it with `realpath` before seeding so the helper and cleanup trap cannot resolve
+   the same configured value from different working directories. The helper
+   writes and later removes immutable candidate content there, and the
+   walkthrough inspects the static-site manifest and artifact written by
+   production reconciliation. A backend without this production target fails
+   the walkthrough instead of treating approval as publication.
 4. Set `VERIFY_ORG_ID` to the organization id resolved for the API key/browser
    identity. This is not guessed: review evidence is tenant-scoped, and seeding
    under a guessed tenant would only prove that the join correctly returns
    nothing.
 5. Install repository dependencies. The helper runs with
    `backend/node_modules/.bin/nbb` and derives the pinned Malli/Katamorph
-   classpath from `backend/deps.edn`; `clojure`, Java, and `unzip` must be
-   available.
+   classpath from `backend/deps.edn`; `clojure`, Java, `unzip`, and `realpath`
+   must be available.
 6. The API key or browser identity needs publication read/manage permission as
    well as access to the translation review routes. Reconciliation is a real
    public-content mutation, although every fixture path and resource id is
@@ -117,8 +121,12 @@ requires 401/403. It also requires closed request contracts to refuse:
   `sensitive`, and `policy_violation`); and
 - a syntactically valid candidate set that was never persisted.
 
-Whole-output approval is attempted while splits are incomplete and must return
-409. It is attempted again after a later rejection and must still return 409.
+Before any review mutation, the publication-intended fixture is reconciled and
+must return a `publication/blocked` receipt whose only blocker is
+`translation-review-required`; direct target observation must remain
+`materialized: false`. Whole-output approval is then attempted while splits are
+incomplete and must return 409. It is attempted again after a later rejection
+and must still return 409.
 
 ### Granular review and memory
 

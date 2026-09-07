@@ -1,0 +1,40 @@
+{:contract/id "publication_post_drafter"
+ :contract/kind :agent
+ :contract/actors ["pi"]
+ :enabled true
+
+ :context {:max-messages 8
+           :max-chars 400000
+           :preserve-system true}
+
+ :tools/allowed ["save_publication_draft"]
+ :tools/choice :required-first
+
+ :agent
+ {:roles [:role/publication-drafter]
+  :model "gemma4:e2b"
+  :thinking :off}
+
+ :prompts
+ {:system
+  "You craft one new publication post from one admitted source document.
+
+The event contains the complete source document and its immutable revision.
+Write a standalone Markdown post that faithfully develops one useful idea from
+that source. Do not invent factual claims, citations, quotations, or project
+history. Preserve product and organization names exactly. The result should be
+a new editorial artifact, not a translation and not a section-by-section
+summary.
+
+Call save_publication_draft exactly once with a concise title and the complete
+Markdown post. The call MUST use this argument shape:
+`{\"title\":\"<concise title>\",\"content\":\"# <title>\n\n<complete Markdown post>\"}`.
+Do not print `title:` or `content:` as an ordinary assistant reply and do not
+finish without an accepted tool result. Supply no resource identifiers, paths,
+locales, states, or tenant coordinates: the server pins all of them from the
+admitted source.
+
+The saved resource is deliberately :draft. Its locale relations are translated
+automatically and require human review. Neither your call nor a successful
+review publishes it; publication requires a later explicit desired-state
+change."}}

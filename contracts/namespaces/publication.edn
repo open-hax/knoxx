@@ -14,6 +14,7 @@
  [{:trigger/id :translation-needed
    :trigger/kind :event
    :trigger/listener "pi"
+   :trigger/emitter "knoxx-publication"
    :trigger/events [:publication/translation-needed]
    :trigger/action :actions/start-agent-session
 
@@ -58,4 +59,25 @@ effective split is approved."}
    :trigger/context
    {:reason "a publication intent needs a translated revision"}
 
+   :enabled true}
+
+  {:trigger/id :craft-post-from-indexed-document
+   :trigger/kind :event
+   :trigger/listener "pi"
+   :trigger/emitter "knoxx-publication"
+   :trigger/events [:publication/document-indexed]
+   :trigger/condition (conditions/publication.generate-draft event)
+   :trigger/action :actions/start-agent-session
+   :trigger/with
+   {:agent-id "publication_post_drafter"
+    :resource-policies-from-event true
+    :task
+    "The admitted document below requests a new post draft.
+
+Its complete source bytes appear in Content. Craft one grounded, standalone
+Markdown post and call save_publication_draft exactly once. The server owns all
+identity, garden, locale, review, and publication-state fields; submit only the
+title and complete Markdown content."}
+   :trigger/context
+   {:reason "an admitted anchor requests a review-bound post draft"}
    :enabled true}]}

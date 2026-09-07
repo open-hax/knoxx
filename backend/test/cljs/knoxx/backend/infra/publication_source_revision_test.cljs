@@ -1,5 +1,8 @@
 (ns knoxx.backend.infra.publication-source-revision-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require ["node:fs/promises" :as node-fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.domain.node.fs :as fs]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
@@ -47,7 +50,7 @@
   (let [path-a (await (write-source! "a.md" "# Alpha"))
         path-b (await (write-source! "b.md" "# Beta"))
         revisions (await (source-revision/source-revisions!
-                          {}
+                          {:contracts-dir (str temp-root "/contracts")}
                           [(document :knoxx.docs/a path-a)
                            (document :knoxx.docs/b path-b)]))]
     (testing "each document gets its own content-derived revision"
@@ -62,7 +65,7 @@
       ;; the honest shape: the gate then reports the revision unresolved instead
       ;; of proceeding on a guess.
       (let [with-missing (await (source-revision/source-revisions!
-                                 {}
+                                 {:contracts-dir (str temp-root "/contracts")}
                                  [(document :knoxx.docs/gone
                                             (str temp-root "/does-not-exist.md"))]))]
         (is (not (contains? with-missing :knoxx.docs/gone)))))))
@@ -80,7 +83,8 @@
                                           (document :knoxx.docs/probe "docs/probe.md")))))
 
   (testing "an absolute path is respected as written"
-    ;; An operator who wrote an absolute path meant it.
+    ;; This is only candidate resolution. Reads still require canonical
+    ;; containment under the resource's provenance root.
     (is (= "/etc/knoxx/probe.md"
            (source-revision/document-path "/srv/knoxx"
                                           (document :knoxx.docs/probe "/etc/knoxx/probe.md")))))
@@ -93,6 +97,45 @@
 
   (testing "a document with no source path has nowhere to read from"
     (is (nil? (source-revision/document-path "/srv/knoxx" {:document/id :knoxx.docs/probe})))))
+
+(deftest ^:async canonical-source-paths-cannot-escape-resource-provenance
+  (let [sandbox (await (.mkdtemp node-fs
+                                 (.join path (.tmpdir os)
+                                        "knoxx-source-containment-")))
+        root (.join path sandbox "checkout")
+        docs-root (.join path root "docs")
+        inside (.join path docs-root "inside.md")
+        secret (.join path sandbox "secret.md")
+        symlink (.join path docs-root "escape.md")]
+    (try
+      (await (.mkdir node-fs docs-root #js {:recursive true}))
+      (await (.writeFile node-fs inside "# Inside" "utf8"))
+      (await (.writeFile node-fs secret "do not disclose" "utf8"))
+      (await (.symlink node-fs secret symlink))
+
+      (testing "ordinary relative and contained absolute sources remain valid"
+        (is (= inside
+               (await (source-revision/canonical-document-path!
+                       root (document :knoxx.docs/relative "docs/inside.md")))))
+        (is (= inside
+               (await (source-revision/canonical-document-path!
+                       root (document :knoxx.docs/absolute-inside inside))))))
+
+      (doseq [[label source-path]
+              [["absolute path outside the root" secret]
+               ["parent traversal" "../secret.md"]
+               ["symlink escape" "docs/escape.md"]]]
+        (testing label
+          (let [err (try
+                      (await (source-revision/canonical-document-path!
+                              root (document :knoxx.docs/escape source-path)))
+                      nil
+                      (catch :default error error))]
+            (is (= 409 (:status (ex-data err))))
+            (is (= "document_source_outside_provenance_root"
+                   (:code (ex-data err)))))))
+      (finally
+        (await (.rm node-fs sandbox #js {:recursive true :force true}))))))
 
 (deftest ^:async a-relative-path-is-read-through-the-root
   (let [_ (await (write-source! "nested/probe.md" "# Nested"))
