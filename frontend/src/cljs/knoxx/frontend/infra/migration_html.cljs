@@ -25,12 +25,19 @@
     (or (not= "http://www.w3.org/1999/xhtml" (.-namespaceURI element))
         (contains? javascript-types (str/lower-case effective-type)))))
 
-(defn- javascript-url? [value]
+(defn- normalized-url [value]
   (-> value
       (str/replace #"[\t\r\n]" "")
       (str/replace #"^[\x00-\x20]+" "")
-      str/lower-case
-      (str/starts-with? "javascript:")))
+      str/lower-case))
+
+(defn- javascript-url? [value]
+  (str/starts-with? (normalized-url value) "javascript:"))
+
+(defn- data-url-facts [{:keys [value] :as attribute}]
+  (when-let [[_ metadata] (re-find #"^data:([^,]*)," (normalized-url value))]
+    (assoc attribute :mime-type (str/replace (first (str/split metadata #";" -1))
+                                              #"^ +| +$" ""))))
 
 (defn- html-facts [path elements attributes]
   {:path path
@@ -41,6 +48,7 @@
                     :html? (= "http://www.w3.org/1999/xhtml" (.-namespaceURI element))
                     :inline-code? (not (str/blank? (.-textContent element)))}))
    :handlers (vec (filter #(str/starts-with? (:name %) "on") attributes))
+   :data-urls (vec (keep data-url-facts attributes))
    :script-urls (vec (filter #(and (or (contains? #{"href" "src" "action" "formaction" "xlink:href"}
                                                  (:name %))
                                       (and (= "object" (:element %)) (= "data" (:name %))))

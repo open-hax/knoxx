@@ -131,7 +131,7 @@
 (defn route-implementation
   "Select known ownership; unresolved bridge module values cannot prove native ownership."
   [{:keys [bridge-alias live-references rendered-components local-definitions
-           source-namespace project-namespaces]
+           source-namespace project-namespaces lexically-bound-components]
     route-exports :legacy-route-exports}]
   (let [references (reachable-references live-references local-definitions)
         bridge-referred-names (get-in project-namespaces [source-namespace :bridge-referred-names])]
@@ -140,7 +140,8 @@
                      (when-let [export (and (nil? (:namespace %))
                                              (get bridge-referred-names (:name %)))]
                        (str bridge-alias "/" export))) references))
-        (when-not (or (and bridge-alias
+        (when-not (or (seq lexically-bound-components)
+                      (and bridge-alias
                             (some #(and (nil? (:namespace %)) (= bridge-alias (:name %))) references))
                       (unresolved-project-ownership? source-namespace project-namespaces
                                                      route-exports references))

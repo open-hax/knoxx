@@ -48,6 +48,27 @@
                 (html/assert-html! "frontend/index.html"
                                    "<iframe srcdoc='&lt;script&gt;legacy()&lt;/script&gt;'></iframe>"))))
 
+(t/deftest document-data-urls-cannot-hide-executable-html-or-xml
+  (doseq [source ["<iframe src='data:text/html,&lt;script&gt;1+1&lt;/script&gt;'></iframe>"
+                  "<iframe src=' &#9;DA&#10;TA:TEXT/HTML;charset=utf-8;base64,PHNjcmlwdD4xKzE8L3NjcmlwdD4='></iframe>"
+                  "<object data='data:image/svg+xml,&lt;svg/&gt;'></object>"
+                  "<embed src='data:application/xhtml+xml,&lt;html/&gt;'>"
+                  "<iframe src='data:text/xml,&lt;document/&gt;'></iframe>"
+                  "<iframe src='data:application/xml,&lt;document/&gt;'></iframe>"
+                  "<a target='preview' href='data:text/html,&lt;script&gt;1+1&lt;/script&gt;'>Preview</a>"
+                  "<iframe srcdoc='&lt;iframe src=&quot;data:text/html,%3Cscript%3E1%2B1%3C/script%3E&quot;&gt;&lt;/iframe&gt;'></iframe>"]]
+    (t/is (thrown? js/Error (html/assert-html! "frontend/index.html" source)) source)))
+
+(t/deftest data-images-and-inert-data-remain-admissible
+  (doseq [source ["<img src='data:image/svg+xml,&lt;svg/&gt;'>"
+                  "<img src='data:image/png;base64,iVBORw0KGgo='>"
+                  "<iframe src='data:text/plain,%3Cscript%3E1%2B1%3C/script%3E'></iframe>"
+                  "<iframe src='data:,%3Cscript%3E1%2B1%3C/script%3E'></iframe>"
+                  "<iframe src='data:not+xml,hello'></iframe>"
+                  "<iframe src='data:invalid type/xml+xml,hello'></iframe>"
+                  "<div data-example='data:text/html,&lt;script&gt;1+1&lt;/script&gt;'></div>"]]
+    (t/is (nil? (html/assert-html! "frontend/index.html" source)) source)))
+
 (t/deftest copied-public-html-is-inspected-without-rejecting-generated-javascript
   (with-files {"frontend/index.html" "<script src='/cljs/app.js'></script>"
                "frontend/public/index.html" "<script src='/cljs/app.js'></script>"

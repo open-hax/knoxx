@@ -198,6 +198,7 @@
                       {:components (vec unknown)})))
     (or (domain/route-implementation
           (assoc ownership-facts :live-references (router/symbol-references nodes)
+                 :lexically-bound-components (get (:lexical-route-components ownership-facts) route-form)
                  :rendered-components (router/symbol-references components)))
         (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
@@ -292,6 +293,7 @@
   (let [forms (source-forms path source)]
     {:bridge-alias (app-bridge-alias source)
      :local-definitions (router/definition-references (route-inspection-nodes forms) route-inspection-nodes)
+     :lexical-route-components (router/lexical-route-components forms non-evaluated-form?)
      :source-namespace (:namespace (router/namespace-facts forms route-inspection-nodes))
      :project-namespaces (project-source/read-namespaces
                            {:root root :app-path path :walk-files walk-files :read-forms source-forms

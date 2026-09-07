@@ -7,7 +7,8 @@
             [clojure.string :as str]
             [knoxx.frontend.infra.migration-config-source :as config-source]
             [knoxx.frontend.law.migration :as law]
-            [knoxx.frontend.law.migration-shadow :as shadow-law]))
+            [knoxx.frontend.law.migration-shadow :as shadow-law]
+            [knoxx.frontend.law.migration-vite-entry :as entry-law]))
 
 (defn- unsupported! [file detail]
   (throw (ex-info "Unsupported Vite migration configuration"
@@ -195,6 +196,35 @@
       (when-let [input (get (object-properties file rollup-node) "input")]
         (assert-entry! file frontend-root bindings expected input)))))
 
+(defn- entry-paths [file frontend-root bindings ^js input]
+  (let [entries (cond
+                  (and input (ts/isArrayLiteralExpression input)) (array-seq (.-elements input))
+                  (and input (ts/isObjectLiteralExpression input)) (vals (object-properties file input))
+                  :else [input])]
+    (mapv #(node-path/resolve frontend-root (static-path file frontend-root bindings %)) entries)))
+
+(defn- assert-default-entry! [file frontend-root bindings configuration]
+  (let [build (when-let [node (get configuration "build")] (object-properties file node))
+        rollup (when-let [node (get build "rollupOptions")] (object-properties file node))
+        ^js library-node (get build "lib")
+        library (when (and library-node
+                            (not (contains? #{(.-FalseKeyword ts/SyntaxKind)
+                                               (.-NullKeyword ts/SyntaxKind)} (.-kind library-node))))
+                  (object-properties file library-node))
+        ^js ssr (get build "ssr")
+        input (cond
+                library (or (get rollup "input") (get library "entry"))
+                (and ssr (not (contains? #{(.-TrueKeyword ts/SyntaxKind)
+                                          (.-FalseKeyword ts/SyntaxKind)
+                                          (.-NullKeyword ts/SyntaxKind)} (.-kind ssr))))
+                (do (static-path file frontend-root bindings ssr) ssr)
+                :else (get rollup "input"))
+        expected (node-path/resolve frontend-root "index.html")]
+    (entry-law/assert-default-entry!
+      {:path file :expected expected
+       :entries (if (or input library)
+                  (entry-paths file frontend-root bindings input) [expected])})))
+
 (defn- assert-configuration! [frontend-root config-name expected]
   (let [file (node-path/join frontend-root config-name)]
     (if (fs/existsSync file)
@@ -208,8 +238,9 @@
           (law/assert-vite-config-admission!
             (configuration-facts file bindings configuration))
           (let [aliases (assert-aliases! file frontend-root bindings configuration)]
-            (when expected
-              (assert-bridge! file frontend-root bindings expected configuration))
+            (if expected
+              (assert-bridge! file frontend-root bindings expected configuration)
+              (assert-default-entry! file frontend-root bindings configuration))
             aliases)))
       {})))
 

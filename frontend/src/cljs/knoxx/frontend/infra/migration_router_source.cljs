@@ -57,6 +57,93 @@
        (filter symbol?)
        (mapv (fn [reference] {:name (str reference) :namespace (namespace reference)}))))
 
+(defn- binding-names [pattern]
+  (cond
+    (symbol? pattern) (if (or (namespace pattern) (= '& pattern)) #{} #{(str pattern)})
+    (vector? pattern) (into #{} (mapcat binding-names) pattern)
+    (map? pattern)
+    (into #{} (mapcat (fn [[entry value]]
+                       (cond
+                         (= :or entry) []
+                         (= :as entry) (binding-names value)
+                         (and (keyword? entry) (contains? #{"keys" "syms" "strs"} (name entry)))
+                         (map #(name %) value)
+                         :else (binding-names entry)))) pattern)
+    :else #{}))
+
+(defn- binding-children [bindings outer-names]
+  (reduce (fn [{:keys [children names]} [pattern initializer]]
+            (if (= :let pattern)
+              (let [nested (binding-children initializer names)]
+                {:children (into children (:children nested)) :names (:names nested)})
+              {:children (conj children [pattern names] [initializer names])
+               :names (into names (binding-names pattern))}))
+          {:children [] :names outer-names} (partition 2 bindings)))
+
+(defn- function-children [declaration outer-names]
+  (let [declaration (drop-while #(or (string? %) (map? %)) declaration)
+        arities (if (vector? (first declaration)) [declaration] declaration)]
+    (mapcat (fn [arity]
+              (when (and (seq? arity) (vector? (first arity)))
+                (let [names (into outer-names (binding-names (first arity)))]
+                  (map #(vector % names) (rest arity))))) arities)))
+
+(defn- scoped-binding-children [form outer-names]
+  (let [{:keys [children names]} (binding-children (second form) outer-names)
+        conditional? (contains? #{"if-let" "if-some"} (name (first form)))]
+    (into children
+          (map-indexed (fn [index body]
+                         [body (if (and conditional? (pos? index)) outer-names names)]))
+          (drop 2 form))))
+
+(defn- scoped-function-children [form outer-names]
+  (let [constructor (name (first form))
+        anonymous? (contains? #{"fn" "fn*"} constructor)
+        named? (symbol? (second form))
+        local-name (when (and anonymous? named?) (str (second form)))]
+    (function-children (drop (if (and anonymous? (not named?)) 1 2) form)
+                       (cond-> outer-names local-name (conj local-name)))))
+
+(defn- scoped-letfn-children [form outer-names]
+  (let [declarations (second form)
+        names (into outer-names (mapcat #(binding-names (first %))) declarations)]
+    (concat (mapcat #(function-children (rest %) names) declarations)
+            (map #(vector % names) (drop 2 form)))))
+
+(defn- scoped-children [form outer-names]
+  (let [constructor (when (and (seq? form) (symbol? (first form))) (name (first form)))]
+    (cond
+      (and (contains? #{"let" "let*" "loop" "loop*" "binding" "with-open"
+                         "if-let" "when-let" "if-some" "when-some" "for" "doseq"} constructor)
+           (vector? (second form))) (scoped-binding-children form outer-names)
+      (contains? #{"fn" "fn*" "defn" "defn-" "defnc"} constructor)
+      (scoped-function-children form outer-names)
+      (= "letfn" constructor) (scoped-letfn-children form outer-names)
+      (= "as->" constructor)
+      (cons [(second form) outer-names]
+            (map #(vector % (into outer-names (binding-names (nth form 2 nil)))) (drop 3 form)))
+      (= "catch" constructor)
+      (map #(vector % (into outer-names (binding-names (nth form 2 nil)))) (drop 3 form))
+      :else (map #(vector % outer-names) form))))
+
+(defn lexical-route-components
+  "Read lexically bound component positions for each canonical route without resolving values."
+  [forms ignored-form?]
+  (let [components (atom {})]
+    (letfn [(inspect [form names enclosing-route]
+              (when (and (coll? form) (not (ignored-form? form)))
+                (let [route (if (and (seq? form) (= '$ (first form)) (= 'Route (second form)))
+                              form enclosing-route)]
+                  (when route
+                    (swap! components update route (fnil into #{})
+                           (keep #(when (and (symbol? %) (nil? (namespace %))
+                                              (contains? names (str %))) (str %))
+                                 (element-components [form]))))
+                  (doseq [[child child-names] (scoped-children form names)]
+                    (inspect child child-names route)))))]
+      (doseq [form forms] (inspect form #{} nil))
+      @components)))
+
 (defn- namespace-form? [form]
   (and (seq? form) (= 'ns (first form))))
 

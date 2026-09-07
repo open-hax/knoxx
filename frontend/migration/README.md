@@ -14,6 +14,8 @@ TypeScript resolver marks them as external libraries.
 This includes TypeScript path mappings and static Vite aliases. Vite bridge
 entries must match the governed bridge files; dynamic configurations that
 cannot be inspected without execution are rejected.
+The default Vite configuration used by the browser contract must retain the
+already inspected `frontend/index.html` entry; extra entry inputs require support.
 Vite plugins are limited to the existing zero-argument `@vitejs/plugin-react`
 factory; additional Vite or Rollup hooks require explicit inventory support.
 Rollup output, worker, and esbuild settings must use inspected static forms;
@@ -39,6 +41,8 @@ Authored entry and public HTML may load the canonical `/cljs/app.js` bootstrap;
 additional executable scripts, event handlers, JavaScript URLs, and base URL
 redirection require inventory support. Inert markup and data scripts remain
 supported, and generated public CLJS JavaScript is preserved.
+HTML/XML data URLs in document navigation attributes require inventory support;
+image resources, plain-text data documents, and inert data attributes remain supported.
 The production build may contain governed Vite phases, then Shadow release and
 the optional CSS phase. Every active bridge must be compiled before Shadow.
 The pipeline remains checked after bridge resolutions are retired.
@@ -110,6 +114,8 @@ files, so an intervening re-export file cannot retire legacy page ownership.
 The canonical `(def Route (.-Route router-alias))` binding is supported;
 copying Route values or router module values into other definitions or bindings
 is rejected. Statically named router property reads remain supported.
+Lexical bindings and parameters cannot establish native ownership merely by
+reusing a trusted component name; unresolved scoped component ownership is rejected.
 Computed and threaded router API access is rejected when it could hide a route constructor.
 Route-object APIs (`useRoutes` and the browser/hash/memory router factories)
 are detected and rejected outside this grammar.
