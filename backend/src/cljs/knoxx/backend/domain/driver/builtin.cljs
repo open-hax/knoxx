@@ -44,6 +44,37 @@
                            :conversation-id :string
                            :audio-files [:vector :map]}}]}))
 
+(def github-app-driver
+  (registry/make-static-driver
+   {:id :driver/github-app
+    :kind :github-app
+    :emits [{:event/type :github.delivery-received
+             :description "A signature-verified GitHub App webhook delivery signal."
+             :event/shape {:delivery-id :string
+                           :installation-id :string
+                           :event-name :string
+                           :action [:maybe :string]}}
+            {:event/type :github.object-observed
+             :description "A GitHub object hydrated after a delivery or reconciliation pass."
+             :event/shape {:installation-id :string
+                           :repository-id :string
+                           :object-id :string
+                           :object-kind :keyword
+                           :revision [:maybe :string]}}
+            {:event/type :github.coverage-observed
+             :description "Permission, rate-limit, and reconciliation coverage for one GitHub scope."
+             :event/shape {:installation-id :string
+                           :scope-id :string
+                           :status [:enum :complete :partial :blocked :unavailable]
+                           :reason [:maybe :keyword]}}
+            {:event/type :github.ledger-discovered
+             :description "A repository .ημ or .eta-mu ledger locator observed during hydration."
+             :event/shape {:installation-id :string
+                           :repository-id :string
+                           :object-id :string
+                           :path :string
+                           :revision [:maybe :string]}}]}))
+
 (def eta-mu-ingestion-driver
   (registry/make-static-driver
    {:id :driver/eta-mu-ingestion
@@ -169,6 +200,7 @@
 
 (def built-in-drivers
   [discord-driver
+   github-app-driver
    eta-mu-ingestion-driver
    agents-driver
    knoxx-driver

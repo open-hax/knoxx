@@ -1,0 +1,50 @@
+{:namespace :github
+ :resources
+ [{:source/id :github/app-events
+   :source/type :event-generator
+   :source/name "GitHub App webhook and reconciliation source"
+   :source/driver :driver/github-app
+   :source/provider :github
+   :source/actor "github_automation"
+   :source/listens [:github.delivery-received
+                    :github.object-observed
+                    :github.coverage-observed
+                    :github.ledger-discovered]
+   :source/protocol
+   {:message-transport :webhook
+    :delivery :at-least-once
+    :ack-mode :after-signature-verification
+    :signal-id :github/delivery-id
+    :object-id :github/node-id
+    :identity-supplier :axxium
+    :record-profile :clio/event-record-v1
+    :checkpoint :github/delivery-cursor
+    :reconcile :github/deliveries-and-api
+    :completeness :explicit}
+   :enabled false}
+
+  {:store/id :event-ledger
+   :store/schema :clio/event-record-v1
+   :store/driver :event-ledger/nd-edn
+   :store/path ".ημ/ledgers/github"
+   :store/identity-supplier :axxium
+   :store/mirror
+   {:provider :google-drive
+    :mode :immutable-segments
+    :verification :sha256}
+   :enabled false}
+
+  {:store/id :object-index
+   :store/schema
+   [:map {:closed false}
+    [:object/id :string]
+    [:source/provider [:= :github]]
+    [:source/object-id :string]
+    [:source/revision {:optional true} :string]
+    [:record/ids [:vector :string]]]
+   :store/driver :knoxx/projection
+   :store/projection
+   {:kind :knoxx/github-object-graph
+    :authority :event-ledger
+    :rebuildable? true}
+   :enabled false}]}

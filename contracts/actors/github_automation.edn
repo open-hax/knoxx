@@ -1,0 +1,15 @@
+{:actor/id "github_automation"
+ :actor/kind :agent
+ :actor/type :service
+ :actor/org "open-hax"
+ :actor/label "GitHub App automation"
+ :actor/contract "axxium/provider-actor-v1"
+ :actor/accounts
+ {:github
+  {:identity/supplier :axxium
+   :principal-binding :required
+   :installation-binding :required
+   :object-binding :required}}
+ :actor/roles [:role/github-event-observer]
+ :actor/capabilities [:cap/github-event-observer]
+ :actor/sources [:github/app-events]}
