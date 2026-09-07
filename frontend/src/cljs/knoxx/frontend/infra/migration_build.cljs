@@ -5,6 +5,7 @@
             ["typescript" :as ts]
             [cljs.tools.reader.edn :as edn]
             [clojure.string :as str]
+            [knoxx.frontend.infra.migration-config-source :as config-source]
             [knoxx.frontend.law.migration :as law]))
 
 (defn- unsupported! [file detail]
@@ -201,6 +202,7 @@
             bindings (imported-names source)]
         (when (seq (array-seq (.-parseDiagnostics source)))
           (unsupported! file "Configuration syntax could not be parsed"))
+        (config-source/assert-source! file :vite source)
         (let [configuration (exported-config file source bindings)]
           (law/assert-vite-config-admission!
             (configuration-facts file bindings configuration))

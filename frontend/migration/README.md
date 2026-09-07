@@ -17,6 +17,11 @@ Vite plugins are limited to the existing zero-argument `@vitejs/plugin-react`
 factory; additional Vite or Rollup hooks require explicit inventory support.
 Rollup output, worker, and esbuild settings must use inspected static forms;
 output text hooks and injected source are rejected.
+Vite and Vitest config loading permits only inspected imports and expressions.
+Current config helpers, environment constants, static objects, and pure filename
+template callbacks remain supported. Top-level effects and uninspected calls,
+including calls nested in exported settings or constant initializers, are rejected
+before inventory collection can mistake config-time source restoration for progress.
 Active Vite build commands must select an existing governed bridge config;
 retiring a bridge also requires removing its build commands.
 An active Shadow bridge resolution requires its corresponding governed build
@@ -75,6 +80,8 @@ External project namespaces cannot establish native ownership when their live
 dependencies reach an application-bridge export backed by a legacy route file
 or an unresolved bridge module value. Shared bridge widgets and hooks remain
 supported in native pages.
+Namespace ownership and route-location inspection include every configured
+Shadow source root as well as the governed frontend and shared source trees.
 Bridge export provenance follows TypeScript export aliases to their declaration
 files, so an intervening re-export file cannot retire legacy page ownership.
 The canonical `(def Route (.-Route router-alias))` binding is supported;

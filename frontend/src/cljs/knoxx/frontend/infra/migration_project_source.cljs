@@ -77,8 +77,7 @@
            :route-count (count (route-forms path source))})
         (update result (:namespace facts) merge-source-facts facts)))
     {}
-    (for [source-path ["frontend/src" "shared/src/cljs"]
-          :let [source-root (node-path/join root source-path)]
+    (for [source-root (configured-source-roots root)
           :when (fs/existsSync source-root)
           absolute-path (walk-files source-root)
           :when (re-find #"\.clj[sc]$" absolute-path)]

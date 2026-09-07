@@ -3,6 +3,7 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as node-path]
             ["typescript" :as ts]
+            [knoxx.frontend.infra.migration-config-source :as config-source]
             [knoxx.frontend.law.migration :as law]))
 
 (defn- unsupported! [file detail]
@@ -84,6 +85,7 @@
                                       (.-Latest ts/ScriptTarget) true)]
     (when (seq (array-seq (.-parseDiagnostics source)))
       (unsupported! file "Configuration syntax could not be parsed"))
+    (config-source/assert-source! file :vitest source)
     (assert-test-scopes! file (exported-configuration file source))))
 
 (defn- package-scripts [file]
