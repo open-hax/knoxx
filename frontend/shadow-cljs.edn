@@ -43,14 +43,8 @@
     :devtools-url "https://knoxx.promethean.rest"}
    :compiler-options
    {:output-feature-set :es-next
+    :warnings-as-errors true
     :source-map true}}
-
-  :migration-validator
-  {:target :node-script
-   :main knoxx.frontend.infra.migration-manifest/main
-   :output-to "dist/migration/validate-manifest.cjs"
-   :compiler-options
-   {:output-feature-set :es-next}}
 
   :e2e
   {:target :node-script
@@ -58,6 +52,7 @@
    :output-to "dist/e2e/knoxx-e2e.cjs"
    :compiler-options
    {:output-feature-set :es-next
+    :warnings-as-errors true
     :source-map true}}
 
   ;; CLJS unit tests for migrated frontend logic. Mirrors the backend :test
@@ -78,4 +73,13 @@
    ;; which makes the failure look selective).
    :prepend-js "const { JSDOM } = require('jsdom'); const __jsdom = new JSDOM('<!doctype html><html><body></body></html>'); globalThis.window = __jsdom.window; globalThis.document = __jsdom.window.document; Object.defineProperty(globalThis, 'navigator', { value: __jsdom.window.navigator, configurable: true }); globalThis.IS_REACT_ACT_ENVIRONMENT = true;"
    :compiler-options
-   {:output-feature-set :es-next}}}}
+   {:output-feature-set :es-next
+    :warnings-as-errors true}}
+
+  :migration-manifest
+  {:target :node-script
+   :main knoxx.frontend.migration.main/main
+   :output-to "dist/migration/frontend-migration-manifest.cjs"
+   :compiler-options
+   {:output-feature-set :es-next
+    :warnings-as-errors true}}}}
