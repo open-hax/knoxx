@@ -48,8 +48,29 @@
             js/Error #"Vitest source scope leaves governed frontend source tree"
             (inspect-fixture!
               {:config (config-source (str "include:['src/**/*.test.ts']," field ":['legacy/**/*.ts']"))})))
+    (let [path (if (= field "includeSource") "src/test/in-source.test.ts" "src/test/setup.ts")]
+      (t/is (nil? (inspect-fixture!
+                    {:config (config-source (str "include:['src/**/*.test.ts']," field ":['" path "']"))}))))))
+
+(t/deftest running-suites-must-retain-the-counted-filename-convention
+  (doseq [field ["include" "includeSource"]
+          pattern ["src/test/helper.ts" "src/**/*.ts" "src/**/*.{ts,tsx,mts,cts}"
+                   "src/{test/helper.ts,test/*.test.ts}" "src/**/*.test.{ts,js}"]]
+    (let [properties (if (= field "include")
+                       (str "include:['" pattern "']")
+                       (str "include:['src/**/*.test.ts'],includeSource:['" pattern "']"))]
+      (t/is (thrown-with-msg?
+              js/Error #"Vitest suite scope leaves governed filename inventory"
+              (inspect-fixture!
+                {:config (config-source properties)
+                 :extra-files {"src/test/helper.ts"
+                               "import { test } from 'vitest'; test('still runs', () => {});"}}))))))
+
+(t/deftest conventional-suite-patterns-remain-supported
+  (doseq [pattern ["src/**/*.test.ts" "src/**/*.spec.tsx" "src/test/helper.test.mts"
+                   "./src/test/helper.spec.cts" "src/**/*.{test,spec}.{ts,tsx,mts,cts}"]]
     (t/is (nil? (inspect-fixture!
-                  {:config (config-source (str "include:['src/**/*.test.ts']," field ":['src/test/setup.ts']"))})))))
+                  {:config (config-source (str "include:['" pattern "'],includeSource:['" pattern "']"))})))))
 
 (t/deftest dynamic-and-overridden-vitest-scopes-fail-closed
   (doseq [properties ["include:patterns" "include:[...patterns]" "...settings"

@@ -103,14 +103,42 @@
                (conj references reference)))
       references)))
 
+(defn legacy-route-exports
+  "Identify app bridge exports whose governed implementation file owns a route."
+  [exports]
+  (->> exports
+       (filter #(and (= :app (:bridge %)) (:resolved-source %)
+                     (= :route (file-role (:resolved-source %)))))
+       (map :symbol)
+       set))
+
+(defn- unresolved-project-ownership?
+  [source-namespace project-namespaces route-exports references]
+  (let [{:keys [aliases referred-names]} (get project-namespaces source-namespace)
+        starts (keep #(or (get aliases (:namespace %)) (get aliases (:name %))
+                          (get referred-names (:name %)) (:namespace %)) references)]
+    (loop [pending (seq starts) visited #{source-namespace}]
+      (if-let [module (first pending)]
+        (if (contains? visited module)
+          (recur (rest pending) visited)
+          (let [{:keys [dependencies bridge-exports unresolved-bridge?]} (get project-namespaces module)]
+            (if (or unresolved-bridge? (some (or route-exports #{}) bridge-exports))
+              true
+              (recur (concat (rest pending) dependencies) (conj visited module)))))
+        false))))
+
 (defn route-implementation
   "Select known ownership; unresolved bridge module values cannot prove native ownership."
-  [{:keys [bridge-alias live-references rendered-components local-definitions]}]
+  [{:keys [bridge-alias live-references rendered-components local-definitions
+           source-namespace project-namespaces]
+    route-exports :legacy-route-exports}]
   (let [references (reachable-references live-references local-definitions)]
     (or (when bridge-alias
           (some #(when (= bridge-alias (:namespace %)) (:name %)) references))
-        (when-not (and bridge-alias
-                        (some #(and (nil? (:namespace %)) (= bridge-alias (:name %))) references))
+        (when-not (or (and bridge-alias
+                            (some #(and (nil? (:namespace %)) (= bridge-alias (:name %))) references))
+                      (unresolved-project-ownership? source-namespace project-namespaces
+                                                     route-exports references))
           (or (some #(when (:namespace %) (:name %)) rendered-components)
               (some #(when (contains? #{"LegacyOpsRedirect" "Navigate" "PlaceholderPage"} (:name %))
                        (:name %))

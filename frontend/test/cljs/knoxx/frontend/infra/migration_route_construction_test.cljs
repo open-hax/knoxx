@@ -5,19 +5,19 @@
             [cljs.test :as t]
             [knoxx.frontend.infra.migration-manifest :as manifest]))
 
-(defn- fixture-routes [route-source & [router-alias]]
+(defn- fixture-routes [route-source & [router-alias extra-files extra-requires]]
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-route-construction-"))
         original-cwd (.cwd js/process)
         router-alias (or router-alias "rr")
-        files {"frontend/package.json" "{}"
+        files (merge {"frontend/package.json" "{}"
                "frontend/src/bridge/app.ts" ""
                "frontend/src/bridge/index.ts" ""
                "frontend/src/cljs/knoxx/frontend/app.cljs"
                (str "(ns fixture (:require [\"react\" :as react]\n"
                     " [\"react-router-dom\" :as " router-alias "]\n"
-                    " [\"@open-hax/knoxx-app-bridge\" :as app]))\n"
+                    " [\"@open-hax/knoxx-app-bridge\" :as app]" extra-requires "))\n"
                     "(def Route (.-Route " router-alias "))\n"
-                    "(def createElement react/createElement)\n" route-source)}]
+                    "(def createElement react/createElement)\n" route-source)} extra-files)]
     (try
       (doseq [[path source] files]
         (let [absolute-path (node-path/join root path)]
@@ -263,3 +263,61 @@
                   "(quote (-> rr (aget \"Route\")))"
                   "(some-> payload (aget \"Route\"))"]]
     (t/is (= [] (fixture-routes source)))))
+
+(def ^:private project-bridge-files
+  {"frontend/src/bridge/app.ts"
+   "export { ChatPage } from '../pages/ChatPage'; export { ChatWorkspacePane } from '../components/ChatWorkspacePane';"
+   "frontend/src/pages/ChatPage.ts" "export const ChatPage = () => null;"
+   "frontend/src/components/ChatWorkspacePane.ts" "export const ChatWorkspacePane = () => null;"})
+
+(t/deftest project-page-wrappers-cannot-conceal-legacy-route-ownership
+  (doseq [wrapper ["(ns knoxx.frontend.pages.wrapper (:require [\"@open-hax/knoxx-app-bridge\" :as legacy])) (defnc ForwardedPage [] ($ legacy/ChatPage))"
+                   "(ns knoxx.frontend.pages.wrapper (:require [\"@open-hax/knoxx-app-bridge\" :refer [ChatPage]])) (def ForwardedPage ChatPage)"
+                   "(ns knoxx.frontend.pages.wrapper (:require [\"@open-hax/knoxx-app-bridge\" :as legacy])) (def ForwardedPage (aget legacy \"ChatPage\"))"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route implementation"
+            (fixture-routes
+              "($ Route {:path \"/chat\"\n :element ($ wrapper/ForwardedPage)})" nil
+              (assoc project-bridge-files "frontend/src/cljs/knoxx/frontend/pages/wrapper.cljs" wrapper)
+              " [knoxx.frontend.pages.wrapper :as wrapper]")))))
+
+(t/deftest transitive-project-wrappers-retain-the-legacy-route-obligation
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported Shadow route implementation"
+          (fixture-routes
+            "($ Route {:path \"/chat\"\n :element ($ wrapper/ChatPage)})" nil
+            (assoc project-bridge-files
+                   "frontend/src/cljs/knoxx/frontend/pages/wrapper.cljs"
+                   "(ns knoxx.frontend.pages.wrapper (:require [knoxx.frontend.pages.inner :as inner])) (def ChatPage inner/ChatPage)"
+                   "frontend/src/cljs/knoxx/frontend/pages/inner.cljs"
+                   "(ns knoxx.frontend.pages.inner (:require [\"@open-hax/knoxx-app-bridge\" :as legacy] [knoxx.frontend.pages.wrapper :as wrapper])) (def ChatPage legacy/ChatPage) (def cycle-reference wrapper/ChatPage)")
+            " [knoxx.frontend.pages.wrapper :as wrapper]"))))
+
+(t/deftest native-project-pages-can-compose-bridge-widgets
+  (doseq [wrapper ["(ns knoxx.frontend.pages.wrapper (:require [\"@open-hax/knoxx-app-bridge\" :as legacy])) (defnc ChatPage [] ($ legacy/ChatWorkspacePane))"
+                   "(ns knoxx.frontend.pages.wrapper (:require [\"@open-hax/knoxx-app-bridge\" :refer [ChatWorkspacePane]])) (defnc ChatPage [] ($ ChatWorkspacePane))"
+                   "(ns knoxx.frontend.pages.wrapper (:require [\"@open-hax/knoxx-app-bridge\" :as legacy])) (comment (def ChatPage legacy/ChatPage)) (defnc ChatPage [] ($ legacy/ChatWorkspacePane))"]]
+    (t/is (= [{:route "\"/chat\"" :implementation "wrapper/ChatPage" :status :native}]
+             (fixture-routes
+               "($ Route {:path \"/chat\"\n :element ($ wrapper/ChatPage)})" nil
+               (assoc project-bridge-files "frontend/src/cljs/knoxx/frontend/pages/wrapper.cljs" wrapper)
+               " [knoxx.frontend.pages.wrapper :as wrapper]")))))
+
+(t/deftest removing-the-main-bridge-alias-cannot-hide-a-project-page-wrapper
+  (t/is (thrown-with-msg?
+          js/Error #"Unsupported Shadow route implementation"
+          (fixture-routes
+            "" nil
+            (assoc project-bridge-files
+                   "frontend/src/cljs/knoxx/frontend/app.cljs"
+                   "(ns fixture (:require [\"react-router-dom\" :as rr] [knoxx.frontend.pages.wrapper :as wrapper])) (def Route (.-Route rr))\n($ Route {:path \"/chat\"\n :element ($ wrapper/ChatPage)})"
+                   "frontend/src/cljs/knoxx/frontend/pages/wrapper.cljs"
+                   "(ns knoxx.frontend.pages.wrapper (:require [\"@open-hax/knoxx-app-bridge\" :as legacy])) (defnc ChatPage [] ($ legacy/ChatPage))")))))
+
+(t/deftest self-qualified-native-controls-do-not-inherit-unrelated-route-dependencies
+  (t/is (= [{:route "\"/legacy\"" :implementation "app/ChatPage" :status :legacy}
+            {:route "\"/native\"" :implementation "fixture/LegacyOpsRedirect" :status :native}]
+           (fixture-routes
+             (str "(def Navigate (.-Navigate rr)) (defnc LegacyOpsRedirect [] ($ Navigate))\n"
+                  "($ Route {:path \"/legacy\"\n :element ($ app/ChatPage)})\n"
+                  "($ Route {:path \"/native\"\n :element ($ fixture/LegacyOpsRedirect)})")))))

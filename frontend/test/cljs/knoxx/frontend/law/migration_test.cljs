@@ -33,11 +33,23 @@
                              (law/assert-vite-alias-target! (assoc facts field outside)))))))
 
 (t/deftest vitest-scope-contract-preserves-supported-source-boundaries
-  (doseq [scope ["src/**/*.{test,spec}.{ts,tsx}" "./src/test/setup.ts"]]
-    (t/is (nil? (law/assert-vitest-scope! "vitest.config.ts" "include" scope))))
+  (doseq [field ["include" "includeSource"]
+          scope ["src/**/*.{test,spec}.{ts,tsx}" "./src/test/setup.spec.ts"
+                  "src/**/*.test.mts" "src/**/*.spec.cts" "src/**/*.{spec,test}.{cts,mts,tsx,ts}"]]
+    (t/is (nil? (law/assert-vitest-scope! "vitest.config.ts" field scope))))
+  (doseq [field ["setupFiles" "globalSetup"]]
+    (t/is (nil? (law/assert-vitest-scope! "vitest.config.ts" field "./src/test/setup.ts"))))
   (doseq [scope ["../legacy/**/*" "/frontend/src/**/*" "src/../legacy/**/*" "src\\test.ts"]]
     (t/is (thrown-with-msg? js/Error #"Vitest source scope leaves governed frontend source tree"
                            (law/assert-vitest-scope! "vitest.config.ts" "include" scope)))))
+
+(t/deftest vitest-suite-pattern-contract-prevents-false-retirement
+  (doseq [field ["include" "includeSource"]
+          scope ["src/test/helper.ts" "src/**/*.ts" "src/**/*.test.ts*"
+                  "src/**/*.{ts,tsx,mts,cts}" "src/**/*.{test,helper}.ts"
+                  "src/{test/helper.ts,test/*.test.ts}" "src/**/*.test.{ts,js}"]]
+    (t/is (thrown-with-msg? js/Error #"Vitest suite scope leaves governed filename inventory"
+                           (law/assert-vitest-scope! "vitest.config.ts" field scope)))))
 
 (t/deftest vite-entry-contract-preserves-the-governed-bridge-target
   (let [facts {:path "vite.app-bridge.config.ts" :expected "src/bridge/app.ts"

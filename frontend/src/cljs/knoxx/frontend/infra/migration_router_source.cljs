@@ -48,6 +48,47 @@
        (filter symbol?)
        (mapv (fn [reference] {:name (str reference) :namespace (namespace reference)}))))
 
+(defn- namespace-form? [form]
+  (and (seq? form) (= 'ns (first form))))
+
+(defn- require-bindings [forms]
+  (for [form forms :when (namespace-form? form)
+        clause (drop 2 form) :when (and (seq? clause) (= :require (first clause)))
+        specification (rest clause)
+        :let [specification (if (sequential? specification) specification [specification])
+              module (str (first specification))
+              options (into {} (map vec (partition 2 (rest specification))))]]
+    {:module module
+     :alias (some-> (:as options) str)
+     :referred (into {} (for [export (:refer options)]
+                          [(str (get (:rename options) export export)) (str export)]))}))
+
+(defn namespace-facts
+  "Decode namespace imports and live source references without inferring route ownership."
+  [forms inspect-nodes]
+  (let [bindings (require-bindings forms)
+        namespace-aliases (into {} (keep #(when (:alias %) [(:alias %) (:module %)])) bindings)
+        referred (into {} (mapcat (fn [{:keys [module referred]}]
+                                   (map (fn [[local-name export]]
+                                          [local-name {:module module :export export}]) referred))) bindings)
+        references (->> forms (remove namespace-form?) inspect-nodes (filter symbol?))
+        module-for (fn [reference]
+                     (or (get namespace-aliases (namespace reference))
+                         (get namespace-aliases (str reference))
+                         (:module (get referred (str reference)))
+                         (namespace reference)))
+        bridge-module "@open-hax/knoxx-app-bridge"]
+    {:namespace (some #(when (namespace-form? %) (str (second %))) forms)
+     :aliases namespace-aliases
+     :referred-names (into {} (map (fn [[local-name value]] [local-name (:module value)])) referred)
+     :dependencies (set (keep module-for references))
+     :bridge-exports (set (keep (fn [reference]
+                                 (when (= bridge-module (module-for reference))
+                                   (if (namespace reference)
+                                     (name reference)
+                                     (:export (get referred (str reference)))))) references))
+     :unresolved-bridge? (boolean (some #(= bridge-module (get namespace-aliases (str %))) references))}))
+
 (defn definition-references
   "Decode declarations and assignments under local and self-qualified names."
   [nodes inspect-nodes]

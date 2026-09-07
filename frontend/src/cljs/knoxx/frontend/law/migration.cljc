@@ -129,13 +129,17 @@
   facts)
 
 (defn assert-vitest-scope!
-  "Require a parsed Vitest source scope to remain under frontend/src."
+  "Require contained Vitest scopes and suite patterns counted by the census."
   [file field scope]
   (let [relative (str/replace scope #"^(?:\./)+" "")]
     (when-not (and (str/starts-with? relative "src/")
                    (not (str/includes? relative ".."))
                    (not (str/includes? relative "\\")))
       (throw (ex-info "Vitest source scope leaves governed frontend source tree"
+                      {:path file :field field :scope scope})))
+    (when (and (contains? #{"include" "includeSource"} field)
+               (not (re-find #"\.(?:test|spec|\{(?:test|spec)(?:,(?:test|spec))*\})\.(?:tsx?|mts|cts|\{(?:tsx?|mts|cts)(?:,(?:tsx?|mts|cts))*\})$" relative)))
+      (throw (ex-info "Vitest suite scope leaves governed filename inventory"
                       {:path file :field field :scope scope})))))
 
 (defn assert-shadow-bridge-resolutions!

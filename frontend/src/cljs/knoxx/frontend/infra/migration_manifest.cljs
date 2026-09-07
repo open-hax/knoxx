@@ -11,6 +11,7 @@
             [knoxx.frontend.infra.migration-build :as build]
             [knoxx.frontend.infra.migration-git :as git]
             [knoxx.frontend.infra.migration-imports :as imports]
+            [knoxx.frontend.infra.migration-project-source :as project-source]
             [knoxx.frontend.infra.migration-router-source :as router]
             [knoxx.frontend.infra.migration-vitest :as vitest]
             [knoxx.frontend.law.migration :as law]
@@ -181,7 +182,7 @@
     (catch :default _
       (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
-(defn- route-implementation [bridge-alias local-definitions route-form]
+(defn- route-implementation [ownership-facts route-form]
   (let [nodes (route-inspection-nodes route-form)
         components (router/element-components nodes)
         unknown (remove #(or (keyword? %)
@@ -194,10 +195,8 @@
       (throw (ex-info "Unsupported Shadow route implementation"
                       {:components (vec unknown)})))
     (or (domain/route-implementation
-          {:bridge-alias bridge-alias
-           :local-definitions local-definitions
-           :live-references (router/symbol-references nodes)
-           :rendered-components (router/symbol-references components)})
+          (assoc ownership-facts :live-references (router/symbol-references nodes)
+                 :rendered-components (router/symbol-references components)))
         (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
 (defn- source-forms [path source]
@@ -277,18 +276,6 @@
                         {:path path :constructor (second form)}))))
     forms))
 
-(defn- assert-route-locations! [root app-path]
-  (doseq [source-path ["frontend/src" "shared/src/cljs"]
-          :let [source-root (node-path/join root source-path)]
-          :when (fs/existsSync source-root)
-          absolute-path (walk-files source-root)
-          :when (re-find #"\.clj[sc]$" absolute-path)
-          :let [path (repository-path root absolute-path)]
-          :when (not= app-path path)]
-    (law/assert-route-location!
-      {:path path :supported-path app-path
-       :route-count (count (route-forms path (fs/readFileSync absolute-path "utf8")))})))
-
 (defn- extract-route-forms [source matches]
   (mapv (fn [position next-position]
           (parse-route-form
@@ -296,16 +283,23 @@
                   (or (:index next-position) (count source)))))
         matches (concat (rest matches) [nil])))
 
-(defn- route-records [root]
+(defn- route-ownership-facts [root path source route-exports]
+  (let [forms (source-forms path source)]
+    {:bridge-alias (app-bridge-alias source)
+     :local-definitions (router/definition-references (route-inspection-nodes forms) route-inspection-nodes)
+     :source-namespace (:namespace (router/namespace-facts forms route-inspection-nodes))
+     :project-namespaces (project-source/read-namespaces
+                           {:root root :app-path path :walk-files walk-files :read-forms source-forms
+                            :route-forms route-forms :inspect-nodes route-inspection-nodes})
+     :legacy-route-exports route-exports}))
+
+(defn- route-records [root route-exports]
   (let [path "frontend/src/cljs/knoxx/frontend/app.cljs"
         source (fs/readFileSync (node-path/join root path) "utf8")
-        bridge-alias (app-bridge-alias source)
-        local-definitions (router/definition-references
-                            (route-inspection-nodes (source-forms path source)) route-inspection-nodes)
+        ownership-facts (route-ownership-facts root path source route-exports)
         pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
         route-count (count (re-seq #"\(\s*\$\s+Route(?=\s|\))" source))
         declared-route-forms (checked-route-forms path source)]
-    (assert-route-locations! root path)
     (loop [matches []]
       (if-let [match (.exec pattern source)]
         (recur (conj matches {:index (.-index match)
@@ -321,8 +315,8 @@
           (mapv (fn [position route-form]
                   {:path path
                    :route (:route position)
-                   :implementation (route-implementation bridge-alias local-definitions route-form)
-                   :bridge-alias bridge-alias})
+                   :implementation (route-implementation ownership-facts route-form)
+                   :bridge-alias (:bridge-alias ownership-facts)})
                 matches
                 extracted-route-forms))))))
 
@@ -338,7 +332,11 @@
         exports (mapv #(dissoc % :resolved-source) bridge-records*)]
     (domain/assemble-records {:sources sources
                               :bridge-exports exports
-                              :routes (route-records root)})))
+                              :routes (route-records root
+                                        (domain/legacy-route-exports
+                                          (map #(update % :resolved-source
+                                                         (fn [source] (when source (repository-path root source))))
+                                               bridge-records*)))})))
 
 (defn render-records
   "Render one EDN map per line with a terminal newline."

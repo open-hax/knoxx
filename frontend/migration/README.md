@@ -20,19 +20,23 @@ output text hooks and injected source are rejected.
 Active Vite build commands must select an existing governed bridge config;
 retiring a bridge also requires removing its build commands.
 An active Shadow bridge resolution requires its corresponding governed build
-script and config.
+script, config, and exact `dist/bridge` output mapping; release overrides cannot
+redirect that mapping.
 The production build may contain governed Vite phases, then Shadow release and
 the optional CSS phase. Every active bridge must be compiled before Shadow.
 The pipeline remains checked after bridge resolutions are retired.
 Opaque build wrappers and decoy commands are rejected.
 Vite glob imports are not supported by the inventory and fail explicitly;
 comments and string literals that merely mention glob syntax are ignored.
-Worker and SharedWorker URL dependencies must also stay in `frontend/src`;
-dynamic worker URLs that cannot be inspected are rejected.
+All Vite `new URL(..., import.meta.url)` dependencies must stay in `frontend/src`,
+including worker and standalone asset URLs; dynamic source URLs are rejected.
 Dynamic `import()` calls must use literal module paths; variable imports are
 rejected because their dependency set cannot be read from a literal specifier.
 Vitest source scopes must stay within `frontend/src`; active test commands
 must select the inspected static Vitest configuration.
+Suite `include` and `includeSource` patterns must select the counted
+`.test`/`.spec` TypeScript filename convention. Custom suite naming and
+Vitest-only aliases require inventory support before they can be admitted.
 The `test`, `test:coverage`, and `test:watch` entrypoints cannot hide the runner
 behind wrappers; retiring Vitest removes these entrypoints and its config together.
 
@@ -63,11 +67,17 @@ The conservative census treats Route-named components and literal
 Explicit comment and quote bodies cannot contribute routes or implementation ownership.
 Direct React `createElement` route construction is detected and rejected as
 unsupported syntax rather than silently dropping the route.
-Within canonical Route elements, any live application-bridge reference keeps
-ownership legacy, including mixed React constructors inside native wrappers.
+Within canonical Route elements, resolved application-bridge references keep
+ownership legacy, including mixed React constructors and local aliases or wrappers.
+Local definition tracing includes assignments and self-qualified names; unresolved
+bridge module values cannot fall back to native ownership.
+External project namespaces cannot establish native ownership when their live
+dependencies reach an application-bridge export backed by a legacy route file
+or an unresolved bridge module value. Shared bridge widgets and hooks remain
+supported in native pages.
 The canonical `(def Route (.-Route router-alias))` binding is supported;
 copying Route values into other definitions or bindings is rejected.
-Computed router API access is rejected when it could hide a route constructor.
+Computed and threaded router API access is rejected when it could hide a route constructor.
 Route-object APIs (`useRoutes` and the browser/hash/memory router factories)
 are detected and rejected outside this grammar.
 
