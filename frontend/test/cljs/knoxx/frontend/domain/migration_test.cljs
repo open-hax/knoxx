@@ -21,6 +21,43 @@
              {:bridge-alias "app" :live-references []
               :rendered-components [{:name "Navigate" :namespace nil}]}))))
 
+(t/deftest trusted-local-components-retain-their-reachable-legacy-ownership
+  (doseq [component ["LegacyOpsRedirect" "Navigate" "PlaceholderPage" "ProtectedSurface"]]
+    (let [reference {:name component :namespace nil}
+          legacy {:name "app/ChatPage" :namespace "app"}]
+      (t/is (= "app/ChatPage"
+               (migration/route-implementation
+                 {:bridge-alias "app"
+                  :live-references [reference]
+                  :rendered-components [reference {:name "native/Page" :namespace "native"}]
+                  :local-definitions {component [legacy]}}))))))
+
+(t/deftest local-component-dependencies-follow-aliases-and-terminate-cycles
+  (let [component {:name "LegacyOpsRedirect" :namespace nil}
+        alias-reference {:name "page-alias" :namespace nil}
+        native {:name "react/Fragment" :namespace "react"}
+        legacy {:name "app/ChatPage" :namespace "app"}
+        facts {:bridge-alias "app"
+               :live-references [component]
+               :rendered-components [component]
+               :local-definitions {"LegacyOpsRedirect" [native alias-reference]
+                                   "page-alias" [component legacy]}}]
+    (t/is (= "app/ChatPage" (migration/route-implementation facts)))
+    (t/is (= "LegacyOpsRedirect"
+             (migration/route-implementation
+               (assoc-in facts [:local-definitions "page-alias"] [component native]))))))
+
+(t/deftest native-controls-ignore-unreachable-local-legacy-definitions
+  (let [component {:name "LegacyOpsRedirect" :namespace nil}]
+    (t/is (= "LegacyOpsRedirect"
+             (migration/route-implementation
+               {:bridge-alias "app" :live-references [component]
+                :rendered-components [component]
+                :local-definitions
+                {"LegacyOpsRedirect" [{:name "Navigate" :namespace nil}]
+                 "Navigate" [{:name "rr/Navigate" :namespace "rr"}]
+                 "UnusedPage" [{:name "app/ChatPage" :namespace "app"}]}})))))
+
 (t/deftest chooses-terminal-actions-from-migration-semantics
   (t/is (= :delete
            (migration/file-disposition

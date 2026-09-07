@@ -181,7 +181,7 @@
     (catch :default _
       (throw (ex-info "Unsupported Shadow route implementation" {})))))
 
-(defn- route-implementation [bridge-alias route-form]
+(defn- route-implementation [bridge-alias local-definitions route-form]
   (let [nodes (route-inspection-nodes route-form)
         components (router/element-components nodes)
         unknown (remove #(or (keyword? %)
@@ -195,6 +195,7 @@
                       {:components (vec unknown)})))
     (or (domain/route-implementation
           {:bridge-alias bridge-alias
+           :local-definitions local-definitions
            :live-references (router/symbol-references nodes)
            :rendered-components (router/symbol-references components)})
         (throw (ex-info "Unsupported Shadow route implementation" {})))))
@@ -299,6 +300,8 @@
   (let [path "frontend/src/cljs/knoxx/frontend/app.cljs"
         source (fs/readFileSync (node-path/join root path) "utf8")
         bridge-alias (app-bridge-alias source)
+        local-definitions (router/definition-references
+                            (route-inspection-nodes (source-forms path source)) route-inspection-nodes)
         pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
         route-count (count (re-seq #"\(\s*\$\s+Route(?=\s|\))" source))
         declared-route-forms (checked-route-forms path source)]
@@ -318,7 +321,7 @@
           (mapv (fn [position route-form]
                   {:path path
                    :route (:route position)
-                   :implementation (route-implementation bridge-alias route-form)
+                   :implementation (route-implementation bridge-alias local-definitions route-form)
                    :bridge-alias bridge-alias})
                 matches
                 extracted-route-forms))))))

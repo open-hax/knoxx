@@ -90,11 +90,25 @@
     (re-find heavy-widget-pattern path) :wrap
     :else :port))
 
+(defn- reachable-references [live-references local-definitions]
+  (loop [pending (seq live-references)
+         visited #{}
+         references []]
+    (if-let [reference (first pending)]
+      (let [local-name (:name reference)
+            dependencies (when-not (contains? visited local-name)
+                           (get local-definitions local-name))]
+        (recur (concat (rest pending) dependencies)
+               (cond-> visited local-name (conj local-name))
+               (conj references reference)))
+      references)))
+
 (defn route-implementation
   "Select a live legacy dependency before a native rendered component or control."
-  [{:keys [bridge-alias live-references rendered-components]}]
+  [{:keys [bridge-alias live-references rendered-components local-definitions]}]
   (or (when bridge-alias
-        (some #(when (= bridge-alias (:namespace %)) (:name %)) live-references))
+        (some #(when (= bridge-alias (:namespace %)) (:name %))
+              (reachable-references live-references local-definitions)))
       (some #(when (:namespace %) (:name %)) rendered-components)
       (some #(when (contains? #{"LegacyOpsRedirect" "Navigate" "PlaceholderPage"} (:name %))
                (:name %))

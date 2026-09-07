@@ -24,11 +24,13 @@
                    (name value))))
 
 (defn computed-access?
-  "Recognize computed property reads on a declared React Router module alias."
+  "Recognize computed reads or unresolved threading of a declared router alias."
   [router-aliases form]
   (and (seq? form)
        (symbol? (first form))
-       (contains? #{"aget" "get" "getValueByKeys" "Reflect.get"} (name (first form)))
+       (contains? #{"aget" "get" "getValueByKeys" "Reflect.get"
+                    "->" "->>" "some->" "some->>" "cond->" "cond->>" "as->"}
+                  (name (first form)))
        (contains? router-aliases (second form))))
 
 (defn element-components
@@ -45,3 +47,23 @@
   (->> nodes
        (filter symbol?)
        (mapv (fn [reference] {:name (str reference) :namespace (namespace reference)}))))
+
+(defn definition-references
+  "Decode declarations and assignments under local and self-qualified names."
+  [nodes inspect-nodes]
+  (let [source-namespace (some #(when (and (seq? %) (= 'ns (first %))) (str (second %))) nodes)
+        definitions (reduce (fn [result form]
+                              (if (and (seq? form) (symbol? (first form)) (symbol? (second form))
+                                       (contains? #{"def" "defonce" "defn" "defn-" "defnc" "set!"}
+                                                  (name (first form))))
+                                (let [binding-name (second form)
+                                      local-name (if (= source-namespace (namespace binding-name))
+                                                   (name binding-name) (str binding-name))]
+                                  (update result local-name (fnil into [])
+                                          (symbol-references (inspect-nodes (drop 2 form)))))
+                                result))
+                            {} nodes)]
+    (if source-namespace
+      (into definitions (map (fn [[local-name references]]
+                               [(str source-namespace "/" local-name) references])) definitions)
+      definitions)))

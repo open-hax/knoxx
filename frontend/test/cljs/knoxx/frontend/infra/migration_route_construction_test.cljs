@@ -201,3 +201,50 @@
                (str "($ Route {:path \"/native\"\n :element (do (" wrapper
                     " (react/createElement app/ChatPage nil))"
                     " (react/createElement native/Page nil))})"))))))
+
+(t/deftest trusted-local-component-definitions-preserve-legacy-provenance
+  (doseq [declarations ["(def LegacyOpsRedirect app/ChatPage)"
+                        "(defonce LegacyOpsRedirect app/ChatPage)"
+                        "(defn LegacyOpsRedirect [] ($ app/ChatPage))"
+                        "(defnc LegacyOpsRedirect [] ($ app/ChatPage))"
+                        "(def helper app/ChatPage) (def LegacyOpsRedirect helper)"
+                        "(def LegacyOpsRedirect native/Page) (set! LegacyOpsRedirect app/ChatPage)"
+                        "(def LegacyOpsRedirect native/Page) (set! fixture/LegacyOpsRedirect app/ChatPage)"
+                        "(def LegacyOpsRedirect app/ChatPage) (def LegacyOpsRedirect native/Page)"]]
+    (t/is (= [{:route "\"/chat\"" :implementation "app/ChatPage" :status :legacy}]
+             (fixture-routes
+               (str declarations "\n($ Route {:path \"/chat\"\n :element ($ LegacyOpsRedirect)})"))))))
+
+(t/deftest local-native-controls-and-parked-aliases-retain-native-ownership
+  (doseq [declarations ["(def Navigate (.-Navigate rr)) (defnc LegacyOpsRedirect [] ($ Navigate))"
+                        "(comment (def LegacyOpsRedirect app/ChatPage))"
+                        "(quote (def LegacyOpsRedirect app/ChatPage))"
+                        "(defnc LegacyOpsRedirect [] (comment app/ChatPage) ($ Navigate))"]]
+    (t/is (= [{:route "\"/redirect\"" :implementation "LegacyOpsRedirect" :status :native}]
+             (fixture-routes
+               (str declarations "\n($ Route {:path \"/redirect\"\n :element ($ LegacyOpsRedirect)})"))))))
+
+(t/deftest self-qualified-local-components-preserve-legacy-provenance
+  (t/is (= [{:route "\"/chat\"" :implementation "app/ChatPage" :status :legacy}]
+           (fixture-routes
+             (str "(def helper app/ChatPage) (def LegacyOpsRedirect fixture/helper)\n"
+                  "($ Route {:path \"/chat\"\n :element ($ fixture/LegacyOpsRedirect)})")))))
+
+(t/deftest threaded-router-values-cannot-conceal-aliased-route-construction
+  (doseq [expression ["(-> rr (aget \"Route\"))" "(some-> rr (aget \"Route\"))"
+                      "(cljs.core/some-> rr (cljs.core/aget \"Route\"))"
+                      "(->> rr (goog.object/get \"Route\"))" "(some->> rr identity)"
+                      "(cond-> rr true (aget \"Route\"))" "(cond->> rr true identity)"
+                      "(as-> rr router-value (aget router-value \"Route\"))"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route syntax"
+            (fixture-routes
+              (str "(def RouterComponent " expression ")\n"
+                   "(def route-props #js {:path \"/chat\" :element ($ app/ChatPage)})\n"
+                   "($ RouterComponent route-props)"))))))
+
+(t/deftest parked-threaded-router-values-and-unrelated-threading-remain-inert
+  (doseq [source ["(comment (some-> rr (aget \"Route\")))"
+                  "(quote (-> rr (aget \"Route\")))"
+                  "(some-> payload (aget \"Route\"))"]]
+    (t/is (= [] (fixture-routes source)))))
