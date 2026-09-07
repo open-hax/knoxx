@@ -236,9 +236,9 @@
       (->> (tree-seq coll? seq configuration)
            (filter map?)
            (keep :resolve)
-           (mapcat keys)
-           set))
-    #{}))
+           (mapcat seq)
+           vec))
+    []))
 
 (defn- production-phases [file command]
   (when-not (string? command)
@@ -256,7 +256,9 @@
 
 (defn- assert-shadow-bridge-builds! [frontend-root scripts]
   (let [shadow-file (node-path/join frontend-root "shadow-cljs.edn")
-        required-bridges (law/required-bridge-builds (shadow-resolutions shadow-file))]
+        facts (law/assert-shadow-bridge-resolutions!
+                {:path shadow-file :resolutions (shadow-resolutions shadow-file)})
+        required-bridges (law/required-bridge-builds (set (map first (:resolutions facts))))]
     (when (or (seq required-bridges) (contains? scripts "build"))
       (let [file (node-path/join frontend-root "package.json")]
         (law/assert-production-build!

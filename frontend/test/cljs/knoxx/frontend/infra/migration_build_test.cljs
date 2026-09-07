@@ -41,7 +41,7 @@
                           :js-options
                           {:resolve (into {} (map (fn [module]
                                                    [module {:target :file
-                                                            :file "dist/bridge/output.es.js"}]))
+                                                            :file (str "dist/bridge/" (subs module (count "@open-hax/")) ".es.js")}]))
                                           modules)}}}}))
 
 (defn- production-build []
@@ -140,6 +140,28 @@
                    (dissoc "vite.app-bridge.config.ts")
                    (assoc "shadow-cljs.edn"
                           (shadow-config ["@open-hax/knoxx-frontend-bridge"])))))))
+
+(t/deftest shadow-bridge-resolutions-cannot-redirect-the-governed-build
+  (doseq [module ["@open-hax/knoxx-app-bridge" "@open-hax/knoxx-frontend-bridge"]
+          resolution [nil "legacy/app.js" {}
+                      {:target :file :file "legacy/app.js"}
+                      {:target :file :file "dist/bridge/other.es.js"}
+                      {:target :file :file "dist/bridge/knoxx-app-bridge.es.js" :file-min "legacy/app.js"}
+                      {:target :npm :require "legacy-bridge"}]
+          redirect-base? [true false]]
+    (let [canonical {:target :file :file (str "dist/bridge/" (subs module (count "@open-hax/")) ".es.js")}
+          [base-resolution release-resolution] (if redirect-base? [resolution canonical] [canonical resolution])
+          configuration {:builds {:app {:js-options {:resolve {module base-resolution}}
+                                        :release {:js-options {:resolve {module release-resolution}}}}}}]
+      (t/is (thrown-with-msg?
+              js/Error #"Shadow bridge resolution leaves governed inventory"
+              (inspect-configs!
+                (assoc (bridge-configs
+                         {"build:bridge" "vite build --config vite.bridge.config.ts"
+                          "build:app-bridge" "vite build --config vite.app-bridge.config.ts"
+                          "build" (production-build)})
+                       "shadow-cljs.edn" (pr-str configuration)
+                       "legacy-entry.js" "export const ChatPage = () => null;")))))))
 
 (t/deftest unused-governed-scripts-cannot-hide-an-opaque-production-build
   (let [scripts {"build:app-bridge" "vite build --config vite.app-bridge.config.ts"

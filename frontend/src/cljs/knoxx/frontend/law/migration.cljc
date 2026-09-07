@@ -138,6 +138,20 @@
       (throw (ex-info "Vitest source scope leaves governed frontend source tree"
                       {:path file :field field :scope scope})))))
 
+(defn assert-shadow-bridge-resolutions!
+  "Require every active Shadow bridge resolution to use its governed Vite output."
+  [{:keys [path resolutions] :as facts}]
+  (let [expected {"@open-hax/knoxx-frontend-bridge"
+                  {:target :file :file "dist/bridge/knoxx-frontend-bridge.es.js"}
+                  "@open-hax/knoxx-app-bridge"
+                  {:target :file :file "dist/bridge/knoxx-app-bridge.es.js"}}]
+    (doseq [[module resolution] resolutions :when (contains? expected module)]
+      (when-not (= (get expected module) resolution)
+        (throw (ex-info "Shadow bridge resolution leaves governed inventory"
+                        {:path path :module module :expected (get expected module)
+                         :actual resolution})))))
+  facts)
+
 (defn required-bridge-builds
   "Derive governed build obligations from active Shadow bridge resolutions."
   [resolutions]
