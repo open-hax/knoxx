@@ -192,6 +192,7 @@ jobs:
           pnpm -C frontend run migration:check
 
       - name: Upload frontend migration manifest
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: knoxx-frontend-migration-manifest
