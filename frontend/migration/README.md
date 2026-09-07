@@ -32,6 +32,9 @@ Other Shadow file resolutions require explicit inventory support. Local package
 imports from CLJS pass through the same source-containment boundary as TypeScript.
 Executable Shadow build hooks require inventory support because they can alter
 source files or emitted JavaScript after the census. Empty hook settings are allowed.
+Shadow `:prepend`, `:append`, `:prepend-js`, and `:append-js` text inputs also
+require inventory support, including module and mode overrides. Empty settings
+and the exact existing node-test jsdom bootstrap remain supported.
 Authored entry and public HTML may load the canonical `/cljs/app.js` bootstrap;
 additional executable scripts, event handlers, JavaScript URLs, and base URL
 redirection require inventory support. Inert markup and data scripts remain

@@ -231,6 +231,23 @@
       (unsupported! file (str "Vite builds require an explicit static config: " script-name)))
     (mapv second configured)))
 
+(defn- shadow-javascript-inputs [config-path node]
+  (cond
+    (map? node)
+    (mapcat (fn [[setting value]]
+              (let [setting-path (conj config-path setting)]
+                (concat
+                  (when (contains? #{:prepend :append :prepend-js :append-js} setting)
+                    [{:config-path setting-path :value value}])
+                  (shadow-javascript-inputs setting-path value)))) node)
+
+    (sequential? node)
+    (mapcat (fn [[index value]]
+              (shadow-javascript-inputs (conj config-path index) value))
+            (map-indexed vector node))
+
+    :else []))
+
 (defn- shadow-configuration-facts [file]
   (if (fs/existsSync file)
     (let [configuration (edn/read-string (fs/readFileSync file "utf8"))]
@@ -239,8 +256,9 @@
       (let [configurations (filter map? (tree-seq coll? seq configuration))]
         {:path file
          :resolutions (vec (mapcat seq (keep :resolve configurations)))
-         :build-hooks (mapv :build-hooks (filter #(contains? % :build-hooks) configurations))}))
-    {:path file :resolutions [] :build-hooks []}))
+         :build-hooks (mapv :build-hooks (filter #(contains? % :build-hooks) configurations))
+         :javascript-inputs (vec (shadow-javascript-inputs [] configuration))}))
+    {:path file :resolutions [] :build-hooks [] :javascript-inputs []}))
 
 (defn- production-phases [file command]
   (when-not (string? command)
@@ -261,7 +279,8 @@
         facts (-> (shadow-configuration-facts shadow-file)
                   law/assert-shadow-bridge-resolutions!
                   shadow-law/assert-file-resolutions!
-                  shadow-law/assert-build-hooks!)
+                  shadow-law/assert-build-hooks!
+                  shadow-law/assert-javascript-inputs!)
         required-bridges (law/required-bridge-builds (set (map first (:resolutions facts))))]
     (when (or (seq required-bridges) (contains? scripts "build"))
       (let [file (node-path/join frontend-root "package.json")]
