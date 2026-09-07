@@ -7,8 +7,10 @@
             [clojure.string :as str]
             [knoxx.frontend.infra.migration-config-source :as config-source]
             [knoxx.frontend.law.migration :as law]
+            [knoxx.frontend.law.migration-lifecycle :as lifecycle-law]
             [knoxx.frontend.law.migration-shadow :as shadow-law]
-            [knoxx.frontend.law.migration-vite-entry :as entry-law]))
+            [knoxx.frontend.law.migration-vite-entry :as entry-law]
+            [knoxx.frontend.law.migration-vite-public :as public-law]))
 
 (defn- unsupported! [file detail]
   (throw (ex-info "Unsupported Vite migration configuration"
@@ -138,6 +140,16 @@
     (dirname-path file frontend-root bindings expression)
     :else (unsupported! file "Expected a literal path or path.resolve call")))
 
+(defn- assert-public-directory! [file frontend-root bindings configuration]
+  (let [^js node (get configuration "publicDir")
+        expected (node-path/resolve frontend-root "public")
+        selected (cond
+                   (nil? node) expected
+                   (= (.-FalseKeyword ts/SyntaxKind) (.-kind node)) nil
+                   :else (let [path (static-path file frontend-root bindings node)]
+                           (when-not (= "" path) (node-path/resolve frontend-root path))))]
+    (public-law/assert-public-directory! {:path file :expected expected :actual selected})))
+
 (defn- containment-facts [source-root target]
   (let [relative (node-path/relative source-root target)]
     {:relative-path relative :absolute? (node-path/isAbsolute relative) :separator node-path/sep}))
@@ -237,6 +249,7 @@
         (let [configuration (exported-config file source bindings)]
           (law/assert-vite-config-admission!
             (configuration-facts file bindings configuration))
+          (assert-public-directory! file frontend-root bindings configuration)
           (let [aliases (assert-aliases! file frontend-root bindings configuration)]
             (if expected
               (assert-bridge! file frontend-root bindings expected configuration)
@@ -251,6 +264,7 @@
       (when-not (or (nil? scripts)
                     (and (map? scripts) (every? string? (vals scripts))))
         (unsupported! file "Package scripts must be command strings"))
+      (lifecycle-law/assert-script-hooks! {:path file :scripts scripts})
       (or scripts {}))
     {}))
 

@@ -16,6 +16,8 @@ entries must match the governed bridge files; dynamic configurations that
 cannot be inspected without execution are rejected.
 The default Vite configuration used by the browser contract must retain the
 already inspected `frontend/index.html` entry; extra entry inputs require support.
+Vite public directories must remain the inspected `frontend/public` directory
+or be disabled; alternate copied source directories require inventory support.
 Vite plugins are limited to the existing zero-argument `@vitejs/plugin-react`
 factory; additional Vite or Rollup hooks require explicit inventory support.
 Rollup output, worker, and esbuild settings must use inspected static forms;
@@ -47,6 +49,8 @@ The production build may contain governed Vite phases, then Shadow release and
 the optional CSS phase. Every active bridge must be compiled before Shadow.
 The pipeline remains checked after bridge resolutions are retired.
 Opaque build wrappers and decoy commands are rejected.
+Nonempty implicit pre/post hooks around declared package scripts require inventory
+support; explicit commands and empty hooks remain supported.
 Vite glob imports are not supported by the inventory and fail explicitly;
 comments and string literals that merely mention glob syntax are ignored.
 All Vite `new URL(..., import.meta.url)` dependencies must stay in `frontend/src`,
@@ -116,6 +120,8 @@ copying Route values or router module values into other definitions or bindings
 is rejected. Statically named router property reads remain supported.
 Lexical bindings and parameters cannot establish native ownership merely by
 reusing a trusted component name; unresolved scoped component ownership is rejected.
+Core binding macros and temporary var redefinitions carry the same scope facts;
+unparsed low-level type binding forms cannot establish native ownership.
 Computed and threaded router API access is rejected when it could hide a route constructor.
 Route-object APIs (`useRoutes` and the browser/hash/memory router factories)
 are detected and rejected outside this grammar.

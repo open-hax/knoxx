@@ -107,3 +107,43 @@
              (str "(let [PlaceholderPage supplied-component]"
                   " ($ Route {:path \"/studio\"\n :element ($ react/Fragment"
                   " ($ PlaceholderPage) ($ app/BroadcastStudioPage))}))")))))
+
+(t/deftest core-binding-macros-cannot-launder-component-ownership
+  (doseq [[prefix suffix] [["(when-first [PlaceholderPage [app/BroadcastStudioPage]] " ")"]
+                           ["(when-first [[PlaceholderPage] [[app/BroadcastStudioPage]]] " ")"]
+                           ["(this-as PlaceholderPage " ")"]
+                           ["(dotimes [PlaceholderPage 1] " ")"]
+                           ["(amap source PlaceholderPage result " ")"]
+                           ["(areduce source index PlaceholderPage nil " ")"]
+                           ["(simple-benchmark [PlaceholderPage app/BroadcastStudioPage] " " 1)"]
+                           ["(letfn* [PlaceholderPage (fn [] app/BroadcastStudioPage)] " ")"]
+                           ["(defmethod render :default [PlaceholderPage] " ")"]
+                           ["(defmethod render :default render-page [PlaceholderPage] " ")"]
+                           ["(reify IRender (render [this PlaceholderPage] " "))"]
+                           ["(deftype View [PlaceholderPage] IRender (render [this] " "))"]
+                           ["(defrecord View [PlaceholderPage] IRender (render [this] " "))"]]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route implementation"
+            (fixture-routes (str prefix placeholder-route suffix))))))
+
+(t/deftest var-redefinitions-retain-qualified-and-unqualified-identities
+  (doseq [constructor ["with-redefs" "binding"]
+          reference ["PlaceholderPage" "fixture/PlaceholderPage"]
+          component ["PlaceholderPage" "fixture/PlaceholderPage"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route implementation"
+            (fixture-routes
+              (str "(def ^:dynamic PlaceholderPage nil) (" constructor " [" reference
+                   " app/BroadcastStudioPage] ($ Route {:path \"/studio\"\n :element ($ "
+                   component ")}))"))))))
+
+(t/deftest unrelated-core-bindings-and-var-redefinitions-do-not-taint-native-routes
+  (doseq [source [(str "(when-first [props [{}]] " placeholder-route ")")
+                  (str "(with-redefs [unrelated-value 1] " placeholder-route ")")
+                  (str "(with-redefs [PlaceholderPage app/BroadcastStudioPage] nil) " placeholder-route)
+                  (str "(with-redefs [PlaceholderPage " placeholder-route "] nil)")
+                  (str "(comment (with-redefs [PlaceholderPage app/BroadcastStudioPage] nil)) "
+                       placeholder-route)
+                  (str "(let [PlaceholderPage app/BroadcastStudioPage]"
+                       " (deftype View [] IRender (render [this] " placeholder-route ")))" )]]
+    (t/is (= [:native] (mapv :status (fixture-routes source))) source)))
