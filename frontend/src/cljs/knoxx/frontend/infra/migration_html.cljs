@@ -56,6 +56,23 @@
     (assoc attribute :mime-type (str/replace (first (str/split metadata #";" -1))
                                               #"^ +| +$" ""))))
 
+(defn- refresh-target [content]
+  ;; Shared declarative refresh grammar: decimal delay, optional URL=, and quotes.
+  (when-let [[_ tail] (re-matches #"^[\t\n\f\r ]*[0-9.]+(?:[\t\n\f\r ]*[;,][\t\n\f\r ]*|[\t\n\f\r ]+)([\s\S]*)$"
+                                 (or content ""))]
+    (let [target (str/replace tail #"^[uU][rR][lL][\t\n\f\r ]*=[\t\n\f\r ]*" "")
+          quote-delimiter (subs target 0 (min 1 (count target)))]
+      (if (contains? #{"'" "\""} quote-delimiter)
+        (subs target 1 (or (str/index-of target quote-delimiter 1) (count target)))
+        target))))
+
+(defn- refresh-data-url-facts [^js element]
+  (when (and (= "http://www.w3.org/1999/xhtml" (.-namespaceURI element))
+             (= "meta" (.-localName element))
+             (= "refresh" (some-> (.getAttribute element "http-equiv") str/lower-case)))
+    (when-let [target (refresh-target (.getAttribute element "content"))]
+      (data-url-facts {:element "meta" :name :refresh-target :value target}))))
+
 (defn- html-facts [path elements attributes]
   {:path path
    :scripts (vec (for [^js element elements
@@ -65,7 +82,8 @@
                     :html? (= "http://www.w3.org/1999/xhtml" (.-namespaceURI element))
                     :inline-code? (not (str/blank? (.-textContent element)))}))
    :handlers (vec (filter #(str/starts-with? (:name %) "on") attributes))
-   :data-urls (vec (keep data-url-facts attributes))
+   :data-urls (vec (concat (keep data-url-facts attributes)
+                           (keep refresh-data-url-facts elements)))
    :script-urls (vec (filter #(and (or (contains? #{"href" "src" "action" "formaction" "xlink:href"}
                                                  (:name %))
                                       (and (= "object" (:element %)) (= "data" (:name %))))

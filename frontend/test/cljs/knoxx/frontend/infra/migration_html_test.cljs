@@ -70,6 +70,33 @@
                   "<div data-example='data:text/html,&lt;script&gt;1+1&lt;/script&gt;'></div>"]]
     (t/is (nil? (html/assert-html! "frontend/index.html" source)) source)))
 
+(t/deftest refresh-data-documents-cannot-hide-inline-source
+  (doseq [content ["0; url=data:text/html,%3Cscript%3E1%2B1%3C/script%3E"
+                   " .5 , UrL = &quot;DATA:APPLICATION/XHTML+XML,&lt;html/&gt;&quot; ignored"
+                   "1.2.3 data:image/svg+xml,&lt;svg/&gt;"
+                   "0;'data:text/xml,&lt;document/&gt;'"
+                   "0;url='data:application/xml,&lt;document/&gt;"]]
+    (t/is (thrown? js/Error
+                  (html/assert-html! "frontend/public/help.html"
+                                     (str "<meta http-equiv='REFRESH' content=\"" content "\">")))
+          content))
+  (t/is (thrown? js/Error
+                (html/assert-html! "frontend/index.html"
+                                   "<iframe srcdoc='&lt;meta http-equiv=&quot;refresh&quot; content=&quot;0;url=data:text/html,%3Cscript%3E1%2B1%3C/script%3E&quot;&gt;'></iframe>"))))
+
+(t/deftest ordinary-refresh-and-inert-metadata-remain-admissible
+  (doseq [content ["300" "0; url=/help.html" "0;url=https://example.invalid/help"
+                   "0;url=data:text/plain,help" "0;url=data:,help"
+                   "0;url=javascript:1+1" "-1;url=data:text/html,invalid-delay"
+                   "0x;url=data:text/html,invalid-delay"]]
+    (t/is (nil? (html/assert-html! "frontend/index.html"
+                                  (str "<meta http-equiv='refresh' content='" content "'>")))
+          content))
+  (t/is (nil? (html/assert-html! "frontend/index.html"
+                                "<meta name='refresh' content='0;url=data:text/html,example'>")))
+  (t/is (nil? (html/assert-html! "frontend/index.html"
+                                "<meta refresh='data:text/html,example'>"))))
+
 (t/deftest copied-public-html-is-inspected-without-rejecting-generated-javascript
   (with-files {"frontend/index.html" "<script src='/cljs/app.js'></script>"
                "frontend/public/index.html" "<script src='/cljs/app.js'></script>"

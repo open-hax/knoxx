@@ -48,6 +48,8 @@ with XML parsing that preserves namespaces and case. Static graphics and foreign
 namespace metadata remain supported.
 HTML/XML data URLs in document navigation attributes require inventory support;
 image resources, plain-text data documents, and inert data attributes remain supported.
+Meta-refresh targets use the same data-document rule; ordinary redirects and
+reloads remain supported.
 The production build may contain governed Vite phases, then Shadow release and
 the optional CSS phase. Every active bridge must be compiled before Shadow.
 The pipeline remains checked after bridge resolutions are retired.

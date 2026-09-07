@@ -6,7 +6,8 @@
   (and (contains? #{["iframe" "src"] ["frame" "src"] ["embed" "src"]
                     ["object" "data"] ["a" "href"] ["a" "xlink:href"]
                     ["area" "href"] ["form" "action"]
-                    ["button" "formaction"] ["input" "formaction"]}
+                    ["button" "formaction"] ["input" "formaction"]
+                    ["meta" :refresh-target]}
                   [element attribute-name])
        (or (contains? #{"text/html" "text/xml" "application/xml"} mime-type)
            (and (re-matches #"[!#$%&'*+.^_`|~0-9a-z-]+/[!#$%&'*+.^_`|~0-9a-z-]+" mime-type)
