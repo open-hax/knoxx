@@ -149,11 +149,15 @@
           (loader/load-all-contracts-sync config))))
 
 (defn source-contract
-  "Resolve a runtime source contract by source id or source ref."
+  "Resolve a source ref without accepting another namespace's slug match."
   [config source-ref]
   (when-let [source-id (source-ref-id source-ref)]
-    (or (loader/contract-sync config "sources" (source-contract-id source-id))
-        (source-contract-by-source-id config source-id))))
+    (let [contract (loader/contract-sync config "sources" (source-contract-id source-id))
+          resolved-id (normalize-source-id (or (:source/id contract)
+                                               (:contract/id contract)))]
+      (or (when (= source-id resolved-id)
+            contract)
+          (source-contract-by-source-id config source-id)))))
 
 (defn- source-ref-overrides
   [source-ref]

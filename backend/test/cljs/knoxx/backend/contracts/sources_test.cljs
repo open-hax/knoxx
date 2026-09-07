@@ -90,3 +90,45 @@
             [:source/openplanner-memory]
             [{:source/ref :source/openplanner-memory
               :enabled false}])))))
+
+(deftest qualified-source-lookup-rejects-a-colliding-legacy-contract
+  (let [legacy (assoc openplanner-source-contract
+                      :contract/id "app-events"
+                      :source/id :source/app-events)
+        records [{:contractClass "sources" :id "app-events" :contract legacy}
+                 {:contractClass "sources" :id "github/app-events"
+                  :contract disabled-github-source-contract}]]
+    (doseq [ordered-records [records (vec (reverse records))]]
+      (with-redefs [loader/load-all-contracts-sync (fn [_] ordered-records)]
+        (testing "qualified refs resolve the matching contract in either catalog order"
+          (doseq [source-ref [:github/app-events "github/app_events"
+                              {:source/ref :github/app-events}]]
+            (is (= disabled-github-source-contract
+                   (sut/source-contract {} source-ref)))))
+        (testing "the legacy ref still resolves its own contract"
+          (is (= legacy (sut/source-contract {} :source/app-events))))
+        (testing "a colliding enabled contract cannot bypass GitHub disablement"
+          (is (= [] (sut/compose-source-refs
+                     {} [:github/app-events]
+                     [{:source/ref :github/app-events :enabled true}]))))))))
+
+(deftest missing-qualified-source-does-not-inherit-a-legacy-contract
+  (doseq [enabled [true false]]
+    (let [legacy (assoc openplanner-source-contract
+                        :contract/id "app-events"
+                        :source/id :source/app-events
+                        :enabled enabled)]
+      (with-redefs [loader/load-all-contracts-sync
+                    (fn [_] [{:contractClass "sources" :id "app-events"
+                              :contract legacy}])]
+        (is (nil? (sut/source-contract {} :github/app-events)))
+        (testing "a missing contract remains a run-local ref without inherited settings"
+          (is (= {:source/id :github/app-events :source/ref :github/app-events}
+                 (sut/resolve-source-spec {} :github/app-events))))))))
+
+(deftest legacy-contract-id-still-supplies-a-missing-source-id
+  (let [legacy (dissoc openplanner-source-contract :source/id)]
+    (with-redefs [loader/load-all-contracts-sync
+                  (fn [_] [{:contractClass "sources" :id "openplanner-memory"
+                            :contract legacy}])]
+      (is (= legacy (sut/source-contract {} "openplanner_memory"))))))
