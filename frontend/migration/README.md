@@ -100,6 +100,8 @@ compares the exact base revision and rejects:
 Route IDs use canonical source expressions. A new legacy ID is rejected to
 prevent an expression change from hiding a rollback. Native route IDs may be
 added or renamed.
+Live referred router APIs remain visible after namespace import renaming;
+unsupported aliased constructors require inventory support instead of disappearing.
 
 Route declarations currently belong in `frontend/src/cljs/knoxx/frontend/app.cljs`;
 the inventory rejects route declarations extracted into other source files.

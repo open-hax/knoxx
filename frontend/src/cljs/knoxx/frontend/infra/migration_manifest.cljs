@@ -252,11 +252,12 @@
 
 ;; Route values may not escape through aliases in definitions, bindings or calls.
 ;; Only the canonical Route binding is exempt; alias dataflow is not interpreted.
-(defn- route-candidate? [router-aliases form]
+(defn- route-candidate? [router-aliases router-apis form]
   (and (coll? form)
        (not (non-evaluated-form? form))
        (not (canonical-route-binding? form))
        (or (some router/api-reference? form)
+           (some router-apis form)
            (router/computed-access? router-aliases form)
            (router/unresolved-module-value? router-aliases form)
            (and (symbol? (first form))
@@ -268,11 +269,12 @@
 ;; Shared :id/:children props do not identify routes; route markers identify aliases.
 (defn- route-forms [path source]
   (let [forms (source-forms path source)
-        router-aliases (router/aliases forms)]
+        router-aliases (router/aliases forms)
+        router-apis (router/api-bindings forms)]
     (->> forms
          (remove #(and (seq? %) (= 'ns (first %))))
          route-inspection-nodes
-         (filter (partial route-candidate? router-aliases)))))
+         (filter (partial route-candidate? router-aliases router-apis)))))
 
 (defn- checked-route-forms [path source]
   (let [forms (vec (route-forms path source))]

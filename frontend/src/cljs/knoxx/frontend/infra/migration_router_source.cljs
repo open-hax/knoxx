@@ -197,6 +197,20 @@
      :referred (into {} (for [export (:refer options)]
                           [(str (get (:rename options) export export)) (str export)]))}))
 
+(defn api-bindings
+  "Read local and self-qualified referred router API names, including import renames."
+  [forms]
+  (let [source-namespace (some #(when (namespace-form? %) (str (second %))) forms)]
+    (into #{}
+          (mapcat (fn [{:keys [module referred]}]
+                    (when (contains? #{"react-router" "react-router-dom"} module)
+                      (mapcat (fn [[local-name export]]
+                                (when (api-reference? (symbol export))
+                                  (cond-> [(symbol local-name)]
+                                    source-namespace (conj (symbol source-namespace local-name)))))
+                              referred))))
+          (require-bindings forms))))
+
 (defn namespace-facts
   "Decode namespace imports and live source references without inferring route ownership."
   [forms inspect-nodes]
