@@ -2,6 +2,8 @@ name: knoxx-ci
 
 on:
   pull_request:
+    # Infrastructure admission depends on the current PR body.
+    types: [opened, synchronize, reopened, edited]
     branches:
       - main
   push:
@@ -54,6 +56,8 @@ jobs:
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Checkout OpenPlanner SDK source
         uses: actions/checkout@v5
@@ -168,8 +172,30 @@ jobs:
       - name: Frontend typecheck (tsc)
         run: pnpm -C frontend run typecheck
 
+      - name: Frontend CLJS lint
+        env:
+          KNOXX_LINT_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}"
+        run: pnpm -C frontend run lint:cljs:changed
+
+      - name: Frontend migration manifest and ratchets
+        env:
+          KNOXX_MIGRATION_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}"
+        run: |
+          KNOXX_MIGRATION_INFRASTRUCTURE="$(node -e '
+            const fs = require("node:fs");
+            const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+            const declared = (event.pull_request?.body || "").split(/\r?\n/)
+              .some(line => line.trim() === "Migration infrastructure: yes");
+            console.log(process.env.GITHUB_EVENT_NAME !== "pull_request" || declared);
+          ')"
+          export KNOXX_MIGRATION_INFRASTRUCTURE
+          pnpm -C frontend run migration:check
+
       - name: Frontend CLJS tests
         run: pnpm -C frontend run test:cljs
+
+      - name: Frontend production Shadow release (zero warnings)
+        run: pnpm -C frontend run build:cljs
 
       - name: Frontend tests + coverage (vitest)
         run: pnpm -C frontend run test:coverage
