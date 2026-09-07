@@ -58,6 +58,19 @@
                  "Navigate" [{:name "rr/Navigate" :namespace "rr"}]
                  "UnusedPage" [{:name "app/ChatPage" :namespace "app"}]}})))))
 
+(t/deftest unresolved-bridge-module-values-cannot-select-a-native-fallback
+  (let [component {:name "LegacyOpsRedirect" :namespace nil}
+        facts {:bridge-alias "app" :live-references [component]
+               :rendered-components [component]
+               :local-definitions {"LegacyOpsRedirect" [{:name "app" :namespace nil}]}}]
+    (t/is (nil? (migration/route-implementation facts)))
+    (t/is (= "app/ChatPage"
+             (migration/route-implementation
+               (update facts :live-references conj {:name "app/ChatPage" :namespace "app"}))))
+    (t/is (= "LegacyOpsRedirect"
+             (migration/route-implementation
+               (assoc-in facts [:local-definitions "LegacyOpsRedirect"] [{:name "payload" :namespace nil}]))))))
+
 (t/deftest chooses-terminal-actions-from-migration-semantics
   (t/is (= :delete
            (migration/file-disposition

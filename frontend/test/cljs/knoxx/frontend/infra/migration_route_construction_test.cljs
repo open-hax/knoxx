@@ -230,6 +230,21 @@
              (str "(def helper app/ChatPage) (def LegacyOpsRedirect fixture/helper)\n"
                   "($ Route {:path \"/chat\"\n :element ($ fixture/LegacyOpsRedirect)})")))))
 
+(t/deftest computed-bridge-access-cannot-classify-a-local-component-as-native
+  (doseq [definition ["(def LegacyOpsRedirect (.-ChatPage app))"
+                      "(def LegacyOpsRedirect (aget app \"ChatPage\"))"
+                      "(def LegacyOpsRedirect (aget app component-name))"
+                      "(def LegacyOpsRedirect (some-> app (aget \"ChatPage\")))"
+                      "(def bridge-module app) (def LegacyOpsRedirect (aget bridge-module \"ChatPage\"))"]]
+    (t/is (thrown-with-msg?
+            js/Error #"Unsupported Shadow route implementation"
+            (fixture-routes
+              (str definition "\n($ Route {:path \"/chat\"\n :element ($ LegacyOpsRedirect)})")))))
+  (t/is (= [{:route "\"/redirect\"" :implementation "LegacyOpsRedirect" :status :native}]
+           (fixture-routes
+             (str "(defnc LegacyOpsRedirect [] (comment (aget app \"ChatPage\")) ($ Navigate))\n"
+                  "($ Route {:path \"/redirect\"\n :element ($ LegacyOpsRedirect)})")))))
+
 (t/deftest threaded-router-values-cannot-conceal-aliased-route-construction
   (doseq [expression ["(-> rr (aget \"Route\"))" "(some-> rr (aget \"Route\"))"
                       "(cljs.core/some-> rr (cljs.core/aget \"Route\"))"

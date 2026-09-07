@@ -104,15 +104,17 @@
       references)))
 
 (defn route-implementation
-  "Select a live legacy dependency before a native rendered component or control."
+  "Select known ownership; unresolved bridge module values cannot prove native ownership."
   [{:keys [bridge-alias live-references rendered-components local-definitions]}]
-  (or (when bridge-alias
-        (some #(when (= bridge-alias (:namespace %)) (:name %))
-              (reachable-references live-references local-definitions)))
-      (some #(when (:namespace %) (:name %)) rendered-components)
-      (some #(when (contains? #{"LegacyOpsRedirect" "Navigate" "PlaceholderPage"} (:name %))
-               (:name %))
-            rendered-components)))
+  (let [references (reachable-references live-references local-definitions)]
+    (or (when bridge-alias
+          (some #(when (= bridge-alias (:namespace %)) (:name %)) references))
+        (when-not (and bridge-alias
+                        (some #(and (nil? (:namespace %)) (= bridge-alias (:name %))) references))
+          (or (some #(when (:namespace %) (:name %)) rendered-components)
+              (some #(when (contains? #{"LegacyOpsRedirect" "Navigate" "PlaceholderPage"} (:name %))
+                       (:name %))
+                    rendered-components))))))
 
 (defn- route-record
   "Classify parsed route ownership before constructing its structural record."
