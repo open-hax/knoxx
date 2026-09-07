@@ -30,6 +30,8 @@ script, config, and exact `dist/bridge` output mapping; release overrides cannot
 redirect that mapping.
 Other Shadow file resolutions require explicit inventory support. Local package
 imports from CLJS pass through the same source-containment boundary as TypeScript.
+Executable Shadow build hooks require inventory support because they can alter
+source files or emitted JavaScript after the census. Empty hook settings are allowed.
 Authored entry and public HTML may load the canonical `/cljs/app.js` bootstrap;
 additional executable scripts, event handlers, JavaScript URLs, and base URL
 redirection require inventory support. Inert markup and data scripts remain

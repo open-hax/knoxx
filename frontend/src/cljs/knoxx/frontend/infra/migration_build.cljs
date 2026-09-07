@@ -231,17 +231,16 @@
       (unsupported! file (str "Vite builds require an explicit static config: " script-name)))
     (mapv second configured)))
 
-(defn- shadow-resolutions [file]
+(defn- shadow-configuration-facts [file]
   (if (fs/existsSync file)
     (let [configuration (edn/read-string (fs/readFileSync file "utf8"))]
       (when-not (map? configuration)
         (unsupported! file "Shadow configuration must be an EDN map"))
-      (->> (tree-seq coll? seq configuration)
-           (filter map?)
-           (keep :resolve)
-           (mapcat seq)
-           vec))
-    []))
+      (let [configurations (filter map? (tree-seq coll? seq configuration))]
+        {:path file
+         :resolutions (vec (mapcat seq (keep :resolve configurations)))
+         :build-hooks (mapv :build-hooks (filter #(contains? % :build-hooks) configurations))}))
+    {:path file :resolutions [] :build-hooks []}))
 
 (defn- production-phases [file command]
   (when-not (string? command)
@@ -259,9 +258,10 @@
 
 (defn- assert-shadow-bridge-builds! [frontend-root scripts]
   (let [shadow-file (node-path/join frontend-root "shadow-cljs.edn")
-        facts (-> {:path shadow-file :resolutions (shadow-resolutions shadow-file)}
+        facts (-> (shadow-configuration-facts shadow-file)
                   law/assert-shadow-bridge-resolutions!
-                  shadow-law/assert-file-resolutions!)
+                  shadow-law/assert-file-resolutions!
+                  shadow-law/assert-build-hooks!)
         required-bridges (law/required-bridge-builds (set (map first (:resolutions facts))))]
     (when (or (seq required-bridges) (contains? scripts "build"))
       (let [file (node-path/join frontend-root "package.json")]

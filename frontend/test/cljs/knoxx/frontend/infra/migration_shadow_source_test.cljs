@@ -82,3 +82,41 @@
                     "frontend/src/cljs/knoxx/frontend/app.cljs"
                     "(ns fixture (:require [\"react\" :as react]))\n($ Route {:path \"/native\"\n :element ($ react/Fragment)})"})
                 (filter #(= :route (:kind %))) first :status))))
+
+(t/deftest shadow-build-hooks-cannot-change-source-after-the-census
+  (doseq [placement [[:build-hooks]
+                     [:builds :app :build-hooks]
+                     [:builds :app :release :build-hooks]
+                     [:builds :app :dev :build-hooks]
+                     [:builds :other :release :build-hooks]]]
+    (t/is (thrown-with-msg?
+            js/Error #"Shadow build hooks require explicit migration inventory support"
+            (source-root-records "hooks"
+              {"frontend/shadow-cljs.edn"
+               (pr-str (assoc-in {:source-paths ["src/cljs" "hooks"]}
+                                 placement ['fixture.restore/restore]))
+               "frontend/hooks/fixture/restore.clj"
+               "(ns fixture.restore) (defn restore {:shadow.build/stage :flush} [state] (spit \"dist/legacy.js\" \"console.log('legacy')\") state)"})))))
+
+(t/deftest empty-base-hooks-cannot-hide-executable-release-overrides
+  (t/is (thrown-with-msg?
+          js/Error #"Shadow build hooks require explicit migration inventory support"
+          (source-root-records "src/cljs"
+            {"frontend/shadow-cljs.edn"
+             (pr-str {:source-paths ["src/cljs"]
+                      :builds {:app {:build-hooks []
+                                     :release {:build-hooks [['fixture.restore/restore "legacy.js"]]}}}})}))))
+
+(t/deftest absent-and-empty-build-hooks-preserve-static-builds
+  (doseq [hooks [[] [nil] [[]] [[] nil []]]]
+    (let [facts {:path "shadow-cljs.edn" :build-hooks hooks}]
+      (t/is (= facts (shadow-law/assert-build-hooks! facts)))))
+  (t/is (= :native
+           (->> (source-root-records "src/cljs"
+                   {"frontend/shadow-cljs.edn"
+                    (pr-str {:source-paths ["src/cljs"]
+                             :build-hooks []
+                             :builds {:app {:build-hooks nil :release {:build-hooks []}}}})
+                    "frontend/src/cljs/knoxx/frontend/app.cljs"
+                    "(ns fixture)\n($ Route {:path \"/native\"\n :element ($ Navigate)})"})
+                (filter #(= :route (:kind %))) first :status))))

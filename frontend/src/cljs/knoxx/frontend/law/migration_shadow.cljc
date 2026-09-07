@@ -1,5 +1,5 @@
 (ns knoxx.frontend.law.migration-shadow
-  "Contracts for local Shadow JavaScript sources outside the TypeScript inventory.")
+  "Contracts for Shadow source and build effects outside the TypeScript inventory.")
 
 (defn assert-file-resolutions!
   "Require explicit inventory support for file modules beyond the governed bridges."
@@ -10,4 +10,13 @@
                                        "@open-hax/knoxx-frontend-bridge"} module)))]
     (throw (ex-info "Shadow file resolution requires explicit migration inventory support"
                     {:path path :module module :resolution resolution})))
+  facts)
+
+(defn assert-build-hooks!
+  "Reject executable build hooks whose source and output effects are not inventoried."
+  [{:keys [path build-hooks] :as facts}]
+  (doseq [hooks build-hooks
+          :when (not (or (nil? hooks) (and (sequential? hooks) (empty? hooks))))]
+    (throw (ex-info "Shadow build hooks require explicit migration inventory support"
+                    {:path path :build-hooks hooks})))
   facts)
