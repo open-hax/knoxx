@@ -117,6 +117,7 @@ jobs:
 
       - name: Frontend CLJS migration ratchet
         run: |
+          node --test frontend/scripts/check-cljs-migration-ratchet.test.mjs
           node frontend/scripts/check-cljs-migration-ratchet.mjs --self-test
           node frontend/scripts/check-cljs-migration-ratchet.mjs \
             --check \

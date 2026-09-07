@@ -303,6 +303,17 @@ function checkBaseline(actual, baseline, base) {
   }
 
   if (base) {
+    const priorCljsFiles = execFileSync(
+      "git",
+      ["ls-tree", "-r", "--name-only", "-z", base, "--", "frontend/src/"],
+      { cwd: repoRoot, encoding: "utf8" },
+    ).split("\0").filter((path) => path.endsWith(".cljs")).length;
+    if (actual.summary.cljsFiles < priorCljsFiles) {
+      failures.push(
+        `cljsFiles regressed against base ${base}: ${actual.summary.cljsFiles} < ${priorCljsFiles}`,
+      );
+    }
+
     const newTs = newTypeScriptPaths(base);
     if (newTs.length) {
       failures.push(`new production TypeScript paths: ${newTs.join(", ")}`);

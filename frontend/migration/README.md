@@ -18,7 +18,7 @@ At that revision the frontend contains:
 The ratchet enforces:
 
 1. TypeScript and TSX file counts may only decrease.
-2. CLJS source count may not decrease.
+2. CLJS source count may not decrease below the historical minimum or, when `--base` is supplied, the count at that exact revision. Renames and equal-count reorganizations remain allowed.
 3. Neither bridge may gain exports.
 4. Shadow-owned routing may not gain bridge-owned route components.
 5. When a base ref is supplied, a pull request may not add a new production `.ts` or `.tsx` path even if another TypeScript file is deleted in the same change.
