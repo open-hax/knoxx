@@ -79,7 +79,6 @@
 
 (t/deftest ordinary-url-values-and-worker-example-text-remain-supported
   (doseq [source ["const url = new URL(base);"
-                  "const worker = new Worker(new URL(absoluteUrl));"
                   "const url = new URL(url, window.location.origin);"
                   "// new Worker(new URL('../../legacy/worker.ts', import.meta.url))"
                   "const help = \"new Worker(new URL('../../legacy/worker.ts', import.meta.url))\";"]]

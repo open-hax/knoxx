@@ -44,6 +44,13 @@ Vite glob imports are not supported by the inventory and fail explicitly;
 comments and string literals that merely mention glob syntax are ignored.
 All Vite `new URL(..., import.meta.url)` dependencies must stay in `frontend/src`,
 including worker and standalone asset URLs; dynamic source URLs are rejected.
+Browser worker constructors and service-worker registrations in governed
+TypeScript must use the inspected `new URL(..., import.meta.url)` source form.
+Plain public URLs and variables require inventory support before admission.
+Unresolved worker constructor, service-worker container, and registration-method
+aliases are rejected; ordinary package constructors and availability checks remain supported.
+Live CLJS browser-worker constructors and service-worker access require explicit
+inventory support; quoted examples and ordinary browser APIs remain supported.
 Dynamic `import()` calls must use literal module paths; variable imports are
 rejected because their dependency set cannot be read from a literal specifier.
 Vitest source scopes must stay within `frontend/src`; active test commands

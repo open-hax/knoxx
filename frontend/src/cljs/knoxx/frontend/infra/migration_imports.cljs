@@ -4,7 +4,8 @@
             ["typescript" :as ts]
             [clojure.string :as str]
             [knoxx.frontend.infra.migration-packages :as packages]
-            [knoxx.frontend.law.migration :as law]))
+            [knoxx.frontend.law.migration :as law]
+            [knoxx.frontend.law.migration-worker :as worker-law]))
 
 (defn- assert-target! [source-root path specifier target]
   (let [relative (node-path/relative source-root target)]
@@ -87,10 +88,102 @@
         (.-text property)))))
 
 (defn- new-constructor [^js node]
-  (when (ts/isNewExpression node)
+  (when (and node (ts/isNewExpression node))
     (let [^js constructor (.-expression node)]
       (when (ts/isIdentifier constructor)
         (.-text constructor)))))
+
+(defn- member-path [^js node]
+  (cond
+    (ts/isIdentifier node) [(.-text node)]
+    (or (ts/isPropertyAccessExpression node) (ts/isElementAccessExpression node))
+    (let [^js property (if (ts/isPropertyAccessExpression node)
+                         (.-name node) (.-argumentExpression node))]
+      (when (and property (if (ts/isPropertyAccessExpression node)
+                            (ts/isIdentifier property)
+                            (or (ts/isStringLiteral property)
+                                (ts/isNoSubstitutionTemplateLiteral property))))
+        (when-let [receiver (member-path (.-expression node))]
+          (conj receiver (.-text property)))))
+    :else nil))
+
+(defn- imported-bindings [^js module]
+  (let [bindings (atom #{})]
+    (letfn [(inspect [^js node type-only?]
+              (let [type-only? (or type-only? (.-isTypeOnly node))]
+                (when (and (not type-only?)
+                           (or (ts/isImportClause node) (ts/isImportSpecifier node)
+                               (ts/isNamespaceImport node)) (.-name node))
+                  (swap! bindings conj (.-text ^js (.-name node))))
+                (ts/forEachChild node #(inspect % type-only?))
+                nil))]
+      (inspect module false)
+      @bindings)))
+
+(defn- browser-worker-reference [bindings node]
+  (let [members (member-path node)
+        root (first members)
+        members (if (contains? #{"window" "globalThis" "self"} root)
+                  (subvec members 1) members)]
+    (when-not (contains? bindings root)
+      (cond
+        (contains? #{["Worker"] ["SharedWorker"]} members) :worker
+        (= ["navigator" "serviceWorker"] members) :service-worker
+        (= ["navigator" "serviceWorker" "register"] members) :registration
+        :else nil))))
+
+(defn- worker-call [bindings ^js node]
+  (when (or (ts/isNewExpression node) (ts/isCallExpression node))
+    (let [kind (browser-worker-reference bindings (.-expression node))]
+      (cond
+        (and (= :worker kind) (ts/isNewExpression node)) :worker
+        (and (= :registration kind) (ts/isCallExpression node)) :service-worker
+        :else nil))))
+
+(defn- runtime-reference? [^js node]
+  (let [^js parent (.-parent node)]
+    (and parent
+         (or (ts/isExpressionNode node) (ts/isShorthandPropertyAssignment parent))
+         (not (and (ts/isPropertyAccessExpression parent) (identical? node (.-name parent))))
+         (not (loop [^js ancestor parent]
+                (when ancestor
+                  (or (ts/isTypeNode ancestor) (recur (.-parent ancestor)))))))))
+
+(defn- container-usage [^js node ^js parent]
+  (let [^js call (.-parent parent)
+        method (last (member-path parent))]
+    (when (and (or (ts/isPropertyAccessExpression parent) (ts/isElementAccessExpression parent))
+               (identical? node (.-expression parent)) call)
+      (cond
+        (ts/isTypeOfExpression call) :type-query
+        (and (ts/isCallExpression call) (identical? parent (.-expression call)))
+        (cond
+          (= "register" method) :registration-call
+          (contains? #{"getRegistration" "getRegistrations" "startMessages"} method) :query-call
+          :else nil)
+        :else nil))))
+
+(defn- assert-worker-reference! [bindings path ^js node]
+  (when-let [kind (browser-worker-reference bindings node)]
+    (when (runtime-reference? node)
+      (let [^js parent (.-parent node)
+            usage (cond
+                    (ts/isTypeOfExpression parent) :type-query
+                    (and (= :worker kind) (ts/isNewExpression parent)
+                         (identical? node (.-expression parent))) :constructor-call
+                    (and (= :registration kind) (ts/isCallExpression parent)
+                         (identical? node (.-expression parent))) :registration-call
+                    (= :service-worker kind) (container-usage node parent)
+                    :else nil)]
+        (worker-law/assert-reference! {:path path :kind kind :usage usage})))))
+
+(defn- assert-worker-source! [bindings path ^js node]
+  (when-let [kind (worker-call bindings node)]
+    (let [^js source (first (array-seq (.-arguments node)))
+          base (when (= "URL" (new-constructor source))
+                 (second (array-seq (.-arguments source))))]
+      (worker-law/assert-source! {:path path :kind kind
+                                 :governed-url? (= "url" (import-meta-property base))}))))
 
 (defn- assert-asset-url! [{:keys [root source-root] :as resolution} path ^js node]
   (when (= "URL" (new-constructor node))
@@ -121,12 +214,15 @@
       (resolve-target resolution path (.-text specifier)))))
 
 (defn- assert-vite-dependencies! [resolution path source]
-  (let [module (ts/createSourceFile path source (.-Latest ts/ScriptTarget) true)]
+  (let [module (ts/createSourceFile path source (.-Latest ts/ScriptTarget) true)
+        bindings (imported-bindings module)]
     (letfn [(inspect [node]
               (when (contains? #{"glob" "globEager"} (import-meta-property node))
                 (throw (ex-info "Vite glob imports are outside the supported migration grammar"
                                 {:path path})))
               (assert-asset-url! resolution path node)
+              (assert-worker-source! bindings path node)
+              (assert-worker-reference! bindings path node)
               (assert-dynamic-import! resolution path node)
               (ts/forEachChild node inspect)
               nil)]

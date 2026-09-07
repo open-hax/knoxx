@@ -6,7 +6,27 @@
             [knoxx.frontend.infra.migration-imports :as imports]
             [knoxx.frontend.infra.migration-router-source :as router]
             [knoxx.frontend.law.migration :as law]
+            [knoxx.frontend.law.migration-worker :as worker-law]
             [knoxx.frontend.shape.migration :as shape]))
+
+(defn- browser-worker-reference [aliases node]
+  (cond
+    (symbol? node)
+    (when (or (contains? '#{.-Worker -Worker .-SharedWorker -SharedWorker
+                            .-serviceWorker -serviceWorker} node)
+              (re-matches #"js/(?:(?:(?:window|globalThis|self)\.)?(?:Worker|SharedWorker)\.?|(?:(?:window|globalThis|self)\.)?navigator\.serviceWorker(?:\..*)?)"
+                          (str node)))
+      (str node))
+
+    (and (seq? node) (symbol? (first node))
+         (or (contains? '#{aget cljs.core/aget clojure.core/aget js/Reflect.get} (first node))
+             (and (= "get" (name (first node)))
+                  (= "goog.object" (get aliases (namespace (first node))
+                                        (namespace (first node)))))))
+    (some #(when (contains? #{"Worker" "SharedWorker" "serviceWorker"} %) %)
+          (rest node))
+
+    :else nil))
 
 (defn- macro-declaration? [node]
   (when (and (seq? node) (symbol? (first node)))
@@ -85,7 +105,11 @@
       (fn [result absolute-path]
         (let [path (shape/normalize-path (node-path/relative root absolute-path))
               source (fs/readFileSync absolute-path "utf8")
-              facts (router/namespace-facts (read-forms path source) inspect-nodes)]
+              forms (read-forms path source)
+              facts (router/namespace-facts forms inspect-nodes)]
+          (worker-law/assert-cljs-source!
+            {:path path :references (vec (keep (partial browser-worker-reference (:aliases facts))
+                                               (inspect-nodes forms)))})
           (assert-package-imports! resolution absolute-path facts)
           (law/assert-route-location!
             {:path path :supported-path app-path
