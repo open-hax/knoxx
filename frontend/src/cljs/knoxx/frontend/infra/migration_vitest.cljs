@@ -4,7 +4,8 @@
             ["node:path" :as node-path]
             ["typescript" :as ts]
             [knoxx.frontend.infra.migration-config-source :as config-source]
-            [knoxx.frontend.law.migration :as law]))
+            [knoxx.frontend.law.migration :as law]
+            [knoxx.frontend.law.migration-vitest-modules :as module-law]))
 
 (defn- unsupported! [file detail]
   (throw (ex-info "Unsupported Vitest migration configuration" {:path file :detail detail})))
@@ -67,11 +68,27 @@
             (.-text entry))
           entries)))
 
+(defn- config-value [file ^js node]
+  (cond
+    (or (ts/isStringLiteral node) (ts/isNoSubstitutionTemplateLiteral node)) (.-text node)
+    (ts/isNumericLiteral node) (js/Number (.-text node))
+    (= (.-NullKeyword ts/SyntaxKind) (.-kind node)) nil
+    (= (.-TrueKeyword ts/SyntaxKind) (.-kind node)) true
+    (= (.-FalseKeyword ts/SyntaxKind) (.-kind node)) false
+    (ts/isArrayLiteralExpression node) (mapv #(config-value file %) (array-seq (.-elements node)))
+    (ts/isObjectLiteralExpression node)
+    (into {} (map (fn [[property value]] [property (config-value file value)]))
+          (object-properties file node))
+    :else :dynamic))
+
 (defn- assert-test-scopes! [file configuration]
   (let [test-settings (object-properties file (get configuration "test"))]
     (law/assert-vitest-config-admission! {:path file
                                          :root-fields (set (keys configuration))
                                          :test-fields (set (keys test-settings))})
+    (module-law/assert-config!
+      {:path file :settings (into {} (map (fn [[field node]] [field (config-value file node)]))
+                                 test-settings)})
     (doseq [scope (literal-scopes file (get test-settings "include") false)]
       (law/assert-vitest-scope! file "include" scope))
     (doseq [field ["includeSource" "setupFiles" "globalSetup"]

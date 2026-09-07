@@ -58,6 +58,10 @@ must select the inspected static Vitest configuration.
 Suite `include` and `includeSource` patterns must select the counted
 `.test`/`.spec` TypeScript filename convention. Custom suite naming and
 Vitest-only aliases require inventory support before they can be admitted.
+Vitest module selectors must use supported literal built-ins. Custom reporters,
+environments, pools, providers, snapshot/diff modules, sequencer overrides, and
+nonempty worker `execArgv` require explicit inventory support. Built-in reporter
+options and empty optional module lists remain supported.
 The `test`, `test:coverage`, and `test:watch` entrypoints cannot hide the runner
 behind wrappers; retiring Vitest removes these entrypoints and its config together.
 
