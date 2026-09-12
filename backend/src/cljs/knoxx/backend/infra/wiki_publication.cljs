@@ -66,7 +66,9 @@
   (law/assert-command! {:publication (identity/encode-keyword publication)
                         :expected_revision expected})
   (let [index (await (publications/publication-index! config))
-        intent (some #(when (= publication (:publication/id %)) %) (:publications index))
+        intent (or (some #(when (= publication (:publication/id %)) %) (:publications index))
+                   (throw (ex-info "Owned publication was not found"
+                                   {:status 404 :code "wiki_publication_not_found"})))
         scope (commands/scope config ctx (identity/encode-keyword (:publication/document intent)))]
     (domain/owned-intent! index scope publication)
     (await (files/with-document-lock! scope

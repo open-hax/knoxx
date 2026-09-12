@@ -8,8 +8,15 @@
             [knoxx.backend.shape.session-persistence :as persistence]))
 
 (defn- authorize! [ctx]
-  (authz/ensure-permission! ctx "agent.chat.use")
-  (when-not ctx (throw (ex-info "Authentication required" {:status 401}))))
+  (when-not ctx (throw (ex-info "Authentication required" {:status 401})))
+  (authz/ensure-permission! ctx "agent.chat.use"))
+
+(defn- visible? [ctx run]
+  (and (or (authz/system-admin? ctx)
+           (authz/ctx-permitted? ctx "agent.runs.read_all")
+           (and (some? (authz/ctx-org-id ctx))
+                (= (authz/ctx-org-id ctx) (authz/record-org-id run))))
+       (authz/run-visible? ctx run)))
 
 (defn ^:async read!
   "Read an existing run with fresh tenant and principal authorization."
@@ -19,7 +26,7 @@
               (await (persistence/get-run store run-id))
               (get @state/runs* run-id))]
     (when-not run (throw (ex-info "Run not found" {:status 404 :code "run_not_found"})))
-    (when-not (authz/run-visible? ctx run)
+    (when-not (visible? ctx run)
       (throw (ex-info "Access denied" {:status 403 :code "run_access_denied"})))
     run))
 
