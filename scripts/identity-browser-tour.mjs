@@ -1,13 +1,17 @@
 /** Real browser identity ceremonies. The supervisor owns isolated keys, accounts and cleanup. */
 import assert from 'node:assert/strict';
+import {observeBrowserResponse} from './browser-response-observer.mjs';
 
-async function submit(page, label, suffix, status = 200) {
-  const pending = page.waitForResponse(response => response.request().method() === 'POST' &&
-    new URL(response.url()).pathname.endsWith(suffix)).then(async response => ({status: response.status(), body: await response.json()}));
-  await page.getByRole('button', {name: label, exact: true}).click();
-  const response = await pending;
-  assert.equal(response.status, status, `${suffix}: expected ${status}, got ${response.status}`);
-  return response.body;
+async function submit(page, label, suffix, status = 200, {readBody = true} = {}) {
+  const pending = observeBrowserResponse(page, response => response.request().method() === 'POST' &&
+    new URL(response.url()).pathname.endsWith(suffix), async response => ({status: response.status(),
+      body: readBody ? await response.json() : undefined}));
+  try {
+    await page.getByRole('button', {name: label, exact: true}).click();
+    const response = await pending.value();
+    assert.equal(response.status, status, `${suffix}: expected ${status}, got ${response.status}`);
+    return readBody ? response.body : {status: response.status};
+  } finally { pending.cancel(); }
 }
 async function signOut(page) {
   await page.getByRole('button', {name: 'Account menu', exact: true}).click();
@@ -83,8 +87,9 @@ async function signupTour(page, config, original) {
   }
 }
 async function revocationTour(page, config, original) {
-  const pending = page.waitForResponse(response => new URL(response.url()).pathname === '/api/auth/config').then(response => response.json());
-  await account(page, config.baseUrl); const registry = await pending;
+  const pending = observeBrowserResponse(page, response => new URL(response.url()).pathname === '/api/auth/config', response => response.json());
+  let registry;
+  try { await account(page, config.baseUrl); registry = await pending.value(); } finally { pending.cancel(); }
   if (!registry.credentialListUrl || !registry.credentialRevokeUrl) {
     process.stdout.write('WARN Running Axxium does not advertise credential revocation.\n');
     return {available: false, verified: false};
@@ -96,10 +101,12 @@ async function revocationTour(page, config, original) {
   await pgp.getByRole('button', {name: /^Revoke /}).click();
   await page.getByRole('group', {name: 'Confirm credential revocation', exact: true}).waitFor();
   await config.shot('identity-09-revocation-confirmation', 'The inventory requires explicit confirmation before removing the PGP binding; another method remains available.', []);
-  const denied = page.waitForResponse(response => new URL(response.url()).pathname === '/api/auth/context' && response.status() === 401);
-  const revoked = await submit(page, 'Confirm revocation', '/api/auth/credentials/revoke');
-  assert.equal(revoked.ok, true); assert.equal(revoked.reauthenticate, true);
-  await page.getByText('Axxium sessions ended; sign in again.', {exact: true}).waitFor(); await denied;
+  // This successful command deliberately navigates. Chrome may discard its response body
+  // before CDP reads it; prove the real status and subsequent loss of authority instead.
+  await submit(page, 'Confirm revocation', '/api/auth/credentials/revoke', 200, {readBody: false});
+  await page.getByText('Axxium sessions ended; sign in again.', {exact: true}).waitFor();
+  const denied = await page.request.get(new URL('/api/auth/context', config.baseUrl).href);
+  assert.equal(denied.status(), 401, 'The browser cookie jar must no longer authorize an Axxium context');
   await config.shot('identity-10-axxium-sessions-ended', 'Axxium revoked the binding and its sessions; a fresh context request returned 401. Independent MCP grants and external provider accounts are outside this operation.', []);
   assert.equal((await pgpProof(page, config, false, 401)).code, 'invalid-credentials');
   await page.getByText('Invalid PGP credential', {exact: true}).waitFor();

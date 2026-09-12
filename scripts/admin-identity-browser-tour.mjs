@@ -1,12 +1,15 @@
 /** Actual Admin UI commands; the isolated supervisor owns all created identity/directory data. */
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {observeBrowserResponse} from './browser-response-observer.mjs';
 async function command(page, button, method, pathname, status) {
-  const pending = page.waitForResponse(response => response.request().method() === method && new URL(response.url()).pathname === pathname)
-    .then(async response => ({status: response.status(), body: await response.json(), sent: response.request().postDataJSON()}));
-  await button.click(); const response = await pending;
-  assert.equal(response.status, status, `${method} ${pathname}: ${response.status}`);
-  return response;
+  const pending = observeBrowserResponse(page, response => response.request().method() === method && new URL(response.url()).pathname === pathname,
+    async response => ({status: response.status(), body: await response.json(), sent: response.request().postDataJSON()}));
+  try {
+    await button.click(); const response = await pending.value();
+    assert.equal(response.status, status, `${method} ${pathname}: ${response.status}`);
+    return response;
+  } finally { pending.cancel(); }
 }
 function noIdentityEdits(payload) {
   for (const field of ['email', 'authProvider', 'externalSubject', 'axxiumPrincipalId']) {
@@ -18,9 +21,11 @@ export async function adminIdentityTour(page, config) {
   const anonymous = await page.context().browser().newContext();
   try {
     const visitor = await anonymous.newPage();
-    const denied = visitor.waitForResponse(response => new URL(response.url()).pathname === '/api/auth/context');
-    await visitor.goto(new URL('/ops/admin/actors', config.baseUrl).href);
-    assert.equal((await denied).status(), 401);
+    const denied = observeBrowserResponse(visitor, response => new URL(response.url()).pathname === '/api/auth/context');
+    try {
+      await visitor.goto(new URL('/ops/admin/actors', config.baseUrl).href);
+      assert.equal((await denied.value()).status(), 401);
+    } finally { denied.cancel(); }
     await visitor.getByText('Identity managed by Axxium', {exact: true}).waitFor();
   } finally {await anonymous.close();}
   const suffix = randomUUID().slice(0, 8), orgName = `Sandbox editorial team ${suffix}`;
