@@ -38,6 +38,9 @@
   [{:keys [revision translated? approved? superseded? observed]
     :or {revision "probe-revision" translated? true approved? true}}]
   {:current-source-revision (constantly revision)
+   ;; These translation/target fixtures begin after exact source acceptance.
+   :source-accepted? (fn [document locale concrete]
+                       (= [document locale concrete] [:knoxx.docs/probe :en revision]))
    :translated-revision? (constantly (boolean translated?))
    :approved? (constantly (boolean approved?))
    :source-revision-superseded? (constantly (boolean superseded?))
@@ -216,6 +219,9 @@
           result (plan/reconcile-plan
                   resource-index intent
                   {:current-source-revision next!
+                   ;; These translation/target fixtures begin after exact source acceptance.
+                   :source-accepted? (fn [document locale concrete]
+                                       (= [document locale concrete] [:knoxx.docs/probe :en "probe-revision"]))
                    :translated-revision? (constantly true)
                    :approved? (constantly true)
                    :source-revision-superseded? (constantly false)

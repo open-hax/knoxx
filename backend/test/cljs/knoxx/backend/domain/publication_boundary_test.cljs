@@ -47,6 +47,9 @@
    what the adapter actually did."
   [target-bundle]
   {:current-source-revision (constantly "abc123")
+   ;; These translation/target fixtures begin after exact source acceptance.
+   :source-accepted? (fn [document locale concrete]
+                       (= [document locale concrete] [:knoxx.docs/probe :en "abc123"]))
    :translated-revision? (constantly true)
    :approved? (constantly true)
    :source-revision-superseded? (constantly false)

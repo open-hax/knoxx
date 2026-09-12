@@ -1,6 +1,5 @@
 (ns hooks.defroute
-  (:require [clj-kondo.hooks-api :as api]
-            [clojure.string :as str]))
+  (:require [clj-kondo.hooks-api :as api]))
 
 ;; Teaches clj-kondo the shape of:
 ;;
@@ -17,8 +16,8 @@
 ;;
 ;; The hook generates:
 ;;
-;;   (defn fn-name [_app _runtime _config _deps]
-;;     (let [<only symbols referenced in body+guards> (fn [& _] nil) ...]
+;;   (defn fn-name [_app _runtime _config deps]
+;;     (let [<only symbols referenced in body+guards> (get deps :symbol) ...]
 ;;       (^:async fn [ctx]            ; or [_ctx] when ctx is unused
 ;;         [guards-if-any] body...)))
 ;;
@@ -27,19 +26,17 @@
 ;; raw Promise chains inside route bodies are analyzed in the same
 ;; structural context they actually run in.
 ;;
-;; Using (fn [& _] nil) as the binding value avoids both
-;; "Unresolved symbol" errors (which occur when the right side
-;; references a symbol not yet in scope) and "Nil cannot be called"
-;; errors (which occur when clj-kondo tracks a nil-typed binding).
-;; A variadic fn is callable with any argument count, so all route-body
-;; call sites are valid.
+;; An unknown dependency lookup keeps actual types unknown. Inventing a
+;; variadic function here falsely makes request/reply and scalar TTL values
+;; callable, producing type errors in valid route bodies. The hook preserves
+;; checks on real literals/local values rather than disabling type analysis.
 ;;
 ;; Only symbols that actually appear in the body are injected, so
 ;; clj-kondo does not emit spurious unused-binding warnings for the
 ;; many standard deps that a given route does not reference.
 ;;
-;; request, reply, and await are injected via the let pool as variadic
-;; fns so clj-kondo does not flag them as unresolved inside route bodies.
+;; request, reply, and await are modeled by unknown values in the same let
+;; pool so clj-kondo does not flag them as unresolved inside route bodies.
 ;; ctx is modeled as the wrapping ^:async fn parameter (the macro binds
 ;; it from (aget request "ctx")), not via the let pool.
 ;;
@@ -55,18 +52,12 @@
     bearer-headers fetch-json request-query-string
     session-guard optional-session-guard])
 
-;; request, reply, and await live in the let pool (bound as variadic fns).
+;; request, reply, and await live in the let pool (with unknown types).
 ;; ctx is modeled as the parameter of the ^:async handler fn that wraps the
 ;; body — see new-node below — because the runtime macro binds it from
 ;; (aget request "ctx") inside the emitted handler, not from deps.
 (def ^:private handler-syms
   '[request reply await])
-
-(defn- any-fn-node []
-  (api/list-node
-   [(api/token-node 'fn)
-    (api/vector-node [(api/token-node '&) (api/token-node '_)])
-    (api/token-node nil)]))
 
 (defn- async-handler-node
   "Wrap the route body forms in the ^:async handler fn that the runtime macro
@@ -81,15 +72,11 @@
        (api/vector-node [(api/token-node param)])]
       body-forms))))
 
-(defn- atom-node []
-  (api/list-node
-   [(api/token-node 'atom)
-    (api/vector-node [])]))
-
 (defn- binding-value-node [sym]
-  (if (str/ends-with? (name sym) "*")
-    (atom-node)
-    (any-fn-node)))
+  (api/list-node
+   [(api/token-node 'get)
+    (api/token-node 'deps)
+    (api/token-node (keyword sym))]))
 
 (defn- collect-body-syms
   "Walk body nodes recursively, returning a set of all symbol sexprs found."
@@ -131,18 +118,18 @@
         ;; filtered so the real unused-dep warning surfaces.
         needed-extra-syms (filter (fn [s] (contains? body-syms s)) extra-syms)
         all-syms          (concat needed-std-syms needed-extra-syms)
+        deps-param        (if (seq all-syms) 'deps '_deps)
         binding-vec       (api/vector-node
                            (mapcat (fn [sym]
                                      [(api/token-node sym) (binding-value-node sym)])
                                    all-syms))
-        ;; All four structural params use _ prefix: they're never referenced in body
-        ;; text (app/deps are macro-internal; runtime/config are injected via let
-        ;; when the body actually uses them).
+        ;; Use a real name for the dependency parameter only when the generated
+        ;; lookups read it. This preserves unused/used-underscored diagnostics.
         new-node          (api/list-node
                            [(api/token-node 'defn)
                             fn-name
                             (api/vector-node
-                             (map api/token-node '[_app _runtime _config _deps]))
+                             (map api/token-node ['_app '_runtime '_config deps-param]))
                             (api/list-node
                              [(api/token-node 'let)
                               binding-vec

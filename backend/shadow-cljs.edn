@@ -110,7 +110,7 @@
       "libsodium-wrappers"}},
    :compiler-options
    {:output-feature-set :es-next,
-    :optimizations :none,
+    :optimizations :simple,
     :source-map true,
     :infer-externs false,
     :macros {:knoxx.backend.macros true},
@@ -118,7 +118,7 @@
   :test
   {:target :node-test,
    :output-to "target/test/test.cjs",
-   :ns-regex ["knoxx.backend.*-test$"],
+   :ns-regexp "knoxx\\.backend\\..*-test$",
    :autorun true,
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                      :file "test/js/eta_mu_cli_test_stub.cjs"}
@@ -159,7 +159,7 @@
   :test-ci
   {:target :node-test,
    :output-to "target/test/test-ci.cjs",
-   :ns-regex ["knoxx.backend.*-test$"],
+   :ns-regexp "knoxx\\.backend\\..*-test$",
    :autorun false,
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                      :file "test/js/eta_mu_cli_test_stub.cjs"}

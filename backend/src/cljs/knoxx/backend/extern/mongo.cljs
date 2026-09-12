@@ -18,7 +18,7 @@
 
    What comes back is another opaque handle, and it is only ever passed back
    into this namespace's own functions."
-  [db collection-name]
+  [^js db collection-name]
   (.collection db collection-name))
 
 (defn- hello->topology
@@ -41,7 +41,7 @@
    The native `hello` response is decoded here and only a CLJS topology map or
    a typed exception crosses the boundary. A standalone deployment is refused:
    bootstrap credential replacement has no safe non-transactional equivalent."
-  [db]
+  [^js db]
   (when-not db
     (throw (js/Error. "Mongo database handle is required for topology validation")))
   (let [hello (await (.command db #js {:hello 1}))
@@ -55,7 +55,7 @@
 
 (defn ^:async insert-one!
   "Insert one CLJS document into a native collection handle. Returns the doc."
-  [collection-handle doc]
+  [^js collection-handle doc]
   (await (.insertOne collection-handle (clj->js doc)))
   doc)
 
@@ -143,7 +143,7 @@
       update))))
 
 (defn- ^:async update-one-native!
-  [session collection-handle query update options]
+  [session ^js collection-handle query update options]
   (assert-mutation! query update options)
   (try
     (-> (await (.updateOne
@@ -160,7 +160,7 @@
         (throw (mongo-operation-error "updateOne" err))))))
 
 (defn- ^:async update-many-native!
-  [session collection-handle query update options]
+  [session ^js collection-handle query update options]
   (assert-mutation! query update options)
   (try
     (-> (await (.updateMany
@@ -202,10 +202,10 @@
    Knoxx's deployment contract is a replica set, so the transaction uses
    snapshot read concern and majority write concern and lets the driver retry
    transient write conflicts. The session is closed on every exit path."
-  [client f]
+  [^js client f]
   (when-not client
     (throw (js/Error. "Mongo client is required for a transaction")))
-  (let [session (.startSession client)]
+  (let [^js session (.startSession client)]
     (try
       (try
         (await (.withTransaction
@@ -279,7 +279,7 @@
    rather than the one code being claimed. The output check keeps an
    unexpected driver shape from reaching a caller that has already destroyed
    the record it is about to misread."
-  [collection-handle query]
+  [^js collection-handle query]
   (assert-query! query)
   (let [result (await (.findOneAndDelete collection-handle (clj->js query)))
         raw    (when result
@@ -305,7 +305,7 @@
    claim the driver said nothing was deleted when it actually said nothing at
    all, and callers validating a required count would accept the fabrication
    and carry on — the boundary must fail closed, not invent an answer."
-  [collection-handle query]
+  [^js collection-handle query]
   (assert-query! query)
   (let [result (await (.deleteOne collection-handle (clj->js query)))
         count  (aget result "deletedCount")]
@@ -314,10 +314,10 @@
 (defn ^:async find-docs!
   "Run a field-equality query against a native collection handle.
    The :limit key caps results. Returns a CLJS vector of documents."
-  [collection-handle query]
+  [^js collection-handle query]
   (let [limit (:limit query)
-        cursor (cond-> (.find collection-handle (clj->js (dissoc query :limit)))
-                 limit (.limit limit))
+        ^js initial-cursor (.find collection-handle (clj->js (dissoc query :limit)))
+        ^js cursor (if limit (.limit initial-cursor limit) initial-cursor)
         rows (await (.toArray cursor))]
     (vec (js->clj rows :keywordize-keys true))))
 
@@ -365,7 +365,7 @@
 
    Any other error propagates. A failed write whose cause is unknown must not
    be reported as a peaceful collision."
-  [collection-handle doc]
+  [^js collection-handle doc]
   (try
     (await (.insertOne collection-handle (clj->js doc)))
     {:inserted? true :doc doc}

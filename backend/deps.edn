@@ -26,6 +26,12 @@
   {:extra-paths ["src/cljs" "test/cljs" "test/e2e"]
    :extra-deps
    {io.github.open-hax/katamorph   {:git/sha "b00316a64310190335e4cb1a31b08d601eff8bb0"}
+    io.github.open-hax/clio        {:git/url "https://github.com/open-hax/eta-mu.git"
+                                   :git/sha "388c462b3f1a5b0c51bc93486ab954a7f89cedbe"
+                                   :deps/root "packages/clio"}
+    io.github.open-hax/axxium      {:git/url "https://github.com/open-hax/eta-mu.git"
+                                   :git/sha "388c462b3f1a5b0c51bc93486ab954a7f89cedbe"
+                                   :deps/root "packages/axxium"}
     ;; ../shared/src/cljs, as a local lib rather than an external :extra-path
     ;; (tools.deps deprecates paths that escape the project directory).
     open-hax/knoxx-shared          {:local/root "../shared"}
