@@ -10,7 +10,10 @@
 (defn install!
   "Install one ordered durable event writer for the selected run provider."
   [store]
-  (let [writer (when (satisfies? persistence/IRunEventStore store)
+  (when (and store (not (satisfies? persistence/IRunEventStore store)))
+    (throw (ex-info "The selected run provider does not support durable events"
+                    {:status 503 :code "run_event_provider_unsupported"})))
+  (let [writer (when store
                  (queue/create #(persistence/append-event! store %)))]
     (reset! installed* writer)
     (state/set-durable-event-sink! (:submit! writer))))
@@ -24,6 +27,9 @@
 (defn ^:async persist-run!
   "Persist a run snapshot after its ordered events, without duplicating events."
   [run]
-  (await (flush! (:run_id run)))
-  (when-let [store @registry/session-store*]
+  (let [store @registry/session-store*]
+    (when-not store
+      (throw (ex-info "A durable run provider is required for run admission"
+                      {:status 503 :code "run_provider_unavailable"})))
+    (await (flush! (:run_id run)))
     (await (persistence/put-run! store (dissoc run :events :run_events :sequence)))))

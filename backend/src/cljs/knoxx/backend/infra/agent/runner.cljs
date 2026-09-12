@@ -5,6 +5,7 @@
    turn runtime. This namespace provides a queue-style direct-start helper so
    non-HTTP callers can use the same semantics as /api/knoxx/direct/start."
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.run-event-payload :as run-payload]
             [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.time :as time]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
@@ -410,7 +411,7 @@
 
 (defn- event-queue-event
   [body queue-result status event-type error]
-  (run-state/tool-event-payload
+  (run-payload/tool-event-payload
    (:run-id body) (:conversation-id body) (:session-id body) event-type
    (cond-> {:status status
             :queue_position (:position queue-result)
@@ -460,7 +461,7 @@
            (assoc-in [:settings :eventQueue :position] 0))))
     (run-state/append-run-event!
      run-id
-     (run-state/tool-event-payload
+     (run-payload/tool-event-payload
       run-id conversation-id session-id "event_turn_started"
       {:status "running"
        :restart_aware false}))))
@@ -471,7 +472,7 @@
         run-id (:run-id body)
         conversation-id (:conversation-id body)
         session-id (:session-id body)
-        event (run-state/tool-event-payload run-id conversation-id session-id
+        event (run-payload/tool-event-payload run-id conversation-id session-id
                                             "async_spawn_failed"
                                             {:status "failed"
                                              :error (:message diagnostic)
