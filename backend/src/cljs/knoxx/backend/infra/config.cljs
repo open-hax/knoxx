@@ -138,6 +138,7 @@
    :cache-provider (keyword (env "KNOXX_CACHE_PROVIDER" "edn"))
    :mcp-oauth-provider (keyword (env "KNOXX_MCP_OAUTH_PROVIDER" "edn"))
    :mailbox-directory (env "KNOXX_MAILBOX_DIRECTORY" nil)
+   :mailbox-provider (keyword (env "KNOXX_MAILBOX_PROVIDER" "edn"))
    :request-logging? (not (env-flag "KNOXX_DISABLE_REQUEST_LOGGING"))
    :wiki-model-provider (env "KNOXX_WIKI_MODEL_PROVIDER" "opencode")
    :wiki-model (env "KNOXX_WIKI_MODEL" "opencode/big-pickle")
@@ -263,7 +264,7 @@
   []
   {:mcp-enabled (not= (env "MCP_ENABLED" "false") "false")
    :mcp-servers (env "MCP_SERVERS" "")
-   :openplanner-mcp-base-url (env "OPENPLANNER_MCP_BASE_URL" "http://openplanner-mcp:8010")
+   :openplanner-mcp-base-url (env "OPENPLANNER_MCP_BASE_URL" "")
    :openplanner-mcp-tool-name (env "OPENPLANNER_MCP_TOOL_NAME" "openplanner")
    :openplanner-mcp-project (env-first ["KNOXX_OPENPLANNER_PROJECT" "WORKSPACE_PROJECT_NAME" "KNOXX_WORKSPACE_PROJECT"] "workspace")
    :openplanner-mcp-source (env "KNOXX_OPENPLANNER_SOURCE" "knoxx")

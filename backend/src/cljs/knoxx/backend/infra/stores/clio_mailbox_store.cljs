@@ -2,6 +2,7 @@
   "Canonical Clio actor mailboxes with scoped reads and fenced delivery receipts."
   (:require [knoxx.backend.extern.mailbox-store :as host]
             [knoxx.backend.infra.clio-application-store :as clio]
+            [knoxx.backend.infra.mailbox-changes :as changes]
             [knoxx.backend.infra.stores.mailbox-store-reference :as reference]
             [knoxx.backend.law.mailbox-store :as law]
             [knoxx.backend.shape.mailbox-store :as mailbox]))
@@ -39,4 +40,5 @@
    (clio/open! {:directory directory :stream "knoxx/mailbox" :projection reference/projection
                 :reads {:mailbox/route reference/resolve-route :mailbox/entries reference/list-entries
                         :mailbox/message reference/read-message}
+                :after-append changes/accepted!
                 :writes {:mailbox/operation reference/apply-operation!}}) options))

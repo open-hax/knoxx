@@ -42,9 +42,10 @@
 
   `projection` returns {:store protocol-provider :snapshot (fn [] plain-state)}.
   The snapshot must exclude transient method answers. It is never persisted."
-  [{:keys [directory stream projection reads writes before-append]}]
+  [{:keys [directory stream projection reads writes before-append after-append]}]
   (when-not (and (string? stream) (seq stream) (fn? projection)
                  (map? reads) (map? writes) (or (nil? before-append) (fn? before-append))
+                 (or (nil? after-append) (fn? after-append))
                  (every? qualified-keyword? (concat (keys reads) (keys writes)))
                  (every? fn? (concat (vals reads) (vals writes))))
     (throw (ex-info "invalid Clio application provider"
@@ -61,7 +62,8 @@
       (ledger/create-ledger! file))
     (let [store {:directory directory :file file :stream stream
                  :runtime (runtime/open schemas law/catalog)
-                 :projection projection :reads reads :writes writes :before-append before-append}]
+                 :projection projection :reads reads :writes writes
+                 :before-append before-append :after-append after-append}]
       (history store)
       store)))
 
@@ -100,7 +102,7 @@
 
 (defn- append-operation!
   "Admit one immutable operation at the exact stream slot that was inspected."
-  [{:keys [file runtime stream before-append]} events operation]
+  [{:keys [file runtime stream before-append after-append]} events operation]
   (let [previous (last events)
         fact (event/make-event
               (:schema/current runtime) :knoxx.application/operation-accepted
@@ -119,6 +121,7 @@
       (when before-append (before-append operation))
       (ledger/append-event! (:schema/revisions (runtime/refresh runtime)) file fact)
       (notify-changed!)
+      (when after-append (paths/notify-subscriber! #(after-append operation)))
       (catch :default cause
         (if (= :clio.ledger/concurrent-stream-write (:clio/error (ex-data cause)))
           (throw (ex-info "Clio application state changed; retry against fresh history"

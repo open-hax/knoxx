@@ -22,6 +22,7 @@
   {:ok true
    :box "inbox"
    :actor-id "actor-7"
+   :durable true :capabilities {:send true :modes ["inbox-only"] :acknowledge true}
    :entries [{:id "mail-1"
               :kind "actor-message"
               :status status

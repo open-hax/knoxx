@@ -23,6 +23,17 @@
   (when-let [permission (get {"event" "org.events.control" "steer" "agent.controls.steer"
                              "follow-up" "agent.controls.follow_up"} mode)]
     (authz/ensure-permission! context permission)))
+(defn interface-capabilities
+  "Project current command policy for the human mailbox controls."
+  [context]
+  (let [send? (boolean (and (authz/ctx-permitted? context "agent.chat.use") (allowed? context)))
+        modes (cond-> ["inbox-only"]
+                (authz/ctx-permitted? context "agent.controls.follow_up") (conj "follow-up")
+                (authz/ctx-permitted? context "agent.controls.steer") (conj "steer")
+                (authz/ctx-permitted? context "org.events.control") (conj "event"))]
+    {:send send? :modes (if send? modes [])
+     :acknowledge (boolean (and (authz/ctx-permitted? context "agent.chat.use")
+                                (authz/ctx-actor-binding context)))}))
 (defn- ^:async resolved-target! [mailbox request]
   (let [target (address/resolve-target request (:lineage request))]
     (if-let [actor (:actor-id target)]

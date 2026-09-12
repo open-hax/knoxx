@@ -18,6 +18,9 @@ Bootstrap installs `clio-mailbox-store/open!` with an explicit `:directory` usin
 valid timestamp. The application selects `KNOXX_MAILBOX_DIRECTORY`, normally a
 `mailbox` child of its Wiki state directory. Missing providers return a classified
 503; they cannot report a successful send or acknowledgement.
+`KNOXX_MAILBOX_PROVIDER` selects the mailbox independently and defaults to `edn`.
+Unavailable provider names, including a Mongo mailbox implementation that this
+checkpoint does not provide, are rejected before any ledger is opened.
 
 All routes require current Axxium identity and Knoxx membership. Tenant and actor
 authority come from that context, never from request fields. Agent
@@ -29,6 +32,7 @@ an explicit deny overrides administrator defaults.
 | `POST /api/actors/messages` | `{operation_id,target,content,mode}`; optional target coordinates and metadata |
 | `GET /api/actors/mailbox?box=inbox` | Current actor's inbox metadata; `outbox` selects its sent messages |
 | `GET /api/actors/mailbox/:mailboxId` | Full immutable body for the sender, recipient or tenant administrator |
+| `GET /api/actors/mailbox/changes` | Authenticated SSE invalidation stream for the current actor or operator |
 | `POST /api/actors/mailbox/:mailboxId/ack` | Recipient acknowledgement, even when the recipient is an administrator |
 | `GET /api/admin/config/actors/mailbox` | Tenant operator inventory and named filters |
 | `POST /api/admin/config/actors/mailbox/:mailboxId/ack` | Explicit operator acknowledgement |
@@ -45,6 +49,16 @@ List entries expose a truncated preview, never the full canonical body. A full
 read returns the `content` field. Top-level response entry keys are explicit
 `id`, `orgId`, `status`, `source`, `target`, `delivery`, `contentRef`, `metadata`,
 `preview`, `durable` and timestamps; qualified EDN keys cannot collide in JSON.
+List responses also contain current `capabilities` with `send`, `modes` and
+`acknowledge`, including explicit send-tool denial and mode-specific permissions.
+
+SSE sends `event: mailbox-changed` with exactly `data: {}`. No message content or
+identifier is broadcast. The stream filters the tenant and participating actors,
+then refreshes credentials and permissions before writing a frame. An operator
+can observe only the current tenant. Accepted state-changing Clio appends trigger
+immediate process-local invalidation; no-op retries and refused writes are silent.
+The initial frame and 15-second heartbeat reconcile reconnects and other-process
+writes. Those heartbeats are reconciliation signals, not claims of new writes.
 
 ## Delivery guarantees and limits
 
@@ -107,6 +121,14 @@ The subsequent retry-identity and durable-response follow-up passed **27 tests /
 changes the actor route, retries the original message, and proves that no second
 effect is invoked and no canonical body leaks through inventory metadata.
 
+SSE, capability DTOs and explicit provider composition subsequently passed
+**31 tests / 146 assertions**, with **516 files / zero compiler warnings**.
+The added boundary tests verify other-tenant and unrelated-actor silence,
+no-op/refusal silence, credential revocation, content-free frames, and actual
+mailbox bootstrap selection. The stream boundary test uses a controlled Node
+response sink; the browser tour remains the separate proof of a real browser
+subscription and the rendered UI.
+
 Changed-source lint has zero errors. The sole warning is the pre-existing,
 unchanged 51-line `create-session-manager!` in `infra/agent/session.cljs`; the new
 mailbox and cache-authority functions have no warnings. A coordinated full backend
@@ -118,9 +140,9 @@ server artifact.
 
 The full-stack supervisor is `scripts/verify-wiki-stack.mjs`; it owns temporary
 data, source/artifact provenance checks, actual Axxium login and browser cleanup.
-This mailbox checkpoint supplies the real endpoints for that stack. It does not
-yet add compose/full-message controls or live mailbox updates to the existing
-administrator inventory. The HTTP/SDK proof above does **not** establish human UI
-parity or a mailbox browser walkthrough. Those controls and their annotated
-screenshots must be added to the existing surface before claiming this user-facing
-feature complete.
+This mailbox checkpoint supplies the real endpoints for that stack. The existing
+`/mail` page is the human surface for compose, full-message reading, acknowledgement
+and live updates; its UI extension and browser helper are a coordinated frontend
+checkpoint. The HTTP/SDK and controlled-stream proofs above do **not** establish
+human UI parity or replace the annotated browser walkthrough. That tour must
+invoke an actual authenticated agent tool while the human view is open.

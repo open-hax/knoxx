@@ -2,12 +2,16 @@
   "Install explicitly selected application persistence providers before recovery."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.clock :as clock]
+            [knoxx.backend.infra.mailbox-delivery :as mailbox-delivery]
+            [knoxx.backend.infra.mailbox-delivery-registry :as mailbox-deliveries]
             [knoxx.backend.infra.run-events :as events]
             [knoxx.backend.infra.stores.cache-registry :as caches]
             [knoxx.backend.infra.stores.clio-cache-store :as clio-cache]
+            [knoxx.backend.infra.stores.clio-mailbox-store :as clio-mailbox]
             [knoxx.backend.infra.stores.clio-mcp-oauth :as clio-mcp]
             [knoxx.backend.infra.stores.clio-run-store :as clio-run]
             [knoxx.backend.infra.stores.clio-thread-store :as clio-thread]
+            [knoxx.backend.infra.stores.mailbox-store :as mailboxes]
             [knoxx.backend.infra.stores.mongo-cache-store :as mongo-cache]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
             [knoxx.backend.infra.stores.mongo-run-store :as mongo-run]
@@ -21,14 +25,19 @@
   [config]
   (boolean (some #{:mongodb} (vals (law/selection! config)))))
 
+(defn- required-directory! [service directory]
+  (when-not (and (string? directory) (not (str/blank? directory)))
+    (throw (ex-info "Persistence directory is required"
+                    {:status 503 :code "persistence_directory_required" :service service})))
+  directory)
+
 (defn install-local!
   "Validate every selection before opening a ledger; install only selected EDN ports."
   [config]
   (let [selection (law/selection! config)
-        directory (:wiki-directory config)]
-    (when-not (and (string? directory) (not (str/blank? directory)))
-      (throw (ex-info "Persistence directory is required"
-                      {:status 503 :code "persistence_directory_required"})))
+        directory (required-directory! :application (:wiki-directory config))
+        mailbox-directory (required-directory! :mailbox-provider
+                                                (or (:mailbox-directory config) (str directory "/mailbox")))]
     (when (= :edn (:run-provider selection))
       (reset! runs/session-store* (clio-run/open! {:directory (str directory "/runs")
                                                   :clock! clock/instant-iso})))
@@ -38,6 +47,9 @@
       (caches/install! (clio-cache/open! {:directory (str directory "/cache")})))
     (when (= :edn (:mcp-oauth-provider selection))
       (mongo-mcp/install! (clio-mcp/open! {:directory (str directory "/mcp-oauth")})))
+    (when (= :edn (:mailbox-provider selection))
+      (mailboxes/install! (clio-mailbox/open! {:directory mailbox-directory}))
+      (mailbox-deliveries/install! (mailbox-delivery/provider)))
     (events/install! @runs/session-store*)
     selection))
 

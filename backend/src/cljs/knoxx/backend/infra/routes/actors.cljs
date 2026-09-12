@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.routes.actors
   "HTTP adapters for the same verified, durable mailbox commands used by agent tools."
   (:require [knoxx.backend.extern.actor-mailbox :as wire]
+            [knoxx.backend.extern.mailbox-changes :as changes]
             [knoxx.backend.infra.actor-mailbox :as mailbox]
             [knoxx.backend.infra.actor-mailbox-commands :as commands]
             [knoxx.backend.infra.auth.authz :as authz]
@@ -12,7 +13,8 @@
   [] "GET" "/api/admin/config/actors/mailbox" [session-guard]
   (try (ensure-permission! ctx "org.events.control")
        (let [result (await (mailbox/list-entries! (mailbox/context runtime ctx) (wire/request-filters request)))]
-         (json-response! reply 200 (assoc (wire/result-wire result) :ok true)))
+         (json-response! reply 200 (assoc (wire/result-wire result) :ok true
+                                        :capabilities (assoc (commands/interface-capabilities ctx) :acknowledge true))))
        (catch :default err (error-response! reply err))))
 (defroute actor-mailbox-ack-route!
   [] "POST" "/api/admin/config/actors/mailbox/:mailboxId/ack" [session-guard]
@@ -35,7 +37,8 @@
              filters (assoc (select-keys (wire/request-filters request) [:status :limit])
                             (if (= box "outbox") :source-actor-id :target-actor-id) actor-id)
              result (await (mailbox/list-entries! (mailbox/context runtime ctx) filters))]
-         (json-response! reply 200 (assoc (wire/result-wire result) :ok true :box box :actorId actor-id)))
+         (json-response! reply 200 (assoc (wire/result-wire result) :ok true :box box :actorId actor-id
+                                        :capabilities (commands/interface-capabilities ctx))))
        (catch :default err (error-response! reply err))))
 (defroute actor-mailbox-self-read-route!
   [] "GET" "/api/actors/mailbox/:mailboxId" [session-guard]
@@ -55,9 +58,14 @@
   (try (let [result (await (commands/send! runtime config ctx (wire/request-send request)))]
          (json-response! reply 200 (wire/command-wire result)))
        (catch :default err (error-response! reply err))))
+(defroute actor-mailbox-changes-route!
+  [] "GET" "/api/actors/mailbox/changes" [session-guard]
+  (try (changes/open-stream! runtime ctx reply)
+       (catch :default err (error-response! reply err))))
 (defn register-actor-routes!
   "Register the mailbox reader, sender, acknowledgement and operator retry adapters."
   [app runtime config deps]
   (doseq [register! [actor-mailbox-list-route! actor-mailbox-ack-route! actor-mailbox-retry-route!
-                    actor-mailbox-self-list-route! actor-mailbox-self-read-route! actor-mailbox-self-ack-route! actor-mailbox-send-route!]]
+                    actor-mailbox-self-list-route! actor-mailbox-self-read-route! actor-mailbox-self-ack-route!
+                    actor-mailbox-send-route! actor-mailbox-changes-route!]]
     (register! app runtime config deps)) nil)

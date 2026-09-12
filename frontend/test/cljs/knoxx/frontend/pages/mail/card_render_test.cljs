@@ -25,7 +25,7 @@
 
 (deftest renders-status-route-and-preview
   (let [html (render {:entry pending-entry :box "inbox"
-                      :acking false :on-ack (fn [_]) :on-navigate (fn [_])})]
+                      :can-ack? true :acking false :on-ack (fn [_]) :on-navigate (fn [_])})]
     (is (str/includes? html "pending"))
     (is (str/includes? html "amber") "status chip uses the pending tone")
     (is (str/includes? html "agent-a"))
@@ -40,22 +40,22 @@
   (testing "inbox + not acknowledged → button"
     (is (str/includes?
          (render {:entry pending-entry :box "inbox"
-                  :acking false :on-ack (fn [_]) :on-navigate (fn [_])})
+                  :can-ack? true :acking false :on-ack (fn [_]) :on-navigate (fn [_])})
          "Acknowledge")))
   (testing "acknowledged entries get no button"
     (is (not (str/includes?
               (render {:entry (assoc pending-entry :status "acknowledged")
-                       :box "inbox" :acking false :on-ack (fn [_]) :on-navigate (fn [_])})
+                       :box "inbox" :can-ack? true :acking false :on-ack (fn [_]) :on-navigate (fn [_])})
               "Acknowledge"))))
   (testing "outbox gets no button"
     (is (not (str/includes?
               (render {:entry pending-entry :box "outbox"
-                       :acking false :on-ack (fn [_]) :on-navigate (fn [_])})
+                       :can-ack? true :acking false :on-ack (fn [_]) :on-navigate (fn [_])})
               "Acknowledge")))))
 
 (deftest fallback-preview-and-unknown-parties
   (let [html (render {:entry {:id "m2" :status "delivered"
                               :source {} :target {} :delivery {} :contentRef {}}
-                      :box "outbox" :acking false :on-ack (fn [_]) :on-navigate (fn [_])})]
+                      :box "outbox" :can-ack? true :acking false :on-ack (fn [_]) :on-navigate (fn [_])})]
     (is (str/includes? html "No preview available"))
     (is (str/includes? html "unknown"))))
