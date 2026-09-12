@@ -19,7 +19,7 @@ function noIdentityEdits(payload) {
   }
 }
 async function expandActor(page, identity) {
-  const row = page.getByRole('button').filter({hasText: identity});
+  const row = page.locator('button[aria-expanded]').filter({hasText: identity});
   await row.waitFor();
   if (await row.getAttribute('aria-expanded') !== 'true') await row.click();
   await page.getByRole('button', {expanded: true}).filter({hasText: identity}).waitFor();
