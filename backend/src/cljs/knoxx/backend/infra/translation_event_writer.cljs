@@ -62,14 +62,7 @@
 
 (defn- ^:async event-id-exists?
   [client event-id]
-  (let [result (await
-                (openplanner-client/mongo-query!
-                 client
-                 {:collection "events"
-                  :filter {:id event-id}
-                  :projection {:id 1}
-                  :limit 1}))]
-    (boolean (some #(= event-id (:id %)) (:rows result)))))
+  (boolean (await (openplanner-client/event-by-id! client event-id))))
 
 (defn- ^:async existing-event-ids!
   [client event-ids]

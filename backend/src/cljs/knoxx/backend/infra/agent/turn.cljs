@@ -20,19 +20,17 @@
             [knoxx.backend.infra.agent.transcript :as transcript]
             [knoxx.backend.infra.auth.authz :as authz :refer [auth-snapshot]]
             [knoxx.backend.infra.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
-            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.openplanner.memory :as openplanner-memory]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.domain.action.run-state :refer [store-run! append-run-event! update-run!
                                                            finalize-run-trace-blocks! tool-event-payload
                                                            record-retrieval-sample! latest-assistant-message
-                                                           set-event-stream-sink! clear-event-stream-sink!]]
+]]
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.shape.agent :refer [send-user-message! subscribe!]]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
-            [knoxx.backend.infra.stores.session-store-registry :as store-registry]
-            [knoxx.backend.shape.session-persistence :refer [put-run!]]
+            [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
@@ -168,48 +166,6 @@
       (append-run-event! run-id task-event)
       (broadcast-ws-session! session-id "events" task-event))))
 
-(defn- install-openplanner-event-sink!
-  [config]
-  (set-event-stream-sink!
-     (^:async fn [event]
-       (let [client (openplanner-client/client config)]
-         (when (openplanner-client/enabled? client)
-           (try
-             (await (openplanner-client/events!
-                     client
-                     [(openplanner-memory/openplanner-event
-                       config
-                       {:id        (str (:run_id event) ":"
-                                        (:type event) ":"
-                                        (:at event))
-                        :ts        (:at event)
-                        :kind      (str "knoxx." (:type event))
-                        ;; Session-scoped diagnostics must carry the session project:
-                        ;; without it they default to the workspace project and the
-                        ;; /v1/sessions list (filtered by session project) cannot see
-                        ;; in-flight threads until their first run completes.
-                        :project   (:session-project-name config)
-                        :session   (:conversation_id event)
-                        :message   (:run_id event)
-                        :role      "system"
-                        :text      (str (:type event)
-                                        (when (:tool_name event)
-                                          (str ": " (:tool_name event)))
-                                        (when (:preview event)
-                                          (str "\n" (:preview event))))
-                        :extra     event})]))
-             (catch :default _ nil)))))))
-
-(defn- ^:async persist-initial-run!
-  [store base-run run-id]
-  (try
-    (await (put-run! store base-run))
-    (catch :default err
-      (.warn js/console "[turn] failed to persist initial run"
-             (clj->js {:run-id run-id
-                       :error (ex-message err)
-                       :error-data (clj->js (or (ex-data err) {}))})))))
-
 (defn- ^:async persist-initial-session!
   [session-payload session-id]
   (try
@@ -220,15 +176,13 @@
                         :error (ex-message err)
                         :error-data (clj->js (or (ex-data err) {}))})))))
 
-(defn- create-initial-run!
+(defn- ^:async create-initial-run!
   [run-id session-id conversation-id started-at model-id mode thinking-level
    agent-spec auth-extra request-messages config]
   (let [base-run (build-initial-run run-id session-id conversation-id started-at model-id mode thinking-level
                                     agent-spec auth-extra request-messages config)]
+    (await (run-events/persist-run! base-run))
     (store-run! run-id base-run)
-    (when-let [store @store-registry/session-store*]
-      (persist-initial-run! store base-run run-id))
-    (install-openplanner-event-sink! config)
     (persist-initial-session! (merge (cond-> {:session_id session-id
                                               :conversation_id conversation-id
                                               :run_id run-id
@@ -382,7 +336,7 @@
                                              {:status "failed"
                                               :error err-text
                                               :messages final-messages})))
-    (clear-event-stream-sink!)
+    (await (run-events/persist-run! (get @knoxx.backend.domain.action.run-state/runs* run-id)))
     (remove-agent-session! conversation-id)
     {:answer ""
      :error err-text
@@ -431,7 +385,7 @@
               {:status "completed"
                :answer answer
                :messages final-messages})))
-    (clear-event-stream-sink!)
+    (await (run-events/persist-run! (get @knoxx.backend.domain.action.run-state/runs* run-id)))
     (remove-agent-session! conversation-id)
     response))
 
@@ -514,7 +468,7 @@
                                                {:status "failed"
                                                 :error err-text
                                                 :messages final-messages})))
-      (clear-event-stream-sink!)
+      (await (run-events/persist-run! (get @knoxx.backend.domain.action.run-state/runs* run-id)))
       (remove-agent-session! conversation-id))
     (throw err)))
 (defn content-part-type [part]
@@ -824,7 +778,7 @@
 (defn- prepare-turn-context
   "Resolve turn parameters from the request and agent-spec.
    Returns a map of resolved values or throws for invalid inputs."
-  [runtime config {:keys [conversation-id session-id message template-context model mode run-id auth-context thinking-level agent-spec]}]
+  [_runtime config {:keys [conversation-id session-id message template-context model mode run-id auth-context thinking-level agent-spec]}]
   (let [conversation-id (or conversation-id (xturn-node/random-uuid!))
         session-id (ensure-session-id session-id)
         auth-context (auth-context-for-agent-turn auth-context agent-spec)
@@ -889,7 +843,7 @@
 (defn- process-hydration-results-and-start-turn!
   [_runtime config run-id session-id conversation-id started-at started-ms model-id mode thinking-level
    agent-spec auth-extra seeded-messages message]
-  (fn [[hydration memory-hydration materialized-content-parts session]]
+  (^:async fn [[hydration memory-hydration materialized-content-parts session]]
     (let [materialized-content-parts (vec (or materialized-content-parts []))
           turn-message (content/nonblank message)
           user-message (if (seq materialized-content-parts)
@@ -897,8 +851,8 @@
                          {:role "user" :content turn-message})
           prompt-content-parts (model-ready-content-parts config model-id materialized-content-parts)
           request-messages (prune-session-messages agent-spec (conj seeded-messages user-message))]
-      (create-initial-run! run-id session-id conversation-id started-at model-id mode thinking-level
-                           agent-spec auth-extra request-messages config)
+      (await (create-initial-run! run-id session-id conversation-id started-at model-id mode thinking-level
+                                  agent-spec auth-extra request-messages config))
       (when hydration
         (emit-hydration-event! run-id conversation-id session-id "passive_hydration"
                                hydration {:passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results])}))

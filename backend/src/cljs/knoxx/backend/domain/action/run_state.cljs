@@ -13,6 +13,12 @@
 
 
 (defonce event-stream-sink* (atom nil))
+(defonce ^:private durable-event-sink* (atom nil))
+
+(defn set-durable-event-sink!
+  "Install the application event admission hook independently of telemetry."
+  [sink]
+  (reset! durable-event-sink* sink))
 
 (defn set-event-stream-sink!
   "Register a 1-arity fire-and-forget fn called with each event as it is appended.
@@ -97,6 +103,7 @@
 
 (defn append-run-event!
   [run-id event]
+  (when-let [sink @durable-event-sink*] (sink event))
   (update-run! run-id
                (fn [run]
                  (-> run

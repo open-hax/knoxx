@@ -69,6 +69,10 @@
       {:concrete-revision revision
        :blockers
        (cond-> []
+         (and (:source-accepted? facts)
+              (not ((:source-accepted? facts) intent revision)))
+         (conj :source-review-required)
+
          (and (translation-required? intent)
               (not ((:translated-revision? facts) document garden locale revision)))
          (conj :translation-missing)
@@ -119,6 +123,7 @@
         blocker-set (set (:blockers evidence))]
     (when (and (translation-work-eligible? intent)
                (some? concrete-revision)
+               (not (contains? blocker-set :source-review-required))
                (or (contains? blocker-set :translation-missing)
                    (contains? blocker-set :translation-stale)))
       {:action/id :actions/request-translation

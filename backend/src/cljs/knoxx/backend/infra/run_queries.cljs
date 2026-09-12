@@ -1,0 +1,43 @@
+(ns knoxx.backend.infra.run-queries
+  "Authenticated run and reconnect reads from the selected persistence port."
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.action.run-state :as state]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.run-events :as events]
+            [knoxx.backend.infra.stores.session-store-registry :as registry]
+            [knoxx.backend.shape.session-persistence :as persistence]))
+
+(defn- authorize! [ctx]
+  (authz/ensure-permission! ctx "agent.chat.use")
+  (when-not ctx (throw (ex-info "Authentication required" {:status 401}))))
+
+(defn ^:async read!
+  "Read an existing run with fresh tenant and principal authorization."
+  [ctx run-id]
+  (authorize! ctx)
+  (let [run (if-let [store @registry/session-store*]
+              (await (persistence/get-run store run-id))
+              (get @state/runs* run-id))]
+    (when-not run (throw (ex-info "Run not found" {:status 404 :code "run_not_found"})))
+    (when-not (authz/run-visible? ctx run)
+      (throw (ex-info "Access denied" {:status 403 :code "run_access_denied"})))
+    run))
+
+(defn- cursor [since]
+  (cond
+    (or (nil? since) (= "" since)) nil
+    (and (string? since) (re-matches #"[0-9]+" since))
+    (let [value (parse-long since)]
+      (when-not value (throw (ex-info "Invalid event cursor" {:status 400}))) value)
+    (and (string? since) (not (str/blank? since))) since
+    :else (throw (ex-info "Invalid event cursor" {:status 400}))))
+
+(defn ^:async events-since!
+  "Authorize the run before exposing any event, including after restart."
+  [ctx run-id since]
+  (await (read! ctx run-id))
+  (await (events/flush! run-id))
+  (let [store @registry/session-store*]
+    (if (satisfies? persistence/IRunEventStore store)
+      (await (persistence/events-since store run-id (cursor since)))
+      (await (state/get-run-events-since run-id (or since ""))))))

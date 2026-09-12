@@ -20,12 +20,14 @@
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
+            [knoxx.backend.infra.source-review :as source-review]
             [knoxx.backend.infra.translation-agent-dispatch :as agent-dispatch]
             [knoxx.backend.infra.translation-candidate-content :as candidate-content]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.translation-dispatch :as dispatch]
             [knoxx.backend.infra.translation-evidence-store :as store]
             [knoxx.backend.infra.translation-split-projection :as split-projection]
+            [knoxx.backend.infra.wiki-runtime :as wiki-runtime]
             [knoxx.backend.law.translation-dispatch :as law]))
 
 (defn hydrated-intents
@@ -297,10 +299,14 @@
                            :split-store split-store
                            :digest-hex digest-hex}))
         evidence (evidence-domain/evidence {:receipts receipts
-                                            :approvals approvals})]
+                                            :approvals approvals})
+        acceptance (await (source-review/acceptance-facts!
+                           config {:documents (into {} (map (juxt :document/id identity)) documents)}
+                           scope (wiki-runtime/source-dependencies)))]
      {:evidence evidence
       :facts (merge (source-revision/revision-facts revisions)
-                    (evidence-domain/gate-facts evidence))})))
+                    (evidence-domain/gate-facts evidence)
+                    acceptance)})))
 
 (def runner-kinds
   "The producers a deployment may ask translations from.

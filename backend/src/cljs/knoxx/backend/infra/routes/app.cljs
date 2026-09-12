@@ -14,6 +14,7 @@
             [knoxx.backend.shape.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
             [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-role-slugs ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
+            [knoxx.backend.infra.run-queries :as run-queries]
             [knoxx.backend.infra.routes.resources :as resource-routes]
             [knoxx.backend.infra.publication-admission-hook :as publication-admission-hook]
             [knoxx.backend.infra.translation-event-writer :as translation-event-writer]
@@ -27,6 +28,8 @@
             [knoxx.backend.extern.fastify.translation-dispatch :as translation-dispatch-routes]
             [knoxx.backend.extern.fastify.translation-review :as translation-review-routes]
             [knoxx.backend.extern.fastify.cms-publication :as cms-publication-routes]
+            [knoxx.backend.extern.fastify.wiki :as wiki-routes]
+            [knoxx.backend.extern.wiki-changes :as wiki-changes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
@@ -656,7 +659,7 @@
   (json-response! reply 200 {:run_id run-id :events events :count (count events)}))
 
 (defn- run-events-err [reply err]
-  (json-response! reply 500 {:error (str err)}))
+  (error-response! reply err 500))
 
 (defn- shibboleth-ok [config reply request body data]
   (let [session (or (:session data) {})
@@ -1505,27 +1508,19 @@
     (if (str/blank? run-id)
       (json-response! reply 400 {:error "runId is required"})
       (try
-        (run-events-ok reply run-id (await (run-state/get-run-events-since run-id since)))
+        (run-events-ok reply run-id (await (run-queries/events-since! ctx run-id since)))
         (catch :default err
           (run-events-err reply err))))))
 
 (defroute api-knoxx-run-get! []
   "GET" "/api/knoxx/runs/:runId"
-  (when ctx (ensure-permission! ctx "agent.chat.use"))
   (let [run-id (str (or (aget request "params" "runId") ""))]
-    (cond
-      (str/blank? run-id)
+    (if (str/blank? run-id)
       (json-response! reply 400 {:error "runId required"})
-
-      (some? (get @runs* run-id))
-      (if-let [filtered (run-visible? ctx (get @runs* run-id))]
-        (json-response! reply 200
-                        {:ok true :source "memory" :run filtered})
-        (json-response! reply 403 {:error "Access denied"}))
-
-      :else
-      (json-response! reply 404 {:ok false :error "Run not found"
-                                 :run_id run-id}))))
+      (try
+        (json-response! reply 200 {:ok true :source "provider"
+                                   :run (await (run-queries/read! ctx run-id))})
+        (catch :default err (error-response! reply err 500))))))
 
 (defroute api-shibboleth-handoff! []
   "POST" "/api/shibboleth/handoff"
@@ -1682,6 +1677,8 @@
      app runtime config (select-keys helpers [:with-request-context!
                                               :ensure-permission!]))
     (cms-publication-routes/register-cms-publication-routes! app runtime config helpers)
+    (wiki-routes/register-wiki-routes! app runtime config)
+    (wiki-changes/register! app runtime config)
     (reconcile-routes/register-publication-reconcile-routes!
      app runtime config (select-keys helpers [:with-request-context!
                                               :ensure-permission!]))

@@ -194,18 +194,22 @@
     (.assign js/Object base (stream-body-options request) (clj->js extra))))
 
 (defn error-status
-  [err default-status]
-  (or (aget err "statusCode")
-      (aget err "status")
-      default-status))
+  "Read a valid failure status from CLJS ex-data or a native transport error."
+  ([err] (error-status err 500))
+  ([err default-status]
+   (or (some #(when (and (integer? %) (<= 400 % 599)) %)
+             [(:status (ex-data err)) (when err (.-statusCode ^js err))
+              (when err (.-status ^js err))])
+       default-status)))
 
 (defn error-message
   [err]
   (or (aget err "message") (str err)))
 
 (defn error-code
+  "Preserve classified CLJS service failures across the HTTP boundary."
   [err]
-  (aget err "code"))
+  (or (:code (ex-data err)) (when err (.-code ^js err))))
 
 (defn log-unclassified-failure!
   "Record a failure the boundary could not classify, without printing its values.
