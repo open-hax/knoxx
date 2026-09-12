@@ -1,9 +1,9 @@
 (ns knoxx.backend.run-state-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :as t]
             [knoxx.backend.domain.action.run-state :as run-state]))
 
-(deftest backfill-run-tool-input-preview-upgrades-missing-receipts-and-trace-blocks
-  (testing "missing or sentinel tool inputs are replaced with a real preview"
+(t/deftest backfill-run-tool-input-preview-upgrades-missing-receipts-and-trace-blocks
+  (t/testing "missing or sentinel tool inputs are replaced with a real preview"
     (let [run-id "run-backfill"
           _ (run-state/store-run! run-id {:run_id run-id
                                           :tool_receipts [{:id "tool-1"
@@ -18,14 +18,14 @@
                                                           :inputPreview "null"}]})]
       (run-state/backfill-run-tool-input-preview! run-id "tool-1" "read" "```yaml\npath: docs/guide.md\n```")
       (let [run (run-state/update-run! run-id identity)]
-        (is (= "```yaml\npath: docs/guide.md\n```"
+        (t/is (= "```yaml\npath: docs/guide.md\n```"
                (get-in run [:tool_receipts 0 :input_preview])))
-        (is (= "```yaml\npath: docs/guide.md\n```"
+        (t/is (= "```yaml\npath: docs/guide.md\n```"
                (get-in run [:trace_blocks 0 :inputPreview])))
-        (is (= "done" (get-in run [:trace_blocks 0 :status])))))))
+        (t/is (= "done" (get-in run [:trace_blocks 0 :status])))))))
 
-(deftest backfill-run-tool-input-preview-does-not-overwrite-existing-values
-  (testing "existing observability data stays intact"
+(t/deftest backfill-run-tool-input-preview-does-not-overwrite-existing-values
+  (t/testing "existing observability data stays intact"
     (let [run-id "run-existing"
           _ (run-state/store-run! run-id {:run_id run-id
                                           :tool_receipts [{:id "tool-2"
@@ -40,13 +40,13 @@
                                                           :inputPreview "```bash\necho hi\n```"}]})]
       (run-state/backfill-run-tool-input-preview! run-id "tool-2" "bash" "```bash\nwhoami\n```")
       (let [run (run-state/update-run! run-id identity)]
-        (is (= "```bash\necho hi\n```"
+        (t/is (= "```bash\necho hi\n```"
                (get-in run [:tool_receipts 0 :input_preview])))
-        (is (= "```bash\necho hi\n```"
+        (t/is (= "```bash\necho hi\n```"
                (get-in run [:trace_blocks 0 :inputPreview])))))))
 
-(deftest append-run-event-streams-to-registered-sink
-  (testing "append-run-event! mirrors events into the registered sink"
+(t/deftest append-run-event-streams-to-registered-sink
+  (t/testing "append-run-event! mirrors events into the registered sink"
     (let [run-id "run-sink"
           seen* (atom [])
           _ (run-state/store-run! run-id {:run_id run-id :events []})]
@@ -57,13 +57,13 @@
                                              :session_id "sess-1"
                                              :type "tool_start"
                                              :at "2026-04-27T20:00:00.000Z"})
-        (is (= 1 (count @seen*)))
-        (is (= "tool_start" (:type (first @seen*))))
+        (t/is (= 1 (count @seen*)))
+        (t/is (= "tool_start" (:type (first @seen*))))
         (finally
           (run-state/clear-event-stream-sink!))))))
 
-(deftest append-run-event-swallows-sink-errors
-  (testing "a failing sink never prevents the run event from being recorded"
+(t/deftest append-run-event-swallows-sink-errors
+  (t/testing "a failing sink never prevents the run event from being recorded"
     (let [run-id "run-sink-error"
           _ (run-state/store-run! run-id {:run_id run-id :events []})]
       (run-state/set-event-stream-sink! (fn [_] (throw (js/Error. "boom"))))
@@ -74,7 +74,7 @@
                                              :type "tool_end"
                                              :at "2026-04-27T20:00:01.000Z"})
         (let [run (run-state/update-run! run-id identity)]
-          (is (= 1 (count (:events run))))
-          (is (= "tool_end" (:type (first (:events run))))))
+          (t/is (= 1 (count (:events run))))
+          (t/is (= "tool_end" (:type (first (:events run))))))
         (finally
           (run-state/clear-event-stream-sink!))))))

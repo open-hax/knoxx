@@ -1,7 +1,7 @@
 (ns knoxx.backend.shape.bluesky
   "Pure Bluesky URI and presentation projections."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.text :refer [clip-text]]))
+            [knoxx.backend.domain.text :as text]))
 
 (defn parse-at-uri
   "Project parse-at-uri." [uri]
@@ -25,7 +25,7 @@
                    (map (fn [{:keys [displayName handle text url]}]
                           (str "- " (or (not-empty displayName) handle "unknown")
                                (when (not (str/blank? (str handle))) (str " (@" handle ")"))
-                               ": " (clip-text (or text "") 220)
+                               ": " (text/clip-text (or text "") 220)
                                (when (not (str/blank? (str url))) (str "\n  " url)))))
                    (str/join "\n"))]
     (str prefix (when-not (str/blank? lines) (str "\n" lines)))))
@@ -41,7 +41,7 @@
         indent (str/join "" (repeat depth "  "))]
     (str indent "- " (or (not-empty display-name) handle "unknown")
          (when-not (str/blank? handle) (str " (@" handle ")"))
-         ": " (clip-text text 180)
+         ": " (text/clip-text text 180)
          (when-not (str/blank? uri) (str "\n" indent "  " uri)))))
 
 (defn collect-thread-replies

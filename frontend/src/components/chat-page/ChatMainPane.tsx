@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { Badge, Button, SearchableSelect } from '@open-hax/uxx';
 import { CollapsedPanelTab } from '../CollapsedPanelTab';
 import ChatComposer from '../ChatComposer';
@@ -7,106 +7,15 @@ import { ChatMessageList } from './ChatMessageList';
 import { ChatRuntimePanel } from './ChatRuntimePanel';
 import { ChatScratchpadPanel } from './ChatScratchpadPanel';
 import { ChatSettingsPanel } from './ChatSettingsPanel';
-import { useAutoConversationVoice } from './useAutoConversationVoice';
-import { useVoiceRecorder } from './useVoiceRecorder';
-import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, RunDetail, RunEvent, ToolCatalogResponse, ToolReceipt } from '../../lib/types';
+import { useConversationVoiceControls } from './useAutoConversationVoice';
+import type { ChatMainPaneProps } from './ChatWorkspacePane';
 import { THINKING_OPTIONS } from '../../lib/api/contracts';
-import type { HydrationSource } from './types';
 
 const EMPTY_STATE = {
   title: 'Chat',
   body: 'Ask Knoxx anything about devel, your client work, or the artifact you are actively building.',
   detail: 'Use the context bar like an IDE explorer, pin the context that matters, and use the canvas as your live working surface.',
 } as const;
-
-type ChatMainPaneProps = {
-  showFiles: boolean;
-  showSettings: boolean;
-  showCanvas: boolean;
-  showConsole: boolean;
-  showCanvasToggle?: boolean;
-  onShowFiles: () => void;
-  showFilesToggle?: boolean;
-  filesLabel?: string;
-  onToggleSettings: () => void;
-  onToggleCanvas: () => void;
-  onToggleConsole: () => void;
-  selectedModel: string;
-  onSelectedModelChange: (value: string) => void;
-  selectedThinkingLevel: string;
-  onSelectedThinkingLevelChange: (value: string) => void;
-  proxxModels: ProxxModelInfo[];
-  proxxReachable: boolean;
-  proxxConfigured: boolean;
-  onNewChat: () => void;
-  onUndoMessages: () => void | Promise<void>;
-  undoDisabled: boolean;
-  systemPrompt: string;
-  onSystemPromptChange: (value: string) => void;
-  conversationId: string | null;
-  activeRole: string;
-  activeActorId: string;
-  activeAgentId: string;
-  availableAgents: AgentContractCatalogItem[];
-  onActiveAgentChange: (value: string) => void;
-  toolCatalog: ToolCatalogResponse | null;
-  wsStatus: 'connected' | 'closed' | 'error' | 'connecting';
-  isRecovering: boolean;
-  latestRun: RunDetail | null;
-  isSending: boolean;
-  liveControlEnabled: boolean;
-  liveControlText: string;
-  onLiveControlTextChange: (value: string) => void;
-  queueingControl: 'steer' | 'follow_up' | null;
-  onQueueLiveControl: (kind: 'steer' | 'follow_up') => void | Promise<void>;
-  onVoiceSteer: (text: string) => void | Promise<void>;
-  abortingTurn: boolean;
-  onAbortTurn: () => void | Promise<void>;
-  activeRunId: string | null;
-  hydrationSources: HydrationSource[];
-  runtimeEvents: RunEvent[];
-  latestToolReceipts: ToolReceipt[];
-  liveToolReceipts: ToolReceipt[];
-  liveToolEvents: RunEvent[];
-  assistantSurfaceBackground: string;
-  assistantSurfaceBorder: string;
-  assistantSurfaceText: string;
-  messages: ChatMessage[];
-  consoleLines: string[];
-  onSend: (text: string) => void;
-  composerDisabled: boolean;
-  onOpenHydrationSource: (source: HydrationSource) => void | Promise<void>;
-  onPinHydrationSource: (source: HydrationSource) => void;
-  onAppendToScratchpad: (text: string, heading?: string) => void;
-  onOpenMessageInCanvas: (message: ChatMessage) => void;
-  onOpenSourceInPreview: (source: NonNullable<ChatMessage['sources']>[number]) => void | Promise<void>;
-  onPinAssistantSource: (source: NonNullable<ChatMessage['sources']>[number]) => void;
-  onPinMessageContext: (row: NonNullable<ChatMessage['contextRows']>[number]) => void;
-  canvasTitle: string;
-  onCanvasTitleChange: (value: string) => void;
-  canvasPath: string;
-  onCanvasPathChange: (value: string) => void;
-  canvasSubject: string;
-  onCanvasSubjectChange: (value: string) => void;
-  canvasRecipients: string;
-  onCanvasRecipientsChange: (value: string) => void;
-  canvasCc: string;
-  onCanvasCcChange: (value: string) => void;
-  canvasContent: string;
-  onCanvasContentChange: (value: string) => void;
-  canvasStatus: string | null;
-  savingCanvas: boolean;
-  savingCanvasFile: boolean;
-  sendingCanvas: boolean;
-  onUseLatestAssistantInCanvas: () => void;
-  onSaveCanvasDraft: () => void | Promise<void>;
-  onSaveCanvasFile: () => void | Promise<void>;
-  onClearScratchpad: () => void;
-  onSendCanvasEmailAction: () => void | Promise<void>;
-  sttEnabled?: boolean;
-  ttsEnabled?: boolean;
-  ttsDefaultVoiceId?: string;
-};
 
 export function ChatMainPane({
   showFiles,
@@ -199,23 +108,11 @@ export function ChatMainPane({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
-  const [autoConversationEnabled, setAutoConversationEnabled] = useState(false);
-  const [autoRecording, setAutoRecording] = useState(false);
-  const [voiceThreshold, setVoiceThreshold] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('knoxx_voice_threshold');
-      if (saved) {
-        const parsed = parseFloat(saved);
-        if (!isNaN(parsed)) return Math.max(0.001, Math.min(0.1, parsed));
-      }
-    }
-    return 0.015;
-  });
-
-  useEffect(() => {
-    localStorage.setItem('knoxx_voice_threshold', String(voiceThreshold));
-  }, [voiceThreshold]);
-
+  const {
+    autoConversationEnabled, setAutoConversationEnabled, autoRecording,
+    voiceThreshold, setVoiceThreshold, autoConversationVoice,
+    autoRecorderState, audioLevelRef,
+  } = useConversationVoiceControls({ messages, ttsEnabled, sttEnabled, ttsDefaultVoiceId, isSending, onSend });
   const updateAutoScrollState = useCallback((container: HTMLDivElement) => {
     const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
     shouldAutoScrollRef.current = remaining <= 96;
@@ -235,69 +132,6 @@ export function ChatMainPane({
     if (!shouldAutoScrollRef.current) return;
     scrollToBottom();
   }, [messages, latestToolReceipts, liveToolReceipts, liveToolEvents, isSending, scrollToBottom]);
-
-  const autoConversationVoice = useAutoConversationVoice({
-    enabled: autoConversationEnabled,
-    available: ttsEnabled,
-    messages,
-    defaultVoiceId: ttsDefaultVoiceId,
-    onPlaybackEnded: () => {
-      if (sttEnabled) {
-        setAutoRecording(true);
-      }
-    },
-  });
-
-  useEffect(() => {
-    if (!ttsEnabled && autoConversationEnabled) {
-      setAutoConversationEnabled(false);
-    }
-  }, [autoConversationEnabled, ttsEnabled]);
-
-  useEffect(() => {
-    if (!autoConversationEnabled && autoRecording) {
-      setAutoRecording(false);
-    }
-  }, [autoConversationEnabled, autoRecording]);
-
-  const prevAutoConversationEnabledRef = useRef(false);
-
-  const { state: autoRecorderState, startRecording: startAutoRecording, stopRecording: stopAutoRecording, audioLevelRef } = useVoiceRecorder({
-    onTranscript: (text) => {
-      setAutoRecording(false);
-      onSend(text);
-    },
-    conversationMode: true,
-    silenceThreshold: voiceThreshold,
-  });
-
-  // Start recording immediately when user toggles auto-conversation ON
-  useEffect(() => {
-    if (!prevAutoConversationEnabledRef.current && autoConversationEnabled && sttEnabled && !isSending) {
-      setAutoRecording(true);
-    }
-    prevAutoConversationEnabledRef.current = autoConversationEnabled;
-  }, [autoConversationEnabled, sttEnabled, isSending]);
-
-  // Stop recording when assistant starts generating
-  useEffect(() => {
-    if (isSending && autoRecording) {
-      setAutoRecording(false);
-    }
-  }, [isSending, autoRecording]);
-
-  // Start/stop the actual recorder based on autoRecording state
-  useEffect(() => {
-    if (autoRecording && autoRecorderState.status === "idle") {
-      void startAutoRecording();
-    }
-  }, [autoRecording, autoRecorderState.status, startAutoRecording]);
-
-  useEffect(() => {
-    if (!autoRecording && autoRecorderState.status === "recording") {
-      stopAutoRecording();
-    }
-  }, [autoRecording, autoRecorderState.status, stopAutoRecording]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;

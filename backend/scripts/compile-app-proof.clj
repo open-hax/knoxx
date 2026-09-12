@@ -1,6 +1,5 @@
 (require '[clojure.edn :as edn]
          '[shadow.cljs.devtools.api :as shadow])
-(set! *warn-on-reflection* true)
 (try
  (shadow/with-runtime
   (let [config (edn/read-string (slurp "shadow-cljs.edn"))
@@ -12,4 +11,4 @@
   nil)
  (catch Throwable error
    (binding [*out* *err*] (println (ex-message error)))
-   (System/exit 1)))
+   (binding [*warn-on-reflection* true] (System/exit 1))))

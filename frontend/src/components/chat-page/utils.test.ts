@@ -166,3 +166,22 @@ describe("rewindTranscriptTurns", () => {
     ]);
   });
 });
+
+describe("Failed run transcript recovery", () => {
+  it("retains reasoning and failed tool receipts when a run has no assistant answer", () => {
+    const rows: MemorySessionRow[] = [
+      {id: "user", kind: "knoxx.message", role: "user", text: "Read the ledger", extra: {run_id: "run-failed"}},
+      {id: "reasoning", kind: "knoxx.reasoning", text: "Inspecting the source", extra: {run_id: "run-failed"}},
+      {id: "receipt", kind: "knoxx.tool_receipt", extra: {run_id: "run-failed", receipt: {
+        id: "call-1", tool_name: "read", status: "failed", result_preview: "Source missing", is_error: true,
+      }}},
+      {id: "run", kind: "knoxx.run", text: "Run failed", extra: {run_id: "run-failed", status: "failed"}},
+    ];
+    const messages = memoryRowsToMessages(rows);
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({role: "assistant", status: "error", runId: "run-failed", traceBlocks: [
+      {id: "reasoning", kind: "reasoning", content: "Inspecting the source"},
+      {id: "call-1", kind: "tool_call", toolName: "read", status: "error", outputPreview: "Source missing", isError: true},
+    ]});
+  });
+});

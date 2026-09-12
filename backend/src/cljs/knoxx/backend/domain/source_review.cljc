@@ -124,29 +124,43 @@
         (append-event history scope event)
         {:existing? false :event event}))))
 
-(defn learned-lessons
-  "Attributed lessons present at acceptance; later comments cannot poison memory."
+(defn- acceptance-cutoffs
   [events]
-  (let [accepted-through
-        (reduce-kv (fn [indexes index event]
-                     (let [coordinate [(:review/revision event) (:review/source-locale event)]]
-                       (case (:review/action event)
-                         :accept (assoc indexes coordinate index)
-                         :request-changes (dissoc indexes coordinate)
-                         :submit (dissoc indexes coordinate)
-                         indexes)))
-                   {} events)]
+  (reduce-kv (fn [indexes index event]
+               (let [coordinate [(:review/revision event) (:review/source-locale event)]]
+                 (case (:review/action event)
+                   :accept (assoc indexes coordinate index)
+                   :request-changes (dissoc indexes coordinate)
+                   :submit (dissoc indexes coordinate)
+                   indexes)))
+             {} events))
+
+(defn learned-lessons
+  "Acceptance endorses earlier scoped reviewer feedback in its language, with provenance."
+  [events]
+  (let [accepted-through (acceptance-cutoffs events)
+        language-cutoffs (reduce-kv (fn [indexes [_revision locale] index]
+                                      (update indexes locale #(max (or % -1) index)))
+                                    {} accepted-through)]
     (into []
           (mapcat (fn [[index event]]
-                    (when-let [cutoff (get accepted-through
-                                          [(:review/revision event)
-                                           (:review/source-locale event)])]
+                    ;; Request-changes is a reviewer action. Its lessons can
+                    ;; inform corrected source; comments on other revisions
+                    ;; remain unreviewed. Ledger order is the causal boundary,
+                    ;; not wall-clock time or an inferred revision ancestry.
+                    (when-let [cutoff (if (= :request-changes (:review/action event))
+                                       (get language-cutoffs (:review/source-locale event))
+                                       (get accepted-through [(:review/revision event)
+                                                              (:review/source-locale event)]))]
                       (when (<= index cutoff)
-                        (mapv (fn [lesson]
-                                {:text lesson :review (:review/id event)
-                                 :revision (:review/revision event)
-                                 :actor (:review/actor event)})
-                              (:review/lessons event))))))
+                        (let [acceptance (nth events cutoff)]
+                          (mapv (fn [lesson]
+                                  {:text lesson :review (:review/id event)
+                                   :revision (:review/revision event)
+                                   :actor (:review/actor event)
+                                   :acceptance-review (:review/id acceptance)
+                                   :acceptance-revision (:review/revision acceptance)})
+                                (:review/lessons event)))))))
           (map-indexed vector events))))
 
 (defn project

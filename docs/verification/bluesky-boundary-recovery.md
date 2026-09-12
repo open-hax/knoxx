@@ -26,6 +26,17 @@ publish parameters and progress callbacks, and blank-input refusal before the
 remote operation. These checks use a finite remote-operation fixture; they do
 not claim a real authenticated Bluesky request or OAuth login.
 
+The optional strict kondo pass initially reported seven unqualified `:refer`
+imports and one missing fixture docstring. Namespace aliases now qualify those
+calls, and the expected capability list documents its stable role. All seven
+optional rules pass across the eight owned source/test paths with zero errors or
+warnings. The separate `bluesky-strict-proof` build compiled 268 files with zero
+warnings; its guarded native test artifact passed four tests / 11 assertions.
+This import/docstring-only check covers the preserved catalog, injected remote
+operation seam, UTF-8 facet offsets, and invalid-input refusal. It wrote a distinct
+test output and did not replace the browser's frozen production artifact. The
+next combined backend build owns validation of the final aggregate source.
+
 The focused run, including the repaired OpenPlanner fixtures, passed 24 tests /
 62 assertions with the fatal asynchronous guard and zero failures/errors. Its
 292 compiler inputs produced zero warnings. The JS boundary check also passes.

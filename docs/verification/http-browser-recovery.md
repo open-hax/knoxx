@@ -179,3 +179,49 @@ dispatch, admission and Wiki checks pass **46 tests / 296 assertions** under the
 fatal async guard, **548 compiler inputs / 0 warnings**, and all seven explicit
 optional lint rules report **0 errors / 0 warnings**. Run 10 remains a failed tour;
 its partial screenshots and failure are retained, and the next live run is required.
+
+## Browser run 11: acceptance succeeds, learning reveals a revision gap
+
+Production release 06 used frozen Clio/Axxium source `fc3b6a09` and compiled
+the server from **691 inputs / 0 warnings**, plus the verification library from
+**107 inputs / 0 warnings**. The matching full backend suite passed **1,823 tests /
+8,257 assertions** with the fatal async guard and exit zero; its 842 captured
+backend source hashes stayed unchanged during compilation. The production
+frontend remained release 04. This is a diagnostic source snapshot, not final
+verification of promoted dependency pins.
+
+Run 11 completed identity, administration and human/MCP-agent Mail again. Source
+acceptance returned successfully and the rendered publication workflow showed
+**Accepted**. The next assertion failed because the writing lesson recorded on
+the rejected original revision was absent after accepting its correction. The
+23 annotated screenshots and failed result remain in the run-11 evidence archive.
+The failure screenshot shows both the accepted state and the empty remembered
+lessons panel. Translation and publication have not yet completed.
+
+`domain.source-review/learned-lessons` previously required every lesson to belong
+to an accepted source revision. That cannot represent the intended
+request-revision → edit → accept → learn cycle: its useful reviewer feedback
+belongs to the rejected revision. The projection now admits preceding explicit
+reviewer feedback under an active acceptance in the same scoped document and
+source language. General comments still require acceptance of their own revision.
+Ledger order supplies the cutoff; later comments cannot enter memory, and
+revoking the licensing acceptance removes its lessons. This does not establish
+revision ancestry or accept the rejected source bytes.
+
+Every lesson retains its original review, actor and revision and now also names
+the accepting review and revision. A reviewer can distinguish the feedback's
+origin from the source whose acceptance endorsed it. No immutable ledger bytes
+or event schema were rewritten.
+
+The original implementation reproduced **4 failures** across pure projection
+and actual source-edit/Clio-reopen tests. An initial test-only delimiter typo was
+corrected before the authentic reproduction. The fixed gate passes **21 tests /
+99 assertions** under the fatal async guard, **135 compiler inputs / 0 warnings**,
+and all seven explicit optional lint rules report **0 errors / 0 warnings**.
+The portable JVM gate also passes **16 tests / 61 assertions**. Independent
+review found no blocking issue in the cutoff or provenance rules.
+
+The same browser run also exposed a separate translation-trigger failure:
+verified organization context disappeared before run-event projection and agent
+session hydration. It is being repaired with a real dispatch-to-run regression;
+source acceptance alone is not evidence that translation completed.

@@ -1,22 +1,23 @@
 (ns knoxx.backend.infra.stores.mongo-mcp-oauth
   "Mongo twin for MCP OAuth state (replaces Redis knoxx:mcp:* keys).
    Handles clients, auth codes, and access tokens."
-  (:require [knoxx.backend.extern.mongo :as extern-mongo]
-            [knoxx.backend.extern.mcp-oauth-store :as oauth-host]
-            [knoxx.backend.infra.stores.mcp-oauth-dispatch :as dispatch]
-            [knoxx.backend.law.mcp-oauth-store :as oauth-law]
-            [knoxx.backend.shape.mcp-oauth-store :as oauth]
+  (:require [knoxx.backend.extern.mcp-oauth-store :as oauth-host]
+            [knoxx.backend.extern.mongo :as extern-mongo]
+            [knoxx.backend.extern.mongo-mcp-token-inventory :as token-inventory]
             [knoxx.backend.infra.mongo-client :as mongo-client]
+            [knoxx.backend.infra.stores.mcp-oauth-dispatch :as dispatch]
             [knoxx.backend.infra.system-instance :as system-instance]
-            [knoxx.backend.law.mcp-oauth :as law]))
+            [knoxx.backend.law.mcp-oauth :as law]
+            [knoxx.backend.law.mcp-oauth-store :as oauth-law]
+            [knoxx.backend.shape.mcp-oauth-store :as oauth]))
 
-(def CLIENTS_COLLECTION "knoxx_mcp_clients")
-(def CODES_COLLECTION "knoxx_mcp_codes")
-(def TOKENS_COLLECTION "knoxx_mcp_tokens")
+(def CLIENTS_COLLECTION "Mongo collection owning registered OAuth clients." "knoxx_mcp_clients")
+(def CODES_COLLECTION "Mongo collection owning single-use OAuth codes." "knoxx_mcp_codes")
+(def TOKENS_COLLECTION "Mongo collection owning issued bearer credentials." "knoxx_mcp_tokens")
 
-(defn- clients-coll [db] (.collection db CLIENTS_COLLECTION))
-(defn- codes-coll [db] (.collection db CODES_COLLECTION))
-(defn- tokens-coll [db] (.collection db TOKENS_COLLECTION))
+(defn- clients-coll [db] (extern-mongo/collection db CLIENTS_COLLECTION))
+(defn- codes-coll [db] (extern-mongo/collection db CODES_COLLECTION))
+(defn- tokens-coll [db] (extern-mongo/collection db TOKENS_COLLECTION))
 
 (defn ^:async setup-indexes!
   "Create required indexes. Idempotent."
@@ -72,7 +73,7 @@
   ([client-id] (mongo-get-client! (mongo-client/get-db) client-id))
   ([db client-id]
    (when (and db client-id)
-     (let [c (clients-coll db)
+     (let [^js c (clients-coll db)
            result (await (.findOne c #js {"client_id" (str client-id)}))]
        (when result
          (let [doc    (keywordize result)
@@ -88,7 +89,7 @@
   ([client-id client-json] (mongo-set-client! (mongo-client/get-db) client-id client-json))
   ([db client-id client-json]
    (when (and db client-id)
-     (let [c (clients-coll db)
+     (let [^js c (clients-coll db)
            now (js/Date.)
            parsed (js/JSON.parse client-json)]
        (await (.updateOne
@@ -113,7 +114,7 @@
   ([code] (mongo-peek-code! (mongo-client/get-db) code))
   ([db code]
    (when (and db code)
-     (let [c (codes-coll db)
+     (let [^js c (codes-coll db)
            result (await (.findOne c #js {"code" (str code)}))]
        (when result
          (let [doc (keywordize result)]
@@ -146,7 +147,7 @@
   ([code code-json ttl-seconds] (mongo-set-code! (mongo-client/get-db) code code-json ttl-seconds))
   ([db code code-json ttl-seconds]
    (when (and db code)
-     (let [c (codes-coll db)
+     (let [^js c (codes-coll db)
            now (js/Date.)
            parsed (js/JSON.parse code-json)
            doc {:code (str code)
@@ -169,7 +170,7 @@
   ([code] (mongo-delete-code! (mongo-client/get-db) code))
   ([db code]
    (when (and db code)
-     (let [c (codes-coll db)]
+     (let [^js c (codes-coll db)]
        (await (.deleteOne c #js {"code" (str code)}))
        true))))
 
@@ -180,7 +181,7 @@
   ([access-token] (mongo-get-token! (mongo-client/get-db) access-token))
   ([db access-token]
    (when (and db access-token)
-     (let [c (tokens-coll db)
+     (let [^js c (tokens-coll db)
            result (await (.findOne c #js {"access_token" (str access-token)}))]
        (when result
          (let [doc (keywordize result)]
@@ -193,7 +194,7 @@
    (mongo-set-token! (mongo-client/get-db) access-token token-json ttl-seconds membership-id))
   ([db access-token token-json ttl-seconds membership-id]
    (when (and db access-token)
-     (let [c (tokens-coll db)
+     (let [^js c (tokens-coll db)
            now (js/Date.)
            parsed (js/JSON.parse token-json)
            doc {:access_token (str access-token)
@@ -222,7 +223,7 @@
   ([access-token] (mongo-delete-token! (mongo-client/get-db) access-token))
   ([db access-token]
    (when (and db access-token)
-     (let [c (tokens-coll db)]
+     (let [^js c (tokens-coll db)]
        (await (.deleteOne c #js {"access_token" (str access-token)}))
        true))))
 
@@ -253,17 +254,10 @@
          (pos? (:deleted-count result)))))))
 
 (defn ^:async mongo-list-tokens-for-membership!
-  "List all tokens for a membership."
-  ([membership-id] (mongo-list-tokens-for-membership! (mongo-client/get-db) membership-id))
+  "List live safe grants and digests for one exact Mongo membership."
+  ([membership-id] (await (mongo-list-tokens-for-membership! (mongo-client/get-db) membership-id)))
   ([db membership-id]
-   (when (and db membership-id)
-     (let [c (tokens-coll db)
-           cursor (.find c #js {"membership_id" (str membership-id)})
-           results (await (.toArray cursor))]
-       (vec (for [doc results
-                  :let [d (keywordize doc)]
-                  :when (live? d)]
-              (js/JSON.stringify (clj->js (:token_data d)))))))))
+   (await (token-inventory/list-live! db membership-id))))
 
 (def install! "Select the finite provider at bootstrap; explicit databases remain Mongo." dispatch/install!)
 
@@ -359,14 +353,13 @@
      (mongo-delete-token-for-membership! (or db (mongo-client/get-db)) token member))))
 
 (defn delete-token-id-for-membership!
-  "Revoke a safe local token digest from inventory without exposing its bearer."
+  "Revoke an inventory digest through the selected provider without exposing its bearer."
   [token-id member]
   (oauth-law/validate! oauth-law/Digest token-id)
   (oauth-law/validate! oauth-law/Text member)
   (if-let [store (dispatch/current)]
     (oauth/oauth-admit! store :oauth/revoke-token {:id token-id :membership-id member})
-    (throw (ex-info "Token-id revocation requires the selected local provider"
-                    {:status 400 :code "mcp_oauth_token_id_provider_required"}))))
+    (token-inventory/revoke-id! (mongo-client/get-db) token-id member)))
 
 (defn ^:async list-tokens-for-membership!
   "Expose safe tokenId digests and grant metadata, never bearer values."

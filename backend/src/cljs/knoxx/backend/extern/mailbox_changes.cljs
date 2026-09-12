@@ -6,12 +6,30 @@
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.mailbox-changes :as changes]))
 
-(defn- close! [{:keys [closed? unsubscribe* interval* pending* raw]}]
+(defn- close! [{:keys [closed? unsubscribe* interval* pending* drain-cleanup* raw]}]
   (when (compare-and-set! closed? false true)
     (when-let [unsubscribe @unsubscribe*] (unsubscribe))
     (when-let [interval @interval*] (js/clearInterval interval))
+    (when-let [cleanup @drain-cleanup*] (cleanup))
     (reset! pending* [])
     (.end raw)))
+
+(defn- wait-for-drain! [{:keys [closed? drain-cleanup* raw]}]
+  (js/Promise.
+   (fn [complete _reject]
+     (let [settled? (atom false)]
+       (letfn [(finish! []
+                 (when (compare-and-set! settled? false true)
+                   (.removeListener raw "drain" finish!)
+                   (.removeListener raw "close" finish!)
+                   (.removeListener raw "error" finish!)
+                   (reset! drain-cleanup* nil)
+                   (complete nil)))]
+         (reset! drain-cleanup* finish!)
+         (.once raw "drain" finish!)
+         (.once raw "close" finish!)
+         (.once raw "error" finish!)
+         (when @closed? (finish!)))))))
 
 (defn- ^:async current-scope! [{:keys [runtime context scope]}]
   (let [current (await (authz/current-context! runtime context))]
@@ -31,7 +49,8 @@
             (reset! pending* [])
             (let [current (await (current-scope! state))]
               (when (and (not @closed?) (some #(visibility/visible? current %) batch))
-                (when-not (.write raw "event: mailbox-changed\ndata: {}\n\n") (close! state))))
+                (when-not (.write raw "event: mailbox-changed\ndata: {}\n\n")
+                  (await (wait-for-drain! state)))))
             (recur))))
       (catch :default error
         (when-not (contains? #{401 403} (fastify/error-status error))
@@ -54,7 +73,8 @@
   (authz/ensure-permission! context "agent.chat.use")
   (let [scope (:scope (mailbox/context runtime context)) raw (.-raw reply)
         state {:runtime runtime :context context :scope scope :raw raw :closed? (atom false)
-               :busy? (atom false) :pending* (atom []) :unsubscribe* (atom nil) :interval* (atom nil)}]
+               :busy? (atom false) :pending* (atom []) :unsubscribe* (atom nil)
+               :interval* (atom nil) :drain-cleanup* (atom nil)}]
     (.hijack reply)
     (.writeHead raw 200 #js {"Content-Type" "text/event-stream" "Cache-Control" "no-cache, no-transform"
                             "Connection" "keep-alive" "X-Accel-Buffering" "no"})

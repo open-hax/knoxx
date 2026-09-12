@@ -1,8 +1,8 @@
 (ns knoxx.backend.extern.bluesky-tool-execution
   "Decode Bluesky SDK arguments and encode tool results."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.domain.tools :refer [maybe-tool-update!]]
+            [knoxx.backend.domain.text :as text]
+            [knoxx.backend.domain.tools :as tools]
             [knoxx.backend.extern.bluesky-operations :as operations]
             [knoxx.backend.shape.bluesky :as shape]))
 
@@ -15,18 +15,18 @@
         reply-to (or (aget params "replyTo") "")]
     (when (str/blank? (str/trim text))
       (throw (js/Error. "text is required")))
-    (maybe-tool-update! on-update "Publishing to Bluesky…")
+    (tools/maybe-tool-update! on-update "Publishing to Bluesky…")
     (let [result (await (operations/bluesky-publish! runtime config text images image-alts reply-to))]
-      (tool-text-result (str "Published Bluesky post\n" (or (:url result) (:uri result) ""))
+      (text/tool-text-result (str "Published Bluesky post\n" (or (:url result) (:uri result) ""))
                         result))))
 
 (defn ^:async profile-execute
   "SDK execution for profile-execute." [runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         actor (or (aget params "actor") "")]
-    (maybe-tool-update! on-update "Reading Bluesky profile…")
+    (tools/maybe-tool-update! on-update "Reading Bluesky profile…")
     (let [profile (await (operations/bluesky-profile! runtime actor))]
-      (tool-text-result
+      (text/tool-text-result
        (str "Bluesky profile: " (or (:displayName profile) (:handle profile) "unknown")
             (when-not (str/blank? (str (:handle profile))) (str " (@" (:handle profile) ")"))
             "\nFollowers: " (:followersCount profile)
@@ -46,9 +46,9 @@
         limit (max 1 (min 25 (or (aget params "limit") 5)))]
     (when (str/blank? (str/trim query))
       (throw (js/Error. "query is required")))
-    (maybe-tool-update! on-update "Searching Bluesky…")
+    (tools/maybe-tool-update! on-update "Searching Bluesky…")
     (let [result (await (operations/bluesky-search! runtime query kind limit))]
-      (tool-text-result (shape/format-posts (str "Bluesky search (" (:kind result) ")") (:results result))
+      (text/tool-text-result (shape/format-posts (str "Bluesky search (" (:kind result) ")") (:results result))
                         result))))
 
 (defn ^:async author-feed-execute
@@ -58,9 +58,9 @@
         limit (max 1 (min 25 (or (aget params "limit") 8)))]
     (when (str/blank? (str/trim actor))
       (throw (js/Error. "actor is required")))
-    (maybe-tool-update! on-update (str "Reading Bluesky feed for " actor "…"))
+    (tools/maybe-tool-update! on-update (str "Reading Bluesky feed for " actor "…"))
     (let [result (await (operations/bluesky-author-feed! actor limit))]
-      (tool-text-result (shape/format-posts (str "Bluesky author feed: " actor) (:results result))
+      (text/tool-text-result (shape/format-posts (str "Bluesky author feed: " actor) (:results result))
                         result))))
 
 (defn ^:async timeline-execute
@@ -68,9 +68,9 @@
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         limit (max 1 (min 25 (or (aget params "limit") 8)))
         cursor (or (aget params "cursor") "")]
-    (maybe-tool-update! on-update "Reading authenticated Bluesky timeline…")
+    (tools/maybe-tool-update! on-update "Reading authenticated Bluesky timeline…")
     (let [result (await (operations/bluesky-timeline! runtime limit cursor))]
-      (tool-text-result (shape/format-posts "Bluesky timeline" (:results result))
+      (text/tool-text-result (shape/format-posts "Bluesky timeline" (:results result))
                         result))))
 
 ;; -------------------------------------------------------------------------
@@ -83,9 +83,9 @@
         uri (or (aget params "uri") "")]
     (when (str/blank? uri)
       (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Reposting on Bluesky…")
+    (tools/maybe-tool-update! on-update "Reposting on Bluesky…")
     (let [result (await (operations/bluesky-repost! runtime uri))]
-      (tool-text-result (str "Reposted Bluesky post\n" (or (:uri result) uri))
+      (text/tool-text-result (str "Reposted Bluesky post\n" (or (:uri result) uri))
                         result))))
 
 (defn ^:async like-execute
@@ -94,9 +94,9 @@
         uri (or (aget params "uri") "")]
     (when (str/blank? uri)
       (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Liking Bluesky post…")
+    (tools/maybe-tool-update! on-update "Liking Bluesky post…")
     (let [result (await (operations/bluesky-like! runtime uri))]
-      (tool-text-result (str "Liked Bluesky post\n" (or (:uri result) uri))
+      (text/tool-text-result (str "Liked Bluesky post\n" (or (:uri result) uri))
                         result))))
 
 (defn ^:async unlike-execute
@@ -105,9 +105,9 @@
         uri (or (aget params "uri") "")]
     (when (str/blank? uri)
       (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Removing Bluesky like…")
+    (tools/maybe-tool-update! on-update "Removing Bluesky like…")
     (await (operations/bluesky-unlike! runtime uri))
-    (tool-text-result (str "Removed like from " uri) {})))
+    (text/tool-text-result (str "Removed like from " uri) {})))
 
 (defn ^:async follow-execute
   "SDK execution for follow-execute." [runtime _config _tool-call-id params a b c]
@@ -115,9 +115,9 @@
         actor (or (aget params "actor") "")]
     (when (str/blank? actor)
       (throw (js/Error. "actor is required")))
-    (maybe-tool-update! on-update (str "Following " actor " on Bluesky…"))
+    (tools/maybe-tool-update! on-update (str "Following " actor " on Bluesky…"))
     (let [result (await (operations/bluesky-follow! runtime actor))]
-      (tool-text-result (str "Followed " actor "\n" (or (:uri result) ""))
+      (text/tool-text-result (str "Followed " actor "\n" (or (:uri result) ""))
                         result))))
 
 (defn ^:async unfollow-execute
@@ -126,9 +126,9 @@
         uri (or (aget params "uri") "")]
     (when (str/blank? uri)
       (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Unfollowing on Bluesky…")
+    (tools/maybe-tool-update! on-update "Unfollowing on Bluesky…")
     (await (operations/bluesky-unfollow! runtime uri))
-    (tool-text-result (str "Unfollowed " uri) {})))
+    (text/tool-text-result (str "Unfollowed " uri) {})))
 
 (defn ^:async delete-execute
   "SDK execution for delete-execute." [runtime _config _tool-call-id params a b c]
@@ -136,9 +136,9 @@
         uri (or (aget params "uri") "")]
     (when (str/blank? uri)
       (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Deleting Bluesky post…")
+    (tools/maybe-tool-update! on-update "Deleting Bluesky post…")
     (await (operations/bluesky-delete-post! runtime uri))
-    (tool-text-result (str "Deleted Bluesky post " uri) {})))
+    (text/tool-text-result (str "Deleted Bluesky post " uri) {})))
 
 (defn ^:async thread-execute
   "SDK execution for thread-execute." [_runtime _config _tool-call-id params a b c]
@@ -147,16 +147,16 @@
         depth (max 1 (min 10 (or (aget params "depth") 6)))]
     (when (str/blank? uri)
       (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Reading Bluesky thread…")
+    (tools/maybe-tool-update! on-update "Reading Bluesky thread…")
     (let [result (await (operations/bluesky-thread! uri depth))]
-      (tool-text-result (str "Bluesky thread\n" (str/join "\n" (:lines result)))
+      (text/tool-text-result (str "Bluesky thread\n" (str/join "\n" (:lines result)))
                         result))))
 
 (defn ^:async notifications-execute
   "SDK execution for notifications-execute." [runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         limit (max 1 (min 50 (or (aget params "limit") 20)))]
-    (maybe-tool-update! on-update "Reading Bluesky notifications…")
+    (tools/maybe-tool-update! on-update "Reading Bluesky notifications…")
     (let [payload (await (operations/bluesky-notifications! runtime limit))
           notifications (or (:notifications payload) [])
           lines (mapv (fn [n]
@@ -167,9 +167,9 @@
                           (str "- [" reason "] "
                                (or (:displayName author) "")
                                " (@" (or (:handle author) "") "): "
-                               (clip-text text 120))))
+                               (text/clip-text text 120))))
                       notifications)]
-      (tool-text-result (str "Bluesky notifications (" (count notifications) ")\n"
+      (text/tool-text-result (str "Bluesky notifications (" (count notifications) ")\n"
                              (str/join "\n" lines))
                         payload))))
 
@@ -180,9 +180,9 @@
         limit (max 1 (min 50 (or (aget params "limit") 25)))]
     (when (str/blank? actor)
       (throw (js/Error. "actor is required")))
-    (maybe-tool-update! on-update (str "Reading followers of " actor "…"))
+    (tools/maybe-tool-update! on-update (str "Reading followers of " actor "…"))
     (let [result (await (operations/bluesky-followers! actor limit))]
-      (tool-text-result (shape/format-posts (str "Followers of " actor) (:results result))
+      (text/tool-text-result (shape/format-posts (str "Followers of " actor) (:results result))
                         result))))
 
 (defn ^:async follows-execute
@@ -192,16 +192,16 @@
         limit (max 1 (min 50 (or (aget params "limit") 25)))]
     (when (str/blank? actor)
       (throw (js/Error. "actor is required")))
-    (maybe-tool-update! on-update (str "Reading who " actor " follows…"))
+    (tools/maybe-tool-update! on-update (str "Reading who " actor " follows…"))
     (let [result (await (operations/bluesky-follows! actor limit))]
-      (tool-text-result (shape/format-posts (str "Follows of " actor) (:results result))
+      (text/tool-text-result (shape/format-posts (str "Follows of " actor) (:results result))
                         result))))
 
 (defn ^:async chat-list-execute
   "SDK execution for chat-list-execute." [runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         limit (max 1 (min 50 (or (aget params "limit") 20)))]
-    (maybe-tool-update! on-update "Listing Bluesky conversations…")
+    (tools/maybe-tool-update! on-update "Listing Bluesky conversations…")
     (let [payload (await (operations/bluesky-chat-list! runtime limit))
           convos (or (:convos payload) [])
           lines (mapv (fn [convo]
@@ -210,9 +210,9 @@
                               last-msg (:lastMessage convo)]
                           (str "- " (:id convo) ": " names
                                (when last-msg
-                                 (str " — " (clip-text (or (:text last-msg) "") 80))))))
+                                 (str " — " (text/clip-text (or (:text last-msg) "") 80))))))
                       convos)]
-      (tool-text-result (str "Bluesky conversations (" (count convos) ")\n"
+      (text/tool-text-result (str "Bluesky conversations (" (count convos) ")\n"
                              (str/join "\n" lines))
                         payload))))
 
@@ -226,9 +226,9 @@
       (throw (js/Error. "convoId is required")))
     (when (str/blank? text)
       (throw (js/Error. "text is required")))
-    (maybe-tool-update! on-update "Sending Bluesky DM…")
+    (tools/maybe-tool-update! on-update "Sending Bluesky DM…")
     (let [result (await (operations/bluesky-chat-send! runtime convo-id text reply-to))]
-      (tool-text-result (str "Sent DM in conversation " convo-id)
+      (text/tool-text-result (str "Sent DM in conversation " convo-id)
                         result))))
 
 (defn ^:async chat-read-execute
@@ -238,7 +238,7 @@
         limit (max 1 (min 100 (or (aget params "limit") 25)))]
     (when (str/blank? convo-id)
       (throw (js/Error. "convoId is required")))
-    (maybe-tool-update! on-update (str "Reading Bluesky DMs in " convo-id "…"))
+    (tools/maybe-tool-update! on-update (str "Reading Bluesky DMs in " convo-id "…"))
     (let [payload (await (operations/bluesky-chat-messages! runtime convo-id limit))
           messages (or (:messages payload) [])
           lines (mapv (fn [msg]
@@ -248,9 +248,9 @@
                           (str "- [" msg-id "] "
                                (or (:displayName sender) "")
                                " (@" (or (:handle sender) "") "): "
-                               (clip-text text 200))))
+                               (text/clip-text text 200))))
                       messages)]
-      (tool-text-result (str "Bluesky DMs (" (count messages) ")\n"
+      (text/tool-text-result (str "Bluesky DMs (" (count messages) ")\n"
                              (str/join "\n" lines))
                         payload))))
 
@@ -266,8 +266,7 @@
       (throw (js/Error. "messageId is required")))
     (when (str/blank? emoji)
       (throw (js/Error. "emoji is required")))
-    (maybe-tool-update! on-update (str "Reacting to message " message-id "…"))
+    (tools/maybe-tool-update! on-update (str "Reacting to message " message-id "…"))
     (let [result (await (operations/bluesky-chat-react! runtime convo-id message-id emoji))]
-      (tool-text-result (str "Reacted " emoji " to message " message-id)
+      (text/tool-text-result (str "Reacted " emoji " to message " message-id)
                         result))))
-

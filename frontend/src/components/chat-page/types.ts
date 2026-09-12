@@ -1,3 +1,5 @@
+import type { BrowseResponse, SemanticSearchMatch, WorkspaceJob } from "../workspace-context/types";
+
 export type {
   BrowseEntry,
   BrowseResponse,
@@ -335,3 +337,18 @@ export interface MultimodalInputProps {
   /** Hide inline attachment previews (useful when parent manages previews) */
   hidePreviews?: boolean;
 }
+
+export type UseChatPageDerivedStateParams = {
+  browseData: BrowseResponse | null;
+  entryFilter: string;
+  visibilityFilter: string;
+  kindFilter: string;
+  semanticQuery: string;
+  semanticResults: SemanticSearchMatch[];
+  workspaceJob: WorkspaceJob | null;
+  latestRun: RunDetail | null;
+  isSending: boolean;
+  runtimeEvents: RunEvent[];
+  pendingAssistantId: string | null;
+  conversationId: string | null;
+};

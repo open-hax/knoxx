@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.bluesky.client :as bsky-client]
             [knoxx.backend.domain.media :as media]
-            [knoxx.backend.domain.text :refer [clip-text]]
+            [knoxx.backend.domain.text :as text]
             [knoxx.backend.extern.bluesky-facets :as facets]
             [knoxx.backend.infra.actor.credentials :as actor-credentials]
             [knoxx.backend.shape.bluesky :as shape]))
@@ -236,7 +236,7 @@
         root-uri (or (when root-post (:uri root-post)) "")
         root-line (str "- " (or (not-empty root-display) root-handle "unknown")
                        (when-not (str/blank? root-handle) (str " (@" root-handle ")"))
-                       ": " (clip-text root-text 200)
+                       ": " (text/clip-text root-text 200)
                        (when-not (str/blank? root-uri) (str "\n  " root-uri)))
         reply-lines (shape/collect-thread-replies thread 1 depth [])]
     {:root {:uri root-uri :text root-text :handle root-handle}

@@ -139,6 +139,42 @@
     (test/is (true? (review/accepted? history "sha256-original" :en)))
     (test/is (empty? (review/learned-lessons history)))))
 
+(test/deftest revision-request-lessons-become-memory-when-corrected-source-is-accepted
+  (let [feedback (event "changes" :request-changes "submit-1"
+                        {:notes "Name the decision maker." :lessons ["Name who accepts content."]})
+        pending (conj submitted feedback)
+        unrelated (event "other-draft" :comment "changes"
+                         {:revision "sha256-abandoned" :lessons ["Unreviewed abandoned claim."]})
+        resubmitted (conj pending unrelated
+                          (event "submit-next" :submit "other-draft" {:revision "sha256-next"}))
+        history (conj resubmitted (event "accept-next" :accept "submit-next" {:revision "sha256-next"}))
+        expected [{:text "Name who accepts content." :review "changes"
+                   :revision "sha256-original" :actor actor
+                   :acceptance-review "accept-next" :acceptance-revision "sha256-next"}]]
+    (test/is (empty? (review/learned-lessons pending)))
+    (test/is (empty? (review/learned-lessons resubmitted)))
+    (test/is (= expected (:lessons (review/project history scope (assoc snapshot :revision "sha256-next")))))
+    (test/is (false? (review/accepted? history "sha256-original" :en)))
+    (test/is (true? (review/accepted? history "sha256-next" :en)))
+    (test/is (= expected (review/learned-lessons
+                         (conj history (event "late" :comment "accept-next"
+                                              {:revision "sha256-next" :lessons ["Late unreviewed claim."]})))))
+    (test/is (empty? (review/learned-lessons
+                     (conj history (event "revoke" :request-changes "accept-next"
+                                          {:revision "sha256-next" :notes "Recheck this conclusion."})))))))
+
+(test/deftest source-language-acceptance-does-not-endorse-another-language-feedback
+  (let [feedback (event "english-changes" :request-changes "submit-1"
+                        {:notes "Clarify." :lessons ["English review lesson."]})
+        history (conj submitted feedback
+                      (event "french-submit" :submit "english-changes"
+                             {:revision "sha256-french" :source-locale :fr})
+                      (event "french-accept" :accept "french-submit"
+                             {:revision "sha256-french" :source-locale :fr}))]
+    (test/is (true? (:accepted (review/project history scope
+                                              (assoc snapshot :revision "sha256-french" :source-locale :fr)))))
+    (test/is (empty? (review/learned-lessons history)))))
+
 (test/deftest wire-preserves-resource-namespace-and-history
   (let [wire (shape/projection->wire (review/project accepted scope snapshot))]
     (test/is (= "docs/introduction" (:document wire)))

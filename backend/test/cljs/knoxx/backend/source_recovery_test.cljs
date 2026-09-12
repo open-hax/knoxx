@@ -108,3 +108,31 @@
             (when (fn? source-accepted?)
               (test/is (= expected (source-accepted? intent revision)))
               (test/is (false? (source-accepted? intent "changed-source-revision")))))))))))
+
+(test/deftest ^:async corrected-source-retains-reviewed-lessons-after-both-ledgers-reopen
+  (await (fixture!
+    (^:async fn [config dependencies options]
+      (let [created (await (authoring/create! config scope actor creation dependencies))
+            document (assoc scope :document (get-in created [:review :document]))
+            submitted (await (review/command! config document actor
+                                (command "submit-original" :submit (:review created)) dependencies))
+            requested (await (review/command! config document actor
+                                (assoc (command "request-revision" :request-changes (:review submitted))
+                                       :notes "State who accepts the page."
+                                       :lessons ["Humans make final acceptance decisions."]) dependencies))
+            saved (await (authoring/save! config document actor
+                             {:operation-id "save-correction" :expected-revision (get-in requested [:review :revision])
+                              :content "Humans make final acceptance decisions."} dependencies))
+            accepted (await (accept! config document dependencies))
+            restarted (assoc dependencies :source-provider (sources/open! (:source options))
+                                          :provider (reviews/open! (:review options)))
+            recovered (await (review/read! config document restarted))
+            expected [{:text "Humans make final acceptance decisions." :review "request-revision"
+                       :revision (get-in created [:review :revision]) :actor actor
+                       :acceptance-review "accept-one" :acceptance-revision (get-in saved [:review :revision])}]]
+        (test/is (empty? (get-in requested [:review :lessons])))
+        (test/is (empty? (get-in saved [:review :lessons])))
+        (test/is (true? (get-in accepted [:review :accepted])))
+        (test/is (= expected (get-in accepted [:review :lessons])))
+        (test/is (= expected (:lessons recovered)))
+        (test/is (= (:review accepted) recovered)))))))

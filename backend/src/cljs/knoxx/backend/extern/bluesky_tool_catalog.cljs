@@ -1,13 +1,13 @@
 (ns knoxx.backend.extern.bluesky-tool-catalog
   "Construct native SDK tools from Bluesky contracts and authorized capabilities."
-  (:require [knoxx.backend.domain.tools :refer [create-tool-obj]]
+  (:require [knoxx.backend.domain.tools :as tools]
             [knoxx.backend.extern.bluesky-tool-execution :as execution]
-            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.law.bluesky-tools :as schemas]))
 
 (def publish-tool
   "Bluesky tool catalog entry: publish-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.publish" "Bluesky Publish"
      "Publish a post to Bluesky using the configured account."
      "Post a concise update to Bluesky when public social publishing is useful."
@@ -21,7 +21,7 @@
 
 (def profile-tool
   "Bluesky tool catalog entry: profile-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.profile" "Bluesky Profile"
      "Read a Bluesky profile by handle or DID, or default to the authenticated account."
      "Read a Bluesky profile by handle or DID, or default to the authenticated account."
@@ -33,7 +33,7 @@
 
 (def search-tool
   "Bluesky tool catalog entry: search-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.search" "Bluesky Search"
      "Search public Bluesky posts or actors."
      "Search public Bluesky posts or actors."
@@ -45,7 +45,7 @@
 
 (def author-feed-tool
   "Bluesky tool catalog entry: author-feed-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.author.feed" "Bluesky Author Feed"
      "Read recent posts from a specific Bluesky author."
      "Read recent posts from a specific Bluesky author."
@@ -57,7 +57,7 @@
 
 (def timeline-tool
   "Bluesky tool catalog entry: timeline-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.timeline" "Bluesky Timeline"
      "Read the authenticated account's Bluesky timeline."
      "Read the authenticated account's Bluesky timeline."
@@ -69,7 +69,7 @@
 
 (def repost-tool
   "Bluesky tool catalog entry: repost-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
             "bluesky.repost" "Bluesky Repost"
             "Repost (quote-retweet) a Bluesky post by AT-URI."
             "Repost a Bluesky post to share it with followers."
@@ -81,7 +81,7 @@
 
 (def like-tool
   "Bluesky tool catalog entry: like-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
             "bluesky.like" "Bluesky Like"
             "Like a Bluesky post by AT-URI."
             "Like a Bluesky post to show appreciation."
@@ -93,7 +93,7 @@
 
 (def unlike-tool
   "Bluesky tool catalog entry: unlike-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
             "bluesky.unlike" "Bluesky Unlike"
             "Remove a like from a Bluesky post by like record AT-URI."
             "Remove a like from a Bluesky post."
@@ -104,7 +104,7 @@
 
 (def follow-tool
   "Bluesky tool catalog entry: follow-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
             "bluesky.follow" "Bluesky Follow"
             "Follow a Bluesky actor by handle or DID."
             "Follow a Bluesky user."
@@ -116,7 +116,7 @@
 
 (def unfollow-tool
   "Bluesky tool catalog entry: unfollow-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
             "bluesky.unfollow" "Bluesky Unfollow"
             "Unfollow a Bluesky actor by follow record AT-URI."
             "Unfollow a Bluesky user."
@@ -127,7 +127,7 @@
 
 (def delete-tool
   "Bluesky tool catalog entry: delete-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
             "bluesky.delete" "Bluesky Delete"
             "Delete one of your own Bluesky posts by AT-URI."
             "Delete a Bluesky post you authored."
@@ -139,7 +139,7 @@
 
 (def thread-tool
   "Bluesky tool catalog entry: thread-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
             "bluesky.thread" "Bluesky Thread"
             "Read a Bluesky post thread including replies."
             "Read a post and its reply thread."
@@ -151,7 +151,7 @@
 
 (def notifications-tool
   "Bluesky tool catalog entry: notifications-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
             "bluesky.notifications" "Bluesky Notifications"
             "Read notifications for the authenticated Bluesky account."
             "Check notifications on Bluesky."
@@ -163,7 +163,7 @@
 
 (def followers-tool
   "Bluesky tool catalog entry: followers-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.followers" "Bluesky Followers"
      "List followers of a Bluesky actor."
      "Read the followers list of a Bluesky user."
@@ -175,7 +175,7 @@
 
 (def follows-tool
   "Bluesky tool catalog entry: follows-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.follows" "Bluesky Follows"
      "List accounts a Bluesky actor follows."
      "Read the following list of a Bluesky user."
@@ -187,7 +187,7 @@
 
 (def chat-list-tool
   "Bluesky tool catalog entry: chat-list-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.chat.list" "Bluesky Chat List"
      "List Bluesky DM conversations."
      "List direct message conversations."
@@ -198,7 +198,7 @@
 
 (def chat-send-tool
   "Bluesky tool catalog entry: chat-send-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.chat.send" "Bluesky Chat Send"
      "Send a direct message in a Bluesky conversation."
      "Send a DM in a Bluesky chat."
@@ -210,7 +210,7 @@
 
 (def chat-read-tool
   "Bluesky tool catalog entry: chat-read-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.chat.read" "Bluesky Chat Read"
      "Read messages from a Bluesky DM conversation."
      "Read DMs in a Bluesky conversation."
@@ -222,7 +222,7 @@
 
 (def chat-react-tool
   "Bluesky tool catalog entry: chat-react-tool."
-  (partial create-tool-obj
+  (partial tools/create-tool-obj
      "bluesky.chat.react" "Bluesky Chat React"
      "Add an emoji reaction to a message in a Bluesky DM."
      "React to a Bluesky DM message."
@@ -256,7 +256,7 @@
 
 (defn- auth-context-allows-tool? [auth-context tool-id]
   (or (nil? auth-context)
-      (ctx-tool-allowed? auth-context tool-id)))
+      (authz/ctx-tool-allowed? auth-context tool-id)))
 
 (defn- create-allowed-bluesky-tool [runtime config allowed? [tool-id tool-factory]]
   (when (allowed? tool-id)
