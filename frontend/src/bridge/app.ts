@@ -18,11 +18,6 @@ export { default as ContractsPage } from "../pages/ContractsPage";
 export { default as DataPage } from "../pages/DataPage";
 export { default as OpsRoot } from "../pages/OpsRoot";
 
-// NOTE: CMS pages currently import CSS Modules; ensure the bridge build remains
-// single-file + compatible with shadow-cljs file resolution when adding these.
-export { default as CmsPage } from "../pages/CmsPage";
-export { VisualCmsEditorPage } from "../pages/VisualCmsEditorPage";
-
 // Agent audit surfaces — TSX widgets mounted by shadow-cljs AgentsPage.
 export { default as AgentAuditLogs } from "../components/agent-audit/AgentAuditLogs";
 

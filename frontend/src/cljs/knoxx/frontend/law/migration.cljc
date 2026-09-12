@@ -180,7 +180,7 @@
                     (assoc facts :detail "Active Shadow bridges require their governed build scripts"))))
   (let [bridges (take-while #{"build:bridge" "build:app-bridge"} phases)
         remaining (vec (drop (count bridges) phases))]
-    (when-not (and (contains? #{[:shadow] [:shadow :css]} remaining)
+    (when-not (and (contains? #{[:shadow] [:shadow :css] [:html :shadow] [:html :shadow :css]} remaining)
                    (= (count bridges) (count (set bridges)))
                    (every? (set bridges) required-bridges))
       (throw (ex-info "Unsupported Vite migration configuration"

@@ -276,10 +276,19 @@
          route-inspection-nodes
          (filter (partial route-candidate? router-aliases router-apis)))))
 
+(defn- helix-constructors [path source]
+  (into '#{$ helix.core/$}
+        (keep (fn [node]
+                (when (and (vector? node) (= 'helix.core (first node)))
+                  (when-let [alias (:as (apply hash-map (rest node)))]
+                    (symbol (str alias) "$")))))
+        (tree-seq coll? seq (source-forms path source))))
+
 (defn- checked-route-forms [path source]
-  (let [forms (vec (route-forms path source))]
+  (let [forms (vec (route-forms path source))
+        constructors (helix-constructors path source)]
     (doseq [form forms]
-      (when-not (and (= '$ (first form)) (= 'Route (second form)))
+      (when-not (and (contains? constructors (first form)) (= 'Route (second form)))
         (throw (ex-info "Unsupported Shadow route syntax"
                         {:path path :constructor (second form)}))))
     forms))
@@ -306,8 +315,8 @@
   (let [path "frontend/src/cljs/knoxx/frontend/app.cljs"
         source (fs/readFileSync (node-path/join root path) "utf8")
         ownership-facts (route-ownership-facts root path source route-exports)
-        pattern (js/RegExp. "\\(\\$ Route \\{:path\\s+([^\\n]+)" "g")
-        route-count (count (re-seq #"\(\s*\$\s+Route(?=\s|\))" source))
+        pattern (js/RegExp. "\\((?:[A-Za-z0-9_.-]+/)?\\$ Route \\{:path\\s+([^\\n]+)" "g")
+        route-count (count (re-seq #"\(\s*(?:[A-Za-z0-9_.-]+/)?\$\s+Route(?=\s|\))" source))
         declared-route-forms (checked-route-forms path source)]
     (loop [matches []]
       (if-let [match (.exec pattern source)]

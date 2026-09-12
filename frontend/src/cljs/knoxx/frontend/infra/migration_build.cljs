@@ -310,6 +310,7 @@
     (unsupported! file "Active Shadow bridges require a production build command"))
   (let [known {"vite build --config vite.bridge.config.ts" "build:bridge"
                "vite build --config vite.app-bridge.config.ts" "build:app-bridge"
+               "vite build --config vite.config.ts" :html
                "shadow-cljs release app" :shadow
                "tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css" :css}]
     (mapv (fn [phase]
@@ -340,7 +341,8 @@
         scripts (package-scripts file)
         bridges {"build:bridge" "vite.bridge.config.ts"
                  "build:app-bridge" "vite.app-bridge.config.ts"}
-        allowed (set (map #(node-path/resolve frontend-root %) (vals bridges)))]
+        allowed (set (map #(node-path/resolve frontend-root %)
+                          (conj (vec (vals bridges)) "vite.config.ts")))]
     (assert-shadow-bridge-builds! frontend-root scripts)
     (doseq [[script-name command] scripts]
       (let [configs (mapv #(node-path/resolve frontend-root %)

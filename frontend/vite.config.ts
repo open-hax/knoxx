@@ -9,6 +9,14 @@ const KNOXX_PROXY = {
     target: VITE_BACKEND_URL,
     changeOrigin: true,
   },
+  "/mcp": {
+    target: VITE_BACKEND_URL,
+    changeOrigin: true,
+  },
+  "/.well-known": {
+    target: VITE_BACKEND_URL,
+    changeOrigin: true,
+  },
   "/ws": {
     target: VITE_BACKEND_URL,
     changeOrigin: true,
@@ -34,6 +42,7 @@ export default defineConfig({
     // shadow-cljs also writes into dist/cljs and Vite bridge builds write into
     // dist/bridge. Don't wipe those on each rebuild.
     emptyOutDir: false,
+    copyPublicDir: false,
   },
 
   // Kept for `pnpm preview` / ad-hoc Vite dev usage, but the default `pnpm dev`
