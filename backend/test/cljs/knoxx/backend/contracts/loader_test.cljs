@@ -1,6 +1,6 @@
 (ns knoxx.backend.contracts.loader-test
   (:require [clojure.string :as str]
-            [cljs.test :refer [deftest is testing async]]
+            [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.contracts.loader :as sut]))
 
 (def fixture-config

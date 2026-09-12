@@ -21,7 +21,11 @@
 
 (deftest ^:async writing-preserves-explicit-request-and-complete-output
   (let [seen (atom nil)]
-    (with-redefs [xfetch/default-client (reify xfetch/IHttpClient (json! [_ request] (reset! seen request) response))]
+    (with-redefs [xfetch/default-client (reify xfetch/IHttpClient
+                                       (json! [_ request] (reset! seen request) response)
+                                       (response! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :response!})))
+                                       (text! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :text!})))
+                                       (array-buffer! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :array-buffer!}))))]
       (is (= "A clearer draft." (:content (await (sut/generate! config input)))))
     (is (= "http://127.0.0.1:4321/v1/chat/completions" (:url @seen)))
     (is (= (sut/prompt input) (get-in @seen [:opts :json :messages 1 :content])))
@@ -34,7 +38,11 @@
                 (assoc-in (:body response) [:choices 0 :message :tool_calls] [{:name "save"}])
                 (assoc-in (:body response) [:choices 0 :message :function_call] {:name "save"})
                 (assoc-in (:body response) [:choices 0 :message :content] "")]]
-    (with-redefs [xfetch/default-client (reify xfetch/IHttpClient (json! [_ _] (assoc response :body body)))]
+    (with-redefs [xfetch/default-client (reify xfetch/IHttpClient
+                                       (json! [_ _] (assoc response :body body))
+                                       (response! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :response!})))
+                                       (text! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :text!})))
+                                       (array-buffer! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :array-buffer!}))))]
       (try (await (sut/generate! config input)) (is false "Invalid provider result was accepted")
            (catch :default error (is (= "writing_model_invalid_output" (:code (ex-data error)))))))))
 
@@ -49,7 +57,10 @@
 
 (deftest ^:async writing-deadline-includes-response-body
   (with-redefs [xfetch/default-client (reify xfetch/IHttpClient
-                                       (json! [_ _] (xpromise/reject-after 100 "Late response body")))]
+                                       (json! [_ _] (xpromise/reject-after 100 "Late response body"))
+                                       (response! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :response!})))
+                                       (text! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :text!})))
+                                       (array-buffer! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :array-buffer!}))))]
     (try (await (sut/generate! (assoc config :wiki-model-timeout-ms 5) input))
          (is false "Late response body escaped completion deadline")
          (catch :default error

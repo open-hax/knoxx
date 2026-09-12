@@ -55,3 +55,38 @@ same shared pnpm store. This restored the actual frontend toolchain without
 creating a second package store or changing the child manifest's dependencies.
 The cold Maven fetch used the recovered shared cache and then selected
 ClojureScript 1.12.145 and Shadow 3.4.11 for native async compilation.
+
+## Complete admin lint gate
+
+The remaining admin rendering helpers now use qualified Helix names, sorted
+imports and short components for source fields, event-kind inputs and runtime
+footers. This preserves the existing input keys and public component props.
+The entire admin source/test directory passes strict clj-kondo with zero errors
+and zero warnings. Its focused runtime gate passed **17 tests / 66 assertions**
+with zero failures, errors or compiler warnings; the shared fatal-error guard
+and test-summary validator were both enabled.
+
+The isolated gate writes to `dist-verification`, preserving the production
+browser files. Inspection of Shadow's installed test selector revealed that
+`:ns-regex` is ignored: its supported key is `:ns-regexp`, with a string value.
+The checked-in test configuration now uses that supported key and the same
+frontend namespace scope. CLI overrides must target the build map directly,
+for example `{:output-to "dist-verification/admin-lint-tests.cjs"
+:ns-regexp "^knoxx.frontend.admin.*-test$"}`. The full exposed frontend lint
+gate still reports inherited warnings outside this completed admin slice.
+
+## Initial load failure and retry
+
+Self-review found that the panel treated missing data as ongoing loading even
+after the initial GET had failed. That hid the error and offered no way to try
+again. A new interaction regression reproduced the stuck loading screen before
+the fix. The panel now distinguishes a pending request from unavailable data,
+shows the read failure and provides an explicit retry. Write controls appear
+only after a successful read supplies the control data.
+
+The regression's first run exposed an unhandled testing-library rejection while
+Shadow still printed zero failures/errors. The uncaught-error preload emitted
+its fatal marker and the shared summary validator correctly returned exit 1.
+After the UI correction, all **18 admin tests / 69 assertions** passed with zero
+failures, errors and compiler warnings, and strict admin source/test lint stayed
+at zero errors/warnings. Browser acceptance remains owned by the full stack tour.

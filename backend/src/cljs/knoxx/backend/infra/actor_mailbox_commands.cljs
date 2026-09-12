@@ -26,13 +26,13 @@
 (defn interface-capabilities
   "Project current command policy for the human mailbox controls."
   [context]
-  (let [send? (boolean (and (authz/ctx-permitted? context "agent.chat.use") (allowed? context)))
+  (let [send? (boolean (and (authz/permission-allowed? context "agent.chat.use") (allowed? context)))
         modes (cond-> ["inbox-only"]
-                (authz/ctx-permitted? context "agent.controls.follow_up") (conj "follow-up")
-                (authz/ctx-permitted? context "agent.controls.steer") (conj "steer")
-                (authz/ctx-permitted? context "org.events.control") (conj "event"))]
+                (authz/permission-allowed? context "agent.controls.follow_up") (conj "follow-up")
+                (authz/permission-allowed? context "agent.controls.steer") (conj "steer")
+                (authz/permission-allowed? context "org.events.control") (conj "event"))]
     {:send send? :modes (if send? modes [])
-     :acknowledge (boolean (and (authz/ctx-permitted? context "agent.chat.use")
+     :acknowledge (boolean (and (authz/permission-allowed? context "agent.chat.use")
                                 (authz/ctx-actor-binding context)))}))
 (defn- ^:async resolved-target! [mailbox request]
   (let [target (address/resolve-target request (:lineage request))]

@@ -70,6 +70,8 @@
 (deftest changed-reuse-of-operation-identity-conflicts
   (doseq [[attempt-actor changed-command]
           [[actor (assoc (command "accept-1" :accept "submit-1") :notes "changed")]
+           [actor (command "accept-1" :accept "accept-1")]
+           [actor (command "accept-1" :accept nil)]
            [(assoc actor :id "another-person") (command "accept-1" :accept "submit-1")]]]
     (is (= "source_review_operation_conflict"
            (error-code #(review/decide accepted scope attempt-actor snapshot

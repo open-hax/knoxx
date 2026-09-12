@@ -1,9 +1,9 @@
 (ns knoxx.frontend.admin.event-agent-components
   "Small, reusable UI components for the event agent panel."
-  (:require [helix.core :as hx :refer [$ defnc]]
+  (:require [helix.core :as hx]
             [helix.dom :as d]))
 
-(defnc collapsible-panel
+(hx/defnc collapsible-panel
   "A details/summary panel that can be toggled open/closed."
   [{:keys [title description default-open children]}]
   (d/details
@@ -19,7 +19,7 @@
              (d/span {:class-name "text-xs uppercase tracking-wide text-slate-500"} "toggle")))
     (d/div {:class-name "mt-4"} children)))
 
-(defnc badge
+(hx/defnc badge
   "Simple status badge."
   [{:keys [tone children]}]
   (let [tone-class (case tone
@@ -31,7 +31,7 @@
     (d/span {:class-name (str "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium " tone-class)}
             children)))
 
-(defnc status-badge
+(hx/defnc status-badge
   "Badge that shows a runtime status."
   [{:keys [status enabled running]}]
   (let [tone (cond
@@ -45,4 +45,4 @@
                 running "running"
                 status (str status)
                 :else "idle")]
-    ($ badge {:tone tone} label)))
+    (hx/$ badge {:tone tone} label)))

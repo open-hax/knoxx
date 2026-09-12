@@ -234,8 +234,20 @@
                                     :saving-control saving-control :running-job-id running-job-id})))
       (hx/$ error-banner {:error error}) (hx/$ notice-banner {:notice notice}))))
 
+(hx/defnc unavailable-panel
+  "Show an initial read failure and an explicit retry without write controls."
+  [{:keys [error reload-data]}]
+  (d/div {:class-name "space-y-3" :role "alert"}
+    (hx/$ error-banner {:error (or (not-empty error) "Runtime control data is unavailable.")})
+    (d/button {:type "button" :on-click reload-data
+               :class-name "rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"}
+      "Retry loading runtime")))
+
 (hx/defnc event-agents-panel
   "Read and edit the runtime through the same authorized commands used by agents."
   [{:keys [can-manage on-selected-job-change]}]
   (let [{:keys [loading draft status] :as panel} (use-panel-controller can-manage on-selected-job-change)]
-    (if (or loading (not draft) (not status)) (hx/$ agents/loading-state) (hx/$ panel-content {:panel panel}))))
+    (cond
+      loading (hx/$ agents/loading-state)
+      (or (not draft) (not status)) (hx/$ unavailable-panel {& panel})
+      :else (hx/$ panel-content {:panel panel}))))

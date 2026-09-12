@@ -78,7 +78,7 @@ function installVisualCmsFetchMock() {
 
 function renderVisualCmsEditor(path = "/cms/editor/drafts/test") {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[path]}>
       <Routes>
         <Route path="/cms/editor/*" element={<VisualCmsEditorPage />} />
         <Route path="/cms" element={<div>CMS index</div>} />

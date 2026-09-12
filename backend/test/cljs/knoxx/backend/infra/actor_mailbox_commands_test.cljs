@@ -20,6 +20,31 @@
          (with-redefs [authz/current-context! (fn [_ context] context)] (await (f provider options)))
          (catch :default error (is false (str "Unexpected mailbox fixture failure: " error)))
          (finally (registry/install! previous) (deliveries/install! old-delivery) (fs/remove-tree! directory)))))
+
+(deftest ^:async administrator-mail-capabilities-match-the-authorized-command
+  (await
+   (fixture!
+    (^:async fn [_provider _options]
+      (let [administrator (-> sender (assoc :role-slugs ["system_admin"])
+                              (dissoc :permissions :tool-policies))
+            capabilities (commands/interface-capabilities administrator)
+            result (await (commands/send! {} {} administrator request))]
+        (is (= "delivered" (get-in result [:entry :mailbox/status])))
+        (is (true? (:send capabilities)))
+        (is (= #{"inbox-only" "follow-up" "steer" "event"} (set (:modes capabilities))))
+        (is (true? (:acknowledge capabilities)))
+        (let [denied (assoc administrator :tool-policies [{:tool-id "actors.send-message" :effect "deny"}])]
+          (is (false? (:send (commands/interface-capabilities denied))))
+          (is (empty? (:modes (commands/interface-capabilities denied))))
+          (is (= "mailbox_tool_denied"
+                 (get-in (await (attempt #(commands/send! {} {} denied
+                                                         (assoc request :operation-id "denied-admin"))))
+                         [:error :code])))))))))
+
+(deftest ordinary-mail-capabilities-still-require-both-permission-and-tool-policy
+  (is (= ["inbox-only"] (:modes (commands/interface-capabilities sender))))
+  (is (false? (:send (commands/interface-capabilities (dissoc sender :permissions)))))
+  (is (false? (:send (commands/interface-capabilities (dissoc sender :tool-policies))))))
 (deftest ^:async canonical-body-survives-restart-without-leaking-through-list
   (await (fixture! (^:async fn [provider options]
     (let [sent (await (commands/send! {} {} sender request)) inbox (mailbox/context {} receiver)]

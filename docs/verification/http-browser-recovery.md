@@ -38,3 +38,58 @@ creates disposable users, ledgers and content, owns all service processes, and
 removes its fixtures when it exits. Its `result.json` and annotated screenshots
 are authoritative for that run only. Historical screenshots do not prove this
 reconstructed source works.
+
+## Fresh browser run 07
+
+The real browser completed password, username/email, passkey and PGP login,
+signup, session revocation/recovery, Admin organization and identity binding,
+and authenticated MCP initialization. It then stopped at a disabled Mail send
+button: the capability projection used explicit permissions while the command
+also authorized the system-administrator role. A new regression reproduced
+three failures while the actual command successfully delivered the message.
+Both paths now use the same permission predicate; explicit tool denial still
+wins. The complete Mail command regression passes **12 tests / 54 assertions**,
+and scoped lint remains zero errors and warnings.
+
+The supplemental `agent-browser` CLI could not bind its daemon's Unix socket
+(`Operation not permitted`), including a debug retry with the installed Chromium
+path and `--no-sandbox`. The application tour uses Playwright's existing Chromium
+pipe connection successfully inside this sandbox. No external browser environment
+is required. Run 07 screenshots and its exact failed result were saved together;
+they do not establish Mail, translation or publication completion.
+
+## Fresh browser run 08 and admission regressions
+
+Run 08 completed the identity and Admin ceremonies again, then the complete
+Mail interaction: human composition and full-body retrieval, a real delegated
+MCP delivery visible through SSE, preservation of an unfinished human response,
+and acknowledgement. The Wiki created and saved a page, obtained and applied a
+real Qwen writing suggestion, submitted it for review, recorded requested changes
+and a lesson, edited and resubmitted. First source acceptance returned HTTP 502.
+Translation and publication were therefore not reached.
+
+The admission writer still queried Mongo directly despite selecting Clio. Its
+new actual Clio/reopen regression failed all 11 assertions. The writer now calls
+the existing `event-by-id!` provider boundary; retries repair projections without
+duplicating the durable source fact. The test also retains that fact across an
+embedding failure and repairs the index after reopening. Its small vector fixture
+checks persistence semantics; real model quality remains a separate browser gate.
+
+A real Fastify stream regression reproduced one implicit second send after
+`reply.hijack()`. Returning native `undefined` from the owned SSE adapter keeps
+Fastify from sending the private stream state. Existing authorization, scoped
+invalidation and revocation checks still run.
+
+CodeRabbit also found that source-review retry identity discarded the caller's
+expected head. Reusing `accept-1` with a changed or absent predecessor reproduced
+two failures. Only server-recorded time is now excluded from identity comparison;
+an unchanged retry retains the first receipt even after the source changes.
+
+The first combined run passed its assertions but the fatal async guard caught two
+old Mongo adapter fixtures depending on another test namespace's registration.
+Those tests now select their adapter explicitly. The guarded rerun passes
+**41 tests / 233 assertions**, with **547 compiler inputs / 0 warnings**. Scoped
+lint still flags two pre-existing oversized admission source/test files; the
+size gate remains enabled while those responsibilities are extracted. The prior
+full backend checkpoint passed **1,786 tests / 8,083 assertions**; a new full run
+including these fixes and the policy cleanup is required and running.

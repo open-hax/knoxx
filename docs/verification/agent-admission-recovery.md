@@ -94,6 +94,33 @@ The focused repair suite passed 65 tests / 396 assertions, with the fatal guard
 and zero failures/errors; 490 compiled inputs, zero warnings. All seven changed
 fixture/native boundary files pass scoped clj-kondo with zero errors/warnings.
 
-The full suite must be rerun after these repairs. Advertised production build
-with final dependency pins and complete browser verification remain pending.
-Compiler exit zero alone is not a test result.
+The second full execution found stale OpenPlanner fixtures further into the
+suite: memory pagination and message restoration supplied no organization. A
+complete callback provider fixture now asserts the actual tenant sent to each
+operation and refuses unseeded operations. The missing-session case explicitly
+stubs the active-session lookup and fails if an unnecessary session read occurs.
+The focused memory/message suite passed 17 tests / 40 assertions with the fatal
+guard, zero failures/errors, and zero compiler warnings.
+
+A third full run compiled 924 inputs with zero warnings against the frozen
+eta-identity `e0cdf3585b15101c83ef01b7bc2901652b3b54dd` checkout. Another compiler
+invocation accidentally reused the `test-ci` output directory while Node was
+executing it. Its result is diagnostic only; it cannot establish an immutable
+full-suite result. Its fatal guard also exposed three semantic-search HTTP
+fixtures missing tenant scope. Their configured tenant is now asserted in the
+actual recorded vector-search request body. Future concurrent focused builds
+use distinct build IDs as well as distinct output filenames.
+
+The repaired memory, message-source and semantic HTTP fixtures then passed
+together with the Bluesky boundary regressions: 24 tests / 62 assertions, zero
+failures/errors, with the fatal guard; 292 compiler inputs, zero warnings.
+
+The fourth full run completed with 1,786 tests / 8,083 assertions and zero
+failures/errors. The fatal asynchronous guard was enabled, no guard failures
+were emitted, and the Node process exited zero. Compilation covered 931 inputs
+with zero warnings. This fresh result uses the same frozen eta-identity commit
+through explicit local dependency overrides. It includes the Mail permission
+predicate repair and Bluesky extraction; later Discord and policy extractions
+need their own verification. Advertised commands with final dependency pins
+and complete browser verification remain separate gates. Compiler exit zero
+alone is not a test result.

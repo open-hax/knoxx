@@ -7,9 +7,9 @@
    has none — it needs no translation — so it never appears there, and until
    this action existed it had no route to publication through any UI at all.
    Its bytes were deployed, valid, and unreachable."
-  (:require [helix.core :refer [$ defnc]]
-            [helix.hooks :as hooks]
+  (:require [helix.core :as hx]
             [helix.dom :as d]
+            [helix.hooks :as hooks]
             [knoxx.frontend.components.ui :as ui]
             [knoxx.frontend.pages.gardens.api :as api]
             [knoxx.frontend.pages.gardens.logic :as logic]))
@@ -28,7 +28,9 @@
                     :class-name "rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300"}
                    (str (logic/language-name locale) " · " locale)))))
 
-(defnc placement-row [{:keys [placement publishing on-publish]}]
+(hx/defnc placement-row
+  "Show a placement and its explicit reconciliation action."
+  [{:keys [placement publishing on-publish]}]
   (let [{:keys [id locale path state url]} placement
         in-flight? (= publishing id)]
     (d/li {:class-name "flex flex-col gap-2 rounded border border-slate-800 bg-slate-950/40 p-3 sm:flex-row sm:items-center sm:justify-between"}
@@ -47,7 +49,7 @@
                  ;; already-published revision answers `publication/noop` and says
                  ;; so, which beats a button that guesses and hides itself.
                  (when (logic/placement-published? placement)
-                   ($ ui/button {:size :sm
+                   (hx/$ ui/button {:size :sm
                                  :variant :secondary
                                  :disabled (some? publishing)
                                  :on-click #(on-publish id)}
@@ -58,7 +60,7 @@
 
 (defn- publish-all-button [garden publishing on-publish-all]
   (when-let [placements (seq (logic/publishable-placements garden))]
-    ($ ui/button {:size :sm
+    (hx/$ ui/button {:size :sm
                   :variant :primary
                   :disabled (some? publishing)
                   :on-click #(on-publish-all garden)}
@@ -78,15 +80,17 @@
   (if (seq placements)
     (d/ul {:class-name "space-y-2"}
           (for [placement placements]
-            ($ placement-row {:key (:id placement)
+            (hx/$ placement-row {:key (:id placement)
                               :placement placement
                               :publishing publishing
                               :on-publish on-publish})))
     (d/p {:class-name "text-sm text-slate-500"}
          "No publication intents target this Garden.")))
 
-(defnc garden-card [{:keys [garden publishing on-publish on-publish-all]}]
-  ($ ui/card {:variant :elevated :padding :md}
+(hx/defnc garden-card
+  "Review one garden with its locale catalog and publication placements."
+  [{:keys [garden publishing on-publish on-publish-all]}]
+  (hx/$ ui/card {:variant :elevated :padding :md}
      (garden-card-header garden publishing on-publish-all)
      (d/div {:class-name "mt-4"}
             (d/p {:class-name "mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500"}
@@ -133,25 +137,27 @@
 (defn- gardens-grid [gardens publishing on-publish on-publish-all]
   (d/div {:class-name "grid gap-4"}
          (for [garden gardens]
-           ($ garden-card {:key (:id garden)
+           (hx/$ garden-card {:key (:id garden)
                            :garden garden
                            :publishing publishing
                            :on-publish on-publish
                            :on-publish-all on-publish-all}))))
 
-(defnc gardens-body [{:keys [deployment loading error notice notice-tone
+(hx/defnc gardens-body
+  "Render deployment loading, errors and reconciliation receipts."
+  [{:keys [deployment loading error notice notice-tone
                              publishing on-publish on-publish-all]}]
   (let [{:keys [site-url gardens]} deployment]
     (d/div {:class-name "space-y-4"}
            (gardens-header site-url)
            (when loading
-             ($ ui/card {:padding :md}
+             (hx/$ ui/card {:padding :md}
                 (d/div {:class-name "text-sm text-slate-500"}
                        "Loading deployed Garden contracts...")))
            (when error (error-banner error))
            (when notice (notice-banner notice notice-tone))
            (when (and (not loading) (empty? gardens) (nil? error))
-             ($ ui/card {:padding :lg}
+             (hx/$ ui/card {:padding :lg}
                 (d/p {:class-name "text-center text-slate-500"}
                      "No deployed Garden contracts were found.")))
            (gardens-grid gardens publishing on-publish on-publish-all))))
@@ -220,7 +226,9 @@
     (finally
       (set-publishing! nil))))
 
-(defnc gardens-page []
+(hx/defnc gardens-page
+  "Load deployment contracts and execute explicit publication reconciliation."
+  []
   (let [[deployment set-deployment!] (hooks/use-state nil)
         [loading set-loading!] (hooks/use-state true)
         [error set-error!] (hooks/use-state nil)
@@ -234,7 +242,7 @@
                  :set-notice-tone! set-notice-tone!
                  :set-publishing! set-publishing!}]
     (hooks/use-effect [] (load!) nil)
-    ($ gardens-body {:deployment deployment :loading loading :error error
+    (hx/$ gardens-body {:deployment deployment :loading loading :error error
                      :notice notice :notice-tone notice-tone
                      :publishing publishing
                      :on-publish #(publish-placement! % actions)

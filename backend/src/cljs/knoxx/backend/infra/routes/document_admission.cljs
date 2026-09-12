@@ -61,24 +61,17 @@
     (await (openplanner-client/events! client [event]))))
 
 (defn ^:async persist-openplanner-event!
-  "Append one event once, awaiting detached indexing in embedded Mongo mode.
+  "Append one event through the selected provider and await its projections.
 
-  OpenPlanner's event collection currently has no unique `id` index. Check the
-  durable collection before ingestion so a deployment replay does not append a
-  second row with the same content-addressed identity. A concurrent-writer
-  unique constraint still belongs in OpenPlanner; this read-before-write closes
-  Knoxx's serialized deployment/re-admission path without mutating its schema."
+  Look up the durable event by producer identity so a serialized deployment
+  replay repairs existing projections without appending another source fact.
+  Atomic admission across writers remains the provider's responsibility."
   ([config event]
    (await (persist-openplanner-event!
            config (openplanner-client/client config) event)))
   ([_config client event]
-   (let [existing (await
-                   (openplanner-client/mongo-query!
-                    client {:collection "events"
-                            :filter {:id (:id event)}
-                            :projection {:id 1}
-                            :limit 1}))]
-     (if (pos? (or (:total existing) 0))
+   (let [existing (await (openplanner-client/event-by-id! client (:id event)))]
+     (if existing
        (await (repaired-existing-event! client (:id event)))
        (await (append-event-with-supported-projections! client event))))))
 

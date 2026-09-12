@@ -10,6 +10,7 @@
             [knoxx.backend.infra.db.policy :as policy]
             [knoxx.backend.infra.identity-bootstrap :as bootstrap]
             [knoxx.backend.infra.identity-bindings :as bindings]
+            [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.routes.users.admin :as routes]))
 
 (def ^:private password "correct administrator fixture password")
@@ -44,7 +45,8 @@
             pool (policy/context-pool acting)]
         (is (identical? acting pool))
         (is (policy/configured? acting))
-        (with-redefs [policy/db! (fn [] (throw (ex-info "Mongo must never be reached" {})))]
+        (with-redefs [policy/db! (fn [] (throw (ex-info "Mongo must never be reached" {})))
+                      mongo-client/init-mongo! (fn [] (throw (ex-info "Mongo connection must never be reached" {})))]
           (let [org (:org (await (policy/create-org-for-context! acting {:name "Editorial"})))
                 created (await (policy/create-user-for-context! acting {:org-id (:id org) :display-name "Research agent"}))
                 id (get-in created [:user :id])]

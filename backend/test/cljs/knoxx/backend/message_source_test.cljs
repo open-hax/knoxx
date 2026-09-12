@@ -5,7 +5,8 @@
             [knoxx.backend.infra.stores.mongo-message-source :refer [->MongoMessageSource]]
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
-            [knoxx.backend.infra.clients.openplanner :as openplanner-client]))
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.openplanner-fixture :as planner-fixture]))
 
 ;; ─── In-memory IMessageSource for testing ───────────────────────────────────
 
@@ -88,7 +89,11 @@
         (is (= [{:role "user" :content "from lookup"}] result))))))
 
 (deftest ^:async mongo-source-returns-empty-when-no-session
-  (with-redefs [session-store/get-session (fn [_] (js/Promise.resolve nil))]
+  (with-redefs [session-store/get-conversation-active-session
+                (fn ([_] nil) ([_ _] nil))
+                session-store/get-session
+                (fn ([_] (throw (ex-info "Unexpected session read" {})))
+                    ([_ _] (throw (ex-info "Unexpected session read" {}))))]
     (let [src    (->MongoMessageSource nil)
           result (await (fetch-messages! src "conv-x"))]
       (testing "returns empty vec when no session found"
@@ -111,20 +116,23 @@
         (is (= [] result))))))
 
 (defn- stub-op-client [rows]
-  (reify openplanner-client/IOpenPlannerClient
-    (enabled? [_] true)
-    (session! [_ _conversation-id _opts]
-      (js/Promise.resolve {:rows rows}))))
+  (planner-fixture/client
+   {:enabled? (constantly true)
+    :session! (fn [_ _conversation-id opts]
+                (is (= "message-org" (:org_id opts)))
+                {:rows rows})}))
 
 (defn- failing-op-client []
-  (reify openplanner-client/IOpenPlannerClient
-    (enabled? [_] true)
-    (session! [_ _conversation-id _opts]
-      (js/Promise.reject (js/Error. "OpenPlanner request failed")))))
+  (planner-fixture/client
+   {:enabled? (constantly true)
+    :session! (fn [_ _conversation-id opts]
+                (is (= "message-org" (:org_id opts)))
+                (throw (js/Error. "OpenPlanner request failed")))}))
 
 (deftest ^:async openplanner-source-maps-rows-to-messages
   (let [src    (->OpenPlannerMessageSource
-                {:openplanner-client
+                {:openplanner-org-id "message-org"
+                 :openplanner-client
                  (stub-op-client [{:role "user" :text "hello from op"}
                                   {:role "assistant" :text "reply from op"}
                                   {:role "unknown" :text "filtered out"}])})
@@ -135,7 +143,7 @@
              result)))))
 
 (deftest ^:async openplanner-source-rejects-when-history-restore-fails
-  (let [src (->OpenPlannerMessageSource {:openplanner-client (failing-op-client)})]
+  (let [src (->OpenPlannerMessageSource {:openplanner-org-id "message-org" :openplanner-client (failing-op-client)})]
     (testing "OpenPlanner restore failure is explicit and blocks transcript construction"
       (try
         (await (fetch-messages! src "conv-1"))

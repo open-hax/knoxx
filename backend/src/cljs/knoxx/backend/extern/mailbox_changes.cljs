@@ -48,7 +48,8 @@
   {:org-id (:org-id scope) :actor-ids (if-let [actor (:actor-id scope)] [actor] [])})
 
 (defn open-stream!
-  "Open only after request authentication; every emitted frame refreshes authority."
+  "Open after authentication and refresh authority before every emitted frame.
+  Return undefined so Fastify does not send another reply after hijacking."
   [runtime context reply]
   (authz/ensure-permission! context "agent.chat.use")
   (let [scope (:scope (mailbox/context runtime context)) raw (.-raw reply)
@@ -64,4 +65,4 @@
     ;; Reconnect/heartbeat reconciles other-process appends; process-local writes invalidate immediately.
     (reset! (:interval* state) (js/setInterval #(enqueue! state (initial-change scope)) 15000))
     (enqueue! state (initial-change scope))
-    state))
+    js/undefined))

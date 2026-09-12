@@ -147,4 +147,3 @@
       :facts (merge (source-revision/revision-facts revisions)
                     (evidence-domain/gate-facts evidence)
                     acceptance)})))
-

@@ -22,6 +22,12 @@ export async function mailTour(page, {baseUrl, principalId, agentSend, shot}) {
   await page.goto(new URL('/mail', baseUrl).href);
   await page.getByRole('heading', {name: 'Mail', exact: true}).waitFor();
   await page.getByText('Live · Durable mailbox', {exact: true}).waitFor();
+  const capabilityResponse = await page.request.get(new URL('/api/actors/mailbox?box=inbox', baseUrl).href);
+  assert.equal(capabilityResponse.status(), 200);
+  const capabilities = (await capabilityResponse.json()).capabilities;
+  assert.equal(capabilities?.send, true, `The authenticated actor cannot send: ${JSON.stringify(capabilities)}`);
+  assert(capabilities.modes.includes('inbox-only'), 'The human interface must expose its authorized mailbox delivery mode');
+  assert.equal(capabilities.acknowledge, true, 'The authenticated recipient must have its acknowledgement capability');
   const marker = `Human handoff ${randomUUID()}`;
   const content = `${marker}\n${'Research context that must survive the preview boundary. '.repeat(8)}\nFull human message ending.`;
   await page.getByLabel('Recipient', {exact: true}).fill(`actor:${principalId}`);
@@ -34,7 +40,7 @@ export async function mailTour(page, {baseUrl, principalId, agentSend, shot}) {
   assert.ok(!await humanCard.textContent().then(text => text.includes('Full human message ending.')), 'List must display only its bounded preview');
   await humanCard.getByRole('button', {name: 'Read full message', exact: true}).click();
   await page.getByRole('region', {name: 'Full message', exact: true}).getByText(content, {exact: true}).waitFor();
-  await shot('mail-01-human-full-content', 'The human compose command persisted a complete message; the owned reader retrieves content beyond the list preview.', []);
+  await shot('mail-01-human-full-content', 'The human compose command persisted a complete message; the owned reader retrieves content beyond the list preview.', ['section[aria-label="Full message"]']);
   const draft = 'Keep this unfinished human response while the agent sends another message.';
   await page.getByLabel('Message', {exact: true}).fill(draft);
   const agentMarker = `Agent handoff ${randomUUID()}`;
@@ -44,7 +50,7 @@ export async function mailTour(page, {baseUrl, principalId, agentSend, shot}) {
   assert.equal(await page.getByLabel('Message', {exact: true}).inputValue(), draft);
   await agentCard.getByRole('button', {name: 'Read full message', exact: true}).click();
   await page.getByRole('region', {name: 'Full message', exact: true}).getByText(agentContent, {exact: true}).waitFor();
-  await shot('mail-02-agent-live-handoff', 'A real agent command appeared through mailbox SSE without a refresh click, while the human draft remained intact.', []);
+  await shot('mail-02-agent-live-handoff', 'A real agent command appeared through mailbox SSE without a refresh click, while the human draft remained intact.', ['form[aria-label="Compose message"]', 'section[aria-label="Full message"]']);
   const incoming = await page.request.get(new URL('/api/actors/mailbox?box=inbox', baseUrl).href);
   const entry = (await incoming.json()).entries.find(row => row.preview.startsWith(agentMarker)); assert.ok(entry?.id);
   const ack = await command(page, agentCard.getByRole('button', {name: 'Acknowledge', exact: true}), `/api/actors/mailbox/${encodeURIComponent(entry.id)}/ack`);
@@ -52,5 +58,5 @@ export async function mailTour(page, {baseUrl, principalId, agentSend, shot}) {
   await agentCard.getByText('acknowledged', {exact: true}).waitFor();
   await shot('mail-03-human-acknowledgement', 'The same actor acknowledged the persisted agent message through its human capability control.', []);
   await page.getByLabel('Message', {exact: true}).fill('');
-  return {anonymous: 401, humanSend: true, fullContent: true, agentLiveUpdate: true, draftPreserved: true, acknowledged: true};
+  return {anonymous: 401, capabilities, humanSend: true, fullContent: true, agentLiveUpdate: true, draftPreserved: true, acknowledged: true};
 }

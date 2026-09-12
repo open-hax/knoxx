@@ -119,10 +119,14 @@
   (or (system-admin? ctx)
       (= "allow" (ctx-tool-effect ctx tool-id))))
 
+(defn permission-allowed?
+  "The permission decision enforced by commands, including the administrator role."
+  [ctx permission]
+  (or (system-admin? ctx) (ctx-permitted? ctx permission)))
+
 (defn ensure-permission!
   [ctx permission]
-  (when-not (or (system-admin? ctx)
-                (ctx-permitted? ctx permission))
+  (when-not (permission-allowed? ctx permission)
     (throw (http/http-error 403 "permission_denied" (str "Permission '" permission "' is required"))))
   ctx)
 

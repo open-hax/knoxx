@@ -2,16 +2,15 @@
   "Port of the component tests in AgentAuditSessionList.test.tsx to the
   node :test build — contract-scoped loading, search filtering, resume
   click, and 20-row infinite-scroll pagination. API ns mocked via set!."
-  (:require [cljs.test :refer [deftest is async use-fixtures]]
-            ["@testing-library/react" :as rtl]
-            [helix.core :refer [$]]
+  (:require ["@testing-library/react" :as rtl]
+            [cljs.test :as t]
+            [helix.core :as hx]
             [knoxx.frontend.components.agent-audit.api :as api]
-            [knoxx.frontend.components.agent-audit.session-list
-             :refer [agent-audit-session-list]]))
+            [knoxx.frontend.components.agent-audit.session-list :as session-list]))
 
 ;; jsdom globals come from the :test build's :prepend-js.
 
-(defn memory-session [overrides]
+(defn- memory-session [overrides]
   (merge {:project "knoxx-session"
           :session "conv-history"
           :title "Fork history"
@@ -26,7 +25,7 @@
           :has_active_stream false}
          overrides))
 
-(def active-run
+(def ^:private active-run
   {:run_id "run-1"
    :session_id "sid-active"
    :conversation_id "conv-active"
@@ -40,15 +39,15 @@
                 :triggerId "fork_tales_creative_director_cron"
                 :eventType "schedule/fork-tales-creative-director"}})
 
-(def memory-calls (atom []))
-(def memory-pages (atom []))
-(def operator-calls (atom 0))
-(def resume-calls (atom []))
+(def ^:private memory-calls (atom []))
+(def ^:private memory-pages (atom []))
+(def ^:private operator-calls (atom 0))
+(def ^:private resume-calls (atom []))
 
 (def ^:private real-memory api/list-memory-sessions)
 (def ^:private real-operator api/list-operator-active-agents)
 
-(use-fixtures :each
+(t/use-fixtures :each
   {:before (fn []
              (reset! memory-calls [])
              (reset! operator-calls 0)
@@ -84,53 +83,74 @@
        :resumeMemorySession (fn [session] (swap! resume-calls conj session))})
 
 (defn- render-list []
-  (rtl/render ($ agent-audit-session-list
+  (rtl/render (hx/$ session-list/agent-audit-session-list
                  {:controller (controller)
                   :built-in-contract-id "fork_tales_creative_director"})))
 
-(deftest loads-filters-searches-and-resumes
-  (async done
-    (let [r (render-list)]
-      (-> (wait-until "history row" #(some? (.queryByText r "Fork history")))
-          (.then (fn []
-                   (is (some? (.queryByText r "sub-agent fork_tales_creative_director"))
-                       "active run card present")
-                   (is (nil? (.queryByText r "Other history"))
-                       "other-contract session filtered out")
-                   (is (= [{:limit 20 :offset 0 :contract-id "fork_tales_creative_director"}]
-                          @memory-calls))
-                   (is (= 1 @operator-calls))
-                   (.change rtl/fireEvent (.getByLabelText r "Search audit sessions")
-                            #js {:target #js {:value "fork history"}})
-                   (wait-until "search filters active card"
-                               #(nil? (.queryByText r "sub-agent fork_tales_creative_director")))))
-          (.then (fn []
-                   (.click rtl/fireEvent (.getByText r "Fork history"))
-                   (is (= ["conv-history"] @resume-calls))
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+(t/deftest ^:async loads-filters-searches-and-resumes
+  (let [r (render-list)]
+    (await (wait-until "history row" #(some? (.queryByText r "Fork history"))))
+    (t/is (some? (.queryByText r "sub-agent fork_tales_creative_director"))
+          "active run card present")
+    (t/is (nil? (.queryByText r "Other history")) "other-contract session filtered out")
+    (t/is (= [{:limit 20 :offset 0 :contract-id "fork_tales_creative_director"}]
+             @memory-calls))
+    (t/is (= 1 @operator-calls))
+    (.change rtl/fireEvent (.getByLabelText r "Search audit sessions")
+             #js {:target #js {:value "fork history"}})
+    (await (wait-until "search filters active card"
+                      #(nil? (.queryByText r "sub-agent fork_tales_creative_director"))))
+    (.click rtl/fireEvent (.getByText r "Fork history"))
+    (t/is (= ["conv-history"] @resume-calls))))
 
-(deftest paginates-with-infinite-scroll
+(t/deftest ^:async paginates-with-infinite-scroll
   (reset! memory-pages
           [{:ok true :rows [(memory-session {:session "first-page" :title "First page"})]
             :total 2 :offset 0 :limit 20 :has_more true}
            {:ok true :rows [(memory-session {:session "second-page" :title "Second page"})]
             :total 2 :offset 1 :limit 20 :has_more false}])
-  (async done
+  (let [r (render-list)]
+    (await (wait-until "first page" #(some? (.queryByText r "First page"))))
+    (let [scroll-list (.getByLabelText r "Audit sessions list")]
+      (js/Object.defineProperties scroll-list
+                                  #js {:scrollHeight #js {:configurable true :value 200}
+                                       :scrollTop #js {:configurable true :value 100}
+                                       :clientHeight #js {:configurable true :value 100}})
+      (.scroll rtl/fireEvent scroll-list))
+    (await (wait-until "second page" #(some? (.queryByText r "Second page"))))
+    (t/is (= [{:limit 20 :offset 0 :contract-id "fork_tales_creative_director"}
+              {:limit 20 :offset 1 :contract-id "fork_tales_creative_director"}]
+             @memory-calls))
+    (t/is (some? (.queryByText r "First page")) "first page rows kept")))
+
+(t/deftest ^:async failed-load-can-be-refreshed
+  (set! api/list-memory-sessions (fn [_params] (js/Promise.reject (js/Error. "Audit temporarily unavailable"))))
+  (let [r (render-list)]
+    (await (wait-until "load error" #(some? (.queryByText r "Audit temporarily unavailable"))))
+    (t/is (nil? (.queryByText r "Loading sessions…")) "failure releases initial busy state")
+    (set! api/list-memory-sessions
+          (fn [_params] (js/Promise.resolve {:rows [(memory-session {})] :has_more false})))
+    (.click rtl/fireEvent (.getByText r "↻"))
+    (await (wait-until "refresh recovers" #(some? (.queryByText r "Fork history"))))
+    (t/is (nil? (.queryByText r "Audit temporarily unavailable")))
+    (t/is (= 2 @operator-calls))))
+
+(t/deftest ^:async obsolete-contract-response-does-not-replace-current-page
+  (let [release-old (atom nil)
+        old-page (js/Promise. (fn [resolve-page _reject] (reset! release-old resolve-page)))]
+    (set! api/list-memory-sessions
+          (fn [{:keys [contract-id]}]
+            (if (= contract-id "fork_tales_creative_director")
+              old-page
+              (js/Promise.resolve {:rows [(memory-session {:session "other" :title "New scope"
+                                                            :contract_id "other-agent"})]
+                                    :has_more false}))))
     (let [r (render-list)]
-      (-> (wait-until "first page" #(some? (.queryByText r "First page")))
-          (.then (fn []
-                   (let [list (.getByLabelText r "Audit sessions list")]
-                     (js/Object.defineProperties list
-                                                 #js {:scrollHeight #js {:configurable true :value 200}
-                                                      :scrollTop #js {:configurable true :value 100}
-                                                      :clientHeight #js {:configurable true :value 100}})
-                     (.scroll rtl/fireEvent list))
-                   (wait-until "second page" #(some? (.queryByText r "Second page")))))
-          (.then (fn []
-                   (is (= [{:limit 20 :offset 0 :contract-id "fork_tales_creative_director"}
-                           {:limit 20 :offset 1 :contract-id "fork_tales_creative_director"}]
-                          @memory-calls))
-                   (is (some? (.queryByText r "First page")) "first page rows kept")
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+      (.rerender r (hx/$ session-list/agent-audit-session-list
+                         {:controller (controller) :built-in-contract-id "other-agent"}))
+      (await (wait-until "new scope" #(some? (.queryByText r "New scope"))))
+      (await (rtl/act (fn ^:async complete-old []
+                        (@release-old {:rows [(memory-session {})] :has_more false})
+                        (await old-page))))
+      (t/is (some? (.queryByText r "New scope")))
+      (t/is (nil? (.queryByText r "Fork history")) "late prior scope cannot replace the current page"))))

@@ -3,6 +3,7 @@
             [clio.extern.js.fs :as fs]
             [cljs.test :refer [deftest is]]
             [knoxx.backend.extern.clio-store-fixture :as disk]
+            [knoxx.backend.extern.http-server :as http-server]
             [knoxx.backend.extern.mailbox-changes :as stream]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clio-application-store :as ledger]
@@ -78,3 +79,28 @@
                                   :projection (fn [] {}) :after-append "invalid"})))
       (is (false? (fs/exists? child)))
       (finally (fs/remove-tree! directory)))))
+
+(deftest ^:async hijacked-mailbox-stream-does-not-trigger-a-second-fastify-send
+  (let [directory (disk/temp-directory!) previous @registry/provider*
+        app (http-server/create-app! {:request-logging? false})
+        implicit-sends (atom 0)]
+    (try
+      (registry/install! (clio/open! {:directory directory}))
+      (with-redefs [authz/current-context! (fn [_ _] context)]
+        (.get app "/stream"
+              (fn [_request reply]
+                (let [native-send (.-send ^js reply)]
+                  (set! (.-send ^js reply)
+                        (fn [& args]
+                          (swap! implicit-sends inc)
+                          (.apply native-send reply (to-array args)))))
+                (js/setTimeout #(.end (.-raw ^js reply)) 20)
+                (stream/open-stream! {} context reply)))
+        (let [response (await (.inject app #js {:method "GET" :url "/stream"}))]
+          (is (= 200 (.-statusCode ^js response)))
+          (is (= "event: mailbox-changed\ndata: {}\n\n" (.-body ^js response)))
+          (is (zero? @implicit-sends))))
+      (finally
+        (await (http-server/close! app))
+        (registry/install! previous)
+        (fs/remove-tree! directory)))))

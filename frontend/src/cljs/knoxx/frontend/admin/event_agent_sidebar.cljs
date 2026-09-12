@@ -2,15 +2,29 @@
   "Sidebar components for the event agent runtime panel.
 
    Operates on CLJS data (keyword keys)."
-  (:require [helix.core :as hx :refer [$ defnc]]
+  (:require [clojure.string :as str]
+            [helix.core :as hx]
             [helix.dom :as d]
-            [clojure.string :as str]
             [knoxx.frontend.admin.event-agent-utils :as u]))
 
-(defnc job-button
+(hx/defnc job-runtime-footer
+  "Show a compact identity and latest runtime status."
+  [{:keys [job runtime runtime-label]}]
+  (d/div {:class-name "mt-1 flex items-center justify-between gap-2 text-[11px] leading-4"}
+             (d/span {:class-name "min-w-0 truncate font-mono text-slate-400"}
+                     (u/compact-text (:id job) 28))
+             (d/span {:class-name (str "shrink-0 uppercase tracking-wide "
+                                       (cond
+                                         (= (:lastStatus runtime) "ok") "text-emerald-300"
+                                         (= (:lastStatus runtime) "error") "text-rose-300"
+                                         (:running runtime) "text-sky-300"
+                                         :else "text-slate-500"))}
+                     runtime-label)))
+
+(hx/defnc job-button
   "Single job button in the sidebar list."
   [{:keys [job runtime active on-select]}]
-  (let [meta [(get-in job [:source :kind])
+  (let [job-metadata [(get-in job [:source :kind])
               (get-in job [:trigger :kind])
               (if (:contractSourceId job) "contract" "custom")]
         runtime-label (if (:running runtime)
@@ -32,16 +46,7 @@
                       :aria-hidden "true"}))
       (d/div {:class-name "mt-1 flex items-center justify-between gap-2 text-[11px] leading-4 text-slate-500"}
              (d/span {:class-name "min-w-0 truncate"}
-                     (str/join " · " meta))
+                     (str/join " · " job-metadata))
              (d/span {:class-name "shrink-0"}
                      (str (or (:runCount runtime) 0) "r")))
-      (d/div {:class-name "mt-1 flex items-center justify-between gap-2 text-[11px] leading-4"}
-             (d/span {:class-name "min-w-0 truncate font-mono text-slate-400"}
-                     (u/compact-text (:id job) 28))
-             (d/span {:class-name (str "shrink-0 uppercase tracking-wide "
-                                       (cond
-                                         (= (:lastStatus runtime) "ok") "text-emerald-300"
-                                         (= (:lastStatus runtime) "error") "text-rose-300"
-                                         (:running runtime) "text-sky-300"
-                                         :else "text-slate-500"))}
-                     runtime-label)))))
+      (hx/$ job-runtime-footer {:job job :runtime runtime :runtime-label runtime-label}))))

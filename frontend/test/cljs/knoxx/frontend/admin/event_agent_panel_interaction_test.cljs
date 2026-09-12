@@ -50,6 +50,18 @@
       (t/is (.-disabled (.getByRole rendered "button" #js {:name label}))))
     (t/is (= ["GET" "GET"] (mapv :method @requests)))))
 
+(t/deftest ^:async initial-load-failure-is-visible-and-retryable
+  (set! (.-fetch js/globalThis)
+        (fn [_url _options] (js/Promise.resolve (response 503 "Runtime unavailable"))))
+  (let [^js rendered (render! true)]
+    (await (.findByText rendered "Runtime unavailable"))
+    (t/is (nil? (.queryByRole rendered "button" #js {:name "Save runtime"})))
+    (set! (.-fetch js/globalThis) fetch!)
+    (.click rtl/fireEvent (.getByRole rendered "button" #js {:name "Retry loading runtime"}))
+    (await (.findByLabelText rendered "Model"))
+    (t/is (nil? (.queryByText rendered "Runtime unavailable")))
+    (t/is (= ["GET" "GET"] (mapv :method @requests)))))
+
 (t/deftest ^:async native-api-preserves-encoded-paths-and-unwrapped-wire-bodies
   (await (api/run-event-agent-job "job/with space")) (await (api/fire-trigger "trigger/one"))
   (await (api/update-discord-config "disposable-token"))

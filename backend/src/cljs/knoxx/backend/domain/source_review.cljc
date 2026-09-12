@@ -79,10 +79,10 @@
   (reduce #(append-event %1 scope %2) [] events))
 
 (defn same-operation?
-  "An exact retry preserves original server timestamp and causal predecessor."
+  "An exact retry preserves its causal predecessor; only server time may differ."
   [existing attempted]
-  (= (dissoc existing :review/recorded-at :review/previous)
-     (dissoc attempted :review/recorded-at :review/previous)))
+  (= (dissoc existing :review/recorded-at)
+     (dissoc attempted :review/recorded-at)))
 
 (defn event-for-command
   "Normalize optional command data before identity comparison or durable admission."

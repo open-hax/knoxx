@@ -3,6 +3,7 @@
             [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.openplanner-sdk :as xsdk]
             [knoxx.backend.infra.agent.runner :as agent-runner]
+            [knoxx.backend.infra.clients.openplanner-mongo :as openplanner-mongo]
             [knoxx.backend.infra.routes.document-admission :as admission]))
 
 (defn document
@@ -874,8 +875,9 @@
     (agent-runner/reset-event-turn-queue!)
     (agent-runner/reset-event-turn-settlers!)))
 
-(deftest ^:async default-openplanner-persistence-detects-a-replay
-  (let [event {:schema "openplanner.event.v1"
+(deftest ^:async mongo-openplanner-persistence-detects-a-replay
+  (let [client (openplanner-mongo/client {} nil)
+        event {:schema "openplanner.event.v1"
                :id "knoxx-document-admission-real-adapter-replay"
                :ts "2026-09-02T12:00:00.000Z"
                :source "knoxx-publication"
@@ -883,14 +885,14 @@
                :source_ref {:project "knoxx-local"
                             :message "knoxx.docs/replay"}
                :text "# Replay"}
-        first-result (await (admission/persist-openplanner-event! {} event))
-        retry-result (await (admission/persist-openplanner-event! {} event))]
+        first-result (await (admission/persist-openplanner-event! {} client event))
+        retry-result (await (admission/persist-openplanner-event! {} client event))]
     (is (true? (:ok first-result)))
     (is (not (:existing first-result)))
     (is (true? (:existing retry-result)))
     (is (= [(:id event)] (:ids retry-result)))))
 
-(deftest ^:async default-openplanner-replay-repairs-a-missing-vector
+(deftest ^:async mongo-openplanner-replay-repairs-a-missing-vector
   (sdk-mod/__setEventVectorMode "missing")
   (try
     (let [event {:schema "openplanner.event.v1"
@@ -902,7 +904,8 @@
                               :message "knoxx.docs/vector-repair"}
                  :text "# Repair this durable document event"}
           _ (await (xsdk/events! [event]))
-          result (await (admission/persist-openplanner-event! {} event))
+          result (await (admission/persist-openplanner-event!
+                         {} (openplanner-mongo/client {} nil) event))
           stored (await (xsdk/mongo-query
                          {:collection "events"
                           :filter {:id (:id event)}}))]

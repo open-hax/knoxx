@@ -24,7 +24,11 @@
 
 (deftest ^:async exact-request-and-no-implicit-fallback
   (let [seen (atom nil)]
-    (with-redefs [xfetch/default-client (reify xfetch/IHttpClient (json! [_ request] (reset! seen request) response))]
+    (with-redefs [xfetch/default-client (reify xfetch/IHttpClient
+                                       (json! [_ request] (reset! seen request) response)
+                                       (response! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :response!})))
+                                       (text! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :text!})))
+                                       (array-buffer! [_ _] (throw (ex-info "Unseeded HTTP fixture method" {:method :array-buffer!}))))]
       (is (= [[1 0] [0 1]] (:vectors (await (sut/embed! config ["First" "Second"]))))))
     (is (= {:model "local-embedding" :input ["First" "Second"] :dimensions 2 :encoding_format "float"}
            (get-in @seen [:opts :json]))))

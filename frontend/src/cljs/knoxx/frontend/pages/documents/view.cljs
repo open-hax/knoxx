@@ -1,7 +1,7 @@
 (ns knoxx.frontend.pages.documents.view
   "Presentational pieces for the documents/lakes page. Helix port of
    src/pages/documents-page/DocumentsPageView.tsx, split into cards."
-  (:require [helix.core :as hx :refer [$ defnc]]
+  (:require [helix.core :as hx]
             [helix.dom :as d]
             [knoxx.frontend.pages.documents.logic :as logic]))
 
@@ -14,7 +14,9 @@
              :class-name (str "px-3 py-2 rounded text-white disabled:opacity-50 " class-name)}
             label))
 
-(defnc page-header [{:keys [is-uploading on-upload]}]
+(hx/defnc page-header
+  "Render the data lake heading and upload control."
+  [{:keys [is-uploading on-upload]}]
   (d/div {:class-name "flex justify-between items-center"}
          (d/div
           (d/h1 {:class-name "text-2xl font-bold"} "Data Lakes")
@@ -26,7 +28,8 @@
                             :disabled is-uploading
                             :on-change #(on-upload % true)}))))
 
-(defnc lake-select-card
+(hx/defnc lake-select-card
+  "Render lake selection and activation availability."
   [{:keys [db-info selected-db-id set-selected-db-id selected-db-can-access
            is-ingesting is-switching on-activate]}]
   (d/div {:class-name "md:col-span-2"}
@@ -35,9 +38,9 @@
                 (d/select {:class-name field-input
                            :value selected-db-id
                            :on-change #(set-selected-db-id (.. % -target -value))}
-                          (for [{:keys [id name qdrantCollection privateToSession canAccess]} (:databases db-info)]
+                          (for [{:keys [id qdrantCollection privateToSession canAccess] profile-name :name} (:databases db-info)]
                             (d/option {:key id :value id}
-                                      (str name " · index " qdrantCollection
+                                      (str profile-name " · index " qdrantCollection
                                            (when privateToSession
                                              (if (false? canAccess) " [private: other session]" " [private]"))))))
                 (action-button {:on-click on-activate
@@ -56,23 +59,8 @@
            (d/p {:class-name "text-xs text-rose-300 mt-1"}
                 "This lake profile is private to another session. You can view it but cannot activate or edit it."))))
 
-(defnc lake-create-card
-  [{:keys [new-db set-new-db is-creating on-create]}]
-  (let [update! (fn [k v] (set-new-db (assoc new-db k v)))]
-    (d/div
-     (d/label {:class-name "text-xs text-slate-400"} "Create New Lake Profile")
-     (d/div {:class-name "mt-1 flex gap-2"}
-            (d/input {:value (:name new-db)
-                      :on-change #(update! :name (.. % -target -value))
-                      :class-name field-input
-                      :placeholder "e.g. Engine Manuals"})
-            (action-button {:on-click on-create
-                            :disabled (or is-creating (empty? (.trim (or (:name new-db) ""))))
-                            :class-name "bg-emerald-600 hover:bg-emerald-500"
-                            :label (cond is-creating "Creating..."
-                                         (seq (:files new-db)) "Create + Upload"
-                                         :else "Create")}))
-     (d/div {:class-name "mt-2 space-y-2"}
+(defn- lake-create-options [new-db update!]
+  (d/div {:class-name "mt-2 space-y-2"}
             (d/label {:class-name "flex items-center gap-2 text-xs text-slate-300"}
                      (d/input {:type "checkbox" :checked (:forum-mode new-db)
                                :on-change #(update! :forum-mode (.. % -target -checked))})
@@ -90,12 +78,49 @@
                       :on-change #(update! :files (vec (js/Array.from (or (.. % -target -files) #js []))))
                       :class-name "block w-full text-xs text-slate-300"})
             (d/p {:class-name "text-[11px] text-slate-400"}
-                 "Optional bootstrap upload (.zip or files) after creating the lake profile.")))))
+                 "Optional bootstrap upload (.zip or files) after creating the lake profile.")))
 
-(defnc lake-edit-card
-  [{:keys [edit-db set-edit-db selected-db-id selected-db-can-access db-info
-           is-ingesting is-saving is-deleting is-privatizing
-           on-save on-delete on-make-private]}]
+(hx/defnc lake-create-card
+  "Render a new lake profile form with optional bootstrap files."
+  [{:keys [new-db set-new-db is-creating on-create]}]
+  (let [update! (fn [k v] (set-new-db (assoc new-db k v)))]
+    (d/div
+     (d/label {:class-name "text-xs text-slate-400"} "Create New Lake Profile")
+     (d/div {:class-name "mt-1 flex gap-2"}
+            (d/input {:value (:name new-db)
+                      :on-change #(update! :name (.. % -target -value))
+                      :class-name field-input
+                      :placeholder "e.g. Engine Manuals"})
+            (action-button {:on-click on-create
+                            :disabled (or is-creating (empty? (.trim (or (:name new-db) ""))))
+                            :class-name "bg-emerald-600 hover:bg-emerald-500"
+                            :label (cond is-creating "Creating..."
+                                         (seq (:files new-db)) "Create + Upload"
+                                         :else "Create")}))
+     (lake-create-options new-db update!))))
+
+(defn- lake-edit-actions
+  [{:keys [selected-db-id selected-db-can-access db-info is-ingesting
+           is-saving is-deleting is-privatizing on-save on-delete on-make-private]}]
+  (d/div {:class-name "flex gap-2"}
+            (action-button {:on-click on-save
+                            :disabled (or is-saving (empty? (or selected-db-id "")) (not selected-db-can-access))
+                            :class-name "bg-indigo-600 hover:bg-indigo-500"
+                            :label (if is-saving "Saving..." "Save Lake Profile")})
+            (action-button {:on-click on-delete
+                            :disabled (or is-deleting (empty? (or selected-db-id ""))
+                                          (= selected-db-id (:activeDatabaseId db-info))
+                                          is-ingesting (not selected-db-can-access))
+                            :class-name "bg-rose-700 hover:bg-rose-600"
+                            :label (if is-deleting "Deleting..." "Delete Lake Profile")})
+            (action-button {:on-click on-make-private
+                            :disabled (or is-privatizing (empty? (or selected-db-id "")) (not selected-db-can-access))
+                            :class-name "bg-amber-700 hover:bg-amber-600"
+                            :label (if is-privatizing "Applying..." "Make Session-Private")})))
+
+(hx/defnc lake-edit-card
+  "Render the selected lake profile settings and actions."
+  [{:keys [edit-db set-edit-db] :as props}]
   (let [update! (fn [k v] (set-edit-db (assoc edit-db k v)))]
     (hx/<>
      (d/div {:class-name "grid gap-3 md:grid-cols-3"}
@@ -119,23 +144,10 @@
                      (d/input {:type "checkbox" :checked (:use-local-docs edit-db)
                                :on-change #(update! :use-local-docs (.. % -target -checked))})
                      "Use local docs viewer links"))
-     (d/div {:class-name "flex gap-2"}
-            (action-button {:on-click on-save
-                            :disabled (or is-saving (empty? (or selected-db-id "")) (not selected-db-can-access))
-                            :class-name "bg-indigo-600 hover:bg-indigo-500"
-                            :label (if is-saving "Saving..." "Save Lake Profile")})
-            (action-button {:on-click on-delete
-                            :disabled (or is-deleting (empty? (or selected-db-id ""))
-                                          (= selected-db-id (:activeDatabaseId db-info))
-                                          is-ingesting (not selected-db-can-access))
-                            :class-name "bg-rose-700 hover:bg-rose-600"
-                            :label (if is-deleting "Deleting..." "Delete Lake Profile")})
-            (action-button {:on-click on-make-private
-                            :disabled (or is-privatizing (empty? (or selected-db-id "")) (not selected-db-can-access))
-                            :class-name "bg-amber-700 hover:bg-amber-600"
-                            :label (if is-privatizing "Applying..." "Make Session-Private")})))))
+     (lake-edit-actions props))))
 
-(defnc progress-banner
+(hx/defnc progress-banner
+  "Render current ingestion progress, throughput, and estimated time."
   [{:keys [progress chunks-per-sec remaining-chunks eta-seconds last-restart-at]}]
   (d/div {:class-name "bg-cyan-500/10 border border-cyan-500/30 p-4 rounded-md"}
          (d/h3 {:class-name "font-semibold text-cyan-200"} "Ingestion in Progress")
@@ -159,7 +171,9 @@
            (d/p {:class-name "text-xs text-amber-300 mt-1"}
                 "Progress appears stalled. Use restart resume."))))
 
-(defnc resume-banner [{:keys [progress]}]
+(hx/defnc resume-banner
+  "Show an available forum ingestion checkpoint."
+  [{:keys [progress]}]
   (d/div {:class-name "bg-amber-500/10 border border-amber-500/30 p-4 rounded-md"}
          (d/h3 {:class-name "font-semibold text-amber-200"} "Resumable Forum Ingestion Found")
          (d/p {:class-name "text-xs text-amber-100 mt-1"}
@@ -168,7 +182,8 @@
                    "%)."))
          (d/p {:class-name "text-xs text-amber-200/80 mt-1"} "Press restart to resume from checkpoint.")))
 
-(defnc ingest-actions
+(hx/defnc ingest-actions
+  "Render ingestion and restart actions with their busy states."
   [{:keys [selected-count is-ingesting can-restart is-restarting stale?
            on-ingest-selected on-ingest-all on-restart]}]
   (d/div {:class-name "flex items-center gap-4 bg-slate-900 p-4 rounded-md border border-slate-700"}
@@ -187,7 +202,33 @@
                                       stale? "Restart Ingestion (Force Fresh)"
                                       :else "Restart Ingestion (Resume)")})))
 
-(defnc documents-table
+(defn- document-row
+  [{:keys [relativePath size indexed chunkCount] document-name :name}
+   selected-docs on-toggle-doc on-delete-doc]
+  (d/tr {:key relativePath
+                              :class-name "border-b border-slate-800 hover:bg-slate-800/60"}
+                             (d/td {:class-name "p-3 text-center"}
+                                   (d/input {:type "checkbox"
+                                             :checked (contains? selected-docs relativePath)
+                                             :on-change #(on-toggle-doc relativePath)}))
+                             (d/td {:class-name "p-3"}
+                                   (d/div {:class-name "font-medium"} document-name)
+                                   (d/div {:class-name "text-xs text-slate-400"} relativePath))
+                             (d/td {:class-name "p-3 text-sm text-slate-300"}
+                                   (str (.toFixed (/ size 1024) 1) " KB"))
+                             (d/td {:class-name "p-3"}
+                                   (if indexed
+                                     (d/span {:class-name "inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"}
+                                             (str "Indexed (" chunkCount " chunks)"))
+                                     (d/span {:class-name "inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30"}
+                                             "Pending")))
+                             (d/td {:class-name "p-3 text-right"}
+                                   (d/button {:on-click #(on-delete-doc relativePath)
+                                              :class-name "text-red-600 hover:text-red-800 text-sm font-medium"}
+                                             "Delete"))))
+
+(hx/defnc documents-table
+  "Render document selection, indexing status, and deletion controls."
   [{:keys [documents selected-docs on-toggle-all on-toggle-doc on-delete-doc]}]
   (d/div {:class-name "overflow-x-auto border border-slate-700 rounded-md bg-slate-900"}
          (d/table {:class-name "w-full text-left border-collapse"}
@@ -206,30 +247,12 @@
                    (if (empty? documents)
                      (d/tr (d/td {:col-span 5 :class-name "p-8 text-center text-slate-400"}
                                  "No documents found."))
-                     (for [{:keys [relativePath name size indexed chunkCount]} documents]
-                       (d/tr {:key relativePath
-                              :class-name "border-b border-slate-800 hover:bg-slate-800/60"}
-                             (d/td {:class-name "p-3 text-center"}
-                                   (d/input {:type "checkbox"
-                                             :checked (contains? selected-docs relativePath)
-                                             :on-change #(on-toggle-doc relativePath)}))
-                             (d/td {:class-name "p-3"}
-                                   (d/div {:class-name "font-medium"} name)
-                                   (d/div {:class-name "text-xs text-slate-400"} relativePath))
-                             (d/td {:class-name "p-3 text-sm text-slate-300"}
-                                   (str (.toFixed (/ size 1024) 1) " KB"))
-                             (d/td {:class-name "p-3"}
-                                   (if indexed
-                                     (d/span {:class-name "inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"}
-                                             (str "Indexed (" chunkCount " chunks)"))
-                                     (d/span {:class-name "inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30"}
-                                             "Pending")))
-                             (d/td {:class-name "p-3 text-right"}
-                                   (d/button {:on-click #(on-delete-doc relativePath)
-                                              :class-name "text-red-600 hover:text-red-800 text-sm font-medium"}
-                                             "Delete")))))))))
+                     (for [document documents]
+                       (document-row document selected-docs on-toggle-doc on-delete-doc)))))))
 
-(defnc history-table [{:keys [items]}]
+(hx/defnc history-table
+  "Render completed ingestion runs for the current lake."
+  [{:keys [items]}]
   (d/div {:class-name "rounded-md border border-slate-700 bg-slate-900 p-4"}
          (d/h2 {:class-name "text-sm font-semibold uppercase tracking-wide text-slate-300 mb-3"}
                "Ingestion History (Current Lake)")

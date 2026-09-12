@@ -2,7 +2,7 @@
 ;; Pure fns — no async, no fixtures needed.
 
 (ns knoxx.backend.node.path-crypto-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.domain.node.path :as path]
             [knoxx.backend.domain.node.crypto :as crypto]))
 
