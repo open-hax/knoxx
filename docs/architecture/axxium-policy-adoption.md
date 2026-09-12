@@ -30,6 +30,12 @@ private refresh closure, rather than a serializable token field, supports
 policy hydration additionally rereads binding, joined rows and role composition;
 this is bounded revalidation, not a cross-store transactional snapshot.
 
+Private agent-session caches also receive `:identity/authentication-id`, a
+one-way digest of the high-entropy opaque credential. Together with stable
+principal/membership/actor IDs and current policy, it separates newly issued
+logins and delegated grants so cached tool closures cannot retain an earlier
+credential. Public context responses remain explicitly allowlisted.
+
 MCP accepts a direct active Axxium session as `Authorization: Bearer <token>` or
 an explicitly consented delegated bearer. A Node agent using a browser user's
 session must omit the browser cookie from the same request. Delegated records

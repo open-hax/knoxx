@@ -113,7 +113,10 @@
         origin (get-in policy-context [:axxium-service :options :public-base-url])]
     (transport/require-origin! credentials origin)
     (when (or (not (string? token)) (str/blank? token)) (unauthenticated!))
-    (let [refresh (fn ^:async refresh-context [] (await (resolve-token-context! policy-context token bearer?)))
+    (let [authentication-id (transport/authentication-id token)
+          refresh (fn ^:async refresh-context []
+                    (assoc (await (resolve-token-context! policy-context token bearer?))
+                           :identity/authentication-id authentication-id))
           result (await (refresh))]
       ;; The secret is captured privately, not stored in a serializable context field.
       (assoc result :identity/refresh! refresh))))
@@ -123,5 +126,8 @@
   [policy-context token]
   (when (or (not (string? token)) (str/blank? token)) (unauthenticated!))
   (let [policy-context (context policy-context)
-        refresh (fn ^:async refresh-bearer [] (await (resolve-token-context! policy-context token true)))]
+        authentication-id (transport/authentication-id token)
+        refresh (fn ^:async refresh-bearer []
+                  (assoc (await (resolve-token-context! policy-context token true))
+                         :identity/authentication-id authentication-id))]
     (assoc (await (refresh)) :identity/refresh! refresh)))

@@ -28,6 +28,23 @@
   (axxium/signup! (:axxium-service context) {:username username :email (str username "@example.test")
                                             :password "correct horse battery staple"}))
 
+(deftest ^:async authentication-cache-identity-partitions-new-logins-without-bearing-the-secret
+  (let [directory (fixture/directory!)]
+    (try
+      (let [context (await (open-context! directory {}))
+            first-token (:token (await (signup! context "cache-user")))
+            second-token (:token (await (axxium/login! (:axxium-service context)
+                                                       {:identifier "cache-user" :password "correct horse battery staple"})))
+            first-ctx (await (identity/resolve-request! context (fixture/request first-token)))
+            second-ctx (await (identity/resolve-request! context (fixture/request second-token)))
+            refreshed (await (identity/current-context! context first-ctx))]
+        (is (= (:axxium-principal first-ctx) (:axxium-principal second-ctx)))
+        (is (re-matches #"[0-9a-f]{64}" (:identity/authentication-id first-ctx)))
+        (is (not= first-token (:identity/authentication-id first-ctx)))
+        (is (not= (:identity/authentication-id first-ctx) (:identity/authentication-id second-ctx)))
+        (is (= (:identity/authentication-id first-ctx) (:identity/authentication-id refreshed))))
+      (finally (fixture/remove! directory)))))
+
 (deftest ^:async active-identity-binds-by-id-and-replays-without-email-authority
   (let [directory (fixture/directory!)]
     (try

@@ -2,6 +2,7 @@
   "Knoxx's named native boundary for the Axxium-owned identity plugin."
   (:require [axxium.api :as api]
             [axxium.extern.identity-http :as identity-http]
+            [axxium.extern.identity-host :as identity-host]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.node-env :as environment]))
 
@@ -40,6 +41,11 @@
     (catch :default cause
       (throw (ex-info "Invalid authentication credentials"
                       {:status 401 :code "invalid_credentials"} cause)))))
+
+(defn authentication-id
+  "Hash an opaque credential for private cache partitioning without retaining its bearer value."
+  [token]
+  (identity-host/sha256 token))
 
 (defn require-origin!
   "Cookie-authenticated mutations must name the configured origin."

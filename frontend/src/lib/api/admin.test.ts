@@ -6,6 +6,7 @@ import {
   listOrgRoles,
   listOrgActors,
   createOrgActor,
+  updateAdminActor,
   getDiscordConfig,
   updateDiscordConfig,
   getEventAgentControl,
@@ -44,6 +45,19 @@ describe("Admin API", () => {
     const [url, init] = mockRequest.mock.calls[0];
     expect(url).toBe("/api/admin/orgs/org/actors");
     expect(JSON.parse(init.body)).toEqual({axxiumPrincipalId: "principal", roleSlugs: ["basic-user"]});
+  });
+
+  it("keeps a name-only profile unbound instead of assigning a blank actor ID", async () => {
+    mockRequest.mockResolvedValueOnce({user: {id: "user", identityBound: false, identityEnrollmentRequired: true, memberships: []}});
+    await updateAdminActor("user", {orgId: "org", displayName: "Revised name", actorId: "  "});
+    const [url, init] = mockRequest.mock.calls[0];
+    expect(url).toBe("/api/admin/actors/user");
+    expect(JSON.parse(init.body)).toEqual({orgId: "org", displayName: "Revised name"});
+  });
+  it("preserves an explicit nonblank actor ID and profile status changes", async () => {
+    mockRequest.mockResolvedValueOnce({user: {id: "user", memberships: []}});
+    await updateAdminActor("user", {orgId: "org", actorId: " agent-one ", status: "disabled"});
+    expect(JSON.parse(mockRequest.mock.calls[0][1].body)).toEqual({orgId: "org", actorId: "agent-one", status: "disabled"});
   });
 
   it("getDiscordConfig fetches discord config", async () => {

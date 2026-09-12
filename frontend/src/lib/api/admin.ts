@@ -277,9 +277,12 @@ export async function updateAdminActor(userId: string, payload: {
   authProvider?: string;
   externalSubject?: string;
 }): Promise<{ user: AdminUserSummary | null }> {
+  // A blank optional field means this unbound row still has no actor identity.
+  // Sending an empty string would ask the directory to assign an invalid ID.
+  const actorId = payload.actorId?.trim() || undefined;
   const response = asRecord(await request<unknown>(`/api/admin/actors/${encodeURIComponent(userId)}`, {
     method: "PATCH",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, actorId }),
   }));
   const user = valueAt(response, "user");
   return { user: user == null ? null : normalizeUser(user) };

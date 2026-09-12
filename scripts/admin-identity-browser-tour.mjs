@@ -7,7 +7,9 @@ async function command(page, button, method, pathname, status) {
     async response => ({status: response.status(), body: await response.json(), sent: response.request().postDataJSON()}));
   try {
     await button.click(); const response = await pending.value();
-    assert.equal(response.status, status, `${method} ${pathname}: ${response.status}`);
+    const profileDiagnostic = method === 'PATCH' && /^\/api\/admin\/actors\/[^/]+$/.test(pathname)
+      ? `; profile response=${JSON.stringify(response.body)}; submitted=${JSON.stringify(response.sent)}` : '';
+    assert.equal(response.status, status, `${method} ${pathname}: ${response.status}${profileDiagnostic}`);
     return response;
   } finally { pending.cancel(); }
 }
@@ -51,7 +53,8 @@ export async function adminIdentityTour(page, config) {
   await config.shot('admin-01-unbound-directory', 'A named directory row without a principal creates no login; its enrollment requirement is visible.', []);
   await page.getByLabel('Display name', {exact: true}).fill(`${name} revised`);
   const saved = await command(page, page.getByRole('button', {name: 'Save actor profile', exact: true}), 'PATCH', `/api/admin/actors/${unbound.body.user.id}`, 200);
-  noIdentityEdits(saved.sent); assert.equal(saved.body.user.displayName, `${name} revised`);
+  noIdentityEdits(saved.sent); assert.ok(!Object.hasOwn(saved.sent, 'actorId'), 'A name-only profile must not assign an empty actor ID');
+  assert.equal(saved.body.user.displayName, `${name} revised`);
   await page.getByLabel('Search actors', {exact: true}).fill('');
   await page.getByLabel('Existing Axxium principal ID (optional)', {exact: true}).fill(config.principalId);
   assert.equal(await page.getByLabel('New actor ID', {exact: true}).isDisabled(), true);
