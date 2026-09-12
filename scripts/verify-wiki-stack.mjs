@@ -23,7 +23,7 @@ const bootOnly = process.argv.includes('--boot-only');
 const frontendPort = parseInt(process.env.WIKI_FRONTEND_PORT || '8311',10);
 const backendPort = parseInt(process.env.WIKI_BACKEND_PORT || '8312',10);
 const evidence = {startedAt: new Date().toISOString(), mode: bootOnly ? 'boot-only' : 'full', checks: [], screenshots: [], failures: []};
-let services, browser, artifactServer, client;
+let services, browser, artifactServer, client, page;
 await fs.mkdir(outputDir, {recursive:true});
 await fs.writeFile(path.join(outputDir, 'fixture-owner.json'), `${JSON.stringify({fixtureDirectory, owner:'verify-wiki-stack', pid:process.pid})}\n`, {mode:0o600});
 const check = (description, details = {}) => { evidence.checks.push({description, ...details}); console.log(`PASS ${description}`); };
@@ -158,7 +158,7 @@ try {
   assert.equal(unauthorized.status,401); check('Anonymous Wiki inventory is refused with 401');
   browser = await chromium.launch({executablePath:process.env.FORESIGHT_BROWSER_EXECUTABLE, headless:true, args:['--no-sandbox']});
   const context = await browser.newContext({baseURL:services.baseUrl, viewport:{width:1440,height:1000}});
-  const page = await context.newPage();
+  page = await context.newPage();
   page.setDefaultTimeout(30_000);
   page.on('pageerror', error => evidence.failures.push({stage:'browser', message:error.message}));
   const shot = async (name, caption, selectors=[]) => {
@@ -196,6 +196,22 @@ try {
   evidence.completed = true;
 } catch (error) {
   evidence.completed = false; evidence.failures.push({stage:'supervisor',message:error.message, stack:error.stack});
+  if (page && !page.isClosed()) {
+    try {
+      await page.screenshot({path:path.join(outputDir,'failure.png'),fullPage:true,
+        mask:[page.locator('input[type="password"]'),page.locator('textarea')]});
+      const markup = await page.evaluate(() => {
+        const root = document.documentElement.cloneNode(true);
+        root.querySelectorAll('script').forEach(node => node.remove());
+        root.querySelectorAll('input').forEach(node => node.removeAttribute('value'));
+        root.querySelectorAll('textarea').forEach(node => {node.textContent='[redacted]';});
+        return root.outerHTML;
+      });
+      await fs.writeFile(path.join(outputDir,'failure.html'),markup,{mode:0o600});
+    } catch (captureError) {
+      evidence.failures.push({stage:'failure-capture',message:captureError.message});
+    }
+  }
   console.error(`FAIL ${error.message}`); process.exitCode=1;
 } finally {
   await cleanup();
