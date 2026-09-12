@@ -1,6 +1,6 @@
 (ns knoxx.backend.infra.openplanner.semantic
   "Semantic search and document-reading tools for the active Knoxx corpus."
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-semantic-search!]]
             [knoxx.backend.domain.text :refer [clip-text semantic-search-result-text tool-text-result]]
@@ -57,8 +57,10 @@
 (defn ^:async semantic-search-documents!
   "Search OpenPlanner for passive semantic hydration and return the legacy
    document-result shape expected by agent hydration. Returns a Promise."
-  [_runtime config {:keys [query top-k max-snippet-chars]} _auth-context]
-  (let [k (max 1 (min 10 (or top-k 5)))
+  [_runtime config {:keys [query top-k max-snippet-chars]} auth-context]
+  (let [config (if auth-context (planner-scope/scoped-config config auth-context)
+                   (do (planner-scope/org-id! config) config))
+        k (max 1 (min 10 (or top-k 5)))
         max-snippet-chars (max 160 (min 1200 (or max-snippet-chars 240)))
         result (await (openplanner-semantic-search! config {:query query :k k}))]
     {:query query
@@ -100,4 +102,4 @@
      (remove nil?
              [(when (or (nil? auth-context)
                         (ctx-tool-allowed? auth-context "semantic_query"))
-                (semantic-query-tool runtime config))])))))
+                (semantic-query-tool runtime (planner-scope/scoped-config config auth-context)))])))))

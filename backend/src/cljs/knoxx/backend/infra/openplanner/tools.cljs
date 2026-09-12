@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.openplanner.tools
   "OpenPlanner memory, graph, websearch, and translation tools."
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
             [knoxx.backend.infra.document-state :refer [active-agent-profile normalize-relative-path]]
@@ -134,7 +135,8 @@
 
 (defn make-memory-search-execute [auth-context]
   (^:async fn [_runtime config _tool-call-id params a b c]
-    (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+    (let [config (planner-scope/scoped-config config auth-context)
+          on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           query (or (aget params "query") "")
           k (aget params "k")
           session-id (or (aget params "sessionId") "")]
@@ -146,7 +148,8 @@
 
 (defn make-memory-session-execute [auth-context]
   (^:async fn [_runtime config _tool-call-id params a b c]
-    (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+    (let [config (planner-scope/scoped-config config auth-context)
+          on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           session-id (or (aget params "sessionId") "")]
       (maybe-tool-update! on-update "Loading Knoxx session from OpenPlanner…")
       (let [rows (await (fetch-openplanner-session-rows! config session-id))]

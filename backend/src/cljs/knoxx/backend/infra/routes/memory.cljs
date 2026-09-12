@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.routes.memory
   (:require-macros [knoxx.backend.macros :refer [defroute]])
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [clojure.string :as str]
             [knoxx.backend.infra.http :refer [http-error]]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.core-memory :as core-memory :refer [fetch-openplanner-session-rows!
@@ -294,9 +295,11 @@
 
 (defn ^:async fetch-authorized-session-pages!
   [config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
-  (let [body (await (openplanner-client/sessions! (or (:openplanner-client config)
+  (let [config (planner-scope/scoped-config config ctx)
+        body (await (openplanner-client/sessions! (or (:openplanner-client config)
                                                       (openplanner-client/client config))
-                                                  {:project (:session-project-name config)
+                                                  {:org_id (planner-scope/org-id! config)
+                                                   :project (:session-project-name config)
                                                    :limit upstream-page-size
                                                    :offset upstream-offset}))
         page-rows (vec (or (:rows body) []))
@@ -538,25 +541,16 @@
                                                   :exclude-actor-ids exclude-actor-ids
                                                   :contract-id contract-id}))))
 
-(defn- contract-only-admin-fetch?
-  [ctx {:keys [actor-id exclude-actor-ids contract-id]}]
-  (and contract-id
-       (str/blank? (str (or actor-id "")))
-       (empty? exclude-actor-ids)
-       (system-admin? ctx)))
-
 (defn- fetch-memory-sessions-source!
   [config ctx opts authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter?]
   (cached-memory-sessions-source!
    (:cache-key opts)
    (fn []
-     (if (contract-only-admin-fetch? ctx opts)
-       (fetch-contract-session-pages-from-mongo! config (:contract-id opts) (:needed-count opts))
-       (fetch-authorized-session-pages! config ctx (:actor-id opts) (:exclude-actor-ids opts)
+     (fetch-authorized-session-pages! config ctx (:actor-id opts) (:exclude-actor-ids opts)
                                         (:contract-id opts) authorized-session-ids!
                                         fetch-openplanner-session-rows!
                                         session-matches-page-actor-filter?
-                                        (:upstream-page-size opts) 0 [] (:needed-count opts))))))
+                                        (:upstream-page-size opts) 0 [] (:needed-count opts)))))
 
 
 
@@ -584,10 +578,14 @@
       nil)))
 
 (defn- synthetic-active-session-rows
-  [live page-rows actor-id exclude-actor-ids contract-id]
+  [ctx live page-rows actor-id exclude-actor-ids contract-id]
   (let [op-ids (set (map #(str (:session %)) page-rows))]
     (->> live
-         (filter #(and (:conversation_id %)
+         (filter #(and (= (ctx-org-id ctx) (:org_id %))
+                       (or (system-admin? ctx) (ctx-permitted? ctx "agent.memory.cross_session")
+                           (and (some? (ctx-user-id ctx)) (= (ctx-user-id ctx) (:user_id %)))
+                           (and (some? (ctx-membership-id ctx)) (= (ctx-membership-id ctx) (:membership_id %))))
+                       (:conversation_id %)
                        (not (op-ids (str (:conversation_id %))))
                        (contains? #{"running" "waiting_input"} (:status %))
                        (active-session-matches-actor-filter? % actor-id exclude-actor-ids)
@@ -596,7 +594,7 @@
          vec)))
 
 (defn ^:async send-memory-sessions-live-ids!
-  [{:keys [error-response! reply] :as env}
+  [{:keys [ctx error-response! reply] :as env}
    {:keys [page-rows actor-id exclude-actor-ids contract-id] :as page-state}
    live-ids]
   (try
@@ -604,7 +602,7 @@
                                (clj->js (mapv #(session-store/get-session %)
                                                (vec live-ids)))))
           live (vec (js->clj live-js :keywordize-keys true))
-          synthetic (synthetic-active-session-rows live page-rows actor-id exclude-actor-ids contract-id)]
+          synthetic (synthetic-active-session-rows ctx live page-rows actor-id exclude-actor-ids contract-id)]
       (await (send-memory-session-rows! env page-state (vec (concat synthetic page-rows)))))
     (catch :default err
       (error-response! reply err 502)
@@ -627,8 +625,9 @@
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (try
-      (let [opts (memory-sessions-request-options config ctx request)
-            env {:config config
+      (let [config (planner-scope/scoped-config config ctx)
+            opts (memory-sessions-request-options config ctx request)
+            env {:config config :ctx ctx
                  :runtime runtime
                  :reply reply
                  :json-response! json-response!
@@ -662,7 +661,7 @@
                       (parse-positive-int (aget request "query" "limit")))
             force? (or (truthy-param? (aget body "force"))
                        (truthy-param? (aget request "query" "force")))
-            status (await (start-session-title-backfill! runtime config {:force force? :limit limit} fetch-openplanner-session-rows!))]
+            status (await (start-session-title-backfill! runtime (planner-scope/scoped-config config ctx) {:force force? :limit limit} fetch-openplanner-session-rows!))]
         (json-response! reply 202 {:ok true
                                    :status status
                                    :cached_count (count @session-titles*)}))
@@ -702,7 +701,8 @@
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (try
-      (let [session-id (or (aget request "params" "sessionId") "")
+      (let [config (planner-scope/scoped-config config ctx)
+            session-id (or (aget request "params" "sessionId") "")
             requested-limit (parse-positive-int (aget request "query" "limit"))
             preview-limit (when requested-limit
                             (:limit (expansion-policy/bounded-preview-params
@@ -729,7 +729,8 @@
    fetch-openplanner-session-rows!
    session-matches-page-actor-filter?
    {:keys [query bounded-k session-id actor-id exclude-actor-ids]}]
-  (let [result (await (openplanner-memory-search! config {:query query
+  (let [config (planner-scope/scoped-config config ctx)
+        result (await (openplanner-memory-search! config {:query query
                                                           :k bounded-k
                                                           :session-id session-id}))
         hits (await (filter-authorized-memory-hits! config ctx (:hits result)))
