@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { observeBrowserResponse } from './browser-response-observer.mjs';
 
 // This stage uses a real authenticated browser and shared command callback.
 // The supervisor owns service startup, isolated fixture creation and cleanup.
@@ -45,14 +46,15 @@ async function readReview(page, document) {
 }
 
 async function command(page, method, suffix, click) {
-  const responsePromise = page.waitForResponse(response => {
+  const observed = observeBrowserResponse(page, response => {
     const url = new URL(response.url());
     return response.request().method() === method && url.pathname.endsWith(suffix);
+  }, async response => {
+    assert(response.ok(), `Command failed: ${response.status()} ${await response.text()}`);
+    return response.json();
   });
-  await click();
-  const response = await responsePromise;
-  assert(response.ok(), `Command failed: ${response.status()} ${await response.text()}`);
-  return response.json();
+  try { await click(); return await observed.value(); }
+  finally { observed.cancel(); }
 }
 
 async function review(page, action, notes = '', lessons = '') {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { observeBrowserResponse } from './browser-response-observer.mjs';
 
 // Real browser commands and persisted evidence only. The supervisor owns the
 // model, account, resource fixtures, static artifact server and Clio reader.
@@ -21,12 +22,13 @@ async function jsonGet(page, url) {
 }
 
 async function command(page, method, pathname, click, timeout = 180_000) {
-  const waiting = page.waitForResponse(response => response.request().method() === method
-    && new URL(response.url()).pathname === pathname, { timeout });
-  await click();
-  const response = await waiting;
-  assert(response.ok(), `${method} ${pathname}: ${response.status()} ${await response.text()}`);
-  return response.json();
+  const observed = observeBrowserResponse(page, response => response.request().method() === method
+    && new URL(response.url()).pathname === pathname, async response => {
+    assert(response.ok(), `${method} ${pathname}: ${response.status()} ${await response.text()}`);
+    return response.json();
+  }, timeout);
+  try { await click(); return await observed.value(); }
+  finally { observed.cancel(); }
 }
 
 async function until(read, predicate, description, timeout = 180_000) {
