@@ -1,19 +1,15 @@
 (ns knoxx.backend.infra.db.policy
-  "Policy DB public API — Mongo-backed (kanban 14-05 cutover complete).
+  "Policy facade for explicitly selected Clio EDN or Mongo persistence.
 
-   All durable policy state lives in MongoDB. This namespace is a thin
-   CLJS-typed public surface that routes every slice (directory, roles, tools,
-   sessions, config, audit, actor credentials, data lakes, invites) to its
-   Mongo twin under infra.stores.mongo-policy-*. The twins own collection
-   layout + indexes (setup-indexes!/ensure-indexes!); this layer keeps the
-   row->map / response-wrapping layers and the public function signatures.
-
-   create-policy-db returns a Promise<CLJS policy context | nil>. The context
-   is plain CLJS data; its :pool value is now always nil — it is retained only
-   so existing callers that pass (context-pool ctx) into policy functions need
-   not change. The pool first arg on policy functions is ignored."
+   Clio directory reads and writes carry a verified Axxium acting context into
+   finite provider operations. The legacy Mongo implementation remains available
+   only when selected. Provider contexts are preserved by context-pool; credentials
+   and login remain owned by Axxium when identity composition is configured."
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.local-policy-api :as local-api]
             [knoxx.backend.infra.auth.password :as password]
+            [knoxx.backend.infra.identity-bindings :as identity-bindings]
+            [knoxx.backend.law.identity-binding :as identity-law]
             [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy]
             [knoxx.backend.infra.stores.mongo-policy-directory :as mongo-directory]
@@ -143,14 +139,20 @@
 ;; Basic lookups
 ;; ---------------------------------------------------------------------------
 
-(defn ^:async find-org-by-id [_pool org-id]
-  (await (mongo-directory/find-org-by-id! (await (db!)) org-id)))
+(defn ^:async find-org-by-id [pool org-id]
+  (if (local-api/selected? pool)
+    (local-api/trusted-read! pool :policy/org-by-id [org-id])
+    (await (mongo-directory/find-org-by-id! (await (db!)) org-id))))
 
-(defn ^:async find-org-by-slug [_pool slug]
-  (await (mongo-directory/find-org-by-slug (await (db!)) slug)))
+(defn ^:async find-org-by-slug [pool slug]
+  (if (local-api/selected? pool)
+    (local-api/trusted-read! pool :policy/org-by-slug [slug])
+    (await (mongo-directory/find-org-by-slug (await (db!)) slug))))
 
-(defn ^:async find-role [_pool {:keys [org-id slug]}]
-  (await (mongo-roles/find-role (await (db!)) {:org-id org-id :slug slug})))
+(defn ^:async find-role [pool {:keys [org-id slug]}]
+  (if (local-api/selected? pool)
+    (local-api/trusted-read! pool :policy/role-by-slug [{:org-id org-id :slug slug}])
+    (await (mongo-roles/find-role (await (db!)) {:org-id org-id :slug slug}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Role management
@@ -225,11 +227,13 @@
   (assoc p :constraints-json (js/JSON.stringify (clj->js (:constraints p)))))
 
 (defn ^:async set-role-tool-policies!
-  [_pool role-id tool-policies]
-  (let [db (await (db!))
+  [pool role-id tool-policies]
+  (if (local-api/selected? pool)
+    (local-api/command! pool :policy/role-tools [role-id tool-policies])
+    (let [db (await (db!))
         normalized (mapv (comp policy-with-constraints-json normalize-tool-policy) tool-policies)]
     (await (mongo-tools/ensure-tool-definitions! db (mapv :tool-id normalized)))
-    (await (mongo-tools/set-role-tool-policies! db role-id normalized))))
+    (await (mongo-tools/set-role-tool-policies! db role-id normalized)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Membership roles
@@ -303,11 +307,13 @@
     (await (mongo-roles/set-membership-roles! (await (db!)) membership-id (boolean replace) resolved-ids))))
 
 (defn ^:async set-membership-tool-policies!
-  [_pool membership-id tool-policies]
-  (let [db (await (db!))
+  [pool membership-id tool-policies]
+  (if (local-api/selected? pool)
+    (local-api/command! pool :policy/membership-tools [membership-id tool-policies])
+    (let [db (await (db!))
         normalized (mapv (comp policy-with-constraints-json normalize-tool-policy) tool-policies)]
     (await (mongo-tools/ensure-tool-definitions! db (mapv :tool-id normalized)))
-    (await (mongo-tools/set-membership-tool-policies! db membership-id normalized))))
+    (await (mongo-tools/set-membership-tool-policies! db membership-id normalized)))))
 
 (defn ^:async set-membership-actor-id!
   [_pool membership-id actor-id]
@@ -520,6 +526,40 @@
   (let [membership (first (await (hydrate-memberships pool [membership-row])))
         detailed-roles (await (detailed-membership-roles pool membership))]
     (request-context-map membership-row membership detailed-roles)))
+
+(defn- assert-bound-row! [binding row]
+  (when-not (and row (every? #(= "active" (get row %)) [:status :user_status :org_status]))
+    (throw (ex-info "Bound membership, user or organization is inactive"
+                    {:status 403 :code "identity_policy_inactive"})))
+  (when-not (= [(:membership-id binding) (:user-id binding) (:org-id binding) (:actor-id binding)]
+               [(:id row) (:user_id row) (:org_id row) (:actor_id row)])
+    (throw (ex-info "Policy membership no longer matches the verified identity"
+                    {:status 403 :code "identity_binding_conflict"})))
+  row)
+
+(defn- ^:async current-bound-row! [policy-context binding]
+  (let [stored (await (identity-bindings/read! (:identity-bindings policy-context) (:principal-id binding)))
+        row (await (mongo-directory/find-membership-row-with-user-org!
+                    (await (db!)) (:membership-id binding)))]
+    (when-not (= stored binding)
+      (throw (ex-info "The stable identity binding has changed"
+                      {:status 403 :code "identity_binding_conflict"})))
+    (assert-bound-row! binding row)))
+
+(defn ^:async resolve-bound-context!
+  "Resolve Mongo roles only through a durable identity binding and recheck asynchronous drift."
+  [policy-context binding]
+  (identity-law/assert-binding! binding)
+  (let [pool (:pool policy-context)
+        before (await (current-bound-row! policy-context binding))
+        first-context (await (build-request-context pool before))
+        middle (await (current-bound-row! policy-context binding))
+        final-context (await (build-request-context pool middle))
+        after (await (current-bound-row! policy-context binding))]
+    (when-not (and (= before middle after) (= first-context final-context))
+      (throw (ex-info "Policy changed during identity authorization; retry the request"
+                      {:status 409 :code "identity_policy_changed"})))
+    final-context))
 
 ;; ---------------------------------------------------------------------------
 ;; Bootstrap & contract sync
@@ -772,17 +812,22 @@
 
 (defn ^:async list-actor-credentials!
   "Return active actor credential rows for provider as {:credentials [...]}."
-  [_pool provider]
-  (when (str/blank? provider)
+  [pool provider]
+  (if (local-api/selected? pool)
+    (local-api/credentials! pool provider)
+    (do
+      (when (str/blank? provider)
     (throw (js/Error. "provider is required")))
   (if-let [db (await (ensure-mongo-policy-db!))]
     {:credentials (mapv mongo-actor-creds/credential-row->response
                         (await (mongo-actor-creds/list-actor-credentials-by-provider! db provider)))}
-    {:credentials []}))
+    {:credentials []}))))
 
 (defn list-permissions!
-  [_pool]
-  (let [codes (->> (contracts-roles/list-role-slugs (contracts-config))
+  [pool]
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/permissions [])
+    (let [codes (->> (contracts-roles/list-role-slugs (contracts-config))
                    (mapcat #(contracts-roles/role-permissions (contracts-config) %))
                    distinct sort vec)]
     (js/Promise.resolve
@@ -791,16 +836,18 @@
                             :code         c
                             :resourceKind (first (str/split c #"\."))
                             :description  ""})
-                         codes)})))
+                         codes)}))))
 
 (defn- tool-row->map
   [{:keys [id label description risk_level]}]
   {:id id :label label :description description :risk-level risk_level})
 
 (defn ^:async list-tools!
-  [_pool]
-  (let [rows (await (mongo-tools/list-tools! (await (db!))))]
-    {:tools (mapv tool-row->map rows)}))
+  [pool]
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/tools [])
+    (let [rows (await (mongo-tools/list-tools! (await (db!))))]
+    {:tools (mapv tool-row->map rows)})))
 
 (defn get-bootstrap-context!
   [_pool primary-org bootstrap]
@@ -840,8 +887,10 @@
     @acc))
 
 (defn ^:async list-orgs!
-  [_pool]
-  (let [db (await (db!))
+  [pool]
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/orgs [])
+    (let [db (await (db!))
         rows (await (mongo-directory/list-orgs! db))
         ;; The directory twin owns member_count but zeroes role_count /
         ;; data_lake_count (later slices). Recompute them here, preserving the
@@ -853,7 +902,7 @@
                    (org-row->map (assoc o
                                         :role_count (get role-counts (:id o) 0)
                                         :data_lake_count (get lake-counts (:id o) 0))))
-                 rows)}))
+                 rows)})))
 
 (defn- org-response
   [org]
@@ -862,8 +911,10 @@
 
 (defn ^:async create-org!
   [pool uid mid {:keys [name slug kind status]
-                  :or {kind "customer" status "active"}}]
-  (if (str/blank? name)
+                  :or {kind "customer" status "active"} :as payload}]
+  (if (local-api/selected? pool)
+    (local-api/command! pool :policy/create-org [payload])
+    (if (str/blank? name)
     (throw (js/Error. "name is required"))
     (let [s (slugify (or slug name) "org")
           org (await (mongo-directory/create-org! (await (db!)) {:slug s :name name
@@ -872,7 +923,7 @@
       (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
                                   :org-id (:id org) :action "org.create"
                                   :resource-kind "org" :resource-id (:id org)}))
-      (org-response org))))
+      (org-response org)))))
 
 (defn self-org-slug
   [email]
@@ -895,18 +946,24 @@
 
 (defn ^:async list-roles!
   [pool {:keys [org-id]}]
-  (let [rows (await (mongo-roles/list-roles! (await (db!)) {:org-id org-id}))]
-    {:roles (await (hydrate-role-maps pool rows))}))
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/roles [{:org-id org-id}])
+    (let [rows (await (mongo-roles/list-roles! (await (db!)) {:org-id org-id}))]
+    {:roles (await (hydrate-role-maps pool rows))})))
 
 (defn ^:async get-role!
   [pool role-id]
-  (if-let [row (await (mongo-roles/get-role-by-id! (await (db!)) role-id))]
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/role [role-id])
+    (if-let [row (await (mongo-roles/get-role-by-id! (await (db!)) role-id))]
     {:role (first (await (hydrate-role-maps pool [row])))}
-    {:role nil}))
+    {:role nil})))
 
 (defn ^:async create-role!
-  [pool uid mid {:keys [org-id name slug permission-codes tool-policies]}]
-  (cond
+  [pool uid mid {:keys [org-id name slug permission-codes tool-policies] :as payload}]
+  (if (local-api/selected? pool)
+    (local-api/command! pool :policy/create-role [payload])
+    (cond
     (str/blank? org-id) (throw (js/Error. "org-id is required"))
     (str/blank? name)   (throw (js/Error. "name is required"))
     :else
@@ -919,7 +976,7 @@
       (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
                                   :org-id org-id :action "role.create"
                                   :resource-kind "role" :resource-id (:id role)}))
-      {:role (first (await (hydrate-role-maps pool [role])))})))
+      {:role (first (await (hydrate-role-maps pool [role])))}))))
 
 (defn- credential-row->map
   [{:keys [id provider kind account_identifier status secret_json created_at updated_at]}]
@@ -956,7 +1013,9 @@
 
 (defn ^:async list-users!
   [pool {:keys [org-id]}]
-  (let [db (await (db!))
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/users [{:org-id org-id}])
+    (let [db (await (db!))
         users (await (mongo-directory/list-users! db {:org-id org-id}))
         user-ids (mapv :id users)
         mem-rows (await (mongo-directory/memberships-for-users-with-org! db user-ids org-id))
@@ -965,7 +1024,7 @@
                     (await (mongo-actor-creds/list-credentials-for-users-org! db user-ids org-id))
                     [])
         by-cred-user (credentials-by-user cred-rows)]
-    {:users (mapv #(user-row->map by-user by-cred-user %) users)}))
+    {:users (mapv #(user-row->map by-user by-cred-user %) users)})))
 
 (defn- require-not-blank!
   [value message]
@@ -983,7 +1042,7 @@
              :role-slugs role-slugs
              :kind :agent}))))
 
-(defn ^:async create-user!
+(defn- ^:async mongo-create-user!
   [pool uid mid {:keys [email display-name auth-provider external-subject status
                          membership-status org-id role-slugs role-ids is-default actor-id]
                   :or {auth-provider "local" status "active"
@@ -1014,6 +1073,13 @@
                                 :resource-kind "user" :resource-id (:id user)}))
     {:user user :membership ms}))
 
+(defn ^:async create-user!
+  "Create a directory user with the selected provider and verified acting caller."
+  [pool uid mid payload]
+  (if (local-api/selected? pool)
+    (await (local-api/create-user! pool payload))
+    (await (mongo-create-user! pool uid mid payload))))
+
 (defn- secret-json->clj
   [value]
   (cond
@@ -1022,13 +1088,19 @@
     (string? value) (js->clj (js/JSON.parse value) :keywordize-keys true)
     :else (js->clj value :keywordize-keys true)))
 
-(defn ^:async local-password-auth-record!
-  "Resolve an active local-password authentication record.
+(defn- password-record [row credential]
+  {:user-id (:user_id row)
+                  :email (:email row)
+                  :display-name (:display_name row)
+                  :membership-id (:id row)
+                  :org-id (:org_id row)
+                  :org-slug (:org_slug row)
+                  :actor-id (:actor_id row)
+                  :secret-json (secret-json->clj (:secret_json credential))})
 
-   A marked bootstrap credential owns its organization choice, so concurrent
-   primary-org updates cannot strand the committed password behind a different
-   default membership. Ordinary users without that marker retain the existing
-   default-first / primary-org membership selection."
+(defn ^:async local-password-auth-record!
+  "Resolve active Mongo password credentials. Marked bootstrap credentials keep
+   their original organization; ordinary users retain default-first selection."
   ([_pool email]
    (local-password-auth-record!
     _pool email
@@ -1053,32 +1125,31 @@
                                     (await (get-membership-credential!
                                             db (:user_id row) (:org_id row)
                                             "local" "password")))]
-                 {:user-id (:user_id row)
-                  :email (:email row)
-                  :display-name (:display_name row)
-                  :membership-id (:id row)
-                  :org-id (:org_id row)
-                  :org-slug (:org_slug row)
-                  :actor-id (:actor_id row)
-                  :secret-json (secret-json->clj (:secret_json credential))})))))))))
+                 (password-record row credential))))))))))
 
 (defn ^:async list-memberships!
   [pool {:keys [org-id]}]
-  (if (str/blank? org-id)
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/memberships [{:org-id org-id}])
+    (if (str/blank? org-id)
     (throw (js/Error. "org-id is required"))
     (let [rows (await (mongo-directory/list-memberships-with-org! (await (db!)) {:org-id org-id}))]
-      {:memberships (await (hydrate-memberships pool rows))})))
+      {:memberships (await (hydrate-memberships pool rows))}))))
 
 (defn ^:async get-membership!
   [pool membership-id]
-  (if-let [row (await (mongo-directory/find-membership-row-with-user-org! (await (db!)) membership-id))]
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/membership [membership-id])
+    (if-let [row (await (mongo-directory/find-membership-row-with-user-org! (await (db!)) membership-id))]
     {:membership (first (await (hydrate-memberships pool [row])))}
-    {:membership nil}))
+    {:membership nil})))
 
 (defn ^:async set-membership-roles-public!
   [pool uid mid membership-id {:keys [org-id role-ids role-slugs actor-id replace]
-                                 :or {replace true}}]
-  (let [ms (await (mongo-directory/get-membership! (await (db!)) membership-id))]
+                                 :or {replace true} :as opts}]
+  (if (local-api/selected? pool)
+    (local-api/command! pool :policy/membership-roles [membership-id opts])
+    (let [ms (await (mongo-directory/get-membership! (await (db!)) membership-id))]
     (when-not ms (throw (js/Error. "membership not found")))
     (let [resolved-actor (or (normalize-actor-id actor-id)
                              (normalize-actor-id (:actor_id ms))
@@ -1096,7 +1167,7 @@
       (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
                                   :org-id (:org_id ms) :action "membership.roles.update"
                                   :resource-kind "membership" :resource-id membership-id}))
-      {:membership nil})))
+      {:membership nil}))))
 
 (defn- data-lake-row->map
   [{:keys [id org_id name slug kind config_json status created_at updated_at]}]
@@ -1105,12 +1176,14 @@
    :status status :created-at created_at :updated-at updated_at})
 
 (defn ^:async list-data-lakes!
-  [_pool {:keys [org-id]}]
-  (if (str/blank? org-id)
+  [pool {:keys [org-id]}]
+  (if (local-api/selected? pool)
+    (local-api/read! pool :policy/data-lakes [{:org-id org-id}])
+    (if (str/blank? org-id)
     (throw (js/Error. "org-id is required"))
     (when-let [db (await (ensure-mongo-policy-db!))]
       {:data-lakes (mapv data-lake-row->map
-                         (await (mongo-data-lakes/list-data-lakes-by-org! db org-id)))})))
+                         (await (mongo-data-lakes/list-data-lakes-by-org! db org-id)))}))))
 
 (defn- data-lake-response
   [lake]
@@ -1119,8 +1192,10 @@
 
 (defn ^:async create-data-lake!
   [pool uid mid {:keys [org-id name slug kind config status]
-                  :or {kind "workspace_docs" status "active"}}]
-  (cond
+                  :or {kind "workspace_docs" status "active"} :as payload}]
+  (if (local-api/selected? pool)
+    (local-api/command! pool :policy/create-data-lake [payload])
+    (cond
     (str/blank? org-id) (throw (js/Error. "org-id is required"))
     (str/blank? name)   (throw (js/Error. "name is required"))
     :else
@@ -1133,7 +1208,7 @@
         (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
                                     :org-id org-id :action "data_lake.create"
                                     :resource-kind "data_lake" :resource-id (:id lake)}))
-        (data-lake-response lake)))))
+        (data-lake-response lake))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Sessions
@@ -1284,8 +1359,10 @@
 
 (defn ^:async update-user-actor!
   "Update a membership's actor-id and optionally its roles."
-  [pool uid mid user-id {:keys [org-id actor-id role-slugs]}]
-  (let [ms (await (mongo-directory/find-membership-by-user-and-org! (await (db!)) user-id org-id))]
+  [pool uid mid user-id {:keys [org-id actor-id role-slugs] :as payload}]
+  (if (local-api/selected? pool)
+    (local-api/command! pool :policy/update-user [user-id payload])
+    (let [ms (await (mongo-directory/find-membership-by-user-and-org! (await (db!)) user-id org-id))]
     (if-not ms
       (throw (js/Error. "membership not found"))
       (let [membership-id (:id ms)
@@ -1299,7 +1376,7 @@
         (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
                                     :org-id org-id :action "user.update_actor"
                                     :resource-kind "user" :resource-id user-id}))
-        {:ok true}))))
+        {:ok true})))))
 
 (defn- actor-credential-response [row]
   {:credential (when row
@@ -1316,8 +1393,10 @@
 
 (defn ^:async upsert-actor-credential!
   "Upsert an actor credential by user-id + org-id + provider."
-  [_pool _uid _mid user-id {:keys [org-id provider kind account-identifier secret-json status]}]
-  (if-let [db (await (ensure-mongo-policy-db!))]
+  [pool _uid _mid user-id {:keys [org-id provider kind account-identifier secret-json status] :as payload}]
+  (if (local-api/selected? pool)
+    (local-api/command! pool :policy/upsert-credential [user-id payload])
+    (if-let [db (await (ensure-mongo-policy-db!))]
     (let [row (await (mongo-actor-creds/upsert-actor-credential!
                       db user-id org-id provider
                       {:kind kind
@@ -1325,18 +1404,30 @@
                        :secret-json (js->clj (or secret-json {}) :keywordize-keys true)
                        :status status}))]
       (actor-credential-response row))
-    (throw (js/Error. "Mongo policy store unavailable"))))
+    (throw (js/Error. "Mongo policy store unavailable")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Policy context helpers
 ;; ---------------------------------------------------------------------------
 
-(defn context-pool [policy-context] (:pool policy-context))
-(defn configured? [policy-context] (boolean (or (:mongo? policy-context) (:query! policy-context))))
+(defn acting-context
+  "Carry the authenticated caller rather than granting the server bootstrap identity."
+  [policy-context verified-context]
+  (local-api/acting-context policy-context verified-context))
+
+(defn context-pool
+  "Keep the selected finite provider intact through legacy first-argument call sites."
+  [policy-context]
+  (if (local-api/selected? policy-context) policy-context (:pool policy-context)))
+(defn configured? [policy-context] (boolean (or (local-api/selected? policy-context) (:mongo? policy-context) (:query! policy-context))))
 (defn context-primary-org [policy-context] (:primary-org policy-context))
 (defn context-bootstrap [policy-context] (:bootstrap policy-context))
-(defn context-actor-user-id [policy-context] (:bootstrap-user-id policy-context))
-(defn context-actor-membership-id [policy-context] (:bootstrap-membership-id policy-context))
+(defn context-actor-user-id [policy-context]
+  (if (:acting-context policy-context) (get-in policy-context [:acting-context :user :id])
+      (when-not (local-api/selected? policy-context) (:bootstrap-user-id policy-context))))
+(defn context-actor-membership-id [policy-context]
+  (if (:acting-context policy-context) (get-in policy-context [:acting-context :membership :id])
+      (when-not (local-api/selected? policy-context) (:bootstrap-membership-id policy-context))))
 
 (defn close!
   "No-op for the Mongo policy store: the shared Mongo client is owned by
@@ -1358,32 +1449,40 @@
 
 (defn bootstrap-context!
   [policy-context]
-  (if-let [f (:bootstrap-context! policy-context)]
+  (if (local-api/selected? policy-context)
+    (local-api/bootstrap! policy-context)
+    (if-let [f (:bootstrap-context! policy-context)]
     (f)
     (get-bootstrap-context! (context-pool policy-context)
                             (context-primary-org policy-context)
-                            (context-bootstrap policy-context))))
+                            (context-bootstrap policy-context)))))
 
 (defn resolve-context!
   [policy-context headers-like]
-  (if-let [f (:resolve-context! policy-context)]
+  (if (local-api/selected? policy-context)
+    (local-api/unavailable! :header-authentication)
+    (if-let [f (:resolve-context! policy-context)]
     (f headers-like)
-    (resolve-request-context! (context-pool policy-context) headers-like)))
+    (resolve-request-context! (context-pool policy-context) headers-like))))
 
 (defn sync-actor-contracts-for-context!
   [policy-context]
-  (if-let [f (:sync-actor-contracts! policy-context)]
+  (if (local-api/selected? policy-context)
+    {:synced? false :provider :edn}
+    (if-let [f (:sync-actor-contracts! policy-context)]
     (f)
     (sync-actor-contracts! (context-pool policy-context)
-                           (context-primary-org policy-context))))
+                           (context-primary-org policy-context)))))
 
 (defn sync-user-from-actor-contract-for-context!
   [policy-context opts]
-  (if-let [f (:sync-user-from-actor-contract! policy-context)]
+  (if (local-api/selected? policy-context)
+    (local-api/unavailable! :contract-identity-projection)
+    (if-let [f (:sync-user-from-actor-contract! policy-context)]
     (f opts)
     (sync-user-from-actor-contract! (context-pool policy-context)
                                     (context-primary-org policy-context)
-                                    opts)))
+                                    opts))))
 
 (defn create-user-for-context!
   [policy-context payload]
@@ -1394,14 +1493,18 @@
 
 (defn local-password-auth-record-for-context!
   [policy-context email]
-  (local-password-auth-record! (context-pool policy-context) email))
+  (if (local-api/selected? policy-context)
+    (local-api/unavailable! :password)
+    (local-password-auth-record! (context-pool policy-context) email)))
 
 (defn create-invite-for-context!
   [policy-context payload]
-  (create-invite! (context-pool policy-context)
+  (if (local-api/selected? policy-context)
+    (local-api/unavailable! :invite)
+    (create-invite! (context-pool policy-context)
                   (context-actor-user-id policy-context)
                   (context-actor-membership-id policy-context)
-                  payload))
+                  payload)))
 
 (defn create-org-for-context!
   [policy-context payload]
@@ -1464,12 +1567,14 @@
    most of the Discord and Bluesky surface."
   ([policy-context actor-id provider] (get-actor-credential! policy-context actor-id provider nil))
   ([policy-context actor-id provider scope]
-   (if-let [f (:get-actor-credential! policy-context)]
-     (await (f actor-id provider scope))
+   (if (local-api/selected? policy-context)
+     (await (local-api/credential! policy-context actor-id provider scope))
+     (if-let [f (:get-actor-credential! policy-context)]
+       (await (f actor-id provider scope))
      (when-let [db (await (ensure-mongo-policy-db!))]
        {:credential (mongo-actor-creds/credential-row->response
                      (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider!
-                             db actor-id provider scope)))}))))
+                             db actor-id provider scope)))})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation
