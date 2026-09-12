@@ -1,0 +1,49 @@
+{
+  "model": "onnx-community/Qwen2.5-0.5B-Instruct",
+  "provider": "transformers-js",
+  "offline": true,
+  "writing": {
+    "content": "A wiki enables users to collaboratively create, edit, and manage content on its platform.",
+    "model": "onnx-community/Qwen2.5-0.5B-Instruct",
+    "provider": "openai-compatible",
+    "usage": {
+      "prompt_tokens": 63,
+      "completion_tokens": 19,
+      "total_tokens": 82
+    }
+  },
+  "translations": [
+    "Here's the exact translation of the provided text:\n\n---\n\n**Translation:** Quellbegriff\n\n---\n\n**Memory ID:** translation-memory-reviewed-1\n\n---\n\n**Reviewed Memory Example:** digest-older-candidate\n\n---\n\n**Source Locale:** en\n\n**Target Locale:** de\n\n---\n\n**Translated Text:** Quellbegriff",
+    "Here's the exact translation of the provided text:\n\n**Translated Text:**\n\"Seit der zweite Anfrage wurde die Quelleinformation verwendet.\"\n\nThis translation preserves the original content while ensuring that the translation follows the specified guidelines for the given locale. It maintains the meaning and structure of the original text, adhering to the principles of preserving Markdown formatting and retaining meaningful whitespace. The review examples provided are used as a reference to ensure consistency in the translation process."
+  ],
+  "receipt": {
+    "source-revision": "sha256-structured-source",
+    "document": "structured-output",
+    "content-digest": "sha256-d3bab6246bbd30dd3ee8198cb7a22c24af428822f9bc1c975eccbe083ae872af",
+    "dispatch-key": "\"open-hax\"|\"promethean\"|\"open-hax.gardens/promethean\"|:open-hax.documents/structured-output|:en|:de|\"sha256-structured-source\"",
+    "at": "2026-09-02T12:05:00.000Z",
+    "project": "promethean",
+    "locale": "de",
+    "candidate-claim-id": "translation-candidate-claim-h1777561829",
+    "split-manifest-id": "translation-split-manifest-h-1681653379",
+    "split-turn-admitted-at": "2026-09-02T12:00:00.000Z",
+    "candidate-set-id": "translation-candidate-set-h1473780908",
+    "type": "completed",
+    "revision": "sha256-structured-source+de@translation-run-structured-output",
+    "garden": "promethean",
+    "org-id": "open-hax",
+    "candidate-set-digest": "h698565734",
+    "source-locale": "en",
+    "split-count": 2,
+    "dispatch-attempt-id": "dispatch-attempt-structured-output"
+  },
+  "exactReplay": true,
+  "embeddings": {
+    "model": "Xenova/all-MiniLM-L6-v2",
+    "dimensions": 384,
+    "count": 3,
+    "identicalInputEqual": true,
+    "differentInputDifferent": true
+  },
+  "note": "Actual offline outputs through reconstructed production adapters and canonical translation sink. Reference stores/emitter are fixtures. Human review remains required; structural acceptance is not translation-quality approval."
+}
