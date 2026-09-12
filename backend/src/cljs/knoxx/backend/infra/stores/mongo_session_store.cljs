@@ -1,333 +1,137 @@
 (ns knoxx.backend.infra.stores.mongo-session-store
-  "MongoDB-backed thread state for resilient Knoxx agent threads.
-   Replaces Redis session store with MongoDB + TTL index.
-   Active threads are stored in the knoxx_threads collection — 'thread'
-   (not 'session') is the canonical name for an agent conversation; auth
-   browser-sessions keep the word 'session' (knoxx_policy_sessions).
-   In-memory cache preserved for fast access during streaming."
-  (:require
-    [clojure.string :as str]
-    [knoxx.backend.infra.mongo-client :as mongo-client]
-    [knoxx.backend.infra.system-instance :as system-instance]))
+  "Compatibility conversation facade with explicit provider selection and disposable cache."
+  (:require [knoxx.backend.domain.thread-store :as domain]
+            [knoxx.backend.extern.thread-store :as clock]
+            [knoxx.backend.infra.mongo-client :as mongo-client]
+            [knoxx.backend.infra.stores.mongo-thread-store :as mongo]
+            [knoxx.backend.law.thread-store :as law]
+            [knoxx.backend.shape.thread-store :as protocol]))
 
-;; ── Constants ─────────────────────────────────────────────────────────
-
-(def SESSION_TTL_SECONDS 3600) ; 1 hour TTL for active sessions
-(def STICKY_SESSION_TTL_SECONDS (* 24 60 60)) ; 24 hours for sticky sessions
+(def SESSION_TTL_SECONDS 3600)
+(def STICKY_SESSION_TTL_SECONDS 86400)
 (def COLLECTION_NAME "knoxx_threads")
-(def ACTIVE_STATUS #{"running" "queued" "waiting_input"})
-
-;; ── In-memory cache (preserved from Redis store) ──────────────────────
-
+(def ACTIVE_STATUS domain/active-statuses)
 (defonce session-cache* (atom {}))
+(defonce ^:private cache-owners (atom {}))
+(defonce provider* (atom nil))
 
-(def ^:private max-session-cache-size 1000)
-(def ^:private sticky-session-ttl-ms (* 24 60 60 1000))
-(def ^:private session-cache-sweep-interval-ms 300000)
-
-(defn- evict-oldest-session-cache-entry!
-  "Remove the oldest entry when the cache exceeds max size."
+(defn available?
+  "Report only an installed provider or an already initialized Mongo handle; never probe a service."
   []
-  (when (> (count @session-cache*) max-session-cache-size)
-    (let [oldest (apply min-key (comp :cached-at val) @session-cache*)]
-      (when oldest
-        (swap! session-cache* dissoc (key oldest))))))
+  (boolean (or @provider* (mongo-client/get-db))))
 
-(defn- start-session-cache-sweep!
-  "Periodically evict stale sticky sessions from the cache."
-  []
-  (js/setInterval
-   (fn []
-     (let [cutoff (- (js/Date.now) sticky-session-ttl-ms)
-           stale (for [[id entry] @session-cache*
-                       :when (< (or (:cached-at entry) 0) cutoff)]
-                   id)]
-       (when (seq stale)
-         (swap! session-cache* #(apply dissoc % stale)))))
-   session-cache-sweep-interval-ms))
+(defn install!
+  "Install a finite provider and discard cache authority from every prior provider."
+  [provider]
+  (when (and provider (not (satisfies? protocol/IThreadStore provider)))
+    (throw (ex-info "Invalid thread provider" {:status 400 :code "thread_provider_invalid"})))
+  (reset! session-cache* {})
+  (reset! cache-owners {})
+  (reset! provider* provider))
 
-(start-session-cache-sweep!)
+(defn- selected [db]
+  (cond db {:provider (mongo/create-store db) :owner db}
+        @provider* {:provider @provider* :owner @provider*}
+        :else (if-let [handle (mongo-client/get-db)]
+                {:provider (mongo/create-store handle) :owner handle}
+                (throw (ex-info "Thread persistence is not initialized" {:status 503 :code "thread_provider_unavailable"})))))
 
-(defn- cache-session!
-  [session-id session]
-  (evict-oldest-session-cache-entry!)
-  (swap! session-cache* assoc session-id (assoc session :cached-at (js/Date.now))))
+(defn- remember! [owner id value]
+  (when (and value (identical? owner (or @provider* (mongo-client/get-db))))
+    (swap! cache-owners assoc id owner)
+    (swap! session-cache* assoc id (assoc value :cached-at (clock/now-ms))))
+  value)
 
-(defn- session-ttl-seconds
-  [session-id]
-  (if (str/includes? (str session-id) "-sticky")
-    STICKY_SESSION_TTL_SECONDS
-    SESSION_TTL_SECONDS))
-
-;; ── MongoDB Operations ────────────────────────────────────────────────
-
-(defn- ^:async find-session [db session-id]
-  (let [coll (.collection db COLLECTION_NAME)
-        result (await (.findOne coll #js {"session_id" session-id}))]
-    (when result (js->clj result :keywordize-keys true))))
-
-(defn- ^:async find-session-by-conversation [db conversation-id]
-  (let [coll (.collection db COLLECTION_NAME)
-        result (await (.findOne coll #js {"conversation_id" conversation-id}))]
-    (when result (js->clj result :keywordize-keys true))))
-
-(defn- ^:async upsert-session! [db session]
-  (let [coll (.collection db COLLECTION_NAME)
-        ttl (session-ttl-seconds (:session_id session))
-        now (js/Date.)
-        doc (-> session
-                (assoc :expiresAt (js/Date. (+ (.now js/Date) (* ttl 1000)))
-                       :updatedAt now)
-                (dissoc :createdAt))]
-    (await (.findOneAndUpdate
-             coll
-             #js {"session_id" (:session_id session)}
-             #js {"$set" (clj->js doc)
-                  "$setOnInsert" (clj->js {:createdAt now})}
-             #js {"upsert" true "returnDocument" "after"}))))
-
-(defn- ^:async update-session-doc! [db session-id updates]
-  (let [coll (.collection db COLLECTION_NAME)
-        ttl (session-ttl-seconds session-id)
-        set-doc (merge updates
-                       {:updatedAt (js/Date.)
-                        :expiresAt (js/Date. (+ (.now js/Date) (* ttl 1000)))})]
-    (await (.findOneAndUpdate
-             coll
-             #js {"session_id" session-id}
-             #js {"$set" (clj->js set-doc)}
-             #js {"returnDocument" "after"}))))
-
-(defn- ^:async delete-session! [db session-id]
-  (let [coll (.collection db COLLECTION_NAME)]
-    (await (.deleteOne coll #js {"session_id" session-id}))
-    true))
-
-(defn- ^:async fetch-active-sessions [db]
-  (let [coll (.collection db COLLECTION_NAME)
-        cursor (.find coll #js {"status" #js {"$in" (clj->js (vec ACTIVE_STATUS))}})
-        results (await (.toArray cursor))]
-    (js->clj results :keywordize-keys true)))
-
-;; ── Public API ────────────────────────────────────────────────────────
+(defn- forget! [owner id]
+  (when (identical? owner (get @cache-owners id))
+    (swap! cache-owners dissoc id)
+    (swap! session-cache* dissoc id)))
 
 (defn ^:async get-session
-  "Get session state, checking cache first then MongoDB."
-  ([session-id]
-   (get-session (mongo-client/get-db) session-id))
-  ([db session-id]
-   (if-let [cached (get @session-cache* session-id)]
-     cached
-     (when db
-       (let [session (await (find-session db session-id))]
-         (when session
-           (evict-oldest-session-cache-entry!)
-           (swap! session-cache* assoc session-id (assoc session :cached-at (js/Date.now))))
-         session)))))
+  "Read current provider state; stale heap state never overrides durable expiry or revocation."
+  ([id] (await (get-session nil id)))
+  ([db id]
+   (let [{:keys [provider owner]} (selected db)
+         value (await (protocol/read-thread provider id))]
+     (if value (remember! owner id value) (do (forget! owner id) nil)))))
 
 (defn get-session-sync
-  "Synchronous session lookup from cache only."
-  [session-id]
-  (get @session-cache* session-id))
+  "Best-effort synchronous view of only the installed provider's nonexpired cache."
+  [id]
+  (let [value (get @session-cache* id)
+        owner (or @provider* (mongo-client/get-db))]
+    (when (and (identical? owner (get @cache-owners id)) value
+               (clock/cache-live? value (clock/now-ms) (law/ttl-ms id))) value)))
 
 (defn ^:async get-conversation-active-session
-  "Get the active session for a conversation."
-  ([conversation-id]
-   (get-conversation-active-session (mongo-client/get-db) conversation-id))
-  ([db conversation-id]
-   (when db
-     (let [session (await (find-session-by-conversation db conversation-id))]
-       (:session_id session)))))
+  "Resolve a conversation through its selected durable provider."
+  ([id] (await (get-conversation-active-session nil id)))
+  ([db id] (:session_id (await (protocol/conversation-thread (:provider (selected db)) id)))))
 
-(defn ^:async put-session!
-  "Store session state in cache and MongoDB.
-   Stamps :system_instance_id so readers can detect documents orphaned by a
-   previous system instance (see knoxx.backend.infra.system-instance)."
-  ([session]
-   (put-session! (mongo-client/get-db) session))
-  ([db session]
-   (let [session (assoc session :system_instance_id (system-instance/current-id))
-         session-id (str (:session_id session))]
-     (cache-session! session-id session)
-     (when db
-       (await (upsert-session! db session)))
-     session)))
+(defn- ^:async mutate! [db id operation]
+  (let [{:keys [provider owner]} (selected db)
+        result (await (operation provider))]
+    (if (map? result) (remember! owner id result) (forget! owner id))
+    result))
 
-(defn ^:async update-session!
-  "Update session state, merging with existing."
-  ([session-id updates]
-   (update-session! (mongo-client/get-db) session-id updates))
-  ([db session-id updates]
-   (if (str/blank? (str (or session-id "")))
-     (do
-       (js/console.error "[mongo-session-store] update-session! called with nil/blank session-id")
-       nil)
-     (let [raw (or (get @session-cache* session-id) {})
-           current (if (array? raw) (js->clj raw :keywordize-keys true) raw)
-           updated (merge current updates {:session_id session-id
-                                           :updated_at (js/Date.now)})]
-       (await (put-session! db updated))))))
+(defn put-session!
+  "Await durable admission before publishing any cache entry."
+  ([session] (put-session! nil session))
+  ([db session] (mutate! db (:session_id session) #(protocol/put-thread! % session))))
 
-(defn ^:async remove-session!
-  "Remove session from cache and MongoDB."
-  ([session-id conversation-id]
-   (remove-session! (mongo-client/get-db) session-id conversation-id))
-  ([db session-id _conversation-id]
-   (swap! session-cache* dissoc session-id)
-   (if db
-     (try
-       (await (delete-session! db session-id))
-       true
-       (catch :default err
-         (js/console.error "Failed to remove session from MongoDB:" err)
-         false))
-     true)))
+(defn update-session!
+  "Merge under the selected provider's admission contract."
+  ([id updates] (update-session! nil id updates))
+  ([db id updates] (mutate! db id #(protocol/patch-thread! % id updates))))
 
-(defn ^:async list-active-sessions
-  "List all active sessions from MongoDB."
-  ([]
-   (list-active-sessions (mongo-client/get-db)))
-  ([db]
-   (if db
-     (fetch-active-sessions db)
-     [])))
+(defn remove-session!
+  "Delete durably before removing only this provider's cached copy."
+  ([id conversation] (remove-session! nil id conversation))
+  ([db id _conversation] (mutate! db id #(protocol/delete-thread! % id))))
+
+(defn list-active-sessions
+  "Read visible active conversations from the selected provider."
+  ([] (list-active-sessions nil))
+  ([db] (protocol/active-threads (:provider (selected db)))))
 
 (defn ^:async list-active-session-ids
-  "List all active session IDs from MongoDB."
-  ([]
-   (list-active-session-ids (mongo-client/get-db)))
-  ([db]
-    (if db
-      (let [sessions (await (fetch-active-sessions db))]
-        (mapv :session_id sessions))
-      [])))
+  "Read only the IDs of current active conversations."
+  ([] (await (list-active-session-ids nil)))
+  ([db] (mapv :session_id (await (list-active-sessions db)))))
 
 (defn ^:async recover-sessions!
-  "Recover active sessions from MongoDB on startup."
-  ([]
-   (recover-sessions! (mongo-client/get-db)))
+  "Rebuild this provider's cache from current durable state and return running conversations."
+  ([] (await (recover-sessions! nil)))
   ([db]
-   (if-not db
-     []
-     (let [sessions (await (fetch-active-sessions db))
-           running (filterv #(= "running" (:status %)) sessions)]
-       (doseq [session sessions]
-         (swap! session-cache* assoc (:session_id session) session))
-       running))))
+   (let [{:keys [provider owner]} (selected db)
+         sessions (await (protocol/active-threads provider))]
+     (doseq [session sessions] (remember! owner (:session_id session) session))
+     (filterv #(= "running" (:status %)) sessions))))
 
 (defn mark-session-streaming!
-  "Mark session as actively streaming."
-  ([session-id is-streaming]
-   (mark-session-streaming! (mongo-client/get-db) session-id is-streaming))
-  ([db session-id is-streaming]
-   (update-session! db session-id {:has_active_stream is-streaming})))
+  "Durably update stream state."
+  ([id streaming?] (mark-session-streaming! nil id streaming?))
+  ([db id streaming?] (update-session! db id {:has_active_stream streaming?})))
 
-(defn ^:async complete-session!
-  "Mark session as completed."
-  ([session-id conversation-id opts]
-   (complete-session! (mongo-client/get-db) session-id conversation-id opts))
-  ([db session-id _conversation-id opts]
-   (let [{:keys [status answer error messages]} opts
-         session (await (update-session! db session-id
-                                         {:status (or status "completed")
-                                          :has_active_stream false
-                                          :answer answer
-                                          :error error
-                                          :messages messages}))]
-     (js/setTimeout
-      #(swap! session-cache* dissoc session-id)
-      (if (str/includes? (str session-id) "-sticky")
-        sticky-session-ttl-ms
-        60000))
-     session)))
+(defn complete-session!
+  "Durably finalize one conversation."
+  ([id conversation opts] (complete-session! nil id conversation opts))
+  ([db id _conversation opts]
+   (update-session! db id (merge {:status "completed" :has_active_stream false}
+                                 (select-keys opts [:status :answer :error :messages])))))
 
-(defn session-can-send?
-  "Check if session can accept new messages."
-  [session]
-  (cond
-    (nil? session)
-    {:can-send true :reason "No existing session. Ready for new conversation."}
+(defn session-can-send? "Pure conversation send readiness." [session] (domain/session-can-send? session))
+(defn rewind-messages "Pure transcript rewind." [messages turns] (domain/rewind-messages messages turns))
 
-    (= "running" (:status session))
-    {:can-send false
-     :reason (if (:has_active_stream session)
-               "Session is actively streaming. Use steer or wait."
-               "Session is already processing. Use steer, follow-up, abort, or wait.")}
-
-    (= "waiting_input" (:status session))
-    {:can-send true :reason nil}
-
-    (= "completed" (:status session))
-    {:can-send true :reason "Previous session completed. Starting new turn."}
-
-    (= "failed" (:status session))
-    {:can-send true :reason "Previous session failed. Starting new turn."}
-
-    :else
-    {:can-send true :reason nil}))
-
-(defn rewind-messages
-  "Remove the last N user turns plus everything that followed them.
-   Preserves any leading system messages that predate the removed turn(s)."
-  [messages turns]
-  (loop [remaining (vec (or messages []))
-         turns-left (max 1 (or turns 1))]
-    (if (or (zero? turns-left) (empty? remaining))
-      remaining
-      (if-let [last-user-index (->> remaining
-                                    (keep-indexed (fn [index message]
-                                                    (when (= "user" (:role message))
-                                                      index)))
-                                    last)]
-        (recur (subvec remaining 0 last-user-index) (dec turns-left))
-        remaining))))
-
-(defn ^:async undo-session-turns!
-  "Rewind the session by removing the last N user turns.
-   Resolves nil when no session exists, or the updated session when successful."
-  ([session-id turns]
-   (undo-session-turns! (mongo-client/get-db) session-id turns))
-  ([db session-id turns]
-   (when-let [session (await (get-session db session-id))]
-     (let [current-messages (vec (or (:messages session) []))
-           rewound-messages (rewind-messages current-messages turns)]
-       (if (= rewound-messages current-messages)
-         session
-         (await (put-session! db
-                              (-> session
-                                  (assoc :messages rewound-messages
-                                         :status "waiting_input"
-                                         :has_active_stream false
-                                          :updated_at (js/Date.now)
-                                         :answer nil
-                                         :error nil)))))))))
-
-;; ── Debug ─────────────────────────────────────────────────────────────
+(defn undo-session-turns!
+  "Rewind through a durable provider; an absent transcript produces no event."
+  ([id turns] (undo-session-turns! nil id turns))
+  ([db id turns] (mutate! db id #(protocol/rewind-thread! % id turns))))
 
 (defn active-session-snapshots
-  "Return active sessions from the in-memory cache for monitoring."
+  "Return current-provider cached active snapshots for diagnostics only."
   []
-  (->> @session-cache*
-       vals
-        (filter #(contains? #{"running" "queued" "waiting_input"} (:status %)))
-        (sort-by #(let [v (:updated_at %)]
-                    (cond
-                      (number? v) v
-                      (instance? js/Date v) (.getTime v)
-                      (string? v) (.getTime (js/Date. v))
-                      :else 0))
-                  >)
-       vec))
+  (->> (keys @session-cache*) sort (keep get-session-sync)
+       (filter #(ACTIVE_STATUS (:status %))) vec))
 
-;; ── Setup ─────────────────────────────────────────────────────────────
-
-(defn ^:async setup-indexes!
-  "Create required indexes on knoxx_threads collection."
-  [db]
-  (let [coll (.collection db COLLECTION_NAME)]
-    (await (.createIndex coll #js {"session_id" 1} #js {"unique" true}))
-    (await (.createIndex coll #js {"conversation_id" 1} #js {"unique" true "sparse" true}))
-    (await (.createIndex coll #js {"user_id" 1}))
-    (await (.createIndex coll #js {"org_id" 1}))
-    (await (.createIndex coll #js {"status" 1}))
-    (await (.createIndex coll #js {"expiresAt" 1} #js {"expireAfterSeconds" 0}))))
+(defn setup-indexes! "Retain the explicit Mongo initialization entry point." [db] (mongo/setup-indexes! db))

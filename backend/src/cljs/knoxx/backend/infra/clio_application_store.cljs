@@ -12,6 +12,24 @@
             [knoxx.backend.extern.clio-store :as paths]
             [knoxx.backend.law.clio-application-store :as law]))
 
+(defonce ^:private change-listeners (atom {}))
+
+(defn subscribe!
+  "Observe this process's successful state-changing appends without receiving private facts.
+   Returns an unsubscribe function. Other processes require a separate watcher."
+  [listener]
+  (when-not (fn? listener)
+    (throw (ex-info "Clio change subscriber must be a function" {:cause :clio-application/invalid-subscriber})))
+  (let [id (gensym "clio-change-")]
+    (swap! change-listeners assoc id listener)
+    (fn [] (swap! change-listeners dissoc id) nil)))
+
+(defn- notify-changed! []
+  (doseq [listener (vals @change-listeners)]
+    ;; Delivery deliberately cannot turn an accepted durable write into a
+    ;; refusal; the named extern contains and reports async observer failures.
+    (paths/notify-subscriber! listener)))
+
 (defn history
   "Read canonical history, refusing missing, malformed or causally invalid facts."
   [{:keys [file runtime]}]
@@ -100,6 +118,7 @@
       ;; rewrites accepted arguments/results and never runs during replay.
       (when before-append (before-append operation))
       (ledger/append-event! (:schema/revisions (runtime/refresh runtime)) file fact)
+      (notify-changed!)
       (catch :default cause
         (if (= :clio.ledger/concurrent-stream-write (:clio/error (ex-data cause)))
           (throw (ex-info "Clio application state changed; retry against fresh history"
