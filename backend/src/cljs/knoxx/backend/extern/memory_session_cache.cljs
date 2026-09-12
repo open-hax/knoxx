@@ -1,7 +1,7 @@
 (ns knoxx.backend.extern.memory-session-cache
   "Session-page cache native clock, canonical hash and persistence boundary."
   (:require ["node:crypto" :as crypto]
-            [knoxx.backend.infra.auth.authz :refer [ctx-actor-id ctx-membership-id ctx-org-id ctx-permitted? ctx-user-id system-admin?]]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.stores.mongo-memory-sessions :as mongo-memory-sessions]))
 
 (def memory-sessions-cache-ttl-seconds
@@ -33,12 +33,12 @@
 (defn memory-sessions-auth-scope
   "Memory session operation: memory-sessions-auth-scope."
   [ctx]
-  {:system-admin? (boolean (system-admin? ctx))
-   :cross-session? (boolean (ctx-permitted? ctx "agent.memory.cross_session"))
-   :org-id (str (or (ctx-org-id ctx) ""))
-   :membership-id (str (or (ctx-membership-id ctx) ""))
-   :user-id (str (or (ctx-user-id ctx) ""))
-   :actor-id (str (or (ctx-actor-id ctx) ""))})
+  {:system-admin? (boolean (authz/system-admin? ctx))
+   :cross-session? (boolean (authz/ctx-permitted? ctx "agent.memory.cross_session"))
+   :org-id (str (or (authz/ctx-org-id ctx) ""))
+   :membership-id (str (or (authz/ctx-membership-id ctx) ""))
+   :user-id (str (or (authz/ctx-user-id ctx) ""))
+   :actor-id (str (or (authz/ctx-actor-id ctx) ""))})
 
 (defn memory-sessions-cache-key
   "Memory session operation: memory-sessions-cache-key."

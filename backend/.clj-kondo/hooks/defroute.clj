@@ -35,7 +35,7 @@
 ;; clj-kondo does not emit spurious unused-binding warnings for the
 ;; many standard deps that a given route does not reference.
 ;;
-;; request, reply, and await are modeled by unknown values in the same let
+;; request and reply are modeled by unknown values in the same let
 ;; pool so clj-kondo does not flag them as unresolved inside route bodies.
 ;; ctx is modeled as the wrapping ^:async fn parameter (the macro binds
 ;; it from (aget request "ctx")), not via the let pool.
@@ -52,12 +52,14 @@
     bearer-headers fetch-json request-query-string
     session-guard optional-session-guard])
 
-;; request, reply, and await live in the let pool (with unknown types).
+;; request and reply live in the let pool (with unknown types).
+;; Native await stays unbound inside the async handler, matching the runtime
+;; macro. A synthetic local would incorrectly shadow cljs.core/await.
 ;; ctx is modeled as the parameter of the ^:async handler fn that wraps the
 ;; body — see new-node below — because the runtime macro binds it from
 ;; (aget request "ctx") inside the emitted handler, not from deps.
 (def ^:private handler-syms
-  '[request reply await])
+  '[request reply])
 
 (defn- async-handler-node
   "Wrap the route body forms in the ^:async handler fn that the runtime macro
@@ -68,7 +70,7 @@
   (let [param (if ctx-used? 'ctx '_ctx)]
     (api/list-node
      (concat
-      [(api/token-node (with-meta 'fn {:async true}))
+      [(assoc (api/token-node 'fn) :meta [(api/keyword-node :async)])
        (api/vector-node [(api/token-node param)])]
       body-forms))))
 
@@ -89,7 +91,9 @@
           #{}
           nodes))
 
-(defn defroute [{:keys [node]}]
+(defn defroute
+  "Model route dependency bindings and a native async handler without inventing local await."
+  [{:keys [node]}]
   (let [children          (:children node)
         fn-name           (nth children 1 nil)
         extra-vec         (nth children 2 nil)

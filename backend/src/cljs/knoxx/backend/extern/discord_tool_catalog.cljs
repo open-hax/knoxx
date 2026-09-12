@@ -1,13 +1,13 @@
 (ns knoxx.backend.extern.discord-tool-catalog
   "Construct native Discord SDK tools from contracts and capability selection."
-  (:require [knoxx.backend.domain.tools :refer [create-tool-obj]]
+  (:require [knoxx.backend.domain.tools :as tools]
             [knoxx.backend.extern.discord :as xdiscord]
             [knoxx.backend.extern.discord-tool-execution :as execution]
-            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.law.discord-tools :as schemas]))
 
 (def discord-send-tool
-  "Discord tool catalog entry: discord-send-tool." (partial create-tool-obj "discord.send" "Discord Send" "Send a message to a Discord channel, optionally as a reply to an existing message."
+  "Discord tool catalog entry: discord-send-tool." (partial tools/create-tool-obj "discord.send" "Discord Send" "Send a message to a Discord channel, optionally as a reply to an existing message."
                           "Send a Discord message or reply to a specific message id."
                           ["Use discord.publish or discord.send to share results in a Discord channel."
                                     "Provide channelId/channel_id and content/text."
@@ -23,7 +23,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def channel-messages-tool
-  "Discord tool catalog entry: channel-messages-tool." (partial create-tool-obj "discord.channel.messages" "Discord Channel Messages"
+  "Discord tool catalog entry: channel-messages-tool." (partial tools/create-tool-obj "discord.channel.messages" "Discord Channel Messages"
                                     "Fetch messages from a Discord channel with before/after/around cursors."
                                     "Fetch channel messages from Discord with pagination cursors when you need exact transcript context."
                                     ["Use this when you know the channel id and need exact message history."
@@ -32,7 +32,7 @@
                                     execution/channel-messages-execute))
 
 (def channel-scroll-tool
-  "Discord tool catalog entry: channel-scroll-tool." (partial create-tool-obj "discord.channel.scroll" "Discord Channel Scroll"
+  "Discord tool catalog entry: channel-scroll-tool." (partial tools/create-tool-obj "discord.channel.scroll" "Discord Channel Scroll"
                                   "Scroll older channel messages by fetching messages before the oldest already-seen message id."
                                   "Scroll backwards in a Discord channel once you already know the oldest seen id."
                                   ["Use discord.channel.scroll as sugar over discord.channel.messages before=oldest_seen_id."
@@ -41,7 +41,7 @@
                                   execution/channel-scroll-execute))
 
 (def dm-messages-tool
-  "Discord tool catalog entry: dm-messages-tool." (partial create-tool-obj "discord.dm.messages" "Discord DM Messages"
+  "Discord tool catalog entry: dm-messages-tool." (partial tools/create-tool-obj "discord.dm.messages" "Discord DM Messages"
                                "Fetch messages from the DM channel shared with a Discord user."
                                "Read DM history with a Discord user by user id."
                                ["Use this when the relevant conversation is in DMs rather than a guild channel."
@@ -50,7 +50,7 @@
                                execution/dm-messages-execute))
 
 (def search-tool
-  "Discord tool catalog entry: search-tool." (partial create-tool-obj "discord.search" "Discord Search"
+  "Discord tool catalog entry: search-tool." (partial tools/create-tool-obj "discord.search" "Discord Search"
                           "Search channel or DM messages by content and/or author using client-side filtering."
                           "Search Discord messages by text and scope to find relevant discussion quickly."
                           ["Use scope=channel with channel_id for guild channels or scope=dm with user_id for DMs."
@@ -62,7 +62,7 @@
                           execution/search-execute))
 
 (def list-servers-tool
-  "Discord tool catalog entry: list-servers-tool." (partial create-tool-obj "discord.list.servers" "Discord List Servers"
+  "Discord tool catalog entry: list-servers-tool." (partial tools/create-tool-obj "discord.list.servers" "Discord List Servers"
                                 "List all Discord servers/guilds the bot can access."
                                 "List Discord servers before choosing channels or replying into a guild."
                                 ["Use this before discord.list.channels when you need discovery."
@@ -71,7 +71,7 @@
                                 execution/list-servers-execute))
 
 (def guilds-tool
-  "Discord tool catalog entry: guilds-tool." (partial create-tool-obj "discord.guilds" "Discord Guilds"
+  "Discord tool catalog entry: guilds-tool." (partial tools/create-tool-obj "discord.guilds" "Discord Guilds"
                           "List Discord guilds/servers the bot is in."
                           "List Discord guilds to discover available servers."
                           ["Alias for discord.list.servers."
@@ -80,7 +80,7 @@
                           execution/list-servers-execute))
 
 (def list-channels-tool
-  "Discord tool catalog entry: list-channels-tool." (partial create-tool-obj "discord.list.channels" "Discord List Channels"
+  "Discord tool catalog entry: list-channels-tool." (partial tools/create-tool-obj "discord.list.channels" "Discord List Channels"
                                  "List channels in one Discord guild or across all visible guilds."
                                  "List Discord channels to discover readable/postable targets."
                                  ["If guild_id is omitted, returns channels across all visible guilds."
@@ -89,7 +89,7 @@
                                  execution/list-channels-execute))
 
 (def channels-tool
-  "Discord tool catalog entry: channels-tool." (partial create-tool-obj "discord.channels" "Discord Channels"
+  "Discord tool catalog entry: channels-tool." (partial tools/create-tool-obj "discord.channels" "Discord Channels"
                             "List channels in a Discord guild."
                             "List channels in a Discord guild to find the right channel for reading or posting."
                             ["Alias for discord.list.channels."
@@ -98,7 +98,7 @@
                             execution/channels-execute))
 
 (def react-tool
-  "Discord tool catalog entry: react-tool." (partial create-tool-obj "discord.react" "Discord React"
+  "Discord tool catalog entry: react-tool." (partial tools/create-tool-obj "discord.react" "Discord React"
                          "Add an emoji reaction to a Discord message."
                          "React to a Discord message with an emoji."
                          ["Use discord.react to add emoji reactions to messages."
@@ -107,7 +107,7 @@
                          execution/react-execute))
 
 (def thread-create-tool
-  "Discord tool catalog entry: thread-create-tool." (partial create-tool-obj "discord.thread.create" "Discord Thread Create"
+  "Discord tool catalog entry: thread-create-tool." (partial tools/create-tool-obj "discord.thread.create" "Discord Thread Create"
                                  "Create a Discord thread from a message or in a channel."
                                  "Create a thread to spin off a conversation."
                                  ["Use discord.thread.create to start a thread from a message or in a channel."
@@ -121,7 +121,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def publish-tool
-  "Discord tool catalog entry: publish-tool." (partial create-tool-obj "discord.publish" "Discord Publish"
+  "Discord tool catalog entry: publish-tool." (partial tools/create-tool-obj "discord.publish" "Discord Publish"
                            "Post a message to a Discord channel using the configured Knoxx Discord bot."
                            "Post updates, summaries, or notifications to Discord channels."
                            ["Use discord.publish or discord.send to share results in a Discord channel."
@@ -132,7 +132,7 @@
                            execution/publish-execute))
 
 (def read-tool
-  "Discord tool catalog entry: read-tool." (partial create-tool-obj "discord.read" "Discord Read"
+  "Discord tool catalog entry: read-tool." (partial tools/create-tool-obj "discord.read" "Discord Read"
                         "Read recent messages from a Discord channel."
                         "Read recent messages from a Discord channel to understand context."
                         ["Use discord.read as a simple alias for discord.channel.messages."
@@ -150,7 +150,7 @@
   ([runtime config auth-context]
    (let [allowed? (fn [tool-id]
                     (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context tool-id)))]
+                        (authz/ctx-tool-allowed? auth-context tool-id)))]
      (xdiscord/tool-array
       (remove nil?
               [(when (allowed? "discord.publish") (publish-tool runtime config))

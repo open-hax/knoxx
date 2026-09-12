@@ -1,5 +1,5 @@
 (ns knoxx.backend.infra.routes.document-admission-settlement-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :as test]
             [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.routes.document-admission :as admission]
             [knoxx.backend.infra.routes.document-admission-fixture :as fixture]))
@@ -8,8 +8,8 @@
   [doc draft-complete settlers]
   {:draft-complete?
    (fn [policy]
-     (is (= (:document/id doc) (:source-document-id policy)))
-     (is (string? (:source-revision policy)))
+     (test/is (= (:document/id doc) (:source-document-id policy)))
+     (test/is (string? (:source-revision policy)))
      (js/Promise.resolve @draft-complete))
    :register-turn-settler!
    (fn [event-id settle!]
@@ -63,7 +63,7 @@
                              {} dependencies fixture/scope {:generate-drafts? true}))
         event-id (get-in first-result [:results 0 :index/event-id])
         settle! (get @settlers event-id)]
-    (is (fn? settle!))
+    (test/is (fn? settle!))
     (await (settle! settlement))
     (let [retry-result (await (admission/admit-documents!
                                {} dependencies fixture/scope {:generate-drafts? true}))]
@@ -74,31 +74,31 @@
        :emitted emitted
        :releases releases})))
 
-(deftest ^:async a-rejected-draft-provider-turn-is-retriable-in-process
+(test/deftest ^:async a-rejected-draft-provider-turn-is-retriable-in-process
   (let [{:keys [event-id first-result retry-result persisted emitted releases]}
         (await (exercise-absent-draft-retry!
                 {:event-turn/status :failed
                  :event-turn/detail "provider unavailable"}))]
-    (testing "the failed terminal owner releases only its indexed event"
-      (is (= [event-id] @releases))
-      (is (= [event-id event-id] @emitted)))
-    (testing "re-admission reuses durable facts and enqueues a fresh attempt"
-      (is (true? (:ok first-result)))
-      (is (true? (:ok retry-result)))
-      (is (= 2 (count @persisted)))
-      (is (= :existing (get-in retry-result
+    (test/testing "the failed terminal owner releases only its indexed event"
+      (test/is (= [event-id] @releases))
+      (test/is (= [event-id event-id] @emitted)))
+    (test/testing "re-admission reuses durable facts and enqueues a fresh attempt"
+      (test/is (true? (:ok first-result)))
+      (test/is (true? (:ok retry-result)))
+      (test/is (= 2 (count @persisted)))
+      (test/is (= :existing (get-in retry-result
                                [:results 0 :index/event-status]))))))
 
-(deftest ^:async a-draft-turn-that-never-calls-its-tool-is-retriable-in-process
+(test/deftest ^:async a-draft-turn-that-never-calls-its-tool-is-retriable-in-process
   (let [{:keys [event-id retry-result emitted releases]}
         (await (exercise-absent-draft-retry!
                 {:event-turn/status :completed}))]
-    (testing "successful provider completion is not mistaken for a saved draft"
-      (is (= [event-id] @releases))
-      (is (= [event-id event-id] @emitted))
-      (is (true? (:ok retry-result))))))
+    (test/testing "successful provider completion is not mistaken for a saved draft"
+      (test/is (= [event-id] @releases))
+      (test/is (= [event-id event-id] @emitted))
+      (test/is (true? (:ok retry-result))))))
 
-(deftest ^:async an-explicitly-reset-draft-reclaims-its-dispatch-in-process
+(test/deftest ^:async an-explicitly-reset-draft-reclaims-its-dispatch-in-process
   (let [doc (fixture/document :knoxx.docs/vanished-draft
                       "docs/vanished-draft.md" true)
         resource-records (fixture/records [doc])
@@ -160,15 +160,15 @@
         first-owner (get @settlers event-id)
         live-retry (await (admission/admit-documents!
                            {} dependencies fixture/scope {:generate-drafts? true}))]
-    (testing "a currently owned generation is not duplicated"
-      (is (true? (:ok live-retry)))
-      (is (= [event-id] @emitted))
-      (is (identical? first-owner (get @settlers event-id))))
+    (test/testing "a currently owned generation is not duplicated"
+      (test/is (true? (:ok live-retry)))
+      (test/is (= [event-id] @emitted))
+      (test/is (identical? first-owner (get @settlers event-id))))
 
     (reset! draft-complete true)
     (await (first-owner {:event-turn/status :completed}))
-    (is (empty? @settlers))
-    (is (= :completed (get @dispatch-states event-id)))
+    (test/is (empty? @settlers))
+    (test/is (= :completed (get @dispatch-states event-id)))
 
     ;; Model an operator explicitly removing the completion marker before its
     ;; immutable files. Unlike a surviving marker with missing files, removing
@@ -176,15 +176,15 @@
     (reset! draft-complete false)
     (let [repair (await (admission/admit-documents!
                          {} dependencies fixture/scope {:generate-drafts? true}))]
-      (testing "the ownerless completed claim is released and dispatched again"
-        (is (true? (:ok repair)))
-        (is (= [event-id] @releases))
-        (is (= [event-id event-id] @emitted))
-        (is (= :existing (get-in repair [:results 0 :index/event-status])))
-        (is (true? (get-in repair
+      (test/testing "the ownerless completed claim is released and dispatched again"
+        (test/is (true? (:ok repair)))
+        (test/is (= [event-id] @releases))
+        (test/is (= [event-id event-id] @emitted))
+        (test/is (= :existing (get-in repair [:results 0 :index/event-status])))
+        (test/is (true? (get-in repair
                            [:results 0 :document/draft-generation-needed?])))))))
 
-(deftest ^:async re-admission-redelivers-a-transiently-rejected-draft-settlement
+(test/deftest ^:async re-admission-redelivers-a-transiently-rejected-draft-settlement
   (agent-runner/reset-event-turn-queue!)
   (agent-runner/reset-event-turn-settlers!)
   (let [doc (fixture/document :knoxx.docs/redeliver-draft
@@ -224,23 +224,23 @@
                    :event-id event-id}}
      (fn [] (js/Promise.resolve {:ok true})))
     (await (fixture/flush-promises!))
-    (is (= 2 @checks)
+    (test/is (= 2 @checks)
         "the first terminal draft check rejected and remained cached")
-    (is (= [event-id] @releases)
+    (test/is (= [event-id] @releases)
         "a rejected completion read immediately releases the event claim")
 
     (let [retry-result (await (admission/admit-documents!
                                {} dependencies fixture/scope
                                {:generate-drafts? true}))]
-      (testing "registration redelivers before the equal event is emitted"
-        (is (= [event-id event-id] @releases))
-        (is (= [event-id event-id] @emitted)))
-      (testing "the same admission pass retries against existing durable facts"
-        (is (true? (:ok retry-result)))
-        (is (= :existing (get-in retry-result
+      (test/testing "registration redelivers before the equal event is emitted"
+        (test/is (= [event-id event-id] @releases))
+        (test/is (= [event-id event-id] @emitted)))
+      (test/testing "the same admission pass retries against existing durable facts"
+        (test/is (true? (:ok retry-result)))
+        (test/is (= :existing (get-in retry-result
                                  [:results 0 :index/event-status])))))
 
-    (testing "the redelivered owner is re-armed for the newly emitted turn"
+    (test/testing "the redelivered owner is re-armed for the newly emitted turn"
       (agent-runner/enqueue-event-turn!
        {:llmModel "test-model" :collection-name "test"}
        {:run-id (str run-id "-retry")
@@ -251,11 +251,11 @@
                      :event-id event-id}}
        (fn [] (js/Promise.resolve {:ok true})))
       (await (fixture/flush-promises!))
-      (is (= [event-id event-id event-id] @releases)))
+      (test/is (= [event-id event-id event-id] @releases)))
     (agent-runner/reset-event-turn-queue!)
     (agent-runner/reset-event-turn-settlers!)))
 
-(deftest ^:async repeatedly-rejected-draft-settlement-fails-admission
+(test/deftest ^:async repeatedly-rejected-draft-settlement-fails-admission
   (agent-runner/reset-event-turn-queue!)
   (agent-runner/reset-event-turn-settlers!)
   (let [doc (fixture/document :knoxx.docs/repeated-draft-redelivery
@@ -294,7 +294,7 @@
                    :event-id event-id}}
      (fn [] (js/Promise.resolve {:ok true})))
     (await (fixture/flush-promises!))
-    (is (= [event-id] @releases)
+    (test/is (= [event-id] @releases)
         "the first rejected completion read releases its exact event")
 
     (let [error (try
@@ -302,20 +302,20 @@
                           {} dependencies fixture/scope {:generate-drafts? true}))
                   nil
                   (catch :default err err))]
-      (testing "a second rejected callback cannot masquerade as a live owner"
-        (is (= 503 (:status (ex-data error))))
-        (is (= "document_post_draft_settlement_redelivery_failed"
+      (test/testing "a second rejected callback cannot masquerade as a live owner"
+        (test/is (= 503 (:status (ex-data error))))
+        (test/is (= "document_post_draft_settlement_redelivery_failed"
                (:code (ex-data error))))
-        (is (= [event-id] @emitted))
-        (is (= [event-id event-id] @releases))
-        (is (= :settled (agent-runner/event-turn-owner-state event-id)))))
+        (test/is (= [event-id] @emitted))
+        (test/is (= [event-id event-id] @releases))
+        (test/is (= :settled (agent-runner/event-turn-owner-state event-id)))))
 
     (let [retry-result (await (admission/admit-documents!
                                {} dependencies fixture/scope
                                {:generate-drafts? true}))]
-      (testing "the retained settlement remains recoverable on a later pass"
-        (is (true? (:ok retry-result)))
-        (is (= [event-id event-id event-id] @releases))
-        (is (= [event-id event-id] @emitted))))
+      (test/testing "the retained settlement remains recoverable on a later pass"
+        (test/is (true? (:ok retry-result)))
+        (test/is (= [event-id event-id event-id] @releases))
+        (test/is (= [event-id event-id] @emitted))))
     (agent-runner/reset-event-turn-queue!)
     (agent-runner/reset-event-turn-settlers!)))

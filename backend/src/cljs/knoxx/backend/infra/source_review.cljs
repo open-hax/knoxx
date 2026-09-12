@@ -8,7 +8,8 @@
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.source-projection-health :as health]
             [knoxx.backend.infra.source-review-store :as store]
-            [knoxx.backend.law.source-review :as law]))
+            [knoxx.backend.law.source-review :as law]
+            [knoxx.backend.shape.source-review :as shape]))
 
 (defn- refuse! [status code message] (throw (ex-info message {:status status :code code})))
 (defn- provider! [dependencies]
@@ -68,7 +69,7 @@
   (let [accepted (atom {})]
     (doseq [[id document] (:documents index)]
       (when (admission/document-visible-to-org? scope document)
-        (let [current (await (read! config (assoc scope :document id) dependencies))]
+        (let [current (await (read! config (shape/context->scope scope id) dependencies))]
           (swap! accepted assoc id current))))
     {:source-accepted?
      (fn [intent revision]

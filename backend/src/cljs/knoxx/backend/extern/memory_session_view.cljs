@@ -4,37 +4,37 @@
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.extern.memory-session-cache :as cache]
             [knoxx.backend.extern.memory-session-pages :as pages]
-            [knoxx.backend.infra.auth.authz :refer [ctx-membership-id ctx-org-id ctx-permitted? ctx-user-id system-admin?]]
-            [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows!]]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.core-memory :as core-memory]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
-            [knoxx.backend.infra.stores.session-titles :refer [session-titles* session-title-promises* session-title-seed-text heuristic-session-title resolve-session-title! normalize-session-title cache-session-title!]]
+            [knoxx.backend.infra.stores.session-titles :as titles]
             [knoxx.backend.shape.memory-sessions :as memory-shape]))
 
 (defn ^:async run-warm-title-cache!
   "Memory session operation: run-warm-title-cache!."
   [session-id config runtime]
   (try
-    (let [title-rows (await (fetch-openplanner-session-rows! config session-id))
-          seed-text (session-title-seed-text title-rows)
-          fallback-title (heuristic-session-title seed-text)]
+    (let [title-rows (await (core-memory/fetch-openplanner-session-rows! config session-id))
+          seed-text (titles/session-title-seed-text title-rows)
+          fallback-title (titles/heuristic-session-title seed-text)]
       (try
-        (let [entry (await (resolve-session-title! config seed-text))]
-          (cache-session-title! runtime config session-id
-                                (or (normalize-session-title (:title entry) fallback-title)
+        (let [entry (await (titles/resolve-session-title! config seed-text))]
+          (titles/cache-session-title! runtime config session-id
+                                (or (titles/normalize-session-title (:title entry) fallback-title)
                                     fallback-title)
                                 (:title_model entry)))
         (catch :default _
-          (cache-session-title! runtime config session-id fallback-title nil))))
+          (titles/cache-session-title! runtime config session-id fallback-title nil))))
     (catch :default _
-      (cache-session-title! runtime config session-id "Untitled session" nil))))
+      (titles/cache-session-title! runtime config session-id "Untitled session" nil))))
 
 (defn- warm-title-cache! [session-id config runtime]
   (let [session-id (str (or session-id ""))]
     (when (and (not (str/blank? session-id))
-               (not (contains? @session-titles* session-id))
-               (not (contains? @session-title-promises* session-id)))
+               (not (contains? @titles/session-titles* session-id))
+               (not (contains? @titles/session-title-promises* session-id)))
       (let [title-promise (run-warm-title-cache! session-id config runtime)]
-        (swap! session-title-promises* assoc session-id title-promise)
+        (swap! titles/session-title-promises* assoc session-id title-promise)
         title-promise))))
 
 (defn- inactive-row [row]
@@ -44,13 +44,13 @@
          :has_active_stream false))
 
 (defn- agent-spec-value
-  [agent-spec keys]
+  [agent-spec field-keys]
   (some (fn [k]
           (some-> (get agent-spec k)
                   str
                   str/trim
                   not-empty))
-        keys))
+        field-keys))
 
 (defn- active-session-actor-claims
   [session]
@@ -151,7 +151,7 @@
 (defn ^:async enrich-row
   "Memory session operation: enrich-row." [row]
   (let [session-id (str (:session row))
-        titled-row (if-let [title-entry (get @session-titles* session-id)]
+        titled-row (if-let [title-entry (get @titles/session-titles* session-id)]
                      (assoc row
                             :title (:title title-entry)
                             :title_model (:title_model title-entry))
@@ -190,13 +190,13 @@
 
 (defn fetch-memory-sessions-source!
   "Memory session operation: fetch-memory-sessions-source!."
-  [config ctx opts authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter?]
+  [config ctx opts authorized-session-ids! fetch-rows! session-matches-page-actor-filter?]
   (cache/cached-memory-sessions-source!
    (:cache-key opts)
    (fn []
      (pages/fetch-authorized-session-pages! config ctx (:actor-id opts) (:exclude-actor-ids opts)
                                         (:contract-id opts) authorized-session-ids!
-                                        fetch-openplanner-session-rows!
+                                        fetch-rows!
                                         session-matches-page-actor-filter?
                                         (:upstream-page-size opts) 0 [] (:needed-count opts)))))
 
@@ -230,10 +230,10 @@
   [ctx live page-rows actor-id exclude-actor-ids contract-id]
   (let [op-ids (set (map #(str (:session %)) page-rows))]
     (->> live
-         (filter #(and (= (ctx-org-id ctx) (:org_id %))
-                       (or (system-admin? ctx) (ctx-permitted? ctx "agent.memory.cross_session")
-                           (and (some? (ctx-user-id ctx)) (= (ctx-user-id ctx) (:user_id %)))
-                           (and (some? (ctx-membership-id ctx)) (= (ctx-membership-id ctx) (:membership_id %))))
+         (filter #(and (= (authz/ctx-org-id ctx) (:org_id %))
+                       (or (authz/system-admin? ctx) (authz/ctx-permitted? ctx "agent.memory.cross_session")
+                           (and (some? (authz/ctx-user-id ctx)) (= (authz/ctx-user-id ctx) (:user_id %)))
+                           (and (some? (authz/ctx-membership-id ctx)) (= (authz/ctx-membership-id ctx) (:membership_id %))))
                        (:conversation_id %)
                        (not (op-ids (str (:conversation_id %))))
                        (contains? #{"running" "waiting_input"} (:status %))

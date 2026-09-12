@@ -378,4 +378,3 @@
   "The exact immutable coordinates the server exposed for approval."
   [review]
   (select-keys review [:document :garden :locale :revision :translation_revision]))
-

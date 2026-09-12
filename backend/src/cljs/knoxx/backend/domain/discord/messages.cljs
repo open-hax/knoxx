@@ -93,8 +93,8 @@
 
 (defn discord-message-payload
   "Project discord-message-payload."
-  [chunk reply-to state]
-  (cond-> {:content chunk}
+  [text-chunk reply-to state]
+  (cond-> {:content text-chunk}
     (and reply-to (nil? (:messageId state)))
     (assoc :message_reference {:message_id reply-to})))
 

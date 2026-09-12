@@ -2,7 +2,7 @@
   "Scoped memory provider pagination and native response rows."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.core-memory :as core-memory :refer [session-matches-contract-filter? session-summary-scope-from-rows]]
+            [knoxx.backend.infra.core-memory :as core-memory]
             [knoxx.backend.infra.openplanner.scope :as planner-scope]
             [knoxx.backend.shape.memory-sessions :as memory-shape]))
 
@@ -24,9 +24,9 @@
    actor-id exclude-actor-ids contract-id row]
   (try
     (let [rows (await (fetch-session-filter-rows! fetch-openplanner-session-rows! config (:session row)))]
-      {:row (merge row (session-summary-scope-from-rows rows))
+      {:row (merge row (core-memory/session-summary-scope-from-rows rows))
        :visible (and (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)
-                     (session-matches-contract-filter? config rows contract-id))})
+                     (core-memory/session-matches-contract-filter? config rows contract-id))})
     (catch :default _
       {:row row
        :visible false})))
@@ -83,7 +83,7 @@
 (defn- mongo-session-summary
   [session-id rows]
   (let [latest (first rows)
-        scope (session-summary-scope-from-rows rows)]
+        scope (core-memory/session-summary-scope-from-rows rows)]
     (merge {:session session-id
             :project (:project latest)
             :last_ts (:ts latest)

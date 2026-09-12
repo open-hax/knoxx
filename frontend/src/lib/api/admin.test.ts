@@ -21,7 +21,8 @@ import {
 
 // Mock the core request module
 const mockRequest = vi.fn();
-vi.mock("./core", () => ({
+vi.mock("./core", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./core")>(),
   request: (...args: unknown[]) => mockRequest(...args),
 }));
 
@@ -58,6 +59,26 @@ describe("Admin API", () => {
     mockRequest.mockResolvedValueOnce({user: {id: "user", memberships: []}});
     await updateAdminActor("user", {orgId: "org", actorId: " agent-one ", status: "disabled"});
     expect(JSON.parse(mockRequest.mock.calls[0][1].body)).toEqual({orgId: "org", actorId: "agent-one", status: "disabled"});
+  });
+
+  it("preserves explicit null and false aliases while filtering malformed tool policies", async () => {
+    mockRequest.mockResolvedValueOnce({ roles: [{
+      id: "reviewer",
+      orgId: null,
+      "org-id": "must-not-replace-null",
+      builtIn: false,
+      "built-in": true,
+      permissions: ["content.review", 3, null],
+      toolPolicies: [
+        { toolId: "read", effect: "allow", constraints: {} },
+        { toolId: "edit", effect: "unexpected" },
+        { effect: "deny" },
+      ],
+    }] });
+    const { roles } = await listOrgRoles("org/one");
+    expect(mockRequest).toHaveBeenCalledWith("/api/admin/orgs/org%2Fone/roles");
+    expect(roles[0]).toMatchObject({ orgId: null, builtIn: false, permissions: ["content.review"] });
+    expect(roles[0].toolPolicies).toEqual([{ toolId: "read", effect: "allow" }]);
   });
 
   it("getDiscordConfig fetches discord config", async () => {

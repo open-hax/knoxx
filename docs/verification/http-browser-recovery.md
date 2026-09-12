@@ -142,3 +142,40 @@ suite passes **43 tests / 257 assertions**, compiler **554 inputs / 0 warnings**
 and strict scoped lint **0 errors / 0 warnings**. The next browser run remains
 required. Partial Wiki screenshots now enter the supervisor's evidence inventory
 immediately, so a later failure cannot omit already captured steps from its index.
+
+The optional rules named in `AGENTS.md` were then enabled explicitly over these
+owned source and test namespaces. They exposed 38 findings in existing test
+imports, fixture documentation and shadowed local names despite the configured
+gate being clear. Named test aliases, documented shared fixtures and unambiguous
+local names clear all of them. The guarded suite still passes **43 / 257** after
+this cleanup, with **560 compiler inputs / 0 warnings**; the explicit optional
+lint invocation also reports **0 errors / 0 warnings**.
+
+## Browser run 10 and the downstream review key
+
+Production release 05 compiled the server from **664 inputs / 0 warnings** and
+the verification library from **107 inputs / 0 warnings**. Frontend release 04
+passed its complete **521 tests / 2,270 assertions** and configured native lint
+with zero errors and warnings. The live tour again completed identity, Admin and
+human/agent Mail, then reached writing, review feedback, lesson capture, revision
+and resubmission. Acceptance now passed the dispatch membership check but returned
+HTTP 400 when the downstream source-review reader received those extra fields.
+The closed ledger contract correctly rejected the acting context as a review key.
+
+The new portable `shape.source-review/context->scope` explicitly selects verified
+organization, project (including explicit nil), and the document from the current
+resource index. Membership changes cannot create another review history, and an
+unrelated document selection in the acting context cannot redirect the read.
+The dispatch test fixture now enforces that same closed contract instead of
+silently accepting extra fields.
+
+A real filesystem workflow creates and accepts source through Clio, reopens both
+ledgers, and reads acceptance under changed memberships, another project and an
+absent project. It reproduced **8 failures** with **133 compiler inputs / 0
+warnings**; the initial test attempt's extra argument was corrected before that
+clean reproduction. With the fix, current acceptance survives membership changes,
+while another project or source revision has no acceptance. Combined source,
+dispatch, admission and Wiki checks pass **46 tests / 296 assertions** under the
+fatal async guard, **548 compiler inputs / 0 warnings**, and all seven explicit
+optional lint rules report **0 errors / 0 warnings**. Run 10 remains a failed tour;
+its partial screenshots and failure are retained, and the next live run is required.

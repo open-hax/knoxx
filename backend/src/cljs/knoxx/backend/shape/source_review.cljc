@@ -2,6 +2,12 @@
   "Explicit JSON-shaped data conversion for human and agent review commands."
   (:require [knoxx.backend.law.source-review :as law]))
 
+(defn context->scope
+  "Project a verified acting context and selected document onto the closed ledger key."
+  [context document]
+  (law/assert-valid! :source-review/scope law/Scope
+                    {:org-id (:org-id context) :project (:project context) :document document}))
+
 (def WireCommand
   "Closed wire vocabulary; principal, organization and project are forbidden."
   [:map {:closed true}

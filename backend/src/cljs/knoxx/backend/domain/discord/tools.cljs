@@ -1,10 +1,10 @@
 (ns knoxx.backend.domain.discord.tools
   "Compatibility exports for Discord tools; native behavior lives in named extern boundaries."
-  (:require [knoxx.backend.extern.discord-tool-operations :as operations]
-            [knoxx.backend.extern.discord-upload :as upload]
-            [knoxx.backend.extern.discord-message-selection :as selection]
-            [knoxx.backend.extern.discord-tool-execution :as execution]
+  (:require [knoxx.backend.extern.discord-message-selection :as selection]
             [knoxx.backend.extern.discord-tool-catalog :as catalog]
+            [knoxx.backend.extern.discord-tool-execution :as execution]
+            [knoxx.backend.extern.discord-tool-operations :as operations]
+            [knoxx.backend.extern.discord-upload :as upload]
             [knoxx.backend.law.discord-tools :as schemas]))
 
 (def discord-token!

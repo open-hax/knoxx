@@ -10,6 +10,7 @@
             [knoxx.frontend.domain.migration :as domain]
             [knoxx.frontend.infra.migration-build :as build]
             [knoxx.frontend.infra.migration-export-source :as export-source]
+            [knoxx.frontend.infra.migration-filesystem :as filesystem]
             [knoxx.frontend.infra.migration-git :as git]
             [knoxx.frontend.infra.migration-html :as html]
             [knoxx.frontend.infra.migration-imports :as imports]
@@ -23,48 +24,9 @@
   "Repository-relative path to the generated migration ledger."
   "frontend/migration/manifest.ndedn")
 
-(defn- relative-path-facts
-  "Read platform-relative path facts for the source boundary contract."
-  [root target]
-  (let [relative (node-path/relative root target)]
-    {:relative-path relative
-     :absolute? (node-path/isAbsolute relative)
-     :separator node-path/sep}))
-
-(defn- symlink-facts
-  "Read a symbolic link's target facts without admitting it into the inventory."
-  [root path]
-  (try
-    (let [target (fs/realpathSync path)]
-      {:path path :target (relative-path-facts root target)
-       :file? (.isFile (fs/statSync target))})
-    (catch :default _ {:path path :file? false})))
-
-(defn- walk-files-under
-  "Return file paths under directory without leaving the canonical root."
-  [root directory]
-  (->> (fs/readdirSync directory)
-       (mapcat (fn [entry-name]
-                 (let [path (node-path/join directory entry-name)
-                       stat (fs/lstatSync path)]
-                   (cond
-                     (.isSymbolicLink stat)
-                     (do (law/assert-source-symlink! (symlink-facts root path))
-                         [path])
-
-                     (.isDirectory stat) (walk-files-under root path)
-                     :else [path]))))
-       sort))
-
-(defn walk-files
-  "Return sorted absolute file paths without following unsafe symbolic links."
-  [root]
-  (let [stat (fs/lstatSync root)]
-    (law/assert-source-root! {:path root
-                              :symbolic-link? (.isSymbolicLink stat)
-                              :directory? (.isDirectory stat)}))
-  (let [canonical-root (fs/realpathSync root)]
-    (walk-files-under canonical-root canonical-root)))
+(def walk-files
+  "Compatibility entry point for safe, sorted migration source discovery."
+  filesystem/walk-files)
 
 (defn- repository-root []
   (let [cwd (.cwd js/process)]

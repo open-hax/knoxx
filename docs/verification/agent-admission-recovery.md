@@ -133,3 +133,21 @@ remained after replacing the stale credential fixture. This result corresponds
 to the backend source committed in `0d73b98ea02f37b1e9757fba752f39bc821fd9ef`,
 with the same frozen eta-identity dependency override. Later memory/resource
 extractions and subsequent fixture edits require another full run.
+
+The sixth complete guarded run passed **1,823 tests / 8,257 assertions**, zero
+failures/errors, with actual process exit zero. Compilation covered 1,009 inputs
+(327 compiled), zero warnings, in 27.21 seconds. The frozen dependency override
+was eta identity initialization `fc3b6a09c6cd90ca200023cbc1fc54ec57a630a0`.
+All 842 backend CLJS/CLJC source file hashes were captured before compilation
+and remained unchanged when compilation finished; `test-ci` outputs were kept
+exclusive throughout native execution. No fatal-guard or Mongo-refusal output
+occurred. The snapshot includes the gateway, memory, resources, app and
+translation-test decompositions plus the source-scope repair. At capture, the
+application decomposition was not yet committed, so the recorded source hashes
+and dirty-state manifest are the provenance rather than the then-current Git
+head alone.
+
+The advertised backend lint command now reports **zero errors and 207 warnings**
+and exits nonzero. Removing giant-file errors does not satisfy the zero-warning
+gate. Further warning cleanup, later source fixes, final published dependency
+pins and end-to-end browser verification remain distinct acceptance work.

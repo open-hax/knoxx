@@ -115,3 +115,59 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   return (await response.json()) as T;
 }
+
+// Shared response decoding preserves explicit nulls and alias precedence.
+export type WireRecord = Record<string, unknown>;
+
+export function asRecord(value: unknown): WireRecord {
+  return value != null && typeof value === "object" && !Array.isArray(value) ? value as WireRecord : {};
+}
+
+export function valueAt(record: WireRecord, ...keys: string[]): unknown {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      return record[key];
+    }
+  }
+  return undefined;
+}
+
+export function stringValue(record: WireRecord, keys: string[], fallback = ""): string {
+  const value = valueAt(record, ...keys);
+  return typeof value === "string" ? value : fallback;
+}
+
+export function optionalStringValue(record: WireRecord, keys: string[]): string | undefined {
+  const value = valueAt(record, ...keys);
+  return typeof value === "string" ? value : undefined;
+}
+
+export function optionalNullableStringValue(record: WireRecord, keys: string[]): string | null | undefined {
+  const value = valueAt(record, ...keys);
+  if (value === null) return null;
+  return typeof value === "string" ? value : undefined;
+}
+
+export function optionalBooleanValue(record: WireRecord, keys: string[]): boolean | undefined {
+  const value = valueAt(record, ...keys);
+  return typeof value === "boolean" ? value : undefined;
+}
+
+export function optionalNumberValue(record: WireRecord, keys: string[]): number | undefined {
+  const value = valueAt(record, ...keys);
+  return typeof value === "number" ? value : undefined;
+}
+
+export function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+export function recordArrayValue(value: unknown): WireRecord[] {
+  return Array.isArray(value) ? value.map(asRecord) : [];
+}
+
+export function optionalRecordValue(record: WireRecord, keys: string[]): Record<string, unknown> | undefined {
+  const value = valueAt(record, ...keys);
+  const normalized = asRecord(value);
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}

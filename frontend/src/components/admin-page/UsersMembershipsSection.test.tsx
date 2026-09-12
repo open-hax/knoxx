@@ -3,6 +3,11 @@ import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {describe, expect, it, vi} from 'vitest';
 import {UsersMembershipsSection} from './UsersMembershipsSection';
 import type {UserFormState} from './types';
+import type {AdminCtx} from '../../pages/AdminLayout';
+import {AdminOrgsPage} from './OrganizationsSection';
+
+const {createAdminOrg} = vi.hoisted(() => ({createAdminOrg: vi.fn()}));
+vi.mock('../../lib/nextApi', () => ({createAdminOrg}));
 
 type Props = ComponentProps<typeof UsersMembershipsSection>;
 function mount(bound = true) {
@@ -47,5 +52,47 @@ describe('Axxium actor directory controls', () => {
     expect(screen.getByLabelText('New actor ID')).toBeDisabled();
     expect(screen.getByLabelText('New actor contact email')).toBeDisabled();
     expect(screen.getByRole('button', {name: 'Create actor in Research'})).toBeEnabled();
+  });
+});
+
+function orgContext(allowed = true) {
+  createAdminOrg.mockReset();
+  return {
+    context: null, orgs: [], selectedOrg: null, selectedOrgId: '',
+    orgForm: {name: ' Research ', slug: ' research ', kind: 'customer'},
+    creatingOrg: false, hasPermission: () => allowed,
+    setCreatingOrg: vi.fn(), setNotice: vi.fn(), setOrgForm: vi.fn(),
+    setSelectedOrgId: vi.fn(), refresh: vi.fn(async () => {}),
+  } as unknown as AdminCtx;
+}
+
+describe('Organization directory orchestration', () => {
+  it('submits the original normalized payload and selects the refreshed organization', async () => {
+    const ctx = orgContext();
+    createAdminOrg.mockResolvedValue({org: {id: 'org-new', name: 'Research'}});
+    render(<AdminOrgsPage ctx={ctx} />);
+    fireEvent.click(screen.getByRole('button', {name: 'Create org'}));
+    await waitFor(() => expect(ctx.setSelectedOrgId).toHaveBeenCalledWith('org-new'));
+    expect(createAdminOrg).toHaveBeenCalledWith({name: 'Research', slug: 'research', kind: 'customer'});
+    expect(ctx.refresh).toHaveBeenCalledTimes(1);
+    expect(ctx.setOrgForm).toHaveBeenCalledWith({name: '', slug: '', kind: 'customer'});
+    expect(ctx.setCreatingOrg).toHaveBeenLastCalledWith(false);
+  });
+
+  it('reports a failed creation without replacing the selection or refreshing', async () => {
+    const ctx = orgContext();
+    createAdminOrg.mockRejectedValue(new Error('directory unavailable'));
+    render(<AdminOrgsPage ctx={ctx} />);
+    fireEvent.click(screen.getByRole('button', {name: 'Create org'}));
+    await waitFor(() => expect(ctx.setNotice).toHaveBeenCalledWith({tone: 'error', text: 'directory unavailable'}));
+    expect(ctx.setCreatingOrg).toHaveBeenLastCalledWith(false);
+    expect(ctx.refresh).not.toHaveBeenCalled();
+    expect(ctx.setSelectedOrgId).not.toHaveBeenCalled();
+  });
+
+  it('does not expose organization creation without its capability', () => {
+    render(<AdminOrgsPage ctx={orgContext(false)} />);
+    expect(screen.queryByRole('button', {name: 'Create org'})).not.toBeInTheDocument();
+    expect(createAdminOrg).not.toHaveBeenCalled();
   });
 });

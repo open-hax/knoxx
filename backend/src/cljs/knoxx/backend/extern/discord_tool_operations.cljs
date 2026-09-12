@@ -81,26 +81,26 @@
       (if (<= (count remaining) chunk-size)
         (conj acc remaining)
         (let [slice (.lastIndexOf remaining "\n\n" chunk-size)
-              split-at (if (> slice (int (* chunk-size 0.5))) slice chunk-size)]
-          (recur (str/trim (subs remaining split-at))
-                 (conj acc (str/trim (subs remaining 0 split-at)))))))))
+              split-index (if (> slice (int (* chunk-size 0.5))) slice chunk-size)]
+          (recur (str/trim (subs remaining split-index))
+                 (conj acc (str/trim (subs remaining 0 split-index)))))))))
 
 (defn- post-discord-message-chunk!
-  [client channel-id reply-to file-list chunk state]
+  [client channel-id reply-to file-list text-chunk state]
   (discord-rest/create-channel-message-form!
    client
    channel-id
-   (xdiscord/message-form-data {:payload (messages/discord-message-payload chunk reply-to state)
+   (xdiscord/message-form-data {:payload (messages/discord-message-payload text-chunk reply-to state)
                                 :files file-list})))
 
 (defn ^:async post-discord-message-chunks!
   "Discord boundary operation: post-discord-message-chunks!."
   [client channel-id reply-to file-list chunks]
-  (loop [[chunk & remaining] (seq chunks)
+  (loop [[text-chunk & remaining] (seq chunks)
          state nil]
-    (if chunk
+    (if text-chunk
       (recur remaining
-             (await (post-discord-message-chunk! client channel-id reply-to file-list chunk state)))
+             (await (post-discord-message-chunk! client channel-id reply-to file-list text-chunk state)))
       state)))
 
 (defn ^:async discord-send-message!
@@ -151,12 +151,12 @@
 
 (defn ^:async discord-thread-create!
   "Create a thread in a channel or from a message."
-  [runtime channel-id message-id name auto-archive-duration]
+  [runtime channel-id message-id thread-name auto-archive-duration]
   (when (str/blank? channel-id)
     (throw (js/Error. "channel_id is required")))
-  (when (str/blank? name)
+  (when (str/blank? thread-name)
     (throw (js/Error. "name is required")))
-  (let [body {:name name
+  (let [body {:name thread-name
               :auto_archive_duration (or auto-archive-duration 1440)
               :type 11}
         client (await (discord-client! runtime))
@@ -164,7 +164,7 @@
     {:threadId (or (:id result) "")
      :channelId channel-id
      :messageId (or message-id "")
-     :name name
+     :name thread-name
      :created true}))
 
 (defn ^:async discord-list-guilds!

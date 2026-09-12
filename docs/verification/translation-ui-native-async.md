@@ -3,7 +3,7 @@
 Translation inventory and candidate-authority logic remain in `logic.cljs`;
 locale/status formatting, form projections and authored detail presentation now
 live in `presentation.cljs`. Compatibility exports preserve every existing
-caller. The split reduces the inventory module from 498 to 381 lines without
+caller. The split reduces the inventory module from 498 to fewer than 400 lines without
 changing candidate matching, review identity, immutable approval coordinates or
 the legacy/resource compatibility rules.
 

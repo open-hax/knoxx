@@ -1,6 +1,6 @@
 (ns knoxx.backend.extern.memory-routes-test
   "Memory routes through real Fastify with finite scoped provider responses."
-  (:require [cljs.test :refer [deftest is]]
+  (:require [cljs.test :as t]
             [knoxx.backend.extern.http-server :as server]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as planner]
@@ -17,6 +17,7 @@
     (throw (ex-info "Authentication required" {:status 401 :code "identity_required"}))))
 
 (def route-dependencies
+  "Finite provider and native HTTP adapters used by the route fixture."
   {:route! app-shapes/route!
    :json-response! http/json-response!
    :error-response! http/error-response!
@@ -25,7 +26,7 @@
    :fetch-openplanner-session-rows! (fn [_ _] (throw (ex-info "No rows were seeded" {})))
    :session-matches-page-actor-filter? (fn [_ _ _ _] true)})
 
-(deftest ^:async actual-session-route-refuses-anonymous-and-forwards-only-verified-tenant
+(t/deftest ^:async actual-session-route-refuses-anonymous-and-forwards-only-verified-tenant
   (let [app (server/create-app! {:request-logging? false})
         reads (atom [])
         active-reads (atom 0)
@@ -46,16 +47,16 @@
                                               :openplanner-org-id "ambient-org"}
                                        route-dependencies)
         (let [anonymous (await (.inject app #js {:method "GET" :url "/api/memory/sessions"}))]
-          (is (= 401 (.-statusCode anonymous)))
-          (is (empty? @reads)))
+          (t/is (= 401 (.-statusCode anonymous)))
+          (t/is (empty? @reads)))
         (let [response (await (.inject app #js {:method "GET"
                                                :url "/api/memory/sessions?org_id=other-org&limit=1"
                                                :headers #js {:x-test-session "verified"}}))
               payload (js->clj (.json response) :keywordize-keys true)]
-          (is (= 200 (.-statusCode response)))
-          (is (= [] (:rows payload)))
-          (is (= [{:org_id "request-org" :project "wiki" :limit 10 :offset 0}] @reads))
-          (is (= 1 @active-reads))))
+          (t/is (= 200 (.-statusCode response)))
+          (t/is (= [] (:rows payload)))
+          (t/is (= [{:org_id "request-org" :project "wiki" :limit 10 :offset 0}] @reads))
+          (t/is (= 1 @active-reads))))
       (finally
         (memory/clear-memory-sessions-cache!)
         (await (server/close! app))))))

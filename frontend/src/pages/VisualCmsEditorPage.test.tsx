@@ -1,3 +1,8 @@
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { syntaxHighlighting } from "@codemirror/language";
+import { monokai } from "@open-hax/uxx/tokens";
+import { ednLinter, monokaiHighlight, tryParseEdn, uxxEditorTheme } from "../lib/edn";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -125,5 +130,24 @@ describe("VisualCmsEditorPage", () => {
       expect(JSON.parse(String(putRequest?.init?.body)).content).toContain(':view-title "Edited Visual Draft"');
     });
     await waitFor(() => expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument());
+  });
+});
+
+describe("shared EDN editor services", () => {
+  it("retains bracket diagnostics while ignoring comments and string contents", () => {
+    expect(tryParseEdn('; ignored }\n{:text "a ]" :items [1 2]}')).toEqual({ ok: true });
+    expect(tryParseEdn('\n)')).toEqual({ ok: false, error: "Unexpected closing bracket", line: 2 });
+    expect(tryParseEdn('{:items [1]\n')).toEqual({ ok: false, error: "Unclosed bracket(s): depth 1", line: 2 });
+    expect(tryParseEdn('"draft')).toEqual({ ok: false, error: "Unclosed string", line: 1 });
+  });
+
+  it("composes the extracted lint and palette extensions with real CodeMirror state", () => {
+    const state = EditorState.create({
+      doc: viewContractEdn,
+      extensions: [ednLinter(), uxxEditorTheme(monokai), syntaxHighlighting(monokaiHighlight(monokai))],
+    });
+    expect(state.doc.toString()).toBe(viewContractEdn);
+    expect(state.facet(EditorView.darkTheme)).toBe(true);
+    expect(tryParseEdn(state.doc.toString())).toEqual({ ok: true });
   });
 });

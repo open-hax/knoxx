@@ -1,6 +1,6 @@
 (ns knoxx.backend.infra.wiki-admission-scope-test
   "The real Wiki command must retain acting membership at translation admission."
-  (:require [cljs.test :refer [deftest is]]
+  (:require [cljs.test :as test]
             [knoxx.backend.domain.source-review :as domain]
             [knoxx.backend.infra.publication-admission-hook :as admission]
             [knoxx.backend.infra.source-review :as review]
@@ -37,22 +37,22 @@
     (try {:result (await (commands/review! {:session-project-name "wiki"} ctx "docs/page" wire))}
          (catch :default error {:error (assoc (or (ex-data error) {}) :message (str error))}))))
 
-(deftest ^:async accepted-source-retains-verified-membership-without-changing-review-identity
+(test/deftest ^:async accepted-source-retains-verified-membership-without-changing-review-identity
   (doseq [membership [{:membership-id "member-a"} {:membershipId "member-a"}
                       {:membership {:id "member-a"}}]]
     (let [mutations (atom []) dispatches (atom [])
           result (await (attempt! (merge context membership) mutations dispatches))]
-      (is (nil? (:error result)))
-      (is (true? (get-in result [:result :review :accepted])))
-      (is (= [scope] @mutations))
-      (is (= [[{:org-id "org-a" :project "wiki" :membership-id "member-a"}
+      (test/is (nil? (:error result)))
+      (test/is (true? (get-in result [:result :review :accepted])))
+      (test/is (= [scope] @mutations))
+      (test/is (= [[{:org-id "org-a" :project "wiki" :membership-id "member-a"}
                {:document :docs/page}]] @dispatches)))))
 
-(deftest ^:async acceptance-without-membership-refuses-before-durable-review
+(test/deftest ^:async acceptance-without-membership-refuses-before-durable-review
   (doseq [membership [nil "" "   "]]
     (let [mutations (atom []) dispatches (atom [])
           result (await (attempt! (assoc context :membership-id membership) mutations dispatches))]
-      (is (= 403 (get-in result [:error :status])))
-      (is (= "wiki_membership_required" (get-in result [:error :code])))
-      (is (empty? @mutations))
-      (is (empty? @dispatches)))))
+      (test/is (= 403 (get-in result [:error :status])))
+      (test/is (= "wiki_membership_required" (get-in result [:error :code])))
+      (test/is (empty? @mutations))
+      (test/is (empty? @dispatches)))))

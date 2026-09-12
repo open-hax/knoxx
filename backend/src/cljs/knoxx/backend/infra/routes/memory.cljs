@@ -1,24 +1,24 @@
 (ns knoxx.backend.infra.routes.memory
   "Memory route registration and compatibility exports."
-  (:require-macros [knoxx.backend.macros :refer [defroute]])
+  (:require-macros [knoxx.backend.macros :as routes])
   (:require ["node:crypto" :as crypto]
             [clojure.string :as str]
             [knoxx.backend.domain.graph.expansion-policy :as expansion-policy]
             [knoxx.backend.domain.graph.policy-registry :as policy-registry]
-            [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
-            [knoxx.backend.domain.time :refer [now-iso]]
+            [knoxx.backend.domain.realtime :as realtime]
+            [knoxx.backend.domain.time :as time]
             [knoxx.backend.extern.memory-session-cache :as cache]
             [knoxx.backend.extern.memory-session-pages :as pages]
             [knoxx.backend.extern.memory-session-view :as view]
-            [knoxx.backend.infra.auth.authz :refer [ctx-permitted? system-admin? ensure-permission!]]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.core-memory :refer [session-visible? filter-authorized-memory-hits!]]
-            [knoxx.backend.infra.http :refer [http-error]]
-            [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search!]]
+            [knoxx.backend.infra.core-memory :as core-memory]
+            [knoxx.backend.infra.http :as http]
+            [knoxx.backend.infra.openplanner.memory :as planner-memory]
             [knoxx.backend.infra.openplanner.scope :as planner-scope]
-            [knoxx.backend.infra.stores.session-titles :refer [session-titles* session-title-backfill* normalize-session-title cache-session-title! start-session-title-backfill!]]
+            [knoxx.backend.infra.stores.session-titles :as titles]
             [knoxx.backend.shape.memory-sessions :as memory-shape]
-            [knoxx.backend.shape.parse :refer [parse-positive-int truthy-param?]]))
+            [knoxx.backend.shape.parse :as parse]))
 
 (def interactive-session-id?
   "Compatibility export for interactive-session-id?."
@@ -108,7 +108,8 @@
   [config]
   (openplanner-client/enabled? (openplanner-client/client config)))
 
-(defroute memory-sessions-route! [authorized-session-ids!
+(routes/defroute ^{:doc "Register the memory-sessions-route! HTTP handler."}
+  memory-sessions-route! [authorized-session-ids!
                                   fetch-openplanner-session-rows!
                                   session-matches-page-actor-filter?]
   "GET" "/api/memory/sessions"
@@ -133,32 +134,35 @@
         (error-response! reply err 502)
         nil))))
 
-(defroute memory-session-titles-status-route! []
+(routes/defroute ^{:doc "Register the memory-session-titles-status-route! HTTP handler."}
+  memory-session-titles-status-route! []
   "GET" "/api/memory/session-titles/status"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (json-response! reply 200 {:ok true
-                               :status @session-title-backfill*
-                               :cached_count (count @session-titles*)})))
+                               :status @titles/session-title-backfill*
+                               :cached_count (count @titles/session-titles*)})))
 
-(defroute memory-backfill-titles-route! [fetch-openplanner-session-rows!]
+(routes/defroute ^{:doc "Register the memory-backfill-titles-route! HTTP handler."}
+  memory-backfill-titles-route! [fetch-openplanner-session-rows!]
   "POST" "/api/memory/sessions/backfill-titles"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (try
       (let [body (or (aget request "body") (js/Object.))
-            limit (or (parse-positive-int (aget body "limit"))
-                      (parse-positive-int (aget request "query" "limit")))
-            force? (or (truthy-param? (aget body "force"))
-                       (truthy-param? (aget request "query" "force")))
-            status (await (start-session-title-backfill! runtime (planner-scope/scoped-config config ctx) {:force force? :limit limit} fetch-openplanner-session-rows!))]
+            limit (or (parse/parse-positive-int (aget body "limit"))
+                      (parse/parse-positive-int (aget request "query" "limit")))
+            force? (or (parse/truthy-param? (aget body "force"))
+                       (parse/truthy-param? (aget request "query" "force")))
+            status (await (titles/start-session-title-backfill! runtime (planner-scope/scoped-config config ctx) {:force force? :limit limit} fetch-openplanner-session-rows!))]
         (json-response! reply 202 {:ok true
                                    :status status
-                                   :cached_count (count @session-titles*)}))
+                                   :cached_count (count @titles/session-titles*)}))
       (catch :default err
         (error-response! reply err 502)))))
 
-(defroute memory-import-titles-route! []
+(routes/defroute ^{:doc "Register the memory-import-titles-route! HTTP handler."}
+  memory-import-titles-route! []
   "POST" "/api/memory/sessions/import-titles"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
@@ -174,26 +178,27 @@
                                                        (:title_model entry)
                                                        (:title-model entry)
                                                        (:model entry)))
-                                     normalized (normalize-session-title raw-title)]
+                                     normalized (titles/normalize-session-title raw-title)]
                                  (if (or (str/blank? session-id) (nil? normalized))
                                    total
                                    (do
-                                     (cache-session-title! runtime config session-id normalized (or title-model "retro:heuristic"))
+                                     (titles/cache-session-title! runtime config session-id normalized (or title-model "retro:heuristic"))
                                      (inc total)))))
                              0
                              titles)]
       (json-response! reply 200 {:ok true
                                  :updated updated
-                                 :cached_count (count @session-titles*)}))))
+                                 :cached_count (count @titles/session-titles*)}))))
 
-(defroute memory-session-by-id-route! [fetch-openplanner-session-rows!]
+(routes/defroute ^{:doc "Register the memory-session-by-id-route! HTTP handler."}
+  memory-session-by-id-route! [fetch-openplanner-session-rows!]
   "GET" "/api/memory/sessions/:sessionId"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (try
       (let [config (planner-scope/scoped-config config ctx)
             session-id (or (aget request "params" "sessionId") "")
-            requested-limit (parse-positive-int (aget request "query" "limit"))
+            requested-limit (parse/parse-positive-int (aget request "query" "limit"))
             preview-limit (when requested-limit
                             (:limit (expansion-policy/bounded-preview-params
                                      (policy-registry/get-policy)
@@ -201,18 +206,18 @@
         (if (str/blank? session-id)
           (json-response! reply 400 {:detail "sessionId is required"})
           (let [rows (await (fetch-openplanner-session-rows! config session-id))]
-            (if (session-visible? ctx rows)
+            (if (core-memory/session-visible? ctx rows)
               (json-response! reply 200 {:ok true
                                          :session session-id
                                          :rows (if preview-limit
                                                  (vec (take preview-limit rows))
                                                  rows)})
-              (error-response! reply (http-error 403 "memory_scope_denied" "Session is outside the current Knoxx scope"))))))
+              (error-response! reply (http/http-error 403 "memory_scope_denied" "Session is outside the current Knoxx scope"))))))
       (catch :default err
         (error-response! reply err 502)))))
 
 (defn- require-memory-read! [ctx]
-  (ensure-permission! ctx "agent.memory.read"))
+  (authz/ensure-permission! ctx "agent.memory.read"))
 
 (defn ^:async send-memory-search!
   "Memory session operation: send-memory-search!."
@@ -221,10 +226,10 @@
    session-matches-page-actor-filter?
    {:keys [query bounded-k session-id actor-id exclude-actor-ids]}]
   (let [config (planner-scope/scoped-config config ctx)
-        result (await (openplanner-memory-search! config {:query query
+        result (await (planner-memory/openplanner-memory-search! config {:query query
                                                           :k bounded-k
                                                           :session-id session-id}))
-        hits (await (filter-authorized-memory-hits! config ctx (:hits result)))
+        hits (await (core-memory/filter-authorized-memory-hits! config ctx (:hits result)))
         filtered-hits (await (pages/filter-search-hits-by-actor! config
                                                            fetch-openplanner-session-rows!
                                                            session-matches-page-actor-filter?
@@ -253,11 +258,12 @@
 (defn- ensure-memory-search-scope! [ctx session-id]
   (require-memory-read! ctx)
   (when (and (str/blank? (str session-id))
-             (not (ctx-permitted? ctx "agent.memory.cross_session"))
-             (not (system-admin? ctx)))
-    (throw (http-error 403 "memory_scope_denied" "Cross-session memory search is outside the current Knoxx scope"))))
+             (not (authz/ctx-permitted? ctx "agent.memory.cross_session"))
+             (not (authz/system-admin? ctx)))
+    (throw (http/http-error 403 "memory_scope_denied" "Cross-session memory search is outside the current Knoxx scope"))))
 
-(defroute memory-search-route! [fetch-openplanner-session-rows!
+(routes/defroute ^{:doc "Register the memory-search-route! HTTP handler."}
+  memory-search-route! [fetch-openplanner-session-rows!
                                 session-matches-page-actor-filter?]
   "POST" "/api/memory/search"
   (if-not (openplanner-ready? config)
@@ -273,11 +279,13 @@
       (catch :default err
         (error-response! reply err 502)))))
 
-(defroute lounge-messages-list-route! [lounge-messages*]
+(routes/defroute ^{:doc "Register the lounge-messages-list-route! HTTP handler."}
+  lounge-messages-list-route! [lounge-messages*]
   "GET" "/api/lounge/messages"
   (json-response! reply 200 {:messages @lounge-messages*}))
 
-(defroute lounge-messages-create-route! [lounge-messages*]
+(routes/defroute ^{:doc "Register the lounge-messages-create-route! HTTP handler."}
+  lounge-messages-create-route! [lounge-messages*]
   "POST" "/api/lounge/messages"
   (let [body (or (aget request "body") (js/Object.))
         session-id (str (or (aget body "session_id") ""))
@@ -287,12 +295,12 @@
       (str/blank? session-id) (json-response! reply 400 {:detail "session_id is required"})
       (str/blank? text) (json-response! reply 400 {:detail "text is required"})
       :else (let [msg {:id (str (.randomUUID crypto))
-                       :timestamp (now-iso)
+                       :timestamp (time/now-iso)
                        :session_id session-id
                        :alias (if (str/blank? alias) "anonymous" alias)
                        :text text}]
               (swap! lounge-messages* #(->> (conj (vec %) msg) (take-last 100) vec))
-              (broadcast-ws! "lounge" msg)
+              (realtime/broadcast-ws! "lounge" msg)
               (json-response! reply 200 {:ok true :message msg})))))
 
 (defn register-memory-routes!

@@ -42,3 +42,15 @@ selection operation with an explicitly disabled REST provider. The fresh
 combined memory/Discord run passed 16 tests / 53 assertions with the fatal guard,
 zero failures/errors, process exit zero and zero compiler warnings. The next
 complete run remains required for that test edit.
+# Explicit optional lint audit
+
+The follow-up audit enabled all seven optional rules required by `AGENTS.md`.
+It replaced referred globals with namespace aliases, sorted the facade imports,
+documented the expected catalog IDs and renamed shadowed local bindings. The SVG
+attachment binding still reads the original `:name` wire key. All source/test
+paths in this extraction now report zero errors/warnings under those rules.
+
+Fresh verification after these changes used the independent `:memory-proof`
+target: 312 inputs, nine compiled, zero warnings; the guarded native run passed
+16 tests / 53 assertions with actual process exit zero. This combined target
+includes the Discord native tool tests and the unchanged memory regression set.

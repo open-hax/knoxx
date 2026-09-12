@@ -19,7 +19,7 @@ function lint(body) {
   ${body})\n`);
     const result = spawnSync('clj-kondo', [
       '--config-dir', resolve(backend, '.clj-kondo'),
-      '--config', '{:output {:format :json}}', '--lint', fixture,
+      '--config', '{:output {:format :json} :linters {:shadowed-var {:level :warning}}}', '--lint', fixture,
     ], { cwd: backend, encoding: 'utf8', timeout: 30000 });
     assert.ifError(result.error);
     assert.equal(result.signal, null, result.stderr);
@@ -44,4 +44,11 @@ test('defroute still reports an actual local type mismatch', () => {
   assert.equal(findings.length, 1);
   assert.equal(findings[0].type, 'type-mismatch');
   assert.equal(findings[0].level, 'error');
+});
+
+test('defroute retains real local shadow checks while native await stays unbound', () => {
+  const findings = lint('(let [map (helper)] (await (helper map)))');
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].type, 'shadowed-var');
+  assert.match(findings[0].message, /cljs.core\/map/);
 });

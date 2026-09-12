@@ -69,10 +69,10 @@
 
 (defn changed!
   "Notify views to reload durable authority; hints never carry content or grant access."
-  [scope]
+  [change-scope]
   (doseq [listener (vals @listeners*)]
     (try
-      (listener (select-keys scope [:org-id :project :document]))
+      (listener (select-keys change-scope [:org-id :project :document]))
       (catch :default error
         (fastify/log-unclassified-failure! "wiki-change-listener" error)))))
 
@@ -106,10 +106,10 @@
   "Save source at the exact revision seen by the caller, preserving stale drafts."
   [config ctx document body]
   (ensure-command! ctx "wiki_save" "publication/write")
-  (let [scope (scope config ctx document)
-        result (await (authoring/save! config scope (actor ctx) (source-wire/decode-save body)
+  (let [review-scope (scope config ctx document)
+        result (await (authoring/save! config review-scope (actor ctx) (source-wire/decode-save body)
                                       (runtime/source-dependencies)))]
-    (changed! scope)
+    (changed! review-scope)
     (result-wire ctx result source-wire/result->wire)))
 
 (defn ^:async review!
@@ -119,17 +119,17 @@
         capability (if (contains? #{:accept :request-changes} (:action command))
                      "publication/review" "publication/write")
         _ (ensure-command! ctx "wiki_review" capability)
-        scope (scope config ctx document)
+        review-scope (scope config ctx document)
         admission-scope (when (= :accept (:action command))
                           (let [membership (authz/ctx-membership-id ctx)]
                             (when (or (not (string? membership)) (str/blank? membership))
                               (throw (ex-info "Source acceptance requires an authenticated membership"
                                               {:status 403 :code "wiki_membership_required"})))
-                            (assoc (select-keys scope [:org-id :project]) :membership-id membership)))
-        result (await (review/command! config scope (actor ctx) command (runtime/source-dependencies)))]
-    (changed! scope)
+                            (assoc (select-keys review-scope [:org-id :project]) :membership-id membership)))
+        result (await (review/command! config review-scope (actor ctx) command (runtime/source-dependencies)))]
+    (changed! review-scope)
     (when admission-scope
-      (await (admission/admit! admission-scope {:document (:document scope)})))
+      (await (admission/admit! admission-scope {:document (:document review-scope)})))
     (result-wire ctx result review-wire/result->wire)))
 
 (defn ^:async assist!

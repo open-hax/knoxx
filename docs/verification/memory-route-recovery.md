@@ -38,3 +38,16 @@ the fatal guard, zero failures/errors and process exit zero. Compilation covered
 with zero errors/warnings. The proof uses frozen eta-identity
 `e0cdf3585b15101c83ef01b7bc2901652b3b54dd` through local dependency overrides.
 The next complete backend run and production build remain separate gates.
+
+A subsequent audit explicitly enabled all seven optional lint rules from
+`AGENTS.md`. It replaced referred globals with namespace aliases, added route
+metadata documentation and renamed two shadowed arguments without changing
+their scope or behavior. The corrected shared defroute analysis hook models the
+actual async handler, eliminating false await-context findings while preserving
+real diagnostics. Scoped optional lint now has zero errors/warnings.
+
+The fresh `:memory-proof` build compiled 312 inputs with zero warnings. Its
+guarded Node run again passed 16 tests / 53 assertions with process exit zero.
+Reproduce the isolated proof with `clojure -M:cljs scripts/compile-memory-proof.clj`
+from `backend`, followed by the guard and `target/memory-proof/tests.cjs`.
+These fresh results use the same frozen eta overrides described above.

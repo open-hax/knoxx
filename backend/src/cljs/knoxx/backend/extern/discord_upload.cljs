@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.discord.rest-client :as discord-rest]
             [knoxx.backend.domain.media :as media]
-            [knoxx.backend.domain.text :refer [sanitize-svg-content]]
+            [knoxx.backend.domain.text :as text]
             [knoxx.backend.infra.svg-render :as svg-render]))
 
 (defn- infer-upload-filename
@@ -22,7 +22,7 @@
 (defn- svg-buffer->png-buffer!
 "Render an SVG buffer to PNG using headless Chromium. Returns a promise."
 [svg-buffer]
-(let [svg-str (sanitize-svg-content (.toString svg-buffer "utf8"))]
+(let [svg-str (text/sanitize-svg-content (.toString svg-buffer "utf8"))]
   (svg-render/svg->png svg-str {:width 600 :height 300})))
 
 (def svg-code-block-pattern
@@ -54,14 +54,14 @@
 (defn ^:async maybe-render-svg!
 "If the resolved attachment is an SVG, render it to PNG transparently.
    On render failure, returns original attachment."
-  [{:keys [name mimeType buffer] :as attachment}]
+  [{filename :name :keys [mimeType buffer] :as attachment}]
   (if (or (= mimeType "image/svg+xml")
-          (some-> name str/lower-case (str/ends-with? ".svg")))
+          (some-> filename str/lower-case (str/ends-with? ".svg")))
     (try
       (let [png-buf (await (svg-buffer->png-buffer! buffer))]
-        {:name (if (some-> name str/lower-case (str/ends-with? ".svg"))
-                 (str/replace name #"(?i)\.svg$" ".png")
-                 (str (or name "attachment") ".png"))
+        {:name (if (some-> filename str/lower-case (str/ends-with? ".svg"))
+                 (str/replace filename #"(?i)\.svg$" ".png")
+                 (str (or filename "attachment") ".png"))
          :mimeType "image/png"
          :buffer png-buf})
       (catch :default error
