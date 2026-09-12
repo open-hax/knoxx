@@ -5,21 +5,19 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
+import { snapshotBuildFiles, verifyBuildSnapshot } from './wiki-build-snapshot.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 async function hashBuilds(repo) {
-  const files = ['backend/dist/server.js', 'frontend/dist/index.html', 'frontend/dist/app.css',
+  const required = ['backend/dist/server.js', 'frontend/dist/index.html', 'frontend/dist/app.css',
     'frontend/dist/cljs/app.js', 'frontend/dist/bridge/knoxx-app-bridge.es.js',
     'frontend/dist/bridge/knoxx-frontend-bridge.es.js'];
-  const hashes = {};
-  for (const file of files) {
-    const bytes = await fs.readFile(path.join(repo, file));
-    assert(bytes.length, `Build output is empty: ${file}`);
-    hashes[file] = { sha256: digest(bytes), bytes: bytes.length };
-  }
-  return { sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(), files: hashes };
+  const snapshot = await snapshotBuildFiles(repo);
+  for (const file of required) assert(snapshot.files[file]?.bytes, `Build output is missing or empty: ${file}`);
+  return Object.freeze({ ...snapshot,
+    sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim() });
 }
 
 function logStream(stream, destination, secrets) {
@@ -186,7 +184,9 @@ export async function startServices(options) {
     await fs.writeFile(path.join(config.outputDir, 'service-builds.json'), `${JSON.stringify({ ...builds, baseUrl, backendUrl,
       generation: { model: generation.model, baseUrl: generation.baseUrl },
       embedding: { model: embedding.model, baseUrl: embedding.baseUrl, dimensions: embedding.dimensions } }, null, 2)}\n`);
-    return { baseUrl, backendUrl, modelUrl: generation.baseUrl, embeddingUrl: embedding.baseUrl, env, builds, stop };
+    const verifyBuilds = () => verifyBuildSnapshot(config.repo, builds);
+    await verifyBuilds();
+    return { baseUrl, backendUrl, modelUrl: generation.baseUrl, embeddingUrl: embedding.baseUrl, env, builds, verifyBuilds, stop };
   } catch (error) {
     try { await stop(); } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Startup and owned cleanup failed'); }
     throw error;
