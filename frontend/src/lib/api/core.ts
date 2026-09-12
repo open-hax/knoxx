@@ -1,4 +1,4 @@
-import type { KnoxxAuthIdentity } from "../types";
+import type { KnoxxAuthIdentity, ActorMailboxBox, ActorMailboxEntry, ActorMailboxListResponse, ToolCatalogResponse } from "../types";
 
 const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
 
@@ -170,4 +170,205 @@ export function optionalRecordValue(record: WireRecord, keys: string[]): Record<
   const value = valueAt(record, ...keys);
   const normalized = asRecord(value);
   return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+// Session-scoped proxy requests retain their distinct error and URL contract.
+const KNOXX_SESSION_KEY = 'knoxx_session_id';
+
+export class ProxyApiError extends Error {
+  status: number;
+  body: string;
+
+  constructor(status: number, body: string) {
+    super(body || `Proxy request failed: ${status}`);
+    this.status = status;
+    this.body = body;
+    this.name = 'ProxyApiError';
+  }
+}
+
+export function getKnoxxSessionId(): string {
+  if (typeof window === 'undefined') return '';
+  let current = sessionStorage.getItem(KNOXX_SESSION_KEY);
+  if (current) return current;
+  current = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  sessionStorage.setItem(KNOXX_SESSION_KEY, current);
+  return current;
+}
+
+export async function sessionRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = buildKnoxxAuthHeaders(init?.headers);
+  headers.set('x-knoxx-session-id', getKnoxxSessionId());
+  const res = await fetch(path, {
+    ...init,
+    headers,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ProxyApiError(res.status, text || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// Runtime wire decoders retain their established array and alias handling.
+export function isRuntimeRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+export function runtimeBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function runtimeRecord(value: unknown): Record<string, unknown> {
+  return isRuntimeRecord(value) ? value : {};
+}
+
+export function normalizeMailboxEntry(value: unknown): ActorMailboxEntry | null {
+  if (!isRuntimeRecord(value)) {
+    return null;
+  }
+
+  const id = asString(value.id);
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    kind: asString(value.kind) ?? "actor-message",
+    status: asString(value.status) ?? "pending",
+    source: runtimeRecord(value.source),
+    target: runtimeRecord(value.target),
+    delivery: runtimeRecord(value.delivery),
+    contentRef: runtimeRecord(value.contentRef),
+    metadata: runtimeRecord(value.metadata),
+    preview: asString(value.preview),
+    lastError: asString(value.lastError),
+    createdAt: asString(value.createdAt),
+    updatedAt: asString(value.updatedAt),
+    deliveredAt: asString(value.deliveredAt),
+    acknowledgedAt: asString(value.acknowledgedAt),
+    expiresAt: asString(value.expiresAt),
+  };
+}
+
+export function normalizeMailboxListResponse(value: unknown, fallbackBox: ActorMailboxBox): ActorMailboxListResponse {
+  const record = isRuntimeRecord(value) ? value : {};
+  const entries = Array.isArray(record.entries)
+    ? record.entries.map(normalizeMailboxEntry).filter((entry): entry is ActorMailboxEntry => entry !== null)
+    : [];
+
+  return {
+    ok: runtimeBoolean(record.ok) ?? true,
+    box: (asString(record.box) === "outbox" ? "outbox" : asString(record.box) === "inbox" ? "inbox" : fallbackBox),
+    actorId: asString(record.actorId),
+    durable: runtimeBoolean(record.durable) ?? runtimeBoolean(record.durable_),
+    entries,
+  };
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function normalizeToolDefinition(value: unknown, fallbackId?: string) {
+  if (!isRuntimeRecord(value)) {
+    return typeof fallbackId === "string"
+      ? {
+          id: fallbackId,
+          label: fallbackId,
+          description: "",
+          enabled: true,
+        }
+      : null;
+  }
+
+  const id = asString(value.id) ?? fallbackId;
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    label: asString(value.label) ?? id,
+    description: asString(value.description) ?? "",
+    enabled: runtimeBoolean(value.enabled) ?? true,
+  };
+}
+
+function normalizeToolDefinitions(value: unknown): ToolCatalogResponse["tools"] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => normalizeToolDefinition(entry))
+      .filter((entry): entry is ToolCatalogResponse["tools"][number] => entry !== null);
+  }
+
+  if (!isRuntimeRecord(value)) {
+    return [];
+  }
+
+  return Object.entries(value)
+    .map(([fallbackId, entry]) => normalizeToolDefinition(entry, fallbackId))
+    .filter((entry): entry is ToolCatalogResponse["tools"][number] => entry !== null);
+}
+
+export function normalizeToolCatalogResponse(value: unknown): ToolCatalogResponse {
+  const record = isRuntimeRecord(value) ? value : {};
+
+  return {
+    role: asString(record.role) ?? "",
+    actor_id: asString(record.actor_id) ?? asString(record.actorId) ?? null,
+    agent_id: asString(record.agent_id) ?? asString(record.agentId) ?? null,
+    agent_label: asString(record.agent_label) ?? asString(record.agentLabel) ?? null,
+    agent_trigger_kind: asString(record.agent_trigger_kind) ?? asString(record.agentTriggerKind) ?? null,
+    role_slugs: normalizeStringArray(record.role_slugs) ?? normalizeStringArray(record.roleSlugs),
+    capability_ids: normalizeStringArray(record.capability_ids) ?? normalizeStringArray(record.capabilityIds),
+    system_prompt: asString(record.system_prompt) ?? asString(record.systemPrompt) ?? null,
+    actor_system_prompt: asString(record.actor_system_prompt) ?? asString(record.actorSystemPrompt) ?? null,
+    agent_system_prompt: asString(record.agent_system_prompt) ?? asString(record.agentSystemPrompt) ?? null,
+    task_prompt: asString(record.task_prompt) ?? asString(record.taskPrompt) ?? null,
+    tools: normalizeToolDefinitions(record.tools),
+    email_enabled: runtimeBoolean(record.email_enabled) ?? runtimeBoolean(record.emailEnabled) ?? false,
+  };
+}
+
+export function normalizeConversationResponse(response: Record<string, unknown>) {
+  return {
+    answer: typeof response.answer === "string" ? response.answer : "",
+    run_id:
+      typeof response.run_id === "string"
+        ? response.run_id
+        : typeof response.runId === "string"
+          ? response.runId
+          : typeof response["run-id"] === "string"
+            ? response["run-id"]
+            : null,
+    conversation_id:
+      typeof response.conversation_id === "string"
+        ? response.conversation_id
+        : typeof response.conversationId === "string"
+          ? response.conversationId
+          : typeof response["conversation-id"] === "string"
+            ? response["conversation-id"]
+            : null,
+    session_id:
+      typeof response.session_id === "string"
+        ? response.session_id
+        : typeof response.sessionId === "string"
+          ? response.sessionId
+          : typeof response["session-id"] === "string"
+            ? response["session-id"]
+            : null,
+    model: typeof response.model === "string" ? response.model : null,
+  };
 }

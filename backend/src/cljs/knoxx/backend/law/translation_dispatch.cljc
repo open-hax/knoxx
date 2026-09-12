@@ -266,6 +266,8 @@
    ;; constructed record below requires one. The token distinguishes successive
    ;; attempts that intentionally reuse the same logical dispatch key.
    [:dispatch/attempt-id {:optional true} NonBlankString]
+   ;; Historical claims remain readable; only scoped claims can emit new agent work.
+   [:dispatch/membership-id {:optional true} NonBlankString]
    [:dispatch/outcome Outcome]
    [:dispatch/org-id NonBlankString]
    [:dispatch/project {:optional true} [:maybe NonBlankString]]
@@ -309,19 +311,8 @@
   [left right]
   (= (attempt-binding left) (attempt-binding right)))
 
-(defn dispatch-record
-  "Build a dispatch record for one new attempt. Pure: identity and time are
-   supplied, not sampled here.
-
-   `attempt-id` is mandatory for newly constructed records. The schema keeps it
-   optional solely so claims persisted before attempt-bound settlement remain
-   readable and recoverable during rollout."
-  [work context outcome at & {:keys [attempt-id batch-id detail recovery-reason]}]
-  (when-not (m/validate NonBlankString attempt-id)
-    (throw (ex-info "new translation dispatch records require an attempt id"
-                    {:dispatch/attempt-id attempt-id})))
-  (assert-record!
-   (cond-> {:dispatch/key (dispatch-key
+(defn- record-coordinates [work context outcome at attempt-id]
+  {:dispatch/key (dispatch-key
                            {:org-id (:dispatch/org-id context)
                             :project (:dispatch/project context)
                             :garden (:dispatch/garden context)
@@ -332,13 +323,29 @@
             :dispatch/attempt-id attempt-id
             :dispatch/outcome outcome
             :dispatch/org-id (:dispatch/org-id context)
+            :dispatch/membership-id (:dispatch/membership-id context)
             :dispatch/garden (wire-resource-id (:dispatch/garden context))
             :dispatch/document (:document work)
             :dispatch/document-wire-id (:dispatch/document-wire-id context)
             :dispatch/source-locale (:dispatch/source-locale context)
             :dispatch/locale (:locale work)
             :dispatch/revision (:revision work)
-            :dispatch/at at}
+            :dispatch/at at})
+
+(defn dispatch-record
+  "Build a dispatch record for one new attempt. Pure: identity and time are
+   supplied, not sampled here.
+
+   `attempt-id` is mandatory for newly constructed records. The schema keeps it
+   optional solely so claims persisted before attempt-bound settlement remain
+   readable and recoverable during rollout. New records always carry membership,
+   so record validation refuses missing membership before persistence."
+  [work context outcome at & {:keys [attempt-id batch-id detail recovery-reason]}]
+  (when-not (m/validate NonBlankString attempt-id)
+    (throw (ex-info "new translation dispatch records require an attempt id"
+                    {:dispatch/attempt-id attempt-id})))
+  (assert-record!
+   (cond-> (record-coordinates work context outcome at attempt-id)
      (some? (:dispatch/project context))
      (assoc :dispatch/project (:dispatch/project context))
 
@@ -413,8 +420,8 @@
   [value]
   (cond
     (string? value) (not-empty (str/trim value))
-    (map? value) (some (fn [key]
-                         (let [id (get value key)]
+    (map? value) (some (fn [field]
+                         (let [id (get value field)]
                            (when (string? id) (not-empty (str/trim id)))))
                        [:document_id :document_wire_id :document :id])
     :else nil))
@@ -765,11 +772,11 @@
   candidate set. It is merged only at this constructor boundary so worker and
   agent completions still mint the same receipt law rather than maintaining
   parallel evidence shapes."
-  ([record output-revision at]
-   (translation-receipt record output-revision at nil nil))
-  ([record output-revision at content-digest]
-   (translation-receipt record output-revision at content-digest nil))
-  ([record output-revision at content-digest split-evidence]
+  ([record produced-revision at]
+   (translation-receipt record produced-revision at nil nil))
+  ([record produced-revision at content-digest]
+   (translation-receipt record produced-revision at content-digest nil))
+  ([record produced-revision at content-digest split-evidence]
    (evidence/assert-receipt!
     (merge
      (cond->
@@ -779,7 +786,7 @@
        :translation/source-locale (:dispatch/source-locale record)
        :translation/locale (:dispatch/locale record)
        :translation/source-revision (:dispatch/revision record)
-       :translation/revision output-revision
+       :translation/revision produced-revision
        :translation/dispatch-key (:dispatch/key record)
        :translation/org-id (:dispatch/org-id record)
        :translation/project (:dispatch/project record)

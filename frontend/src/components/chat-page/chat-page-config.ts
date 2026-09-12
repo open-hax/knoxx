@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
-import { getAgentContractsCatalog, getFrontendConfig, getToolCatalog } from '../../lib/api';
-import type { ActorCatalogItem, AgentContractCatalogItem, ToolCatalogResponse } from '../../lib/types';
+import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
+import { getAgentContractsCatalog, getFrontendConfig, getToolCatalog, listProxxModels, proxxHealth } from '../../lib/api';
+import type { ActorCatalogItem, AgentContractCatalogItem, ProxxModelInfo, ToolCatalogResponse } from '../../lib/types';
 
 type UseChatPageConfigParams = {
   defaultRole: string;
@@ -82,4 +82,51 @@ export function useChatPageConfig({
         setConsoleLines((previous) => [...previous.slice(-400), `[tools] failed: ${(error as Error).message}`]);
       });
   }, [activeActorId, activeAgentId, activeRole, setConsoleLines, setToolCatalog]);
+}
+
+type SetState<T> = Dispatch<SetStateAction<T>>;
+
+type UseProxxStatusPollingParams = {
+  selectedModel: string;
+  setSelectedModel: SetState<string>;
+  setProxxReachable: SetState<boolean>;
+  setProxxConfigured: SetState<boolean>;
+  setProxxModels: SetState<ProxxModelInfo[]>;
+};
+
+export function useProxxStatusPolling({
+  selectedModel,
+  setSelectedModel,
+  setProxxReachable,
+  setProxxConfigured,
+  setProxxModels,
+}: UseProxxStatusPollingParams) {
+  useEffect(() => {
+    let timer: number | null = null;
+
+    const poll = async () => {
+      try {
+        const status = await proxxHealth();
+        setProxxReachable(Boolean(status.reachable));
+        setProxxConfigured(Boolean(status.configured));
+        const models = await listProxxModels();
+        setProxxModels(models);
+        if (!selectedModel) {
+          const preferred = models.find((model) => model.id === status.default_model);
+          setSelectedModel(preferred?.id ?? models[0]?.id ?? "");
+        }
+      } catch {
+        setProxxReachable(false);
+      }
+    };
+
+    void poll();
+    timer = window.setInterval(() => {
+      void poll();
+    }, 5000);
+
+    return () => {
+      if (timer !== null) window.clearInterval(timer);
+    };
+  }, [selectedModel, setProxxConfigured, setProxxModels, setProxxReachable, setSelectedModel]);
 }

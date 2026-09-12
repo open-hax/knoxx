@@ -354,3 +354,24 @@ export type EventAgentRuntimeResetResponse = EventAgentControlResponse & {
     preservedCronJobCount?: number;
   };
 };
+
+export type ActorProfileDraft = {
+  actorId: string;
+  displayName: string;
+  email: string;
+  status: string;
+};
+
+export type ActorCredentialDraft = {
+  kind: string;
+  accountIdentifier: string;
+  secretJson: Record<string, string>;
+};
+
+export type CredentialDescriptor = {
+  provider: string;
+  label: string;
+  kind: string;
+  accountPlaceholder: string;
+  fields: Array<{ key: string; label: string; secret?: boolean; placeholder?: string }>;
+};

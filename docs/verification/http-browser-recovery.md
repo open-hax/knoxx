@@ -225,3 +225,22 @@ The same browser run also exposed a separate translation-trigger failure:
 verified organization context disappeared before run-event projection and agent
 session hydration. It is being repaired with a real dispatch-to-run regression;
 source acceptance alone is not evidence that translation completed.
+
+## Retained content, policy and publication warning cleanup
+
+Two unused private text helpers were left behind after the text-delta extraction;
+repository search found only their definitions. They were removed. The retained
+EDN policy adapter no longer imports an unused Node filesystem promise module,
+and its public functions now document their actual boundaries. Named imports in
+the existing native content adapter and an unambiguous policy lookup argument
+clear the explicitly enabled optional lint findings without moving runtime policy
+or changing native data handling.
+
+Publication evidence still resolves a source selector exactly once and skips
+receipt lookups when it cannot resolve. The bounded private blocker calculation
+now consumes that concrete revision; public evidence and consumer APIs remain
+unchanged. The retained content, policy and publication tests pass **24 tests /
+91 assertions**, fatal async guard exit zero, compiler **214 inputs / 0 warnings**.
+All three changed source namespaces pass the seven optional lint rules with zero
+errors and warnings. This is scoped cleanup; the remaining whole-backend warning
+debt still needs its final gate.

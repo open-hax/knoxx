@@ -1,6 +1,6 @@
 import type { UIEvent } from "react";
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
-import type { MemorySessionSummary, RunDetail, RunEvent, ToolReceipt } from "../../lib/types";
+import type { MemorySearchHit, MemorySessionSummary, RunDetail, RunEvent, ToolReceipt } from "../../lib/types";
 import type { HydrationSource } from "./types";
 import { asMarkdownPreview, formatMaybeDate, truncateText } from "./utils";
 
@@ -187,14 +187,8 @@ export function RecentChatSessions({
   conversationId, onRefreshRecentSessions, onLoadMoreRecentSessions,
   onResumeMemorySession,
 }: RecentChatSessionsProps) {
-  const handleRecentSessionsScroll = (event: UIEvent<HTMLDivElement>) => {
-    if (!recentSessionsHasMore || loadingMoreRecentSessions || loadingRecentSessions) return;
-    const target = event.currentTarget;
-    const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
-    if (remaining <= 120) {
-      void onLoadMoreRecentSessions();
-    }
-  };
+  const handleRecentSessionsScroll = (event: UIEvent<HTMLDivElement>) => loadMoreSessionsOnScroll(event,
+    recentSessionsHasMore, loadingMoreRecentSessions, loadingRecentSessions, onLoadMoreRecentSessions);
 
   return (
     <Card variant="outlined" padding="sm" style={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -302,4 +296,42 @@ export function RecentChatSessions({
                       </div>
                     </Card>
   );
+}
+
+export function groupSessionSearchHits(sessionSearchHits: MemorySearchHit[] | undefined, recentSessions: MemorySessionSummary[] | undefined) {
+  const bySession = new Map<string, { session: string; snippet: string; hitCount: number; title?: string }>();
+  for (const hit of sessionSearchHits ?? []) {
+    const session = typeof hit.session === "string"
+      ? hit.session
+      : typeof hit.metadata?.session === "string"
+        ? hit.metadata.session
+        : "";
+    if (!session) continue;
+    const snippet = typeof hit.snippet === "string"
+      ? hit.snippet
+      : typeof hit.text === "string"
+        ? hit.text
+        : typeof hit.document === "string"
+          ? hit.document
+          : "";
+    const title = recentSessions?.find((item) => item.session === session)?.title ?? undefined;
+    const existing = bySession.get(session);
+    if (existing) {
+      existing.hitCount += 1;
+      if (!existing.snippet && snippet) existing.snippet = snippet;
+    } else {
+      bySession.set(session, { session, snippet, hitCount: 1, title });
+    }
+  }
+  return [...bySession.values()];
+}
+
+export function loadMoreSessionsOnScroll(
+  event: UIEvent<HTMLDivElement>, hasMore: boolean | undefined, loadingMore: boolean | undefined,
+  loading: boolean | undefined, loadMore: (() => void | Promise<void>) | undefined,
+) {
+  if (!hasMore || loadingMore || loading || !loadMore) return;
+  const target = event.currentTarget;
+  const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+  if (remaining <= 120) void loadMore();
 }

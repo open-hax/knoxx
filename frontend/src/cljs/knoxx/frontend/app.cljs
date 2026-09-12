@@ -19,6 +19,7 @@
             [knoxx.frontend.infra.navigation-guard :as navigation]
             [knoxx.frontend.pages.agents :as agents-page]
             [knoxx.frontend.pages.cms.view :as cms]
+            [knoxx.frontend.pages.contracts.page :as contracts-page]
             [knoxx.frontend.pages.events :as events-page]
             [knoxx.frontend.pages.gardens.view :as gardens-page]
             [knoxx.frontend.pages.mail.view :as mail-page]
@@ -106,7 +107,7 @@
    (hx/$ Route {:path (str routes/cms-editor-route "/*")
                :key "route-7" :element (hx/$ ProtectedSurface {:children (hx/$ cms/cms-page {:Markdown frontend/Markdown})})})
    (hx/$ Route {:path routes/contracts-route
-               :key "route-8" :element (hx/$ ProtectedSurface {:children (hx/$ app/ContractsPage)})})
+               :key "route-8" :element (hx/$ ProtectedSurface {:children (hx/$ contracts-page/ContractsPage)})})
    (hx/$ Route {:path routes/data-route
                :key "route-9" :element (hx/$ ProtectedSurface {:children (hx/$ app/DataPage)})})
    (hx/$ Route {:path (str routes/data-route "/:tab")

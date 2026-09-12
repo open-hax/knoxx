@@ -1,4 +1,4 @@
-import { request } from "./core";
+import { buildKnoxxAuthHeaders, request } from "./core";
 
 /**
  * Translation pipeline configuration, resolved from Knoxx resources.
@@ -170,4 +170,111 @@ export interface TranslationManifest {
   languages: Record<string, TranslationManifestLanguageStats>;
   labelers: Array<{ email: string; segments_labeled: number }>;
   export_sizes: Record<string, { rows: number; bytes_estimate: number }>;
+}
+
+export async function listTranslationSegments(params: {
+  project: string;
+  status?: TranslationStatus | "all";
+  target_lang?: string;
+  source_lang?: string;
+  domain?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<TranslationSegmentListResponse> {
+  const query = new URLSearchParams({ project: params.project });
+  if (params.status && params.status !== "all") query.set("status", params.status);
+  if (params.target_lang) query.set("target_lang", params.target_lang);
+  if (params.source_lang) query.set("source_lang", params.source_lang);
+  if (params.domain) query.set("domain", params.domain);
+  if (typeof params.limit === "number") query.set("limit", String(params.limit));
+  if (typeof params.offset === "number") query.set("offset", String(params.offset));
+  return request<TranslationSegmentListResponse>(`/api/translations/segments?${query.toString()}`);
+}
+
+export async function getTranslationSegment(segmentId: string): Promise<TranslationSegment> {
+  return request<TranslationSegment>(`/api/translations/segments/${encodeURIComponent(segmentId)}`);
+}
+
+export async function submitTranslationLabel(segmentId: string, payload: TranslationLabelPayload): Promise<{ ok: boolean; label_id: string; new_status: TranslationStatus }> {
+  return request<{ ok: boolean; label_id: string; new_status: TranslationStatus }>(`/api/translations/segments/${encodeURIComponent(segmentId)}/labels`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getTranslationManifest(project: string): Promise<TranslationManifest> {
+  return request<TranslationManifest>(`/api/translations/export/manifest?project=${encodeURIComponent(project)}`);
+}
+
+export async function getTranslationSftExport(params: {
+  project: string;
+  targetLang?: string;
+  includeCorrected?: boolean;
+}): Promise<string> {
+  const query = new URLSearchParams({ project: params.project });
+  if (params.targetLang) query.set("target_lang", params.targetLang);
+  if (typeof params.includeCorrected === "boolean") {
+    query.set("include_corrected", String(params.includeCorrected));
+  }
+  const res = await fetch(`/api/translations/export/sft?${query.toString()}`, {
+    headers: buildKnoxxAuthHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text() || `Failed to export SFT: ${res.status}`);
+  }
+  return res.text();
+}
+
+export async function listTranslationDocuments(params: {
+  project: string;
+  target_lang?: string;
+  source_lang?: string;
+  garden_id?: string;
+}): Promise<{ documents: TranslationDocumentSummary[]; total: number }> {
+  const query = new URLSearchParams({ project: params.project });
+  if (params.target_lang) query.set("target_lang", params.target_lang);
+  if (params.source_lang) query.set("source_lang", params.source_lang);
+  if (params.garden_id) query.set("garden_id", params.garden_id);
+  return request<{ documents: TranslationDocumentSummary[]; total: number }>(`/api/translations/documents?${query.toString()}`);
+}
+
+export async function getTranslationDocument(documentId: string, targetLang: string): Promise<TranslationDocumentDetail> {
+  return request<TranslationDocumentDetail>(`/api/translations/documents/${encodeURIComponent(documentId)}/${encodeURIComponent(targetLang)}`);
+}
+
+export async function reviewTranslationDocument(
+  documentId: string,
+  targetLang: string,
+  payload: TranslationDocumentReviewPayload,
+): Promise<{ ok: boolean; segments_reviewed: number; overall: string; overrides_applied: number }> {
+  return request<{ ok: boolean; segments_reviewed: number; overall: string; overrides_applied: number }>(
+    `/api/translations/documents/${encodeURIComponent(documentId)}/${encodeURIComponent(targetLang)}/review`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function listTranslationBatches(params?: {
+  status?: string;
+  garden_id?: string;
+  target_lang?: string;
+}): Promise<{ batches: TranslationBatchSummary[] }> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.garden_id) query.set("garden_id", params.garden_id);
+  if (params?.target_lang) query.set("target_lang", params.target_lang);
+  const qs = query.toString();
+  return request<{ batches: TranslationBatchSummary[] }>(`/api/translations/batches${qs ? `?${qs}` : ""}`);
+}
+
+export async function createTranslationBatch(payload: {
+  garden_id: string;
+  target_lang: string;
+  document_ids: string[];
+  source_lang?: string;
+  project?: string;
+}): Promise<{ ok: boolean; batch_id: string; status: string; document_ids: string[] }> {
+  return request<{ ok: boolean; batch_id: string; status: string; document_ids: string[] }>("/api/translations/batches", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

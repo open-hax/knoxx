@@ -3,13 +3,14 @@ export type DraftControl = EventAgentControlResponse["control"];
 export type JsonDrafts = Record<string, { sourceConfig: string; filters: string; toolPolicies: string }>;
 
 import type {
+  AdminActorCredentialSummary,
   AdminMembershipSummary,
   AdminPermissionDefinition,
   AdminRoleSummary,
   AdminToolPolicy,
   AdminUserSummary,
 } from '../../lib/types';
-import type { ToolDraftEffect } from './types';
+import type { ActorProfileDraft, ActorCredentialDraft, CredentialDescriptor, ToolDraftEffect } from './types';
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -203,4 +204,109 @@ export function parseEventControl(draft: DraftControl | null, jsonDrafts: JsonDr
       };
     }),
   };
+}
+
+export const CREDENTIAL_DESCRIPTORS: CredentialDescriptor[] = [
+  {
+    provider: 'bluesky',
+    label: 'Bluesky',
+    kind: 'app-password',
+    accountPlaceholder: 'handle.bsky.social',
+    fields: [
+      { key: 'identifier', label: 'Identifier / handle', placeholder: 'handle.bsky.social' },
+      { key: 'appPassword', label: 'App password', secret: true, placeholder: 'xxxx-xxxx-xxxx-xxxx' },
+    ],
+  },
+  {
+    provider: 'twitch',
+    label: 'Twitch',
+    kind: 'oauth-login',
+    accountPlaceholder: 'twitch username',
+    fields: [
+      { key: 'username', label: 'Username', placeholder: 'channel_or_login' },
+      { key: 'oauthToken', label: 'OAuth token', secret: true, placeholder: 'oauth:… or raw token' },
+    ],
+  },
+  {
+    provider: 'discord_bot',
+    label: 'Discord bot',
+    kind: 'bot-token',
+    accountPlaceholder: 'bot application/client id',
+    fields: [
+      { key: 'botToken', label: 'Bot token', secret: true, placeholder: 'Bot token' },
+      { key: 'applicationId', label: 'Application ID', placeholder: 'Discord application id' },
+      { key: 'publicKey', label: 'Public key', placeholder: 'Optional interactions public key' },
+    ],
+  },
+  {
+    provider: 'discord_oauth',
+    label: 'Discord OAuth login',
+    kind: 'oauth-login',
+    accountPlaceholder: 'discord user id or username',
+    fields: [
+      { key: 'clientId', label: 'Client ID', placeholder: 'OAuth client id' },
+      { key: 'clientSecret', label: 'Client secret', secret: true, placeholder: 'OAuth client secret' },
+      { key: 'accessToken', label: 'Access token', secret: true, placeholder: 'Optional current access token' },
+      { key: 'refreshToken', label: 'Refresh token', secret: true, placeholder: 'Optional refresh token' },
+    ],
+  },
+];
+
+export function credentialForProvider(credentials: AdminActorCredentialSummary[] | undefined, provider: string): AdminActorCredentialSummary | null {
+  return credentials?.find((credential) => credential.provider === provider) ?? null;
+}
+
+export function credentialKey(userId: string, provider: string): string {
+  return `${userId}:${provider}`;
+}
+
+export function draftProfileForUser(user: AdminUserSummary, selectedOrgId: string): ActorProfileDraft {
+  const membership = membershipForOrg(user, selectedOrgId);
+  return {
+    actorId: membership?.actorId ?? '',
+    displayName: user.displayName ?? '',
+    email: user.email ?? '',
+    status: user.status ?? 'active',
+  };
+}
+
+export function draftCredentialForDescriptor(
+  user: AdminUserSummary,
+  descriptor: CredentialDescriptor,
+): ActorCredentialDraft {
+  const current = credentialForProvider(user.credentials, descriptor.provider);
+  return {
+    kind: current?.kind || descriptor.kind,
+    accountIdentifier: current?.accountIdentifier || '',
+    secretJson: descriptor.fields.reduce<Record<string, string>>((acc, field) => {
+      acc[field.key] = current?.secretJson?.[field.key] || '';
+      return acc;
+    }, {}),
+  };
+}
+
+export function configuredFieldLabel(current: AdminActorCredentialSummary | null, fieldKey: string): string {
+  return current?.configuredFields.includes(fieldKey) ? 'configured' : 'not set';
+}
+
+export function actorSearchText(user: AdminUserSummary, selectedOrgId: string): string {
+  const membership = membershipForOrg(user, selectedOrgId);
+  return [
+    user.displayName,
+    user.email,
+    user.authProvider,
+    user.externalSubject,
+    user.status,
+    membership?.actorId,
+    membership?.status,
+    ...(membership?.roles.map((role) => `${role.slug} ${role.name}`) ?? []),
+    ...(membership?.toolPolicies.map((policy) => `${policy.toolId} ${policy.effect}`) ?? []),
+    ...(user.credentials?.flatMap((credential) => [
+      credential.provider,
+      credential.label,
+      credential.kind,
+      credential.accountIdentifier,
+      ...credential.configuredFields,
+    ]) ?? []),
+  ].filter(Boolean).join(' ').toLowerCase();
 }

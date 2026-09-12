@@ -2,101 +2,11 @@ import { FormEvent, KeyboardEvent, useState, useCallback, useRef, useEffect } fr
 import { Badge } from "@open-hax/uxx";
 import { MultimodalInput, type MultimodalAttachment } from "./chat-page/MultimodalInput";
 import { VoiceInputButton } from "./chat-page/VoiceInputButton";
-import { ConversationVoiceButton } from "./chat-page/ConversationVoiceButton";
+import { ConversationVoiceButton, VoiceLevelGauge } from "./chat-page/ConversationVoiceButton";
 import { SpeakAssistantButton } from "./chat-page/SpeakAssistantButton";
 import type { ContentPart } from "../lib/types";
-
-interface ChatComposerProps {
-  onSend: (text: string, contentParts?: ContentPart[]) => void;
-  isSending: boolean;
-  /** Enable multimodal file uploads (images, audio, video, documents) */
-  multimodalEnabled?: boolean;
-  voiceInputEnabled?: boolean;
-  liveControlEnabled?: boolean;
-  liveControlText?: string;
-  onLiveControlTextChange?: (value: string) => void;
-  queueingControl?: "steer" | "follow_up" | null;
-  onQueueLiveControl?: (kind: "steer" | "follow_up") => void | Promise<void>;
-  onVoiceSteer?: (text: string) => void | Promise<void>;
-  abortingTurn?: boolean;
-  onAbortTurn?: () => void | Promise<void>;
-  /** Latest assistant message content for the speak button */
-  latestAssistantContent?: string;
-  /** Auto-conversation voice toggle */
-  autoConversationEnabled?: boolean;
-  onToggleAutoConversation?: () => void;
-  ttsEnabled?: boolean;
-  ttsStatus?: string;
-  ttsError?: string | null;
-  /** Auto-recording is active (hands-free mic loop) */
-  autoRecording?: boolean;
-  /** Voice detection threshold for silence-based auto-stop */
-  voiceThreshold?: number;
-  onVoiceThresholdChange?: (value: number) => void;
-  /** Live audio level from the voice recorder analyser */
-  audioLevelRef?: React.MutableRefObject<number>;
-  /** Undo last turn */
-  onUndoMessages?: () => void | Promise<void>;
-  undoDisabled?: boolean;
-  /** Start a new chat */
-  onNewChat?: () => void;
-}
-
-/**
- * Convert MultimodalAttachment to ContentPart for API transmission
- */
-function attachmentToContentPart(attachment: MultimodalAttachment): Promise<ContentPart> {
-  return new Promise((resolve) => {
-    const type = attachment.type;
-    const base: Omit<ContentPart, "data" | "url"> = {
-      type,
-      mimeType: attachment.file.type,
-      filename: attachment.file.name,
-      size: attachment.file.size,
-    };
-
-    if (attachment.preview) {
-      // For images, use the data URL directly
-      if (type === "image" && attachment.preview.startsWith("data:")) {
-        resolve({ ...base, data: attachment.preview });
-        return;
-      }
-      // For audio/video, we have object URLs - need to convert to base64
-      if ((type === "audio" || type === "video") && attachment.preview.startsWith("blob:")) {
-        fetch(attachment.preview)
-          .then((res) => res.blob())
-          .then((blob) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              resolve({ ...base, data: reader.result as string });
-            };
-            reader.onerror = () => {
-              // Fallback to URL if base64 conversion fails
-              resolve({ ...base, url: attachment.preview });
-            };
-            reader.readAsDataURL(blob);
-          })
-          .catch(() => {
-            resolve({ ...base, url: attachment.preview });
-          });
-        return;
-      }
-      // Fallback
-      resolve({ ...base, url: attachment.preview });
-      return;
-    }
-
-    // No preview - read file as base64
-    const reader = new FileReader();
-    reader.onload = () => {
-      resolve({ ...base, data: reader.result as string });
-    };
-    reader.onerror = () => {
-      resolve({ ...base });
-    };
-    reader.readAsDataURL(attachment.file);
-  });
-}
+import type { ChatComposerProps } from "./chat-page/ChatWorkspacePane";
+import { attachmentToContentPart } from "../lib/mediaEmbeds";
 
 function GlyphButton({
   glyph,
@@ -119,118 +29,10 @@ function GlyphButton({
       title={title}
       onClick={onClick}
       disabled={disabled}
-      style={{
-        width: 28,
-        height: 28,
-        borderRadius: 6,
-        border: "1px solid var(--token-colors-border-default)",
-        background: active
-          ? "var(--token-colors-alpha-green-_20)"
-          : "var(--token-colors-button-ghost-bg)",
-        color: active
-          ? "var(--token-colors-accent-green)"
-          : "var(--token-colors-text-muted)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        fontSize: 14,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 0,
-        lineHeight: 1,
-        transition: "background-color 120ms, color 120ms, opacity 120ms",
-      }}
+      className={`knoxx-chat-glyph${active ? " knoxx-chat-glyph-active" : ""}`}
     >
       {glyph}
     </button>
-  );
-}
-
-function VoiceLevelGauge({
-  audioLevelRef,
-  threshold,
-  onThresholdChange,
-}: {
-  audioLevelRef: React.MutableRefObject<number>;
-  threshold: number;
-  onThresholdChange: (v: number) => void;
-}) {
-  const [level, setLevel] = useState(0);
-
-  useEffect(() => {
-    let raf: number;
-    const tick = () => {
-      setLevel(audioLevelRef.current);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [audioLevelRef]);
-
-  const maxLevel = 0.06;
-  const pct = Math.min(100, (level / maxLevel) * 100);
-  const thresholdPct = Math.min(100, (threshold / maxLevel) * 100);
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }} title={`Level: ${level.toFixed(4)} | Threshold: ${threshold.toFixed(3)}`}>
-      <div style={{
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: "var(--token-colors-accent-red)",
-        boxShadow: "0 0 6px var(--token-colors-accent-red)",
-      }} />
-      <div style={{ position: "relative", width: 72, height: 14 }}>
-        <div style={{
-          position: "absolute",
-          inset: 0,
-          background: "var(--token-colors-surface-input)",
-          borderRadius: 3,
-          overflow: "hidden",
-          border: "1px solid var(--token-colors-border-subtle)",
-        }}>
-          <div style={{
-            width: `${pct}%`,
-            height: "100%",
-            background: level > threshold
-              ? "var(--token-colors-accent-green)"
-              : "var(--token-colors-accent-yellow)",
-            transition: "width 40ms linear",
-          }} />
-          <div style={{
-            position: "absolute",
-            left: `${thresholdPct}%`,
-            top: 0,
-            bottom: 0,
-            width: 2,
-            background: "var(--token-colors-accent-red)",
-            transform: "translateX(-50%)",
-            opacity: 0.9,
-          }} />
-        </div>
-        <input
-          type="range"
-          min={0.001}
-          max={0.06}
-          step={0.001}
-          value={threshold}
-          onChange={(e) => onThresholdChange(parseFloat(e.target.value))}
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            opacity: 0,
-            cursor: "pointer",
-            margin: 0,
-            padding: 0,
-          }}
-        />
-      </div>
-      <span style={{ fontSize: 9, color: "var(--token-colors-text-muted)", minWidth: 28, fontVariantNumeric: "tabular-nums" }}>
-        {threshold.toFixed(3)}
-      </span>
-    </div>
   );
 }
 
@@ -324,18 +126,7 @@ function ChatComposer({
     <form onSubmit={handleSubmit}>
       {/* Attachment previews */}
       {attachments.length > 0 && !liveControlEnabled && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            marginBottom: 8,
-            padding: 8,
-            background: "var(--token-colors-background-elevated, #1a1a2e)",
-            borderRadius: 8,
-            border: "1px solid var(--token-colors-border-default, #333)",
-          }}
-        >
+        <div className="knoxx-chat-attachments">
           {attachments.map((att) => (
             <div
               key={att.id}
@@ -471,15 +262,7 @@ function ChatComposer({
       />
 
       {/* Bottom toolbar — ALL buttons */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          flexWrap: "wrap",
-          marginTop: 8,
-        }}
-      >
+      <div className="knoxx-chat-toolbar">
         {/* Left-side actions */}
         {!liveControlEnabled && multimodalEnabled && (
           <MultimodalInput

@@ -352,3 +352,17 @@ export type UseChatPageDerivedStateParams = {
   pendingAssistantId: string | null;
   conversationId: string | null;
 };
+
+export type ChatSessionSnapshot = {
+  sessionId?: string;
+  systemPrompt?: string;
+  selectedModel?: string;
+  selectedThinkingLevel?: string;
+  activeActorId?: string;
+  activeAgentId?: string;
+  conversationId?: string | null;
+  messages?: ChatMessage[];
+  latestRun?: RunDetail | null;
+  runtimeEvents?: RunEvent[];
+  isSending?: boolean;
+};

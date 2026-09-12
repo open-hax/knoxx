@@ -290,3 +290,33 @@ export interface GraphLabeledNode {
   node_id: string;
   event: any;
 }
+
+// Canonical graph layout and render payloads.
+export type LayoutNode = {
+  id: string;
+  kind: string;
+  label: string;
+  data?: Record<string, unknown>;
+};
+
+export type LayoutEdge = {
+  id: string;
+  source: string;
+  target: string;
+  kind: string;
+  data?: Record<string, unknown>;
+};
+
+export type LayoutSnapshot = {
+  nodes: LayoutNode[];
+  edges: LayoutEdge[];
+};
+
+export type RenderNodePayload = {
+  exportNode: GraphExportNode;
+  degree: number;
+};
+
+export type RenderEdgePayload = {
+  exportEdge: GraphExportEdge;
+};

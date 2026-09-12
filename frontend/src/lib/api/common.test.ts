@@ -1,11 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./core", () => ({
   buildKnoxxAuthHeaders: vi.fn(() => ({})),
   request: vi.fn(),
 }));
 
-import { getRun } from "./common";
+import { getRun, getTranslationDocument, getTranslationSftExport, listTranslationSegments, reviewTranslationDocument } from "./common";
 import { request } from "./core";
 
 describe("getRun", () => {
@@ -111,5 +111,35 @@ describe("getRun", () => {
         size: undefined,
       },
     ]);
+  });
+});
+
+
+afterEach(() => { vi.unstubAllGlobals(); });
+
+describe("translation API compatibility exports", () => {
+  it("encodes selectors without treating zero pagination or all status as missing", async () => {
+    await listTranslationSegments({ project: "wiki & notes", status: "all", target_lang: "pt-BR", limit: 0, offset: 0 });
+    expect(request).toHaveBeenLastCalledWith("/api/translations/segments?project=wiki+%26+notes&target_lang=pt-BR&limit=0&offset=0");
+    await getTranslationDocument("doc/one", "zh/Hant");
+    expect(request).toHaveBeenLastCalledWith("/api/translations/documents/doc%2Fone/zh%2FHant");
+    const payload = { overall: "approve" as const, segment_overrides: { "s/1": { overall: "needs_edit" as const, corrected_text: "Better" } } };
+    await reviewTranslationDocument("doc/one", "zh/Hant", payload);
+    expect(request).toHaveBeenLastCalledWith("/api/translations/documents/doc%2Fone/zh%2FHant/review", { method: "POST", body: JSON.stringify(payload) });
+  });
+
+  it("keeps the text export response and explicit false option", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("training row\n"));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getTranslationSftExport({ project: "wiki", includeCorrected: false })).resolves.toBe("training row\n");
+    expect(fetchMock).toHaveBeenCalledWith("/api/translations/export/sft?project=wiki&include_corrected=false", { headers: {} });
+  });
+
+  it("retains export failure bodies and status fallback", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response("Access denied", { status: 403 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 })));
+    await expect(getTranslationSftExport({ project: "wiki" })).rejects.toThrow("Access denied");
+    await expect(getTranslationSftExport({ project: "wiki" })).rejects.toThrow("Failed to export SFT: 503");
   });
 });

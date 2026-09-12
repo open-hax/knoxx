@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.routes.document-admission-settlement-test
   (:require [cljs.test :as test]
+            [knoxx.backend.extern.event-queue-fixture :as queue-fixture]
             [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.routes.document-admission :as admission]
             [knoxx.backend.infra.routes.document-admission-fixture :as fixture]))
@@ -185,6 +186,8 @@
                            [:results 0 :document/draft-generation-needed?])))))))
 
 (test/deftest ^:async re-admission-redelivers-a-transiently-rejected-draft-settlement
+  (await (queue-fixture/with-queue!
+          (^:async fn []
   (agent-runner/reset-event-turn-queue!)
   (agent-runner/reset-event-turn-settlers!)
   (let [doc (fixture/document :knoxx.docs/redeliver-draft
@@ -214,7 +217,7 @@
                              {} dependencies fixture/scope {:generate-drafts? true}))
         event-id (get-in first-result [:results 0 :index/event-id])
         run-id "draft-settlement-redelivery"]
-    (agent-runner/enqueue-event-turn!
+    (await (agent-runner/enqueue-event-turn!
      {:llmModel "test-model" :collection-name "test"}
      {:run-id run-id
       :conversation-id run-id
@@ -222,8 +225,8 @@
       :message "craft the draft"
       :agent-spec {:trigger-id "craft-post-from-indexed-document"
                    :event-id event-id}}
-     (fn [] (js/Promise.resolve {:ok true})))
-    (await (fixture/flush-promises!))
+     (fn [] (js/Promise.resolve {:ok true}))))
+    (await (queue-fixture/wait-idle!))
     (test/is (= 2 @checks)
         "the first terminal draft check rejected and remained cached")
     (test/is (= [event-id] @releases)
@@ -241,7 +244,7 @@
                                  [:results 0 :index/event-status])))))
 
     (test/testing "the redelivered owner is re-armed for the newly emitted turn"
-      (agent-runner/enqueue-event-turn!
+      (await (agent-runner/enqueue-event-turn!
        {:llmModel "test-model" :collection-name "test"}
        {:run-id (str run-id "-retry")
         :conversation-id (str run-id "-retry")
@@ -249,13 +252,15 @@
         :message "craft the retried draft"
         :agent-spec {:trigger-id "craft-post-from-indexed-document"
                      :event-id event-id}}
-       (fn [] (js/Promise.resolve {:ok true})))
-      (await (fixture/flush-promises!))
+       (fn [] (js/Promise.resolve {:ok true}))))
+      (await (queue-fixture/wait-idle!))
       (test/is (= [event-id event-id event-id] @releases)))
     (agent-runner/reset-event-turn-queue!)
-    (agent-runner/reset-event-turn-settlers!)))
+    (agent-runner/reset-event-turn-settlers!))))))
 
 (test/deftest ^:async repeatedly-rejected-draft-settlement-fails-admission
+  (await (queue-fixture/with-queue!
+          (^:async fn []
   (agent-runner/reset-event-turn-queue!)
   (agent-runner/reset-event-turn-settlers!)
   (let [doc (fixture/document :knoxx.docs/repeated-draft-redelivery
@@ -284,7 +289,7 @@
                              {} dependencies fixture/scope {:generate-drafts? true}))
         event-id (get-in first-result [:results 0 :index/event-id])
         run-id "draft-settlement-repeated-redelivery"]
-    (agent-runner/enqueue-event-turn!
+    (await (agent-runner/enqueue-event-turn!
      {:llmModel "test-model" :collection-name "test"}
      {:run-id run-id
       :conversation-id run-id
@@ -292,8 +297,8 @@
       :message "craft the draft"
       :agent-spec {:trigger-id "craft-post-from-indexed-document"
                    :event-id event-id}}
-     (fn [] (js/Promise.resolve {:ok true})))
-    (await (fixture/flush-promises!))
+     (fn [] (js/Promise.resolve {:ok true}))))
+    (await (queue-fixture/wait-idle!))
     (test/is (= [event-id] @releases)
         "the first rejected completion read releases its exact event")
 
@@ -318,4 +323,4 @@
         (test/is (= [event-id event-id event-id] @releases))
         (test/is (= [event-id event-id] @emitted))))
     (agent-runner/reset-event-turn-queue!)
-    (agent-runner/reset-event-turn-settlers!)))
+    (agent-runner/reset-event-turn-settlers!))))))

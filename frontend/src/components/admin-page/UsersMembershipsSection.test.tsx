@@ -10,21 +10,22 @@ const {createAdminOrg} = vi.hoisted(() => ({createAdminOrg: vi.fn()}));
 vi.mock('../../lib/nextApi', () => ({createAdminOrg}));
 
 type Props = ComponentProps<typeof UsersMembershipsSection>;
-function mount(bound = true) {
+function mount(bound = true, canUpdateUserPolicies = true) {
   const save = vi.fn(async () => {});
+  const saveCredential = vi.fn(async () => {});
   const user: Props['users'][number] = {id: 'user-1', email: bound ? 'member@wiki.test' : '', displayName: 'Research member',
     principalId: bound ? 'principal-1' : undefined, identityBound: bound, identityEnrollmentRequired: !bound, status: 'active',
     memberships: [{id: 'membership-1', orgId: 'org-1', actorId: bound ? 'principal-1' : 'directory-1', status: 'active', roles: [], toolPolicies: []}]};
   function Harness() {
     const [userForm, setUserForm] = useState<UserFormState>({actorId: '', email: '', displayName: '', axxiumPrincipalId: '', roleSlugs: []});
     return <UsersMembershipsSection selectedOrgId="org-1" selectedOrgName="Research" users={[user]} roles={[]} tools={[]}
-      canCreateUsers canUpdateMemberships canUpdateUserPolicies canUpdateGlobalStatus={false}
+      canCreateUsers canUpdateMemberships canUpdateUserPolicies={canUpdateUserPolicies} canUpdateGlobalStatus={false}
       userForm={userForm} setUserForm={setUserForm} membershipRoleDrafts={{}} setMembershipRoleDrafts={vi.fn()}
       membershipToolDrafts={{}} setMembershipToolDrafts={vi.fn()} creatingUser={false} savingMembershipId={null}
-      onCreateUser={vi.fn()} onSaveActorProfile={save} onSaveActorCredential={vi.fn()} onSaveMembershipRoles={vi.fn()} onSaveMembershipPolicies={vi.fn()} />;
+      onCreateUser={vi.fn()} onSaveActorProfile={save} onSaveActorCredential={saveCredential} onSaveMembershipRoles={vi.fn()} onSaveMembershipPolicies={vi.fn()} />;
   }
   render(<Harness />);
-  return {save};
+  return {save, saveCredential};
 }
 describe('Axxium actor directory controls', () => {
   it('protects bound identity and global status while allowing profile edits', async () => {
@@ -94,5 +95,45 @@ describe('Organization directory orchestration', () => {
     render(<AdminOrgsPage ctx={orgContext(false)} />);
     expect(screen.queryByRole('button', {name: 'Create org'})).not.toBeInTheDocument();
     expect(createAdminOrg).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('Actor credential editor ownership', () => {
+  it('sends the provider-specific draft without changing actor identity', async () => {
+    const {save, saveCredential} = mount();
+    fireEvent.click(screen.getByRole('button', {name: /Research member/}));
+    const password = screen.getByPlaceholderText('xxxx-xxxx-xxxx-xxxx');
+    expect(password).toHaveAttribute('type', 'password');
+    expect(password).toHaveValue('');
+    fireEvent.change(password, {target: {value: 'fixture-app-password'}});
+    const handles = screen.getAllByPlaceholderText('handle.bsky.social');
+    fireEvent.change(handles[0], {target: {value: 'reviewer.bsky.social'}});
+    fireEvent.change(handles[1], {target: {value: 'reviewer.bsky.social'}});
+    fireEvent.click(screen.getByRole('button', {name: 'Save Bluesky'}));
+    await waitFor(() => expect(saveCredential).toHaveBeenCalledWith('user-1', 'bluesky', {
+      kind: 'app-password', accountIdentifier: 'reviewer.bsky.social',
+      secretJson: {identifier: 'reviewer.bsky.social', appPassword: 'fixture-app-password'},
+    }));
+    expect(save).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Actor ID')).toHaveValue('principal-1');
+  });
+
+  it('hides credential writes without the user-policy capability', () => {
+    const {saveCredential} = mount(true, false);
+    fireEvent.click(screen.getByRole('button', {name: /Research member/}));
+    expect(screen.queryByRole('button', {name: 'Save Bluesky'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Save Discord bot'})).not.toBeInTheDocument();
+    expect(saveCredential).not.toHaveBeenCalled();
+  });
+
+  it('retains a credential draft while collapsing and expanding filtered actors', () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', {name: /Research member/}));
+    fireEvent.change(screen.getByPlaceholderText('Discord application id'), {target: {value: 'fixture-application'}});
+    fireEvent.click(screen.getByRole('button', {name: 'Collapse filtered'}));
+    expect(screen.queryByPlaceholderText('Discord application id')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', {name: 'Expand filtered'}));
+    expect(screen.getByPlaceholderText('Discord application id')).toHaveValue('fixture-application');
   });
 });

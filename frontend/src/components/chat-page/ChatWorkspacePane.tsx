@@ -1,5 +1,5 @@
 import { ChatMainPane } from "./ChatMainPane";
-import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, RunDetail, RunEvent, ToolCatalogResponse, ToolReceipt } from "../../lib/types";
+import type { AgentContractCatalogItem, ChatMessage, ContentPart, ProxxModelInfo, RunDetail, RunEvent, ToolCatalogResponse, ToolReceipt } from "../../lib/types";
 import type { HydrationSource } from "./types";
 import type { ChatWorkspaceController } from "./useChatWorkspaceController";
 
@@ -207,3 +207,39 @@ export type ChatMainPaneProps = {
   ttsEnabled?: boolean;
   ttsDefaultVoiceId?: string;
 };
+
+export interface ChatComposerProps {
+  onSend: (text: string, contentParts?: ContentPart[]) => void;
+  isSending: boolean;
+  /** Enable multimodal file uploads (images, audio, video, documents) */
+  multimodalEnabled?: boolean;
+  voiceInputEnabled?: boolean;
+  liveControlEnabled?: boolean;
+  liveControlText?: string;
+  onLiveControlTextChange?: (value: string) => void;
+  queueingControl?: "steer" | "follow_up" | null;
+  onQueueLiveControl?: (kind: "steer" | "follow_up") => void | Promise<void>;
+  onVoiceSteer?: (text: string) => void | Promise<void>;
+  abortingTurn?: boolean;
+  onAbortTurn?: () => void | Promise<void>;
+  /** Latest assistant message content for the speak button */
+  latestAssistantContent?: string;
+  /** Auto-conversation voice toggle */
+  autoConversationEnabled?: boolean;
+  onToggleAutoConversation?: () => void;
+  ttsEnabled?: boolean;
+  ttsStatus?: string;
+  ttsError?: string | null;
+  /** Auto-recording is active (hands-free mic loop) */
+  autoRecording?: boolean;
+  /** Voice detection threshold for silence-based auto-stop */
+  voiceThreshold?: number;
+  onVoiceThresholdChange?: (value: number) => void;
+  /** Live audio level from the voice recorder analyser */
+  audioLevelRef?: React.MutableRefObject<number>;
+  /** Undo last turn */
+  onUndoMessages?: () => void | Promise<void>;
+  undoDisabled?: boolean;
+  /** Start a new chat */
+  onNewChat?: () => void;
+}

@@ -1,32 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useResolvedTheme, tokens } from "@open-hax/uxx";
-import type { ThemePalette } from "@open-hax/uxx/tokens";
-
 import {
-  copyContract,
-  DEFAULT_CONTRACT_EDN,
-  EVENT_KIND_OPTIONS,
-  getContract,
-  listContracts,
-  MODEL_OPTIONS,
-  ROLE_OPTIONS,
-  saveContract,
-  SOURCE_KIND_OPTIONS,
-  THINKING_OPTIONS,
-  TRIGGER_KIND_OPTIONS,
-  validateContract,
-  type AgentContract,
-  type ContractListItem,
-  type ContractValidationResult,
+  copyContract, DEFAULT_CONTRACT_EDN, getContract, listContracts, mergeContractEntries,
+  saveContract, validateContract, type AgentContract, type ContractListItem,
+  type ContractSidebarEntry, type ContractValidationResult,
 } from "../lib/api/contracts";
-import { getEventAgentControl } from "../lib/api/admin";
-import type { EventAgentControlResponse, EventAgentJobControl, EventAgentRuntimeJob } from "../lib/api/admin";
-import { EdnEditor } from "../components/admin-page/EdnEditor";
-import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
+import { getEventAgentControl, type EventAgentControlResponse } from "../lib/api/admin";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
-import type { AgentSource, ContractsClass } from "../lib/types";
-
-// ── Chat sidebar persistence keys (namespaced to avoid CMS collisions) ───────
+import type { ContractsClass } from "../lib/types";
 
 const CHAT_SESSION_ID_KEY = "knoxx_contracts_session_id";
 const CHAT_SCRATCHPAD_KEY = "knoxx_contracts_scratchpad_state";
@@ -70,10 +51,6 @@ function useNarrowLayout(breakpointPx: number): boolean {
 type Notice = { tone: "success" | "error"; text: string } | null;
 type ValidationWithContract = ContractValidationResult & { contract?: AgentContract | null };
 
-function prettyJson(value: unknown): string {
-  return JSON.stringify(value ?? null, null, 2);
-}
-
 function normalizeId(value: string): string {
   return value.trim();
 }
@@ -81,26 +58,6 @@ function normalizeId(value: string): string {
 function parseContractIdFromEdn(ednText: string): string | null {
   const match = ednText.match(/:contract\/id\s+"?([^"\s}]+)"?/);
   return match?.[1] ?? null;
-}
-
-function parseKeywordVector(ednText: string, key: ":always" | ":maybe"): string[] {
-  const pattern = new RegExp(`:events[\\s\\S]*?${key}\\s+\\[([^\\]]*)\\]`, "m");
-  const match = ednText.match(pattern);
-  if (!match?.[1]) return [];
-  return match[1]
-    .split(/[\s,]+/g)
-    .map((token) => token.trim())
-    .filter(Boolean)
-    .map((token) => token.startsWith(":") ? token.slice(1) : token);
-}
-
-function setKeywordVector(ednText: string, key: ":always" | ":maybe", values: string[]): string {
-  const rendered = values.map((v) => (v.startsWith(":") ? v : `:${v}`)).join(" ");
-  const pattern = new RegExp(`(:events[\\s\\S]*?${key}\\s+\\[)([^\\]]*)(\\])`, "m");
-  if (pattern.test(ednText)) {
-    return ednText.replace(pattern, `$1${rendered}$3`);
-  }
-  return ednText;
 }
 
 function extractSimpleValue(ednText: string, key: string): string | null {
@@ -137,176 +94,14 @@ function keywordToken(value: string): string {
   return normalized ? `:${normalized}` : ":agent";
 }
 
-function extractAgentValue(ednText: string, agentKey: string): string | null {
-  const pattern = new RegExp(`(:agent[\\s\\S]{0,400}?:${agentKey}\\s+)([^\\s\\n\\r}]+)`, "m");
-  const match = ednText.match(pattern);
-  if (!match?.[2]) return null;
-  return match[2].trim();
-}
-
-function replaceAgentValue(ednText: string, agentKey: string, token: string): string {
-  const pattern = new RegExp(`(:agent[\\s\\S]{0,400}?:${agentKey}\\s+)([^\\s\\n\\r}]+)`, "m");
-  if (pattern.test(ednText)) {
-    return ednText.replace(pattern, `$1${token}`);
-  }
-  return ednText;
-}
-
-// ── Inline primitives (uxx-styled) ───────────────────────────────────────────
-
-function SearchableSelect({ value, onChange, options, disabled, label, placeholder }: {
-  value: string; onChange: (value: string) => void; options: readonly string[];
-  disabled?: boolean; label: string; placeholder?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const filtered = useMemo(
-    () => options.filter((o) => o.toLowerCase().includes(search.toLowerCase())),
-    [options, search],
-  );
-  const palette = useResolvedTheme().palette as ThemePalette;
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>{label}</div>
-      <div style={{ position: "relative" }}>
-        <input
-          value={open ? search : value}
-          onChange={(e) => { setSearch(e.target.value); if (!open) setOpen(true); }}
-          onFocus={() => { setOpen(true); setSearch(""); }}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          disabled={disabled}
-          style={{
-            width: "100%", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`,
-            background: palette.bg.darker, padding: "6px 10px", fontSize: tokens.fontSize.sm,
-            color: palette.fg.default, outline: "none",
-          }}
-          placeholder={placeholder ?? "Select…"}
-        />
-        {open && filtered.length > 0 ? (
-          <div style={{
-            position: "absolute", zIndex: 20, marginTop: 4, maxHeight: 180, width: "100%",
-            overflow: "auto", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`,
-            background: palette.bg.darker, padding: "4px 0",
-          }}>
-            {filtered.map((opt) => (
-              <button
-                key={opt} type="button"
-                onMouseDown={() => { onChange(opt); setOpen(false); setSearch(""); }}
-                style={{
-                  width: "100%", padding: "6px 10px", textAlign: "left", fontSize: tokens.fontSize.sm,
-                  color: opt === value ? palette.accent.cyan : palette.fg.default,
-                  background: opt === value ? "rgba(102, 217, 239, 0.1)" : "transparent",
-                  border: "none", cursor: "pointer",
-                }}
-              >
-                {opt}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    </label>
-  );
-}
-
-function TagInput({ label, value, onChange, suggestions, disabled }: {
-  label: string; value: string[]; onChange: (next: string[]) => void;
-  suggestions: readonly string[]; disabled?: boolean;
-}) {
-  const [draft, setDraft] = useState("");
-  const filtered = useMemo(
-    () => draft ? suggestions.filter((s) => s.toLowerCase().includes(draft.toLowerCase()) && !value.includes(s)) : [],
-    [draft, suggestions, value],
-  );
-  const palette = useResolvedTheme().palette as ThemePalette;
-  const add = useCallback((tag: string) => {
-    const trimmed = tag.trim();
-    if (!trimmed || value.includes(trimmed)) return;
-    onChange([...value, trimmed]);
-    setDraft("");
-  }, [onChange, value]);
-
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>{label}</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker, padding: 6 }}>
-        {value.map((tag) => (
-          <span key={tag} style={{ display: "inline-flex", alignItems: "center", gap: 4, borderRadius: tokens.radius.xs, border: `1px solid rgba(102, 217, 239, 0.3)`, background: "rgba(102, 217, 239, 0.1)", padding: "2px 8px", fontSize: tokens.fontSize.xs, color: palette.accent.cyan }}>
-            {tag}
-            <button type="button" onClick={() => onChange(value.filter((t) => t !== tag))} disabled={disabled} style={{ background: "none", border: "none", color: palette.accent.cyan, cursor: "pointer", padding: 0, fontSize: "14px", lineHeight: 1 }}>×</button>
-          </span>
-        ))}
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) { e.preventDefault(); add(draft); } if (e.key === "Backspace" && !draft && value.length > 0) onChange(value.slice(0, -1)); }}
-          disabled={disabled}
-          style={{ minWidth: 70, flex: 1, background: "transparent", fontSize: tokens.fontSize.sm, color: palette.fg.default, outline: "none", border: "none" }}
-          placeholder="Type + Enter…"
-        />
-      </div>
-      {filtered.length > 0 ? (
-        <div style={{ maxHeight: 120, overflow: "auto", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker, padding: "4px 0", fontSize: tokens.fontSize.xs }}>
-          {filtered.slice(0, 8).map((s) => (
-            <button key={s} type="button" onMouseDown={() => add(s)} style={{ width: "100%", padding: "4px 8px", textAlign: "left", color: palette.fg.default, background: "transparent", border: "none", cursor: "pointer" }}>{s}</button>
-          ))}
-        </div>
-      ) : null}
-    </label>
-  );
-}
-
-// ── Agent sidebar item ───────────────────────────────────────────────────────
-
-interface AgentSidebarEntry {
-  id: string;
-  contractClass: ContractsClass;
-  label: string;
-  title?: string;
-  version?: number;
-  status: "running" | "idle" | "disabled" | "error" | "unknown";
-  triggerKind: string;
-  sourceKind: string;
-  model?: string;
-  lastStatus?: string;
-  isContract: boolean;       // true if from contracts list
-  isRuntimeJob: boolean;     // true if from event-agent runtime
-  enabled: boolean;
-}
-
-function statusColor(status: AgentSidebarEntry["status"], palette: ThemePalette): string {
-  switch (status) {
-    case "running": return palette.accent.green;
-    case "idle": return palette.accent.cyan;
-    case "disabled": return palette.fg.muted;
-    case "error": return palette.accent.red;
-    default: return palette.fg.soft;
-  }
-}
-
-function statusDot(status: AgentSidebarEntry["status"]): string {
-  switch (status) {
-    case "running": return "●";
-    case "idle": return "◐";
-    case "disabled": return "○";
-    case "error": return "✕";
-    default: return "·";
-  }
-}
-
-// ── Main page ────────────────────────────────────────────────────────────────
-
-export default function ContractsPage() {
+export function useContractsController() {
   const resolvedTheme = useResolvedTheme();
-  const palette = resolvedTheme.palette as ThemePalette;
-  const themeColors = resolvedTheme.colors;
 
   // ── Agent library state ────────────────────────────────────────────────
-  const [agentEntries, setAgentEntries] = useState<AgentSidebarEntry[]>([]);
+  const [agentEntries, setAgentEntries] = useState<ContractSidebarEntry[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(true);
 
   // ── Contract editor state ──────────────────────────────────────────────
-  const [contracts, setContracts] = useState<ContractListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedContractClass, setSelectedContractClass] = useState<ContractsClass>("agents");
 
@@ -382,56 +177,7 @@ export default function ContractsPage() {
         getEventAgentControl().catch(() => null as EventAgentControlResponse | null),
       ]);
 
-      setContracts(contractsResult.contracts);
-
-      // Build merged entries
-      const runtimeJobs = agentControl?.runtime?.jobs ?? [];
-      const controlJobs = agentControl?.control?.jobs ?? [];
-
-      const entries: AgentSidebarEntry[] = [];
-
-      // From stored contracts
-      for (const c of contractsResult.contracts) {
-        const runtimeJob = c.contractClass === "agents" ? runtimeJobs.find((j) => j.id === c.id) : undefined;
-        const controlJob = c.contractClass === "agents" ? controlJobs.find((j) => j.id === c.id) : undefined;
-        const isRunning = runtimeJob?.running ?? false;
-        const isEnabled = controlJob?.enabled ?? c.enabled;
-
-        entries.push({
-          id: c.id,
-          contractClass: c.contractClass,
-          label: c.id,
-          title: c.title,
-          version: c.version,
-          status: isEnabled ? (isRunning ? "running" : "idle") : "disabled",
-          triggerKind: controlJob?.trigger?.kind ?? c.contractClass.slice(0, -1),
-          sourceKind: controlJob?.source?.kind ?? c.contractClass,
-          model: undefined,
-          lastStatus: runtimeJob?.lastStatus,
-          isContract: true,
-          isRuntimeJob: Boolean(runtimeJob),
-          enabled: isEnabled,
-        });
-      }
-
-      // Runtime-only jobs (only applicable to agents)
-      for (const j of runtimeJobs) {
-        if (entries.some((e) => e.id === j.id && e.contractClass === "agents")) continue;
-        entries.push({
-          id: j.id,
-          contractClass: "agents",
-          label: j.id,
-          status: j.running ? "running" : "idle",
-          triggerKind: "event",
-          sourceKind: "unknown",
-          lastStatus: j.lastStatus,
-          isContract: false,
-          isRuntimeJob: true,
-          enabled: true,
-        });
-      }
-
-      const dedupedEntries = Array.from(new Map(entries.map((entry) => [`${entry.contractClass}:${entry.id}`, entry] as const)).values());
+      const dedupedEntries = mergeContractEntries(contractsResult.contracts, agentControl);
       setAgentEntries(dedupedEntries);
 
       if (!selectedId && dedupedEntries.length > 0) {
@@ -497,7 +243,7 @@ export default function ContractsPage() {
 
   const filteredContracts = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    const groups = new Map<string, AgentSidebarEntry[]>();
+    const groups = new Map<string, ContractSidebarEntry[]>();
     for (const entry of agentEntries) {
       if (q && !entry.id.toLowerCase().includes(q)) continue;
       const folder = entry.contractClass;
@@ -569,630 +315,57 @@ export default function ContractsPage() {
   const contractKindValue = ednTokenToInputValue(extractSimpleValue(ednDraft, "contract/kind")) || selectedContractClass.slice(0, -1) || "agent";
   const contractVersionValue = ednTokenToInputValue(extractSimpleValue(ednDraft, "contract/version")) || "1";
   const enabledToken = extractSimpleValue(ednDraft, "enabled");
-  const triggerKindToken = extractSimpleValue(ednDraft, "trigger-kind") ?? ":event";
-  const sourceKindToken = extractSimpleValue(ednDraft, "source-kind") ?? ":discord";
-  const sourceModeToken = extractSimpleValue(ednDraft, "source-mode") ?? ":patrol";
-  const cadenceToken = extractSimpleValue(ednDraft, "cadence-min") ?? "5";
-  const roleToken = extractAgentValue(ednDraft, "role") ?? ":system_admin";
-  const modelToken = extractAgentValue(ednDraft, "model") ?? '"glm-5"';
-  const thinkingToken = extractAgentValue(ednDraft, "thinking") ?? ":off";
-  const eventsAlways = useMemo(() => parseKeywordVector(ednDraft, ":always"), [ednDraft]);
-  const eventsMaybe = useMemo(() => parseKeywordVector(ednDraft, ":maybe"), [ednDraft]);
-
-  const kindSuggestions = useMemo(() => EVENT_KIND_OPTIONS.map((k) => (k.startsWith(":") ? k.slice(1) : k)), []);
-
   // ── Selected agent entry ───────────────────────────────────────────────
 
   const selectedEntry = useMemo(() => agentEntries.find((e) => e.id === selectedId && e.contractClass === selectedContractClass) ?? null, [agentEntries, selectedContractClass, selectedId]);
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  const state = {
+    palette: resolvedTheme.palette, tokens, "agent-entries": agentEntries,
+    "loading-agents": loadingAgents, "selected-id": selectedId, "selected-class": selectedContractClass,
+    "edn-draft": ednDraft, "validation-errors": validationErrors, notice, error, saving, validating,
+    "copy-target": copyTarget, "show-copy": showCopy, "show-normalized": showNormalized,
+    "normalized-json": JSON.stringify(normalizedView ?? null, null, 2), "show-chat": showChat,
+    "is-narrow": isNarrow, "show-left-panel": showLeftPanel, "auto-focus": autoFocusContract,
+    "is-dirty": isDirty, "search-query": searchQuery, "collapsed-folders": Array.from(collapsedFolders),
+    "is-searching": isSearching, "filtered-contracts": filteredContracts, "selected-entry": selectedEntry,
+    "contract-id": contractIdValue, "contract-kind": contractKindValue,
+    "contract-version": contractVersionValue, "enabled": enabledToken !== "false",
+  };
+  const actions = {
+    "toggle-left-panel": toggleLeftPanel, "toggle-auto-focus": toggleAutoFocus,
+    "refresh": loadAgentLibrary, "validate": handleValidate, "save": handleSave, "copy": handleCopy,
+    "set-draft": setEdnDraft, "set-search": setSearchQuery, "toggle-folder": toggleFolder,
+    "set-copy-target": setCopyTarget, "toggle-copy": () => setShowCopy((value) => !value),
+    "toggle-normalized": () => setShowNormalized((value) => !value),
+    "toggle-chat": () => setShowChat((value) => !value),
+    "select-contract": (id: string, contractClass: ContractsClass) => {
+      setSelectedId(id); setSelectedContractClass(contractClass);
+      if (isNarrow) setShowLeftPanel(false);
+    },
+    "new-contract": () => {
+      setSelectedId(null); setSelectedContractClass("agents"); setEdnDraft(DEFAULT_CONTRACT_EDN);
+      setLastSavedEdn(null); if (isNarrow) setShowLeftPanel(false);
+    },
+    "update-field": (field: "id" | "kind" | "version" | "enabled", value: string | boolean) => {
+      const key = field === "enabled" ? field : `contract/${field}`;
+      const token = field === "id" ? stringToken(String(value)) : field === "kind" ? keywordToken(String(value))
+        : field === "version" ? String(Math.max(1, Number(value || 1))) : value ? "true" : "false";
+      setEdnDraft((current) => replaceSimpleValue(current, key, token));
+    },
+    "open-source": (path: string) => {
+      if (autoFocusContract) {
+        const id = path.split("/").pop() ?? path;
+        if (id) { setSelectedId(id); setSelectedContractClass("agents"); }
+      }
+    },
+  };
+  return { state, actions, chat };
+}
 
-  return (
-    <div
-      style={{
-        display: "flex",
-        flex: "1 1 0%",
-        minHeight: 0,
-        minWidth: 0,
-        flexDirection: "column",
-        background: palette.bg.default,
-        color: palette.fg.default,
-      }}
-    >
-      <div style={{ display: "flex", flex: "1 1 0%", minHeight: 0, minWidth: 0, overflow: "hidden", position: "relative" }}>
-        {isNarrow && showLeftPanel ? (
-          <button
-            type="button"
-            aria-label="Close contracts panel"
-            onClick={toggleLeftPanel}
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 14,
-              border: "none",
-              background: "rgba(0, 0, 0, 0.45)",
-              padding: 0,
-              cursor: "pointer",
-            }}
-          />
-        ) : null}
-        {/* ── Left consolidated panel (contracts + metadata) ───────────── */}
-        {showLeftPanel ? (
-          <div style={{
-            width: isNarrow ? "min(88vw, 360px)" : 360,
-            minWidth: isNarrow ? "min(88vw, 320px)" : 300,
-            maxWidth: isNarrow ? "calc(100vw - 40px)" : undefined,
-            borderRight: `1px solid ${palette.fg.subtle}`,
-            display: "flex",
-            flexDirection: "column",
-            background: palette.bg.darker,
-            overflow: "hidden",
-            position: isNarrow ? "absolute" : "relative",
-            inset: isNarrow ? "0 auto 0 0" : undefined,
-            zIndex: isNarrow ? 15 : undefined,
-            boxShadow: isNarrow ? "0 12px 36px rgba(0, 0, 0, 0.45)" : undefined,
-          }}>
-        {/* Sidebar header */}
-        <div style={{
-          padding: "16px 16px 12px",
-          borderBottom: `1px solid ${palette.fg.subtle}`,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-        }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: tokens.fontSize.lg, fontWeight: 600, color: palette.fg.default }}>Contracts</div>
-             <div style={{ fontSize: tokens.fontSize.xs, color: palette.fg.muted, marginTop: 4 }}>
-               {agentEntries.length} contract{agentEntries.length !== 1 ? "s" : ""} · {new Set(agentEntries.map(e => e.contractClass)).size} class{new Set(agentEntries.map(e => e.contractClass)).size !== 1 ? "es" : ""}
-             </div>
-          </div>
-          <button
-            type="button"
-            onClick={toggleLeftPanel}
-            style={{
-              padding: "4px 10px",
-              borderRadius: tokens.radius.sm,
-              border: `1px solid ${palette.fg.subtle}`,
-              background: palette.bg.default,
-              color: palette.fg.soft,
-              fontSize: tokens.fontSize.xs,
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-          >
-            Hide
-          </button>
-        </div>
-
-         {/* Panel body */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "10px 10px 12px" }}>
-          {/* Search input */}
-          <div style={{ marginBottom: 12 }}>
-            <input
-              value={searchQuery}
-               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search contracts..."
-              style={{
-                width: "100%",
-                padding: "8px 10px",
-                borderRadius: tokens.radius.md,
-                border: `1px solid ${palette.fg.subtle}`,
-                background: palette.bg.default,
-                color: palette.fg.default,
-                fontSize: tokens.fontSize.sm,
-                outline: "none",
-              }}
-            />
-          </div>
-
-          {loadingAgents ? (
-            <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>Loading agents…</div>
-          ) : filteredContracts.length === 0 ? (
-            <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>No contracts found.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {filteredContracts.map(([folder, items]) => {
-                const isCollapsed = collapsedFolders.has(folder);
-                const showItems = isSearching || !isCollapsed;
-
-                return (
-                  <div key={folder}>
-                    {/* Folder header */}
-                    <button
-                      type="button"
-                      onClick={() => !isSearching && toggleFolder(folder)}
-                      disabled={isSearching}
-                      style={{
-                        width: "100%",
-                        padding: "8px 10px",
-                        textAlign: "left",
-                        borderRadius: tokens.radius.sm,
-                        border: "none",
-                        background: "rgba(255,255,255,0.03)",
-                        color: palette.fg.muted,
-                        fontSize: tokens.fontSize.xs,
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        cursor: isSearching ? "default" : "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <span style={{ transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
-                        {isSearching ? "▸" : (isCollapsed ? "▸" : "▾")}
-                      </span>
-                      {folder} ({items.length})
-                    </button>
-
-                    {/* Folder items */}
-                    {showItems && items.map((entry) => {
-                      const isSelected = entry.id === selectedId && entry.contractClass === selectedContractClass;
-                      return (
-                        <button
-                          key={`${entry.contractClass}:${entry.id}`}
-                          type="button"
-                          onClick={() => {
-                            setSelectedId(entry.id);
-                            setSelectedContractClass(entry.contractClass);
-                            if (isNarrow) setShowLeftPanel(false);
-                          }}
-                          style={{
-                            width: "100%", padding: "10px 12px", textAlign: "left",
-                            borderRadius: tokens.radius.md,
-                            border: `1px solid ${isSelected ? palette.accent.cyan : "transparent"}`,
-                            background: isSelected ? "rgba(102, 217, 239, 0.08)" : "transparent",
-                            cursor: "pointer", transition: "background 0.1s, border-color 0.1s",
-                            marginLeft: 8,
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)";
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent";
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                              <span style={{
-                                fontSize: tokens.fontSize.sm, fontWeight: 500,
-                                color: isSelected ? palette.accent.cyan : palette.fg.default,
-                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                              }}>
-                                {entry.title ?? entry.id}
-                              </span>
-                            </div>
-                            <span style={{
-                              fontSize: tokens.fontSize.xs, padding: "1px 6px",
-                              borderRadius: tokens.radius.xs,
-                              background: entry.enabled ? "rgba(166, 226, 46, 0.1)" : "rgba(117, 113, 94, 0.15)",
-                              color: entry.enabled ? palette.accent.green : palette.fg.muted,
-                            }}>
-                              {entry.enabled ? "on" : "off"}
-                            </span>
-                          </div>
-                          <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
-                            <span>{entry.contractClass}</span>
-                            <span>·</span>
-                            <span>{entry.version != null ? `v${entry.version}` : "runtime"}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-
-              {/* New contract button */}
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedId(null);
-                  setSelectedContractClass("agents");
-                  setEdnDraft(DEFAULT_CONTRACT_EDN);
-                  setLastSavedEdn(null);
-                  if (isNarrow) setShowLeftPanel(false);
-                }}
-                style={{
-                  width: "100%", padding: "10px 12px", textAlign: "center",
-                  borderRadius: tokens.radius.md,
-                  border: `1px dashed ${palette.fg.subtle}`,
-                  background: "transparent", cursor: "pointer",
-                  fontSize: tokens.fontSize.sm, color: palette.fg.muted,
-                  marginTop: 8,
-                }}
-              >
-                + New contract
-              </button>
-            </div>
-          )}
-        </div>
-          </div>
-        ) : !isNarrow ? (
-          <div
-            style={{
-              width: 38,
-              borderRight: `1px solid ${palette.fg.subtle}`,
-              background: palette.bg.darker,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <button
-              type="button"
-              onClick={toggleLeftPanel}
-              style={{
-                writingMode: "vertical-rl",
-                transform: "rotate(180deg)",
-                padding: "10px 6px",
-                borderRadius: tokens.radius.sm,
-                border: `1px solid ${palette.fg.subtle}`,
-                background: palette.bg.default,
-                color: palette.fg.soft,
-                fontSize: tokens.fontSize.xs,
-                cursor: "pointer",
-              }}
-            >
-              Show
-            </button>
-          </div>
-        ) : null}
-
-        {/* ── Main content ────────────────────────────────────────────── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
-        {/* Header bar */}
-        <div style={{
-          padding: isNarrow ? "12px 14px" : "12px 20px",
-          borderBottom: `1px solid ${palette.fg.subtle}`,
-          display: "flex",
-          alignItems: isNarrow ? "flex-start" : "center",
-          justifyContent: "space-between",
-          gap: 16,
-          flexDirection: isNarrow ? "column" : "row",
-          background: palette.bg.darker,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-            {selectedEntry ? (
-              <>
-                <span style={{ color: statusColor(selectedEntry.status, palette), fontSize: 14 }}>{statusDot(selectedEntry.status)}</span>
-                <span style={{ fontSize: tokens.fontSize.base, fontWeight: 600, color: palette.fg.default }}>{selectedEntry.label}</span>
-                <span style={{ fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
-                  {selectedEntry.contractClass} · {selectedEntry.triggerKind} · {selectedEntry.sourceKind}
-                </span>
-              </>
-            ) : (
-              <span style={{ fontSize: tokens.fontSize.base, fontWeight: 600, color: palette.fg.default }}>New contract</span>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", width: isNarrow ? "100%" : undefined }}>
-            <button type="button" onClick={toggleLeftPanel}
-              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${showLeftPanel ? palette.accent.cyan : palette.fg.subtle}`, background: showLeftPanel ? "rgba(102, 217, 239, 0.08)" : palette.bg.default, color: showLeftPanel ? palette.accent.cyan : palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
-              {showLeftPanel ? "✕ Left" : "☰ Left"}
-            </button>
-            <button type="button" onClick={() => void loadAgentLibrary()} disabled={loadingAgents}
-              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
-              {loadingAgents ? "Loading…" : "Refresh"}
-            </button>
-            <button type="button" onClick={() => void handleValidate()} disabled={validating}
-              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.accent.green}`, background: "rgba(166, 226, 46, 0.08)", color: palette.accent.green, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
-              {validating ? "Validating…" : "✓ Validate"}
-            </button>
-            <button type="button" onClick={() => void handleSave()} disabled={saving || !isDirty}
-              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: "none", background: palette.accent.cyan, color: palette.bg.default, fontSize: tokens.fontSize.xs, fontWeight: 600, cursor: "pointer", opacity: (saving || !isDirty) ? 0.5 : 1 }}>
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button type="button" onClick={() => setShowCopy((v) => !v)} disabled={!selectedId}
-              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
-              Clone
-            </button>
-            <button type="button" onClick={() => setShowNormalized((v) => !v)}
-              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
-              {showNormalized ? "Hide JSON" : "Show JSON"}
-            </button>
-            <button type="button" onClick={() => setShowChat((v) => !v)}
-              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${showChat ? palette.accent.cyan : palette.fg.subtle}`, background: showChat ? "rgba(102, 217, 239, 0.08)" : palette.bg.default, color: showChat ? palette.accent.cyan : palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
-              {showChat ? "✕ Chat" : "💬 Chat"}
-            </button>
-          </div>
-        </div>
-
-        {/* Copy row */}
-        {showCopy ? (
-          <div style={{ padding: "8px 20px", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker }}>
-            <span style={{ fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>New ID</span>
-            <input
-              value={copyTarget}
-              onChange={(e) => setCopyTarget(e.target.value)}
-              placeholder="new-contract-id"
-              style={{ flex: 1, padding: "4px 10px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
-            />
-            <button type="button" onClick={() => void handleCopy()} disabled={!copyTarget.trim()}
-              style={{ padding: "4px 12px", borderRadius: tokens.radius.sm, border: "none", background: palette.accent.cyan, color: palette.bg.default, fontSize: tokens.fontSize.xs, fontWeight: 600, cursor: "pointer" }}>
-              Clone
-            </button>
-          </div>
-        ) : null}
-
-        {/* Contract identity form */}
-        <div style={{ flexShrink: 0, padding: isNarrow ? "10px 14px" : "12px 20px", borderBottom: `1px solid ${palette.fg.subtle}`, background: palette.bg.default }}>
-          <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "minmax(180px, 1.2fr) minmax(120px, 0.7fr) minmax(100px, 0.45fr) auto", gap: 10, alignItems: "end" }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Contract identity</div>
-              <input
-                value={contractIdValue}
-                onChange={(event) => setEdnDraft((current) => replaceSimpleValue(current, "contract/id", stringToken(event.target.value)))}
-                disabled={saving}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
-              />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Kind</div>
-              <select
-                value={contractKindValue}
-                onChange={(event) => setEdnDraft((current) => replaceSimpleValue(current, "contract/kind", keywordToken(event.target.value)))}
-                disabled={saving}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
-              >
-                {["agent", "policy", "fulfillment", "tool-call", "trigger"].map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-              </select>
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Version</div>
-              <input
-                type="number"
-                min={1}
-                value={contractVersionValue}
-                onChange={(event) => setEdnDraft((current) => replaceSimpleValue(current, "contract/version", String(Math.max(1, Number(event.target.value || 1)))))}
-                disabled={saving}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
-              />
-            </label>
-
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 34, padding: "0 4px", fontSize: tokens.fontSize.sm, color: palette.fg.default }}>
-              <input
-                type="checkbox"
-                checked={enabledToken !== "false"}
-                onChange={(event) => setEdnDraft((current) => replaceSimpleValue(current, "enabled", event.target.checked ? "true" : "false"))}
-                disabled={saving}
-              />
-              Enabled
-            </label>
-          </div>
-        </div>
-
-        {/* Main content area: editor */}
-        <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
-          {/* Metadata sidebar */}
-          <div style={{
-            width: 280, minWidth: 240, borderRight: `1px solid ${palette.fg.subtle}`,
-            background: palette.bg.darker, padding: "16px 14px", overflowY: "auto",
-            display: "none",
-          }}>
-            <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted, marginBottom: 4 }}>
-              Metadata
-            </div>
-
-            {/* Enabled */}
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: tokens.fontSize.sm, color: palette.fg.default }}>
-              <input type="checkbox" checked={enabledToken !== "false"} onChange={(e) => setEdnDraft((current) => replaceSimpleValue(current, "enabled", e.target.checked ? "true" : "false"))} />
-              Enabled
-            </label>
-
-            <SearchableSelect label="Trigger" value={triggerKindToken.replace(/^:/, "")} onChange={(v) => setEdnDraft((c) => replaceSimpleValue(c, "trigger-kind", `:${v}`))} options={Array.from(TRIGGER_KIND_OPTIONS)} />
-            <SearchableSelect label="Source" value={sourceKindToken.replace(/^:/, "")} onChange={(v) => setEdnDraft((c) => replaceSimpleValue(c, "source-kind", `:${v}`))} options={Array.from(SOURCE_KIND_OPTIONS)} />
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Source mode</div>
-              <input
-                value={sourceModeToken.replace(/^:/, "")}
-                onChange={(e) => setEdnDraft((c) => replaceSimpleValue(c, "source-mode", `:${e.target.value}`))}
-                style={{ width: "100%", padding: "6px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
-              />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Cadence (min)</div>
-              <input
-                type="number" min={1}
-                value={cadenceToken.replace(/[^0-9]/g, "") || "1"}
-                onChange={(e) => setEdnDraft((c) => replaceSimpleValue(c, "cadence-min", String(Math.max(1, Number(e.target.value || 1)))))}
-                style={{ width: "100%", padding: "6px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
-              />
-            </label>
-
-            <SearchableSelect label="Role" value={roleToken.replace(/^:/, "").replace(/"/g, "")} onChange={(v) => setEdnDraft((c) => replaceAgentValue(c, "role", `:${v}`))} options={ROLE_OPTIONS} />
-            <SearchableSelect label="Model" value={modelToken.replace(/^"|"$/g, "")} onChange={(v) => setEdnDraft((c) => replaceAgentValue(c, "model", `"${v}"`))} options={MODEL_OPTIONS} />
-            <SearchableSelect label="Thinking" value={thinkingToken.replace(/^:/, "")} onChange={(v) => setEdnDraft((c) => replaceAgentValue(c, "thinking", `:${v}`))} options={Array.from(THINKING_OPTIONS)} />
-
-            <TagInput label="Events (always)" value={eventsAlways} onChange={(next) => setEdnDraft((c) => setKeywordVector(c, ":always", next))} suggestions={kindSuggestions} />
-            <TagInput label="Events (maybe)" value={eventsMaybe} onChange={(next) => setEdnDraft((c) => setKeywordVector(c, ":maybe", next))} suggestions={kindSuggestions} />
-
-            {/* Validation badge */}
-            {validation ? (
-              <div style={{
-                padding: "6px 10px", borderRadius: tokens.radius.md, fontSize: tokens.fontSize.xs,
-                border: `1px solid ${validation.ok ? "rgba(166, 226, 46, 0.3)" : "rgba(249, 38, 114, 0.3)"}`,
-                background: validation.ok ? "rgba(166, 226, 46, 0.08)" : "rgba(249, 38, 114, 0.08)",
-                color: validation.ok ? palette.accent.green : palette.accent.red,
-              }}>
-                {validation.ok ? "✓ Valid" : `✕ ${validation.errors.length} error(s)`}
-              </div>
-            ) : null}
-
-            {/* Dirty indicator */}
-            {isDirty ? (
-              <div style={{ fontSize: tokens.fontSize.xs, color: palette.accent.orange, padding: "4px 0" }}>
-                ● unsaved changes
-              </div>
-            ) : null}
-          </div>
-
-          {/* Editor + results */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <EdnEditor
-                value={ednDraft}
-                onChange={setEdnDraft}
-                height="100%"
-                placeholder="Enter EDN contract…"
-                externalErrors={validationErrors.map((e) => ({
-                  message: e.path.length ? `${e.path.join(".")}: ${e.message}` : e.message,
-                }))}
-                onValidate={() => void handleValidate()}
-                fileName={selectedId ?? "new-contract.edn"}
-              />
-            </div>
-
-            {/* Bottom panels: normalized / notices */}
-            <div style={{ flexShrink: 0 }}>
-              {showNormalized ? (
-                <div style={{ borderTop: `1px solid ${palette.fg.subtle}`, padding: "12px 16px", background: palette.bg.darker }}>
-                  <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted, marginBottom: 8 }}>Normalized view</div>
-                  <pre style={{ maxHeight: 200, overflow: "auto", padding: 12, borderRadius: tokens.radius.md, background: palette.bg.default, fontSize: tokens.fontSize.xs, color: palette.fg.soft }}>{prettyJson(normalizedView)}</pre>
-                </div>
-              ) : null}
-
-              {notice ? (
-                <div style={{
-                  padding: "8px 16px", fontSize: tokens.fontSize.sm,
-                  borderTop: `1px solid ${notice.tone === "success" ? "rgba(166, 226, 46, 0.3)" : "rgba(249, 38, 114, 0.3)"}`,
-                  background: notice.tone === "success" ? "rgba(166, 226, 46, 0.06)" : "rgba(249, 38, 114, 0.06)",
-                  color: notice.tone === "success" ? palette.accent.green : palette.accent.red,
-                }}>
-                  {notice.text}
-                </div>
-              ) : null}
-
-              {error ? (
-                <div style={{
-                  padding: "8px 16px", fontSize: tokens.fontSize.sm,
-                  borderTop: `1px solid rgba(249, 38, 114, 0.3)`,
-                  background: "rgba(249, 38, 114, 0.06)", color: palette.accent.red,
-                }}>
-                  {error}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </div>
-
-        {/* ── Right sidebar: Contract Librarian Chat workspace (wide) ───── */}
-        {!isNarrow && showChat ? (
-          <aside
-            style={{
-              width: 460,
-              minWidth: 380,
-              borderLeft: `1px solid ${palette.fg.subtle}`,
-              display: "flex",
-              flexDirection: "column",
-              minHeight: 0,
-              overflow: "hidden",
-              background: palette.bg.darker,
-            }}
-          >
-            {/* Auto-focus toggle bar */}
-            <div style={{
-              padding: "6px 12px",
-              borderBottom: `1px solid ${palette.fg.subtle}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              fontSize: tokens.fontSize.xs,
-            }}>
-              <span style={{ color: palette.fg.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                📋 Contract Librarian
-              </span>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: autoFocusContract ? palette.accent.cyan : palette.fg.muted }}>
-                <input
-                  type="checkbox"
-                  checked={autoFocusContract}
-                  onChange={toggleAutoFocus}
-                  style={{ cursor: "pointer" }}
-                />
-                Auto-focus
-              </label>
-            </div>
-            <ChatWorkspacePane
-              controller={chat}
-              showFiles={false}
-              showCanvasToggle={false}
-              onShowFiles={() => {}}
-              onOpenHydrationSource={(source) => {
-                if (autoFocusContract) {
-                  const contractId = source.path.split("/").pop() ?? source.path;
-                  if (contractId) { setSelectedId(contractId); setSelectedContractClass("agents"); }
-                }
-              }}
-              onOpenSourceInPreview={(source: AgentSource) => {
-                if (autoFocusContract) {
-                  const contractId = source.url.split("/").pop() ?? source.url;
-                  if (contractId) { setSelectedId(contractId); setSelectedContractClass("agents"); }
-                }
-              }}
-            />
-          </aside>
-        ) : null}
-      </div>
-
-      {/* ── Bottom chat panel (narrow) ───────────────────────────────── */}
-      {isNarrow && showChat ? (
-        <div style={{
-          height: "42dvh",
-          minHeight: 240,
-          maxHeight: "60dvh",
-          borderTop: `1px solid ${palette.fg.subtle}`,
-          background: palette.bg.darker,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}>
-          <div style={{
-            padding: "6px 12px",
-            borderBottom: `1px solid ${palette.fg.subtle}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            fontSize: tokens.fontSize.xs,
-          }}>
-            <span style={{ color: palette.fg.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              📋 Contract Librarian
-            </span>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: autoFocusContract ? palette.accent.cyan : palette.fg.muted }}>
-              <input
-                type="checkbox"
-                checked={autoFocusContract}
-                onChange={toggleAutoFocus}
-                style={{ cursor: "pointer" }}
-              />
-              Auto-focus
-            </label>
-          </div>
-          <ChatWorkspacePane
-            controller={chat}
-            showFiles={false}
-            showCanvasToggle={false}
-            onShowFiles={() => {}}
-            onOpenHydrationSource={(source) => {
-              if (autoFocusContract) {
-                const contractId = source.path.split("/").pop() ?? source.path;
-                if (contractId) { setSelectedId(contractId); setSelectedContractClass("agents"); }
-              }
-            }}
-            onOpenSourceInPreview={(source: AgentSource) => {
-              if (autoFocusContract) {
-                const contractId = source.url.split("/").pop() ?? source.url;
-                if (contractId) { setSelectedId(contractId); setSelectedContractClass("agents"); }
-              }
-            }}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
+// The existing app bridge owns the React/controller instance; shadow-cljs supplies
+// the visible view. No hidden legacy metadata panel is mounted as a fallback.
+export default function ContractsPage({ render }: {
+  render: (controller: ReturnType<typeof useContractsController>) => React.ReactNode;
+}) {
+  return render(useContractsController());
 }

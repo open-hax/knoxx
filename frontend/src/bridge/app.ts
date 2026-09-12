@@ -15,6 +15,7 @@ export { AuthContextInstance } from "../pages/auth-context-instance";
 export { default as ChatPage } from "../pages/ChatPage";
 export { default as BroadcastStudioPage } from "../pages/BroadcastStudioPage";
 export { default as ContractsPage } from "../pages/ContractsPage";
+export { EdnEditor } from "../components/admin-page/EdnEditor";
 export { default as DataPage } from "../pages/DataPage";
 export { default as OpsRoot } from "../pages/OpsRoot";
 

@@ -3,7 +3,8 @@
 
   The token is an object identity, not serializable data. An HTTP or persisted
   agent-spec map can spell the same keys but cannot manufacture this value. A
-  trusted trigger action creates the context anew on replay after restart.")
+  trusted trigger action creates the context anew on replay after restart."
+  (:require [knoxx.backend.law.event-scope :as event-scope]))
 
 (defonce ^:private authority-token (js/Object.))
 
@@ -20,3 +21,9 @@
   "True only for a context minted by `authorized-context` in this process."
   [auth-context]
   (identical? authority-token (::authority auth-context)))
+
+(defn authorized-scoped-context
+  "Mint authority only after validating closed, server-admitted event scope."
+  [scope resource-policies actor-id role tool-policies]
+  (merge (authorized-context resource-policies actor-id role tool-policies)
+         (event-scope/assert-scope! scope)))
