@@ -38,6 +38,7 @@
         (let [tool (aget (tools/create-tools {} {} context) 0)]
           (await ((aget tool "execute") "sdk-message" #js {:target "actor:sender" :content "SDK message" :mode "inbox-only"} nil nil nil)))
         (is (= #{"http-message" "sdk-message"} (set (map :id (get-in (await (response app "GET" "/api/actors/mailbox" nil)) [:body :entries])))))
+        (is (true? (get-in (await (response app "GET" "/api/actors/mailbox" nil)) [:body :durable])))
         (is (= "SDK message" (get-in (await (response app "GET" "/api/actors/mailbox/sdk-message" nil)) [:body :entry :content])))
         (reset! current (assoc context :tool-policies [{:tool-id "actors.send-message" :effect "deny"}]))
         (is (= 0 (alength (tools/create-tools {} {} @current))))

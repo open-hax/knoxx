@@ -30,6 +30,7 @@
   (await (fixture!
     (^:async fn [provider options _clock]
       (is (true? (:mailbox/durable? (await (store/create-entry! provider sender message)))))
+      (is (true? (:durable? (await (store/list-entries provider receiver {})))))
       (let [restarted (clio/open! options)]
         (is (= (:mailbox/content message) (:mailbox/content (await (store/read-message restarted receiver "message-one")))))
         (is (nil? (:mailbox/content (first (:entries (await (store/list-entries restarted receiver {})))))))
@@ -109,6 +110,7 @@
     (^:async fn [provider options clock]
       (await (store/create-entry! provider sender message))
       (let [first-result (await (claim-one! provider "operation-one"))]
+        (is (true? (:durable? first-result)))
         (reset! clock "2026-09-12T12:01:00.000Z")
         (is (= first-result (await (claim-one! (clio/open! options) "operation-one"))))
         (is (= 2 (count (ledger/history (:ledger provider)))))

@@ -6,10 +6,15 @@
             [knoxx.backend.law.mailbox-store :as law]
             [knoxx.backend.shape.mailbox-store :as mailbox]))
 
-(defn- command! [{:keys [ledger options]} kind scope payload]
-  (host/serialized!
-   (:directory ledger)
-   (fn [] (clio/write! ledger :mailbox/operation [(host/operation options kind scope payload)]))))
+(defn- ^:async command! [{:keys [ledger options]} kind scope payload]
+  (let [result (await (host/serialized!
+                       (:directory ledger)
+                       (fn [] (clio/write! ledger :mailbox/operation [(host/operation options kind scope payload)]))))]
+    (if (= kind :claim) (assoc result :durable? true) result)))
+
+(defn- ^:async list-durable! [ledger options scope filters]
+  (assoc (await (clio/read! ledger :mailbox/entries [scope filters (host/clock! options)]))
+         :durable? true))
 
 (defrecord ClioMailboxStore [ledger options]
   mailbox/IMailboxStore
@@ -17,7 +22,7 @@
   (register-route! [this scope route] (command! this :register scope route))
   (unregister-route! [this scope conversation] (command! this :unregister scope {:conversation-id conversation}))
   (resolve-route [_ scope actor] (clio/read! ledger :mailbox/route [scope actor (host/clock! options)]))
-  (list-entries [_ scope filters] (clio/read! ledger :mailbox/entries [scope filters (host/clock! options)]))
+  (list-entries [_ scope filters] (list-durable! ledger options scope filters))
   (read-message [_ scope id] (clio/read! ledger :mailbox/message [scope id (host/clock! options)]))
   (claim-deliveries! [this scope request] (command! this :claim scope request))
   (mark-delivery! [this scope id status request]

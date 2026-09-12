@@ -13,12 +13,20 @@
    [:actor-id {:optional true} NonBlank] [:session-id {:optional true} NonBlank]
    [:conversation-id {:optional true} NonBlank] [:run-id {:optional true} NonBlank]
    [:contract-id {:optional true} NonBlank]])
+(def MessageIntent
+  [:map {:closed true} [:source Address] [:content NonBlank] [:metadata map?]
+   [:mode [:enum "follow-up" "steer" "event" "inbox-only"]]
+   [:target [:map {:closed true} [:target NonBlank]
+             [:target-type {:optional true} NonBlank]
+             [:conversation-id {:optional true} NonBlank] [:session-id {:optional true} NonBlank]
+             [:run-id {:optional true} NonBlank]]]])
 (def EntryInput
   [:map {:closed true} [:mailbox/id NonBlank] [:mailbox/kind NonBlank]
    [:mailbox/source Address] [:mailbox/target Address]
    [:mailbox/delivery [:map {:closed true} [:mode [:enum "follow-up" "steer" "event" "inbox-only" "direct-run"]]]]
    [:mailbox/content-ref map?] [:mailbox/metadata map?]
    [:mailbox/content {:optional true} string?]
+   [:mailbox/intent {:optional true} MessageIntent]
    [:mailbox/preview {:optional true} [:string {:max 241}]]
    [:mailbox/expires-at {:optional true} Instant]])
 (def Route

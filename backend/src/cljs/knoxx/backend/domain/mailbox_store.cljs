@@ -63,7 +63,7 @@
     (when (and (nil? original) (due? at (:mailbox/expires-at payload)))
       (law/refuse! 409 "mailbox_expired" "A new message must not already be expired"))
     (if original [state (entry! state scope (:mailbox/id payload) at)]
-        (let [entry (-> payload (dissoc :mailbox/content)
+        (let [entry (-> payload (dissoc :mailbox/content :mailbox/intent)
                         (assoc :mailbox/org-id (:org-id scope) :mailbox/status "pending"
                                :mailbox/created-at at :mailbox/updated-at at :mailbox/durable? true)
                         (assoc-in [:mailbox/delivery :attempts] 0))]
@@ -99,10 +99,12 @@
     (when-not (or (:admin? scope) (= (:actor-id scope) (get-in entry [:mailbox/source :actor-id]))
                    (= (:actor-id scope) (get-in entry [:mailbox/target :actor-id])))
       (law/refuse! 404 "mailbox_not_found" "Mailbox entry was not found"))
-    (let [content (get-in state [:inputs (key-for scope id) :mailbox/content])]
+    (let [input (get-in state [:inputs (key-for scope id)])
+          content (:mailbox/content input)]
       (when-not (string? content)
         (law/refuse! 409 "mailbox_content_unavailable" "This legacy message has no canonical mailbox body"))
-      (assoc entry :mailbox/content content))))
+      (cond-> (assoc entry :mailbox/content content)
+        (:mailbox/intent input) (assoc :mailbox/intent (:mailbox/intent input))))))
 
 (defn- eligible? [entry options at]
   (and (contains? (set (or (:statuses options) ["pending" "failed"])) (:mailbox/status entry))

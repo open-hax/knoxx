@@ -124,3 +124,31 @@
                 (await (store/read-message provider
                                            {:org-id "org-a" :actor-id "receiver" :admin? false}
                                            "message-one"))))))))))
+
+(deftest ^:async exact-request-retry-retains-original-delivery-after-actor-route-changes
+  (await
+   (fixture!
+    (^:async fn [provider options]
+      (let [receiver-scope {:org-id "org-a" :actor-id "receiver" :admin? false}
+            effects (atom [])]
+        (await (store/register-route! provider receiver-scope
+                                      {:actor-id "receiver" :conversation-id "original" :session-id "original-session"}))
+        (deliveries/install!
+         (reify effect/IMailboxDelivery
+           (deliver! [_ _runtime _config _context message]
+             (swap! effects conj (:target message)) {:delivered true})))
+        (let [first-result (await (commands/send! {} {} sender request))]
+          (is (= "original" (get-in first-result [:entry :mailbox/target :conversation-id]))))
+        (await (store/register-route! provider receiver-scope
+                                      {:actor-id "receiver" :conversation-id "new" :session-id "new-session"}))
+        (registry/install! (clio/open! options))
+        (let [retried (await (commands/send! {} {} sender request))]
+          (is (true? (:existing retried)))
+          (is (= "original" (get-in retried [:entry :mailbox/target :conversation-id]))))
+        (is (= 1 (count @effects)))
+        (is (= "mailbox_identity_conflict"
+               (get-in (await (attempt #(commands/send! {} {} sender (assoc request :session-id "new-session"))))
+                       [:error :code])))
+        (let [entries (:entries (await (store/list-entries provider receiver-scope {})))]
+          (is (nil? (:mailbox/intent (first entries))))
+          (is (nil? (:mailbox/content (first entries))))))))))

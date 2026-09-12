@@ -41,6 +41,28 @@
     {:id id :kind "actor-message" :source source :target target :delivery-mode mode
      :content (:content request) :preview (:content request) :metadata (or (:metadata request) {})
      :content-ref (cond-> {:mailbox-id id} (:run-id lineage) (assoc :source-run-id (:run-id lineage)))}))
+(defn- intent [mailbox request mode]
+  (law/checked!
+   :mailbox/intent law/MessageIntent
+   {:source (:source (raw-entry mailbox request {} mode))
+    :target (select-keys request [:target :target-type :conversation-id :session-id :run-id])
+    :content (:content request) :metadata (or (:metadata request) {}) :mode mode}))
+(defn- ^:async existing-entry! [mailbox id]
+  (try (await (mailbox/read-message! mailbox id))
+       (catch :default error
+         (if (= "mailbox_not_found" (:code (ex-data error))) nil (throw error)))))
+(defn- ^:async admit-message! [mailbox request mode]
+  (let [current-intent (intent mailbox request mode)]
+    (if-let [existing (await (existing-entry! mailbox (:operation-id request)))]
+      (do
+        (when-not (= current-intent (:mailbox/intent existing))
+          (law/refuse! 409 "mailbox_identity_conflict" "Mailbox id is already bound to a different request"))
+        existing)
+      (let [target (await (resolved-target! mailbox request))]
+        (when (and (= mode "inbox-only") (nil? (:actor-id target)))
+          (law/refuse! 400 "mailbox_actor_target_required" "Inbox delivery requires an explicit actor target"))
+        (await (mailbox/create-entry! mailbox (assoc (raw-entry mailbox request target mode)
+                                                   :intent current-intent)))))))
 (defn- unconfirmed! [entry cause]
   (throw (ex-info "Delivery happened, but its durable receipt could not be confirmed"
                   {:status 503 :code "mailbox_delivery_unconfirmed" :mailbox-id (:mailbox/id entry)
@@ -90,10 +112,8 @@
   (let [current (await (current-context! runtime context)) _ (require-send! current)
         mailbox (mailbox/context runtime current)
         mode (case (:mode request) (nil "message") "follow-up" (:mode request))
-        _ (require-mode! current mode) target (await (resolved-target! mailbox request))
-        _ (when (and (= mode "inbox-only") (nil? (:actor-id target)))
-            (law/refuse! 400 "mailbox_actor_target_required" "Inbox delivery requires an explicit actor target"))
-        entry (await (mailbox/create-entry! mailbox (raw-entry mailbox request target mode)))]
+        _ (require-mode! current mode)
+        entry (await (admit-message! mailbox request mode))]
     (when (= "failed" (:mailbox/status entry))
       (law/refuse! 409 "mailbox_retry_required" "The previous attempt failed; use an explicit retry command"))
     (if (contains? #{"delivered" "acknowledged"} (:mailbox/status entry))

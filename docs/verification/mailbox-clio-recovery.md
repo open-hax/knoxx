@@ -55,6 +55,14 @@ a conflict and retry. Stable admission IDs reject changed message content.
 Every command invocation uses a fresh claim ID: replaying a stored claim receipt
 cannot authorize the same effect twice.
 
+Logical send intent is admitted separately from the actor route chosen for the
+first attempt. An exact retry retains that original destination even after the
+actor registers a new conversation; a changed address, body, metadata or sender
+still conflicts. Historical entries without logical intent remain readable, but
+cannot be treated as exact command retries without an explicit migration.
+The Clio provider supplies the durable list/claim marker only after successful
+ledger replay/admission; reference projections make no independent disk claim.
+
 Current credentials and permissions are checked again immediately before the
 effect, followed by the current claim token. Revocation records a failed attempt;
 an acknowledgement or newer claim prevents an old callback from changing state.
@@ -93,6 +101,11 @@ preserve the real multi-arity CLJS service interfaces. Replacing them with match
 port arities produced the passing run; production behavior was not relaxed.
 The async guard and explicit fixture catches matter: exit status alone cannot
 prove that native async CLJS assertions completed.
+
+The subsequent retry-identity and durable-response follow-up passed **27 tests /
+126 assertions**, with **494 files / zero warnings**. Its added restart regression
+changes the actor route, retries the original message, and proves that no second
+effect is invoked and no canonical body leaks through inventory metadata.
 
 Changed-source lint has zero errors. The sole warning is the pre-existing,
 unchanged 51-line `create-session-manager!` in `infra/agent/session.cljs`; the new

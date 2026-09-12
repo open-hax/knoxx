@@ -36,7 +36,9 @@
   (let [provider (provider! context) raw-entry (assoc raw-entry :id (or (:id raw-entry) (host/new-id!)))
         raw-entry (if (:admin? scope) raw-entry (assoc-in raw-entry [:source :actor-id] (:actor-id scope)))
         entry (-> (data/mailbox-entry raw-entry) (dissoc :mailbox/status) (update :mailbox/delivery select-keys [:mode]))
-        entry (cond-> entry (contains? raw-entry :content) (assoc :mailbox/content (:content raw-entry)))]
+        entry (cond-> entry
+                (contains? raw-entry :content) (assoc :mailbox/content (:content raw-entry))
+                (:intent raw-entry) (assoc :mailbox/intent (:intent raw-entry)))]
     (store/create-entry! provider scope entry)))
 (defn claim-entry! "Lease one sender-owned message before its external delivery effect."
   [{:keys [scope] :as context} entry-id operation-id]
