@@ -83,6 +83,7 @@ export async function tour(page, config) {
   const shot = async (name, caption, selectors = []) => {
     const result = await annotatedScreenshot(page, outputDir, name, caption, selectors);
     screenshots.push(result);
+    config.recordScreenshot?.(result);
     return result;
   };
   const title = config.title || `Human and agent content review ${Date.now()}`;

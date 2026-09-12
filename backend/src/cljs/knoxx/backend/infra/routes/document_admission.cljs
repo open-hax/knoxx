@@ -10,12 +10,14 @@
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.publication-resolver :as resolver]
-            [knoxx.backend.extern.mongo :as extern-mongo]
             [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-draft-store :as draft-store]
+            [knoxx.backend.infra.publication-event-writer :as event-writer]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
+            [knoxx.backend.infra.routes.document-admission-queue :as admission-queue]
+            [knoxx.backend.infra.routes.document-draft-dispatch :as draft-dispatch]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.routes.translation-dispatch :as translation-dispatch]
             [knoxx.backend.law.publication :as publication-law]))
@@ -38,62 +40,12 @@
                     [(:document/id document) (:resource/file-path record)]))))
         records))
 
-(defn- ^:async repaired-existing-event!
-  [client event-id]
-  (openplanner-client/assert-event-projection-repair-supported! client)
-  {:ok true
-   :count 0
-   :ids [event-id]
-   :existing true
-   :index-result (await (openplanner-client/ensure-event-vectors!
-                         client [event-id]))})
-
-(defn- ^:async append-event-with-supported-projections!
-  [client event]
-  (if (openplanner-client/event-projection-repair-supported? client)
-    (let [result (await
-                  (openplanner-client/ingest-events-awaiting-projections!
-                   client [event]))]
-      (assoc result
-             :index-result
-             (await (openplanner-client/ensure-event-vectors!
-                     client [(:id event)]))))
-    (await (openplanner-client/events! client [event]))))
-
 (defn ^:async persist-openplanner-event!
-  "Append one event through the selected provider and await its projections.
-
-  Look up the durable event by producer identity so a serialized deployment
-  replay repairs existing projections without appending another source fact.
-  Atomic admission across writers remains the provider's responsibility."
+  "Admit an immutable source event through the selected provider."
   ([config event]
-   (await (persist-openplanner-event!
-           config (openplanner-client/client config) event)))
-  ([_config client event]
-   (let [existing (await (openplanner-client/event-by-id! client (:id event)))]
-     (if existing
-       (await (repaired-existing-event! client (:id event)))
-       (await (append-event-with-supported-projections! client event))))))
-
-(defn- ^:async persist-one!
-  [persist-event! document-id phase event]
-  (try
-    (let [result (await (persist-event! event))]
-      {:event/id (:id event)
-       :event/status (if (:existing result) :existing :recorded)
-       :event/result result})
-    (catch :default err
-      (if (extern-mongo/duplicate-key-error? err)
-        {:event/id (:id event)
-         :event/status :existing}
-        (throw
-         (ex-info "publication document event persistence failed"
-                  {:status 502
-                   :code "document_admission_event_failed"
-                   :document/id document-id
-                   :document/admission-phase phase
-                   :event/id (:id event)}
-                  err))))))
+   (await (event-writer/persist-openplanner-event! config event)))
+  ([config client event]
+   (await (event-writer/persist-openplanner-event! config client event))))
 
 (defn- ^:async ensure-provenance!
   [canonical-document-path! document source-root resource-path]
@@ -208,149 +160,19 @@
                            resource-paths document))))
       prepared)))
 
-(defn- ^:async settle-draft-generation!
-  [draft-complete? release-indexed-event! item _settlement]
-  (let [event-id (get-in item [:runtime-event :event/id])]
-    (try
-      (when-not (await (draft-complete? (:draft/policy item)))
-        (await (release-indexed-event! event-id)))
-      true
-      (catch :default err
-        ;; The runner retains the rejected settlement for redelivery. Release
-        ;; its dispatch claim now so that retained result can actually be
-        ;; retried instead of remaining pinned behind an in-flight event.
-        (await (release-indexed-event! event-id))
-        (throw err)))))
-
-(defn- ^:async register-draft-terminal-owner!
-  [runtime item]
-  (when (:draft/needs-generation? item)
-    (let [event-id (get-in item [:runtime-event :event/id])
-          registration
-          (await
-           ((:register-turn-settler! runtime)
-            event-id
-            (fn [settlement]
-              (settle-draft-generation!
-               (:draft-complete? runtime) (:release-indexed-event! runtime)
-               item settlement))))]
-      {:event-id event-id
-       :registration registration})))
-
-(defn- unregister-draft-terminal-owner!
-  [runtime event-id]
-  (when event-id
-    ((:unregister-turn-settler! runtime) event-id)))
-
-(defn- current-draft-owner-state
-  [runtime event-id]
-  ((:draft-event-owner-state runtime) event-id))
-
-(defn- current-indexed-event-state
-  [runtime event-id]
-  ((:indexed-event-state runtime) event-id))
-
-(defn- ^:async release-stale-completed-draft!
-  [runtime item event-id owner-state dispatch-state]
-  (when (and (:draft/needs-generation? item)
-             (= :completed dispatch-state)
-             (nil? owner-state))
-    (await ((:release-indexed-event! runtime) event-id))))
-
-(defn- pending-settlement-redelivery?
-  [owner-state registration]
-  (and (= :settled owner-state)
-       (true? (:event-turn/redelivered? registration))
-       (false? (:event-turn/redelivery-accepted? registration))))
-
-(defn- live-draft-owner-result
-  []
-  {:matchedTriggers []
-   :skipped true
-   :dedup/status :in-flight
-   :draft-owner/existing? true})
-
-(defn- ^:async prepare-draft-owner!
-  [runtime item]
-  (let [event-id (get-in item [:runtime-event :event/id])
-        generation? (:draft/needs-generation? item)
-        owner-state (when generation?
-                      (current-draft-owner-state runtime event-id))
-        dispatch-state (when generation?
-                         (current-indexed-event-state runtime event-id))]
-    (await (release-stale-completed-draft!
-            runtime item event-id owner-state dispatch-state))
-    (if (= :in-flight owner-state)
-      {:result (live-draft-owner-result)}
-      (let [{:keys [registration] :as owner}
-            (await (register-draft-terminal-owner! runtime item))]
-        (if (pending-settlement-redelivery? owner-state registration)
-          ;; The prior turn is terminal and no replacement was enqueued. Keep
-          ;; its cached settlement for a later retry, but fail this admission;
-          ;; calling it in-flight would let deployment pass with no draft owner.
-          (throw
-           (ex-info "publication post draft settlement could not be reconciled"
-                    {:status 503
-                     :code "document_post_draft_settlement_redelivery_failed"
-                     :document/id (get-in item [:document :document/id])
-                     :event/id event-id}))
-          owner)))))
-
-(defn- ^:async emit-runtime-indexed-event!
-  [runtime item document-id event-id]
-  (try
-    (await ((:emit-indexed! runtime) (:runtime-event item)))
-    (catch :default err
-      (unregister-draft-terminal-owner! runtime event-id)
-      (throw
-       (ex-info "publication document indexed event dispatch failed"
-                {:status 500
-                 :code "document_indexed_dispatch_failed"
-                 :document/id document-id
-                 :event/id (get-in item [:indexed-event :id])}
-                err)))))
-
-(defn- assert-draft-dispatch!
-  [runtime item document-id event-id result]
-  (when (and (:draft/needs-generation? item)
-             (empty? (:matchedTriggers result))
-             (not (and (:skipped result)
-                       (= :in-flight (:dedup/status result)))))
-    (unregister-draft-terminal-owner! runtime event-id)
-    (throw
-     (ex-info (if (:skipped result)
-                "publication post draft dispatch is stale"
-                "publication post draft trigger is not enabled")
-              {:status 503
-               :code (if (:skipped result)
-                       "document_post_draft_dispatch_stale"
-                       "document_post_draft_trigger_missing")
-               :document/id document-id
-               :event/id (get-in item [:indexed-event :id])
-               :dedup/status (:dedup/status result)})))
-  result)
-
-(defn- ^:async emit-indexed-event!
-  [runtime item document-id]
-  (let [{:keys [event-id result]} (await (prepare-draft-owner! runtime item))
-        result (or result
-                   (await (emit-runtime-indexed-event!
-                           runtime item document-id event-id)))]
-    (assert-draft-dispatch! runtime item document-id event-id result)))
-
 (defn- ^:async persist-prepared!
   [runtime prepared]
   (loop [pending prepared
          persisted []]
     (if-let [item (first pending)]
       (let [document-id (get-in item [:document :document/id])
-            source-result (await (persist-one! (:persist-event! runtime) document-id
+            source-result (await (event-writer/persist-one! (:persist-event! runtime) document-id
                                                :source-snapshot
                                                (:snapshot-event item)))
-            indexed-result (await (persist-one! (:persist-event! runtime) document-id
+            indexed-result (await (event-writer/persist-one! (:persist-event! runtime) document-id
                                                 :document-indexed
                                                 (:indexed-event item)))
-            runtime-result (await (emit-indexed-event! runtime item document-id))]
+            runtime-result (await (draft-dispatch/emit-indexed-event! runtime item document-id))]
         (recur (next pending)
                (conj persisted
                      (assoc item
@@ -500,49 +322,13 @@
      :documents results
      :translations summary}))
 
+;; Retain this original owner across Shadow reloads so pending work keeps its tail.
 (defonce ^:private document-admission-tail* (atom nil))
 
-(defn- ^:async run-after-document-admission!
-  [previous task-fn]
-  (when previous
-    (try
-      (await previous)
-      ;; knoxx-lint/allow-silent-catch — an earlier admission must not poison the queue.
-      (catch :default _
-        nil)))
-  (await (task-fn)))
-
-(defn- ^:async recover-document-admission-tail!
-  [task]
-  (try
-    (await task)
-    ;; knoxx-lint/allow-silent-catch — only the stored recovery tail consumes this rejection.
-    (catch :default _
-      nil)))
-
-(defn- enqueue-document-admission!
-  "Serialize one complete admission pass behind the process-wide tail."
-  [task-fn]
-  ;; No await occurs between reading and replacing the tail, so the single JS
-  ;; event loop gives every caller an exact predecessor. The recovery promise
-  ;; prevents one failed admission from poisoning every later deployment.
-  (let [task (run-after-document-admission!
-              @document-admission-tail* task-fn)]
-    (reset! document-admission-tail*
-            (recover-document-admission-tail! task))
-    task))
-
 (defn ^:async await-document-admission-barrier!
-  "Resolve only after every document admission already queued in this process.
-
-   The no-op occupies the same serialized tail as HTTP admission and generated
-   draft re-entry. Callers that drain asynchronous owners must await this
-   barrier again after those owners release, because an owner may enqueue a
-   recursive admission while the first barrier is waiting."
+  "Wait until all previously queued admissions have settled."
   []
-  (await
-   (enqueue-document-admission!
-    (fn [] (js/Promise.resolve {:settled true})))))
+  (await (admission-queue/await-document-admission-barrier! document-admission-tail*)))
 
 (defn- ^:async admit-documents-once!
   "Run one admission pass while the process-wide event writer is owned."
@@ -588,7 +374,7 @@
   release this tail before the generated document re-enters it."
   [config deps scope selection]
   (await
-   (enqueue-document-admission!
+   (admission-queue/enqueue-document-admission! document-admission-tail*
     (fn []
       (admit-documents-once! config deps scope selection)))))
 

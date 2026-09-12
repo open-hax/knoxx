@@ -93,3 +93,52 @@ lint still flags two pre-existing oversized admission source/test files; the
 size gate remains enabled while those responsibilities are extracted. The prior
 full backend checkpoint passed **1,786 tests / 8,083 assertions**; a new full run
 including these fixes and the policy cleanup is required and running.
+
+That full run completed with **1,797 tests / 8,124 assertions**, no test failures,
+no fatal async guard events, and process exit zero. Production release 03 compiled
+the server from **649 inputs / 0 warnings** and the Wiki verification library from
+**107 inputs / 0 warnings**. Run 09 repeated the identity, Admin and full Mail
+ceremonies. Source event persistence now succeeded, but translation dispatch
+refused an incomplete context: the Wiki review scope omitted the authenticated
+membership. This is a separate HTTP 500 failure, not a completed publishing tour.
+
+## Admission responsibilities and test isolation
+
+The admission facade is now 393 lines. Immutable event persistence and duplicate
+classification live in `infra.publication-event-writer`; draft-turn ownership and
+retained settlement live in `infra.routes.document-draft-dispatch`; queue execution
+and its recovery barrier live in `infra.routes.document-admission-queue`. Public
+facade entrypoints remain intact. Independent review caught a reload hazard in
+moving the original `defonce` tail; it remains in the facade and is explicitly
+passed to the extracted queue, preserving already pending work across reloads.
+The queue still observes every prior admission before releasing its barrier, and
+a rejected operation cannot poison subsequent work.
+
+Shared resource builders, source preflight tests, draft settlement tests and Mongo
+adapter compatibility tests now have explicit namespaces. The exact same guarded
+suite still passes **41 tests / 233 assertions**, and all affected source and test
+namespaces pass strict lint with **zero errors and warnings**. No tests were
+dropped and no size threshold was changed. These tests cover concurrent admission,
+queued barriers, retained failed settlement, retry repair, and the actual Clio
+and Fastify boundaries; they do not substitute for the next production tour.
+
+## Verified membership at the acceptance handoff
+
+The closed review identity intentionally contains organization, project and
+document, while dispatch additionally requires the acting membership. Adding a
+membership to the review ledger key would change its identity. Acceptance now
+builds a separate admission context from the verified context, retaining that
+membership and refusing its absence before the durable review command runs.
+Neither the document body nor the agent tool can supply this authority.
+
+The actual Wiki command calling the real dispatch-context contract reproduced
+**21 failures / 24 assertions**. Initial test attempts exposed their own malformed
+actor fixture and a single-arity replacement for a multi-arity runtime function;
+those were corrected before claiming the failure reproduced the browser defect.
+The final regression exercises all three existing verified membership shapes,
+unchanged review identity, and nil/blank membership refusal before mutation.
+Combined with the admission, Clio, Mongo, SSE and retry checks, the fixed guarded
+suite passes **43 tests / 257 assertions**, compiler **554 inputs / 0 warnings**,
+and strict scoped lint **0 errors / 0 warnings**. The next browser run remains
+required. Partial Wiki screenshots now enter the supervisor's evidence inventory
+immediately, so a later failure cannot omit already captured steps from its index.

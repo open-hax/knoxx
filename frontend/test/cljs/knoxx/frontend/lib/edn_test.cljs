@@ -3,10 +3,10 @@
   replacement of src/lib/edn.ts (hand-rolled TS parser, no test baseline).
   Contract shape mirrors the real cms/drafts/*/view-contract.edn files,
   including namespaced keywords (:view/id) which the TS parser mangles."
-  (:require [cljs.test :refer [deftest is]]
+  (:require [cljs.test :as t]
             [knoxx.frontend.lib.edn :as edn]))
 
-(def sample-contract
+(def ^:private sample-contract
   "{:view/id \"error-coded-radio\"
     :view/title \"Error Coded Radio\"
     :view/kind :playlist-page
@@ -36,49 +36,49 @@
     :publishing {:last-published-at nil
                  :defer-index true}}")
 
-(deftest parses-scalars
-  (is (= "hi" (edn/parse-edn "\"hi\"")))
-  (is (= 42 (edn/parse-edn "42")))
-  (is (= 1.5 (edn/parse-edn "1.5")))
-  (is (true? (edn/parse-edn "true")))
-  (is (false? (edn/parse-edn "false")))
-  (is (nil? (edn/parse-edn "nil")))
-  (is (= :draft (edn/parse-edn ":draft")))
-  (is (= :view/id (edn/parse-edn ":view/id")) "namespaced keywords survive"))
+(t/deftest parses-scalars
+  (t/is (= "hi" (edn/parse-edn "\"hi\"")))
+  (t/is (= 42 (edn/parse-edn "42")))
+  (t/is (= 1.5 (edn/parse-edn "1.5")))
+  (t/is (true? (edn/parse-edn "true")))
+  (t/is (false? (edn/parse-edn "false")))
+  (t/is (nil? (edn/parse-edn "nil")))
+  (t/is (= :draft (edn/parse-edn ":draft")))
+  (t/is (= :view/id (edn/parse-edn ":view/id")) "namespaced keywords survive"))
 
-(deftest parses-collections-commas-and-comments
-  (is (= {:a 1 :b [1 2 3]}
+(t/deftest parses-collections-commas-and-comments
+  (t/is (= {:a 1 :b [1 2 3]}
          (edn/parse-edn "{:a 1, :b [1, 2, 3]}"))
       "commas are whitespace")
-  (is (= {:a 1}
+  (t/is (= {:a 1}
          (edn/parse-edn ";; leading comment\n{:a 1} ;; trailing"))
       "comments ignored"))
 
-(deftest parses-real-view-contract-shape
+(t/deftest parses-real-view-contract-shape
   (let [contract (edn/parse-edn sample-contract)]
-    (is (= "error-coded-radio" (:view/id contract)))
-    (is (= :playlist-page (:view/kind contract)))
-    (is (= 1 (:view/schema-version contract)))
-    (is (= :markdown-import (get-in contract [:source :kind])))
-    (is (= [:hero :rich-text] (get-in contract [:layout :zones 0 :accepts])))
-    (is (= 2 (count (:blocks contract))))
-    (is (= 180 (get-in contract [:blocks 1 :props :tracks 0 :duration])))
-    (is (true? (get-in contract [:blocks 1 :props :show_labels])))
-    (is (nil? (get-in contract [:publishing :last-published-at])))))
+    (t/is (= "error-coded-radio" (:view/id contract)))
+    (t/is (= :playlist-page (:view/kind contract)))
+    (t/is (= 1 (:view/schema-version contract)))
+    (t/is (= :markdown-import (get-in contract [:source :kind])))
+    (t/is (= [:hero :rich-text] (get-in contract [:layout :zones 0 :accepts])))
+    (t/is (= 2 (count (:blocks contract))))
+    (t/is (= 180 (get-in contract [:blocks 1 :props :tracks 0 :duration])))
+    (t/is (true? (get-in contract [:blocks 1 :props :show_labels])))
+    (t/is (nil? (get-in contract [:publishing :last-published-at])))))
 
-(deftest serializes-scalars
-  (is (= "nil" (edn/serialize-edn nil)))
-  (is (= "42" (edn/serialize-edn 42)))
-  (is (= "true" (edn/serialize-edn true)))
-  (is (= "\"hi\"" (edn/serialize-edn "hi")))
-  (is (= ":view/id" (edn/serialize-edn :view/id))))
+(t/deftest serializes-scalars
+  (t/is (= "nil" (edn/serialize-edn nil)))
+  (t/is (= "42" (edn/serialize-edn 42)))
+  (t/is (= "true" (edn/serialize-edn true)))
+  (t/is (= "\"hi\"" (edn/serialize-edn "hi")))
+  (t/is (= ":view/id" (edn/serialize-edn :view/id))))
 
-(deftest serializes-strings-with-escapes-readably
+(t/deftest serializes-strings-with-escapes-readably
   (let [s "say \"hi\"\nthen newline"]
-    (is (= s (edn/parse-edn (edn/serialize-edn s)))
+    (t/is (= s (edn/parse-edn (edn/serialize-edn s)))
         "quotes and newlines survive a round-trip")))
 
-(deftest round-trips-the-real-contract
+(t/deftest round-trips-the-real-contract
   (let [contract (edn/parse-edn sample-contract)]
-    (is (= contract (edn/parse-edn (edn/serialize-edn contract)))
+    (t/is (= contract (edn/parse-edn (edn/serialize-edn contract)))
         "serialize → parse is identity on a real contract")))

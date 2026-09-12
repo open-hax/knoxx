@@ -124,3 +124,12 @@ predicate repair and Bluesky extraction; later Discord and policy extractions
 need their own verification. Advertised commands with final dependency pins
 and complete browser verification remain separate gates. Compiler exit zero
 alone is not a test result.
+
+After the Discord and policy extractions, finite HTTP fixtures, and the native
+document/SSE/source-review fixes, the fifth complete guarded run passed 1,797
+tests / 8,124 assertions with zero failures/errors and process exit zero. Its
+954 compiler inputs produced zero warnings. No Mongo connection-refusal output
+remained after replacing the stale credential fixture. This result corresponds
+to the backend source committed in `0d73b98ea02f37b1e9757fba752f39bc821fd9ef`,
+with the same frozen eta-identity dependency override. Later memory/resource
+extractions and subsequent fixture edits require another full run.

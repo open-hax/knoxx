@@ -38,3 +38,17 @@ All existing tests in those two areas passed: **16 tests / 69 assertions**, zero
 failures/errors, **83 files / zero compiler warnings**. Strict source/test lint
 is zero for both areas. The full exposed frontend lint inventory is down to
 102 warnings outside these completed slices; its fail level remains unchanged.
+
+Shared UI primitives keep their public `:type` props while binding them to
+explicit button/input names. The remaining library and renderer tests now use
+qualified test/component aliases and private fixture definitions. Their
+existing coverage passed **62 tests / 261 assertions**, zero failures/errors,
+**103 files / zero compiler warnings**, with strict scoped lint at zero. This
+includes actual rendered controls, publication request wires, portable markup
+parity, EDN parsing, media/document links and WebSocket channel handling.
+
+The Mail cleanup changes tests only: qualified aliases, private fixtures and
+native awaited filter/acknowledgment interactions. All **23 Mail tests / 104
+assertions** passed with zero failures/errors and **87 files / zero compiler
+warnings**. The full Mail test directory is lint-clean. Production Mail code
+and the active browser artifacts were left unchanged during this batch.

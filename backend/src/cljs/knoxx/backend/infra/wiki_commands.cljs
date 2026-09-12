@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.wiki-commands
   "Shared authorization, commands and invalidations for Wiki humans and agents."
-  (:require [knoxx.backend.domain.wiki-capabilities :as capabilities]
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.wiki-capabilities :as capabilities]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.publication-admission-hook :as admission]
@@ -119,10 +120,16 @@
                      "publication/review" "publication/write")
         _ (ensure-command! ctx "wiki_review" capability)
         scope (scope config ctx document)
+        admission-scope (when (= :accept (:action command))
+                          (let [membership (authz/ctx-membership-id ctx)]
+                            (when (or (not (string? membership)) (str/blank? membership))
+                              (throw (ex-info "Source acceptance requires an authenticated membership"
+                                              {:status 403 :code "wiki_membership_required"})))
+                            (assoc (select-keys scope [:org-id :project]) :membership-id membership)))
         result (await (review/command! config scope (actor ctx) command (runtime/source-dependencies)))]
     (changed! scope)
-    (when (= :accept (:action command))
-      (await (admission/admit! scope {:document (:document scope)})))
+    (when admission-scope
+      (await (admission/admit! admission-scope {:document (:document scope)})))
     (result-wire ctx result review-wire/result->wire)))
 
 (defn ^:async assist!
@@ -137,4 +144,3 @@
                       {:status 409 :code "wiki_assist_stale_revision"})))
     (assoc (await (model/generate! config (assoc input :instruction (:instruction body))))
            :source_revision (:revision input))))
-

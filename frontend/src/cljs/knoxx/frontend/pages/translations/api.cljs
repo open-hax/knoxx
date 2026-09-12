@@ -4,7 +4,9 @@
    src/lib/api/openplanner.ts and listProxxModels in src/lib/api/runtime.ts."
   (:require [knoxx.frontend.lib.api :as api]))
 
-(defn list-documents [{:keys [project target-lang]}]
+(defn list-documents
+  "Read translation summaries for one project and optional target locale."
+  [{:keys [project target-lang]}]
   (let [q (js/URLSearchParams.)]
     (.set q "project" project)
     (when (seq target-lang) (.set q "target_lang" target-lang))
@@ -44,7 +46,9 @@
                 {:method "POST"
                  :body (merge payload (wire-scope scope))})))
 
-(defn list-publication-reviews []
+(defn list-publication-reviews
+  "Read authoritative publication translation work and review candidates."
+  []
   (api/request "/api/publications/translations/reviews"))
 
 (defn ^:async submit-publication-split-review
@@ -70,11 +74,15 @@
   (api/request "/api/publications/translations/dispatch"
                {:method "POST" :body {:publication publication-id}}))
 
-(defn approve-publication-translation [payload]
+(defn approve-publication-translation
+  "Submit the exact immutable publication approval coordinates."
+  [payload]
   (api/request "/api/publications/translations/approvals"
                {:method "POST" :body payload}))
 
-(defn reconcile-publication [publication-id]
+(defn reconcile-publication
+  "Request reconciliation of one explicit publication placement."
+  [publication-id]
   (api/request "/api/publications/reconcile"
                {:method "POST"
                 :body {:publicationId publication-id}}))
@@ -89,11 +97,15 @@
                 {:method "POST"
                  :body (merge payload (wire-scope scope))})))
 
-(defn get-manifest [project]
+(defn get-manifest
+  "Read the export manifest for an encoded project identifier."
+  [project]
   (api/request (str "/api/translations/export/manifest?project="
                     (js/encodeURIComponent project))))
 
-(defn sft-export [{:keys [project target-lang]}]
+(defn sft-export
+  "Download translation training rows with accepted corrections included."
+  [{:keys [project target-lang]}]
   (let [q (js/URLSearchParams.)]
     (.set q "project" project)
     (when (seq target-lang) (.set q "target_lang" target-lang))
@@ -105,13 +117,19 @@
 ;; `:config`, so there is nothing to unwrap. `:model` is a catalog model id, and
 ;; `:model` is also the unqualified wire key the backend contract declares,
 ;; because `api/request` serializes with `clj->js` and would erase a namespace.
-(defn ^:async pipeline-config []
+(defn ^:async pipeline-config
+  "Read the native translation pipeline configuration wire."
+  []
   (await (api/request "/api/translations/config")))
 
-(defn ^:async update-pipeline-config [model]
+(defn ^:async update-pipeline-config
+  "Patch the pipeline model using the existing unqualified model key."
+  [model]
   (await (api/request "/api/translations/config"
                       {:method "PATCH" :body {:model model}})))
 
-(defn list-proxx-models []
-  (-> (api/request "/api/proxx/models")
-      (.then #(vec (sort-by :id (:models %))))))
+(defn ^:async list-proxx-models
+  "List available model entries sorted by their catalog identifier."
+  []
+  (let [response (await (api/request "/api/proxx/models"))]
+    (vec (sort-by :id (:models response)))))

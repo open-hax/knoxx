@@ -33,3 +33,12 @@ The proof uses frozen eta-identity
 It does not contact Discord or establish an authenticated OAuth session. The
 complete backend suite and advertised production build remain separate gates
 after this extraction and the concurrently prepared policy extraction.
+
+The complete guarded backend suite then passed 1,797 tests / 8,124 assertions,
+zero failures/errors and process exit zero, with 954 compiler inputs and zero
+warnings. A subsequent whole-project lint correctly identified that one new
+selection test called a private helper; the test now exercises the public
+selection operation with an explicitly disabled REST provider. The fresh
+combined memory/Discord run passed 16 tests / 53 assertions with the fatal guard,
+zero failures/errors, process exit zero and zero compiler warnings. The next
+complete run remains required for that test edit.

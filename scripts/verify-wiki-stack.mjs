@@ -195,6 +195,7 @@ try {
     const artifacts = await artifactService(verification.readManifest); artifactServer = artifacts.server;
     const unlisted = await fetch(new URL('/manifest.edn', artifacts.baseUrl)); assert.equal(unlisted.status,404);
     evidence.wiki = await tour(page, {baseUrl:services.baseUrl, outputDir, garden:'sandbox.wiki/research', agentCommand,
+      recordScreenshot:record => evidence.screenshots.push(record),
       verifyCheckout:services.verifyBuilds, beforeSourceAcceptance:verifySourceUnaccepted,
       translationTour:(currentPage, config) => translationTour(currentPage, {...config, artifactBaseUrl:artifacts.baseUrl,
         verifyMemory:input => verification.readMemory(path.join(fixtureDirectory,'state/translation-splits'), input)})});

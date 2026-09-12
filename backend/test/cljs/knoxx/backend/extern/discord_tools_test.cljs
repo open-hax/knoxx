@@ -51,10 +51,11 @@
     (catch :default error
       (is (= "Invalid data URL attachment" (.-message error))))))
 
-(deftest selection-keeps-good-chronology-and-removes-bad-context
+(deftest ^:async selection-keeps-good-chronology-and-removes-bad-context
   (let [rows [{:id "neutral" :timestamp "2026-01-01T00:00:00Z"}
               {:id "good-new" :timestamp "2026-01-03T00:00:00Z" :quality "good"}
               {:id "bad" :timestamp "2026-01-01T00:00:00Z" :quality "bad"}
               {:id "good-old" :timestamp "2026-01-02T00:00:00Z" :quality "good"}]]
     (is (= ["good-old" "good-new" "neutral"]
-           (mapv :id (selection/good-first-then-not-bad rows))))))
+           (mapv :id (await (selection/attach-openplanner-labels!
+                             {:openplanner-client-mode "rest"} rows)))))))
