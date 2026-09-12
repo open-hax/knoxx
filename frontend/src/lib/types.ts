@@ -545,6 +545,9 @@ export interface AdminActorCredentialSummary {
 }
 
 export interface AdminUserSummary {
+  principalId?: string;
+  identityBound?: boolean;
+  identityEnrollmentRequired?: boolean;
   id: string;
   email: string;
   displayName: string;

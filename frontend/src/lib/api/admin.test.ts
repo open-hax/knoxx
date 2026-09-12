@@ -5,6 +5,7 @@ import {
   listAdminOrgs,
   listOrgRoles,
   listOrgActors,
+  createOrgActor,
   getDiscordConfig,
   updateDiscordConfig,
   getEventAgentControl,
@@ -26,6 +27,23 @@ vi.mock("./core", () => ({
 describe("Admin API", () => {
   beforeEach(() => {
     mockRequest.mockReset();
+  });
+
+  it("preserves verified binding and unbound enrollment flags from the directory", async () => {
+    mockRequest.mockResolvedValueOnce({users: [
+      {id: "bound", principalId: "principal", identityBound: true, identityEnrollmentRequired: false, memberships: []},
+      {id: "unbound", identityBound: false, identityEnrollmentRequired: true, memberships: []},
+    ]});
+    const {users} = await listOrgActors("org");
+    expect(users[0]).toMatchObject({principalId: "principal", identityBound: true, identityEnrollmentRequired: false});
+    expect(users[1]).toMatchObject({identityBound: false, identityEnrollmentRequired: true});
+  });
+  it("sends an explicit principal without inventing email or actor ID", async () => {
+    mockRequest.mockResolvedValueOnce({user: {id: "user", principalId: "principal", identityBound: true, memberships: []}});
+    await createOrgActor("org", {axxiumPrincipalId: "principal", roleSlugs: ["basic-user"]});
+    const [url, init] = mockRequest.mock.calls[0];
+    expect(url).toBe("/api/admin/orgs/org/actors");
+    expect(JSON.parse(init.body)).toEqual({axxiumPrincipalId: "principal", roleSlugs: ["basic-user"]});
   });
 
   it("getDiscordConfig fetches discord config", async () => {

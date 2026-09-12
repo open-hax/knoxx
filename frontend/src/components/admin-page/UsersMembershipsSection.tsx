@@ -136,6 +136,7 @@ export function UsersMembershipsSection({
   selectedOrgName,
   canCreateUsers,
   canUpdateMemberships,
+  canUpdateGlobalStatus = false,
   canUpdateUserPolicies,
   users,
   roles,
@@ -158,6 +159,7 @@ export function UsersMembershipsSection({
   selectedOrgName: string;
   canCreateUsers: boolean;
   canUpdateMemberships: boolean;
+  canUpdateGlobalStatus?: boolean;
   canUpdateUserPolicies: boolean;
   users: AdminUserSummary[];
   roles: AdminRoleSummary[];
@@ -244,22 +246,35 @@ export function UsersMembershipsSection({
         <form className="mb-5 grid gap-3 rounded-xl border border-slate-800 bg-slate-900/80 p-4 md:grid-cols-4" onSubmit={onCreateUser}>
           <input
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+            aria-label="New actor ID"
+            disabled={Boolean(userForm.axxiumPrincipalId?.trim())}
             placeholder="actor id, e.g. discord_automation"
             value={userForm.actorId}
             onChange={(event) => setUserForm((current) => ({ ...current, actorId: event.target.value }))}
           />
           <input
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
-            placeholder="email or leave blank for @actors.local"
+            aria-label="New actor contact email"
+            disabled={Boolean(userForm.axxiumPrincipalId?.trim())}
+            placeholder="Optional directory contact email"
             value={userForm.email}
             onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
           />
           <input
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+            aria-label="New actor display name"
             placeholder="Display name"
             value={userForm.displayName}
             onChange={(event) => setUserForm((current) => ({ ...current, displayName: event.target.value }))}
           />
+          <label className="text-xs text-slate-300">
+            Existing Axxium principal ID (optional)
+            <input aria-label="Existing Axxium principal ID (optional)"
+              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+              value={userForm.axxiumPrincipalId || ''}
+              onChange={event => setUserForm(current => ({ ...current, axxiumPrincipalId: event.target.value }))} />
+            <span className="block mt-2">A verified principal receives membership here. Leave blank to create a directory actor requiring identity enrollment.</span>
+          </label>
           <div>
             <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">Initial roles</div>
             <div className="flex flex-wrap gap-2">
@@ -281,7 +296,7 @@ export function UsersMembershipsSection({
           <div className="md:col-span-4 flex justify-end">
             <button
               type="submit"
-              disabled={creatingUser || (!userForm.email.trim() && !userForm.actorId.trim())}
+              disabled={creatingUser || (!userForm.email.trim() && !userForm.actorId.trim() && !userForm.displayName.trim() && !userForm.axxiumPrincipalId?.trim())}
               className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {creatingUser ? 'Creating…' : `Create actor in ${orgActorLabel}`}
@@ -295,6 +310,7 @@ export function UsersMembershipsSection({
           Search actors
           <input
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 placeholder:text-slate-600"
+            aria-label="Search actors"
             placeholder="Search actor id, email, display name, role, credential provider, tool…"
             value={actorSearch}
             onChange={(event) => setActorSearch(event.target.value)}
@@ -384,11 +400,14 @@ export function UsersMembershipsSection({
               <div className="mt-4 grid gap-4 xl:grid-cols-2">
                 <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
                   <div className="mb-3 text-sm font-semibold text-slate-100">Actor profile</div>
+                  <p className="mb-3 text-xs text-cyan-200">{user.identityBound ? 'Identity bound to Axxium' : 'Identity enrollment required'}</p>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="flex flex-col gap-1 text-xs text-slate-300">
                       Actor ID
                       <input
                         className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+                        aria-label="Actor ID"
+                        readOnly={Boolean(user.identityBound)}
                         value={actorDraft.actorId}
                         onChange={(event) => setActorDrafts((current) => ({
                           ...current,
@@ -400,6 +419,7 @@ export function UsersMembershipsSection({
                       Display name
                       <input
                         className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+                        aria-label="Display name"
                         value={actorDraft.displayName}
                         onChange={(event) => setActorDrafts((current) => ({
                           ...current,
@@ -408,9 +428,11 @@ export function UsersMembershipsSection({
                       />
                     </label>
                     <label className="flex flex-col gap-1 text-xs text-slate-300">
-                      Email / login identifier
+                      {user.identityBound ? 'Identity email (Axxium)' : 'Directory contact email'}
                       <input
                         className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+                        aria-label={user.identityBound ? 'Identity email (Axxium)' : 'Directory contact email'}
+                        readOnly
                         value={actorDraft.email}
                         onChange={(event) => setActorDrafts((current) => ({
                           ...current,
@@ -422,6 +444,8 @@ export function UsersMembershipsSection({
                       Status
                       <select
                         className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+                        aria-label="Global actor status"
+                        disabled={!canUpdateGlobalStatus}
                         value={actorDraft.status}
                         onChange={(event) => setActorDrafts((current) => ({
                           ...current,
@@ -437,7 +461,7 @@ export function UsersMembershipsSection({
                     <button
                       type="button"
                       onClick={() => void saveActorProfile(user.id)}
-                      disabled={savingActorId === user.id || !actorDraft.actorId.trim() || !actorDraft.email.trim()}
+                      disabled={savingActorId === user.id || !actorDraft.displayName.trim()}
                       className="mt-4 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-200 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {savingActorId === user.id ? 'Saving…' : 'Save actor profile'}

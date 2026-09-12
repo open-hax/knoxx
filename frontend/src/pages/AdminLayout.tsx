@@ -119,7 +119,7 @@ function useAdminContext(): AdminCtx {
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
 
   const [orgForm, setOrgForm] = useState<OrgFormState>({ name: '', slug: '', kind: 'customer' });
-  const [userForm, setUserForm] = useState<UserFormState>({ actorId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
+  const [userForm, setUserForm] = useState<UserFormState>({ actorId: '', axxiumPrincipalId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
   const [roleForm, setRoleForm] = useState<RoleFormState>({ name: '', slug: '', permissionCodes: [], toolIds: ['read', 'canvas'] });
   const [lakeForm, setLakeForm] = useState<LakeFormState>({ name: '', slug: '', kind: 'workspace_docs', workspaceRoot: '' });
 
@@ -260,16 +260,28 @@ function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
     try {
       const actorId = ctx.userForm.actorId.trim();
       const email = ctx.userForm.email.trim();
-      await (await import('../lib/nextApi')).createOrgActor(ctx.selectedOrgId, { actorId: actorId || undefined, email: email || undefined, displayName: ctx.userForm.displayName.trim() || actorId || email, roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic-user'] });
-      ctx.setUserForm({ actorId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
-      ctx.setNotice({ tone: 'success', text: 'Actor created.' }); await ctx.refresh();
+      const principalId = (ctx.userForm.axxiumPrincipalId || '').trim();
+      const displayName = ctx.userForm.displayName.trim();
+      const created = await (await import('../lib/nextApi')).createOrgActor(ctx.selectedOrgId, {
+        ...(principalId ? { axxiumPrincipalId: principalId, ...(displayName ? { displayName } : {}) }
+          : { actorId: actorId || undefined, email: email || undefined, displayName: displayName || actorId || email }),
+        roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic-user'],
+      });
+      ctx.setUserForm({ actorId: '', axxiumPrincipalId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
+      await ctx.refresh();
+      ctx.setNotice({ tone: 'success', text: created.user?.identityBound ? 'Actor bound to the verified Axxium principal.' : 'Actor created. Identity enrollment is required before this actor can sign in.' });
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingUser(false); }
   };
   const saveActorProfile = async (userId: string, draft: { actorId: string; displayName: string; email: string; status: string }) => {
     ctx.setNotice(null);
     try {
-      await (await import('../lib/nextApi')).updateAdminActor(userId, { orgId: ctx.selectedOrgId, actorId: draft.actorId.trim(), displayName: draft.displayName.trim(), email: draft.email.trim(), status: draft.status });
-      ctx.setNotice({ tone: 'success', text: 'Actor profile updated.' }); await ctx.refresh();
+      const current = ctx.users.find(user => user.id === userId);
+      await (await import('../lib/nextApi')).updateAdminActor(userId, {
+        orgId: ctx.selectedOrgId, displayName: draft.displayName.trim(),
+        ...(current?.identityBound ? {} : { actorId: draft.actorId.trim() }),
+        ...(ctx.context?.isSystemAdmin && draft.status !== current?.status ? { status: draft.status } : {}),
+      });
+      await ctx.refresh(); ctx.setNotice({ tone: 'success', text: 'Actor profile updated.' });
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); }
   };
   const saveActorCredential = async (userId: string, provider: string, draft: { kind: string; accountIdentifier: string; secretJson: Record<string, string> }) => {
@@ -295,6 +307,7 @@ function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
       selectedOrgId={ctx.selectedOrgId} selectedOrgName={ctx.selectedOrg?.name || ''}
       canCreateUsers={Boolean(ctx.selectedOrg && ctx.hasPermission('org.users.create'))}
       canUpdateMemberships={ctx.hasPermission('org.members.update')}
+      canUpdateGlobalStatus={Boolean(ctx.context?.isSystemAdmin)}
       canUpdateUserPolicies={ctx.hasPermission('org.user_policy.update')}
       users={ctx.users} roles={ctx.roles} tools={ctx.tools}
       userForm={ctx.userForm} setUserForm={ctx.setUserForm}
@@ -402,7 +415,7 @@ export default function AdminLayout() {
           {ADMIN_TABS.map((tab) => (
             <NavLink
               key={tab.path}
-              to={tab.path}
+              to={`${opsRoutes.admin}/${tab.path}`}
               end={tab.path === 'overview'}
               className={({ isActive }) =>
                 `shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition ${

@@ -1,121 +1,58 @@
 (ns knoxx.frontend.auth.boundary-interaction-test
-  "Port of src/pages/AuthContext.test.tsx to the node :test build —
-  401 renders the login surface instead of protected content, and invite
-  redemption refreshes the auth context into the protected app. Global
-  fetch is mocked (the auth api uses raw fetch, not the knoxx helper)."
-  (:require [cljs.test :refer [deftest is async use-fixtures]]
-            ["@testing-library/react" :as rtl]
-            [helix.core :refer [$ defnc]]
+  "Exercise verified login boundaries and retain authority when logout fails."
+  (:require ["@testing-library/react" :as rtl]
+            [cljs.test :as t]
+            [helix.core :as hx]
             [helix.dom :as d]
-            [knoxx.frontend.auth.context :as auth]
-            [knoxx.frontend.auth.boundary :refer [auth-boundary]]))
-
-;; jsdom globals come from the :test build's :prepend-js.
-
-(def fetch-calls (atom []))
-(def context-status (atom 401))
-
-(defn- json-response [status body]
-  #js {:ok (< status 400)
-       :status status
-       :statusText "status"
-       :json (fn [] (js/Promise.resolve (clj->js body)))})
-
-(defn- route-response [path]
-  (cond
-    (re-find #"/api/auth/context" path)
-    (if (= 200 @context-status)
-      (json-response 200 {:user {:id "u1" :email "pi@open-hax.local" :displayName "Pi" :status "active"}
-                          :actor {:id "actor-1"}
-                          :org nil :membership nil
-                          :roleSlugs ["system-admin"] :permissions []
-                          :isSystemAdmin true :authProvider "local"})
-      (json-response 401 {:error "unauthorized"}))
-
-    (re-find #"/api/auth/config" path)
-    (json-response 200 {:githubEnabled false :localPasswordEnabled false})
-
-    (re-find #"/api/auth/invite/redeem" path)
-    (do (reset! context-status 200)
-        (json-response 200 {:ok true}))
-
-    :else (json-response 404 {:error (str "unexpected " path)})))
-
-(def ^:private real-fetch js/fetch)
-
-(use-fixtures :each
-  {:before (fn []
-             (reset! fetch-calls [])
-             (reset! context-status 401)
-             (set! (.-fetch js/globalThis)
-                   (fn [path init]
-                     (swap! fetch-calls conj {:path (str path) :init init})
-                     (js/Promise.resolve (route-response (str path))))))
-   :after (fn []
-            (rtl/cleanup)
-            (set! (.-fetch js/globalThis) real-fetch))})
-
-(defn- wait-until
-  ([msg pred] (wait-until msg pred nil))
-  ([msg pred opts]
-   (rtl/waitFor (fn [] (when-not (pred) (throw (js/Error. (str "still waiting: " msg)))))
-                (clj->js (or opts {})))))
-
-(defnc protected-content []
-  (d/div "Protected Knoxx workspace"))
-
-(defn- render-boundary []
-  (rtl/render ($ auth-boundary {:children ($ protected-content)})))
-
-(deftest renders-login-surface-on-401
-  (async done
-    (let [r (render-boundary)]
-      (-> (wait-until "login page" #(some? (.queryByText r "Knowledge operations platform")))
-          (.then (fn []
-                   (is (some? (.queryByText r "GitHub OAuth is not configured. Contact your administrator.")))
-                   (is (nil? (.queryByText r "Protected Knoxx workspace")))
-                   (let [context-call (first (filter #(re-find #"/api/auth/context" (:path %)) @fetch-calls))]
-                     (is (some? context-call))
-                     (is (= "include" (.-credentials ^js (:init context-call)))))
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
-
-(deftest invite-redemption-refreshes-into-protected-app
-  (async done
-    (let [r (render-boundary)]
-      (-> (wait-until "login page" #(some? (.queryByText r "Knowledge operations platform")))
-          (.then (fn []
-                   (.change rtl/fireEvent (.getByLabelText r "Email")
-                            #js {:target #js {:value "pi@open-hax.local"}})
-                   (.change rtl/fireEvent (.getByLabelText r "Invite code")
-                            #js {:target #js {:value "INVITE-1"}})
-                   (.click rtl/fireEvent (.getByRole r "button" #js {:name "Redeem invite"}))
-                   (wait-until "redeemed" #(some? (.queryByText r "Invite accepted! Redirecting…")))))
-          (.then (fn []
-                   (wait-until "protected app" #(some? (.queryByText r "Protected Knoxx workspace"))
-                               {:timeout 1500})))
-          (.then (fn []
-                   (let [redeem (first (filter #(re-find #"/api/auth/invite/redeem" (:path %)) @fetch-calls))
-                         ^js init (:init redeem)]
-                     (is (= "POST" (.-method init)))
-                     (is (= "include" (.-credentials init)))
-                     (is (= {"code" "INVITE-1" "email" "pi@open-hax.local"}
-                            (js->clj (js/JSON.parse (.-body init))))))
-                   (is (= 2 (count (filter #(re-find #"/api/auth/context" (:path %)) @fetch-calls)))
-                       "auth context refetched after redemption")
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
-
-(defnc auth-consumer []
-  (let [^js a (auth/use-auth)]
-    (d/div (str "signed in as " (.. a -user -email)
-                " admin=" (.-isSystemAdmin a)))))
-
-(deftest authenticated-children-can-use-auth
-  (reset! context-status 200)
-  (async done
-    (let [r (rtl/render ($ auth-boundary {:children ($ auth-consumer)}))]
-      (-> (wait-until "consumer sees auth"
-                      #(some? (.queryByText r "signed in as pi@open-hax.local admin=true")))
-          (.then (fn [] (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+            [knoxx.frontend.auth.boundary :as boundary]
+            [knoxx.frontend.auth.context :as auth]))
+(def calls "Actual fetch requests made by the UI." (atom []))
+(def session? "Fixture server authorization state." (atom false))
+(def logout-fails? "Fixture server logout refusal." (atom false))
+(def original-fetch "Restored fetch boundary." js/fetch)
+(defn- reply [status body]
+  #js {:ok (= 200 status) :status status :json #(js/Promise.resolve (clj->js body))})
+(defn- respond [path]
+  (case path
+    "/api/auth/config" (reply 200 {:identityProvider "axxium" :methods [{:id "password" :kind "password" :available true}]})
+    "/api/auth/context" (if @session? (reply 200 {:user {:id "owner" :email "owner@wiki.test"} :actor {:id "principal"}
+                                                 :roleSlugs ["system-admin"] :permissions [] :isSystemAdmin true})
+                             (reply 401 {:error "Authentication required"}))
+    "/api/auth/local/login" (do (reset! session? true) (reply 200 {:principal {"principal/id" "principal"}}))
+    "/api/auth/logout" (if @logout-fails? (reply 503 {:error "Logout unavailable"})
+                          (do (reset! session? false) (reply 200 {:ok true})))
+    (reply 404 {:error "Unexpected auth request"})))
+(t/use-fixtures :each
+  {:before (fn [] (reset! calls []) (reset! session? false) (reset! logout-fails? false)
+             (set! (.-fetch js/globalThis) (fn [path init] (swap! calls conj {:path path :init init}) (js/Promise.resolve (respond path)))))
+   :after (fn [] (rtl/cleanup) (set! (.-fetch js/globalThis) original-fetch))})
+(hx/defnc protected-content "A protected consumer of the shared context." []
+  (let [context (auth/use-auth)]
+    (d/div (d/p "Protected Knoxx workspace")
+           (when (.-error context) (d/p {:role "alert"} (.-error context)))
+           (d/button {:on-click (fn ^:async logout! [] (try (await (.logout context)) (catch :default _ nil)))} "Test sign out"))))
+(defn- render! [] (rtl/render (hx/$ boundary/auth-boundary {:children (hx/$ protected-content)})))
+(t/deftest ^:async anonymous-context-renders-real-method-registry
+  (render!)
+  (await (.findByText rtl/screen "Identity managed by Axxium"))
+  (t/is (nil? (.queryByText rtl/screen "Protected Knoxx workspace")))
+  (t/is (some? (.getByLabelText rtl/screen "Username or email")))
+  (t/is (= "include" (.-credentials ^js (:init (first @calls))))))
+(t/deftest ^:async password-login-refreshes-server-authority
+  (render!)
+  (await (.findByLabelText rtl/screen "Username or email"))
+  (.change rtl/fireEvent (.getByLabelText rtl/screen "Username or email") #js {:target #js {:value "owner@wiki.test"}})
+  (.change rtl/fireEvent (.getByLabelText rtl/screen "Password") #js {:target #js {:value "test-password"}})
+  (.click rtl/fireEvent (.getByRole rtl/screen "button" #js {:name "Sign in with password"}))
+  (await (.findByText rtl/screen "Protected Knoxx workspace"))
+  (let [^js init (:init (first (filter #(= "/api/auth/local/login" (:path %)) @calls)))]
+    (t/is (= "POST" (.-method init)))
+    (t/is (= {:identifier "owner@wiki.test" :password "test-password"} (js->clj (js/JSON.parse (.-body init)) :keywordize-keys true))))
+  (t/is (= 2 (count (filter #(= "/api/auth/context" (:path %)) @calls)))))
+(t/deftest ^:async failed-logout-does-not-pretend-session-ended
+  (reset! session? true) (reset! logout-fails? true) (render!)
+  (await (.findByText rtl/screen "Protected Knoxx workspace"))
+  (.click rtl/fireEvent (.getByRole rtl/screen "button" #js {:name "Test sign out"}))
+  (await (.findByText rtl/screen "Logout unavailable"))
+  (t/is (some? (.getByText rtl/screen "Protected Knoxx workspace")))
+  (t/is @session?))

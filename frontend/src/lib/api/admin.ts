@@ -190,6 +190,9 @@ function normalizeUser(value: unknown): AdminUserSummary {
   const record = asRecord(value);
   return {
     id: stringValue(record, ["id"]),
+    principalId: optionalStringValue(record, ["principalId"]),
+    identityBound: valueAt(record, "identityBound") === true,
+    identityEnrollmentRequired: valueAt(record, "identityEnrollmentRequired") === true,
     email: stringValue(record, ["email"]),
     displayName: stringValue(record, ["displayName"], stringValue(record, ["email"])),
     authProvider: optionalStringValue(record, ["authProvider"]),
@@ -250,9 +253,10 @@ export async function listOrgActors(orgId: string): Promise<{ users: AdminUserSu
 }
 
 export async function createOrgActor(orgId: string, payload: {
+  axxiumPrincipalId?: string;
   actorId?: string;
   email?: string;
-  displayName: string;
+  displayName?: string;
   roleSlugs: string[];
   toolPolicies?: AdminToolPolicy[];
 }): Promise<{ user: AdminUserSummary | null }> {
