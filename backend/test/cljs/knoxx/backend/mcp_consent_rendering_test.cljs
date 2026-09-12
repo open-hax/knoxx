@@ -24,7 +24,7 @@
 (deftest preserves-consent-form-contract
   (let [output (render-page {})]
     (is (str/starts-with? output "<!doctype html>"))
-    (is (str/includes? output "<form action=\"/api/mcp/oauth/authorize/confirm\" method=\"GET\">"))
+    (is (str/includes? output "<form action=\"/api/mcp/oauth/authorize/confirm\" method=\"POST\">"))
     (is (str/includes? output "name=\"state\" type=\"hidden\" value=\"\""))
     (is (str/includes? output "name=\"scope\" type=\"hidden\" value=\"\""))
     (is (str/includes? output "name=\"actor_id\" type=\"hidden\" value=\"open_hax\""))

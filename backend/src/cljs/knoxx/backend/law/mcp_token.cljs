@@ -12,8 +12,10 @@
   [:map {:closed false}
    [:accessToken NonBlankString]
    [:clientId NonBlankString]
-   [:userEmail NonBlankString]
+   [:userEmail {:optional true} NonBlankString]
    [:tools [:vector NonBlankString]]
+   [:axxiumPrincipalId NonBlankString]
+   [:axxiumEntityId NonBlankString]
    [:membershipId {:optional true} NonBlankString]
    [:orgSlug {:optional true} NonBlankString]
    [:actorId {:optional true} NonBlankString]])

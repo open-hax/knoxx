@@ -156,6 +156,37 @@
     :infer-externs false,
     :macros {:knoxx.backend.macros true}}},
 
+  :provider-recovery-proof
+  {:target :node-test,
+   :output-to "target/provider-recovery-proof/test.cjs",
+   :ns-regexp "provider-recovery-test$",
+   :autorun false,
+   :compiler-options {:output-feature-set :es-next,
+                      :optimizations :none,
+                      :infer-externs false,
+                      :macros {:knoxx.backend.macros true}}},
+
+  :identity-recovery-test
+  {:target :node-test
+   :output-to "target/identity-recovery/test.cjs"
+   :ns-regexp "knoxx\\.backend\\.((auth-session|authz|mcp-consent|extern-mcp-token|mcp-consent-rendering|mcp-params|mcp-schema)-test|extern\\.fastify-error-recovery-test)$"
+   :autorun false
+   :compiler-options {:output-feature-set :es-next :infer-externs false}}
+
+  ;; Verification-only exports never enter the production HTTP server graph.
+  :wiki-verification
+  {:target :esm
+   :runtime :node
+   :output-dir "dist-verification"
+   :js-options {:js-provider :import
+                :keep-as-import #{"node:fs" "node:fs/promises" "node:path"
+                                  "node:crypto" "node:os" "node:process"}}
+   :modules {:wiki
+             {:exports {:readMemory knoxx.backend.extern.wiki-verification/read-memory
+                        :readManifest knoxx.backend.extern.wiki-verification/read-manifest}}}
+   :compiler-options {:output-feature-set :es-next :optimizations :simple
+                      :source-map true :warnings-as-errors true}}
+
   :test-ci
   {:target :node-test,
    :output-to "target/test/test-ci.cjs",

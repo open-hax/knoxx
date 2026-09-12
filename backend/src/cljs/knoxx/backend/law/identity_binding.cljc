@@ -47,6 +47,13 @@
                     {:status 500 :code "identity_role_catalog_invalid"})))
   roles)
 
+(defn assert-provider-config!
+  "Refuse unknown provider selections before any persistence provider is opened."
+  [config]
+  (when-not (contains? #{:edn :mongo} (:policy-provider config :edn))
+    (throw (ex-info "Unsupported policy provider" {:status 500 :code "policy_provider_invalid"})))
+  config)
+
 (defn assert-principal-binding!
   "Refuse a changed entity/kind behind an already bound Axxium actor ID."
   [principal binding]

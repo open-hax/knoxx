@@ -76,7 +76,7 @@ async function ready(url, service, timeout = 60_000) {
     service.check();
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
-      if (response.ok) { await response.arrayBuffer(); return; }
+      if (response.ok) { const body = await response.text(); service.check(); return body; }
       await response.arrayBuffer();
     } catch (error) {
       if (!['TimeoutError', 'TypeError', 'AbortError'].includes(error.name)) throw error;
@@ -168,7 +168,11 @@ export async function startServices(options) {
     const backend = managedProcess(process.execPath, ['dist/server.js'], path.join(config.repo, 'backend'), env,
       path.join(config.outputDir, 'backend.log'));
     owned.push(backend);
-    await ready(`${backendUrl}/health`, backend);
+    const registry = JSON.parse(await ready(`${backendUrl}/api/auth/config`, backend));
+    assert.equal(registry.identityProvider, 'axxium', 'Readiness must expose the actual Axxium registry');
+    assert(Array.isArray(registry.methods), 'Readiness must expose identity method availability');
+    assert(registry.methods.some(method => method.id === 'password' && method.available === true),
+      'The configured bootstrap password method must be available');
     const frontend = managedProcess('pnpm', ['exec', 'vite', 'preview', '--host', 'localhost', '--port', String(config.frontendPort)],
       path.join(config.repo, 'frontend'), { ...env, VITE_KNOXX_BACKEND_URL: backendUrl }, path.join(config.outputDir, 'frontend.log'));
     owned.push(frontend);
