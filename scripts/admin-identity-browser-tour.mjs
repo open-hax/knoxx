@@ -18,6 +18,12 @@ function noIdentityEdits(payload) {
     assert.ok(!Object.hasOwn(payload, field), `Profile PATCH must not edit ${field}`);
   }
 }
+async function expandActor(page, identity) {
+  const row = page.getByRole('button').filter({hasText: identity});
+  await row.waitFor();
+  if (await row.getAttribute('aria-expanded') !== 'true') await row.click();
+  await page.getByRole('button', {expanded: true}).filter({hasText: identity}).waitFor();
+}
 export async function adminIdentityTour(page, config) {
   assert.equal(typeof config.shot, 'function'); assert.ok(config.principalId && config.principalEmail);
   const anonymous = await page.context().browser().newContext();
@@ -46,8 +52,10 @@ export async function adminIdentityTour(page, config) {
   const unbound = await command(page, create, 'POST', `/api/admin/orgs/${orgId}/actors`, 201);
   assert.equal(unbound.body.user.identityBound, false); assert.equal(unbound.body.user.identityEnrollmentRequired, true);
   assert.ok(!Object.hasOwn(unbound.sent, 'axxiumPrincipalId'));
+  // A successful response precedes the Admin refresh, which remounts the actor list.
+  await page.getByText('Actor created. Identity enrollment is required before this actor can sign in.', {exact: true}).waitFor();
   await page.getByLabel('Search actors', {exact: true}).fill(name);
-  await page.getByRole('button').filter({hasText: name}).click();
+  await expandActor(page, name);
   await page.getByText('Identity enrollment required', {exact: true}).waitFor();
   assert.equal(await page.getByLabel('Directory contact email', {exact: true}).inputValue(), '');
   await config.shot('admin-01-unbound-directory', 'A named directory row without a principal creates no login; its enrollment requirement is visible.', []);
@@ -55,6 +63,7 @@ export async function adminIdentityTour(page, config) {
   const saved = await command(page, page.getByRole('button', {name: 'Save actor profile', exact: true}), 'PATCH', `/api/admin/actors/${unbound.body.user.id}`, 200);
   noIdentityEdits(saved.sent); assert.ok(!Object.hasOwn(saved.sent, 'actorId'), 'A name-only profile must not assign an empty actor ID');
   assert.equal(saved.body.user.displayName, `${name} revised`);
+  await page.getByText('Actor profile updated.', {exact: true}).waitFor();
   await page.getByLabel('Search actors', {exact: true}).fill('');
   await page.getByLabel('Existing Axxium principal ID (optional)', {exact: true}).fill(config.principalId);
   assert.equal(await page.getByLabel('New actor ID', {exact: true}).isDisabled(), true);
@@ -63,8 +72,9 @@ export async function adminIdentityTour(page, config) {
   assert.equal(bound.body.user.identityBound, true); assert.equal(bound.body.user.identityEnrollmentRequired, false);
   assert.equal(bound.body.user.principalId, config.principalId); assert.equal(bound.body.user.email, config.principalEmail);
   assert.ok(!Object.hasOwn(bound.sent, 'actorId') && !Object.hasOwn(bound.sent, 'email'));
+  await page.getByText('Actor bound to the verified Axxium principal.', {exact: true}).waitFor();
   await page.getByLabel('Search actors', {exact: true}).fill(config.principalEmail);
-  await page.getByRole('button').filter({hasText: config.principalEmail}).click();
+  await expandActor(page, config.principalEmail);
   assert.equal(await page.getByLabel('Actor ID', {exact: true}).inputValue(), config.principalId);
   assert.equal(await page.getByLabel('Actor ID', {exact: true}).getAttribute('readonly'), '');
   assert.equal(await page.getByLabel('Identity email (Axxium)', {exact: true}).getAttribute('readonly'), '');
