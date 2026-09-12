@@ -38,9 +38,10 @@
         directory (required-directory! :application (:wiki-directory config))
         mailbox-directory (required-directory! :mailbox-provider
                                                 (or (:mailbox-directory config) (str directory "/mailbox")))]
-    (when (= :edn (:run-provider selection))
-      (reset! runs/session-store* (clio-run/open! {:directory (str directory "/runs")
-                                                  :clock! clock/instant-iso})))
+    (reset! runs/session-store*
+            (when (= :edn (:run-provider selection))
+              (clio-run/open! {:directory (str directory "/runs")
+                               :clock! clock/instant-iso})))
     (when (= :edn (:thread-provider selection))
       (sessions/install! (clio-thread/open! {:directory (str directory "/threads")})))
     (when (= :edn (:cache-provider selection))

@@ -4,7 +4,8 @@
    Owns raw Fastify request/reply object traversal and native RequestInit
    construction. Callers pass/receive CLJS maps where possible and may carry
    opaque handles such as raw request streams or Response buffers."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.law.http-failure :as http-failure]))
 
 (defn no-content?
   [x]
@@ -203,8 +204,18 @@
        default-status)))
 
 (defn error-message
+  "Read the message from an opaque native or ClojureScript exception."
   [err]
-  (or (aget err "message") (str err)))
+  (or (when err (.-message ^js err)) (str err)))
+
+(defn http-error
+  "Encode validated failure data in both ex-data and Fastify's native fields."
+  [status code message]
+  (let [failure (http-failure/validate! {:status status :code code :message message})
+        error (ex-info message (select-keys failure [:status :code]))]
+    (set! (.-statusCode ^js error) status)
+    (set! (.-code ^js error) code)
+    error))
 
 (defn error-code
   "Preserve classified CLJS service failures across the HTTP boundary."

@@ -32,7 +32,7 @@ an explicit deny overrides administrator defaults.
 | `POST /api/actors/messages` | `{operation_id,target,content,mode}`; optional target coordinates and metadata |
 | `GET /api/actors/mailbox?box=inbox` | Current actor's inbox metadata; `outbox` selects its sent messages |
 | `GET /api/actors/mailbox/:mailboxId` | Full immutable body for the sender, recipient or tenant administrator |
-| `GET /api/actors/mailbox/changes` | Authenticated SSE invalidation stream for the current actor or operator |
+| `GET /api/actors/mailbox/events/stream` | Authenticated SSE invalidation stream for the current actor or operator |
 | `POST /api/actors/mailbox/:mailboxId/ack` | Recipient acknowledgement, even when the recipient is an administrator |
 | `GET /api/admin/config/actors/mailbox` | Tenant operator inventory and named filters |
 | `POST /api/admin/config/actors/mailbox/:mailboxId/ack` | Explicit operator acknowledgement |

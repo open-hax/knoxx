@@ -39,7 +39,7 @@
   "Invalidate on scoped mailbox events and reconnect, closing the stream on unmount."
   [changed! status!]
   (if (exists? js/EventSource)
-    (let [stream (js/EventSource. "/api/actors/mailbox/changes" #js {:withCredentials true})
+    (let [stream (js/EventSource. "/api/actors/mailbox/events/stream" #js {:withCredentials true})
           change! (fn [_] (changed!))
           open! (fn [_] (status! "Live") (changed!))
           error! (fn [_] (status! "Reconnecting; refresh is available"))]

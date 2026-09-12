@@ -156,6 +156,19 @@
     :infer-externs false,
     :macros {:knoxx.backend.macros true}}},
 
+  :http-route-recovery
+  {:target :node-test
+   :output-to "target/http-route-recovery/test.cjs"
+   :ns-regexp "knoxx\\.backend\\.extern\\.fastify-error-recovery-test$"
+   :autorun false
+   :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
+                                               :file "test/js/eta_mu_cli_test_stub.cjs"}
+                          "@open-hax/openplanner-sdk" {:target :file
+                                                       :file "test/js/openplanner_sdk_test_stub.mjs"}
+                          "@open-hax/openplanner-sdk/mongo-vectors" {:target :file
+                                                                     :file "test/js/openplanner_sdk_test_stub.mjs"}}}
+   :compiler-options {:output-feature-set :es-next :infer-externs false}}
+
   :provider-recovery-proof
   {:target :node-test,
    :output-to "target/provider-recovery-proof/test.cjs",

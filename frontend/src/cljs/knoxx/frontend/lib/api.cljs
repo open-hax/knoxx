@@ -19,12 +19,11 @@
       (.set headers "x-knoxx-org-slug" org))
     headers))
 
-(defn- throw-error-text [^js res path]
-  (-> (.text res)
-      (.then (fn [text]
-               (throw (js/Error. (if (seq text)
-                                   text
-                                   (str "Request to " path " failed (" (.-status res) ")"))))))))
+(defn- ^:async throw-error-text [^js res path]
+  (let [text (await (.text res))]
+    (throw (js/Error. (if (seq text)
+                       text
+                       (str "Request to " path " failed (" (.-status res) ")"))))))
 
 (defn- fetch-init ^js [method body]
   (let [headers (auth-headers)
@@ -35,20 +34,19 @@
       (set! (.-body init) (js/JSON.stringify (clj->js body))))
     init))
 
-(defn- raw-request [path {:keys [method body]} read-body]
-  (-> (js/fetch path (fetch-init method body))
-      (.then (fn [^js res]
-               (if (.-ok res)
-                 (read-body res)
-                 (throw-error-text res path))))))
+(defn- ^:async raw-request [path {:keys [method body]} read-body]
+  (let [^js res (await (js/fetch path (fetch-init method body)))]
+    (if (.-ok res)
+      (await (read-body res))
+      (await (throw-error-text res path)))))
 
-(defn request
+(defn ^:async request
   "Fetches `path`, resolving to the keywordized JSON body. `opts` may
    carry :method and :body (CLJS data, JSON-encoded)."
   ([path] (request path nil))
   ([path opts]
-   (-> (raw-request path opts (fn [^js res] (.json res)))
-       (.then #(js->clj % :keywordize-keys true)))))
+   (js->clj (await (raw-request path opts (fn [^js res] (.json res))))
+            :keywordize-keys true)))
 
 (defn request-text
   "Like `request` but resolves to the raw response text."

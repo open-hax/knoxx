@@ -14,6 +14,8 @@
   (Fastify #js {:logger true
                 :disableRequestLogging (not request-logging?)
                 :bodyLimit (* 50 1024 1024)
+                ;; Qualified Wiki identifiers exceed Fastify's default100.
+                :routerOptions #js {:maxParamLength 1024}
                 :requestTimeout 600000
                 :connectionTimeout 600000
                 ;; Dev hot reload must not hang forever on keep-alive/websocket

@@ -254,7 +254,7 @@
                                         (cond-> (nth receipt-items receipt-idx)
                                           (not (preview-present? (:input_preview (nth receipt-items receipt-idx))))
                                           (assoc :input_preview input-preview)
-                                          (and (nil? (:input (nth receipt-items receipt-idx))))
+                                          (nil? (:input (nth receipt-items receipt-idx)))
                                           (assoc :input input-preview)
                                           (and (not (seq (:tool_name (nth receipt-items receipt-idx)))) (seq tool-name))
                                           (assoc :tool_name tool-name))
@@ -292,15 +292,6 @@
                      (assoc run
                             :tool_receipts next-receipts
                             :trace_blocks next-blocks))))))
-
-(defn tool-event-payload
-  [run-id conversation-id session-id type extra]
-  (merge {:run_id run-id
-          :conversation_id conversation-id
-          :session_id session-id
-          :type type
-          :at (time/now-iso)}
-         extra))
 
 (defn percentile-95
   [values]

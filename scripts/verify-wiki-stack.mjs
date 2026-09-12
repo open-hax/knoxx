@@ -6,11 +6,12 @@ import os from 'node:os';
 import http from 'node:http';
 import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
-import {createHash, randomBytes, randomUUID} from 'node:crypto';
+import {randomBytes, randomUUID} from 'node:crypto';
 import {startServices} from './wiki-stack-services.mjs';
 import {annotatedScreenshot, tour} from './wiki-browser-tour.mjs';
 import {identityTour} from './identity-browser-tour.mjs';
 import {adminIdentityTour} from './admin-identity-browser-tour.mjs';
+import {mailTour} from './mail-browser-tour.mjs';
 import {translationTour, verifySourceUnaccepted} from './wiki-translation-tour.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -79,8 +80,11 @@ async function mcpClient(page) {
   await connected.connect(new StreamableHTTPClientTransport(new URL('/mcp', services.baseUrl),
     {requestInit:{headers:{Authorization:`Bearer ${token}`}}}));
   const tools = await connected.listTools();
-  for (const name of ['wiki_read', 'wiki_save', 'wiki_review']) assert(tools.tools.some(tool => tool.name === name), `${name} is absent from the actual MCP catalog`);
-  check('Real MCP initialization exposes the same Wiki commands as the authorized human UI', {principalMode:'human-delegated Axxium session'});
+  for (const name of ['wiki_read', 'wiki_save', 'wiki_review', 'actors_send-message']) assert(tools.tools.some(tool => tool.name === name), `${name} is absent from the actual MCP catalog`);
+  const mailboxTool = tools.tools.find(tool => tool.name === 'actors_send-message');
+  assert.equal(mailboxTool.inputSchema.properties?.operation_id?.type, 'string',
+    'The delegated Mail command must expose its stable caller operation identity');
+  check('Real MCP initialization exposes the same Wiki and Mail commands as the authorized human UI', {principalMode:'human-delegated Axxium session'});
   return connected;
 }
 
@@ -180,18 +184,23 @@ try {
     evidence.admin = await adminIdentityTour(page, {baseUrl:services.baseUrl, shot,
       principalId:verifiedContext.actor.id, principalEmail:email});
     client = await mcpClient(page);
+    evidence.mail = await mailTour(page, {baseUrl:services.baseUrl, principalId:verifiedContext.actor.id, shot,
+      agentSend:async args => {
+        const result = await client.callTool({name:'actors_send-message', arguments:args});
+        assert(!result.isError, `MCP Mail command refused: ${JSON.stringify(result.content)}`);
+        return result;
+      }});
+    check('Human and delegated-agent Mail commands persist full content and update the open view without losing its draft');
     const verification = await import(pathToFileURL(path.join(repo,'backend/dist-verification/wiki.js')));
     const artifacts = await artifactService(verification.readManifest); artifactServer = artifacts.server;
     const unlisted = await fetch(new URL('/manifest.edn', artifacts.baseUrl)); assert.equal(unlisted.status,404);
     evidence.wiki = await tour(page, {baseUrl:services.baseUrl, outputDir, garden:'sandbox.wiki/research', agentCommand,
-      verifyCheckout:async () => {
-        const bytes = await fs.readFile(path.join(repo,'backend/dist/server.js'));
-        assert.equal(createHash('sha256').update(bytes).digest('hex'),services.builds.files['backend/dist/server.js'].sha256);
-      }, beforeSourceAcceptance:verifySourceUnaccepted,
+      verifyCheckout:services.verifyBuilds, beforeSourceAcceptance:verifySourceUnaccepted,
       translationTour:(currentPage, config) => translationTour(currentPage, {...config, artifactBaseUrl:artifacts.baseUrl,
         verifyMemory:input => verification.readMemory(path.join(fixtureDirectory,'state/translation-splits'), input)})});
     check('Two complete publication cycles reused accepted corrections from distinct canonical translation turns');
   }
+  evidence.verifiedBuilds = await services.verifyBuilds();
   assert.equal(evidence.failures.length,0, 'Browser and artifact failures remain');
   evidence.completed = true;
 } catch (error) {

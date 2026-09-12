@@ -77,3 +77,45 @@
             (is (= 400 (await (status #(queries/events-since! ctx "run-1" cursor))))))
           (is (= [] (await (queries/events-since! ctx "run-1" at))))))
       (finally (fixture/remove! directory)))))
+
+(deftest ^:async missing-event-provider-refuses-after-ownership-before-any-heap-read-or-flush
+  (let [operations (atom [])
+        unsupported (reify persistence/ISessionStore
+                      (get-run [_ _] run)
+                      (put-run! [_ _] nil)
+                      (patch-run! [_ _ _] nil)
+                      (list-active-runs [_ _] [])
+                      (complete-run! [_ _ _] nil)
+                      (delete-run! [_ _] nil))]
+    (doseq [provider [nil unsupported]]
+      (with-redefs [registry/session-store* (atom provider)
+                    state/runs* (atom {"run-1" run})
+                    state/get-run-events-since (fn [_ _] (swap! operations conj :heap) [event])
+                    events/flush! (fn [_] (swap! operations conj :flush))]
+        (is (= 401 (await (status #(queries/events-since! nil "run-1" nil)))))
+        (is (= (if provider 403 503) (await (status #(queries/events-since! (assoc ctx :org-id "foreign") "run-1" nil)))))
+        (try (await (queries/events-since! ctx "run-1" nil))
+             (is false "Unavailable durable authority must not silently become process memory")
+             (catch :default error
+               (is (= {:status 503 :code (if provider "run_event_provider_unsupported" "run_provider_unavailable")} (ex-data error)))))
+        (is (empty? @operations) "Refusal happens before either event effect")))))
+
+(deftest ^:async directory-reads-selected-durable-state-and-current-tenant-policy
+  (let [directory (fixture/temporary-directory) clock (atom at)]
+    (try
+      (let [options {:directory directory :clock! #(deref clock) :instance-id "test"}
+            provider (store/open! options)]
+        (await (persistence/put-run! provider run))
+        (await (persistence/put-run! provider (assoc run :run_id "other-org" :org_id "foreign")))
+        (await (persistence/put-run! provider (assoc run :run_id "other-user" :user_id "other" :membership_id "other")))
+        (with-redefs [registry/session-store* (atom (store/open! options))
+                      state/runs* (atom {"heap-only" (assoc run :run_id "heap-only")})]
+          (is (= 401 (await (status #(queries/list! nil 100)))))
+          (is (= ["run-1"] (mapv :run_id (await (queries/list! ctx 100)))))
+          (is (= #{"run-1" "other-user"}
+                 (set (map :run_id (await (queries/list! (assoc ctx :permissions ["agent.chat.use" "agent.runs.read_org"]) 100))))))
+          (is (= 3 (count (await (queries/list! {:role-slugs ["system-admin"]} 100)))))
+          (doseq [limit [0 501 nil 1.5]] (is (= 400 (await (status #(queries/list! ctx limit))))))
+          (reset! clock "2026-09-12T14:00:00.000Z")
+          (is (= [] (await (queries/list! ctx 100))))))
+      (finally (fixture/remove! directory)))))

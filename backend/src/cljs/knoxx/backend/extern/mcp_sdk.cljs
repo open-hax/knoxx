@@ -1,12 +1,15 @@
 (ns knoxx.backend.extern.mcp-sdk
   "Native MCP SDK schema, registration and response-lifetime boundary."
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.crypto :as crypto]
             [knoxx.backend.infra.actor.acting :as actor-acting]
             [knoxx.backend.law.mcp-tool-annotations :as tool-annotations]))
 
 (declare typebox->zod-shape)
 
-(defn- tool-execute! [^js tool params] (.execute tool "mcp" params nil nil nil))
+(defn- tool-execute!
+  [^js tool params]
+  (.execute tool (str "mcp-" (crypto/random-hex 16)) params nil nil nil))
 
 (defn- apply-zod-description [^js schema-node ^js schema-json]
   (let [description (some-> (aget schema-json "description") str str/trim not-empty)]

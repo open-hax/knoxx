@@ -2,6 +2,7 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.extern.agent-turn-node :as xturn-node]
+            [knoxx.backend.extern.agent-turn-fixture :as fixture]
             [knoxx.backend.infra.agent.turn :as agent-turns]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.shape.agent :as agent-shape]))
@@ -61,12 +62,16 @@
   (testing "an explicit positive timeout still force-closes a turn that overruns it"
     (try
       (await (agent-turns/send-user-message-with-timeout!
-              (delayed-send-session "agent-done" 50) "hello" 1))
+              (pending-agent-session nil) "hello" 1))
       (is false "should have rejected on timeout")
       (catch :default err
         (is (re-find #"Agent turn timed out after 1ms" (.-message err)))))))
 
 (deftest ^:async prompt-timeout-finalizes-session-as-failed
+  (await (fixture/with-run!
+          {:run_id "run-timeout" :session_id "session-timeout"
+           :conversation_id "conversation-timeout"}
+          (^:async fn []
   (testing "provider turns that never settle clear the active stream through failure finalization"
     (let [completed* (atom nil)
           aborted* (atom false)]
@@ -96,9 +101,13 @@
                     :payload {:status "failed"
                               :error "Agent turn timed out after 1ms"
                               :messages [{:role "user" :content "hello"}]}}
-                   @completed*))))))))
+                   @completed*)))))))))))
 
 (deftest ^:async prompt-timeout-fail-stops-when-provider-abort-never-settles
+  (await (fixture/with-run!
+          {:run_id "run-abort-hangs" :session_id "session-abort-hangs"
+           :conversation_id "conversation-abort-hangs"}
+          (^:async fn []
   (testing "a hung abort cannot release the FIFO into a still-live provider"
     (let [completed* (atom nil)
           aborted* (atom false)
@@ -142,4 +151,4 @@
             (is (= :agent-turn/provider-abort-failed
                    (:boundary @abort-diagnostic*)))
             (is (= "Provider abort did not settle before its safety grace elapsed"
-                   (:message @abort-diagnostic*)))))))))
+                   (:message @abort-diagnostic*))))))))))))

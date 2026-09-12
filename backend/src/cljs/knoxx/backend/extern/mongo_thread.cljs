@@ -7,15 +7,23 @@
 (defn- session-ttl-seconds [session-id]
   (if (str/includes? (str session-id) "-sticky") 86400 3600))
 
+(defn- decode-session [native]
+  (when native
+    ;; BSON identities and driver-owned Date fields are transport metadata,
+    ;; not portable conversation state. Returning them breaks the next patch's
+    ;; EDN contract even when the caller only changes an ordinary status.
+    (dissoc (js->clj native :keywordize-keys true)
+            :_id :expiresAt :createdAt :updatedAt)))
+
 (defn ^:async find-session [db session-id]
   (let [coll (.collection db COLLECTION_NAME)
         result (await (.findOne coll #js {"session_id" session-id}))]
-    (when result (js->clj result :keywordize-keys true))))
+    (decode-session result)))
 
 (defn ^:async find-session-by-conversation [db conversation-id]
   (let [coll (.collection db COLLECTION_NAME)
         result (await (.findOne coll #js {"conversation_id" conversation-id}))]
-    (when result (js->clj result :keywordize-keys true))))
+    (decode-session result)))
 
 (defn ^:async upsert-session! [db session]
   (let [coll (.collection db COLLECTION_NAME)
@@ -53,7 +61,7 @@
   (let [coll (.collection db COLLECTION_NAME)
         cursor (.find coll #js {"status" #js {"$in" (clj->js (vec ACTIVE_STATUS))}})
         results (await (.toArray cursor))]
-    (js->clj results :keywordize-keys true)))
+    (mapv decode-session (array-seq results))))
 
 (defn ^:async setup-indexes!
   "Create required indexes on knoxx_threads collection."

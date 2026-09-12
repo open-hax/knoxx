@@ -17,17 +17,12 @@
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.translation-review-inventory :as review-inventory]
             [knoxx.backend.law.publication :as publication-law]
-            [knoxx.backend.domain.translation-evidence :as evidence-domain]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
+            [knoxx.backend.infra.publication-gate-evidence :as gate-evidence]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
-            [knoxx.backend.infra.source-review :as source-review]
             [knoxx.backend.infra.translation-agent-dispatch :as agent-dispatch]
-            [knoxx.backend.infra.translation-candidate-content :as candidate-content]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.translation-dispatch :as dispatch]
-            [knoxx.backend.infra.translation-evidence-store :as store]
-            [knoxx.backend.infra.translation-split-projection :as split-projection]
-            [knoxx.backend.infra.wiki-runtime :as wiki-runtime]
             [knoxx.backend.law.translation-dispatch :as law]))
 
 (defn hydrated-intents
@@ -155,158 +150,33 @@
         records))
 
 (defn current-source-locale-receipts
-  "Only the receipts whose source locale is still the document's declared one.
-
-   The gate's evidential key is `[document target-locale revision]` — it cannot
-   carry a source locale, because a publication intent does not name one. But a
-   translation *from* a different source locale is a different translation, and
-   the dispatch identity says so by including `:source-locale`.
-
-   Without this filter, changing a document's declared source locale while its
-   bytes stay identical left the content digest, the document and the target
-   locale all unchanged — so the old receipt satisfied the new intent and the
-   retranslation that was genuinely required never happened.
-
-   Filtered here rather than keyed in the domain because the gate's fact
-   signature is fixed and the *current* source locale is a property of the
-   document, which this layer has and the domain does not."
+  "Keep receipts translated from the document's currently declared source locale."
   [documents receipts]
-  (let [declared (into {} (map (juxt :document/id :document/source-locale)) documents)]
-    (filterv (fn [receipt]
-               (= (:translation/source-locale receipt)
-                  (get declared (:translation/document receipt))))
-             receipts)))
+  (gate-evidence/current-source-locale-receipts documents receipts))
 
 (defn project-receipts
-  "Only the receipts belonging to `project`.
-
-   Translation output is project-scoped — every existing segment, document and
-   export route filters by it — so output produced under one project does not
-   exist under another. With the project ignored, changing
-   `KNOXX_SESSION_PROJECT_NAME` left the durable evidence in place and the new
-   project read the old project's receipts as its own.
-
-   A nil active project matches only receipts that also name none, so an unset
-   project is its own scope rather than a wildcard over every other."
+  "Keep only receipts from the exact active project, including explicit absence."
   [project receipts]
-  (filterv #(= project (:translation/project %)) receipts))
+  (gate-evidence/project-receipts project receipts))
 
 (defn tenant-receipts
-  "Only the receipts belonging to `org-id`.
-
-   Translation is tenant-scoped: the worker keys segments by organization and
-   every document read requires one, so a translation produced for org A does not
-   exist for org B. Loading receipts unfiltered made org B's gate report a
-   document translated when the segments lived only in org A's tenant — the
-   evidence half of the same leak `law.translation-dispatch/dispatch-key` closes
-   on the identity half.
-
-   A receipt naming no organization is excluded rather than treated as global.
-   Admitting it into every tenant is exactly the failure being fixed."
+  "Keep only receipts belonging to the exact active organization."
   [org-id receipts]
-  (filterv #(= org-id (:translation/org-id %)) receipts))
+  (gate-evidence/tenant-receipts org-id receipts))
 
-(defn- ^:async approvals-for-gate!
-  "Load scoped approvals and optionally join current durable split history."
-  [evidence-store {:keys [org-id project] :as scope} receipts
-   {:keys [enforce-split-review-readiness? split-store digest-hex]}]
-  (let [stored (->> (await (store/approvals!
-                            evidence-store
-                            (select-keys scope [:org-id :project])))
-                    (filterv #(and (= org-id (:review/org-id %))
-                                   (= project (:review/project %)))))]
-    (if enforce-split-review-readiness?
-      (await (split-projection/current-review-approvals!
-              {:split-store split-store :digest-hex digest-hex}
-              receipts stored))
-      stored)))
-
-(declare gate-evidence!)
-
-(defn ^:async gate-facts!
-  "Every fact `domain.publication-gate` needs, read once, scoped to one tenant.
-
-   All four now come from real providers. `:approved?` reads recorded approvals
-   rather than the `(constantly false)` this function used while no approval
-   surface existed.
-
-   Approvals are filtered by the same tenant and project as receipts, and for the
-   same reason: review evidence attests to a translation that exists in one
-   scope. `:approved?` remains inert for dispatch specifically —
-   `translation-work` derives from the `:translation-missing` and
-   `:translation-stale` blockers, never from the review blocker, so a review
-   requirement does not suppress the translation that would satisfy it — but it
-   is loaded here because the same facts answer whether the resulting
-   publication is admissible, and computing them twice in two places is how the
-   two answers drift."
+(defn gate-facts!
+  "Read every gate fact once, scoped to one tenant and project."
   ([config evidence-store scope documents]
-   (gate-facts! config evidence-store scope documents {}))
+   (gate-evidence/gate-facts! config evidence-store scope documents))
   ([config evidence-store scope documents document-roots]
-   (:facts (await (gate-evidence! config evidence-store scope documents
-                                  document-roots)))))
+   (gate-evidence/gate-facts! config evidence-store scope documents document-roots)))
 
-(defn ^:async gate-evidence!
-  "The loaded translation evidence *and* the facts derived from it, read once.
-
-   Split out from `gate-facts!` because two callers need different halves of one
-   read. The gate needs only the closures; `infra.publication-runtime`
-   additionally needs the evidence value itself, to look up the *output* revision
-   an intent's receipt names so it can read the bytes that revision identifies.
-
-   Returned together rather than exposed as two functions on purpose. Loading
-   the receipts twice would let the facts the gate decided with and the receipt
-   the content was read from come from two different reads — and a
-   re-translation landing between them would publish the new bytes under the old
-   approval, which is precisely the transplant the two-revision design prevents."
+(defn gate-evidence!
+  "Authenticate receipts, approvals and source acceptance from one snapshot."
   ([config evidence-store scope documents document-roots]
-   (gate-evidence! config evidence-store scope documents document-roots {}))
-  ([config evidence-store {:keys [org-id project] :as scope} documents document-roots
-    {:keys [source-revisions current-authored desired-work authenticate-content?
-            enforce-split-review-readiness? split-store digest-hex]
-     :or {current-authored []
-          desired-work []
-          authenticate-content? false
-          enforce-split-review-readiness? false}}]
-   (let [revisions (or source-revisions
-                       (await (source-revision/source-revisions!
-                               config documents document-roots)))
-        ;; Scoped in the *query*. Reading every receipt ever recorded and
-        ;; narrowing afterwards made each dispatch pass grow with the global
-        ;; history of every tenant, and left the collection's own indexes unused.
-        ;; The in-memory filters below stay as a second check — a store is
-        ;; replaceable, and one that ignored the scope must not be able to widen
-        ;; what the gate sees.
-        scoped-receipts (->> (await (store/completed-translations!
-                                     evidence-store
-                                     (select-keys scope [:org-id :project])))
-                             (#(contract-content/current-authored-receipts
-                                % current-authored desired-work))
-                             (tenant-receipts org-id)
-                             (project-receipts project)
-                             (current-source-locale-receipts documents))
-        receipts (if authenticate-content?
-                   (await (candidate-content/authenticated-receipts!
-                           (:publication-content-root config)
-                           document-roots
-                           (into {} (map (juxt :document/id identity)) documents)
-                           current-authored
-                           scoped-receipts))
-                   scoped-receipts)
-        approvals (await (approvals-for-gate!
-                          evidence-store scope receipts
-                          {:enforce-split-review-readiness?
-                           enforce-split-review-readiness?
-                           :split-store split-store
-                           :digest-hex digest-hex}))
-        evidence (evidence-domain/evidence {:receipts receipts
-                                            :approvals approvals})
-        acceptance (await (source-review/acceptance-facts!
-                           config {:documents (into {} (map (juxt :document/id identity)) documents)}
-                           scope (wiki-runtime/source-dependencies)))]
-     {:evidence evidence
-      :facts (merge (source-revision/revision-facts revisions)
-                    (evidence-domain/gate-facts evidence)
-                    acceptance)})))
+   (gate-evidence/gate-evidence! config evidence-store scope documents document-roots))
+  ([config evidence-store scope documents document-roots options]
+   (gate-evidence/gate-evidence! config evidence-store scope documents document-roots options)))
 
 (def runner-kinds
   "The producers a deployment may ask translations from.
@@ -348,87 +218,74 @@
     (await (contract-content/source-content!
             (get roots (:document/id document)) document))))
 
+(defn- ^:async dispatch-agent-intent!
+  "Send one derived work item with its source bytes and candidate recovery context."
+  [deps index intent facts scope roots work]
+  (let [digest ((:current-source-revision facts) (:publication/document intent))
+        source (await (document-source! index roots intent))
+        checked-work (:action/with work)
+        context (await (dispatch/candidate-recovery-context!
+                        (:evidence-store deps) checked-work
+                        (dispatch/dispatch-context intent scope digest)))]
+    (assoc (if (str/blank? (str source))
+             {:dispatch/outcome :dispatch/failed
+              :dispatch/detail (str "the document's source could not be read, so"
+                                    " there are no bytes to translate")}
+             (await (agent-dispatch/dispatch-work! deps checked-work context source)))
+           :publication/id (:publication/id intent))))
+
 (defn ^:async dispatch-intents-to-agent!
-  "Announce the derived translation work of every intent to an agent actor.
-
-   The agent-path counterpart of `infra.translation-dispatch/dispatch-intents!`,
-   and sequential for the same reason that one is: fanning an entire garden's
-   backlog out in one pass is how a reconciliation run becomes an incident, and
-   here each item starts a model session rather than merely queueing a row.
-
-   An intent whose source cannot be read is reported rather than dispatched. The
-   bytes are what the agent translates, so there is no lawful dispatch without
-   them — and silently skipping would look identical to 'nothing needed doing'."
+  "Sequentially announce derived work; report unreadable source instead of skipping it."
   [deps index intents facts scope roots]
   (let [results (atom [])]
     (doseq [intent intents]
       (when-let [work (dispatch/derived-work intent facts)]
-        (let [digest ((:current-source-revision facts) (:publication/document intent))
-              source (await (document-source! index roots intent))
-              checked-work (:action/with work)
-              context (await (dispatch/candidate-recovery-context!
-                              (:evidence-store deps)
-                              checked-work
-                              (dispatch/dispatch-context intent scope digest)))]
-          (swap! results conj
-                 (assoc (if (str/blank? (str source))
-                          {:dispatch/outcome :dispatch/failed
-                           :dispatch/detail
-                           (str "the document's source could not be read, so"
-                                " there are no bytes to translate")}
-                          (await (agent-dispatch/dispatch-work!
-                                  deps
-                                  checked-work
-                                  context
-                                  source)))
-                        :publication/id (:publication/id intent))))))
+        (swap! results conj (await (dispatch-agent-intent!
+                                   deps index intent facts scope roots work)))))
     @results))
 
-(defn ^:async dispatch-translations!
-  "Dispatch derived work for one publication, one document, or the corpus.
-
-   Returns `{:considered n :admissible n :dispatched [...]}`. The counts are
-   reported separately because an empty dispatch list is ambiguous on its own:
-   nothing needed translating, nothing was looked at, and everything looked at
-   was structurally inadmissible all read identically. An operator running this
-   against the wrong scope — or against a garden that has been archived —
-   deserves to be able to tell which."
-  [config {:keys [evidence-store] :as deps} scope selection]
-  (let [load-records! (or (:resource-records! deps)
-                          publications/resource-records!)
-        build-index (or (:publication-index deps)
-                        publications/publication-index)
-        load-revisions! (or (:source-revisions! deps)
-                            source-revision/source-revisions!)
-        ensure-receipts! (or (:ensure-contract-receipts! deps)
-                             contract-content/ensure-receipts!)
-        dispatch-agent! (or (:dispatch-agent-intents! deps)
-                            dispatch-intents-to-agent!)
-        dispatch-worker! (or (:dispatch-worker-intents! deps)
-                             dispatch/dispatch-intents!)
+(defn- ^:async dispatch-selection!
+  "Load one resource index and resolve the scoped structurally admissible selection."
+  [config deps scope selection]
+  (let [load-records! (or (:resource-records! deps) publications/resource-records!)
+        build-index (or (:publication-index deps) publications/publication-index)
         records (await (load-records! config))
         index (build-index records)
-        hydrated (selected-hydrated-intents index scope selection)
-        intents (admissible-intents index hydrated)
+        hydrated (selected-hydrated-intents index scope selection)]
+    {:index index :hydrated hydrated :intents (admissible-intents index hydrated)
+     :roots (document-source-roots config records)}))
+
+(defn- selected-desired-work
+  "Attach exact tenant/project scope to work for the selected publication IDs."
+  [index revisions intents scope]
+  (let [selected-publications (set (map :publication/id intents))]
+    (->> (review-inventory/desired-work index revisions)
+         (filterv #(contains? selected-publications (:publication/id %)))
+         (mapv #(assoc % :translation/org-id (:org-id scope)
+                         :translation/project (:project scope))))))
+
+(defn- ^:async dispatch-facts!
+  "Read source revisions once before authenticating authored receipts and gate evidence."
+  [config {:keys [evidence-store] :as deps} scope {:keys [index intents roots]}]
+  (let [load-revisions! (or (:source-revisions! deps) source-revision/source-revisions!)
+        ensure-receipts! (or (:ensure-contract-receipts! deps) contract-content/ensure-receipts!)
         documents (referenced-documents index intents)
-        roots (document-source-roots config records)
         revisions (await (load-revisions! config documents roots))
-        selected-publications (set (map :publication/id intents))
-        desired-work (->> (review-inventory/desired-work index revisions)
-                          (filterv #(contains? selected-publications
-                                               (:publication/id %)))
-                          (mapv #(assoc %
-                                        :translation/org-id (:org-id scope)
-                                        :translation/project (:project scope))))
-        authored (await (ensure-receipts! evidence-store index roots scope revisions))
-        facts (:facts
-               (await (gate-evidence!
-                       config evidence-store scope documents roots
-                       {:source-revisions revisions
-                        :current-authored authored
-                        :desired-work desired-work
-                        :authenticate-content? true})))
-        selected-runner (runner config)]
+        desired-work (selected-desired-work index revisions intents scope)
+        authored (await (ensure-receipts! evidence-store index roots scope revisions))]
+    (:facts (await (gate-evidence! config evidence-store scope documents roots
+                                  {:source-revisions revisions :current-authored authored
+                                   :desired-work desired-work :authenticate-content? true})))))
+
+(defn ^:async dispatch-translations!
+  "Dispatch one publication, document or corpus; report considered and admissible counts."
+  [config deps scope selection]
+  (let [{:keys [index hydrated intents roots] :as selected}
+        (await (dispatch-selection! config deps scope selection))
+        facts (await (dispatch-facts! config deps scope selected))
+        selected-runner (runner config)
+        dispatch-agent! (or (:dispatch-agent-intents! deps) dispatch-intents-to-agent!)
+        dispatch-worker! (or (:dispatch-worker-intents! deps) dispatch/dispatch-intents!)]
     {:considered (count hydrated)
      :admissible (count intents)
      :runner selected-runner
@@ -485,53 +342,35 @@
   [config]
   (partial observe-source-revision! config))
 
-(defn ^:async resolve-batch-status!
-  "Turn one worker batch-status report into translation evidence.
-
-   The *document*, not the status, decides whether a per-document binding can be
-   resolved; a batch-level failure is resolved by batch id alone, which is sound
-   because a Knoxx-created batch carries exactly one document. See
-   `worker-report-vocabulary` for what the worker actually sends and why that
-   matters. `failed-document-id` is still read because the field exists in the
-   contract and a different worker may populate it.
-
-   The report is validated and its batch id resolved *before* any store lookup,
-   and both checks are load-bearing. Every branch below joins on that id, and a
-   nil one is not a wildcard the stores decline to match — it is the value they
-   match unbound records by. See `law/report-batch-id`."
-  [deps report]
-  (let [checked (law/assert-valid! :translation-dispatch/status-report
-                                   law/BatchStatusReport
-                                   report)
-        failed-document (law/failed-document-id (:failed_document checked))
-        batch-id (law/report-batch-id checked)]
+(defn- ^:async resolve-bound-batch!
+  "A completed document wins; batch failures without a document resolve the batch binding."
+  [deps checked batch-id]
+  (let [failed-document (law/failed-document-id (:failed_document checked))]
     (cond
-      (nil? batch-id)
-      {:translation/refusal {:refusal/type :batch-id-missing
-                             :refusal/actual (:batch_id checked)}}
-
-      ;; Any status naming a completed document resolves that binding. The
-      ;; worker sends "processing" here; the others are accepted so a worker
-      ;; that reports differently still works.
       (some? (:completed_document checked))
       (await (dispatch/resolve-batch-report! deps checked))
 
       (some? failed-document)
       (await (dispatch/fail-batch-document! deps batch-id failed-document
-                                            (or (:error checked)
-                                                "worker reported failure")))
+                                            (or (:error checked) "worker reported failure")))
 
-      ;; A batch-level failure names nothing, so the batch id is the binding.
-      ;; Without this the claim would sit in flight forever and never be retried.
       (= "failed" (:status checked))
       (await (dispatch/fail-batch! deps batch-id
-                                   (or (:error checked)
-                                       "worker reported batch failure")))
+                                  (or (:error checked) "worker reported batch failure")))
 
       :else
-      ;; Reported rather than dropped. `complete` and `partial` legitimately name
-      ;; nothing — the per-document reports already resolved each binding — and
-      ;; an operator debugging a translation that never appeared needs to see the
-      ;; difference between 'nothing to resolve' and 'silently ignored'.
-      {:translation/skipped {:reason :no-document-named
-                             :status (:status checked)}})))
+      {:translation/skipped {:reason :no-document-named :status (:status checked)}})))
+
+(defn ^:async resolve-batch-status!
+  "Validate a worker report and require its batch identity before any store lookup.
+
+   Per-document success arrives as processing; complete and partial may name no
+   document. Report that absence explicitly rather than silently dropping it."
+  [deps report]
+  (let [checked (law/assert-valid! :translation-dispatch/status-report
+                                   law/BatchStatusReport report)
+        batch-id (law/report-batch-id checked)]
+    (if (nil? batch-id)
+      {:translation/refusal {:refusal/type :batch-id-missing
+                             :refusal/actual (:batch_id checked)}}
+      (await (resolve-bound-batch! deps checked batch-id)))))

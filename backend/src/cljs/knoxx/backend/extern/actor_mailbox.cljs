@@ -10,7 +10,7 @@
   "Normalize documented wire aliases; arbitrary fields cannot become authority."
   [operation-id raw lineage]
   (let [body (js->clj (or raw #js {}) :keywordize-keys true)
-        result {:operation-id (or operation-id (:operation_id body) (:operationId body))
+        result {:operation-id (or (:operation_id body) (:operationId body) operation-id)
                 :target (:target body) :content (:content body) :metadata (metadata-value body) :lineage (or lineage {})}]
     (reduce (fn [result [key aliases]] (if-let [value (some #(get body %) aliases)] (assoc result key value) result))
             (cond-> result (:mode body) (assoc :mode (if (string? (:mode body)) (str/replace (:mode body) "_" "-") (:mode body))))

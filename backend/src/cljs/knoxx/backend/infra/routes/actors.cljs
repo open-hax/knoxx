@@ -59,7 +59,7 @@
          (json-response! reply 200 (wire/command-wire result)))
        (catch :default err (error-response! reply err))))
 (defroute actor-mailbox-changes-route!
-  [] "GET" "/api/actors/mailbox/changes" [session-guard]
+  [] "GET" "/api/actors/mailbox/events/stream" [session-guard]
   (try (changes/open-stream! runtime ctx reply)
        (catch :default err (error-response! reply err))))
 (defn register-actor-routes!

@@ -1,11 +1,13 @@
 (ns knoxx.backend.infra.stores.clio-run-store
   "Durable finite run and ordered event protocols over canonical Clio."
-  (:require [knoxx.backend.domain.run-store :as domain]
+  (:require [knoxx.backend.domain.run-directory :as directory-view]
+            [knoxx.backend.domain.run-store :as domain]
             [knoxx.backend.extern.clock :as clock]
             [knoxx.backend.extern.local-policy :as locks]
             [knoxx.backend.extern.run-store :as host]
             [knoxx.backend.infra.clio-application-store :as clio]
             [knoxx.backend.infra.system-instance :as instance]
+            [knoxx.backend.shape.run-directory :as directory-port]
             [knoxx.backend.shape.session-persistence :as protocol]))
 
 (defn- projection []
@@ -34,7 +36,10 @@
   (append-event! [store event]
     (mutate! store {:kind :event :run-id (:run_id event) :event event :event-id (host/event-id event)}))
   (events-since [store run-id since]
-    (clio/read! engine :run/events [run-id since (:at-ms (sample store))])))
+    (clio/read! engine :run/events [run-id since (:at-ms (sample store))]))
+  directory-port/IRunDirectoryStore
+  (list-runs [store scope]
+    (clio/read! engine :run/directory [scope (:at-ms (sample store))])))
 
 (defn open!
   "Open a required directory with validated clock and instance identity before touching disk."
@@ -46,6 +51,7 @@
         engine (clio/open! {:directory directory :stream "knoxx/runs" :projection projection
                             :reads {:run/read (fn [state id at] (domain/visible-run @state id at))
                                     :run/active (fn [state id at] (domain/active-runs @state id at))
+                                    :run/directory (fn [state scope at] (directory-view/visible @state scope at))
                                     :run/events (fn [state id since at] (domain/events-since @state id since at))}
                             :writes {:run/admit admit!}})]
     (->ClioRunStore engine (:directory engine) clock! instance-id)))

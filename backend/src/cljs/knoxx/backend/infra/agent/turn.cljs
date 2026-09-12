@@ -16,6 +16,7 @@
             [knoxx.backend.domain.agent.content :as content :refer [model-ready-content-parts merge-content-parts]]
             [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.infra.agent.policy :as policy]
+            [knoxx.backend.infra.agent.run-admission :refer [create-initial-run!]]
             [knoxx.backend.infra.agent.stream :as stream]
             [knoxx.backend.infra.agent.transcript :as transcript]
             [knoxx.backend.infra.auth.authz :as authz :refer [auth-snapshot]]
@@ -23,14 +24,15 @@
             [knoxx.backend.infra.openplanner.memory :as openplanner-memory]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.domain.action.run-state :refer [store-run! append-run-event! update-run!
-                                                           finalize-run-trace-blocks! tool-event-payload
+            [knoxx.backend.domain.action.run-state :refer [append-run-event! update-run!
+                                                           finalize-run-trace-blocks!
                                                            record-retrieval-sample! latest-assistant-message
 ]]
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.shape.agent :refer [send-user-message! subscribe!]]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.infra.run-events :as run-events]
+            [knoxx.backend.infra.run-event-payload :refer [tool-event-payload]]
             [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
@@ -90,121 +92,6 @@
       (xturn-node/random-uuid!)))
 
 
-
-(defn- agent-spec-summary
-  [agent-spec]
-  (when agent-spec
-    (cond-> {}
-      (:contract-id agent-spec) (assoc :contractId (:contract-id agent-spec))
-      (:actor-id agent-spec) (assoc :actorId (:actor-id agent-spec))
-      (seq (:contract-actors agent-spec)) (assoc :contractActors (vec (:contract-actors agent-spec)))
-      (:role agent-spec) (assoc :role (:role agent-spec))
-      (:model agent-spec) (assoc :model (:model agent-spec))
-      (:thinking-level agent-spec) (assoc :thinkingLevel (:thinking-level agent-spec))
-      (:tools-choice agent-spec) (assoc :toolsChoice (:tools-choice agent-spec))
-      (:system-prompt agent-spec) (assoc :hasSystemPrompt true)
-      (seq (:tool-policies agent-spec)) (assoc :toolPolicies (vec (:tool-policies agent-spec)))
-      (:resource-policies agent-spec) (assoc :resourcePolicies (:resource-policies agent-spec))
-      (:context-policy agent-spec) (assoc :contextPolicy (:context-policy agent-spec))
-      (:sub-agent-id agent-spec) (assoc :subAgentId (:sub-agent-id agent-spec))
-      (:parent-agent-id agent-spec) (assoc :parentAgentId (:parent-agent-id agent-spec))
-      (:parent-run-id agent-spec) (assoc :parentRunId (:parent-run-id agent-spec))
-      (:spawn-kind agent-spec) (assoc :spawnKind (:spawn-kind agent-spec))
-      (:trigger-id agent-spec) (assoc :triggerId (:trigger-id agent-spec))
-      (:event-type agent-spec) (assoc :eventType (:event-type agent-spec))
-      (seq (:event-types agent-spec)) (assoc :eventTypes (vec (:event-types agent-spec)))
-      (:event-id agent-spec) (assoc :eventId (:event-id agent-spec))
-      (:event-scope-id agent-spec) (assoc :eventScopeId (:event-scope-id agent-spec))
-      (:schedule-id agent-spec) (assoc :scheduleId (:schedule-id agent-spec))
-      (:task-source agent-spec) (assoc :taskSource (:task-source agent-spec))
-      (:rendered-task-prompt agent-spec) (assoc :hasRenderedTaskPrompt true)
-      (:deprecated-agent-task-fallback agent-spec) (assoc :deprecatedAgentTaskFallback true))))
-
-(defn- build-initial-run
-  [run-id session-id conversation-id started-at model-id mode thinking-level
-   agent-spec auth-extra request-messages config]
-  (merge {:run_id run-id
-          :session_id session-id
-          :conversation_id conversation-id
-          :created_at started-at
-          :updated_at started-at
-          :status "running"
-          :model model-id
-          :ttft_ms nil
-          :total_time_ms nil
-          :input_tokens nil
-          :output_tokens nil
-          :tokens_per_s nil
-          :error nil
-          :answer nil
-          :content_parts []
-          :events []
-          :trace_blocks []
-          :tool_receipts []
-          :request_messages request-messages
-          :settings (cond-> {:sessionId session-id
-                             :conversationId conversation-id
-                             :mode mode
-                             :thinkingLevel thinking-level
-                             :workspaceRoot (:workspace-root config)}
-                      agent-spec (assoc :agentSpec (agent-spec-summary agent-spec)))
-          :resources (cond-> {:provider "proxx"
-                              :collection (:collection-name config)}
-                       (get agent-spec :resource-policies) (assoc :agentResourcePolicies (get agent-spec :resource-policies)))}
-         auth-extra))
-
-(defn- emit-action-task-rendered-event!
-  [run-id conversation-id session-id agent-spec]
-  (when-let [rendered-task (content/nonblank (:rendered-task-prompt agent-spec))]
-    (let [task-event (tool-event-payload
-                      run-id conversation-id session-id "action_task_rendered"
-                      (cond-> {:preview rendered-task}
-                        (:task-source agent-spec) (assoc :task_source (:task-source agent-spec))
-                        (:trigger-id agent-spec) (assoc :trigger_id (:trigger-id agent-spec))
-                        (:deprecated-agent-task-fallback agent-spec)
-                        (assoc :deprecated_agent_task_fallback true)))]
-      (append-run-event! run-id task-event)
-      (broadcast-ws-session! session-id "events" task-event))))
-
-(defn- ^:async persist-initial-session!
-  [session-payload session-id]
-  (try
-    (await (session-store/put-session! session-payload))
-    (catch :default err
-      (.error js/console "[turn] failed to persist initial session"
-              (clj->js {:session-id session-id
-                        :error (ex-message err)
-                        :error-data (clj->js (or (ex-data err) {}))})))))
-
-(defn- ^:async create-initial-run!
-  [run-id session-id conversation-id started-at model-id mode thinking-level
-   agent-spec auth-extra request-messages config]
-  (let [base-run (build-initial-run run-id session-id conversation-id started-at model-id mode thinking-level
-                                    agent-spec auth-extra request-messages config)]
-    (await (run-events/persist-run! base-run))
-    (store-run! run-id base-run)
-    (persist-initial-session! (merge (cond-> {:session_id session-id
-                                              :conversation_id conversation-id
-                                              :run_id run-id
-                                              :status "running"
-                                              :model model-id
-                                              :mode mode
-                                              :thinking_level thinking-level
-                                              :created_at started-at
-                                              :updated_at started-at
-                                              :has_active_stream false
-                                              :messages request-messages}
-                                       agent-spec (assoc :agent_spec (agent-spec-summary agent-spec)))
-                                     auth-extra)
-                              session-id)
-    (let [initial-event (tool-event-payload run-id conversation-id session-id "run_started"
-                                            {:status "running"
-                                             :mode mode
-                                             :model model-id
-                                             :thinking_level thinking-level})]
-      (append-run-event! run-id initial-event)
-      (broadcast-ws-session! session-id "events" initial-event))
-    (emit-action-task-rendered-event! run-id conversation-id session-id agent-spec)))
 
 (defn- extract-turn-answer-and-reasoning
   "Extract the final answer and reasoning text from streaming state and assistant message."

@@ -39,7 +39,7 @@
   (let [original (.-EventSource js/globalThis) listeners (atom {}) status (atom []) changed (atom 0) closed (atom false)]
     (set! (.-EventSource js/globalThis)
           (fn [url options]
-            (t/is (= "/api/actors/mailbox/changes" url)) (t/is (true? (.-withCredentials options)))
+            (t/is (= "/api/actors/mailbox/events/stream" url)) (t/is (true? (.-withCredentials options)))
             #js {:addEventListener (fn [kind callback] (swap! listeners assoc kind callback))
                  :removeEventListener (fn [kind _] (swap! listeners dissoc kind)) :close #(reset! closed true)}))
     (try

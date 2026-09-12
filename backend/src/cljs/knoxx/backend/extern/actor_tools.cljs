@@ -3,7 +3,8 @@
   (:require [knoxx.backend.domain.text :as text] [knoxx.backend.domain.tools :as tools]
             [knoxx.backend.extern.actor-mailbox :as wire] [knoxx.backend.infra.actor-mailbox-commands :as commands]))
 (def parameters
-  [:map [:target {:description "actor:<id>, session:<id>, conversation:<id>, self, or parent."} :string]
+  [:map [:operation_id {:optional true :description "Stable caller operation ID; reuse unchanged for retries."} :string]
+   [:target {:description "actor:<id>, session:<id>, conversation:<id>, self, or parent."} :string]
    [:content :string] [:mode {:optional true} [:enum "message" "follow-up" "steer" "event" "inbox-only"]]
    [:target_type {:optional true} :string] [:conversation_id {:optional true} :string]
    [:session_id {:optional true} :string] [:run_id {:optional true} :string] [:metadata_json {:optional true} :string]])
