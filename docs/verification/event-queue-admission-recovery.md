@@ -102,3 +102,35 @@ coordinated production build also verifies the frozen newer identity/Clio graph.
 Final dependency promotion, advertised top-level build/typecheck, external review,
 and both browser publication cycles remain required before merge. This document
 records the bounded queue proof and does not claim final stack acceptance.
+
+## Current-head Codex follow-up: durable startup failure
+
+Codex comment `3996417205` found that early admitted startup failures only changed
+heap state and appended `async_spawn_failed`. Appending the event does not patch
+the run snapshot, so durable `queued` or `running` records remained active until
+expiry even after the settlement callback ran.
+
+Two native Clio regressions reproduced **10 failures in9 tests /37 assertions**
+on the unchanged implementation. They cover startup before and after an initial
+running snapshot, read the committed status inside the actual settlement
+callback, and exercise a refused terminal snapshot write. A delimiter typo in the
+new test was caught and corrected by the linter before compilation and before the
+authentic RED result.
+
+The failure handler now awaits `persist-run!` before notifying settlement. That
+boundary first flushes the ordered failure event and then commits the failed
+snapshot. If either durable step refuses, the outer execution boundary reports
+the error, withholds settlement, and releases the exact process-local queue slot.
+It does not pretend a terminal write succeeded. The old durable state can still
+remain active when persistence itself is unavailable; repair remains necessary
+and the diagnostic is explicit.
+
+Final wider native proof: **44 tests /221 assertions**, zero failures/errors,
+**535 compiler inputs and zero warnings**, fatal async guard exit0. Both touched
+source/test paths pass all seven optional linter rules with zero warnings. The
+facade is now395 lines. Independent review confirmed flush-before-snapshot-before-
+settlement ordering, explicit failure reporting, and exact-owner release. The
+review also noted the separate pre-existing queued-run heap retention limit; that
+bounded follow-up is coordinated with the retention owner and is not claimed
+fixed here. Production/browser08 predates this small follow-up, so combined gates
+and current-head external review remain required.

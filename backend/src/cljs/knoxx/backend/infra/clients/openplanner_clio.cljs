@@ -4,6 +4,7 @@
             [knoxx.backend.domain.local-openplanner-events :as events]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.extern.local-openplanner :as host]
+            [knoxx.backend.extern.local-policy :as locks]
             [knoxx.backend.infra.clients.local-embedding :as embedding]
             [knoxx.backend.infra.clients.openplanner :as client]
             [knoxx.backend.infra.clio-application-store :as engine]
@@ -21,8 +22,10 @@
 (defn- read-query! [provider query]
   (engine/read! (:ledger provider) :openplanner/read [query]))
 
-(defn- write-operation! [provider operation]
-  (engine/write! (:ledger provider) :openplanner/write [operation]))
+(defn- ^:async write-operation! [provider operation]
+  (let [ledger (:ledger provider)]
+    (await (locks/with-lock! (str (:directory ledger) "/openplanner-store.lock")
+             (fn [] (engine/write! ledger :openplanner/write [operation]))))))
 
 (defn- query! [provider kind opts]
   (read-query! provider {:kind kind :opts (host/query-options opts) :at (now provider)}))
@@ -32,7 +35,7 @@
     (throw (ex-info "Local OpenPlanner embeddings are not configured"
                     {:status 503 :code "openplanner_embedding_not_configured"}))))
 
-(defn- ^:async embed! [provider texts]
+(defn- ^:async embed-texts! [provider texts]
   (require-embeddings! provider)
   (law/assert-valid! [:vector {:min 1} law/NonBlank] texts)
   (let [{:keys [model dimensions vectors] :as result} (await ((:embed! provider) texts))
@@ -42,9 +45,9 @@
                    (= (count texts) (count vectors)))
       (throw (ex-info "Embedding response disagrees with configured model or input count"
                       {:status 502 :code "openplanner_embedding_invalid"})))
-    (doseq [vector vectors]
+    (doseq [embedding-vector vectors]
       (law/projection! {:id "response" :digest "response" :model model
-                        :dimensions dimensions :embedding vector}))
+                        :dimensions dimensions :embedding embedding-vector}))
     result))
 
 (defn- matching-vector? [provider event row]
@@ -66,10 +69,10 @@
           (recur (rest remaining) (cond-> pending (not (matching-vector? provider event row)) (conj event))))
         (do
           (when (seq pending)
-            (let [{:keys [model dimensions vectors]} (await (embed! provider (mapv :text pending)))
-                  projections (mapv (fn [event vector]
+            (let [{:keys [model dimensions vectors]} (await (embed-texts! provider (mapv :text pending)))
+                  projections (mapv (fn [event embedding-vector]
                                       {:id (:id event) :digest (events/content-digest event)
-                                       :model model :dimensions dimensions :embedding vector}) pending vectors)]
+                                       :model model :dimensions dimensions :embedding embedding-vector}) pending vectors)]
               (await (write-operation! provider {:kind :vectors :vectors projections}))))
           {:ok true :event-ids ids :event-count (count ids) :vector-count (count ids)
            :repaired-event-ids (mapv :id pending)})))))
@@ -94,7 +97,7 @@
                                (or (nil? (:source payload)) (= (:source payload) (:source %)))
                                (or (nil? (:session payload)) (= (:session payload) (events/event-session %)))) candidates)
         _ (await (ensure-vectors! provider (mapv :id relevant)))
-        {:keys [model dimensions vectors]} (await (embed! provider [(or (:q payload) (:query payload))]))]
+        {:keys [model dimensions vectors]} (await (embed-texts! provider [(or (:q payload) (:query payload))]))]
     {:ok true :result (await (read-query! provider {:kind :search :opts payload
                                                    :vector (first vectors) :model model :dimensions dimensions}))}))
 
@@ -129,7 +132,7 @@
                       :source-lang (:source_lang row) :target-lang (:target_lang row)
                       :document-id (:document_id row) :segment-id (:id row)})) rows))))
 
-(defrecord ClioOpenPlannerClient [ledger now! embedding-config embed! embeddings-configured?]
+(defrecord ^{:doc "OpenPlanner protocol implementation backed by one canonical Clio ledger."} ClioOpenPlannerClient [ledger now! embedding-config embed! embeddings-configured?]
   client/IOpenPlannerClient
   (enabled? [_] true)
   (health! [_] {:ok true :status 200 :body {:ok true :provider "clio"
@@ -195,7 +198,7 @@
       :now! clock :embedding-config (or embedding-config {}) :embeddings-configured? configured?
       :embed! (or embed! (partial embedding/embed! embedding-config))})))
 
-(defonce providers* (atom {}))
+(defonce ^{:doc "Selected local clients, keyed by explicit directory and embedding configuration."} providers* (atom {}))
 
 (defn configured-client
   "Reuse one selected driver by its explicit ledger and embedding configuration."
@@ -203,10 +206,10 @@
   (let [directory (or (:openplanner-directory config)
                        (when-let [wiki (:wiki-directory config)] (str wiki "/openplanner")))
         embedding-config (select-keys config [:embed-provider-base-url :embed-provider-model :embed-provider-dimensions])
-        key [directory embedding-config]]
-    (or (get @providers* key)
+        provider-key [directory embedding-config]]
+    (or (get @providers* provider-key)
         (let [provider (open! {:directory directory :embedding-config embedding-config})]
-          (swap! providers* assoc key provider)
+          (swap! providers* assoc provider-key provider)
           provider))))
 
 (client/register-local-client-factory! configured-client)

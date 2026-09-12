@@ -1,5 +1,5 @@
-import type { MouseEvent as ReactMouseEvent, Ref } from "react";
-import type { ActorCatalogItem, MemorySearchHit, MemorySessionSummary } from "../../lib/types";
+import type { MouseEvent as ReactMouseEvent, Ref, Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { ActorCatalogItem, ChatMessage, RunDetail, RunEvent, MemorySearchHit, MemorySessionSummary } from "../../lib/types";
 import type { BrowseEntry, BrowseResponse, PinnedContextItem, PreviewResponse, SemanticSearchMatch, WorkspaceJob } from "../workspace-context/types";
 
 export type {
@@ -126,4 +126,69 @@ export type ContextBarFiltersProps = Pick<ContextBarProps,
   actorOptions: Array<{ id: string; label: string }>;
   statusColor: string;
   ingestionStatus: string | undefined;
+};
+
+type WorkspaceSetState<T> = Dispatch<SetStateAction<T>>;
+
+export type ChatWorkspaceActionParams = {
+  visibleAgentIds: ReadonlySet<string>;
+  currentPath: string;
+  showFiles: boolean;
+  browseData: BrowseResponse | null;
+  semanticQuery: string;
+  sessionActorFilter: string;
+  excludeEtaMuSessions: boolean;
+  setBrowseData: WorkspaceSetState<BrowseResponse | null>;
+  setPreviewData: WorkspaceSetState<PreviewResponse | null>;
+  setLoadingBrowse: WorkspaceSetState<boolean>;
+  setLoadingPreview: WorkspaceSetState<boolean>;
+  setSemanticResults: WorkspaceSetState<SemanticSearchMatch[]>;
+  setSemanticProjects: WorkspaceSetState<string[]>;
+  setSemanticSearching: WorkspaceSetState<boolean>;
+  setSessionSearchHits: WorkspaceSetState<MemorySearchHit[]>;
+  setSessionSearchMode: WorkspaceSetState<string>;
+  setSyncingWorkspace: WorkspaceSetState<boolean>;
+  setWorkspaceSourceId: WorkspaceSetState<string | null>;
+  setWorkspaceJob: WorkspaceSetState<WorkspaceJob | null>;
+  recentSessionsRef: MutableRefObject<MemorySessionSummary[]>;
+  remoteRecentSessionsRef: MutableRefObject<MemorySessionSummary[]>;
+  setRecentSessions: WorkspaceSetState<MemorySessionSummary[]>;
+  setRecentSessionsHasMore: WorkspaceSetState<boolean>;
+  setRecentSessionsTotal: WorkspaceSetState<number>;
+  setLoadingRecentSessions: WorkspaceSetState<boolean>;
+  setLoadingMoreRecentSessions: WorkspaceSetState<boolean>;
+  setLoadingMemorySessionId: WorkspaceSetState<string | null>;
+  setMessages: WorkspaceSetState<ChatMessage[]>;
+  setSelectedModel: WorkspaceSetState<string>;
+  setSessionId: WorkspaceSetState<string>;
+  setConversationId: WorkspaceSetState<string | null>;
+  setLatestRun: WorkspaceSetState<RunDetail | null>;
+  setRuntimeEvents: WorkspaceSetState<RunEvent[]>;
+  setLiveControlText: WorkspaceSetState<string>;
+  setIsSending: WorkspaceSetState<boolean>;
+  setConsoleLines: WorkspaceSetState<string[]>;
+  pendingAssistantIdRef: MutableRefObject<string | null>;
+  activeRunIdRef: MutableRefObject<string | null>;
+  makeId: () => string;
+  sessionStateKey: string;
+  fetchPreviewData: (path: string) => Promise<PreviewResponse>;
+  loadRunDetail: (runId: string) => void | Promise<void>;
+  defaultSyncIntervalMinutes: number;
+  defaultFileTypes: string[];
+  defaultExcludePatterns: string[];
+};
+
+export type ChatWorkspaceControllerOptions = {
+  initialShowCanvas?: boolean;
+  initialShowConsole?: boolean;
+  initialShowSettings?: boolean;
+  initialSidebarWidthPx?: number;
+  defaultRole?: string;
+  defaultActorId?: string;
+  sessionIdKey?: string;
+  scratchpadStorageKey?: string;
+  pinnedContextStorageKey?: string;
+  sessionStateKey?: string;
+  sidebarWidthKey?: string;
+  sendUiGuardTimeoutMs?: number;
 };

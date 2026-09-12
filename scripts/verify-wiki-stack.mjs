@@ -12,6 +12,7 @@ import {annotatedScreenshot, tour} from './wiki-browser-tour.mjs';
 import {identityTour} from './identity-browser-tour.mjs';
 import {adminIdentityTour} from './admin-identity-browser-tour.mjs';
 import {mailTour} from './mail-browser-tour.mjs';
+import {contractsTour} from './contracts-browser-tour.mjs';
 import {translationTour, verifySourceUnaccepted} from './wiki-translation-tour.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -191,6 +192,8 @@ try {
         return result;
       }});
     check('Human and delegated-agent Mail commands persist full content and update the open view without losing its draft');
+    evidence.contracts = await contractsTour(page, {baseUrl:services.baseUrl, shot, verifyCheckout:services.verifyBuilds});
+    check('Real Contracts controls validate, save, clone and retain failed edits');
     const verification = await import(pathToFileURL(path.join(repo,'backend/dist-verification/wiki.js')));
     const artifacts = await artifactService(verification.readManifest); artifactServer = artifacts.server;
     const unlisted = await fetch(new URL('/manifest.edn', artifacts.baseUrl)); assert.equal(unlisted.status,404);

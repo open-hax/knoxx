@@ -11,7 +11,7 @@
                          :output-to (if laws? "target/translation-scope-laws/tests.cjs"
                                         "target/translation-scope-proof/tests.cjs")
                          :ns-regexp (if laws? "knoxx\\.backend\\.law\\.(event-scope|translation-agent|translation-dispatch)-test$"
-                                    "knoxx\\.backend\\.(extern\\.translation-trigger-scope-test|law\\.(event-scope|translation-agent|translation-dispatch)-test|actions\\.start-agent-session-test|triggers\\.scope-status-test)$")))]
+                                    "knoxx\\.backend\\.(extern\\.translation-trigger-scope-test|law\\.(event-scope|translation-agent|translation-dispatch)-test|actions\\.start-agent-session-test|triggers\\.scope-status-test|infra\\.translation-agent-content-test)$")))]
     (shadow/compile* build {}))
   nil)
  (catch Throwable error

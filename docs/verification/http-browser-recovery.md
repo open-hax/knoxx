@@ -244,3 +244,24 @@ unchanged. The retained content, policy and publication tests pass **24 tests /
 All three changed source namespaces pass the seven optional lint rules with zero
 errors and warnings. This is scoped cleanup; the remaining whole-backend warning
 debt still needs its final gate.
+# Browser run 12 and current tour recovery
+
+Backend production07 compiled701 server inputs and107 verification inputs with
+zero warnings. Against frozen frontend production04, browser12 completed real
+identity, administration, Mail, source acceptance with remembered lessons,
+agent SSE updates, dirty-draft preservation, acceptance invalidation, and refusal
+to publish unaccepted source. Its28 annotated screenshots retain these outcomes.
+
+Automatic generation now creates actual translation candidates. The observed
+small-model output was an English acknowledgement, requiring human correction.
+The tour failed before review because its earlier inventory chose Dispatch while
+the current rendered control had become Retry. The tour now selects exactly one
+currently admitted Dispatch/Retry button; both use the same observed server
+command. No API result is fabricated and candidate provenance assertions remain.
+
+The run also exposed a real concurrent OpenPlanner ledger admission; checkpoint
+433b2281 fixes it with the existing per-ledger operation lock and records its
+failure-first and native multiprocess proof. Complete browser publishing and the
+second translation-memory cycle remain pending. The supervisor now includes the
+separately prepared real Contracts tour after Mail. Syntax checks pass; the next
+actual browser run verifies both tour changes against freshly built artifacts.

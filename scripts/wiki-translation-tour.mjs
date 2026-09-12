@@ -73,9 +73,13 @@ async function openTranslation(page, row) {
 
 async function dispatch(page, document, row, sourceRevision, priorCandidate, timeout) {
   await openTranslation(page, row);
-  const action = row.allowed_actions?.includes('retry') ? 'Retry' : 'Dispatch';
+  // Automatic generation can change the admitted action while navigation loads.
+  // Both visible controls call the same server command; use the current view.
+  const action = page.getByRole('button', { name: /^(Dispatch|Retry)$/ });
+  await action.waitFor();
+  assert.equal(await action.count(), 1, 'Exactly one current translation dispatch action must be admitted');
   const receipt = await command(page, 'POST', '/api/publications/translations/dispatch',
-    () => page.getByRole('button', { name: action, exact: true }).click(), timeout);
+    () => action.click(), timeout);
   const generated = await until(() => work(page, document, row.publication), value => {
     const selected = candidate(value);
     return value.revision === sourceRevision && value.reviewable === true

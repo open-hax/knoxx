@@ -312,6 +312,7 @@
       (await (notify-event-turn-settler! body (event-turn-settlement result deadline-ms))))
     (catch :default err
       (log-and-record-async-spawn-error! body err)
+      (await (run-events/persist-run! (get @run-state/runs* (:run-id body))))
       (await (notify-event-turn-settler! body (event-turn-failure err deadline-ms))))))
 
 (defn- ^:async execute-event-turn!
@@ -319,6 +320,8 @@
   (try
     (when-not (await admission)
       (await (execute-admitted-turn! body start-turn! (event-turn-deadline-ms event-turn-timeout-ms))))
+    (catch :default error
+      (xrunner/log-async-spawn-error! body error))
     (finally
       (when-let [next-entry (release-event-turn! queue-id)]
         (execute-event-turn! next-entry)))))

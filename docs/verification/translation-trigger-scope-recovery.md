@@ -51,9 +51,11 @@ pass **20 tests / 157 assertions**, with the native asynchronous error guard and
 actual exit zero. The distinct law build compiled **76 inputs, 75 compiled,
 zero warnings**. The new portable scope laws also pass on the JVM: **2 tests /
 14 assertions**. All new scope code and touched constructors pass the seven
-explicit optional linters. Four historical size warnings remain in
+explicit optional linters. At the minimal scope checkpoint, four historical size warnings remained in
 `law/translation_dispatch.cljc`: its file size, `pin-refusal`,
-`source-drift-refusal` and `translation-receipt`. No warning threshold changed.
+`source-drift-refusal` and `translation-receipt`. The subsequent
+[report extraction](translation-dispatch-report-recovery.md) clears all four.
+No warning threshold changed.
 The complete native proof now passes **34 tests / 228 assertions**, with the
 fatal asynchronous guard and actual exit zero. Its distinct build compiled
 **536 inputs, 109 compiled, zero warnings**. This includes the runner's coherent

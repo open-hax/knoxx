@@ -2,6 +2,7 @@
   "Run admission must precede every queue event in the actual Clio provider."
   (:require [cljs.test :as test]
             [knoxx.backend.domain.action.run-state :as state]
+            [knoxx.backend.extern.agent-runner :as host]
             [knoxx.backend.extern.agent-turn-fixture :as fixture]
             [knoxx.backend.infra.agent.runner :as runner]
             [knoxx.backend.infra.run-events :as events]
@@ -147,3 +148,50 @@
               (await (wait-until! #(zero? (:active (runner/event-turn-queue-snapshot)))))
               (test/is (= ["owner" "replacement"] @started*)))
             (finally ((:complete! first-turn) nil)))))))))
+
+(test/deftest ^:async startup-refusal-persists-failure-before-delivering-settlement
+  (doseq [initial-run-persisted? [false true]]
+    (await
+     (with-queue!
+      (^:async fn [provider]
+        (let [id (str "startup-refused-" initial-run-persisted?)
+              request (body id) observed* (atom [])]
+          (await (runner/register-event-turn-settler!
+                  (get-in request [:agent-spec :event-id])
+                  (^:async fn [_settlement]
+                    (swap! observed* conj (:status (await (runs/get-run provider id)))) true)))
+          (with-redefs [host/log-async-spawn-error! (fn [_body _error] nil)]
+            (await (runner/enqueue-event-turn!
+                    config request
+                    (^:async fn []
+                      (when initial-run-persisted?
+                        (await (events/persist-run! (get @state/runs* id))))
+                      (throw (js/Error. "startup enforcement refused")))))
+            (await (wait-until! #(zero? (:active (runner/event-turn-queue-snapshot))))))
+          (let [persisted (await (runs/get-run provider id))]
+            (test/is (= "failed" (:status persisted)))
+            (test/is (= "startup enforcement refused" (:error persisted)))
+            (test/is (empty? (await (runs/list-active-runs provider (:session-id request)))))
+            (test/is (= ["failed"] @observed*) "settlement observes the committed failed snapshot"))))))))
+
+(test/deftest ^:async failure-snapshot-refusal-is-reported-without-delivering-settlement
+  (await
+   (with-queue!
+    (^:async fn [provider]
+      (let [id "terminal-write-refused" request (body id)
+            persist! events/persist-run! delivered* (atom 0) reported* (atom [])]
+        (await (runner/register-event-turn-settler!
+                (get-in request [:agent-spec :event-id]) (fn [_] (swap! delivered* inc) true)))
+        (with-redefs [events/persist-run!
+                      (^:async fn [run]
+                        (if (= "failed" (:status run))
+                          (throw (ex-info "terminal persistence refused" {:code "terminal_refused"}))
+                          (await (persist! run))))
+                      host/log-async-spawn-error!
+                      (fn [_body error] (swap! reported* conj (:code (ex-data error))))]
+          (await (runner/enqueue-event-turn! config request
+                   (fn [] (js/Promise.reject (js/Error. "startup refused")))))
+          (await (wait-until! #(zero? (:active (runner/event-turn-queue-snapshot)))))
+          (test/is (zero? @delivered*) "a failed durable terminal write cannot announce settlement")
+          (test/is (some #{"terminal_refused"} @reported*))
+          (test/is (= "queued" (:status (await (runs/get-run provider id)))))))))))

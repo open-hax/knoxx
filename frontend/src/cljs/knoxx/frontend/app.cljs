@@ -107,7 +107,10 @@
    (hx/$ Route {:path (str routes/cms-editor-route "/*")
                :key "route-7" :element (hx/$ ProtectedSurface {:children (hx/$ cms/cms-page {:Markdown frontend/Markdown})})})
    (hx/$ Route {:path routes/contracts-route
-               :key "route-8" :element (hx/$ ProtectedSurface {:children (hx/$ contracts-page/ContractsPage)})})
+               :key "route-8" :element (hx/$ ProtectedSurface
+                                        {:children (hx/$ contracts-page/ContractsPage
+                                                     {:Controller app/ContractsPage
+                                                      :Editor app/EdnEditor :ChatPane app/ChatWorkspacePane})})})
    (hx/$ Route {:path routes/data-route
                :key "route-9" :element (hx/$ ProtectedSurface {:children (hx/$ app/DataPage)})})
    (hx/$ Route {:path (str routes/data-route "/:tab")
