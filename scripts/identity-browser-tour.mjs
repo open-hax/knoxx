@@ -15,32 +15,23 @@ async function submit(page, label, suffix, status = 200, {readBody = true} = {})
 }
 async function signOut(page) {
   await page.getByRole('button', {name: 'Account menu', exact: true}).click();
-  await submit(page, 'Sign out', '/api/auth/logout');
+  await submit(page, 'Sign out', '/api/auth/logout', 200, {readBody: false});
   await page.getByText('Identity managed by Axxium', {exact: true}).waitFor();
+  assert.equal((await page.request.get('/api/auth/context')).status(), 401);
 }
 async function account(page, baseUrl) {
-  let navigated = false, pending;
-  const onNavigation = frame => {if (frame === page.mainFrame()) navigated = true;};
-  const onRequest = request => {
-    if (navigated && request.method() === 'GET' && new URL(request.url()).pathname === '/api/auth/context') {
-      pending = request.response().then(async response => ({status: response.status(), body: await response.json()})).catch(error => ({error}));
-    }
-  };
-  page.on('framenavigated', onNavigation); page.on('request', onRequest);
-  try {
-    await page.goto(new URL('/account', baseUrl).href);
-    await page.getByRole('heading', {name: 'Account & sign-in', exact: true}).waitFor();
-    assert.ok(pending, 'The new account page must request its own verified authorization context.');
-    const response = await pending;
-    if (response.error) throw response.error;
-    assert.equal(response.status, 200);
-    return response.body;
-  } finally {page.off('framenavigated', onNavigation); page.off('request', onRequest);}
+  await page.goto(new URL('/account', baseUrl).href);
+  await page.getByRole('heading', {name: 'Account & sign-in', exact: true}).waitFor();
+  // Read after the rendered page has settled. DevTools response bodies from the previous
+  // document can disappear during navigation; this GET uses the browser's actual cookie jar.
+  const response = await page.request.get(new URL('/api/auth/context', baseUrl).href);
+  assert.equal(response.status(), 200);
+  return response.json();
 }
 async function passwordLogin(page, config, identifier) {
   await page.getByLabel('Username or email', {exact: true}).fill(identifier);
   await page.getByLabel('Password', {exact: true}).fill(config.password);
-  await submit(page, 'Sign in with password', '/api/auth/local/login');
+  await submit(page, 'Sign in with password', '/api/auth/local/login', 200, {readBody: false});
   return account(page, config.baseUrl);
 }
 async function pgpProof(page, config, enroll, status = 200) {
@@ -50,7 +41,7 @@ async function pgpProof(page, config, enroll, status = 200) {
   const signature = await config.signPgpChallenge(challenge);
   assert.ok(signature.includes('BEGIN PGP SIGNATURE'));
   await page.getByLabel('Armored detached signature', {exact: true}).fill(signature);
-  return submit(page, 'Verify PGP signature', enroll ? '/pgp/enroll' : '/pgp/verify', status);
+  return submit(page, 'Verify PGP signature', enroll ? '/pgp/enroll' : '/pgp/verify', status, {readBody: enroll || status !== 200});
 }
 async function signupTour(page, config, original) {
   const signup = config.signup;
@@ -64,11 +55,12 @@ async function signupTour(page, config, original) {
       ['Display name', signup.displayName || 'Sandbox member'], ['Password', signup.password], ['Confirm password', signup.password]]) {
       await page.getByLabel(label, {exact: true}).fill(value);
     }
-    const response = await submit(page, 'Create account', '/api/auth/signup'); created = true;
-    const principalId = response.principal?.['principal/id'];
-    assert.ok(principalId, `Signup returned no principal identity; keys=${Object.keys(response)}, principal keys=${Object.keys(response.principal || {})}`);
+    await submit(page, 'Create account', '/api/auth/signup', 200, {readBody: false}); created = true;
     const context = await account(page, config.baseUrl);
-    assert.notEqual(context.user.id, original.user.id); assert.equal(context.actor.id, principalId);
+    const principalId = context.actor?.id;
+    assert.ok(principalId, 'Signup must establish a verified principal in a fresh context');
+    assert.notEqual(principalId, original.actor.id); assert.notEqual(context.user.id, original.user.id);
+    assert.equal(context.user.email, signup.email);
     assert.equal(context.isSystemAdmin, false);
     for (const forbidden of ['platform.org.create', 'platform.roles.manage', 'org.users.create', 'org.members.update']) {
       assert.ok(!context.permissions.includes(forbidden), `Signup must not grant ${forbidden}`);
@@ -87,9 +79,10 @@ async function signupTour(page, config, original) {
   }
 }
 async function revocationTour(page, config, original) {
-  const pending = observeBrowserResponse(page, response => new URL(response.url()).pathname === '/api/auth/config', response => response.json());
-  let registry;
-  try { await account(page, config.baseUrl); registry = await pending.value(); } finally { pending.cancel(); }
+  await account(page, config.baseUrl);
+  const registryResponse = await page.request.get(new URL('/api/auth/config', config.baseUrl).href);
+  assert.equal(registryResponse.status(), 200);
+  const registry = await registryResponse.json();
   if (!registry.credentialListUrl || !registry.credentialRevokeUrl) {
     process.stdout.write('WARN Running Axxium does not advertise credential revocation.\n');
     return {available: false, verified: false};
@@ -129,11 +122,13 @@ export async function identityTour(page, config) {
     await page.getByText('Passkey added to this account.', {exact: true}).waitFor();
     assert.equal((await cdp.send('WebAuthn.getCredentials', {authenticatorId})).credentials.length, 1);
     await config.shot('identity-01-passkey-enrolled', 'The browser created a real resident passkey and Axxium verified its enrollment.', []);
-    await signOut(page); await submit(page, 'Sign in with passkey', '/passkey/authentication-verify'); await account(page, config.baseUrl);
+    await signOut(page); await submit(page, 'Sign in with passkey', '/passkey/authentication-verify', 200, {readBody: false});
+    assert.equal((await account(page, config.baseUrl)).user.id, original.user.id);
     await config.shot('identity-02-passkey-login', 'A fresh browser assertion restored the enrolled account.', []);
     await pgpProof(page, config, true); await page.getByText('PGP key added to this account.', {exact: true}).waitFor();
     await config.shot('identity-03-pgp-enrolled', 'A detached signature proved possession; only the public key was enrolled.', []);
-    await signOut(page); await pgpProof(page, config, false); await account(page, config.baseUrl);
+    await signOut(page); await pgpProof(page, config, false);
+    assert.equal((await account(page, config.baseUrl)).user.id, original.user.id);
     await config.shot('identity-04-pgp-login', 'A fresh one-time challenge authenticated the enrolled PGP identity.', []);
     for (const [identifier, step, caption] of [[config.username, 'identity-05-username-login', 'The username signs into the same verified account.'],
       [config.email, 'identity-06-email-login', 'The separate email alias signs into the exact same account.']]) {
