@@ -1,0 +1,27 @@
+name: Service Environment Promotion
+on:
+  pull_request_target:
+    types: [labeled, synchronize, reopened, closed]
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  testing:
+    if: >-
+      github.event.action != 'closed' &&
+      contains(github.event.pull_request.labels.*.name, 'testing')
+    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@f9bfe1724a662930fc10fcb9ba0f46eac78fbc52
+    with:
+      controller_sha: f9bfe1724a662930fc10fcb9ba0f46eac78fbc52
+      service: knoxx
+      environment: testing
+      pull_request: ${{ format('{0}', github.event.pull_request.number) }}
+  staging:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@f9bfe1724a662930fc10fcb9ba0f46eac78fbc52
+    with:
+      controller_sha: f9bfe1724a662930fc10fcb9ba0f46eac78fbc52
+      service: knoxx
+      environment: staging
+      pull_request: ${{ format('{0}', github.event.pull_request.number) }}

@@ -148,18 +148,16 @@ function installCmsFetchMock(doc = cmsDoc, initialDesired: "published" | "withhe
     if (url === "/api/ingestion/file?path=contracts/cms-templates.edn") {
       return jsonResponse({ content: ':article-page {:label "Article"}' });
     }
-    if (url.startsWith("/api/openplanner/v1/cms/documents?")) {
+    if (url.startsWith("/api/cms/documents?")) {
       return jsonResponse({ documents: [doc], total: 1 });
     }
-    if (url === "/api/openplanner/v1/cms/documents/cms-doc-1" && init?.method === "PATCH") {
+    if (url === "/api/cms/documents/cms-doc-1" && init?.method === "PATCH") {
       return jsonResponse({ ...doc, ...(JSON.parse(String(init.body)) as Record<string, unknown>) });
     }
-    if (url === "/api/openplanner/v1/cms/documents/cms-doc-1") {
+    if (url === "/api/cms/documents/cms-doc-1") {
       return jsonResponse(doc);
     }
-    if (url.startsWith("/api/openplanner/v1/cms/publish/cms-doc-1/garden-a")) {
-      return jsonResponse({ ok: true });
-    }
+
 
     return jsonResponse({ error: `Unexpected ${url}` }, { status: 404 });
   });
@@ -209,13 +207,13 @@ describe("CmsPage CMS document backend interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByText("Saved CMS draft");
-    const patchRequest = requests.find((request) => request.url === "/api/openplanner/v1/cms/documents/cms-doc-1" && request.init?.method === "PATCH");
+    const patchRequest = requests.find((request) => request.url === "/api/cms/documents/cms-doc-1" && request.init?.method === "PATCH");
     expect(patchRequest).toBeTruthy();
     expect(JSON.parse(String(patchRequest?.init?.body))).toMatchObject({
       title: "Existing CMS Doc",
       content: "Updated CMS body",
       source_path: "docs/existing.md",
-      visibility: "public",
+      visibility: "review",
     });
     expect(screen.getByDisplayValue("Updated CMS body")).toBeInTheDocument();
   });
@@ -262,14 +260,16 @@ describe("CmsPage CMS document backend interactions", () => {
       expect(patchedBody).not.toHaveProperty(identityField);
     }
 
+    expect(publishedHarness.requests.some((request) => request.url.startsWith("/api/openplanner/v1/cms/publish"))).toBe(false);
     unmount();
     const unpublishedHarness = installCmsFetchMock(cmsDoc);
     renderCmsPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Unpublish" }));
     await waitFor(() => expect(unpublishedHarness.requests.some((request) => (
-      request.url === "/api/openplanner/v1/cms/publish/cms-doc-1/garden-a"
-      && request.init?.method === "DELETE"
+      request.url.startsWith("/api/cms/publications/intents/")
+      && request.init?.method === "PATCH"
+      && JSON.parse(String(request.init.body)).state === "withheld"
     ))).toBe(true));
     expect(await screen.findByRole("button", { name: "Publish" })).toBeInTheDocument();
   });

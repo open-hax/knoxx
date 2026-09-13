@@ -27,6 +27,7 @@
             [knoxx.backend.extern.fastify.translation-dispatch :as translation-dispatch-routes]
             [knoxx.backend.extern.fastify.translation-review :as translation-review-routes]
             [knoxx.backend.extern.fastify.cms-publication :as cms-publication-routes]
+            [knoxx.backend.extern.fastify.cms-documents :as cms-document-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
@@ -1682,6 +1683,7 @@
      app runtime config (select-keys helpers [:with-request-context!
                                               :ensure-permission!]))
     (cms-publication-routes/register-cms-publication-routes! app runtime config helpers)
+    (cms-document-routes/register! app runtime helpers)
     (reconcile-routes/register-publication-reconcile-routes!
      app runtime config (select-keys helpers [:with-request-context!
                                               :ensure-permission!]))
