@@ -8,3 +8,13 @@
                  (string? (:content body)) (<= (count (:content body)) 262144)
                  (contains? #{nil "internal" "review"} (:visibility body)))
     (throw (ex-info "CMS requires a title, bounded text and internal or review visibility" {:status 400}))) body)
+
+(defn require-parents! [id body]
+  (when (and id (not (contains? body :parents)))
+    (throw (ex-info "Load a document revision before saving" {:status 428})))
+  (let [parents (or (:parents body) [])]
+    (when-not (and (vector? parents) (every? string? parents)
+                   (= (count parents) (count (distinct parents)))
+                   (if id (seq parents) (empty? parents)))
+      (throw (ex-info "CMS updates require the revisions observed by the editor" {:status 400}))))
+  body)

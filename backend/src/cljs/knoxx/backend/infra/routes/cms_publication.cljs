@@ -13,6 +13,7 @@
             [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.infra.cms-store :as cms-store]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-manifest :as manifest]))
@@ -129,6 +130,8 @@
       (throw (ex-info "unknown publication" {:publication/id publication-id})))
     (let [next-intent (cms/apply-state-patch current domain-patch)
           file-path (await (publication-file-path! config publication-id))]
+      (when (= :published (:publication/state next-intent))
+        (cms-store/require-resolved! (get-in index [:documents (:publication/document current)])))
       (await (write-publication-state! file-path publication-id
                                        (:publication/state next-intent)))
       (resources/invalidate-sync-resource-cache!)

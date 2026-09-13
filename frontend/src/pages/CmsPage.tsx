@@ -54,6 +54,16 @@ type CmsDocSummary = {
   source_path: string | null;
   visibility?: "internal" | "review" | "public" | "archived";
   metadata?: CmsDocMetadata;
+  source_paths?: string[];
+  revision: string;
+  revision_heads: string[];
+  conflicted: boolean;
+};
+
+type CmsRevision = CmsDocSummary & {
+  actor: string;
+  at: string;
+  parents: string[];
 };
 
 const RECENT_SESSION_PAGE_SIZE = 10;
@@ -103,6 +113,24 @@ function CmsPage() {
   const [loadingCmsDocuments, setLoadingCmsDocuments] = useState(false);
   const [cmsDocId, setCmsDocId] = useState<string | null>(null);
   const [cmsMetadata, setCmsMetadata] = useState<CmsDocMetadata>({});
+  // This is the revision whose content the editor actually loaded. A list or
+  // history refresh must never advance it behind an editor's unsaved changes.
+  const [cmsRevision, setCmsRevision] = useState<string | null>(null);
+  const [cmsHeads, setCmsHeads] = useState<string[]>([]);
+  const [cmsConflicted, setCmsConflicted] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [history, setHistory] = useState<CmsRevision[]>([]);
+  const [previewRevision, setPreviewRevision] = useState<string | null>(null);
+  const [reviewedHeads, setReviewedHeads] = useState<string[]>([]);
+  const historyRequestRef = useRef(0);
+  // Loads, navigation, and edits invalidate older work against the editor.
+  // Ledger writes may finish, but their responses cannot replace a newer view.
+  const editorRequestRef = useRef(0);
+  useEffect(() => () => {
+    editorRequestRef.current += 1;
+    historyRequestRef.current += 1;
+  }, []);
 
   // Visual draft creation state
   const [showCreateDraftModal, setShowCreateDraftModal] = useState(false);
@@ -206,8 +234,10 @@ function CmsPage() {
       if (!selectedGardenId && publishable.length > 0) {
         setSelectedGardenId(publishable[0].id);
       }
+      return topology;
     } catch {
       setPublicationTopology(null);
+      return null;
     }
   }, [selectedGardenId]);
 
@@ -290,52 +320,65 @@ function CmsPage() {
     [currentCmsDocument],
   );
 
-  const selectedPublication = useMemo(
-    () => publicationForGarden(currentCmsDocument, selectedGardenId),
-    [currentCmsDocument, selectedGardenId],
-  );
-
   const isPublishedToSelectedGarden = useMemo(
     () => Boolean(selectedGardenId && publishedGardenIds.includes(selectedGardenId)),
     [publishedGardenIds, selectedGardenId],
   );
 
-  const syncCmsDocumentByPath = useCallback(async (path: string) => {
-    const normalizeSourcePath = (value: string | null | undefined) => (value ?? "").replace(/^\/+/, "");
-    const params = new URLSearchParams({ path_prefix: path, limit: "20" });
+  const findCmsDocumentByPath = useCallback(async (path: string) => {
+    const normalize = (value: string) => value.replace(/^\/+/, "");
+    const params = new URLSearchParams({ path_prefix: path, limit: "100" });
     const resp = await fetch(`/api/cms/documents?${params.toString()}`);
-    if (!resp.ok) {
-      setCmsDocId(null);
-      setCmsMetadata({});
-      setEditorStatus("draft");
-      return null;
-    }
-
+    if (!resp.ok) throw new Error(await resp.text());
     const body = (await resp.json()) as { documents?: CmsDocSummary[] };
-    const normalizedPath = normalizeSourcePath(path);
-    const match = (body.documents ?? []).find((doc) => normalizeSourcePath(doc.source_path) === normalizedPath) ?? null;
-    if (!match) {
-      setCmsDocId(null);
-      setCmsMetadata({});
-      setEditorStatus("draft");
-      return null;
-    }
+    const match = (body.documents ?? []).find((doc) =>
+      [doc.source_path, ...(doc.source_paths ?? [])].some((candidate) =>
+        candidate != null && normalize(candidate) === normalize(path)));
+    if (!match) return null;
+    // A listing is for discovery. Hydrate body and its observed revision from
+    // the same response, including when the URL names an older snapshot.
+    const documentResponse = await fetch(`/api/cms/documents/${encodeURIComponent(match.doc_id)}`);
+    if (!documentResponse.ok) throw new Error(await documentResponse.text());
+    return (await documentResponse.json()) as CmsDocSummary;
+  }, []);
 
-    // Publication state is NOT read from metadata. It is derived from the
-    // resource-backed topology via `publishedGardenIds`.
-    setCmsDocId(match.doc_id);
-    setCmsMetadata(match.metadata ?? {});
-    return match;
+  const acceptCmsRevision = useCallback((doc: CmsDocSummary) => {
+    setCmsDocId(doc.doc_id);
+    setCmsMetadata(doc.metadata ?? {});
+    setCmsRevision(doc.revision);
+    setCmsHeads(doc.revision_heads);
+    setCmsConflicted(doc.conflicted);
+    setReviewedHeads([]);
+  }, []);
+
+  const clearCmsRevision = useCallback(() => {
+    editorRequestRef.current += 1;
+    historyRequestRef.current += 1;
+    setLoadingHistory(false);
+    setCmsDocId(null);
+    setCmsMetadata({});
+    setCmsRevision(null);
+    setCmsHeads([]);
+    setCmsConflicted(false);
+    setShowHistory(false);
+    setHistory([]);
+    setPreviewRevision(null);
+    setReviewedHeads([]);
   }, []);
 
   const applyCmsDocumentToEditor = useCallback((doc: CmsDocSummary, fallbackPath?: string) => {
+    editorRequestRef.current += 1;
+    historyRequestRef.current += 1;
+    setLoadingHistory(false);
     const path = doc.source_path ?? fallbackPath ?? `cms/${doc.doc_id}.md`;
     setEditorTitle(doc.title);
     setEditorBody(doc.content ?? "");
     setEditorPath(path);
     setEditorStatus(doc.visibility === "review" ? "review" : "draft");
-    setCmsDocId(doc.doc_id);
-    setCmsMetadata(doc.metadata ?? {});
+    acceptCmsRevision(doc);
+    setShowHistory(false);
+    setHistory([]);
+    setPreviewRevision(null);
     setIsDirty(false);
     setLastSaveMessage("Loaded CMS draft");
     chat.pinContextItem({
@@ -345,7 +388,7 @@ function CmsPage() {
       snippet: (doc.content ?? "").slice(0, 240),
       kind: "file",
     });
-  }, [chat, selectedGardenId]);
+  }, [acceptCmsRevision, chat]);
 
   const loadCmsDocuments = useCallback(async () => {
     if (!selectedGardenId) {
@@ -372,140 +415,108 @@ function CmsPage() {
   }, [loadCmsDocuments]);
 
   const handleOpenCmsDocument = useCallback(async (docId: string) => {
+    if (isSaving) return;
+    const requestId = ++editorRequestRef.current;
     try {
       const resp = await fetch(`/api/cms/documents/${encodeURIComponent(docId)}`);
       if (!resp.ok) return;
-      applyCmsDocumentToEditor((await resp.json()) as CmsDocSummary);
+      const document = (await resp.json()) as CmsDocSummary;
+      if (editorRequestRef.current !== requestId) return;
+      applyCmsDocumentToEditor(document);
     } catch (error) {
       console.error("Failed to open CMS document:", error);
     }
-  }, [applyCmsDocumentToEditor]);
-
-  const upsertCmsDocument = useCallback(async (path: string) => {
-    const existing = await syncCmsDocumentByPath(path);
-    const payload = {
-      title: editorTitle.trim() || path.split("/").pop() || "Untitled",
-      content: editorBody,
-      source_path: path,
-      visibility: "review",
-      metadata: existing?.metadata ?? cmsMetadata,
-    };
-
-    const endpoint = existing
-      ? `/api/cms/documents/${encodeURIComponent(existing.doc_id)}`
-      : "/api/cms/documents";
-    const method = existing ? "PATCH" : "POST";
-    const resp = await fetch(endpoint, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      if (resp.status === 503) {
-        try {
-          const parsed = JSON.parse(text) as { persisted?: boolean };
-          if (parsed.persisted) {
-            if (existing?.doc_id) {
-              setCmsDocId(existing.doc_id);
-              return existing.doc_id;
-            }
-            const refetched = await syncCmsDocumentByPath(path);
-            if (refetched?.doc_id) {
-              return refetched.doc_id;
-            }
-          }
-        } catch {
-          // fall through to hard error
-        }
-      }
-      throw new Error(text);
-    }
-    const doc = (await resp.json()) as CmsDocSummary;
-    setCmsDocId(doc.doc_id);
-    setCmsMetadata(doc.metadata ?? {});
-    return doc.doc_id;
-  }, [cmsMetadata, editorBody, editorTitle, publishedGardenIds.length, syncCmsDocumentByPath]);
+  }, [applyCmsDocumentToEditor, isSaving]);
 
   const buildEditorPath = useCallback(() => {
     const fileName = editorTitle.trim().replace(/[\\/]+/g, "-");
     return `${editorDirectory}${fileName}`;
   }, [editorDirectory, editorTitle]);
 
-  const persistCmsDocumentOnly = useCallback(async (next: { publishState?: "published" | "draft" } = {}) => {
-    if (!cmsDocId) return null;
+  const persistEditorFile = useCallback(async (parents?: string[]) => {
+    const path = editorPath ?? buildEditorPath();
+    if (!path) return null;
+    if (cmsDocId && !cmsRevision) {
+      setLastSaveMessage("Reload this document before saving.");
+      return null;
+    }
+    const requestId = ++editorRequestRef.current;
     setIsSaving(true);
     setLastSaveMessage(null);
     try {
-      const visibility = next.publishState === "draft" ? "internal" : "review";
-      const resp = await fetch(`/api/cms/documents/${encodeURIComponent(cmsDocId)}`, {
-        method: "PATCH",
+      if (!cmsDocId && await findCmsDocumentByPath(path)) {
+        // Discovering a document at save time does not mean its content was
+        // observed. Loading it is a separate user action; never invent a parent.
+        throw new Error("A CMS document already exists at this path. Open it before saving.");
+      }
+      if (editorRequestRef.current !== requestId) return null;
+      const response = await fetch(cmsDocId
+        ? `/api/cms/documents/${encodeURIComponent(cmsDocId)}`
+        : "/api/cms/documents", {
+        method: cmsDocId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: editorTitle.trim() || "Untitled",
           content: editorBody,
-          source_path: editorPath,
-          visibility,
+          source_path: path,
+          visibility: "review",
           metadata: cmsMetadata,
+          parents: cmsDocId ? (parents ?? [cmsRevision]) : [],
         }),
       });
-      if (!resp.ok) {
-        const text = await resp.text();
-        if (resp.status !== 503) throw new Error(text);
-        const parsed = JSON.parse(text) as { persisted?: boolean };
-        if (!parsed.persisted) throw new Error(text);
-      } else {
-        const doc = (await resp.json()) as CmsDocSummary;
-        setCmsMetadata(doc.metadata ?? {});
+      if (!response.ok) throw new Error(await response.text());
+      const document = (await response.json()) as CmsDocSummary;
+      if (editorRequestRef.current !== requestId) return null;
+      applyCmsDocumentToEditor(document);
+      setLastSaveMessage(document.conflicted
+        ? "Saved. Concurrent edits are preserved; review history to resolve them."
+        : "Saved CMS draft");
+      void loadCmsDocuments();
+      void loadPublicationTopology();
+      return document;
+    } catch (error) {
+      if (editorRequestRef.current === requestId) {
+        setLastSaveMessage(error instanceof Error ? error.message : "Save failed");
       }
-      setIsDirty(false);
-      setLastSaveMessage(next.publishState === "published" ? "Published" : next.publishState === "draft" ? "Unpublished" : "Saved CMS draft");
-      await loadCmsDocuments();
-      return cmsDocId;
+      throw error;
     } finally {
       setIsSaving(false);
     }
-  }, [cmsDocId, cmsMetadata, editorBody, editorPath, editorStatus, editorTitle, isPublishedToSelectedGarden, loadCmsDocuments]);
+  }, [applyCmsDocumentToEditor, buildEditorPath, cmsDocId, cmsMetadata, cmsRevision,
+    editorBody, editorPath, editorTitle, findCmsDocumentByPath, loadCmsDocuments, loadPublicationTopology]);
 
-  const persistEditorFile = useCallback(
-    async (next: { publishState?: "published" | "draft" } = {}) => {
-      if (cmsDocId) {
-        await persistCmsDocumentOnly(next);
-        return editorPath;
-      }
+  const loadHistory = useCallback(async () => {
+    if (!cmsDocId) return;
+    const requestId = ++historyRequestRef.current;
+    setShowHistory(true);
+    setLoadingHistory(true);
+    try {
+      const response = await fetch(`/api/cms/documents/${encodeURIComponent(cmsDocId)}/history`);
+      if (!response.ok) throw new Error(await response.text());
+      const result = (await response.json()) as { document: CmsDocSummary; revisions: CmsRevision[] };
+      if (historyRequestRef.current !== requestId) return;
+      setHistory(result.revisions);
+      setCmsHeads(result.document.revision_heads);
+      setCmsConflicted(result.document.conflicted);
+      setPreviewRevision(cmsRevision ?? result.document.revision);
+      setReviewedHeads([]);
+    } catch (error) {
+      if (historyRequestRef.current === requestId) setLastSaveMessage(error instanceof Error ? error.message : "Could not load history");
+    } finally {
+      if (historyRequestRef.current === requestId) setLoadingHistory(false);
+    }
+  }, [cmsDocId, cmsRevision]);
 
-      const nextPath = buildEditorPath();
-      if (!nextPath) return null;
-
-      setIsSaving(true);
-      setLastSaveMessage(null);
-      try {
-        const id = await upsertCmsDocument(nextPath);
-        const response = await fetch(`/api/cms/documents/${encodeURIComponent(id)}`);
-        if (!response.ok) throw new Error(await response.text());
-        const document = (await response.json()) as CmsDocSummary;
-        applyCmsDocumentToEditor(document);
-        const savedPath = document.source_path ?? nextPath;
-        await loadPublicationTopology();
-        setIsDirty(false);
-        if (next.publishState === "published") {
-          setEditorStatus("published");
-          setLastSaveMessage("Published");
-        } else if (next.publishState === "draft") {
-          setEditorStatus("draft");
-          setLastSaveMessage("Unpublished");
-        } else {
-          setLastSaveMessage("Saved");
-        }
-        await handleLoadDirectory(editorDirectory.slice(0, -1) || undefined);
-        return savedPath;
-      } finally {
-        setIsSaving(false);
-      }
-    },
-    [applyCmsDocumentToEditor, loadPublicationTopology, buildEditorPath, cmsDocId, editorBody, editorDirectory, editorPath, persistCmsDocumentOnly, upsertCmsDocument],
-  );
+  const handleResolveRevisions = useCallback(async () => {
+    if (cmsHeads.length < 2 || !cmsHeads.every((head) => reviewedHeads.includes(head))) return;
+    try {
+      // Only the heads shown and explicitly reviewed by this editor are joined.
+      // A concurrent save after this snapshot remains a separate head.
+      await persistEditorFile([...cmsHeads]);
+    } catch (error) {
+      console.error("Resolution save failed:", error);
+    }
+  }, [cmsHeads, persistEditorFile, reviewedHeads]);
 
   useEffect(() => {
     setEditorStatus(isPublishedToSelectedGarden ? "published" : "draft");
@@ -546,16 +557,25 @@ function CmsPage() {
 
   // CMS behavior: select file -> open in editor + pin into shared chat runtime
   const handleOpenFile = async (entry: BrowseEntry) => {
+    if (isSaving) return;
     if (entry.type === "dir") {
       await handleLoadDirectory(entry.path);
       return;
     }
 
+    const requestId = ++editorRequestRef.current;
     try {
+      const document = await findCmsDocumentByPath(entry.path);
+      if (editorRequestRef.current !== requestId) return;
+      if (document) {
+        applyCmsDocumentToEditor(document);
+        return;
+      }
       const params = new URLSearchParams({ path: entry.path });
       const resp = await fetch(`/api/ingestion/file?${params}`);
       if (resp.ok) {
         const data: PreviewResponse = await resp.json();
+        if (editorRequestRef.current !== requestId) return;
         const previousEditorPath = editorPath;
         setEditorTitle(entry.name);
         setEditorBody(data.content);
@@ -574,7 +594,7 @@ function CmsPage() {
           snippet: data.content.slice(0, 240),
           kind: "file",
         });
-        await syncCmsDocumentByPath(entry.path);
+        clearCmsRevision();
       }
     } catch (err) {
       console.error("Failed to load file:", err);
@@ -585,22 +605,31 @@ function CmsPage() {
     const params = new URLSearchParams(location.search);
     const docId = params.get("doc");
     const path = params.get("path");
+    const requestId = ++editorRequestRef.current;
     if ((docId && cmsDocId === docId) || (!docId && path && editorPath === path)) return;
-
     let cancelled = false;
     void (async () => {
       try {
         if (docId) {
           const resp = await fetch(`/api/cms/documents/${encodeURIComponent(docId)}`);
           if (!resp.ok || cancelled) return;
-          applyCmsDocumentToEditor((await resp.json()) as CmsDocSummary, path ?? undefined);
+          const document = (await resp.json()) as CmsDocSummary;
+          if (cancelled || editorRequestRef.current !== requestId) return;
+          applyCmsDocumentToEditor(document, path ?? undefined);
           return;
         }
 
         if (!path) return;
+        const document = await findCmsDocumentByPath(path);
+        if (cancelled || editorRequestRef.current !== requestId) return;
+        if (document) {
+          applyCmsDocumentToEditor(document);
+          return;
+        }
         const resp = await fetch(`/api/ingestion/file?${new URLSearchParams({ path })}`);
         if (!resp.ok || cancelled) return;
         const data: PreviewResponse = await resp.json();
+        if (cancelled || editorRequestRef.current !== requestId) return;
         const name = path.split("/").pop() ?? path;
         setEditorTitle(name);
         setEditorBody(data.content);
@@ -615,7 +644,7 @@ function CmsPage() {
           snippet: data.content.slice(0, 240),
           kind: "file",
         });
-        await syncCmsDocumentByPath(path);
+        clearCmsRevision();
       } catch (err) {
         console.error("Failed to load CMS document from URL:", err);
       }
@@ -624,9 +653,12 @@ function CmsPage() {
     return () => {
       cancelled = true;
     };
-  }, [applyCmsDocumentToEditor, chat, cmsDocId, editorPath, location.search, syncCmsDocumentByPath]);
+  // Editor state changes (especially a new immutable snapshot path) are not
+  // navigation. Re-running this effect for them would reload over unsaved edits.
+  }, [location.search]);
 
   const handleTitleChange = useCallback((title: string) => {
+    editorRequestRef.current += 1;
     setEditorTitle(title.replace(/[\\/]+/g, "-"));
     setEditorStatus((prev) => (prev === "published" ? "draft" : prev));
     setIsDirty(true);
@@ -634,6 +666,7 @@ function CmsPage() {
   }, []);
 
   const handleBodyChange = useCallback((body: string) => {
+    editorRequestRef.current += 1;
     setEditorBody(body);
     setEditorStatus((prev) => (prev === "published" ? "draft" : prev));
     setIsDirty(true);
@@ -646,7 +679,6 @@ function CmsPage() {
       await persistEditorFile();
     } catch (err) {
       console.error("Save failed:", err);
-      setLastSaveMessage("Save failed");
     }
   }, [editorTitle, persistEditorFile]);
 
@@ -723,84 +755,38 @@ function CmsPage() {
       setLastSaveMessage("Select a garden");
       return;
     }
-
-    const nextState = isPublishedToSelectedGarden ? "draft" : "published";
+    const nextState = isPublishedToSelectedGarden ? "withheld" : "published";
+    let requestId = ++editorRequestRef.current;
     try {
-      const docId = cmsDocId ?? null;
       let savedPath = editorPath;
-      let publishDocId = docId;
-      if (publishDocId) {
-        if (isDirty) await persistCmsDocumentOnly();
-      } else if (cmsMetadata.block_schema_version === 1) {
-        const sourcePath = editorPath ?? `cms/${editorTitle.trim().replace(/[\\/]+/g, "-") || "untitled"}.md`;
-        const resp = await fetch("/api/cms/documents", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: editorTitle.trim() || "Untitled",
-            content: editorBody,
-            source_path: sourcePath,
-            visibility: "review",
-            garden_id: selectedGardenId,
-            defer_index: true,
-            metadata: {
-              ...cmsMetadata,
-              garden_id: selectedGardenId,
-            },
-          }),
-        });
-        if (!resp.ok) throw new Error(await resp.text());
-        const doc = (await resp.json()) as CmsDocSummary;
-        applyCmsDocumentToEditor(doc, sourcePath);
-        publishDocId = doc.doc_id;
-        savedPath = sourcePath;
-      } else {
-        savedPath = await persistEditorFile();
-        if (!savedPath) return;
-        publishDocId = await upsertCmsDocument(savedPath);
+      if (isDirty || !cmsDocId) {
+        const document = await persistEditorFile();
+        if (!document) return;
+        requestId = editorRequestRef.current;
+        savedPath = document.source_path;
+        if (document.conflicted) throw new Error("Review and resolve concurrent edits before publishing.");
       }
-      // The resource intent is the only publication authority. Persist content
-      // first, then update the selected intent below; no legacy REST publish call.
-      if (savedPath) await syncCmsDocumentByPath(savedPath);
-      if (publishDocId) await handleOpenCmsDocument(publishDocId);
-      await loadCmsDocuments();
-
-      // Publication intent lives in the resource graph. This PATCH changes ONLY
-      // the desired state; document, garden, locale and revision are identity and
-      // cannot move through it. The UI then re-reads the topology rather than
-      // predicting the new state locally — if the write is rejected, the badge
-      // keeps showing what the resource graph actually says.
-      if (selectedPublication) {
-        await setPublicationState(
-          selectedPublication.id,
-          nextState === "published" ? "published" : "withheld",
-        );
-      }
+      setIsSaving(true);
+      // Saving may create or relocate this document's resource. Resolve the
+      // intent from a fresh topology rather than the render that began the save.
+      const topology = await listPublicationTopology();
+      if (editorRequestRef.current !== requestId) return;
+      setPublicationTopology(topology);
+      const document = savedPath ? findDocumentBySourcePath(topology, savedPath) : null;
+      const publication = publicationForGarden(document, selectedGardenId);
+      if (!publication) throw new Error("No publication is configured for this document and garden.");
+      await setPublicationState(publication.id, nextState);
       await loadPublicationTopology();
-      setLastSaveMessage((current) => current ?? (nextState === "published" ? "Published" : "Unpublished"));
-    } catch (err) {
-      console.error("Publish toggle failed:", err);
-      setLastSaveMessage(nextState === "published" ? "Publish failed" : "Unpublish failed");
+      if (editorRequestRef.current !== requestId) return;
+      setLastSaveMessage(nextState === "published" ? "Publication requested" : "Publication withheld");
+    } catch (error) {
+      console.error("Publish toggle failed:", error);
+      if (editorRequestRef.current === requestId) setLastSaveMessage(error instanceof Error ? error.message : "Could not update publication");
+    } finally {
+      setIsSaving(false);
     }
-  }, [
-    applyCmsDocumentToEditor,
-    cmsDocId,
-    cmsMetadata,
-    editorBody,
-    editorTitle,
-    isPublishedToSelectedGarden,
-    loadPublicationTopology,
-    selectedPublication,
-    editorPath,
-    handleOpenCmsDocument,
-    isDirty,
-    loadCmsDocuments,
-    persistCmsDocumentOnly,
-    persistEditorFile,
-    selectedGardenId,
-    syncCmsDocumentByPath,
-    upsertCmsDocument,
-  ]);
+  }, [cmsDocId, editorPath, editorTitle, isDirty, isPublishedToSelectedGarden,
+    loadPublicationTopology, persistEditorFile, selectedGardenId]);
 
   const handleRefreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
@@ -904,12 +890,13 @@ function CmsPage() {
           onDomainFilterChange={setDomainFilter}
           onPathPrefixFilterChange={setPathPrefixFilter}
           onNewDocument={() => {
+            if (isSaving) return;
             setEditorTitle("untitled.md");
             setEditorBody("");
             setEditorPath(currentPath ? `${currentPath}/untitled.md` : "untitled.md");
             setEditorStatus("draft");
-            setCmsDocId(null);
-            setCmsMetadata({});
+            clearCmsRevision();
+            navigate("/cms");
             setIsDirty(true);
             setLastSaveMessage(null);
           }}
@@ -971,11 +958,12 @@ function CmsPage() {
                 value={editorTitle}
                 onChange={(event) => handleTitleChange(event.target.value)}
                 placeholder="Select a file from the explorer..."
-                disabled={!editorPath}
+                aria-label="Document title"
+                disabled={!editorPath || isSaving}
               />
             </div>
             {isDirty ? <span className={styles.dirtyIndicator}>Unsaved changes</span> : null}
-            {!isDirty && lastSaveMessage ? <span className={styles.savedIndicator}>{lastSaveMessage}</span> : null}
+            {lastSaveMessage ? <span role="status" className={styles.savedIndicator}>{lastSaveMessage}</span> : null}
           </div>
           <div className={styles.actions}>
             {editorPath ? (
@@ -983,7 +971,8 @@ function CmsPage() {
                 <button className={styles.saveButton} onClick={() => void handleSave()} disabled={isSaving || !isDirty}>
                   {isSaving ? "Saving…" : "Save"}
                 </button>
-                <button className={styles.publishButton} onClick={() => void handlePublishToggle()} disabled={isSaving || !selectedGardenId}>
+                {cmsDocId ? <button className={styles.saveButton} onClick={() => void loadHistory()} disabled={isSaving || loadingHistory}>History</button> : null}
+                <button className={styles.publishButton} onClick={() => void handlePublishToggle()} disabled={isSaving || !selectedGardenId || cmsConflicted}>
                   {isSaving ? (isPublishedToSelectedGarden ? "Unpublishing…" : "Publishing…") : isPublishedToSelectedGarden ? "Unpublish" : "Publish"}
                 </button>
                 {editorPath?.includes("view-contract.edn") ? (
@@ -1014,9 +1003,7 @@ function CmsPage() {
               aria-label="Garden"
             >
               <option value="">Select garden…</option>
-              {/* Active only. The publish handler still calls the legacy endpoint
-                  directly, so an archived garden offered here could be published
-                  through it and bypass the planner's archived-garden block. */}
+              {/* Publication intent may target active gardens only. */}
               {(publicationTopology?.gardens ?? [])
                 .filter((garden) => garden.status === "active")
                 .map((garden) => (
@@ -1047,6 +1034,7 @@ function CmsPage() {
                   type="button"
                   className={`${styles.cmsDocumentChip} ${doc.doc_id === cmsDocId ? styles.cmsDocumentChipActive : ""}`}
                   onClick={() => void handleOpenCmsDocument(doc.doc_id)}
+                  disabled={isSaving}
                   title={doc.source_path ?? doc.title}
                 >
                   <span>{doc.title}</span>
@@ -1057,11 +1045,70 @@ function CmsPage() {
           )}
         </section>
 
+        {cmsConflicted ? (
+          <div role="alert" className={styles.conflictNotice}>
+            Concurrent edits are preserved. Review each current version in History, edit the combined document, then save a resolution.
+          </div>
+        ) : null}
+        {showHistory ? (
+          <section aria-label="Document history" className={styles.historyPanel}>
+            <div className={styles.cmsDocumentStripHeader}>
+              <span>Document history</span>
+              <button className={styles.inlineButton} onClick={() => setShowHistory(false)}>Close history</button>
+            </div>
+            {loadingHistory ? <p>Loading history…</p> : (
+              <>
+                <label>
+                  Version
+                  <select aria-label="History version" className={styles.metaSelect} value={previewRevision ?? ""} onChange={(event) => setPreviewRevision(event.target.value)}>
+                    {history.map((revision, index) => (
+                      <option key={revision.revision} value={revision.revision}>
+                        {index + 1}. {revision.at} · {revision.actor}{cmsHeads.includes(revision.revision) ? " · Current version" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {history.filter((revision) => revision.revision === previewRevision).map((revision) => (
+                  <article key={revision.revision}>
+                    <h3>{revision.title}</h3>
+                    <p>{revision.actor} · <time dateTime={revision.at}>{revision.at}</time></p>
+                    <pre className={styles.historyContent}>{revision.content}</pre>
+                    <div className={styles.historyActions}>
+                      <button className={styles.inlineButton} disabled={isSaving} onClick={() => {
+                        editorRequestRef.current += 1;
+                        setEditorTitle(revision.title);
+                        setEditorBody(revision.content ?? "");
+                        setCmsMetadata(revision.metadata ?? {});
+                        setCmsRevision(revision.revision);
+                        setIsDirty(true);
+                        setLastSaveMessage("Version copied into editor. Saving will preserve its history.");
+                      }}>Use this version in editor</button>
+                      {cmsHeads.includes(revision.revision) ? (
+                        <button className={styles.inlineButton} disabled={reviewedHeads.includes(revision.revision)} onClick={() => setReviewedHeads((heads) => [...heads, revision.revision])}>
+                          {reviewedHeads.includes(revision.revision) ? "Version reviewed" : "Mark this version reviewed"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+                ))}
+                {cmsConflicted ? (
+                  <div className={styles.historyActions}>
+                    <span>{cmsHeads.filter((head) => reviewedHeads.includes(head)).length} of {cmsHeads.length} current versions reviewed</span>
+                    <button className={styles.inlineButton} disabled={isSaving || cmsHeads.length < 2 || !cmsHeads.every((head) => reviewedHeads.includes(head))} onClick={() => void handleResolveRevisions()}>Save resolution from editor</button>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </section>
+        ) : null}
+
         <div className={styles.editorLayout}>
           <main className={styles.bodyEditor}>
             {editorPath ? (
               <textarea
                 className={styles.bodyTextarea}
+                aria-label="Document content"
+                disabled={isSaving}
                 value={editorBody}
                 onChange={(event) => handleBodyChange(event.target.value)}
                 placeholder="Start writing..."

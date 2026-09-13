@@ -5,7 +5,7 @@
   (law/require-id! org) (law/require-id! id) (law/require-body! body)
   {:doc_id id :title (:title body) :content (:content body) :source_path source
    :visibility (or (:visibility body) (:visibility previous) "internal")
-   :garden_id (str "cms." org "/workspace") :metadata {}})
+   :garden_id (str "cms." org "/workspace") :metadata (or (:metadata previous) {})})
 (defn garden [org]
   {:namespace (keyword (str "cms." org))
    :resources [{:garden/id (keyword (str "cms." org) "workspace") :garden/title "Workspace Publications" :garden/status :active :garden/locales [:en :es]}]})

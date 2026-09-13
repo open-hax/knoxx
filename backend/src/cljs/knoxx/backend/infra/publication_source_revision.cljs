@@ -47,6 +47,7 @@
             [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.domain.node.fs :as fs]
+            [knoxx.backend.infra.cms-store :as cms-store]
             [knoxx.backend.law.publication :as law]
             [promesa.core :as p]))
 
@@ -143,6 +144,7 @@
    A missing source returns nil so existing callers can report their established
    missing-source result; a missing provenance root fails closed."
   [root document]
+  (cms-store/require-resolved! document)
   (when (nil? root)
     (fail-source-provenance!
      "publication document source root cannot be resolved from resource provenance"

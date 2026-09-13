@@ -45,6 +45,7 @@
     "discord.js": "^14.26.3",
     "events": "^3.3.0",
     "fastify": "^5.6.1",
+    "fs-ext-extra-prebuilt": "2.2.9",
     "libsodium-wrappers": "^0.7.15",
     "mongodb": "^6.18.0",
     "nbb": "^1.4.207",
@@ -59,5 +60,10 @@
     "url": "^0.11.4",
     "ws": "^8.20.0",
     "zod": "^3.25.76"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "fs-ext-extra-prebuilt"
+    ]
   }
 }
