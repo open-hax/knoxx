@@ -2,6 +2,7 @@
   "CMS filesystem boundary. JSON is read only for migration; new history is EDN."
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
+            [clio.extern.js.fs :as clio-fs]
             [knoxx.backend.extern.node-env :as env]))
 
 (defn configured? []
@@ -45,4 +46,25 @@
       (.writeFileSync fs pending (str (pr-str value) "\n") #js {:flag "wx" :mode 384})
       (try (.linkSync fs pending target)
            (catch :default e (when-not (= "EEXIST" (.-code e)) (throw e))))
+      (finally (.rmSync fs pending #js {:force true})))))
+
+(defn with-document-operation!
+  "Run a synchronous CMS operation under Clio's kernel lock. Never await here."
+  [org id operation]
+  (let [target (.join path (:history (paths org id)) "operations" (str id ".lock"))]
+    (.mkdirSync fs (.dirname path target) #js {:recursive true :mode 448})
+    (try (clio-fs/create-exclusive! target)
+         (catch :default e (when-not (= "EEXIST" (.-code e)) (throw e))))
+    (let [lock (clio-fs/acquire-lock! target)]
+      (try (operation) (finally (clio-fs/release-lock! lock))))))
+
+(defn read-resource-text [target] (.readFileSync fs target "utf8"))
+
+(defn replace-resource!
+  "Atomically replace a complete manifest while its caller holds the operation lock."
+  [target value]
+  (let [pending (str target "." (random-uuid) ".tmp")]
+    (try
+      (.writeFileSync fs pending (str (pr-str value) "\n") #js {:flag "wx" :mode 384})
+      (.renameSync fs pending target)
       (finally (.rmSync fs pending #js {:force true})))))

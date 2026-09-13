@@ -12,7 +12,8 @@
   (let [record (cms/record "org-one" "doc-one" "/trusted/doc-one.md"
                   {:title "Title" :content "Text" :visibility "review" :source_path "/etc/passwd" :metadata {:admin true}} nil)]
     (is (= "/trusted/doc-one.md" (:source_path record)))
-    (is (= {} (:metadata record)))
+    (is (= {:admin true} (:metadata record)))
+    (is (not (contains? record :admin)) "Descriptive metadata never becomes authority")
     (is (= "cms.org-one/workspace" (:garden_id record)))))
 (deftest new-publications-are-private-and-withheld
   (let [resources (:resources (cms/manifest "org-one" "doc-one" "/trusted/doc.md" "Title"))]

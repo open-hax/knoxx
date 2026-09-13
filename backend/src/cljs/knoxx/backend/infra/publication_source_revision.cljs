@@ -169,6 +169,7 @@
   (let [source-path (await (canonical-document-path! root document))
         content (when source-path
                   (await (fs/read-file-or-nil! source-path)))]
+    (cms-store/require-resolved! document)
     (some->> (content-revision content)
              (law/assert-valid! :publication/concrete-revision law/ConcreteRevision))))
 

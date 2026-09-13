@@ -49,6 +49,7 @@ type CmsDocMetadata = Record<string, unknown>;
 
 type CmsDocSummary = {
   doc_id: string;
+  garden_id: string;
   title: string;
   content?: string;
   source_path: string | null;
@@ -103,6 +104,7 @@ function CmsPage() {
   const [editorTitle, setEditorTitle] = useState("");
   const [editorBody, setEditorBody] = useState("");
   const [editorPath, setEditorPath] = useState<string | null>(null);
+  const [isNewDraft, setIsNewDraft] = useState(false);
   const [editorStatus, setEditorStatus] = useState<DocumentStatus>("draft");
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -124,6 +126,7 @@ function CmsPage() {
   const [previewRevision, setPreviewRevision] = useState<string | null>(null);
   const [reviewedHeads, setReviewedHeads] = useState<string[]>([]);
   const historyRequestRef = useRef(0);
+  const documentListRequestRef = useRef(0);
   // Loads, navigation, and edits invalidate older work against the editor.
   // Ledger writes may finish, but their responses cannot replace a newer view.
   const editorRequestRef = useRef(0);
@@ -231,15 +234,15 @@ function CmsPage() {
       const topology = await listPublicationTopology();
       setPublicationTopology(topology);
       const publishable = topology.gardens.filter((garden) => garden.status === "active");
-      if (!selectedGardenId && publishable.length > 0) {
-        setSelectedGardenId(publishable[0].id);
+      if (publishable.length > 0) {
+        setSelectedGardenId((current) => current || publishable[0].id);
       }
       return topology;
     } catch {
       setPublicationTopology(null);
       return null;
     }
-  }, [selectedGardenId]);
+  }, []);
 
   useEffect(() => {
     void loadPublicationTopology();
@@ -326,24 +329,28 @@ function CmsPage() {
   );
 
   const findCmsDocumentByPath = useCallback(async (path: string) => {
-    const normalize = (value: string) => value.replace(/^\/+/, "");
-    const params = new URLSearchParams({ path_prefix: path, limit: "100" });
-    const resp = await fetch(`/api/cms/documents?${params.toString()}`);
-    if (!resp.ok) throw new Error(await resp.text());
-    const body = (await resp.json()) as { documents?: CmsDocSummary[] };
-    const match = (body.documents ?? []).find((doc) =>
-      [doc.source_path, ...(doc.source_paths ?? [])].some((candidate) =>
-        candidate != null && normalize(candidate) === normalize(path)));
-    if (!match) return null;
-    // A listing is for discovery. Hydrate body and its observed revision from
-    // the same response, including when the URL names an older snapshot.
-    const documentResponse = await fetch(`/api/cms/documents/${encodeURIComponent(match.doc_id)}`);
-    if (!documentResponse.ok) throw new Error(await documentResponse.text());
-    return (await documentResponse.json()) as CmsDocSummary;
+    const normalize = (value: string) => value.replace(/^\/+/, "").replace(/^(?:\.\/)+/, "");
+    // Snapshot paths are absolute; client-provided logical aliases are relative.
+    // Search both exact forms without treating a failed request as a miss.
+    for (const candidatePath of Array.from(new Set([path, normalize(path)]))) {
+      const params = new URLSearchParams({ path_prefix: candidatePath, limit: "100" });
+      const resp = await fetch(`/api/cms/documents?${params.toString()}`);
+      if (!resp.ok) throw new Error(await resp.text());
+      const body = (await resp.json()) as { documents?: CmsDocSummary[] };
+      const match = (body.documents ?? []).find((doc) =>
+        [doc.source_path, ...(doc.source_paths ?? [])].some((candidate) =>
+          candidate != null && normalize(candidate) === normalize(path)));
+      if (!match) continue;
+      const documentResponse = await fetch(`/api/cms/documents/${encodeURIComponent(match.doc_id)}`);
+      if (!documentResponse.ok) throw new Error(await documentResponse.text());
+      return (await documentResponse.json()) as CmsDocSummary;
+    }
+    return null;
   }, []);
 
   const acceptCmsRevision = useCallback((doc: CmsDocSummary) => {
     setCmsDocId(doc.doc_id);
+    setSelectedGardenId(doc.garden_id);
     setCmsMetadata(doc.metadata ?? {});
     setCmsRevision(doc.revision);
     setCmsHeads(doc.revision_heads);
@@ -374,6 +381,7 @@ function CmsPage() {
     setEditorTitle(doc.title);
     setEditorBody(doc.content ?? "");
     setEditorPath(path);
+    setIsNewDraft(false);
     setEditorStatus(doc.visibility === "review" ? "review" : "draft");
     acceptCmsRevision(doc);
     setShowHistory(false);
@@ -391,6 +399,7 @@ function CmsPage() {
   }, [acceptCmsRevision, chat]);
 
   const loadCmsDocuments = useCallback(async () => {
+    const requestId = ++documentListRequestRef.current;
     if (!selectedGardenId) {
       setCmsDocuments([]);
       return;
@@ -401,12 +410,12 @@ function CmsPage() {
       const resp = await fetch(`/api/cms/documents?${params.toString()}`);
       if (!resp.ok) return;
       const body = (await resp.json()) as { documents?: CmsDocSummary[] };
-      setCmsDocuments(body.documents ?? []);
+      if (documentListRequestRef.current === requestId) setCmsDocuments(body.documents ?? []);
     } catch (error) {
       console.error("Failed to load CMS documents:", error);
-      setCmsDocuments([]);
+      if (documentListRequestRef.current === requestId) setCmsDocuments([]);
     } finally {
-      setLoadingCmsDocuments(false);
+      if (documentListRequestRef.current === requestId) setLoadingCmsDocuments(false);
     }
   }, [selectedGardenId]);
 
@@ -434,7 +443,9 @@ function CmsPage() {
   }, [editorDirectory, editorTitle]);
 
   const persistEditorFile = useCallback(async (parents?: string[]) => {
-    const path = editorPath ?? buildEditorPath();
+    // Imported workspace files retain their original logical identifier even
+    // when their title changes before the first CMS save.
+    const path = isNewDraft ? buildEditorPath() : editorPath;
     if (!path) return null;
     if (cmsDocId && !cmsRevision) {
       setLastSaveMessage("Reload this document before saving.");
@@ -458,7 +469,7 @@ function CmsPage() {
         body: JSON.stringify({
           title: editorTitle.trim() || "Untitled",
           content: editorBody,
-          source_path: path,
+          source_path: cmsDocId ? path : path.replace(/^\/+/, "").replace(/^(?:\.\/)+/, ""),
           visibility: "review",
           metadata: cmsMetadata,
           parents: cmsDocId ? (parents ?? [cmsRevision]) : [],
@@ -483,7 +494,7 @@ function CmsPage() {
       setIsSaving(false);
     }
   }, [applyCmsDocumentToEditor, buildEditorPath, cmsDocId, cmsMetadata, cmsRevision,
-    editorBody, editorPath, editorTitle, findCmsDocumentByPath, loadCmsDocuments, loadPublicationTopology]);
+    editorBody, editorPath, editorTitle, isNewDraft, findCmsDocumentByPath, loadCmsDocuments, loadPublicationTopology]);
 
   const loadHistory = useCallback(async () => {
     if (!cmsDocId) return;
@@ -580,6 +591,7 @@ function CmsPage() {
         setEditorTitle(entry.name);
         setEditorBody(data.content);
         setEditorPath(entry.path);
+        setIsNewDraft(false);
         setEditorStatus("draft");
         setIsDirty(false);
         setLastSaveMessage(null);
@@ -598,6 +610,9 @@ function CmsPage() {
       }
     } catch (err) {
       console.error("Failed to load file:", err);
+      if (editorRequestRef.current === requestId) {
+        setLastSaveMessage(err instanceof Error ? `Could not load document: ${err.message}` : "Could not load document");
+      }
     }
   };
 
@@ -634,6 +649,7 @@ function CmsPage() {
         setEditorTitle(name);
         setEditorBody(data.content);
         setEditorPath(path);
+        setIsNewDraft(false);
         setEditorStatus("draft");
         setIsDirty(false);
         setLastSaveMessage(null);
@@ -647,6 +663,9 @@ function CmsPage() {
         clearCmsRevision();
       } catch (err) {
         console.error("Failed to load CMS document from URL:", err);
+        if (!cancelled && editorRequestRef.current === requestId) {
+          setLastSaveMessage(err instanceof Error ? `Could not load document: ${err.message}` : "Could not load document");
+        }
       }
     })();
 
@@ -751,6 +770,10 @@ function CmsPage() {
   }, [navigate, handleLoadDirectory]);
 
   const handlePublishToggle = useCallback(async () => {
+    if (!cmsDocId) {
+      setLastSaveMessage("Save the draft to its workspace garden before publishing.");
+      return;
+    }
     if (!editorTitle.trim() || !selectedGardenId) {
       setLastSaveMessage("Select a garden");
       return;
@@ -759,7 +782,7 @@ function CmsPage() {
     let requestId = ++editorRequestRef.current;
     try {
       let savedPath = editorPath;
-      if (isDirty || !cmsDocId) {
+      if (isDirty) {
         const document = await persistEditorFile();
         if (!document) return;
         requestId = editorRequestRef.current;
@@ -894,6 +917,7 @@ function CmsPage() {
             setEditorTitle("untitled.md");
             setEditorBody("");
             setEditorPath(currentPath ? `${currentPath}/untitled.md` : "untitled.md");
+            setIsNewDraft(true);
             setEditorStatus("draft");
             clearCmsRevision();
             navigate("/cms");
@@ -972,7 +996,7 @@ function CmsPage() {
                   {isSaving ? "Saving…" : "Save"}
                 </button>
                 {cmsDocId ? <button className={styles.saveButton} onClick={() => void loadHistory()} disabled={isSaving || loadingHistory}>History</button> : null}
-                <button className={styles.publishButton} onClick={() => void handlePublishToggle()} disabled={isSaving || !selectedGardenId || cmsConflicted}>
+                <button className={styles.publishButton} onClick={() => void handlePublishToggle()} disabled={isSaving || !cmsDocId || !selectedGardenId || cmsConflicted} title={!cmsDocId ? "Save to the workspace garden before publishing" : undefined}>
                   {isSaving ? (isPublishedToSelectedGarden ? "Unpublishing…" : "Publishing…") : isPublishedToSelectedGarden ? "Unpublish" : "Publish"}
                 </button>
                 {editorPath?.includes("view-contract.edn") ? (
@@ -997,12 +1021,13 @@ function CmsPage() {
           </div>
           <div className={styles.metaItem}>
             <select
-              value={selectedGardenId}
+              value={editorPath && !cmsDocId ? "" : selectedGardenId}
+              disabled={isSaving || Boolean(editorPath && !cmsDocId)}
               onChange={(event) => setSelectedGardenId(event.target.value)}
               className={styles.metaSelect}
               aria-label="Garden"
             >
-              <option value="">Select garden…</option>
+              <option value="">{editorPath && !cmsDocId ? "Workspace garden (assigned on save)" : "Select garden…"}</option>
               {/* Publication intent may target active gardens only. */}
               {(publicationTopology?.gardens ?? [])
                 .filter((garden) => garden.status === "active")

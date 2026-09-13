@@ -23,5 +23,7 @@ printf '%s\n' \
   'PASS authenticated CMS routes reject anonymous callers, read-only writes and cross-organization access.' \
   'PASS stale saves preserve both bodies and authenticated actors; explicit resolution retains their history.' \
   'PASS removing snapshots rebuilds identical EDN metadata and Markdown from Clio.' \
+  'PASS publication and source digest checks refuse intervening ledger edits.' \
+  'PASS logical paths reopen one history and descriptive metadata survives concurrent creation.' \
   'PASS migration retains the original JSON/Markdown and existing publication intent.' \
   'WARN password login and browser interactions are covered by the separate deployed browser tour.'

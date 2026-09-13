@@ -1,7 +1,7 @@
 # CMS history backed by Clio
 
 Knoxx persists CMS revisions through `@eta-mu/document-history` at eta-mu commit
-`61a60f0e9d19768475ef5abd5251bbdccf1d3015`. That package calls Clio directly for
+`2a7ca613a179520f3fd693c34e3cf4b19c79c8c9`. That package calls Clio directly for
 creation, locked append, validation, schema history, canonical replay and hashes.
 Knoxx retains organization authorization and publication policy.
 
@@ -18,7 +18,8 @@ With the installed content root, the layout is:
 /state/content/.ημ/cms/<organization>/
   schemas/                          # retain alongside the ledger
   ledgers/<event-uuid>.edn           # accepted immutable events
-  seeds/<document-id>.lock           # stable migration lock inode
+  seeds/<document-id>.lock           # stable initialization lock inode
+  operations/<document-id>.lock      # CMS save/publication operation lock
   snapshots/<document-id>/<hash>/
     metadata.edn
     document.md
@@ -43,9 +44,22 @@ The editor's History view lets a reader inspect every version. Review each curre
 head, compose the desired body/title in the editor, then choose **Save resolution from
 editor**. This appends a revision naming the reviewed heads. A newly arriving branch
 remains a conflict. Publication and translation refuse unresolved CMS conflicts.
+Publication intent edits validate the immutable source path and ledger head while
+holding a synchronous Clio kernel operation lock shared with CMS saves. No await
+occurs under that lock. Source digest reads recheck that path/head after asynchronous
+I/O, refusing stale evidence. This coordinates Knoxx writers sharing this filesystem;
+it is not a claim of cross-host consensus or a migration of publication manifests.
+
+A validated relative logical source identifier is separate from the immutable
+snapshot path. New documents at the same organization/path share one deterministic
+ID, so simultaneous creates retain independent root revisions in the same history.
+Listing includes the logical path for rediscovery. Descriptive document metadata is
+a bounded map, retained with each body; it never grants organization permissions or
+publication intent.
 
 Legacy JSON records import once under the package's Clio migration lock. Original
-JSON and Markdown remain untouched. Existing publication intent stays in its authored
+JSON and Markdown remain untouched. Historical public/archived editor visibility
+is retained in EDN metadata while the editor uses internal visibility. Existing publication intent stays in its authored
 EDN manifest; document reads project the current title/source into the resource view
 without rewriting publication intent. Already approved translations continue to match
 an unchanged source-content digest. No signing keys, databases or identity ownership
@@ -74,7 +88,4 @@ ignored `docs/verification/screenshots/` directory. It modifies no application d
 the fixture verifier covers writes. The deployed acceptance walkthrough separately
 uses fresh recipient login while the source Axxium service is stopped.
 
-Local validation: shared package NBB and compiled CLJS each pass 8 tests/54 assertions;
-Knoxx backend passes 1,669 tests; frontend passes 219 tests with 41 existing TODOs,
-plus the final 13-test CMS regression suite. Backend and frontend compilers report
-zero warnings. Existing unrelated Router test warnings remain in five frontend suites.
+Validation counts are recorded in the PR and deployment receipt for their exact revisions.

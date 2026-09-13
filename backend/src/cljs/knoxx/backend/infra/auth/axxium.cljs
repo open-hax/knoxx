@@ -20,8 +20,7 @@
       (throw (ex-info "Axxium sign-in failed" {:status (if (= 401 (:status response)) 401 503)})))
     ;; The provider's session cookie is not forwarded to the browser or persisted.
     {:issuer origin :actor (law/require-actor! (get-in response [:body :actor]))}))
-(defn ^:async context! "Claim an exact authority/subject binding without overwriting existing accounts or roles." [policy-context {:keys [issuer actor]}]
-  (law/require-actor! actor)
+(defn- ^:async claim-user! [issuer actor]
   (let [db (await (policy/db!))
         users (mongo/collection db directory/USERS_COLLECTION)
         _ (await (mongo/ensure-index! users [[:email 1]] {:unique true}))
@@ -31,7 +30,12 @@
                    (identity/local-user issuer actor (str (random-uuid)) (system-instance/current-id))))
         user (await (directory/find-user-by-email! db (:email actor)))
         _ (when-not (law/same-binding? user (identity/subject issuer actor))
-            (throw (ex-info "This email is already bound to a different local identity" {:status 409})))
+            (throw (ex-info "This email is already bound to a different local identity" {:status 409})))]
+    {:db db :user user}))
+
+(defn ^:async context! "Claim an exact authority/subject binding without overwriting accounts or roles." [policy-context {:keys [issuer actor]}]
+  (let [actor (identity/normalize-actor actor)
+        {:keys [db user]} (await (claim-user! issuer actor))
         existing (await (directory/find-membership-row-by-email-and-org!
                          db {:user-email (:email actor) :active-only true}))]
     (when-not existing

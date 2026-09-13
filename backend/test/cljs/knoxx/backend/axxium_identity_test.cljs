@@ -19,3 +19,10 @@
   (is (= actor (law/require-actor! actor)))
   (doseq [change [{:id ""} {:id "$operator"} {:email {:$ne nil}} {:status "disabled"} {:display_name ""}]]
     (is (thrown? cljs.core/ExceptionInfo (law/require-actor! (merge actor change))))))
+
+(deftest mixed-case-authority-email-uses-the-directory-key
+  (let [mixed (assoc actor :email "Person@Example.test")
+        row (identity/local-user "issuer" mixed "local" "host")]
+    (is (= "person@example.test" (:email row)))
+    (is (= (:email row) (:email (identity/normalize-actor mixed))))
+    (is (= "issuer#actor_123" (:external_subject row)))))

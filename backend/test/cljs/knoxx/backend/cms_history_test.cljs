@@ -5,12 +5,15 @@
             [cljs.reader :as reader]
             [cljs.test :refer [deftest is]]
             [knoxx.backend.domain.cms-document :as domain]
+            [knoxx.backend.domain.node.fs :as node-fs]
             [knoxx.backend.extern.cms-store :as files]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.fastify.cms-documents :as transport]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.cms-store :as store]
-            [knoxx.backend.infra.http-server :as http]))
+            [knoxx.backend.infra.http-server :as http]
+            [knoxx.backend.infra.publication-source-revision :as source]
+            [knoxx.backend.infra.routes.cms-publication :as publication]))
 
 (defn- temporary-root [] (.mkdtempSync fs (.join path (or (aget js/process.env "KNOXX_CMS_VERIFY_ROOT") (.tmpdir os)) "knoxx-cms-history-")))
 (defn- roots [root] {:content (.join path root "content") :resources (.join path root "resources")})
@@ -112,8 +115,100 @@
             (is (= manifest (reader/read-string (text (:manifest paths)))))
             (is (= "Renamed" (:document/title projected)))
             (is (= (:source_path saved) (get-in projected [:document/source :path])))
-            (is (= {:note "keep"} (:metadata saved)))
+            (is (= {:note "keep" :legacy/visibility "review"} (:metadata saved)))
             (is (= 2 (count (:revisions (store/history! org id)))))
             (is (some #{(:source paths)} (:source_paths (first (store/list! org)))))
             (is (= "system:legacy-cms-import" (:actor (first (:revisions (store/history! org id)))))))))
+      (finally (clean! root)))))
+
+(deftest legacy-visibility-does-not-prevent-listing-or-grant-publication
+  (let [root (temporary-root)]
+    (try
+      (with-redefs [files/roots #(roots root) files/configured? (constantly true)]
+        (doseq [visibility ["public" "archived"]]
+          (let [paths (files/paths "legacy" visibility)]
+            (.mkdirSync fs (:root paths) #js {:recursive true})
+            (.writeFileSync fs (:metadata paths)
+                           (js/JSON.stringify #js {:title visibility :content "retained" :visibility visibility}))))
+        (let [documents (store/list! "legacy")]
+          (is (= 2 (count documents)))
+          (doseq [document documents]
+            (is (= "internal" (:visibility document)))
+            (is (= (:doc_id document) (get-in document [:metadata :legacy/visibility])))
+            (is (= "retained" (:content document)))
+            (is (every? #(= :withheld (:publication/state %))
+                        (rest (:resources (reader/read-string
+                                           (text (:manifest (files/paths "legacy" (:doc_id document))))))))))))
+      (finally (clean! root)))))
+
+(defn- resource-document [org value]
+  {:document/id (keyword (str "cms." org) (str "doc-" (:doc_id value)))
+   :document/org-id org :document/source {:path (:source_path value)}})
+
+(deftest ^:async publication-rejects-an-edit-during-resource-loading
+  (let [root (temporary-root)]
+    (try
+      (with-redefs [files/roots #(roots root) files/configured? (constantly true)]
+        (let [org "publish" initial (store/save! org "a" nil (body "Initial" "base" []))
+              id (:doc_id initial) document (resource-document org initial)
+              target (:manifest (files/paths org id))
+              before (text target)
+              intent (second (:resources (reader/read-string before)))
+              index {:documents {(:document/id document) document} :publications [intent]}
+              updated (atom nil)]
+          (with-redefs [publication/resource-index! (fn [_ _] index)
+                        publication/publication-file-path!
+                        (fn [_ _] (reset! updated (store/save! org "b" id (body "Edited" "changed" [(:revision initial)]))) target)]
+            (is (= "cms_revision_changed"
+                   (try (await (publication/set-publication-state! {} {} (:publication/id intent)
+                                                                  {:publication/state :published}))
+                        nil (catch :default e (:code (ex-data e))))))
+            (is (= before (text target)) "No stale publication intent is written"))
+          (let [fresh (resource-document org @updated)]
+            (with-redefs [publication/resource-index! (fn [_ _] (assoc index :documents {(:document/id fresh) fresh}))
+                          publication/publication-file-path! (fn [_ _] target)]
+              (await (publication/set-publication-state! {} {} (:publication/id intent) {:publication/state :published}))
+              (is (= :published (:publication/state (second (:resources (reader/read-string (text target)))))))))))
+      (finally (clean! root)))))
+
+(deftest ^:async source-digest-rejects-an-edit-during-immutable-source-read
+  (let [root (temporary-root)]
+    (try
+      (with-redefs [files/roots #(roots root) files/configured? (constantly true)]
+        (let [org "digest" initial (store/save! org "a" nil (body "Initial" "base" []))
+              document (resource-document org initial)]
+          (with-redefs [source/source-root (fn [_] (:content (roots root)))
+                        node-fs/read-file-or-nil! (fn [p]
+                                                  (let [original (text p)]
+                                                    (store/save! org "b" (:doc_id initial)
+                                                                 (body "Edited" "changed" [(:revision initial)]))
+                                                    original))]
+            (is (= "cms_revision_changed"
+                   (try (await (source/source-revisions! {} [document]))
+                        nil (catch :default e (:code (ex-data e))))))
+            (is (= "base" (text (:source_path initial))) "The original revision remains immutable"))))
+      (finally (clean! root)))))
+
+(deftest logical-source-discovery-retains-one-history-with-concurrent-creation
+  (let [root (temporary-root)]
+    (try
+      (with-redefs [files/roots #(roots root) files/configured? (constantly true)]
+        (let [a (store/save! "paths" "a" nil (assoc (body "A" "body A" []) :source_path "docs/foo.md" :metadata {:publication_kind "playlist" :blocks [{:type "track" :path "music/a.ogg"}]}))
+              b (store/save! "paths" "b" nil (assoc (body "B" "body B" []) :source_path "docs/foo.md"))
+              docs (store/list! "paths")]
+          (is (= (:doc_id a) (:doc_id b)))
+          (is (= 1 (count docs)))
+          (is (= {:publication_kind "playlist" :blocks [{:type "track" :path "music/a.ogg"}]}
+                 (:metadata (some (fn [r] (when (= (:revision a) (:revision r)) r))
+                                  (:revisions (store/history! "paths" (:doc_id a)))))))
+          (is (:conflicted b))
+          (is (some #{"docs/foo.md"} (:source_paths (first docs))))
+          (is (= #{"body A" "body B"} (set (map :content (:revisions (store/history! "paths" (:doc_id a)))))))
+          (let [saved (store/save! "paths" "a" (:doc_id a)
+                                   (assoc (body "Resolved" "both" (:revision_heads b)) :source_path (:source_path a)))]
+            (is (= "docs/foo.md" (:logical_source_path saved)))
+            (is (false? (:conflicted saved)))))
+        (doseq [unsafe ["/etc/passwd" "../escape" "docs/../escape" "docs//foo" "C:/escape" "docs\\foo"]]
+          (is (thrown? cljs.core/ExceptionInfo
+                       (store/save! "paths" "a" nil (assoc (body "Denied" "body" []) :source_path unsafe))))))
       (finally (clean! root)))))

@@ -22,9 +22,13 @@ vi.mock("react-markdown", () => ({
 }));
 
 vi.mock("../components/context-bar", () => ({
-  ContextBar: ({ onNewDocument }: { onNewDocument?: () => void }) => (
+  ContextBar: ({ onNewDocument, onOpenFile }: {
+    onNewDocument?: () => void;
+    onOpenFile?: (entry: { name: string; path: string; type: "file"; previewable: boolean }) => void;
+  }) => (
     <aside data-testid="context-bar">
       <button onClick={onNewDocument}>New document</button>
+      <button onClick={() => onOpenFile?.({ name: "existing.md", path: "docs/existing.md", type: "file", previewable: true })}>Open explorer file</button>
     </aside>
   ),
 }));
@@ -78,6 +82,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
 
 const cmsDoc = {
   doc_id: "cms-doc-1",
+  garden_id: "garden-a",
   title: "Existing CMS Doc",
   content: "Initial CMS body",
   source_path: "docs/existing.md",
@@ -435,6 +440,52 @@ describe("CmsPage CMS document backend interactions", () => {
     expect(screen.queryByText("Saved CMS draft")).not.toBeInTheDocument();
   });
 
+  it("shows a denied CMS lookup while preserving the editor and avoiding ingestion fallback", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url.startsWith("/api/cms/documents?path_prefix=")) return new Response("CMS access denied", { status: 403 });
+    });
+    renderCmsPage();
+    const editor = await screen.findByRole("textbox", { name: "Document content" });
+    fireEvent.change(editor, { target: { value: "Unsaved local draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open explorer file" }));
+    await screen.findByText("Could not load document: CMS access denied");
+    expect(editor).toHaveValue("Unsaved local draft");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/ingestion/file?path=docs"))).toBe(false);
+    errorLog.mockRestore();
+  });
+
+  it("shows a URL hydration failure without opening stale ingestion content", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url === "/api/cms/documents/cms-doc-1") return new Response("CMS history unavailable", { status: 500 });
+    });
+    renderCmsPage("/cms?path=docs%2Fexisting.md");
+    await screen.findByText("Could not load document: CMS history unavailable");
+    expect(screen.queryByRole("textbox", { name: "Document content" })).not.toBeInTheDocument();
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/ingestion/file?path=docs"))).toBe(false);
+    errorLog.mockRestore();
+  });
+
+  it("does not show an older lookup error after navigation to another document", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let failLookup: (response: Response) => void = () => undefined;
+    const other = { ...cmsDoc, doc_id: "other-doc", title: "Other document", content: "Other document body", revision: "other-revision", source_path: "other.md" };
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url.startsWith("/api/cms/documents?path_prefix=")) return new Promise<Response>((resolve) => { failLookup = resolve; });
+      if (url === "/api/cms/documents/other-doc") return jsonResponse(other);
+    });
+    renderCmsPage("/cms?path=docs%2Fexisting.md", true);
+    await waitFor(() => expect(harness.requests.some(({ url }) => url.startsWith("/api/cms/documents?path_prefix="))).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "Navigate to another document" }));
+    await screen.findByDisplayValue("Other document body");
+    await act(async () => failLookup(new Response("Old lookup failure", { status: 500 })));
+    expect(screen.getByRole("status")).toHaveTextContent("Loaded CMS draft");
+    expect(screen.queryByText(/Old lookup failure/)).not.toBeInTheDocument();
+    errorLog.mockRestore();
+  });
+
   it("loads the current ledger body and revision together when a URL names an older source path", async () => {
     const current = { ...cmsDoc, source_path: ".ημ/snapshots/new/content.md", source_paths: ["docs/old.md"], content: "Current ledger content", revision: "revision-7", revision_heads: ["revision-7"] };
     const harness = installCmsFetchMock(current, "withheld");
@@ -449,7 +500,36 @@ describe("CmsPage CMS document backend interactions", () => {
     expect(harness.requests.some(({ url }) => url.startsWith("/api/ingestion/file?path=docs"))).toBe(false);
   });
 
-  it("publishes a new document through the intent created by its save and writes content only once", async () => {
+  it("finds a normalized logical alias after an absolute path lookup misses", async () => {
+    const current = { ...cmsDoc, source_path: "/state/.ημ/snapshots/new/content.md", source_paths: ["docs/source.md"] };
+    const harness = installCmsFetchMock(current, "withheld", (url) => {
+      if (url.startsWith("/api/cms/documents?path_prefix=%2Fdocs")) return jsonResponse({ documents: [] });
+    });
+    renderCmsPage("/cms?path=%2Fdocs%2Fsource.md");
+    await screen.findByDisplayValue("Initial CMS body");
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/cms/documents?path_prefix=docs%2Fsource.md"))).toBe(true);
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/ingestion/file?path=%2Fdocs"))).toBe(false);
+  });
+
+  it("preserves an imported workspace file's logical path when its title changes before the first save", async () => {
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url.startsWith("/api/cms/documents?")) return jsonResponse({ documents: [] });
+      if (url === "/api/ingestion/file?path=docs%2Fexisting.md") return jsonResponse({ content: "Existing workspace content" });
+      if (url === "/api/cms/documents" && init?.method === "POST") {
+        return jsonResponse({ ...cmsDoc, ...JSON.parse(String(init.body)), source_path: "/state/.ημ/snapshots/imported/content.md" });
+      }
+    });
+    renderCmsPage("/cms?path=docs%2Fexisting.md");
+    await screen.findByDisplayValue("Existing workspace content");
+    fireEvent.change(screen.getByRole("textbox", { name: "Document title" }), { target: { value: "Renamed article" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved CMS draft");
+    const create = harness.requests.find(({ url, init }) => url === "/api/cms/documents" && init?.method === "POST");
+    expect(JSON.parse(String(create?.init?.body))).toMatchObject({ title: "Renamed article", source_path: "docs/existing.md", content: "Existing workspace content", parents: [] });
+  });
+
+  it("saves a new document into its assigned workspace garden before allowing publication", async () => {
+    const workspaceGarden = "cms.org/workspace";
     let created = false;
     let published = false;
     const snapshot = ".ημ/snapshots/created/content.md";
@@ -457,12 +537,14 @@ describe("CmsPage CMS document backend interactions", () => {
       if (url === "/api/cms/publications/documents") {
         const topology = publicationTopology(published ? "published" : "withheld");
         topology.documents[0].document.source.path = snapshot;
+        topology.documents[0].publications[0].garden = workspaceGarden;
+        if (created) topology.gardens.push({ id: workspaceGarden, title: "Workspace Publications", status: "active" });
         return jsonResponse({ ...topology, documents: created ? topology.documents : [] });
       }
       if (url.startsWith("/api/cms/documents?")) return jsonResponse({ documents: [] });
       if (url === "/api/cms/documents" && init?.method === "POST") {
         created = true;
-        return jsonResponse({ ...cmsDoc, ...JSON.parse(String(init.body)), source_path: snapshot });
+        return jsonResponse({ ...cmsDoc, ...JSON.parse(String(init.body)), garden_id: workspaceGarden, source_path: snapshot });
       }
       if (url.startsWith("/api/cms/publications/intents/") && init?.method === "PATCH") {
         published = true;
@@ -474,12 +556,18 @@ describe("CmsPage CMS document backend interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "New document" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Document title" }), { target: { value: "New article" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Document content" }), { target: { value: "New article body" } });
+    expect(screen.getByRole("combobox", { name: "Garden" })).toBeDisabled();
+    expect(screen.getByRole("option", { name: "Workspace garden (assigned on save)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved CMS draft");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Garden" })).toHaveValue(workspaceGarden));
     fireEvent.click(screen.getByRole("button", { name: "Publish" }));
     await screen.findByText("Publication requested");
     expect(harness.requests.filter(({ url, init }) => url === "/api/cms/documents" && init?.method === "POST")).toHaveLength(1);
     expect(harness.requests.filter(({ url, init }) => url.startsWith("/api/cms/documents/") && init?.method === "PATCH")).toHaveLength(0);
     const create = harness.requests.find(({ init }) => init?.method === "POST");
-    expect(JSON.parse(String(create?.init?.body))).toMatchObject({ parents: [], content: "New article body" });
+    expect(JSON.parse(String(create?.init?.body))).toMatchObject({ parents: [], content: "New article body", source_path: "New article" });
     expect(published).toBe(true);
   });
 
