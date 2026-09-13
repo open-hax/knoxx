@@ -15,7 +15,7 @@ await check('fresh recipient password sign-in',async()=>{
  assert.equal(r.status,200);cookie=r.headers.getSetCookie().map(c=>c.split(';')[0]).join('; ');assert.ok(cookie);
 });
 async function api(path){const r=await fetch(origin+path,{headers:{cookie}});assert.equal(r.status,200);return r.json();}
-await check('recipient session remains valid',async()=>{await api('/api/auth/me');});
+await check('recipient session remains valid',async()=>{await api('/api/auth/context');});
 await check('anonymous CMS read refused',async()=>{const r=await fetch(origin+'/api/cms/documents');assert.ok([401,403].includes(r.status));});
 let documents;
 await check('saved CMS content reloads from recipient',async()=>{
