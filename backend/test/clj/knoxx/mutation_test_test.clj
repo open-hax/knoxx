@@ -73,3 +73,23 @@
       (finally
         (doseq [f (reverse (file-seq tmp-dir))]
           (.delete f))))))
+
+(deftest campaign-partitions-are-disjoint-and-stable
+  (let [mutants (mutation/assign-mutant-ids
+                 (mapv #(hash-map :relative-path "a.cljs" :line % :column 1 :operator :boolean-literal-flip :original "true" :replacement "false") (range 1000)))
+        batches (mapv #(mutation/partition-mutants mutants {:batch-index % :batch-count 4 :limit 250}) (range 4))]
+    (is (every? #(= 250 (count %)) batches))
+    (is (= 1000 (count (set (map :fingerprint (mapcat identity batches))))))
+    (is (= (first (nth batches 2)) (first (mutation/partition-mutants mutants {:batch-index 2 :batch-count 4 :limit 1}))))))
+
+(deftest invalid-execution-never-counts-as-test-kill
+  (let [green "Ran 10 tests containing 40 assertions.\n0 failures, 0 errors."
+        red "Ran 10 tests containing 40 assertions.\n1 failures, 0 errors."]
+    (is (mutation/passed-tests? {:exit-code 0 :timed-out? false :output green}))
+    (is (mutation/killed? {:exit-code 1 :timed-out? false :output red}))
+    (doseq [result [{:exit-code 124 :timed-out? true :output red}
+                    {:exit-code 1 :timed-out? false :output "Compiler error"}
+                    {:exit-code 0 :timed-out? false :output "0 failures, 0 errors."}]]
+      (is (not (mutation/killed? result)))
+      (is (not (mutation/passed-tests? result)))))
+  (is (not (mutation/compiled? {:exit-code 0 :timed-out? false :output "Build completed. 2 warnings"}))))

@@ -303,7 +303,7 @@ function CmsPage() {
   const syncCmsDocumentByPath = useCallback(async (path: string) => {
     const normalizeSourcePath = (value: string | null | undefined) => (value ?? "").replace(/^\/+/, "");
     const params = new URLSearchParams({ path_prefix: path, limit: "20" });
-    const resp = await fetch(`/api/openplanner/v1/cms/documents?${params.toString()}`);
+    const resp = await fetch(`/api/cms/documents?${params.toString()}`);
     if (!resp.ok) {
       setCmsDocId(null);
       setCmsMetadata({});
@@ -355,7 +355,7 @@ function CmsPage() {
     setLoadingCmsDocuments(true);
     try {
       const params = new URLSearchParams({ garden_id: selectedGardenId, limit: "100" });
-      const resp = await fetch(`/api/openplanner/v1/cms/documents?${params.toString()}`);
+      const resp = await fetch(`/api/cms/documents?${params.toString()}`);
       if (!resp.ok) return;
       const body = (await resp.json()) as { documents?: CmsDocSummary[] };
       setCmsDocuments(body.documents ?? []);
@@ -373,7 +373,7 @@ function CmsPage() {
 
   const handleOpenCmsDocument = useCallback(async (docId: string) => {
     try {
-      const resp = await fetch(`/api/openplanner/v1/cms/documents/${encodeURIComponent(docId)}`);
+      const resp = await fetch(`/api/cms/documents/${encodeURIComponent(docId)}`);
       if (!resp.ok) return;
       applyCmsDocumentToEditor((await resp.json()) as CmsDocSummary);
     } catch (error) {
@@ -387,13 +387,13 @@ function CmsPage() {
       title: editorTitle.trim() || path.split("/").pop() || "Untitled",
       content: editorBody,
       source_path: path,
-      visibility: existing && publishedGardenIds.length > 0 ? "public" : "internal",
+      visibility: "review",
       metadata: existing?.metadata ?? cmsMetadata,
     };
 
     const endpoint = existing
-      ? `/api/openplanner/v1/cms/documents/${encodeURIComponent(existing.doc_id)}`
-      : "/api/openplanner/v1/cms/documents";
+      ? `/api/cms/documents/${encodeURIComponent(existing.doc_id)}`
+      : "/api/cms/documents";
     const method = existing ? "PATCH" : "POST";
     const resp = await fetch(endpoint, {
       method,
@@ -438,16 +438,8 @@ function CmsPage() {
     setIsSaving(true);
     setLastSaveMessage(null);
     try {
-      const visibility = next.publishState === "published"
-        ? "public"
-        : next.publishState === "draft"
-          ? "internal"
-          : editorStatus === "review"
-            ? "review"
-            : isPublishedToSelectedGarden
-              ? "public"
-              : "review";
-      const resp = await fetch(`/api/openplanner/v1/cms/documents/${encodeURIComponent(cmsDocId)}`, {
+      const visibility = next.publishState === "draft" ? "internal" : "review";
+      const resp = await fetch(`/api/cms/documents/${encodeURIComponent(cmsDocId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -489,23 +481,13 @@ function CmsPage() {
       setIsSaving(true);
       setLastSaveMessage(null);
       try {
-        const resp = await fetch("/api/ingestion/file", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            path: nextPath,
-            old_path: editorPath && editorPath !== nextPath ? editorPath : null,
-            content: editorBody,
-          }),
-        });
-        if (!resp.ok) {
-          throw new Error(await resp.text());
-        }
-        const data = await resp.json();
-        const savedPath = typeof data.path === "string" ? data.path : nextPath;
-        setEditorPath(savedPath);
-        setEditorTitle(savedPath.split("/").pop() ?? savedPath);
-        await upsertCmsDocument(savedPath);
+        const id = await upsertCmsDocument(nextPath);
+        const response = await fetch(`/api/cms/documents/${encodeURIComponent(id)}`);
+        if (!response.ok) throw new Error(await response.text());
+        const document = (await response.json()) as CmsDocSummary;
+        applyCmsDocumentToEditor(document);
+        const savedPath = document.source_path ?? nextPath;
+        await loadPublicationTopology();
         setIsDirty(false);
         if (next.publishState === "published") {
           setEditorStatus("published");
@@ -522,7 +504,7 @@ function CmsPage() {
         setIsSaving(false);
       }
     },
-    [buildEditorPath, cmsDocId, editorBody, editorDirectory, editorPath, persistCmsDocumentOnly, upsertCmsDocument],
+    [applyCmsDocumentToEditor, loadPublicationTopology, buildEditorPath, cmsDocId, editorBody, editorDirectory, editorPath, persistCmsDocumentOnly, upsertCmsDocument],
   );
 
   useEffect(() => {
@@ -609,7 +591,7 @@ function CmsPage() {
     void (async () => {
       try {
         if (docId) {
-          const resp = await fetch(`/api/openplanner/v1/cms/documents/${encodeURIComponent(docId)}`);
+          const resp = await fetch(`/api/cms/documents/${encodeURIComponent(docId)}`);
           if (!resp.ok || cancelled) return;
           applyCmsDocumentToEditor((await resp.json()) as CmsDocSummary, path ?? undefined);
           return;
@@ -751,7 +733,7 @@ function CmsPage() {
         if (isDirty) await persistCmsDocumentOnly();
       } else if (cmsMetadata.block_schema_version === 1) {
         const sourcePath = editorPath ?? `cms/${editorTitle.trim().replace(/[\\/]+/g, "-") || "untitled"}.md`;
-        const resp = await fetch("/api/openplanner/v1/cms/documents", {
+        const resp = await fetch("/api/cms/documents", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -777,31 +759,8 @@ function CmsPage() {
         if (!savedPath) return;
         publishDocId = await upsertCmsDocument(savedPath);
       }
-      const query = isPublishedToSelectedGarden ? "" : "?skip_translation=true&defer_index=true";
-      const endpoint = `/api/openplanner/v1/cms/publish/${encodeURIComponent(publishDocId)}/${encodeURIComponent(selectedGardenId)}${query}`;
-      const resp = await fetch(endpoint, {
-        method: isPublishedToSelectedGarden ? "DELETE" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!resp.ok) {
-        const text = await resp.text();
-        let softSuccess = false;
-        if (resp.status === 503) {
-          try {
-            const parsed = JSON.parse(text) as { persisted?: boolean; indexed?: boolean };
-            softSuccess = Boolean(parsed.persisted);
-            if (softSuccess) {
-              setLastSaveMessage(nextState === "published" ? "Published (index pending)" : "Unpublished (index pending)");
-            }
-          } catch {
-            softSuccess = false;
-          }
-        }
-        if (!softSuccess) {
-          throw new Error(text);
-        }
-      }
+      // The resource intent is the only publication authority. Persist content
+      // first, then update the selected intent below; no legacy REST publish call.
       if (savedPath) await syncCmsDocumentByPath(savedPath);
       if (publishDocId) await handleOpenCmsDocument(publishDocId);
       await loadCmsDocuments();
