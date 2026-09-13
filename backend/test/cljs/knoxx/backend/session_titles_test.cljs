@@ -1,5 +1,5 @@
 (ns knoxx.backend.session-titles-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.extern.proxx :as proxx]
             [knoxx.backend.infra.stores.session-titles :as titles]))
 

@@ -3,9 +3,9 @@
    src/components/SidebarOpsStatus.tsx. Exposed at
    window.knoxx.frontend.components.ops_status.sidebar.sidebar_ops_status
    for the TS loader shim (OpsRoot is still TS-routed)."
-  (:require [helix.core :as hx :refer [$ defnc]]
-            [helix.hooks :as hooks]
+  (:require [helix.core :as hx]
             [helix.dom :as d]
+            [helix.hooks :as hooks]
             [knoxx.frontend.components.ops-status.logic :as logic]
             [knoxx.frontend.lib.ws :as ws]
             [knoxx.frontend.pages.documents.api :as documents-api]))
@@ -17,7 +17,9 @@
 
 (defn- pct [v] (str (.toFixed (js/Number (or v 0)) 1) "%"))
 
-(defnc usage-section [{:keys [samples]}]
+(hx/defnc usage-section
+  "Render current utilization and the bounded sample history."
+  [{:keys [samples]}]
   (let [latest (peek (vec samples))]
     (d/div
      (d/p {:class-name "text-[11px] uppercase tracking-wide text-slate-400"} "System Usage")
@@ -37,7 +39,9 @@
 (defn- ingestion-pct [progress]
   (js/Number (or (:percentPrecise progress) (:percent progress) 0)))
 
-(defnc ingestion-section [{:keys [ingestion]}]
+(hx/defnc ingestion-section
+  "Describe active ingestion, a resumable pause or the idle state."
+  [{:keys [ingestion]}]
   (let [progress (:progress ingestion)]
     (d/div
      (d/p {:class-name "text-[11px] uppercase tracking-wide text-slate-400"} "Ingestion")
@@ -60,7 +64,9 @@
        :else
        (d/p {:class-name "mt-1 text-xs text-slate-400"} "No active ingestion")))))
 
-(defnc ^:export sidebar-ops-status []
+(hx/defnc ^:export sidebar-ops-status
+  "Subscribe to usage updates and poll ingestion state until unmount."
+  []
   (let [[samples set-samples!] (hooks/use-state [])
         [ingestion set-ingestion!] (hooks/use-state nil)]
     (hooks/use-effect
@@ -83,5 +89,5 @@
        (poll!)
        (fn [] (js/clearInterval timer))))
     (d/div {:class-name "border-t border-slate-700/60 p-3 space-y-3 overflow-y-auto"}
-           ($ usage-section {:samples samples})
-           ($ ingestion-section {:ingestion ingestion}))))
+           (hx/$ usage-section {:samples samples})
+           (hx/$ ingestion-section {:ingestion ingestion}))))

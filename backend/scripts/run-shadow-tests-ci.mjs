@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { testEnvironment } from './shadow-test-environment.mjs';
 
 const supportedBuilds = new Set(['test', 'e2e']);
 
@@ -22,9 +23,13 @@ export function parseTestCounters(output) {
 }
 
 export function testCountersExitCode(output) {
-  const counters = parseTestCounters(output);
-  if (!counters) return 1;
-  return counters.failures > 0 || counters.errors > 0 ? 1 : 0;
+  const text = String(output);
+  if (text.includes('[shadow-test-guard] FATAL')) return 1;
+  const results = [...text.matchAll(/\b(\d+) failures?,\s*(\d+) errors?\./g)];
+  if (!results.length || results.some(([, failures, errors]) => Number(failures) || Number(errors))) return 1;
+  const summaries = [...text.matchAll(/Ran\s+(\d+) tests? containing\s+(\d+) assertions?\./g)];
+  if (summaries.length !== results.length) return 1;
+  return summaries.every(([, tests, assertions]) => Number(tests) > 0 && Number(assertions) > 0) ? 0 : 1;
 }
 
 export function run(rawBuild) {
@@ -34,13 +39,7 @@ export function run(rawBuild) {
 
   const child = spawn(cmd, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      // Hermetic tests: never let default contract-root resolution reach the
-      // live, operator-owned contracts/ folder. Tests that need contracts must
-      // pass an explicit :contracts-dir pointing at a test/fixtures snapshot.
-      CONTRACTS_DIR: process.env.CONTRACTS_DIR ?? 'test/fixtures/empty-contracts',
-    },
+    env: testEnvironment(),
   });
 
   let combined = '';

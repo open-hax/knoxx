@@ -1,7 +1,9 @@
 (ns knoxx.backend.infra.auth.authz
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.wiki-capabilities :as capabilities]
+            [knoxx.backend.extern.axxium :as transport]
             [knoxx.backend.infra.auth.session :as auth-session]
-            [knoxx.backend.infra.db.policy :as db-policy]
+            [knoxx.backend.infra.identity :as identity]
             [knoxx.backend.infra.http :as http]
             [knoxx.backend.runtime.state :as runtime-state]))
 
@@ -13,75 +15,34 @@
   [runtime]
   (some? (policy-db runtime)))
 
-(defn- ^:async normalize-handler-promise!
-  [value]
-  (let [resolved (await value)]
-    (if (nil? resolved)
-      js/undefined
-      resolved)))
-
-(defn- fastify-handler-result
-  "Fastify treats a resolved promise value as a response payload.
-
-   CLJS `nil` becomes JS `null`, which makes Fastify try to send a second
-   response after we've already used reply.send/reply.code in async handlers.
-   Normalize `nil` to `undefined` so promise-returning handlers can safely do
-   side-effectful replies and resolve to 'no payload'."
-  [value]
-  (cond
-    (instance? js/Promise value)
-    (normalize-handler-promise! value)
-
-    (nil? value)
-    js/undefined
-
-    :else
-    value))
-
 (defn ^:async policy-db-promise
   [runtime reply status promise]
   (if-not (policy-db-enabled? runtime)
-    (fastify-handler-result
-     (http/json-response! reply 503 {:detail "Knoxx policy database is not configured"}))
+    (transport/handler-result (http/json-response! reply 503 {:detail "Knoxx policy database is not configured"}))
     (try
       (let [result (await promise)]
-        (http/json-response! reply status result)
-        js/undefined)
+        (await (transport/handler-result (http/json-response! reply status result))))
       (catch :default err
-        (http/error-response! reply err)
-        js/undefined))))
+        (await (transport/handler-result (http/error-response! reply err)))))))
 
 (defn ^:async resolve-request-context!
   [runtime request]
-  (if-not (policy-db-enabled? runtime)
-    nil
-    (if-let [cached (aget request "__knoxxRequestContext")]
-      cached
-      (let [headers (or (aget request "headers") #js {})
-            header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
-            header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
-            policy-context (policy-db runtime)
-            ctx-promise (if (or (not (str/blank? header-email))
-                                (not (str/blank? header-mid)))
-                          (db-policy/resolve-context! policy-context headers)
-                          ;; Fall back to cookie-backed auth context resolution.
-                          (auth-session/resolve-auth-context request policy-context))
-            ctx (await ctx-promise)]
-        (aset request "__knoxxRequestContext" ctx)
-        ctx))))
+  (await (auth-session/resolve-auth-context request (policy-db runtime))))
 
 (defn ^:async with-request-context!
   "Resolve auth context and call (f ctx). Returns a promise.
    When f is an ^:async fn, await works inside it."
   [runtime request reply f]
-  (if-not (policy-db-enabled? runtime)
-    (fastify-handler-result (f nil))
-    (try
-      (let [ctx (await (resolve-request-context! runtime request))]
-        (fastify-handler-result (f ctx)))
-      (catch :default err
-        (http/error-response! reply err)
-        js/undefined))))
+  (try
+    (let [ctx (await (resolve-request-context! runtime request))]
+      (await (transport/handler-result (f ctx))))
+    (catch :default err
+      (await (transport/handler-result (http/error-response! reply err))))))
+
+(defn current-context!
+  "Refresh authority for long-lived commands and change streams."
+  [runtime ctx]
+  (identity/current-context! (policy-db runtime) ctx))
 
 (defn ctx-org-id [ctx] (or (:org-id ctx) (:orgId ctx) (get-in ctx [:org :id])))
 (defn ctx-org-slug [ctx] (or (:org-slug ctx) (:orgSlug ctx) (get-in ctx [:org :slug])))
@@ -158,12 +119,23 @@
   (or (system-admin? ctx)
       (= "allow" (ctx-tool-effect ctx tool-id))))
 
+(defn permission-allowed?
+  "The permission decision enforced by commands, including the administrator role."
+  [ctx permission]
+  (or (system-admin? ctx) (ctx-permitted? ctx permission)))
+
 (defn ensure-permission!
   [ctx permission]
-  (when-not (or (system-admin? ctx)
-                (ctx-permitted? ctx permission))
+  (when-not (permission-allowed? ctx permission)
     (throw (http/http-error 403 "permission_denied" (str "Permission '" permission "' is required"))))
   ctx)
+
+(defn ensure-capability!
+  "Authorize a declared Wiki capability through its application permission."
+  [ctx capability]
+  (if-let [permission (capabilities/permission capability)]
+    (ensure-permission! ctx permission)
+    (throw (http/http-error 403 "capability_denied" "Unknown capability"))))
 
 (defn ensure-tool!
   "Enforce tool access for request-scoped endpoints.
@@ -205,15 +177,12 @@
         record-membership (str (or (record-membership-id record) ""))
         ctx-user (str (or (ctx-user-id ctx) ""))
         record-user (str (or (record-user-id record) ""))
-        ctx-email (str/lower-case (str (or (ctx-user-email ctx) "")))
-        record-email (str/lower-case (str (or (record-user-email record) "")))
         ctx-actor (str (or (ctx-actor-id ctx) ""))
         record-actor (str (or (record-actor-id record) ""))
         actor-bound? (not (str/blank? record-actor))
         actor-match? (or (not actor-bound?) (= ctx-actor record-actor))
         user-bound? (or (not (str/blank? record-membership))
-                        (not (str/blank? record-user))
-                        (not (str/blank? record-email)))]
+                        (not (str/blank? record-user)))]
     (cond
       (not actor-match?) false
       (system-admin? ctx) true
@@ -223,9 +192,6 @@
       (and (not (str/blank? ctx-user))
            (not (str/blank? record-user)))
       (= ctx-user record-user)
-      (and (not (str/blank? ctx-email))
-           (not (str/blank? record-email)))
-      (= ctx-email record-email)
       :else
       (and actor-bound?
            (not user-bound?)
@@ -249,7 +215,6 @@
   [snapshot]
   (boolean (or (:org_id snapshot)
                (:user_id snapshot)
-               (:user_email snapshot)
                (:membership_id snapshot)
                (:actor_id snapshot)
                (:is_system_admin snapshot))))

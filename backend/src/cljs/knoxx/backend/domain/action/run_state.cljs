@@ -1,18 +1,30 @@
 (ns knoxx.backend.domain.action.run-state
-  (:require [clojure.string :as str]
+  "Process-owned run registry; pure trace projections live in run-trace."
+  (:require [knoxx.backend.domain.action.run-trace :as trace]
             [knoxx.backend.domain.time :as time]
-            [knoxx.backend.shape.agent :refer [messages]]))
+            [knoxx.backend.extern.run-record :as run-record]
+            [knoxx.backend.shape.agent :as agent]))
 
-(defonce runs* (atom {}))
-(defonce run-order* (atom []))
-(defonce retrieval-stats* (atom {:samples []
+(defonce ^{:doc "Process-owned retained run records."}
+  runs* (atom {}))
+(defonce ^{:doc "Most recent run IDs in retention order."}
+  run-order* (atom []))
+(defonce ^{:doc "Process-owned bounded retrieval timing samples."}
+  retrieval-stats* (atom {:samples []
                                  :avgRetrievalMs 0
                                  :p95RetrievalMs 0
                                  :recentSamples 0
                                  :modeCounts {:dense 0 :hybrid 0 :hybrid_rerank 0}}))
 
 
-(defonce event-stream-sink* (atom nil))
+(defonce ^{:doc "Optional best-effort streaming observer for run events."}
+  event-stream-sink* (atom nil))
+(defonce ^:private durable-event-sink* (atom nil))
+
+(defn set-durable-event-sink!
+  "Install the application event admission hook independently of telemetry."
+  [sink]
+  (reset! durable-event-sink* sink))
 
 (defn set-event-stream-sink!
   "Register a 1-arity fire-and-forget fn called with each event as it is appended.
@@ -21,74 +33,51 @@
   (reset! event-stream-sink* f))
 
 (defn clear-event-stream-sink!
+  "Remove the best-effort run event observer."
   []
   (reset! event-stream-sink* nil))
 (defn latest-assistant-message
+  "Return the latest assistant message from an opaque agent session."
   [session]
-  (let [msgs (or (messages session) [])]
+  (let [msgs (or (agent/messages session) [])]
     (last (filter #(= (aget % "role") "assistant") msgs))))
 
 (defn usage-map
+  "Project native agent usage counters into run record fields."
   [usage]
   (when usage
     {:input_tokens (or (aget usage "input") 0)
      :output_tokens (or (aget usage "output") 0)}))
 
-(defn- ensure-clj
-  "Defensive: coerce raw JS arrays/objects back to CLJS data before
-   storing in the in-memory run atom.  Store round-trips and SDK
-   interop can leak raw #js [] / #js {} into fields."
-  [value]
-  (cond
-    (array? value) (js->clj value :keywordize-keys true)
-    :else value))
-
-(def MAX_RUNS 200)
+(def MAX_RUNS
+  "Maximum retained run records." 200)
 
 (defn store-run!
+  "Store a normalized run and keep heap keys bounded by the retained run order."
   [run-id run]
-  (let [clean (cond-> run
-                (array? (:tool_receipts run))
-                (update :tool_receipts ensure-clj)
-                (array? (:trace_blocks run))
-                (update :trace_blocks ensure-clj)
-                (array? (:content_parts run))
-                (update :content_parts ensure-clj)
-                (array? (:events run))
-                (update :events ensure-clj)
-                (array? (:request_messages run))
-                (update :request_messages ensure-clj)
-                (array? (:resources run))
-                (update :resources ensure-clj)
-                (array? (:settings run))
-                (update :settings ensure-clj))]
+  (let [clean (run-record/normalize-run run)]
     (swap! runs* assoc run-id clean)
-    (swap! run-order* (fn [order]
-                        (let [new-order (->> (cons run-id (remove #{run-id} order))
-                                             (take MAX_RUNS)
-                                             vec)]
-                          ;; Evict stale entries from runs* to prevent unbounded memory growth.
-                          ;; run-order* is the canonical set of live run ids; anything not in it
-                          ;; is a stale ghost that was trimmed and should be released.
-                          (when (> (count order) MAX_RUNS)
-                            (let [stale-ids (remove (set new-order) (keys @runs*))]
-                              (when (seq stale-ids)
-                                (swap! runs* #(apply dissoc % stale-ids)))))
-                          new-order)))
+    (let [live-order (swap! run-order*
+                            (fn [order]
+                              (->> (cons run-id (remove #{run-id} order))
+                                   (take MAX_RUNS)
+                                   vec)))]
+      (when (> (count @runs*) MAX_RUNS)
+        (swap! runs* #(select-keys % live-order))))
     clean))
 
 (defn summarize-run
+  "Select the stable fields exposed by run summary responses."
   [run]
   (select-keys run [:run_id :created_at :updated_at :status :model :ttft_ms :total_time_ms :input_tokens :output_tokens :tokens_per_s :error]))
 
 (defn append-limited
+  "Append one value and retain the most recent limit entries."
   [items item limit]
-  (let [v (conj (vec items) item)]
-    (if (> (count v) limit)
-      (subvec v (- (count v) limit))
-      v)))
+  (trace/append-limited items item limit))
 
 (defn update-run!
+  "Transform an existing retained run and return its new value."
   [run-id f]
   (let [state (swap! runs* update run-id (fn [run]
                                            (when run
@@ -96,7 +85,9 @@
     (get state run-id)))
 
 (defn append-run-event!
+  "Admit a durable event before projecting and notifying best-effort observers."
   [run-id event]
+  (when-let [sink @durable-event-sink*] (sink event))
   (update-run! run-id
                (fn [run]
                  (-> run
@@ -106,14 +97,8 @@
   (when-let [sink @event-stream-sink*]
     (try (sink event) (catch :default _ nil))))
 
-(defn- trace-tool-block-id
-  [{:keys [tool_call_id tool_name at]}]
-  (cond
-    (and (string? tool_call_id) (seq tool_call_id)) (str "tool:" tool_call_id)
-    (and (string? tool_name) (seq tool_name)) (str "tool:" tool_name ":" (or at ""))
-    :else (str "tool:" (or at ""))))
-
 (defn append-run-trace-text!
+  "Append a text delta, coalescing an adjacent streaming block."
   [run-id kind delta at]
   (when (seq (str delta))
     (update-run! run-id
@@ -136,65 +121,12 @@
                                               :at at})))))))))
 
 (defn apply-run-tool-trace-event!
-  [run-id {:keys [type tool_name tool_call_id preview is_error at]}]
-  (update-run! run-id
-               (fn [run]
-                 (update run :trace_blocks
-                         (fn [blocks]
-                           (let [items (vec blocks)
-                                 block-id (trace-tool-block-id {:tool_call_id tool_call_id
-                                                                :tool_name tool_name
-                                                                :at at})
-                                 idx (first (keep-indexed (fn [i item]
-                                                            (when (= (:id item) block-id) i))
-                                                          items))
-                                 existing (when (number? idx) (nth items idx))]
-                             (cond
-                               (= type "tool_start")
-                               (let [block {:id block-id
-                                            :kind :tool_call
-                                            :toolName tool_name
-                                            :toolCallId tool_call_id
-                                            :inputPreview preview
-                                            :status "streaming"
-                                            :at at
-                                            :updates []}]
-                                 (if (number? idx)
-                                   (assoc items idx (merge existing block))
-                                   (conj items block)))
-
-                               (= type "tool_update")
-                               (if (number? idx)
-                                 (assoc items idx
-                                        (cond-> (assoc existing
-                                                       :status "streaming"
-                                                       :at (or at (:at existing)))
-                                          (seq preview) (update :updates #(append-limited % preview 8))))
-                                 (conj items {:id block-id
-                                              :kind :tool_call
-                                              :toolName tool_name
-                                              :toolCallId tool_call_id
-                                              :status "streaming"
-                                              :at at
-                                              :updates (cond-> [] (seq preview) (conj preview))}))
-
-                               (= type "tool_end")
-                               (let [block {:id block-id
-                                            :kind :tool_call
-                                            :toolName tool_name
-                                            :toolCallId tool_call_id
-                                            :status (if is_error "error" "done")
-                                            :outputPreview preview
-                                            :isError (boolean is_error)
-                                            :at at}]
-                                 (if (number? idx)
-                                   (assoc items idx (merge existing block {:updates (:updates existing)
-                                                                           :inputPreview (:inputPreview existing)}))
-                                   (conj items (assoc block :updates []))))
-
-                               :else items)))))))
+  "Project one tool event into the retained run trace."
+  [run-id event]
+  (update-run! run-id #(update % :trace_blocks trace/apply-tool-event event)))
 
 (defn finalize-run-trace-blocks!
+  "Settle streaming trace blocks while preserving completed blocks."
   [run-id status]
   (update-run! run-id
                (fn [run]
@@ -209,6 +141,7 @@
                                  (vec blocks)))))))
 
 (defn update-run-tool-receipt!
+  "Update a matching tool receipt or append a bounded new receipt."
   [run-id receipt-id default-receipt f]
   (update-run! run-id
                (fn [run]
@@ -224,78 +157,14 @@
                                (append-limited items (f base) 40)
                                (assoc items idx (f (merge base (nth items idx)))))))))))
 
-(defn- preview-present?
-  [value]
-  (when (string? value)
-    (let [trimmed (str/trim value)
-          lowered (str/lower-case trimmed)]
-      (and (not (str/blank? trimmed))
-           (not= lowered "null")
-           (not= lowered "undefined")))))
-
 (defn backfill-run-tool-input-preview!
+  "Fill absent tool input observations without overwriting recorded values."
   [run-id receipt-id tool-name input-preview]
-  (when (and (string? receipt-id) (seq receipt-id) (preview-present? input-preview))
-    (update-run! run-id
-                 (fn [run]
-                   (let [receipt-items (vec (:tool_receipts run))
-                         receipt-idx (first (keep-indexed (fn [i receipt]
-                                                            (when (= (:id receipt) receipt-id)
-                                                              i))
-                                                          receipt-items))
-                         next-receipt (if (number? receipt-idx)
-                                        (cond-> (nth receipt-items receipt-idx)
-                                          (not (preview-present? (:input_preview (nth receipt-items receipt-idx))))
-                                          (assoc :input_preview input-preview)
-                                          (and (nil? (:input (nth receipt-items receipt-idx))))
-                                          (assoc :input input-preview)
-                                          (and (not (seq (:tool_name (nth receipt-items receipt-idx)))) (seq tool-name))
-                                          (assoc :tool_name tool-name))
-                                        {:id receipt-id
-                                         :tool_name tool-name
-                                         :status "running"
-                                         :input input-preview
-                                         :input_preview input-preview})
-                         next-receipts (if (number? receipt-idx)
-                                         (assoc receipt-items receipt-idx next-receipt)
-                                         (append-limited receipt-items next-receipt 40))
-                         block-items (vec (:trace_blocks run))
-                         block-idx (first (keep-indexed (fn [i block]
-                                                          (when (and (= (:kind block) :tool_call)
-                                                                     (or (= (:toolCallId block) receipt-id)
-                                                                         (= (:id block) (str "tool:" receipt-id))))
-                                                            i))
-                                                        block-items))
-                         next-block (if (number? block-idx)
-                                      (cond-> (nth block-items block-idx)
-                                        (not (preview-present? (:inputPreview (nth block-items block-idx))))
-                                        (assoc :inputPreview input-preview)
-                                        (and (not (seq (:toolName (nth block-items block-idx)))) (seq tool-name))
-                                        (assoc :toolName tool-name))
-                                      {:id (str "tool:" receipt-id)
-                                       :kind :tool_call
-                                       :toolName tool-name
-                                       :toolCallId receipt-id
-                                       :status "streaming"
-                                       :inputPreview input-preview
-                                       :updates []})
-                         next-blocks (if (number? block-idx)
-                                       (assoc block-items block-idx next-block)
-                                       (conj block-items next-block))]
-                     (assoc run
-                            :tool_receipts next-receipts
-                            :trace_blocks next-blocks))))))
-
-(defn tool-event-payload
-  [run-id conversation-id session-id type extra]
-  (merge {:run_id run-id
-          :conversation_id conversation-id
-          :session_id session-id
-          :type type
-          :at (time/now-iso)}
-         extra))
+  (when (trace/valid-input-preview? receipt-id input-preview)
+    (update-run! run-id #(trace/backfill-input-preview % receipt-id tool-name input-preview))))
 
 (defn percentile-95
+  "Compute the existing nearest-index retrieval timing percentile."
   [values]
   (if (seq values)
     (let [sorted (sort values)
@@ -304,6 +173,7 @@
     0))
 
 (defn record-retrieval-sample!
+  "Retain bounded timing samples and update retrieval mode counters."
   [mode elapsed-ms]
   (swap! retrieval-stats*
          (fn [stats]
@@ -322,6 +192,7 @@
               :modeCounts (update current-modes (keyword (or mode "dense")) (fnil inc 0))}))))
 
 (defn active-runs-count
+  "Count retained queued and running work."
   []
   (->> @runs*
        vals

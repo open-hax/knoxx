@@ -12,7 +12,7 @@
             (when (and (string? v) (not (str/blank? v))) v)))
         ks))
 
-(defn status-tone [status]
+(defn status-tone "Color for the persisted mailbox status." [status]
   (case status
     "pending" "bg-amber-500/15 text-amber-200 border-amber-500/30"
     "failed" "bg-red-500/15 text-red-200 border-red-500/30"
@@ -74,7 +74,7 @@
                       :path (str "/events?eventId=" (js/encodeURIComponent event-id))
                       :detail event-id}))))
 
-(defn unread-count [entries]
+(defn unread-count "Count entries awaiting acknowledgement." [entries]
   (count (remove #(= "acknowledged" (:status %)) entries)))
 
 ;; ── mailbox response normalizers (port of lib/api/runtime.ts) ───────────────
@@ -94,6 +94,8 @@
        :delivery (as-record (:delivery value))
        :contentRef (as-record (:contentRef value))
        :metadata (as-record (:metadata value))
+       :durable (:durable value)
+       :content (:content value)
        :preview (:preview value)
        :lastError (:lastError value)
        :createdAt (:createdAt value)
@@ -109,4 +111,27 @@
     {:ok (if (boolean? (:ok record)) (:ok record) true)
      :box (if (contains? #{"inbox" "outbox"} (:box record)) (:box record) fallback-box)
      :actor-id (:actorId record)
+     :durable (:durable record)
+     :capabilities (:capabilities record)
      :entries (into [] (keep normalize-entry) (:entries record))}))
+
+(defn assert-message!
+  "Refuse incomplete or mismatched full-content responses instead of showing a preview."
+  [expected-id response]
+  (let [entry (normalize-entry (:entry response))]
+    (when-not (and (true? (:ok response)) (= expected-id (:id entry)) (string? (:content entry)))
+      (throw (ex-info "The server did not return the requested full message" {})))
+    entry))
+
+(defn assert-send!
+  "A successful transport is insufficient without the persisted command outcome."
+  [response]
+  (when-not (and (true? (:ok response)) (normalize-entry (:entry response))
+                 (contains? #{"delivered" "acknowledged"} (get-in response [:entry :status])))
+    (throw (ex-info "Message delivery has not been confirmed; your draft is preserved" {})))
+  response)
+
+(defn next-operation
+  "Reuse an operation identity for an unchanged retry and rotate it when intent changes."
+  [previous payload new-id]
+  (if (= payload (:payload previous)) previous {:id new-id :payload payload}))

@@ -120,9 +120,34 @@
                              (aget js/process.env "OPENPLANNER_URL")
                              "http://host.docker.internal:7777")
    :openplanner-api-key (env "OPENPLANNER_API_KEY" "")
+   :openplanner-directory (env-first ["KNOXX_OPENPLANNER_DIRECTORY"] nil)
+   :embed-provider-base-url (env-first ["EMBED_PROVIDER_BASE_URL"] nil)
+   :embed-provider-model (env-first ["EMBED_PROVIDER_MODEL"] nil)
+   :embed-provider-dimensions (when-let [raw (env-first ["EMBED_PROVIDER_DIMENSIONS"] nil)]
+                                (js/Number raw))
    ;; "mongo" = data plane in-process via @open-hax/openplanner-sdk (direct
    ;; MongoDB + self-sourced embeddings); "rest" = force the fetch client.
-   :openplanner-client-mode (env "KNOXX_OPENPLANNER_CLIENT_MODE" "mongo")})
+   :openplanner-client-mode (env "KNOXX_OPENPLANNER_CLIENT_MODE" "edn")})
+
+(defn- local-services-config
+  []
+  {:wiki-directory (env "KNOXX_WIKI_DIRECTORY" ".knoxx/wiki")
+   :policy-provider (keyword (env "KNOXX_POLICY_PROVIDER" "edn"))
+   :run-provider (keyword (env "KNOXX_RUN_PROVIDER" "edn"))
+   :thread-provider (keyword (env "KNOXX_THREAD_PROVIDER" "edn"))
+   :cache-provider (keyword (env "KNOXX_CACHE_PROVIDER" "edn"))
+   :mcp-oauth-provider (keyword (env "KNOXX_MCP_OAUTH_PROVIDER" "edn"))
+   :mailbox-directory (env "KNOXX_MAILBOX_DIRECTORY" nil)
+   :mailbox-provider (keyword (env "KNOXX_MAILBOX_PROVIDER" "edn"))
+   :request-logging? (not (env-flag "KNOXX_DISABLE_REQUEST_LOGGING"))
+   :wiki-model-provider (env "KNOXX_WIKI_MODEL_PROVIDER" "opencode")
+   :wiki-model (env "KNOXX_WIKI_MODEL" "opencode/big-pickle")
+   :wiki-model-base-url (env "KNOXX_WIKI_MODEL_BASE_URL" nil)
+   :wiki-model-api-key (env "KNOXX_WIKI_MODEL_API_KEY" nil)
+   :wiki-model-opencode-binary (env "KNOXX_WIKI_MODEL_OPENCODE_BINARY" "opencode")
+   :wiki-model-opencode-directory (env "KNOXX_WIKI_MODEL_OPENCODE_DIRECTORY" nil)
+   :wiki-model-opencode-models-path (env "KNOXX_WIKI_MODEL_OPENCODE_MODELS_PATH" nil)
+   :wiki-model-timeout-ms (env-node-timeout-ms "KNOXX_WIKI_MODEL_TIMEOUT_MS" 180000)})
 
 (defn- publication-config
   []
@@ -239,7 +264,7 @@
   []
   {:mcp-enabled (not= (env "MCP_ENABLED" "false") "false")
    :mcp-servers (env "MCP_SERVERS" "")
-   :openplanner-mcp-base-url (env "OPENPLANNER_MCP_BASE_URL" "http://openplanner-mcp:8010")
+   :openplanner-mcp-base-url (env "OPENPLANNER_MCP_BASE_URL" "")
    :openplanner-mcp-tool-name (env "OPENPLANNER_MCP_TOOL_NAME" "openplanner")
    :openplanner-mcp-project (env-first ["KNOXX_OPENPLANNER_PROJECT" "WORKSPACE_PROJECT_NAME" "KNOXX_WORKSPACE_PROJECT"] "workspace")
    :openplanner-mcp-source (env "KNOXX_OPENPLANNER_SOURCE" "knoxx")
@@ -256,6 +281,7 @@
   (merge
    (base-server-config)
    (workspace-config)
+   (local-services-config)
    (publication-config)
    (provider-config)
    (integration-config)

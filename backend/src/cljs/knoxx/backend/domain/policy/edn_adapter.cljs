@@ -4,17 +4,17 @@
    It resolves contracts through the shared contract loader by contract identity
    rather than trusting directory placement. Actor maps are validated through
    open-hax.contracts.schema via the shared policy protocol."
-  (:require [clojure.string :as str]
+  (:require ["node:fs" :as fs]
+            ["node:path" :as path]
+            [clojure.string :as str]
             [knoxx.backend.domain.contracts.loader :as contracts-loader]
             [knoxx.backend.domain.policy.protocol :as policy]
-            [knoxx.backend.infra.registry.tools :as tool-registry]
-            ["node:fs" :as fs]
-            ["node:fs/promises" :as fs-promises]
-            ["node:path" :as path]))
+            [knoxx.backend.infra.registry.tools :as tool-registry]))
 
-(defrecord EdnPolicyStore [contracts-dir])
+(defrecord ^{:doc "Contract-directory identity for the retained EDN policy provider."} EdnPolicyStore [contracts-dir])
 
 (defn create-store
+  "Construct a policy adapter rooted in the selected contract directory."
   [contracts-dir]
   (->EdnPolicyStore contracts-dir))
 
@@ -53,6 +53,7 @@
         (:model-family/id contract))))
 
 (defn actor-contract-file-path
+  "Resolve one actor's validated identity through the contract loader."
   [store actor-id]
   (contract-path store :actors actor-id))
 
@@ -97,6 +98,7 @@
     (policy/validate-contract! contract-class contract)))
 
 (defn contract-tool-ids
+  "Collect normalized tool identities declared by loaded capability contracts."
   [store]
   (->> (load-all-contract-records-sync store)
        (filter #(= "capabilities" (:contractClass %)))
@@ -112,9 +114,9 @@
            (filter #(= klass (:contractClass %)))
            (mapv #(validate-contract-for-class! contract-class (:contract %))))))
 
-  (get-contract [store contract-class contract-id]
+  (get-contract [store contract-class requested-id]
     (let [klass (normalized-class contract-class)
-          wanted-id (some-> contract-id str str/trim not-empty)]
+          wanted-id (some-> requested-id str str/trim not-empty)]
       (some->> (load-all-contract-records-sync store)
                (filter #(and (= klass (:contractClass %))
                              (= wanted-id (:id %))))

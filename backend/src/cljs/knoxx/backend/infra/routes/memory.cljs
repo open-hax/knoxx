@@ -1,675 +1,168 @@
 (ns knoxx.backend.infra.routes.memory
-  (:require-macros [knoxx.backend.macros :refer [defroute]])
-  (:require [clojure.string :as str]
-            [knoxx.backend.infra.http :refer [http-error]]
-            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.core-memory :as core-memory :refer [fetch-openplanner-session-rows!
-                                               session-visible?
-                                               session-matches-contract-filter?
-                                               session-summary-scope-from-rows
-                                               filter-authorized-memory-hits!]]
-            [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search!]]
+  "Memory route registration and compatibility exports."
+  (:require-macros [knoxx.backend.macros :as routes])
+  (:require ["node:crypto" :as crypto]
+            [clojure.string :as str]
             [knoxx.backend.domain.graph.expansion-policy :as expansion-policy]
             [knoxx.backend.domain.graph.policy-registry :as policy-registry]
-            [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
-            [knoxx.backend.domain.actor.scope :as actor-scope]
-            [knoxx.backend.infra.stores.mongo-memory-sessions :as mongo-memory-sessions]
-            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
-            [knoxx.backend.infra.stores.session-titles :refer [session-titles*
-                                                  session-title-promises*
-                                                  session-title-backfill*
-                                                  session-title-seed-text
-                                                  heuristic-session-title
-                                                  resolve-session-title!
-                                                  normalize-session-title
-                                                  cache-session-title!
-                                                  start-session-title-backfill!]]
-            [knoxx.backend.infra.auth.authz :refer [ctx-actor-id
-                                         ctx-membership-id
-                                         ctx-org-id
-                                         ctx-permitted?
-                                         ctx-user-id
-                                         system-admin?
-                                         ensure-permission!]]
+            [knoxx.backend.domain.realtime :as realtime]
+            [knoxx.backend.domain.time :as time]
+            [knoxx.backend.extern.memory-session-cache :as cache]
+            [knoxx.backend.extern.memory-session-pages :as pages]
+            [knoxx.backend.extern.memory-session-view :as view]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.core-memory :as core-memory]
+            [knoxx.backend.infra.http :as http]
+            [knoxx.backend.infra.openplanner.memory :as planner-memory]
+            [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [knoxx.backend.infra.stores.session-titles :as titles]
             [knoxx.backend.shape.memory-sessions :as memory-shape]
-            [knoxx.backend.shape.parse :refer [parse-positive-int truthy-param?]]
-            [knoxx.backend.domain.time :refer [now-iso]]
-            ["node:crypto" :as crypto]))
+            [knoxx.backend.shape.parse :as parse]))
 
-(defn interactive-session-id?
-  [session-id]
-  (not (str/starts-with? (str session-id) "translation-")))
+(def interactive-session-id?
+  "Compatibility export for interactive-session-id?."
+  pages/interactive-session-id?)
 
+(def memory-sessions-cache-ttl-seconds
+  "Compatibility export for memory-sessions-cache-ttl-seconds."
+  cache/memory-sessions-cache-ttl-seconds)
+
+(def clear-memory-sessions-cache!
+  "Compatibility export for clear-memory-sessions-cache!."
+  cache/clear-memory-sessions-cache!)
+
+(def memory-sessions-auth-scope
+  "Compatibility export for memory-sessions-auth-scope."
+  cache/memory-sessions-auth-scope)
+
+(def memory-sessions-cache-key
+  "Compatibility export for memory-sessions-cache-key."
+  cache/memory-sessions-cache-key)
+
+(def write-memory-sessions-cache-to-mongo!
+  "Compatibility export for write-memory-sessions-cache-to-mongo!."
+  cache/write-memory-sessions-cache-to-mongo!)
+
+(def mongo-memory-sessions-hit!
+  "Compatibility export for mongo-memory-sessions-hit!."
+  cache/mongo-memory-sessions-hit!)
+
+(def fetch-and-cache-memory-sessions!
+  "Compatibility export for fetch-and-cache-memory-sessions!."
+  cache/fetch-and-cache-memory-sessions!)
+
+(def cached-memory-sessions-source!
+  "Compatibility export for cached-memory-sessions-source!."
+  cache/cached-memory-sessions-source!)
+
+(def filter-page-actor-row!
+  "Compatibility export for filter-page-actor-row!."
+  pages/filter-page-actor-row!)
+
+(def filter-page-actor-rows!
+  "Compatibility export for filter-page-actor-rows!."
+  pages/filter-page-actor-rows!)
+
+(def fetch-contract-session-pages-from-mongo!
+  "Compatibility export for fetch-contract-session-pages-from-mongo!."
+  pages/fetch-contract-session-pages-from-mongo!)
+
+(def fetch-authorized-session-pages!
+  "Compatibility export for fetch-authorized-session-pages!."
+  pages/fetch-authorized-session-pages!)
+
+(def search-hit-session-visibility!
+  "Compatibility export for search-hit-session-visibility!."
+  pages/search-hit-session-visibility!)
+
+(def filter-search-hits-by-actor!
+  "Compatibility export for filter-search-hits-by-actor!."
+  pages/filter-search-hits-by-actor!)
+
+(def run-warm-title-cache!
+  "Compatibility export for run-warm-title-cache!."
+  view/run-warm-title-cache!)
+
+(def enrich-row
+  "Compatibility export for enrich-row."
+  view/enrich-row)
+
+(def memory-sessions-request-options
+  "Compatibility export for memory-sessions-request-options."
+  view/memory-sessions-request-options)
+
+(def send-memory-session-rows!
+  "Compatibility export for send-memory-session-rows!."
+  view/send-memory-session-rows!)
+
+(def send-memory-sessions-live-ids!
+  "Compatibility export for send-memory-sessions-live-ids!."
+  view/send-memory-sessions-live-ids!)
+
+(def send-memory-sessions-result!
+  "Compatibility export for send-memory-sessions-result!."
+  view/send-memory-sessions-result!)
 
 (defn- openplanner-ready?
   [config]
   (openplanner-client/enabled? (openplanner-client/client config)))
 
-(def memory-sessions-cache-ttl-seconds 10)
-(def ^:private memory-sessions-cache-ttl-ms (* memory-sessions-cache-ttl-seconds 1000))
-(def ^:private memory-sessions-cache-max-entries 256)
-(defonce ^:private memory-sessions-cache* (atom {}))
-(defonce ^:private memory-sessions-cache-promises* (atom {}))
-
-(defn clear-memory-sessions-cache!
-  []
-  (reset! memory-sessions-cache* {})
-  (reset! memory-sessions-cache-promises* {})
-  true)
-
-(defn- now-ms [] (.now js/Date))
-
-(defn- sha256
-  [value]
-  (-> (.createHash crypto "sha256")
-      (.update (str value))
-      (.digest "hex")))
-
-(defn- stable-json
-  [value]
-  (.stringify js/JSON (clj->js value)))
-
-(defn memory-sessions-auth-scope
-  [ctx]
-  {:system-admin? (boolean (system-admin? ctx))
-   :cross-session? (boolean (ctx-permitted? ctx "agent.memory.cross_session"))
-   :org-id (str (or (ctx-org-id ctx) ""))
-   :membership-id (str (or (ctx-membership-id ctx) ""))
-   :user-id (str (or (ctx-user-id ctx) ""))
-   :actor-id (str (or (ctx-actor-id ctx) ""))})
-
-(defn memory-sessions-cache-key
-  [{:keys [config ctx limit offset actor-id exclude-actor-ids contract-id]}]
-  (sha256
-   (stable-json
-    {:v 1
-     :project (str (or (:session-project-name config) ""))
-     :limit (max 1 (or limit 12))
-     :offset (max 0 (or offset 0))
-     :actor-id (str (or actor-id ""))
-     :exclude-actor-ids (sort (map str (or exclude-actor-ids [])))
-     :contract-id (str (or contract-id ""))
-     :auth (memory-sessions-auth-scope ctx)})))
-
-(defn- evict-memory-sessions-cache!
-  []
-  (let [ts (now-ms)]
-    (swap! memory-sessions-cache*
-           (fn [entries]
-             (let [live (->> entries
-                             (filter (fn [[_ entry]]
-                                       (> (:expires-at entry 0) ts)))
-                             (sort-by (fn [[_ entry]] (:cached-at entry 0)))
-                             (take-last memory-sessions-cache-max-entries))]
-               (into {} live))))))
-
-(defn- memory-sessions-cache-entry
-  [value]
-  (let [ts (now-ms)]
-    {:value value
-     :cached-at ts
-     :expires-at (+ ts memory-sessions-cache-ttl-ms)}))
-
-(defn- memory-sessions-local-hit
-  [cache-key]
-  (when-let [entry (get @memory-sessions-cache* cache-key)]
-    (let [ts (now-ms)]
-      (if (> (:expires-at entry 0) ts)
-        {:value (:value entry)
-         :cache {:hit true
-                 :tier "memory"
-                 :stale false
-                 :age_ms (max 0 (- ts (:cached-at entry ts)))}}
-        (do
-          (swap! memory-sessions-cache* dissoc cache-key)
-          nil)))))
-
-(defn- remember-memory-sessions-cache!
-  [cache-key entry]
-  (swap! memory-sessions-cache* assoc cache-key entry)
-  (evict-memory-sessions-cache!)
-  entry)
-
-(defn ^:async write-memory-sessions-cache-to-mongo!
-  [cache-key entry]
-  (try
-    (await (mongo-memory-sessions/set-cache-entry! cache-key entry))
-    (catch :default _
-      nil)))
-
-(defn- write-memory-sessions-cache!
-  [cache-key value]
-  (let [entry (memory-sessions-cache-entry value)]
-    (remember-memory-sessions-cache! cache-key entry)
-    (write-memory-sessions-cache-to-mongo! cache-key entry)
-    entry))
-
-(defn ^:async mongo-memory-sessions-hit!
-  [cache-key]
-  (try
-    (let [entry (await (mongo-memory-sessions/get-cache-entry! cache-key))
-          ts (now-ms)]
-      (when (and entry (> (:expires-at entry 0) ts))
-        (remember-memory-sessions-cache! cache-key entry)
-        {:value (:value entry)
-         :cache {:hit true
-                 :tier "mongo"
-                 :stale false
-                 :age_ms (max 0 (- ts (:cached-at entry ts)))}}))
-    (catch :default _
-      nil)))
-
-(defn ^:async fetch-and-cache-memory-sessions!
-  [cache-key fetch-fn]
-  (try
-    (let [value (await (fetch-fn))]
-      (write-memory-sessions-cache! cache-key value)
-      {:value value
-       :cache {:hit false
-               :tier "miss"
-               :stale false
-               :age_ms 0}})
-    (finally
-      (swap! memory-sessions-cache-promises* dissoc cache-key))))
-
-(defn ^:async cached-memory-sessions-source!
-  [cache-key fetch-fn]
-  (if-let [hit (memory-sessions-local-hit cache-key)]
-    hit
-    (if-let [hit (await (mongo-memory-sessions-hit! cache-key))]
-      hit
-      (if-let [pending (get @memory-sessions-cache-promises* cache-key)]
-        (await pending)
-        (let [promise (fetch-and-cache-memory-sessions! cache-key fetch-fn)]
-          (swap! memory-sessions-cache-promises* assoc cache-key promise)
-          (await promise))))))
-
-
-(defn- fetch-session-filter-rows!
-  [fetch-openplanner-session-rows! config session-id]
-  (if (identical? fetch-openplanner-session-rows! core-memory/fetch-openplanner-session-rows!)
-    (core-memory/fetch-openplanner-session-visibility-rows! config session-id)
-    (fetch-openplanner-session-rows! config session-id)))
-
-(defn ^:async filter-page-actor-row!
-  [config fetch-openplanner-session-rows! session-matches-page-actor-filter?
-   actor-id exclude-actor-ids contract-id row]
-  (try
-    (let [rows (await (fetch-session-filter-rows! fetch-openplanner-session-rows! config (:session row)))]
-      {:row (merge row (session-summary-scope-from-rows rows))
-       :visible (and (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)
-                     (session-matches-contract-filter? config rows contract-id))})
-    (catch :default _
-      {:row row
-       :visible false})))
-
-(defn ^:async filter-page-actor-rows!
-  [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids contract-id page-rows]
-  (if (and (str/blank? (str (or actor-id "")))
-           (empty? exclude-actor-ids)
-           (str/blank? (str (or contract-id ""))))
-    (vec page-rows)
-    (let [results (await (.all js/Promise
-                               (clj->js
-                                (mapv (partial filter-page-actor-row!
-                                               config
-                                               fetch-openplanner-session-rows!
-                                               session-matches-page-actor-filter?
-                                               actor-id
-                                               exclude-actor-ids
-                                               contract-id)
-                                      page-rows))))]
-      (->> (js->clj results :keywordize-keys true)
-           (filter :visible)
-           (map :row)
-           vec))))
-
-(defn- grouped-session-rows
-  [rows]
-  (reduce (fn [state row]
-            (let [session-id (str (:session row))]
-              (if (or (str/blank? session-id)
-                      (not (interactive-session-id? session-id)))
-                state
-                (-> state
-                    (update :groups update session-id (fnil conj []) row)
-                    (update :order (fn [order]
-                                     (if (contains? (:seen state) session-id)
-                                       order
-                                       (conj order session-id))))
-                    (update :seen conj session-id)))))
-          {:groups {} :order [] :seen #{}}
-          rows))
-
-(defn- session-summary-title
-  [session-id scope]
-  (let [event-type (:event_type scope)
-        trigger-id (:trigger_id scope)]
-    (cond
-      (and event-type trigger-id) (str "event: " event-type " trigger: " trigger-id)
-      trigger-id (str "trigger: " trigger-id)
-      event-type (str "event: " event-type)
-      :else session-id)))
-
-(defn- mongo-session-summary
-  [session-id rows]
-  (let [latest (first rows)
-        scope (session-summary-scope-from-rows rows)]
-    (merge {:session session-id
-            :project (:project latest)
-            :last_ts (:ts latest)
-            :event_count (count rows)
-            :title (session-summary-title session-id scope)}
-           scope)))
-
-(defn ^:async fetch-contract-session-pages-from-mongo!
-  [config contract-id needed-count]
-  (let [target (some-> contract-id str str/trim not-empty)
-        query-limit 500]
-    (when target
-      (let [body (await (openplanner-client/mongo-query! (or (:openplanner-client config)
-                                                             (openplanner-client/client config))
-                                                         {:collection "events"
-                                                          :filter {"project" (:session-project-name config)
-                                                                   "session" {"$type" "string" "$ne" ""}
-                                                                   "extra.contract_id" target}
-                                                          :projection {"_id" 0
-                                                                       "project" 1
-                                                                       "session" 1
-                                                                       "ts" 1
-                                                                       "extra" 1}
-                                                          :sort {"ts" -1}
-                                                          :limit query-limit}))
-            rows (vec (or (:rows body) []))
-            {:keys [groups order]} (grouped-session-rows rows)
-            summaries (mapv #(mongo-session-summary % (get groups %)) order)
-            wanted-count (max 1 (or needed-count 1))
-            selected (vec (take wanted-count summaries))
-            total-events (or (:total body) 0)
-            fetched-events (count rows)
-            more-events? (> total-events fetched-events)
-            more-sessions? (> (count summaries) wanted-count)]
-        {:rows selected
-         :has_more (or more-sessions? more-events?)}))))
-
-(defn ^:async fetch-authorized-session-pages!
-  [config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
-  (let [body (await (openplanner-client/sessions! (or (:openplanner-client config)
-                                                      (openplanner-client/client config))
-                                                  {:project (:session-project-name config)
-                                                   :limit upstream-page-size
-                                                   :offset upstream-offset}))
-        page-rows (vec (or (:rows body) []))
-        fetched-count (count page-rows)
-        next-offset (+ upstream-offset fetched-count)
-        upstream-has-more (boolean (:has_more body))
-        allowed (await (authorized-session-ids! config ctx (map :session page-rows)))
-        authorized-rows (->> page-rows
-                             (filter #(contains? allowed (str (:session %))))
-                             (filter #(interactive-session-id? (:session %)))
-                             vec)
-        actor-visible-rows (await (filter-page-actor-rows! config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids contract-id authorized-rows))
-        next-acc (into acc actor-visible-rows)
-        reached-target? (and (number? needed-count)
-                             (>= (count next-acc) needed-count))]
-    (cond
-      reached-target? {:rows (vec (take needed-count next-acc))
-                       :has_more true}
-      (and upstream-has-more (pos? fetched-count))
-      (await (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size next-offset next-acc needed-count))
-      :else {:rows next-acc
-             :has_more false})))
-
-(defn- hit-session-id
-  [hit]
-  (or (:session hit)
-      (get-in hit [:metadata :session])
-      (get-in hit [:extra :session])))
-
-(defn ^:async search-hit-session-visibility!
-  [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids session-id]
-  (try
-    (let [rows (await (fetch-session-filter-rows! fetch-openplanner-session-rows! config session-id))]
-      {:session session-id
-       :visible (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)})
-    (catch :default _
-      {:session session-id
-       :visible false})))
-
-(defn ^:async filter-search-hits-by-actor!
-  [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids hits]
-  (let [actor-id (memory-shape/normalized-actor-id actor-id)
-        exclude-actor-ids (memory-shape/normalized-actor-ids exclude-actor-ids)
-        hits (vec hits)]
-    (if (and (str/blank? (str (or actor-id "")))
-             (empty? exclude-actor-ids))
-      hits
-      (let [visibility! (partial search-hit-session-visibility!
-                                 config fetch-openplanner-session-rows!
-                                 session-matches-page-actor-filter? actor-id exclude-actor-ids)
-            session-ids (->> hits
-                             (keep hit-session-id)
-                             (map str)
-                             (remove str/blank?)
-                             distinct
-                             vec)
-            results (await (.all js/Promise (clj->js (mapv visibility! session-ids))))
-            allowed-sessions (->> (js->clj results :keywordize-keys true)
-                                  (filter :visible)
-                                  (map (comp str :session))
-                                  set)]
-        (->> hits
-             (filter (fn [hit]
-                       (contains? allowed-sessions (str (or (hit-session-id hit) "")))))
-             vec)))))
-
-(defn ^:async run-warm-title-cache!
-  [session-id config runtime]
-  (try
-    (let [title-rows (await (fetch-openplanner-session-rows! config session-id))
-          seed-text (session-title-seed-text title-rows)
-          fallback-title (heuristic-session-title seed-text)]
-      (try
-        (let [entry (await (resolve-session-title! config seed-text))]
-          (cache-session-title! runtime config session-id
-                                (or (normalize-session-title (:title entry) fallback-title)
-                                    fallback-title)
-                                (:title_model entry)))
-        (catch :default _
-          (cache-session-title! runtime config session-id fallback-title nil))))
-    (catch :default _
-      (cache-session-title! runtime config session-id "Untitled session" nil))))
-
-(defn- warm-title-cache! [session-id config runtime]
-  (let [session-id (str (or session-id ""))]
-    (when (and (not (str/blank? session-id))
-               (not (contains? @session-titles* session-id))
-               (not (contains? @session-title-promises* session-id)))
-      (let [title-promise (run-warm-title-cache! session-id config runtime)]
-        (swap! session-title-promises* assoc session-id title-promise)
-        title-promise))))
-
-(defn- inactive-row [row]
-  (assoc row
-         :is_active false
-         :active_status "inactive"
-         :has_active_stream false))
-
-(defn- agent-spec-value
-  [agent-spec keys]
-  (some (fn [k]
-          (some-> (get agent-spec k)
-                  str
-                  str/trim
-                  not-empty))
-        keys))
-
-(defn- active-session-actor-claims
-  [session]
-  (let [agent-spec (:agent_spec session)
-        contract-actors (or (:contractActors agent-spec)
-                            (:contract-actors agent-spec)
-                            (:contract_actors agent-spec))]
-    (actor-scope/normalize-actor-claims
-     (concat [(or (:actor_id session)
-                  (:actor-id session)
-                  (:actorId session))
-              (agent-spec-value agent-spec [:actor_id :actor-id :actorId])]
-             (cond
-               (set? contract-actors) contract-actors
-               (sequential? contract-actors) contract-actors
-               contract-actors [contract-actors]
-               :else [])))))
-
-(defn- active-session-matches-actor-filter?
-  [session actor-id exclude-actor-ids]
-  (let [include-actor-id (some-> actor-id str str/trim not-empty)
-        exclude-actor-ids (->> (or exclude-actor-ids [])
-                               (keep #(some-> % str str/trim not-empty))
-                               distinct
-                               vec)
-        actors (active-session-actor-claims session)]
-    (and (or (str/blank? (str (or include-actor-id "")))
-             (actor-scope/actor-allowed? actors include-actor-id))
-         (not-any? #(actor-scope/actor-allowed? actors %) exclude-actor-ids))))
-
-(defn- actor-claim-includes?
-  [actors actor-id]
-  (let [wanted (actor-scope/normalize-actor-claim actor-id)]
-    (and wanted
-         (contains? (actor-scope/normalize-actor-claims actors) wanted))))
-
-(defn- active-session-matches-contract?
-  [session contract-id]
-  (let [target (some-> contract-id str str/trim not-empty)
-        agent-spec (:agent_spec session)]
-    (or (nil? target)
-        (= target (agent-spec-value agent-spec [:contract_id :contract-id :contractId]))
-        (= target (agent-spec-value agent-spec [:sub_agent_id :sub-agent-id :subAgentId]))
-        (= target (agent-spec-value agent-spec [:parent_agent_id :parent-agent-id :parentAgentId]))
-        (= target (agent-spec-value agent-spec [:actor_id :actor-id :actorId]))
-        (actor-claim-includes? (active-session-actor-claims session) target))))
-
-(defn- active-session-actor-id
-  [session agent-spec]
-  (or (agent-spec-value agent-spec [:actor_id :actor-id :actorId])
-      (some-> (or (:actor_id session) (:actor-id session) (:actorId session))
-              str
-              str/trim
-              not-empty)))
-
-(defn- active-session-event-types
-  [agent-spec]
-  (let [values (or (:event_types agent-spec)
-                   (:event-types agent-spec)
-                   (:eventTypes agent-spec))]
-    (when (sequential? values)
-      (->> values
-           (map str)
-           (remove str/blank?)
-           distinct
-           vec))))
-
-(defn- active-session-synthetic-scope
-  [session agent-spec]
-  (let [actor-id (active-session-actor-id session agent-spec)
-        event-types (active-session-event-types agent-spec)]
-    (cond-> {}
-      actor-id (assoc :actor_id actor-id)
-      (agent-spec-value agent-spec [:contract_id :contract-id :contractId]) (assoc :contract_id (agent-spec-value agent-spec [:contract_id :contract-id :contractId]))
-      (agent-spec-value agent-spec [:sub_agent_id :sub-agent-id :subAgentId]) (assoc :sub_agent_id (agent-spec-value agent-spec [:sub_agent_id :sub-agent-id :subAgentId]))
-      (agent-spec-value agent-spec [:parent_agent_id :parent-agent-id :parentAgentId]) (assoc :parent_agent_id (agent-spec-value agent-spec [:parent_agent_id :parent-agent-id :parentAgentId]))
-      (agent-spec-value agent-spec [:parent_run_id :parent-run-id :parentRunId]) (assoc :parent_run_id (agent-spec-value agent-spec [:parent_run_id :parent-run-id :parentRunId]))
-      (agent-spec-value agent-spec [:spawn_kind :spawn-kind :spawnKind]) (assoc :spawn_kind (agent-spec-value agent-spec [:spawn_kind :spawn-kind :spawnKind]))
-      (agent-spec-value agent-spec [:trigger_id :trigger-id :triggerId]) (assoc :trigger_id (agent-spec-value agent-spec [:trigger_id :trigger-id :triggerId]))
-      (agent-spec-value agent-spec [:event_type :event-type :eventType]) (assoc :event_type (agent-spec-value agent-spec [:event_type :event-type :eventType]))
-      (seq event-types) (assoc :event_types event-types)
-      (agent-spec-value agent-spec [:event_id :event-id :eventId]) (assoc :event_id (agent-spec-value agent-spec [:event_id :event-id :eventId]))
-      (agent-spec-value agent-spec [:event_scope_id :event-scope-id :eventScopeId]) (assoc :event_scope_id (agent-spec-value agent-spec [:event_scope_id :event-scope-id :eventScopeId]))
-      (agent-spec-value agent-spec [:schedule_id :schedule-id :scheduleId]) (assoc :schedule_id (agent-spec-value agent-spec [:schedule_id :schedule-id :scheduleId])))))
-
-(defn- active-session-synthetic-row
-  [session]
-  (let [agent-spec (:agent_spec session)]
-    (merge {:session (:conversation_id session)
-            :is_active true
-            :active_status (:status session)
-            :has_active_stream (boolean (:has_active_stream session))
-            :title (str "Running · " (or (:run_id session) (:conversation_id session)))
-            :event_count 0
-            :last_ts (:updated_at session)}
-           (active-session-synthetic-scope session agent-spec))))
-
-(defn ^:async enrich-row [row]
-  (let [session-id (str (:session row))
-        titled-row (if-let [title-entry (get @session-titles* session-id)]
-                     (assoc row
-                            :title (:title title-entry)
-                            :title_model (:title_model title-entry))
-                     row)]
-    (try
-      (let [active-session-id (await (session-store/get-conversation-active-session session-id))]
-        (if (str/blank? (str active-session-id))
-          (inactive-row titled-row)
-          (try
-            (let [active-session (await (session-store/get-session active-session-id))
-                  status (or (:status active-session) "inactive")
-                  is-active (contains? #{"running" "waiting_input"} status)]
-              (assoc titled-row
-                     :active_session_id active-session-id
-                     :is_active is-active
-                     :active_status status
-                      :has_active_stream (boolean (:has_active_stream active-session))))
-              (catch :default _
-                (inactive-row titled-row)))))
-        (catch :default _
-          (inactive-row titled-row)))))
-
-(defn memory-sessions-request-options
-  [config ctx request]
-  (let [{:keys [limit offset actor-id exclude-actor-ids contract-id] :as opts}
-        (memory-shape/query-options (aget request "query"))]
-    (assoc opts
-           :cache-key (memory-sessions-cache-key {:config config
-                                                  :ctx ctx
-                                                  :limit limit
-                                                  :offset offset
-                                                  :actor-id actor-id
-                                                  :exclude-actor-ids exclude-actor-ids
-                                                  :contract-id contract-id}))))
-
-(defn- contract-only-admin-fetch?
-  [ctx {:keys [actor-id exclude-actor-ids contract-id]}]
-  (and contract-id
-       (str/blank? (str (or actor-id "")))
-       (empty? exclude-actor-ids)
-       (system-admin? ctx)))
-
-(defn- fetch-memory-sessions-source!
-  [config ctx opts authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter?]
-  (cached-memory-sessions-source!
-   (:cache-key opts)
-   (fn []
-     (if (contract-only-admin-fetch? ctx opts)
-       (fetch-contract-session-pages-from-mongo! config (:contract-id opts) (:needed-count opts))
-       (fetch-authorized-session-pages! config ctx (:actor-id opts) (:exclude-actor-ids opts)
-                                        (:contract-id opts) authorized-session-ids!
-                                        fetch-openplanner-session-rows!
-                                        session-matches-page-actor-filter?
-                                        (:upstream-page-size opts) 0 [] (:needed-count opts))))))
-
-
-
-(defn- warm-memory-session-title-rows!
-  [rows config runtime]
-  (doseq [row rows]
-    (warm-title-cache! (str (:session row)) config runtime)))
-
-(defn- send-enriched-memory-sessions!
-  [{:keys [reply json-response!]} page-state enriched-rows]
-  (json-response! reply 200
-                  (memory-shape/response-payload
-                   (assoc page-state
-                          :rows (vec (js->clj enriched-rows :keywordize-keys true)))))
-  nil)
-
-(defn ^:async send-memory-session-rows!
-  [{:keys [config runtime error-response! reply] :as env} page-state rows]
-  (warm-memory-session-title-rows! rows config runtime)
-  (try
-    (let [enriched-rows (await (.all js/Promise (clj->js (mapv enrich-row rows))))]
-      (send-enriched-memory-sessions! env page-state enriched-rows))
-    (catch :default err
-      (error-response! reply err 502)
-      nil)))
-
-(defn- synthetic-active-session-rows
-  [live page-rows actor-id exclude-actor-ids contract-id]
-  (let [op-ids (set (map #(str (:session %)) page-rows))]
-    (->> live
-         (filter #(and (:conversation_id %)
-                       (not (op-ids (str (:conversation_id %))))
-                       (contains? #{"running" "waiting_input"} (:status %))
-                       (active-session-matches-actor-filter? % actor-id exclude-actor-ids)
-                       (active-session-matches-contract? % contract-id)))
-         (map active-session-synthetic-row)
-         vec)))
-
-(defn ^:async send-memory-sessions-live-ids!
-  [{:keys [error-response! reply] :as env}
-   {:keys [page-rows actor-id exclude-actor-ids contract-id] :as page-state}
-   live-ids]
-  (try
-    (let [live-js (await (.all js/Promise
-                               (clj->js (mapv #(session-store/get-session %)
-                                               (vec live-ids)))))
-          live (vec (js->clj live-js :keywordize-keys true))
-          synthetic (synthetic-active-session-rows live page-rows actor-id exclude-actor-ids contract-id)]
-      (await (send-memory-session-rows! env page-state (vec (concat synthetic page-rows)))))
-    (catch :default err
-      (error-response! reply err 502)
-      nil)))
-
-(defn ^:async send-memory-sessions-result!
-  [env {:keys [page-rows] :as page-state}]
-  (try
-    (let [live-ids (await (session-store/list-active-session-ids))]
-      (if (seq live-ids)
-        (await (send-memory-sessions-live-ids! env page-state live-ids))
-        (await (send-memory-session-rows! env page-state page-rows))))
-    (catch :default _
-      (await (send-memory-session-rows! env page-state page-rows)))))
-
-(defroute memory-sessions-route! [authorized-session-ids!
+(routes/defroute ^{:doc "Register the memory-sessions-route! HTTP handler."}
+  memory-sessions-route! [authorized-session-ids!
                                   fetch-openplanner-session-rows!
                                   session-matches-page-actor-filter?]
   "GET" "/api/memory/sessions"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (try
-      (let [opts (memory-sessions-request-options config ctx request)
-            env {:config config
+      (let [config (planner-scope/scoped-config config ctx)
+            opts (view/memory-sessions-request-options config ctx request)
+            env {:config config :ctx ctx
                  :runtime runtime
                  :reply reply
                  :json-response! json-response!
                  :error-response! error-response!}
-            {:keys [value cache]} (await (fetch-memory-sessions-source! config ctx opts
+            {:keys [value cache]} (await (view/fetch-memory-sessions-source! config ctx opts
                                                                          authorized-session-ids!
                                                                          fetch-openplanner-session-rows!
                                                                          session-matches-page-actor-filter?))]
-        (await (send-memory-sessions-result!
+        (await (view/send-memory-sessions-result!
                 env
                 (memory-shape/page-state value opts cache))))
       (catch :default err
         (error-response! reply err 502)
         nil))))
 
-(defroute memory-session-titles-status-route! []
+(routes/defroute ^{:doc "Register the memory-session-titles-status-route! HTTP handler."}
+  memory-session-titles-status-route! []
   "GET" "/api/memory/session-titles/status"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (json-response! reply 200 {:ok true
-                               :status @session-title-backfill*
-                               :cached_count (count @session-titles*)})))
+                               :status @titles/session-title-backfill*
+                               :cached_count (count @titles/session-titles*)})))
 
-(defroute memory-backfill-titles-route! [fetch-openplanner-session-rows!]
+(routes/defroute ^{:doc "Register the memory-backfill-titles-route! HTTP handler."}
+  memory-backfill-titles-route! [fetch-openplanner-session-rows!]
   "POST" "/api/memory/sessions/backfill-titles"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (try
       (let [body (or (aget request "body") (js/Object.))
-            limit (or (parse-positive-int (aget body "limit"))
-                      (parse-positive-int (aget request "query" "limit")))
-            force? (or (truthy-param? (aget body "force"))
-                       (truthy-param? (aget request "query" "force")))
-            status (await (start-session-title-backfill! runtime config {:force force? :limit limit} fetch-openplanner-session-rows!))]
+            limit (or (parse/parse-positive-int (aget body "limit"))
+                      (parse/parse-positive-int (aget request "query" "limit")))
+            force? (or (parse/truthy-param? (aget body "force"))
+                       (parse/truthy-param? (aget request "query" "force")))
+            status (await (titles/start-session-title-backfill! runtime (planner-scope/scoped-config config ctx) {:force force? :limit limit} fetch-openplanner-session-rows!))]
         (json-response! reply 202 {:ok true
                                    :status status
-                                   :cached_count (count @session-titles*)}))
+                                   :cached_count (count @titles/session-titles*)}))
       (catch :default err
         (error-response! reply err 502)))))
 
-(defroute memory-import-titles-route! []
+(routes/defroute ^{:doc "Register the memory-import-titles-route! HTTP handler."}
+  memory-import-titles-route! []
   "POST" "/api/memory/sessions/import-titles"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
@@ -685,25 +178,27 @@
                                                        (:title_model entry)
                                                        (:title-model entry)
                                                        (:model entry)))
-                                     normalized (normalize-session-title raw-title)]
+                                     normalized (titles/normalize-session-title raw-title)]
                                  (if (or (str/blank? session-id) (nil? normalized))
                                    total
                                    (do
-                                     (cache-session-title! runtime config session-id normalized (or title-model "retro:heuristic"))
+                                     (titles/cache-session-title! runtime config session-id normalized (or title-model "retro:heuristic"))
                                      (inc total)))))
                              0
                              titles)]
       (json-response! reply 200 {:ok true
                                  :updated updated
-                                 :cached_count (count @session-titles*)}))))
+                                 :cached_count (count @titles/session-titles*)}))))
 
-(defroute memory-session-by-id-route! [fetch-openplanner-session-rows!]
+(routes/defroute ^{:doc "Register the memory-session-by-id-route! HTTP handler."}
+  memory-session-by-id-route! [fetch-openplanner-session-rows!]
   "GET" "/api/memory/sessions/:sessionId"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (try
-      (let [session-id (or (aget request "params" "sessionId") "")
-            requested-limit (parse-positive-int (aget request "query" "limit"))
+      (let [config (planner-scope/scoped-config config ctx)
+            session-id (or (aget request "params" "sessionId") "")
+            requested-limit (parse/parse-positive-int (aget request "query" "limit"))
             preview-limit (when requested-limit
                             (:limit (expansion-policy/bounded-preview-params
                                      (policy-registry/get-policy)
@@ -711,29 +206,31 @@
         (if (str/blank? session-id)
           (json-response! reply 400 {:detail "sessionId is required"})
           (let [rows (await (fetch-openplanner-session-rows! config session-id))]
-            (if (session-visible? ctx rows)
+            (if (core-memory/session-visible? ctx rows)
               (json-response! reply 200 {:ok true
                                          :session session-id
                                          :rows (if preview-limit
                                                  (vec (take preview-limit rows))
                                                  rows)})
-              (error-response! reply (http-error 403 "memory_scope_denied" "Session is outside the current Knoxx scope"))))))
+              (error-response! reply (http/http-error 403 "memory_scope_denied" "Session is outside the current Knoxx scope"))))))
       (catch :default err
         (error-response! reply err 502)))))
 
 (defn- require-memory-read! [ctx]
-  (ensure-permission! ctx "agent.memory.read"))
+  (authz/ensure-permission! ctx "agent.memory.read"))
 
 (defn ^:async send-memory-search!
+  "Memory session operation: send-memory-search!."
   [{:keys [config ctx reply json-response!]}
    fetch-openplanner-session-rows!
    session-matches-page-actor-filter?
    {:keys [query bounded-k session-id actor-id exclude-actor-ids]}]
-  (let [result (await (openplanner-memory-search! config {:query query
+  (let [config (planner-scope/scoped-config config ctx)
+        result (await (planner-memory/openplanner-memory-search! config {:query query
                                                           :k bounded-k
                                                           :session-id session-id}))
-        hits (await (filter-authorized-memory-hits! config ctx (:hits result)))
-        filtered-hits (await (filter-search-hits-by-actor! config
+        hits (await (core-memory/filter-authorized-memory-hits! config ctx (:hits result)))
+        filtered-hits (await (pages/filter-search-hits-by-actor! config
                                                            fetch-openplanner-session-rows!
                                                            session-matches-page-actor-filter?
                                                            actor-id
@@ -761,11 +258,12 @@
 (defn- ensure-memory-search-scope! [ctx session-id]
   (require-memory-read! ctx)
   (when (and (str/blank? (str session-id))
-             (not (ctx-permitted? ctx "agent.memory.cross_session"))
-             (not (system-admin? ctx)))
-    (throw (http-error 403 "memory_scope_denied" "Cross-session memory search is outside the current Knoxx scope"))))
+             (not (authz/ctx-permitted? ctx "agent.memory.cross_session"))
+             (not (authz/system-admin? ctx)))
+    (throw (http/http-error 403 "memory_scope_denied" "Cross-session memory search is outside the current Knoxx scope"))))
 
-(defroute memory-search-route! [fetch-openplanner-session-rows!
+(routes/defroute ^{:doc "Register the memory-search-route! HTTP handler."}
+  memory-search-route! [fetch-openplanner-session-rows!
                                 session-matches-page-actor-filter?]
   "POST" "/api/memory/search"
   (if-not (openplanner-ready? config)
@@ -781,11 +279,13 @@
       (catch :default err
         (error-response! reply err 502)))))
 
-(defroute lounge-messages-list-route! [lounge-messages*]
+(routes/defroute ^{:doc "Register the lounge-messages-list-route! HTTP handler."}
+  lounge-messages-list-route! [lounge-messages*]
   "GET" "/api/lounge/messages"
   (json-response! reply 200 {:messages @lounge-messages*}))
 
-(defroute lounge-messages-create-route! [lounge-messages*]
+(routes/defroute ^{:doc "Register the lounge-messages-create-route! HTTP handler."}
+  lounge-messages-create-route! [lounge-messages*]
   "POST" "/api/lounge/messages"
   (let [body (or (aget request "body") (js/Object.))
         session-id (str (or (aget body "session_id") ""))
@@ -795,15 +295,16 @@
       (str/blank? session-id) (json-response! reply 400 {:detail "session_id is required"})
       (str/blank? text) (json-response! reply 400 {:detail "text is required"})
       :else (let [msg {:id (str (.randomUUID crypto))
-                       :timestamp (now-iso)
+                       :timestamp (time/now-iso)
                        :session_id session-id
                        :alias (if (str/blank? alias) "anonymous" alias)
                        :text text}]
               (swap! lounge-messages* #(->> (conj (vec %) msg) (take-last 100) vec))
-              (broadcast-ws! "lounge" msg)
+              (realtime/broadcast-ws! "lounge" msg)
               (json-response! reply 200 {:ok true :message msg})))))
 
 (defn register-memory-routes!
+  "Memory session operation: register-memory-routes!."
   [app runtime config deps]
   (js/console.log "memory-sessions-route! ="
                   (.-name memory-sessions-route!))

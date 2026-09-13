@@ -1,3 +1,5 @@
+import { errorMessage } from "./helpers";
+import type { AdminCtx } from "../../pages/AdminLayout";
 import type React from 'react';
 import type { AdminPermissionDefinition, AdminRoleSummary, AdminToolDefinition } from '../../lib/types';
 import { toggleListValue, toolDraftMap } from './helpers';
@@ -205,5 +207,35 @@ export function RolesSection({
         })}
       </div>
     </SectionCard>
+  );
+}
+
+export function AdminRolesPage({ ctx }: { ctx: AdminCtx }) {
+  const handleCreateRole = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!ctx.selectedOrgId) return;
+    ctx.setCreatingRole(true); ctx.setNotice(null);
+    try {
+      await (await import('../../lib/nextApi')).createOrgRole(ctx.selectedOrgId, { name: ctx.roleForm.name.trim(), slug: ctx.roleForm.slug.trim() || undefined, permissionCodes: ctx.roleForm.permissionCodes, toolPolicies: ctx.roleForm.toolIds.map((t) => ({ toolId: t, effect: 'allow' })) });
+      ctx.setRoleForm({ name: '', slug: '', permissionCodes: [], toolIds: ['read', 'canvas'] });
+      ctx.setNotice({ tone: 'success', text: 'Role created.' }); await ctx.refresh();
+    } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingRole(false); }
+  };
+  const saveRolePolicies = async (id: string) => {
+    ctx.setSavingRoleId(id); ctx.setNotice(null);
+    try { await (await import('../../lib/nextApi')).updateRoleToolPolicies(id, (await import('./helpers')).toolPoliciesFromDraft(ctx.roleToolDrafts[id] || {})); ctx.setNotice({ tone: 'success', text: 'Policy updated.' }); await ctx.refresh(); }
+    catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setSavingRoleId(null); }
+  };
+
+  return (
+    <RolesSection
+      selectedOrgId={ctx.selectedOrgId} selectedOrgName={ctx.selectedOrg?.name || ''}
+      canCreateRoles={Boolean(ctx.selectedOrg && ctx.hasPermission('org.roles.create'))}
+      canUpdateRolePolicies={ctx.hasPermission('org.tool_policy.update')}
+      roles={ctx.roles} tools={ctx.tools} permissionGroups={ctx.permissionGroups}
+      roleForm={ctx.roleForm} setRoleForm={ctx.setRoleForm}
+      roleToolDrafts={ctx.roleToolDrafts} setRoleToolDrafts={ctx.setRoleToolDrafts}
+      creatingRole={ctx.creatingRole} savingRoleId={ctx.savingRoleId}
+      onCreateRole={handleCreateRole} onSaveRolePolicies={saveRolePolicies}
+    />
   );
 }

@@ -5,7 +5,7 @@
 
 (deftest register-and-get-action
   (testing "register-action! stores handler and metadata"
-    (let [handler (fn [ctx action] {:ok true})]
+    (let [handler (fn [_ctx _action] {:ok true})]
       (registry/register-action!
        ::test-action
        {:action/description "test action"
@@ -118,7 +118,7 @@
     (registry/register-action!
      ::bridge-test
      {}
-     (fn [ctx action]
+     (fn [ctx _action]
        (js/Promise.resolve {:ok true :bridge-worked true :ctx-keys (keys ctx)})))
     (let [result (await (registry/run-action!
                          {:event {:event/type :test} :scope {} :actor {:id "test"}}
@@ -167,7 +167,7 @@
     (registry/register-action!
      ::scope-delegate
      {}
-     (fn [ctx action]
+     (fn [ctx _action]
        (js/Promise.resolve {:ok true :scope-received (:scope ctx)})))
     (registry/register-action!
      ::scope-parent
@@ -251,7 +251,7 @@
     (registry/register-action!
      ::registered-no-fn
      {}
-     (fn [ctx action]
+     (fn [_ctx _action]
        (js/Promise.resolve {:ok true :registered-worked true})))
     (let [result (await (registry/run-action!
                          {:event nil :scope {} :actor {}}

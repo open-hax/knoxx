@@ -1,11 +1,12 @@
 import {
   rgba,
   type EdgeStyle,
+  type GraphData as RenderGraphData,
   type GraphEdge as RenderGraphEdge,
   type GraphNode as RenderGraphNode,
   type NodeStyle,
 } from "@octave-commons/webgl-graph-view";
-import type { GraphExportEdge, GraphExportNode } from "../../lib/types";
+import type { GraphExportEdge, GraphExportNode, GraphExportResponse, LayoutNode, LayoutEdge, LayoutSnapshot, RenderNodePayload, RenderEdgePayload } from "../../lib/types";
 
 export const CANONICAL_LAKES = ["devel", "web", "bluesky", "knoxx-session"] as const;
 
@@ -42,35 +43,6 @@ const EDGE_COLORS: Record<string, readonly [number, number, number, number]> = {
   post_links_visited_web: [0.28, 0.86, 0.94, 0.24],
   post_links_unvisited_web: [0.2, 0.78, 0.92, 0.3],
   relation: [0.74, 0.78, 0.9, 0.14],
-};
-
-export type LayoutNode = {
-  id: string;
-  kind: string;
-  label: string;
-  data?: Record<string, unknown>;
-};
-
-export type LayoutEdge = {
-  id: string;
-  source: string;
-  target: string;
-  kind: string;
-  data?: Record<string, unknown>;
-};
-
-type LayoutSnapshot = {
-  nodes: LayoutNode[];
-  edges: LayoutEdge[];
-};
-
-export type RenderNodePayload = {
-  exportNode: GraphExportNode;
-  degree: number;
-};
-
-export type RenderEdgePayload = {
-  exportEdge: GraphExportEdge;
 };
 
 function hash32(input: string): number {
@@ -256,4 +228,152 @@ export function toggleLake(current: string[], lake: string): string[] {
     return current.filter((entry) => entry !== lake);
   }
   return [...current, lake];
+}
+
+export type { LayoutNode, LayoutEdge, RenderNodePayload, RenderEdgePayload } from "../../lib/types";
+
+export function projectGraphExport(
+  payload: GraphExportResponse | null, selectedLakes: string[], crossLakeOnly: boolean, maxNodes: number, maxEdges: number,
+) {
+  const nodes = payload?.nodes ?? [];
+  const edges = payload?.edges ?? [];
+  const selectedLakeSet = new Set(selectedLakes);
+
+  const visibleNodes = nodes.filter((node) => selectedLakeSet.has(inferLake(node)));
+  const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
+  const lakeCounts = new Map<string, number>();
+  const renderedLakeCounts = new Map<string, number>();
+
+  for (const node of visibleNodes) {
+    const lake = inferLake(node);
+    lakeCounts.set(lake, (lakeCounts.get(lake) ?? 0) + 1);
+  }
+
+  const visibleEdges = edges.filter((edge) => {
+    const sourceLakeAllowed = selectedLakeSet.has(edge.sourceLake);
+    const targetLakeAllowed = selectedLakeSet.has(edge.targetLake);
+    if (!sourceLakeAllowed || !targetLakeAllowed) return false;
+    if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) return false;
+    if (crossLakeOnly && !isCrossLake(edge)) return false;
+    return true;
+  });
+
+  const degree = new Map<string, number>();
+  const crossLakeNodes = new Set<string>();
+  for (const edge of visibleEdges) {
+    degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
+    if (isCrossLake(edge)) {
+      crossLakeNodes.add(edge.source);
+      crossLakeNodes.add(edge.target);
+    }
+  }
+
+  const sortedNodes = [...visibleNodes].sort((a, b) => compareNodes(a, b, degree, crossLakeNodes));
+  const cappedNodeIds = new Set(sortedNodes.slice(0, maxNodes).map((node) => node.id));
+  const sortedEdges = visibleEdges
+    .filter((edge) => cappedNodeIds.has(edge.source) && cappedNodeIds.has(edge.target))
+    .sort((a, b) => compareEdges(a, b, degree));
+  const finalEdges = sortedEdges.slice(0, maxEdges);
+
+  const edgeNodeIds = new Set<string>();
+  for (const edge of finalEdges) {
+    edgeNodeIds.add(edge.source);
+    edgeNodeIds.add(edge.target);
+  }
+
+  const finalNodes: GraphExportNode[] = [];
+  const included = new Set<string>();
+  for (const node of sortedNodes) {
+    if (edgeNodeIds.has(node.id) && !included.has(node.id)) {
+      finalNodes.push(node);
+      included.add(node.id);
+    }
+  }
+  for (const node of sortedNodes) {
+    if (included.has(node.id)) continue;
+    if (finalNodes.length >= maxNodes) break;
+    finalNodes.push(node);
+    included.add(node.id);
+  }
+
+  for (const node of finalNodes) {
+    const lake = inferLake(node);
+    renderedLakeCounts.set(lake, (renderedLakeCounts.get(lake) ?? 0) + 1);
+  }
+
+  const layoutNodes: LayoutNode[] = finalNodes.map((node) => ({
+    id: node.id,
+    kind: node.kind,
+    label: node.label,
+    data: {
+      ...(node.data ?? {}),
+      lake: inferLake(node),
+      node_type: inferNodeType(node),
+    },
+  }));
+  const layoutEdges: LayoutEdge[] = finalEdges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    kind: inferEdgeType(edge),
+    data: {
+      ...(edge.data ?? {}),
+      edge_type: inferEdgeType(edge),
+      source_lake: edge.sourceLake,
+      target_lake: edge.targetLake,
+    },
+  }));
+  const positions = layoutGraph({ nodes: layoutNodes, edges: layoutEdges });
+
+  const renderNodes: RenderGraphNode[] = finalNodes.map((node) => {
+    const position = positions.get(node.id) ?? { x: 0, y: 0 };
+    return {
+      id: node.id,
+      x: position.x,
+      y: position.y,
+      kind: inferNodeType(node),
+      label: node.label,
+      data: {
+        exportNode: node,
+        degree: degree.get(node.id) ?? 0,
+      } satisfies RenderNodePayload,
+    };
+  });
+
+  const renderEdges: RenderGraphEdge[] = finalEdges.map((edge) => ({
+    source: edge.source,
+    target: edge.target,
+    kind: inferEdgeType(edge),
+    data: {
+      exportEdge: edge,
+    } satisfies RenderEdgePayload,
+  }));
+
+  const nodeMap = new Map(finalNodes.map((node) => [node.id, node]));
+  const edgesByNode = new Map<string, GraphExportEdge[]>();
+  for (const edge of finalEdges) {
+    const sourceRows = edgesByNode.get(edge.source) ?? [];
+    sourceRows.push(edge);
+    edgesByNode.set(edge.source, sourceRows);
+    const targetRows = edgesByNode.get(edge.target) ?? [];
+    targetRows.push(edge);
+    edgesByNode.set(edge.target, targetRows);
+  }
+
+  return {
+    graph: {
+      nodes: renderNodes,
+      edges: renderEdges,
+    } satisfies RenderGraphData,
+    nodeMap,
+    edgesByNode,
+    degree,
+    lakeCounts,
+    renderedLakeCounts,
+    rawNodeCount: nodes.length,
+    rawEdgeCount: edges.length,
+    filteredNodeCount: visibleNodes.length,
+    filteredEdgeCount: visibleEdges.length,
+  };
 }

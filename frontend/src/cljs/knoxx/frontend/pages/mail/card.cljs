@@ -2,7 +2,7 @@
   "Mailbox entry card. Helix port of MailboxCard in src/pages/MailPage.tsx.
    Router-free: navigation arrives via :on-navigate so the card stays
    node-testable."
-  (:require [helix.core :refer [$ defnc]]
+  (:require [helix.core :as hx]
             [helix.dom :as d]
             [knoxx.frontend.pages.mail.logic :as logic]))
 
@@ -18,8 +18,8 @@
                      (when loading " opacity-60"))}
    (if loading "…" label)))
 
-(defnc card-header
-  [{:keys [entry box acking on-ack]}]
+(hx/defnc card-header "Render receipt state and a capability-gated acknowledgement."
+  [{:keys [entry box acking on-ack can-ack?]}]
   (let [from (or (logic/record-string (:source entry) :actor-id :actorId :session-id :sessionId) "unknown")
         to (or (logic/record-string (:target entry) :actor-id :actorId :session-id :sessionId
                                     :conversation-id :conversationId) "unknown")
@@ -41,7 +41,7 @@
                          (d/span {:class-name "mx-2 text-slate-600"} "→")
                          (d/span {:class-name "text-slate-500"} " To ")
                          (d/span {:class-name "font-mono text-slate-100"} to)))
-           (when (and (= box "inbox") (not= "acknowledged" (:status entry)))
+           (when (and can-ack? (= box "inbox") (not= "acknowledged" (:status entry)))
              (small-button {:on-click #(on-ack (:id entry))
                             :loading acking
                             :label "Acknowledge"})))))
@@ -51,15 +51,16 @@
    (d/dt {:class-name "uppercase tracking-wide text-slate-600"} label)
    (d/dd (logic/format-date value))))
 
-(defnc mailbox-card
-  [{:keys [entry box acking on-ack on-navigate]}]
+(hx/defnc mailbox-card "An entry preview with a separate canonical full-content read."
+  [{:keys [entry box acking on-ack on-navigate on-read can-ack?]}]
   (let [content-ref (js/JSON.stringify (clj->js (or (:contentRef entry) {})))
         links (logic/mailbox-links entry)]
     (d/article {:class-name "rounded-xl border border-slate-800 bg-slate-950/70 p-4 shadow-lg shadow-black/20"}
-               ($ card-header {:entry entry :box box :acking acking :on-ack on-ack})
+               (hx/$ card-header {:entry entry :box box :acking acking :on-ack on-ack :can-ack? can-ack?})
                (d/p {:class-name "mt-4 whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-sm leading-6 text-slate-100"}
                     (or (logic/record-string entry :preview)
                         "No preview available. Open the referenced run/event for full content."))
+               (when on-read (small-button {:on-click #(on-read (:id entry)) :label "Read full message"}))
                (d/dl {:class-name "mt-3 grid gap-2 text-xs text-slate-500 md:grid-cols-3"}
                      (meta-item "Created" (:createdAt entry))
                      (meta-item "Delivered" (:deliveredAt entry))

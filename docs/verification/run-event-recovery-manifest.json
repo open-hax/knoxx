@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "recoveryReason": "Second scratch workspace loss followed by executor HTTP 409 environment_offline",
+  "lostLocalCommit": "8550c8dbc82dedaf556e82d98e197fac99c6619c",
+  "publishedBaseCommit": "377892dcf4908c31b74ccc9349db04356a5d9181",
+  "verificationStatus": "UNVERIFIED reconstruction; historical test results do not transfer",
+  "missingPaths": [],
+  "excludedSharedIntegrationPaths": [
+    "backend/src/cljs/knoxx/backend/domain/action/run_state.cljs",
+    "backend/src/cljs/knoxx/backend/infra/agent/turn.cljs"
+  ],
+  "files": [
+    {
+      "path": "backend/scripts/compile-run-events-proof.clj",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 876
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/law/run_directory.cljc",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 414
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/shape/run_directory.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 272
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/domain/run_directory.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 719
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/domain/mongo_run_store.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 2862
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/extern/mongo_run_store.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 3744
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/extern/run_event.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 362
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/run_event_payload.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 862
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/run_events.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 1574
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/run_queries.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 3199
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/stores/mongo_run_store.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 4648
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/stores/clio_run_store.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 3461
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/stores/openplanner_session_store.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 6202
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/routes/models.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 14565
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/agent/stream.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 17755
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/agent/runtime.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 5452
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/agent/runner.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 30002
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/mongo_run_store_fixture.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 3071
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/mongo_run_native_fixture.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 4728
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/models_run_routes_test.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 2867
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/mongo_run_events_e2e.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 3573
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/run_event_provider_test.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 3258
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/run_queries_recovery_test.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 7994
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/infra/stores/mongo_run_store_test.cljs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 8163
+    },
+    {
+      "path": "scripts/verify-run-event-providers.mjs",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 3361
+    },
+    {
+      "path": "docs/verification/run-event-providers.md",
+      "classification": "reconstructed",
+      "byteIdentityWithLostCommit": "not established",
+      "source": "retained session literal writes and published base source",
+      "characters": 5704
+    }
+  ]
+}

@@ -1,180 +1,71 @@
 (ns knoxx.backend.infra.routes.actors
-  "HTTP routes for actor mailbox delivery projection operations."
-  (:require [clojure.string :as str]
-            [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
-            [knoxx.backend.domain.event.dispatch :as event-dispatch]
+  "HTTP adapters for the same verified, durable mailbox commands used by agent tools."
+  (:require [knoxx.backend.extern.actor-mailbox :as wire]
+            [knoxx.backend.extern.mailbox-changes :as changes]
+            [knoxx.backend.infra.actor-mailbox :as mailbox]
+            [knoxx.backend.infra.actor-mailbox-commands :as commands]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.law.mailbox-store :as law]
             [knoxx.backend.macros :refer-macros [defroute]]))
-
-;; TODO remove  this non sense. This makes  the api so messy, and  the code noisy. just accept on schema and validate against it everywhere
-(defn- query-param
-  [request & names]
-  (some (fn [name]
-          (let [value (aget request "query" name)]
-            (when-not (str/blank? (str (or value "")))
-              value)))
-        names))
-
-(defn- body-map
-  [request]
-  (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true))
-
-(defn- statuses-from-body
-  [body]
-  (let [raw (or (:statuses body) (:status body))]
-    (cond
-      (sequential? raw) (mapv actor-mailbox/normalize-status raw)
-      (string? raw) [(actor-mailbox/normalize-status raw)]
-      :else ["pending" "failed"])))
-
-(defn- current-actor-id
-  [ctx]
-  (or (get-in ctx [:actor :id])
-      (get-in ctx [:membership :actorId])
-      (:actorId ctx)))
-
-(defn- api-entry
-  [entry]
-  {:id (:mailbox/id entry)
-   :kind (:mailbox/kind entry)
-   :status (:mailbox/status entry)
-   :source (:mailbox/source entry)
-   :target (:mailbox/target entry)
-   :delivery (:mailbox/delivery entry)
-   :contentRef (:mailbox/content-ref entry)
-   :metadata (:mailbox/metadata entry)
-   :preview (:mailbox/preview entry)
-   :lastError (:mailbox/last-error entry)
-   :createdAt (:mailbox/created-at entry)
-   :updatedAt (:mailbox/updated-at entry)
-   :deliveredAt (:mailbox/delivered-at entry)
-   :acknowledgedAt (:mailbox/acknowledged-at entry)
-   :expiresAt (:mailbox/expires-at entry)})
-
-(defn- api-result
-  [result]
-  (-> result
-      (assoc :entries (mapv api-entry (:entries result))
-             :durable (boolean (:durable? result)))
-      (dissoc :durable?)))
-
-(defn- retry-dispatches!
-  [entries]
-  (.all js/Promise
-        (clj->js
-         (mapv (fn [entry]
-                  (event-dispatch/dispatch! (actor-mailbox/retry-request-event entry)))
-               entries))))
-
+(defn- actor-id! [ctx]
+  (or (authz/ctx-actor-binding ctx) (law/refuse! 403 "mailbox_actor_required" "An explicit actor binding is required")))
 (defroute actor-mailbox-list-route!
-  []
-  "GET" "/api/admin/config/actors/mailbox"
-  [session-guard]
-  (try
-    (ensure-permission! ctx "org.events.control")
-    (let [result (await (actor-mailbox/list-entries!
-                         runtime
-                         {:status (query-param request "status")
-                          :target-actor-id (query-param request "target_actor_id" "targetActorId" "actor_id" "actorId")
-                          :target-session-id (query-param request "target_session_id" "targetSessionId" "session_id" "sessionId")
-                          :source-actor-id (query-param request "source_actor_id" "sourceActorId")
-                          :source-run-id (query-param request "source_run_id" "sourceRunId" "run_id" "runId")
-                          :limit (query-param request "limit")}))]
-      (json-response! reply 200 (assoc (api-result result) :ok true)))
-    (catch :default err
-      (error-response! reply err))))
-
-(defn ^:async acknowledge-mailbox!
-  ([runtime reply error-response! json-response! mailbox-id]
-   (acknowledge-mailbox! runtime reply error-response! json-response! mailbox-id nil))
-  ([runtime reply error-response! json-response! mailbox-id target-actor-id]
-   (try
-     (let [entry (await (actor-mailbox/acknowledge-entry! runtime mailbox-id target-actor-id))]
-       (if entry
-         (json-response! reply 200 {:ok true :entry (api-entry entry)})
-         (json-response! reply 404 {:ok false :detail "mailbox entry not found"})))
-     (catch :default err
-       (error-response! reply err)))))
-
+  [] "GET" "/api/admin/config/actors/mailbox" [session-guard]
+  (try (ensure-permission! ctx "org.events.control")
+       (let [result (await (mailbox/list-entries! (mailbox/context runtime ctx) (wire/request-filters request)))]
+         (json-response! reply 200 (assoc (wire/result-wire result) :ok true
+                                        :capabilities (assoc (commands/interface-capabilities ctx) :acknowledge true))))
+       (catch :default err (error-response! reply err))))
 (defroute actor-mailbox-ack-route!
-  []
-  "POST" "/api/admin/config/actors/mailbox/:mailboxId/ack"
-  [session-guard]
-  (try
-    (ensure-permission! ctx "org.events.control")
-    (acknowledge-mailbox! runtime reply error-response! json-response! (aget request "params" "mailboxId"))
-    (catch :default err
-      (error-response! reply err))))
-
+  [] "POST" "/api/admin/config/actors/mailbox/:mailboxId/ack" [session-guard]
+  (try (ensure-permission! ctx "org.events.control")
+       (let [entry (await (mailbox/acknowledge-entry! (mailbox/context runtime ctx) (wire/request-id request)))]
+         (json-response! reply 200 {:ok true :entry (wire/entry-wire entry)}))
+       (catch :default err (error-response! reply err))))
 (defroute actor-mailbox-retry-route!
-  []
-  "POST" "/api/admin/config/actors/mailbox/retry"
-  [session-guard]
-  (try
-    (ensure-permission! ctx "org.events.control")
-    (let [body (body-map request)
-          dispatch-events? (not= false (:dispatch_events body))
-          result (await (actor-mailbox/retry-eligible!
-                         runtime
-                         {:mailbox-id (or (:mailbox_id body) (:mailboxId body))
-                          :statuses (statuses-from-body body)
-                          :max-attempts (or (:max_attempts body) (:maxAttempts body))
-                          :limit (:limit body)
-                          :delay-seconds (or (:delay_seconds body) (:delaySeconds body))}))
-          entries (:entries result)]
-      (if (and dispatch-events? (seq entries))
-        (json-response! reply 202
-                        (assoc (api-result result)
-                               :ok true
-                               :retry_event_count (count entries)
-                               :dispatches (js->clj (await (retry-dispatches! entries))
-                                                    :keywordize-keys true)))
-        (json-response! reply 202
-                        (assoc (api-result result)
-                               :ok true
-                               :retry_event_count 0))))
-    (catch :default err
-      (error-response! reply err))))
-
+  [] "POST" "/api/admin/config/actors/mailbox/retry" [session-guard]
+  (try (ensure-permission! ctx "org.events.control")
+       (let [{:keys [dispatch? options]} (wire/request-retry request)
+             result (if dispatch? (await (commands/retry! runtime config ctx options))
+                      (await (mailbox/retry-eligible! (mailbox/context runtime ctx) options)))]
+         (json-response! reply 202 (assoc (wire/result-wire result) :ok true :retry_event_count (count (:deliveries result)))))
+       (catch :default err (error-response! reply err))))
 (defroute actor-mailbox-self-list-route!
-  []
-  "GET" "/api/actors/mailbox"
-  [session-guard]
-  (try
-    (ensure-permission! ctx "agent.chat.use")
-    (let [actor-id (current-actor-id ctx)
-          box (some-> (or (query-param request "box") "inbox") str str/lower-case)
-          filters (cond-> {:status (query-param request "status")
-                           :limit (query-param request "limit")}
-                    (= box "outbox") (assoc :source-actor-id actor-id)
-                    (not= box "outbox") (assoc :target-actor-id actor-id))]
-      (if (str/blank? (str actor-id))
-        (json-response! reply 403 {:ok false :detail "current actor is not available"})
-        (let [result (await (actor-mailbox/list-entries! runtime filters))]
-          (json-response! reply 200 (assoc (api-result result)
-                                           :ok true
-                                           :box (if (= box "outbox") "outbox" "inbox")
-                                           :actorId actor-id)))))
-    (catch :default err
-      (error-response! reply err))))
-
+  [] "GET" "/api/actors/mailbox" [session-guard]
+  (try (ensure-permission! ctx "agent.chat.use")
+       (let [actor-id (actor-id! ctx) box (wire/request-box request)
+             filters (assoc (select-keys (wire/request-filters request) [:status :limit])
+                            (if (= box "outbox") :source-actor-id :target-actor-id) actor-id)
+             result (await (mailbox/list-entries! (mailbox/context runtime ctx) filters))]
+         (json-response! reply 200 (assoc (wire/result-wire result) :ok true :box box :actorId actor-id
+                                        :capabilities (commands/interface-capabilities ctx))))
+       (catch :default err (error-response! reply err))))
+(defroute actor-mailbox-self-read-route!
+  [] "GET" "/api/actors/mailbox/:mailboxId" [session-guard]
+  (try (ensure-permission! ctx "agent.chat.use")
+       (let [entry (await (mailbox/read-message! (mailbox/context runtime ctx) (wire/request-id request)))]
+         (json-response! reply 200 {:ok true :entry (wire/entry-wire entry)}))
+       (catch :default err (error-response! reply err))))
 (defroute actor-mailbox-self-ack-route!
-  []
-  "POST" "/api/actors/mailbox/:mailboxId/ack"
-  [session-guard]
-  (try
-    (ensure-permission! ctx "agent.chat.use")
-    (let [actor-id (current-actor-id ctx)]
-      (if (str/blank? (str actor-id))
-        (json-response! reply 403 {:ok false :detail "current actor is not available"})
-        (acknowledge-mailbox! runtime reply error-response! json-response! (aget request "params" "mailboxId") actor-id)))
-    (catch :default err
-      (error-response! reply err))))
-
+  [] "POST" "/api/actors/mailbox/:mailboxId/ack" [session-guard]
+  (try (ensure-permission! ctx "agent.chat.use") (actor-id! ctx)
+       (let [context (update (mailbox/context runtime ctx) :scope assoc :admin? false)
+             entry (await (mailbox/acknowledge-entry! context (wire/request-id request)))]
+         (json-response! reply 200 {:ok true :entry (wire/entry-wire entry)}))
+       (catch :default err (error-response! reply err))))
+(defroute actor-mailbox-send-route!
+  [] "POST" "/api/actors/messages" [session-guard]
+  (try (let [result (await (commands/send! runtime config ctx (wire/request-send request)))]
+         (json-response! reply 200 (wire/command-wire result)))
+       (catch :default err (error-response! reply err))))
+(defroute actor-mailbox-changes-route!
+  [] "GET" "/api/actors/mailbox/events/stream" [session-guard]
+  (try (changes/open-stream! runtime ctx reply)
+       (catch :default err (error-response! reply err))))
 (defn register-actor-routes!
+  "Register the mailbox reader, sender, acknowledgement and operator retry adapters."
   [app runtime config deps]
-  (actor-mailbox-list-route! app runtime config deps)
-  (actor-mailbox-ack-route! app runtime config deps)
-  (actor-mailbox-retry-route! app runtime config deps)
-  (actor-mailbox-self-list-route! app runtime config deps)
-  (actor-mailbox-self-ack-route! app runtime config deps)
-  nil)
+  (doseq [register! [actor-mailbox-list-route! actor-mailbox-ack-route! actor-mailbox-retry-route!
+                    actor-mailbox-self-list-route! actor-mailbox-self-read-route! actor-mailbox-self-ack-route!
+                    actor-mailbox-send-route! actor-mailbox-changes-route!]]
+    (register! app runtime config deps)) nil)

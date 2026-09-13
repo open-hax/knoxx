@@ -1,6 +1,7 @@
 (ns knoxx.backend.domain.action.run-steps-test
   "Tests for the :actions/run-steps action."
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.action.registry :as registry]
             [knoxx.backend.infra.temp-memory :as temp-memory]))
 
@@ -59,8 +60,8 @@
 
 (deftest ^:async run-steps-single-step
   (testing "run-steps works with a single step"
-    (let [calls (atom [])]
-      (let [ctx {:scope {::solo (fn [ctx action]
+    (let [calls (atom [])
+          ctx {:scope {::solo (fn [ctx action]
                                    ((make-snoop-action calls :solo) ctx action))}
                  :event {}}
             action {:action/kind :actions/run-steps
@@ -68,7 +69,7 @@
             result (await (registry/run-action! ctx action))]
         (is (true? (:ok result)))
         (is (= 1 (:steps-run result)))
-        (is (= [:solo] (mapv :label @calls)))))))
+        (is (= [:solo] (mapv :label @calls))))))
 
 (deftest ^:async run-steps-empty-steps
   (testing "run-steps with no steps succeeds immediately"
@@ -83,8 +84,8 @@
 
 (deftest ^:async run-steps-error-stops-subsequent-steps
   (testing "error in step 2 prevents step 3 from running"
-    (let [calls (atom [])]
-      (let [ctx {:scope {::good-a (fn [ctx action]
+    (let [calls (atom [])
+          ctx {:scope {::good-a (fn [ctx action]
                                      ((make-snoop-action calls :a) ctx action))
                          ::bad-b  (fn [ctx action]
                                      ((make-failing-action :b "step b failed") ctx action))
@@ -101,12 +102,12 @@
         (is (= 1 (:failed-step result)))
         (is (= ::bad-b (:failed-action result)))
         (is (= [:a] (mapv :label @calls))
-            "Only step A should have run; step C was blocked")))))
+            "Only step A should have run; step C was blocked"))))
 
 (deftest ^:async run-steps-error-in-first-step
   (testing "error in step 0 blocks all subsequent steps"
-    (let [calls (atom [])]
-      (let [ctx {:scope {::bad-a  (fn [_ctx _action]
+    (let [calls (atom [])
+          ctx {:scope {::bad-a  (fn [_ctx _action]
                                      (js/Promise.resolve {:ok false :error "fail early"}))
                          ::good-b (fn [ctx action]
                                      ((make-snoop-action calls :b) ctx action))}
@@ -118,7 +119,7 @@
         (is (false? (:ok result)))
         (is (= 0 (:failed-step result)))
         (is (= [] (mapv :label @calls))
-            "No steps should have run")))))
+            "No steps should have run"))))
 
 (deftest ^:async run-steps-action-not-in-scope
   (testing "step with action not in scope returns error"
@@ -128,7 +129,7 @@
           result (await (registry/run-action! ctx action))]
       (is (false? (:ok result)))
       (is (= 0 (:failed-step result)))
-      (is (clojure.string/includes? (:error result) "not found in scope")))))
+      (is (str/includes? (:error result) "not found in scope")))))
 
 ;; ── temp-memory interpolation ─────────────────────────────────────────
 
@@ -136,7 +137,7 @@
   (testing "step :with maps get temp-memory placeholders resolved"
     (let [calls (atom [])]
       (await (temp-memory/mem-set! "interpolated-key" "resolved-value" {:ttl 60}))
-      (let [ctx {:scope {::interp (fn [ctx action]
+      (let [ctx {:scope {::interp (fn [_ctx action]
                                      (swap! calls conj (:action/with action))
                                      (js/Promise.resolve {:ok true}))}
                  :event {}}
@@ -152,7 +153,7 @@
   (testing "temp-memory interpolation works in nested maps"
     (let [calls (atom [])]
       (await (temp-memory/mem-set! "nested-key" "nested-val" {:ttl 60}))
-      (let [ctx {:scope {::nested (fn [ctx action]
+      (let [ctx {:scope {::nested (fn [_ctx action]
                                      (swap! calls conj (:action/with action))
                                      (js/Promise.resolve {:ok true}))}
                  :event {}}

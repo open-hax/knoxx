@@ -48,6 +48,19 @@
         receipt (completion-receipt manifest claim candidate-set turn)]
     {:manifest manifest :candidate-set candidate-set :turn turn :receipt receipt}))
 
+(deftest projection-repair-selects-original-completions-only
+  (let [{:keys [receipt turn candidate-set]} (completed-context)
+        corrupt (assoc receipt :translation/revision "corrupt-raw-revision")]
+    (is (event/raw-candidate-completion? receipt))
+    (is (not (event/raw-candidate-completion?
+              (assoc receipt :translation/revision "corrected-revision"
+                     :translation/split-review-order 1))))
+    (is (not (event/raw-candidate-completion? {:translation/revision "legacy"})))
+    (is (event/raw-candidate-completion? corrupt))
+    (is (thrown-with-msg?
+         js/Error #"does not match its completed receipt"
+         (event/candidate-events fixture/digest corrupt turn candidate-set)))))
+
 (deftest completed-candidate-events-are-stable-and-lineage-complete
   (let [{:keys [manifest candidate-set turn receipt]} (completed-context)
         first-pass (event/candidate-events fixture/digest receipt turn candidate-set)

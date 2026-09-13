@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { filterBrowseEntries, inferBrowseEntryKind, visibilityStats } from "./chat-page-derived";
+import { filterBrowseEntries, inferBrowseEntryKind, normalizeToolPreview, structuredToMarkdown, toolInputSummary, toolOutputMarkdown, toolPreviewMarkdown, visibilityStats } from "./chat-page-derived";
 import type { BrowseEntry } from "./types";
 
 describe("inferBrowseEntryKind", () => {
@@ -41,5 +41,29 @@ describe("visibilityStats", () => {
 
     expect(stats.total).toBe(3);
     expect(stats.byVisibility).toEqual({ public: 1, internal: 2 });
+  });
+});
+
+describe("Tool receipt presentation", () => {
+  it("preserves missing sentinels and displays human tool output separately from input metadata", () => {
+    expect(normalizeToolPreview(" null ")).toBeNull();
+    expect(normalizeToolPreview(" UNDEFINED ")).toBeNull();
+    expect(normalizeToolPreview(" useful result ")).toBe("useful result");
+    expect(toolInputSummary(JSON.stringify({query: "ledger", path: "docs/ledger.edn"}))).toBe("ledger • docs/ledger.edn");
+    const output = toolOutputMarkdown(JSON.stringify({content: [{type: "text", text: "First"}, {type: "text", text: "Second"}]}));
+    expect(output).toContain("First\n\nSecond");
+    expect(output).not.toContain('"content"');
+  });
+
+  it("uses fences longer than embedded backticks and bounds structured breadth and depth", () => {
+    expect(toolPreviewMarkdown(JSON.stringify({body: "```\ntext"}))).toContain("````text\n```\ntext\n````");
+    expect(structuredToMarkdown(Array.from({length: 25}, (_, i) => i))).toContain("1 more item(s)");
+    expect(structuredToMarkdown(Object.fromEntries(Array.from({length: 33}, (_, i) => [String(i), i])))).toContain("1 more key(s)");
+    expect(structuredToMarkdown({a: {b: {c: {d: {e: {f: "bounded"}}}}}})).toContain("max depth");
+  });
+
+  it("caps raw output while exposing truncation to the reader", () => {
+    const output = toolOutputMarkdown("x".repeat(12001));
+    expect(output).toBe("x".repeat(12000) + "…\n\n_(truncated)_");
   });
 });

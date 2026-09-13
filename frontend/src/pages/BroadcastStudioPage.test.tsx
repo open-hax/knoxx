@@ -234,7 +234,7 @@ function installBroadcastStudioFetchMock() {
 
 function renderBroadcastStudioPage() {
   return render(
-    <MemoryRouter>
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <BroadcastStudioPage />
     </MemoryRouter>,
   );

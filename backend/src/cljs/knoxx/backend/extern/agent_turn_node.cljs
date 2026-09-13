@@ -32,3 +32,10 @@
 (defn file-data-url!
   [absolute-path mime-type label max-bytes]
   (file-data-url-with-fs! fs absolute-path mime-type label max-bytes))
+
+(defn log-initial-session-failure!
+  "Report the native admission error without changing the exception being propagated."
+  [session-id error]
+  (.error js/console "[turn] failed to persist initial session"
+          (clj->js {:session-id session-id :error (ex-message error)
+                    :error-data (or (ex-data error) {})})))

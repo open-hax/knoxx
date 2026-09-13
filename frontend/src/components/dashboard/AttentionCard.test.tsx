@@ -10,7 +10,7 @@ import type { AttentionMetric } from "./dashboard-types";
 
 // Wrapper for router
 const RouterWrapper = ({ children }: { children: React.ReactNode }) => (
-  <BrowserRouter>{children}</BrowserRouter>
+  <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>{children}</BrowserRouter>
 );
 
 describe("AttentionCard", () => {

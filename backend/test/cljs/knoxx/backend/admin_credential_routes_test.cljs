@@ -1,7 +1,7 @@
 (ns knoxx.backend.admin-credential-routes-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.routes.users.admin :as admin-routes]
-            [knoxx.backend.infra.db.policy :as policy-db]))
+            [knoxx.backend.infra.db.policy.credentials :as credentials]))
 
 ;; ---------------------------------------------------------------------------
 ;; credential-payload validation
@@ -71,7 +71,7 @@
                :status "active"
                :created_at "2024-01-01"
                :updated_at "2024-01-01"}
-          result (#'policy-db/actor-credential-response row)
+          result (#'credentials/actor-credential-response row)
           credential (:credential result)]
       (is (map? credential))
       (is (= "cred-1" (:id credential)))
@@ -86,7 +86,7 @@
 
 (deftest actor-credential-response-handles-nil-row
   (testing "returns nil credential when row is nil"
-    (let [result (#'policy-db/actor-credential-response nil)]
+    (let [result (#'credentials/actor-credential-response nil)]
       (is (nil? (:credential result))))))
 
 (deftest actor-credential-response-handles-empty-secret-json
@@ -101,7 +101,7 @@
                :status "active"
                :created_at "2024-01-01"
                :updated_at "2024-01-01"}
-          result (#'policy-db/actor-credential-response row)
+          result (#'credentials/actor-credential-response row)
           credential (:credential result)]
       (is (= {} (:secretJson credential)))
       (is (= [] (:configuredFields credential))))))

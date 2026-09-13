@@ -1,12 +1,15 @@
 (ns knoxx.backend.triggers.production-scenario-test
-  "Simulate the exact production scenario: runtime started, then Discord message arrives."
-  (:require [cljs.test :refer [deftest is testing]]
+  "Verify gateway-shaped Discord messages through source and trigger dispatch, with captured action effects."
+  (:require [cljs.test :refer [deftest is testing use-fixtures]]
             [knoxx.backend.domain.condition.builtin :as condition-builtins]
             [knoxx.backend.domain.driver.builtin :as driver-builtin]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
-            [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.source.runtime :as source-runtime]
-            [knoxx.backend.domain.trigger.runtime :as trigger-runtime]))
+            [knoxx.backend.domain.trigger.runtime :as trigger-runtime]
+            [knoxx.backend.triggers.action-fixture :as action-fixture]))
+
+(def action-calls (atom []))
+(use-fixtures :each (action-fixture/recording-fixture action-calls))
 
 (def fixture-config
   {:contracts-dir "test/fixtures/trigger-contracts"})
@@ -48,17 +51,13 @@
                :gatewayBotUserId "bot-123"}
           ;; This is the exact event shape built by core.cljs on-message! handler
           event {:event/type :discord.message
-                 :event/payload msg}]
-      (try
-        (await (source-runtime/dispatch-driver-event!
-                fixture-config
-                :driver/discord
-                "discord_automation"
-                event))
-        (is false "Should have thrown runtime unavailable error")
-        (catch :default err
-          (is (re-find #"runtime unavailable" (str (.-message err)))
-              "Error should be visible and mention runtime"))))))
+                 :event/payload msg}
+          result (await (source-runtime/dispatch-driver-event!
+                          fixture-config :driver/discord "discord_automation" event))]
+        (is (= ["ussyverse_social_replies_event"] (:matchedTriggers result)))
+        (is (= 1 (count @action-calls)))
+        (is (= msg (get-in @action-calls [0 :ctx :event :event/payload])))
+        (is (= "ussyverse_social_replies" (get-in @action-calls [0 :action :action/with :agent-id]))))))
 
 (deftest ^:async keyword-only-message-flow
   (testing "a keyword-only message (no mention) still dispatches through the fixture trigger"
@@ -71,14 +70,10 @@
                :gatewayActorId "discord_automation"
                :gatewayBotUserId "bot-123"}
           event {:event/type :discord.message
-                 :event/payload msg}]
-      (try
-        (await (source-runtime/dispatch-driver-event!
-                fixture-config
-                :driver/discord
-                "discord_automation"
-                event))
-        (is false "Should have thrown runtime unavailable error")
-        (catch :default err
-          (is (re-find #"runtime unavailable" (str (.-message err)))
-              "Error should be visible and mention runtime"))))))
+                 :event/payload msg}
+          result (await (source-runtime/dispatch-driver-event!
+                          fixture-config :driver/discord "discord_automation" event))]
+        (is (= ["ussyverse_social_replies_event"] (:matchedTriggers result)))
+        (is (= 1 (count @action-calls)))
+        (is (= msg (get-in @action-calls [0 :ctx :event :event/payload])))
+        (is (= "ussyverse_social_replies" (get-in @action-calls [0 :action :action/with :agent-id]))))))

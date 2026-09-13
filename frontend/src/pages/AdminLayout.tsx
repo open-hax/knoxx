@@ -10,8 +10,6 @@ import {
   listAdminPermissions,
   listAdminTools,
   listAdminOrgs,
-  setKnoxxAuthIdentity,
-  createAdminOrg,
 } from '../lib/nextApi';
 import type {
   AdminDataLakeSummary,
@@ -26,19 +24,15 @@ import type {
   KnoxxAuthIdentity,
 } from '../lib/types';
 
-import { IdentitySection } from '../components/admin-page/IdentitySection';
-import { SummarySection } from '../components/admin-page/SummarySection';
-import { OrganizationsSection } from '../components/admin-page/OrganizationsSection';
-import { SelectedOrgSection } from '../components/admin-page/SelectedOrgSection';
+import { AdminOverviewPage } from '../components/admin-page/SummarySection';
+import { AdminOrgsPage } from '../components/admin-page/OrganizationsSection';
 import { UsersMembershipsSection } from '../components/admin-page/UsersMembershipsSection';
-import { RolesSection } from '../components/admin-page/RolesSection';
-import { DataLakesSection } from '../components/admin-page/DataLakesSection';
+import { AdminRolesPage } from '../components/admin-page/RolesSection';
+import { AdminLakesPage } from '../components/admin-page/DataLakesSection';
 import { ProxxObservabilitySection } from '../components/admin-page/ProxxObservabilitySection';
 import { CatalogSection } from '../components/admin-page/CatalogSection';
 import { Badge } from '../components/admin-page/common';
 
-const ORG_KIND_OPTIONS = ['platform_owner', 'customer', 'internal', 'partner'];
-const DATA_LAKE_KIND_OPTIONS = ['workspace_docs', 'analytics', 'notes', 'uploads'];
 
 // ── Tab definitions ──────────────────────────────────────────────────────────
 
@@ -54,7 +48,7 @@ const ADMIN_TABS = [
 
 // ── Shared admin context hook ───────────────────────────────────────────────
 
-interface AdminCtx {
+export interface AdminCtx {
   identityForm: KnoxxAuthIdentity;
   setIdentityForm: React.Dispatch<React.SetStateAction<KnoxxAuthIdentity>>;
   context: KnoxxAuthContext | null;
@@ -119,7 +113,7 @@ function useAdminContext(): AdminCtx {
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
 
   const [orgForm, setOrgForm] = useState<OrgFormState>({ name: '', slug: '', kind: 'customer' });
-  const [userForm, setUserForm] = useState<UserFormState>({ actorId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
+  const [userForm, setUserForm] = useState<UserFormState>({ actorId: '', axxiumPrincipalId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
   const [roleForm, setRoleForm] = useState<RoleFormState>({ name: '', slug: '', permissionCodes: [], toolIds: ['read', 'canvas'] });
   const [lakeForm, setLakeForm] = useState<LakeFormState>({ name: '', slug: '', kind: 'workspace_docs', workspaceRoot: '' });
 
@@ -213,46 +207,6 @@ function useAdminContext(): AdminCtx {
 
 // ── Sub-page components (compact) ───────────────────────────────────────────
 
-function AdminOverviewPage({ ctx }: { ctx: AdminCtx }) {
-  const handleApplyIdentity = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const resolved = setKnoxxAuthIdentity(ctx.identityForm);
-    ctx.setIdentityForm(resolved);
-    ctx.setNotice({ tone: 'success', text: `Switched to ${resolved.userEmail} in ${resolved.orgSlug}.` });
-    await ctx.refresh();
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2">
-        <IdentitySection identityForm={ctx.identityForm} setIdentityForm={ctx.setIdentityForm} context={ctx.context} onApplyIdentity={handleApplyIdentity} />
-        <SummarySection orgs={ctx.orgs} toolsCount={ctx.tools.length} permissionsCount={ctx.permissions.length} bootstrap={ctx.bootstrap} />
-      </div>
-    </div>
-  );
-}
-
-function AdminOrgsPage({ ctx }: { ctx: AdminCtx }) {
-  const handleCreateOrg = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!ctx.hasPermission('platform.org.create')) return;
-    ctx.setCreatingOrg(true); ctx.setNotice(null);
-    try {
-      const r = await createAdminOrg({ name: ctx.orgForm.name.trim(), slug: ctx.orgForm.slug.trim() || undefined, kind: ctx.orgForm.kind });
-      ctx.setOrgForm({ name: '', slug: '', kind: 'customer' });
-      ctx.setNotice({ tone: 'success', text: `Created ${r.org.name}.` }); await ctx.refresh(); ctx.setSelectedOrgId(r.org.id);
-    } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingOrg(false); }
-  };
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-      <OrganizationsSection context={ctx.context} orgs={ctx.orgs} selectedOrgId={ctx.selectedOrgId} setSelectedOrgId={ctx.setSelectedOrgId}
-        canCreateOrgs={ctx.hasPermission('platform.org.create')} orgForm={ctx.orgForm} setOrgForm={ctx.setOrgForm}
-        creatingOrg={ctx.creatingOrg} onCreateOrg={handleCreateOrg} orgKindOptions={ORG_KIND_OPTIONS} />
-      <SelectedOrgSection selectedOrg={ctx.selectedOrg} context={ctx.context} />
-    </div>
-  );
-}
-
 function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault(); if (!ctx.selectedOrgId) return;
@@ -260,16 +214,28 @@ function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
     try {
       const actorId = ctx.userForm.actorId.trim();
       const email = ctx.userForm.email.trim();
-      await (await import('../lib/nextApi')).createOrgActor(ctx.selectedOrgId, { actorId: actorId || undefined, email: email || undefined, displayName: ctx.userForm.displayName.trim() || actorId || email, roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic-user'] });
-      ctx.setUserForm({ actorId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
-      ctx.setNotice({ tone: 'success', text: 'Actor created.' }); await ctx.refresh();
+      const principalId = (ctx.userForm.axxiumPrincipalId || '').trim();
+      const displayName = ctx.userForm.displayName.trim();
+      const created = await (await import('../lib/nextApi')).createOrgActor(ctx.selectedOrgId, {
+        ...(principalId ? { axxiumPrincipalId: principalId, ...(displayName ? { displayName } : {}) }
+          : { actorId: actorId || undefined, email: email || undefined, displayName: displayName || actorId || email }),
+        roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic-user'],
+      });
+      ctx.setUserForm({ actorId: '', axxiumPrincipalId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
+      await ctx.refresh();
+      ctx.setNotice({ tone: 'success', text: created.user?.identityBound ? 'Actor bound to the verified Axxium principal.' : 'Actor created. Identity enrollment is required before this actor can sign in.' });
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingUser(false); }
   };
   const saveActorProfile = async (userId: string, draft: { actorId: string; displayName: string; email: string; status: string }) => {
     ctx.setNotice(null);
     try {
-      await (await import('../lib/nextApi')).updateAdminActor(userId, { orgId: ctx.selectedOrgId, actorId: draft.actorId.trim(), displayName: draft.displayName.trim(), email: draft.email.trim(), status: draft.status });
-      ctx.setNotice({ tone: 'success', text: 'Actor profile updated.' }); await ctx.refresh();
+      const current = ctx.users.find(user => user.id === userId);
+      await (await import('../lib/nextApi')).updateAdminActor(userId, {
+        orgId: ctx.selectedOrgId, displayName: draft.displayName.trim(),
+        ...(current?.identityBound ? {} : { actorId: draft.actorId.trim() }),
+        ...(ctx.context?.isSystemAdmin && draft.status !== current?.status ? { status: draft.status } : {}),
+      });
+      await ctx.refresh(); ctx.setNotice({ tone: 'success', text: 'Actor profile updated.' });
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); }
   };
   const saveActorCredential = async (userId: string, provider: string, draft: { kind: string; accountIdentifier: string; secretJson: Record<string, string> }) => {
@@ -295,6 +261,7 @@ function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
       selectedOrgId={ctx.selectedOrgId} selectedOrgName={ctx.selectedOrg?.name || ''}
       canCreateUsers={Boolean(ctx.selectedOrg && ctx.hasPermission('org.users.create'))}
       canUpdateMemberships={ctx.hasPermission('org.members.update')}
+      canUpdateGlobalStatus={Boolean(ctx.context?.isSystemAdmin)}
       canUpdateUserPolicies={ctx.hasPermission('org.user_policy.update')}
       users={ctx.users} roles={ctx.roles} tools={ctx.tools}
       userForm={ctx.userForm} setUserForm={ctx.setUserForm}
@@ -303,56 +270,6 @@ function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
       creatingUser={ctx.creatingUser} savingMembershipId={ctx.savingMembershipId}
       onCreateUser={handleCreateUser} onSaveActorProfile={saveActorProfile} onSaveActorCredential={saveActorCredential}
       onSaveMembershipRoles={saveMemberRoles} onSaveMembershipPolicies={saveMemberPolicies}
-    />
-  );
-}
-
-function AdminRolesPage({ ctx }: { ctx: AdminCtx }) {
-  const handleCreateRole = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!ctx.selectedOrgId) return;
-    ctx.setCreatingRole(true); ctx.setNotice(null);
-    try {
-      await (await import('../lib/nextApi')).createOrgRole(ctx.selectedOrgId, { name: ctx.roleForm.name.trim(), slug: ctx.roleForm.slug.trim() || undefined, permissionCodes: ctx.roleForm.permissionCodes, toolPolicies: ctx.roleForm.toolIds.map((t) => ({ toolId: t, effect: 'allow' })) });
-      ctx.setRoleForm({ name: '', slug: '', permissionCodes: [], toolIds: ['read', 'canvas'] });
-      ctx.setNotice({ tone: 'success', text: 'Role created.' }); await ctx.refresh();
-    } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingRole(false); }
-  };
-  const saveRolePolicies = async (id: string) => {
-    ctx.setSavingRoleId(id); ctx.setNotice(null);
-    try { await (await import('../lib/nextApi')).updateRoleToolPolicies(id, (await import('../components/admin-page/helpers')).toolPoliciesFromDraft(ctx.roleToolDrafts[id] || {})); ctx.setNotice({ tone: 'success', text: 'Policy updated.' }); await ctx.refresh(); }
-    catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setSavingRoleId(null); }
-  };
-
-  return (
-    <RolesSection
-      selectedOrgId={ctx.selectedOrgId} selectedOrgName={ctx.selectedOrg?.name || ''}
-      canCreateRoles={Boolean(ctx.selectedOrg && ctx.hasPermission('org.roles.create'))}
-      canUpdateRolePolicies={ctx.hasPermission('org.tool_policy.update')}
-      roles={ctx.roles} tools={ctx.tools} permissionGroups={ctx.permissionGroups}
-      roleForm={ctx.roleForm} setRoleForm={ctx.setRoleForm}
-      roleToolDrafts={ctx.roleToolDrafts} setRoleToolDrafts={ctx.setRoleToolDrafts}
-      creatingRole={ctx.creatingRole} savingRoleId={ctx.savingRoleId}
-      onCreateRole={handleCreateRole} onSaveRolePolicies={saveRolePolicies}
-    />
-  );
-}
-
-function AdminLakesPage({ ctx }: { ctx: AdminCtx }) {
-  const handleCreateLake = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!ctx.selectedOrgId) return;
-    ctx.setCreatingLake(true); ctx.setNotice(null);
-    try {
-      await (await import('../lib/nextApi')).createOrgDataLake(ctx.selectedOrgId, { name: ctx.lakeForm.name.trim(), slug: ctx.lakeForm.slug.trim() || undefined, kind: ctx.lakeForm.kind, config: ctx.lakeForm.workspaceRoot.trim() ? { workspaceRoot: ctx.lakeForm.workspaceRoot.trim() } : {} });
-      ctx.setLakeForm({ name: '', slug: '', kind: 'workspace_docs', workspaceRoot: ctx.selectedOrg ? `orgs/${ctx.selectedOrg.slug}` : '' });
-      ctx.setNotice({ tone: 'success', text: 'Lake created.' }); await ctx.refresh();
-    } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingLake(false); }
-  };
-
-  return (
-    <DataLakesSection
-      selectedOrgName={ctx.selectedOrg?.name || ''} canCreateDataLakes={Boolean(ctx.selectedOrg && ctx.hasPermission('org.datalakes.create'))}
-      lakeForm={ctx.lakeForm} setLakeForm={ctx.setLakeForm} creatingLake={ctx.creatingLake}
-      dataLakes={ctx.dataLakes} dataLakeKindOptions={DATA_LAKE_KIND_OPTIONS} onCreateLake={handleCreateLake}
     />
   );
 }
@@ -402,7 +319,7 @@ export default function AdminLayout() {
           {ADMIN_TABS.map((tab) => (
             <NavLink
               key={tab.path}
-              to={tab.path}
+              to={`${opsRoutes.admin}/${tab.path}`}
               end={tab.path === 'overview'}
               className={({ isActive }) =>
                 `shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition ${

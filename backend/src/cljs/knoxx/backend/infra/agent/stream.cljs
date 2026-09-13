@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.agent.stream
   "Streaming event handling for agent turns."
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.run-event-payload :refer [tool-event-payload]]
             [knoxx.backend.domain.agent.reasoning :as reasoning]
             [knoxx.backend.domain.agent.text-delta :as text-delta]
             [knoxx.backend.domain.agent.tool-lifecycle :as tool-lifecycle]
@@ -8,7 +9,7 @@
             [knoxx.backend.infra.agent.stream.provider-events :as provider-events]
             [knoxx.backend.infra.agent.stream.sinks :as sinks]
             [knoxx.backend.infra.agent.tools :refer [tool-call-preview-from-part assistant-tool-call-previews]]
-            [knoxx.backend.domain.action.run-state :refer [append-limited tool-event-payload]]
+            [knoxx.backend.domain.action.run-state :refer [append-limited]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.shape.agent :as agent-shape]

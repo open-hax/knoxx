@@ -2,7 +2,7 @@
   "Isolated module for session resumption across backend restarts.
 
    Startup:
-   - Scan Mongo for sessions that were active when the previous process exited.
+   - Scan the selected thread provider for sessions that were active when the previous process exited.
    - Recent sessions (< 10 min) are resumed in the background (non-blocking).
    - Stale sessions (>= 10 min) are aborted so the UI does not show ghost
      'active' sessions forever.
@@ -14,7 +14,6 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.agent.recovery :as agent-recovery]
             [knoxx.backend.infra.agent.session :as agent-session]
-            [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.infra.system-instance :as system-instance]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
@@ -215,16 +214,16 @@
   (js/Math.round (* 1000 (.uptime js/process))))
 
 (defn ^:async resume-on-startup!
-  "Fire-and-forget scan of Mongo running sessions on startup.
+  "Fire-and-forget scan of persisted running sessions on startup.
    At true process startup every running document was stamped by a previous
    system instance, so it is aborted (auto-resume off) or resumed
    (auto-resume on) immediately — no staleness wait.
    Returns a promise for testability, but callers should not await it
    on the critical startup path."
   [runtime app config]
-  (if-let [db (mongo-client/get-db)]
+  (if (session-store/available?)
     (try
-      (let [sessions (await (session-store/recover-sessions! db))
+      (let [sessions (await (session-store/recover-sessions! nil))
             running (vec (filter #(= "running" (:status %)) sessions))
             result (if (seq running)
                      (await (process-sessions! runtime app config running))
@@ -235,8 +234,8 @@
         (log-info! app "[agent-resume] startup scan failed" err)
         {:error (str err)}))
     (do
-      (log-warn! app "[agent-resume] MongoDB unavailable; skipping startup scan")
-      {:skipped true :reason "mongodb_not_connected"})))
+      (log-warn! app "[agent-resume] Thread provider unavailable; skipping startup scan")
+      {:skipped true :reason "thread_provider_unavailable"})))
 
 (defn resume-on-process-startup!
   "Run startup recovery once per Node process, not once per shadow-cljs reload.
@@ -303,9 +302,9 @@
 
 (defn ^:async attempt-recovery!
   [runtime app config]
-  (if-let [db (mongo-client/get-db)]
+  (if (session-store/available?)
     (try
-      (let [sessions (await (session-store/recover-sessions! db))
+      (let [sessions (await (session-store/recover-sessions! nil))
             running (vec (filter #(= "running" (:status %)) sessions))
             {stale true recent false} (group-by #(session-dead? config %) running)
             resumable (if (auto-resume-enabled? config)
@@ -319,9 +318,9 @@
          :skipped (- (count recent) (count resumable))})
       (catch :default err
         (log-info! app "[agent-resume] recovery tick error" err)
-        (log-info! app "[agent-resume] mongo:" (nil? (mongo-client/get-db)))
+        (log-info! app "[agent-resume] thread provider available:" (session-store/available?))
         {:error (str err)}))
-    {:skipped true :reason "mongodb_not_connected"}))
+    {:skipped true :reason "thread_provider_unavailable"}))
 
 (defn start-periodic-recovery!
   [runtime app config]

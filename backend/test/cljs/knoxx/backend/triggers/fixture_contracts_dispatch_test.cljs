@@ -2,7 +2,7 @@
   "End-to-end test: load fixture trigger/source contracts from disk and verify
    the full dispatch pipeline matches Discord events. Uses test/fixtures so the
    live contracts/ folder stays free for operators to edit."
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is testing use-fixtures]]
             [knoxx.backend.domain.condition.builtin :as condition-builtins]
             [knoxx.backend.domain.condition.registry :as condition-registry]
             [knoxx.backend.domain.driver.builtin :as driver-builtin]
@@ -10,7 +10,11 @@
             [knoxx.backend.domain.event.normalize :as event-normalize]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.source.runtime :as source-runtime]
-            [knoxx.backend.domain.trigger.normalize :as trigger-normalize]))
+            [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
+            [knoxx.backend.triggers.action-fixture :as action-fixture]))
+
+(def action-calls (atom []))
+(use-fixtures :each (action-fixture/recording-fixture action-calls))
 
 (def fixture-config
   {:contracts-dir "test/fixtures/trigger-contracts"})
@@ -110,22 +114,18 @@
           "Condition should not match unrelated message"))))
 
 (deftest ^:async full-dispatch-pipeline-with-fixture-contracts
-  (testing "the full source dispatch pipeline matches trigger, then action errors visibly"
+  (testing "real disk contracts route a source event to the captured action boundary"
     (driver-builtin/register-built-in-drivers!)
     (condition-builtins/register-builtins!)
     (event-dispatch/reset-dedup!)
-    (try
-      (await (source-runtime/dispatch-driver-event!
-              fixture-config
-              :driver/discord
-              "discord_automation"
-              {:event/type :discord.message
-               :event/payload {:content "hey frankie what's up"
-                               :gatewayBotUserId "12345"
-                               :gatewayActorId "discord_automation"
-                               :channelId "123"
-                               :id "msg-4"}}))
-      (is false "Should have thrown runtime unavailable error")
-      (catch :default err
-        (is (re-find #"runtime unavailable" (str (.-message err)))
-            "Error should be visible and mention runtime")))))
+    (let [result (await (source-runtime/dispatch-driver-event!
+                         fixture-config :driver/discord "discord_automation"
+                         {:event/type :discord.message
+                          :event/payload {:content "hey frankie what's up"
+                                          :gatewayBotUserId "12345"
+                                          :gatewayActorId "discord_automation"
+                                          :channelId "123" :id "msg-4"}}))]
+      (is (= ["ussyverse_social_replies_event"] (:matchedTriggers result)))
+      (is (= :completed (:dedup/status result)))
+      (is (= 1 (count @action-calls)))
+      (is (= "ussyverse_social_replies" (get-in @action-calls [0 :action :action/with :agent-id]))))))

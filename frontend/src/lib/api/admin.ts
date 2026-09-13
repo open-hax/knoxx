@@ -10,62 +10,39 @@ import type {
   AdminToolPolicy,
   AdminUserSummary,
 } from "../types";
-import { request } from "./core";
-
-type WireRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): WireRecord {
-  return value != null && typeof value === "object" && !Array.isArray(value) ? value as WireRecord : {};
-}
-
-function valueAt(record: WireRecord, ...keys: string[]): unknown {
-  for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(record, key)) {
-      return record[key];
-    }
-  }
-  return undefined;
-}
-
-function stringValue(record: WireRecord, keys: string[], fallback = ""): string {
-  const value = valueAt(record, ...keys);
-  return typeof value === "string" ? value : fallback;
-}
-
-function optionalStringValue(record: WireRecord, keys: string[]): string | undefined {
-  const value = valueAt(record, ...keys);
-  return typeof value === "string" ? value : undefined;
-}
-
-function optionalNullableStringValue(record: WireRecord, keys: string[]): string | null | undefined {
-  const value = valueAt(record, ...keys);
-  if (value === null) return null;
-  return typeof value === "string" ? value : undefined;
-}
-
-function optionalBooleanValue(record: WireRecord, keys: string[]): boolean | undefined {
-  const value = valueAt(record, ...keys);
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function optionalNumberValue(record: WireRecord, keys: string[]): number | undefined {
-  const value = valueAt(record, ...keys);
-  return typeof value === "number" ? value : undefined;
-}
-
-function stringArrayValue(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-}
-
-function recordArrayValue(value: unknown): WireRecord[] {
-  return Array.isArray(value) ? value.map(asRecord) : [];
-}
-
-function optionalRecordValue(record: WireRecord, keys: string[]): Record<string, unknown> | undefined {
-  const value = valueAt(record, ...keys);
-  const normalized = asRecord(value);
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
-}
+import {
+  request,
+  asRecord,
+  valueAt,
+  stringValue,
+  optionalStringValue,
+  optionalNullableStringValue,
+  optionalBooleanValue,
+  optionalNumberValue,
+  stringArrayValue,
+  recordArrayValue,
+  optionalRecordValue,
+} from "./core";
+import type {
+  GraphMonitoringStats,
+  DiscordConfigStatus,
+  EventAgentControlResponse,
+  CreateOrgActorPayload,
+  UpdateAdminActorPayload,
+  ActorCredentialPayload,
+  CreateOrgRolePayload,
+  CreateOrgDataLakePayload,
+  EventAgentEventPayload,
+  EventAgentRuntimeResetResponse,
+} from "../../components/admin-page/types";
+export type {
+  GraphMonitoringStats,
+  DiscordConfigStatus,
+  EventAgentToolPolicy,
+  EventAgentJobControl,
+  EventAgentRuntimeJob,
+  EventAgentControlResponse,
+} from "../../components/admin-page/types";
 
 function inferPermissionResourceKind(code: string): string {
   return code.split(".")[0] || "misc";
@@ -190,6 +167,9 @@ function normalizeUser(value: unknown): AdminUserSummary {
   const record = asRecord(value);
   return {
     id: stringValue(record, ["id"]),
+    principalId: optionalStringValue(record, ["principalId"]),
+    identityBound: valueAt(record, "identityBound") === true,
+    identityEnrollmentRequired: valueAt(record, "identityEnrollmentRequired") === true,
     email: stringValue(record, ["email"]),
     displayName: stringValue(record, ["displayName"], stringValue(record, ["email"])),
     authProvider: optionalStringValue(record, ["authProvider"]),
@@ -249,13 +229,7 @@ export async function listOrgActors(orgId: string): Promise<{ users: AdminUserSu
   return { users: recordArrayValue(valueAt(response, "users")).map(normalizeUser) };
 }
 
-export async function createOrgActor(orgId: string, payload: {
-  actorId?: string;
-  email?: string;
-  displayName: string;
-  roleSlugs: string[];
-  toolPolicies?: AdminToolPolicy[];
-}): Promise<{ user: AdminUserSummary | null }> {
+export async function createOrgActor(orgId: string, payload: CreateOrgActorPayload): Promise<{ user: AdminUserSummary | null }> {
   const response = asRecord(await request<unknown>(`/api/admin/orgs/${encodeURIComponent(orgId)}/actors`, {
     method: "POST",
     body: JSON.stringify(payload),
@@ -264,29 +238,19 @@ export async function createOrgActor(orgId: string, payload: {
   return { user: user == null ? null : normalizeUser(user) };
 }
 
-export async function updateAdminActor(userId: string, payload: {
-  orgId: string;
-  actorId?: string;
-  email?: string;
-  displayName?: string;
-  status?: string;
-  authProvider?: string;
-  externalSubject?: string;
-}): Promise<{ user: AdminUserSummary | null }> {
+export async function updateAdminActor(userId: string, payload: UpdateAdminActorPayload): Promise<{ user: AdminUserSummary | null }> {
+  // A blank optional field means this unbound row still has no actor identity.
+  // Sending an empty string would ask the directory to assign an invalid ID.
+  const actorId = payload.actorId?.trim() || undefined;
   const response = asRecord(await request<unknown>(`/api/admin/actors/${encodeURIComponent(userId)}`, {
     method: "PATCH",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, actorId }),
   }));
   const user = valueAt(response, "user");
   return { user: user == null ? null : normalizeUser(user) };
 }
 
-export async function upsertAdminActorCredential(userId: string, provider: string, payload: {
-  orgId: string;
-  kind: string;
-  accountIdentifier?: string;
-  secretJson: Record<string, string>;
-}): Promise<{ credential: unknown }> {
+export async function upsertAdminActorCredential(userId: string, provider: string, payload: ActorCredentialPayload): Promise<{ credential: unknown }> {
   return request<{ credential: unknown }>(`/api/admin/actors/${encodeURIComponent(userId)}/credentials/${encodeURIComponent(provider)}`, {
     method: "PUT",
     body: JSON.stringify(payload),
@@ -298,12 +262,7 @@ export async function listOrgRoles(orgId: string): Promise<{ roles: AdminRoleSum
   return { roles: recordArrayValue(valueAt(response, "roles")).map(normalizeRole) };
 }
 
-export async function createOrgRole(orgId: string, payload: {
-  name: string;
-  slug?: string;
-  permissionCodes: string[];
-  toolPolicies?: AdminToolPolicy[];
-}): Promise<{ role: AdminRoleSummary | null }> {
+export async function createOrgRole(orgId: string, payload: CreateOrgRolePayload): Promise<{ role: AdminRoleSummary | null }> {
   const response = asRecord(await request<unknown>(`/api/admin/orgs/${encodeURIComponent(orgId)}/roles`, {
     method: "POST",
     body: JSON.stringify(payload),
@@ -344,35 +303,12 @@ export async function listOrgDataLakes(orgId: string): Promise<{ dataLakes: Admi
   return { dataLakes: recordArrayValue(valueAt(response, "dataLakes", "data-lakes", "data_lakes")).map(normalizeDataLake) };
 }
 
-export async function createOrgDataLake(orgId: string, payload: {
-  name: string;
-  slug?: string;
-  kind?: string;
-  config?: Record<string, unknown>;
-}): Promise<{ dataLake: AdminDataLakeSummary }> {
+export async function createOrgDataLake(orgId: string, payload: CreateOrgDataLakePayload): Promise<{ dataLake: AdminDataLakeSummary }> {
   const response = asRecord(await request<unknown>(`/api/admin/orgs/${encodeURIComponent(orgId)}/data-lakes`, {
     method: "POST",
     body: JSON.stringify(payload),
   }));
   return { dataLake: normalizeDataLake(valueAt(response, "dataLake", "data-lake", "data_lake")) };
-}
-
-export interface GraphMonitoringStats {
-  ok: boolean;
-  stats: {
-    nodes: number;
-    edges: number;
-    embeddings: number;
-    layouts: number;
-  };
-  projectBreakdown: Array<{ project: string; count: number }>;
-  recentEmbeddings: Array<{
-    nodeId: string;
-    model: string | null;
-    dimensions: number;
-    updatedAt: Date | null;
-  }>;
-  storageBackend: string;
 }
 
 export async function getGraphMonitoring(): Promise<GraphMonitoringStats> {
@@ -385,99 +321,6 @@ export async function getGraphMonitoring(): Promise<GraphMonitoringStats> {
     throw new Error(`Graph monitoring request failed: ${res.status}`);
   }
   return res.json();
-}
-
-export interface DiscordConfigStatus {
-  configured: boolean;
-  tokenPreview: string;
-}
-
-export interface EventAgentToolPolicy {
-  toolId: string;
-  effect: "allow" | "deny";
-}
-
-export interface EventAgentJobControl {
-  id: string;
-  name: string;
-  enabled: boolean;
-  description?: string;
-  contractSourceId?: string;
-  contractSourceKind?: string;
-  contractSourceKey?: string;
-  contractHash?: number;
-  actorId?: string;
-  trigger: {
-    kind: string;
-    cadenceMinutes: number;
-    eventKinds: string[];
-  };
-  source: {
-    kind: string;
-    mode: string;
-    config: Record<string, unknown>;
-  };
-  filters: Record<string, unknown>;
-  agentSpec: {
-    role: string;
-    model: string;
-    thinkingLevel: string;
-    systemPrompt: string;
-    taskPrompt: string;
-    toolPolicies: EventAgentToolPolicy[];
-  };
-}
-
-export interface EventAgentRuntimeJob {
-  id: string;
-  name: string;
-  enabled: boolean;
-  contractSourceId?: string;
-  contractSourceKind?: string;
-  contractSourceKey?: string;
-  scheduleLabel: string;
-  trigger?: {
-    kind: string;
-    cadenceMinutes?: number;
-    eventKinds?: string[];
-  };
-  source?: {
-    kind: string;
-    mode?: string;
-  };
-  running?: boolean;
-  runCount?: number;
-  lastStartedAt?: number;
-  lastFinishedAt?: number;
-  lastDurationMs?: number;
-  lastStatus?: string;
-  lastError?: string;
-  nextRunAt?: number;
-}
-
-export interface EventAgentControlResponse extends DiscordConfigStatus {
-  availableRoles: string[];
-  availableSourceKinds: string[];
-  availableTriggerKinds: string[];
-  control: {
-    sources: {
-      discord?: {
-        botUserId?: string;
-        defaultChannels?: string[];
-        targetKeywords?: string[];
-      };
-      github?: Record<string, unknown>;
-      cron?: Record<string, unknown>;
-      [key: string]: unknown;
-    };
-    jobs: EventAgentJobControl[];
-  };
-  runtime: {
-    running: boolean;
-    configured: boolean;
-    sources?: Record<string, unknown>;
-    jobs: EventAgentRuntimeJob[];
-  };
 }
 
 export async function getDiscordConfig(): Promise<DiscordConfigStatus> {
@@ -514,11 +357,7 @@ export async function fireTrigger(triggerId: string): Promise<{ ok: boolean; tri
   });
 }
 
-export async function dispatchEventAgentEvent(event: {
-  sourceKind: string;
-  eventKind: string;
-  payload?: Record<string, unknown>;
-}): Promise<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }> {
+export async function dispatchEventAgentEvent(event: EventAgentEventPayload): Promise<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }> {
   return request<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }>("/api/admin/config/events/dispatch", {
     method: "POST",
     body: JSON.stringify(event),
@@ -537,26 +376,8 @@ export async function startEventAgentRuntime(): Promise<EventAgentControlRespons
   });
 }
 
-export async function resetEventAgentRuntime(): Promise<EventAgentControlResponse & {
-  ok: boolean;
-  action: string;
-  reset: {
-    ok: boolean;
-    deletedCount: number;
-    disabledCronJobCount?: number;
-    preservedCronJobCount?: number;
-  };
-}> {
-  return request<EventAgentControlResponse & {
-    ok: boolean;
-    action: string;
-    reset: {
-      ok: boolean;
-      deletedCount: number;
-      disabledCronJobCount?: number;
-      preservedCronJobCount?: number;
-    };
-  }>("/api/admin/config/events/runtime/reset", {
+export async function resetEventAgentRuntime(): Promise<EventAgentRuntimeResetResponse> {
+  return request<EventAgentRuntimeResetResponse>("/api/admin/config/events/runtime/reset", {
     method: "POST",
   });
 }

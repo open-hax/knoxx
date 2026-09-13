@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n CSS,BRIDGE,APP_BRIDGE,SHADOW_BRIDGE,SHADOW \"tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css --watch\" \"vite build --config vite.bridge.config.ts --watch\" \"vite build --config vite.app-bridge.config.ts --watch\" \"node scripts/watch-shadow-bridge-rebuild.mjs\" \"shadow-cljs watch app\"",
-    "build": "vite build --config vite.bridge.config.ts && vite build --config vite.app-bridge.config.ts && shadow-cljs release app && tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css",
+    "build": "vite build --config vite.bridge.config.ts && vite build --config vite.app-bridge.config.ts && vite build --config vite.config.ts && shadow-cljs release app && tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css",
     "preview": "vite preview",
     "test": "NODE_ENV=test vitest run --config vitest.config.ts",
     "test:coverage": "NODE_ENV=test vitest run --config vitest.config.ts --coverage",
     "test:watch": "NODE_ENV=test vitest --config vitest.config.ts",
-    "test:cljs": "shadow-cljs compile test",
+    "test:cljs": "node ../backend/scripts/run-shadow-tests-ci.mjs test",
     "lint:cljs:changed": "../scripts/lint-frontend-cljs-changed.sh",
     "migration:compile": "shadow-cljs compile migration-manifest",
     "migration:write": "shadow-cljs compile migration-manifest && node dist/migration/frontend-migration-manifest.cjs --write",
@@ -24,7 +24,8 @@
     "build:cljs": "shadow-cljs release app",
     "compile:legacy": "tsc -p tsconfig.legacy.json",
     "build:bridge": "vite build --config vite.bridge.config.ts",
-    "build:app-bridge": "vite build --config vite.app-bridge.config.ts"
+    "build:app-bridge": "vite build --config vite.app-bridge.config.ts",
+    "lint": "clj-kondo --lint src/cljs src/dev src/e2e test/cljs ../shared/src/cljs --fail-level warning"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",

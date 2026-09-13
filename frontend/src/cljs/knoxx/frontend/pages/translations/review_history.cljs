@@ -1,7 +1,7 @@
 (ns knoxx.frontend.pages.translations.review-history
   "Shared immutable-label history for legacy segments and resource splits."
   (:require [clojure.string :as str]
-            [helix.core :refer [defnc]]
+            [helix.core :as hx]
             [helix.dom :as d]))
 
 (defn- wire-text
@@ -68,7 +68,7 @@
          (authored-text "Correction" (:corrected_text label) true)
          (authored-text "Notes" (:editor_notes label) false)))
 
-(defnc review-history
+(hx/defnc review-history
   "Render ordered append-only review facts without treating them as form state."
   [{:keys [labels title empty-copy]
     :or {title "Existing labels"}}]

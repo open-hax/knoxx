@@ -1,10 +1,11 @@
 (ns knoxx.backend.infra.stores.openplanner-session-store
-  "OpenPlanner driver for ISessionStore.
+  "OpenPlanner archive projection for ISessionStore, never an ordered event authority.
 
    Writes runs as structured events. Reads are best-effort via graph query.
-   This store is authoritative for COMPLETED runs only.
-   In-flight runs are owned by the Mongo session store."
-  (:require [clojure.string :as str]
+   Snapshot lookup is approximate; it cannot supply authoritative reconnect reads.
+   Application provider selection and run-events/install! refuse it as a run authority."
+  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [clojure.string :as str]
             [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run! get-run patch-run! put-run!]]
             [knoxx.backend.infra.openplanner.memory :as op-mem]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -116,7 +117,8 @@
 (defn- ^:async get-run-impl!
   [config run-id]
   (let [result (await (openplanner-client/vector-search! (openplanner-client/client config)
-                                                         {:q run-id
+                                                         {:org_id (planner-scope/org-id! config)
+                                                          :q run-id
                                                           :k 1
                                                           :project (:session-project-name config)
                                                           :kind "knoxx.run"}))]

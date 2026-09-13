@@ -1,3 +1,4 @@
+import type { ProxxModelInfo, ProxxHealth, ProxxChatResponse } from "../types";
 import { request } from "./core";
 
 export type ProxxUsageWindow = "daily" | "weekly" | "monthly";
@@ -99,4 +100,32 @@ export async function listProxxRequestLogs(params?: {
 
 export async function getProxxProviderModelAnalytics(window: ProxxUsageWindow = "daily"): Promise<ProxxProviderModelAnalytics> {
   return request<ProxxProviderModelAnalytics>(`/api/proxx/observability/analytics/provider-model?window=${encodeURIComponent(window)}`);
+}
+
+export async function listProxxModels(): Promise<ProxxModelInfo[]> {
+  const data = await request<{ models: ProxxModelInfo[] }>("/api/proxx/models");
+  return data.models.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export async function proxxHealth(): Promise<ProxxHealth> {
+  return request<ProxxHealth>("/api/proxx/health");
+}
+
+export async function proxxChat(payload: {
+  model?: string;
+  system_prompt?: string;
+  messages: Array<{ role: string; content: string }>;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  stop?: string[];
+  rag_enabled?: boolean;
+  rag_collection?: string;
+  rag_limit?: number;
+  rag_threshold?: number;
+}): Promise<ProxxChatResponse> {
+  return request<ProxxChatResponse>("/api/proxx/chat", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

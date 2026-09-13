@@ -5,6 +5,8 @@ import {
   listAdminOrgs,
   listOrgRoles,
   listOrgActors,
+  createOrgActor,
+  updateAdminActor,
   getDiscordConfig,
   updateDiscordConfig,
   getEventAgentControl,
@@ -19,13 +21,64 @@ import {
 
 // Mock the core request module
 const mockRequest = vi.fn();
-vi.mock("./core", () => ({
+vi.mock("./core", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./core")>(),
   request: (...args: unknown[]) => mockRequest(...args),
 }));
 
 describe("Admin API", () => {
   beforeEach(() => {
     mockRequest.mockReset();
+  });
+
+  it("preserves verified binding and unbound enrollment flags from the directory", async () => {
+    mockRequest.mockResolvedValueOnce({users: [
+      {id: "bound", principalId: "principal", identityBound: true, identityEnrollmentRequired: false, memberships: []},
+      {id: "unbound", identityBound: false, identityEnrollmentRequired: true, memberships: []},
+    ]});
+    const {users} = await listOrgActors("org");
+    expect(users[0]).toMatchObject({principalId: "principal", identityBound: true, identityEnrollmentRequired: false});
+    expect(users[1]).toMatchObject({identityBound: false, identityEnrollmentRequired: true});
+  });
+  it("sends an explicit principal without inventing email or actor ID", async () => {
+    mockRequest.mockResolvedValueOnce({user: {id: "user", principalId: "principal", identityBound: true, memberships: []}});
+    await createOrgActor("org", {axxiumPrincipalId: "principal", roleSlugs: ["basic-user"]});
+    const [url, init] = mockRequest.mock.calls[0];
+    expect(url).toBe("/api/admin/orgs/org/actors");
+    expect(JSON.parse(init.body)).toEqual({axxiumPrincipalId: "principal", roleSlugs: ["basic-user"]});
+  });
+
+  it("keeps a name-only profile unbound instead of assigning a blank actor ID", async () => {
+    mockRequest.mockResolvedValueOnce({user: {id: "user", identityBound: false, identityEnrollmentRequired: true, memberships: []}});
+    await updateAdminActor("user", {orgId: "org", displayName: "Revised name", actorId: "  "});
+    const [url, init] = mockRequest.mock.calls[0];
+    expect(url).toBe("/api/admin/actors/user");
+    expect(JSON.parse(init.body)).toEqual({orgId: "org", displayName: "Revised name"});
+  });
+  it("preserves an explicit nonblank actor ID and profile status changes", async () => {
+    mockRequest.mockResolvedValueOnce({user: {id: "user", memberships: []}});
+    await updateAdminActor("user", {orgId: "org", actorId: " agent-one ", status: "disabled"});
+    expect(JSON.parse(mockRequest.mock.calls[0][1].body)).toEqual({orgId: "org", actorId: "agent-one", status: "disabled"});
+  });
+
+  it("preserves explicit null and false aliases while filtering malformed tool policies", async () => {
+    mockRequest.mockResolvedValueOnce({ roles: [{
+      id: "reviewer",
+      orgId: null,
+      "org-id": "must-not-replace-null",
+      builtIn: false,
+      "built-in": true,
+      permissions: ["content.review", 3, null],
+      toolPolicies: [
+        { toolId: "read", effect: "allow", constraints: {} },
+        { toolId: "edit", effect: "unexpected" },
+        { effect: "deny" },
+      ],
+    }] });
+    const { roles } = await listOrgRoles("org/one");
+    expect(mockRequest).toHaveBeenCalledWith("/api/admin/orgs/org%2Fone/roles");
+    expect(roles[0]).toMatchObject({ orgId: null, builtIn: false, permissions: ["content.review"] });
+    expect(roles[0].toolPolicies).toEqual([{ toolId: "read", effect: "allow" }]);
   });
 
   it("getDiscordConfig fetches discord config", async () => {

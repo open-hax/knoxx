@@ -3,7 +3,7 @@
    Stand-ins for `@open-hax/uxx`'s Button/Card/Input in migrated pages —
    to be replaced by native uxx-helix once it is consumable from source
    (see kanban: knoxx-frontend-uxx-helix-native)."
-  (:require [helix.core :refer [defnc]]
+  (:require [helix.core :as hx]
             [helix.dom :as d]))
 
 (defn- button-classes [variant size]
@@ -16,19 +16,19 @@
          :ghost "border border-slate-700 text-slate-300 hover:bg-slate-800"
          "border border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700")))
 
-(defnc button
+(hx/defnc button
   "Button with :variant (:primary :secondary :ghost), :size (:sm :md),
    :loading (disables + aria-busy, label stays visible), :disabled,
    :on-click, :type."
-  [{:keys [variant size loading disabled on-click type children]}]
-  (d/button {:type (or type "button")
+  [{:keys [variant size loading disabled on-click children] button-type :type}]
+  (d/button {:type (or button-type "button")
              :disabled (boolean (or loading disabled))
              :aria-busy (boolean loading)
              :on-click on-click
              :class-name (button-classes variant size)}
             children))
 
-(defnc badge
+(hx/defnc badge
   "Small status pill with :variant (:default :success :warning :error :info)."
   [{:keys [variant children]}]
   (d/span {:class-name (str "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium "
@@ -40,7 +40,7 @@
                               "border-slate-700 bg-slate-800 text-slate-200"))}
           children))
 
-(defnc card
+(hx/defnc card
   "Container with :variant (:default :elevated) and :padding (:sm :md :lg)."
   [{:keys [variant padding class-name children]}]
   (d/div {:class-name (str "rounded-xl border border-slate-800 bg-slate-950/60 "
@@ -52,10 +52,10 @@
                            (or class-name ""))}
          children))
 
-(defnc input
+(hx/defnc input
   "Text input passing through :value :on-change :placeholder :disabled :type."
-  [{:keys [value on-change placeholder disabled type]}]
-  (d/input {:type (or type "text")
+  [{:keys [value on-change placeholder disabled] input-type :type}]
+  (d/input {:type (or input-type "text")
             :value value
             :on-change on-change
             :placeholder placeholder

@@ -275,3 +275,91 @@ export function ConversationVoiceButton({
     </div>
   );
 }
+
+export function VoiceLevelGauge({
+  audioLevelRef,
+  threshold,
+  onThresholdChange,
+}: {
+  audioLevelRef: React.MutableRefObject<number>;
+  threshold: number;
+  onThresholdChange: (v: number) => void;
+}) {
+  const [level, setLevel] = useState(0);
+
+  useEffect(() => {
+    let raf: number;
+    const tick = () => {
+      setLevel(audioLevelRef.current);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [audioLevelRef]);
+
+  const maxLevel = 0.06;
+  const pct = Math.min(100, (level / maxLevel) * 100);
+  const thresholdPct = Math.min(100, (threshold / maxLevel) * 100);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }} title={`Level: ${level.toFixed(4)} | Threshold: ${threshold.toFixed(3)}`}>
+      <div style={{
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: "var(--token-colors-accent-red)",
+        boxShadow: "0 0 6px var(--token-colors-accent-red)",
+      }} />
+      <div style={{ position: "relative", width: 72, height: 14 }}>
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          background: "var(--token-colors-surface-input)",
+          borderRadius: 3,
+          overflow: "hidden",
+          border: "1px solid var(--token-colors-border-subtle)",
+        }}>
+          <div style={{
+            width: `${pct}%`,
+            height: "100%",
+            background: level > threshold
+              ? "var(--token-colors-accent-green)"
+              : "var(--token-colors-accent-yellow)",
+            transition: "width 40ms linear",
+          }} />
+          <div style={{
+            position: "absolute",
+            left: `${thresholdPct}%`,
+            top: 0,
+            bottom: 0,
+            width: 2,
+            background: "var(--token-colors-accent-red)",
+            transform: "translateX(-50%)",
+            opacity: 0.9,
+          }} />
+        </div>
+        <input
+          type="range"
+          min={0.001}
+          max={0.06}
+          step={0.001}
+          value={threshold}
+          onChange={(e) => onThresholdChange(parseFloat(e.target.value))}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            opacity: 0,
+            cursor: "pointer",
+            margin: 0,
+            padding: 0,
+          }}
+        />
+      </div>
+      <span style={{ fontSize: 9, color: "var(--token-colors-text-muted)", minWidth: 28, fontVariantNumeric: "tabular-nums" }}>
+        {threshold.toFixed(3)}
+      </span>
+    </div>
+  );
+}

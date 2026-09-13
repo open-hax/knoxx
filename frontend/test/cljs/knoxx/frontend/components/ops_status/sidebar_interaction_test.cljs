@@ -2,22 +2,22 @@
   "Interaction contract for the Helix sidebar ops status: ws stats drive
   the metric rows; the ingestion poll drives the three section states.
   ws connect-stream and the documents api are mocked via set!."
-  (:require [cljs.test :refer [deftest is async use-fixtures]]
-            ["@testing-library/react" :as rtl]
+  (:require ["@testing-library/react" :as rtl]
             ["react" :as react]
-            [helix.core :refer [$]]
+            [cljs.test :as t]
+            [helix.core :as hx]
+            [knoxx.frontend.components.ops-status.sidebar :as sidebar]
             [knoxx.frontend.lib.ws :as ws]
-            [knoxx.frontend.pages.documents.api :as documents-api]
-            [knoxx.frontend.components.ops-status.sidebar :refer [sidebar-ops-status]]))
+            [knoxx.frontend.pages.documents.api :as documents-api]))
 
-(def stream-handlers (atom nil))
-(def disconnects (atom 0))
-(def progress-response (atom {:active false :canResumeForum false}))
+(def ^:private stream-handlers (atom nil))
+(def ^:private disconnects (atom 0))
+(def ^:private progress-response (atom {:active false :canResumeForum false}))
 
 (def ^:private real-connect ws/connect-stream)
 (def ^:private real-progress documents-api/ingestion-progress)
 
-(use-fixtures :each
+(t/use-fixtures :each
   {:before (fn []
              (reset! stream-handlers nil)
              (reset! disconnects 0)
@@ -37,41 +37,26 @@
 (defn- wait-until [msg pred]
   (rtl/waitFor (fn [] (when-not (pred) (throw (js/Error. (str "still waiting: " msg)))))))
 
-(deftest stats-update-metric-rows
-  (async done
-    (let [r (rtl/render ($ sidebar-ops-status))]
-      (-> (wait-until "stream attached" #(some? @stream-handlers))
-          (.then (fn []
-                   (.act react
-                         (fn []
-                           ((:on-stats @stream-handlers)
-                            (clj->js {:cpu_percent 42.5 :memory_percent 33.3
-                                      :gpu [{:util_gpu 91}]}))))
-                   (wait-until "cpu shown" #(some? (.queryByText r "42.5%")))))
-          (.then (fn []
-                   (is (some? (.queryByText r "33.3%")))
-                   (is (some? (.queryByText r "91.0%")))
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+(t/deftest ^:async stats-update-metric-rows
+  (let [r (rtl/render (hx/$ sidebar/sidebar-ops-status))]
+    (await (wait-until "stream attached" #(some? @stream-handlers)))
+    (.act react (fn []
+                  ((:on-stats @stream-handlers)
+                   (clj->js {:cpu_percent 42.5 :memory_percent 33.3 :gpu [{:util_gpu 91}]}))))
+    (await (wait-until "cpu shown" #(some? (.queryByText r "42.5%"))))
+    (t/is (some? (.queryByText r "33.3%")))
+    (t/is (some? (.queryByText r "91.0%")))))
 
-(deftest ingestion-states-render
-  (async done
-    (reset! progress-response {:active true
-                               :progress {:processedChunks 10 :totalChunks 40
-                                          :percentPrecise 25.0 :currentFile "doc.md"}})
-    (let [r (rtl/render ($ sidebar-ops-status))]
-      (-> (wait-until "active ingestion" #(some? (.queryByText r "10 / 40 (25.00%)")))
-          (.then (fn []
-                   (is (some? (.queryByText r "doc.md")))
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+(t/deftest ^:async ingestion-states-render
+  (reset! progress-response {:active true
+                             :progress {:processedChunks 10 :totalChunks 40
+                                        :percentPrecise 25.0 :currentFile "doc.md"}})
+  (let [r (rtl/render (hx/$ sidebar/sidebar-ops-status))]
+    (await (wait-until "active ingestion" #(some? (.queryByText r "10 / 40 (25.00%)"))))
+    (t/is (some? (.queryByText r "doc.md")))))
 
-(deftest disconnects-stream-on-unmount
-  (async done
-    (let [r (rtl/render ($ sidebar-ops-status))]
-      (-> (wait-until "stream attached" #(some? @stream-handlers))
-          (.then (fn []
-                   (.unmount r)
-                   (is (= 1 @disconnects))
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+(t/deftest ^:async disconnects-stream-on-unmount
+  (let [r (rtl/render (hx/$ sidebar/sidebar-ops-status))]
+    (await (wait-until "stream attached" #(some? @stream-handlers)))
+    (.unmount r)
+    (t/is (= 1 @disconnects))))

@@ -1,3 +1,7 @@
+import type React from "react";
+import { setKnoxxAuthIdentity } from "../../lib/nextApi";
+import { IdentitySection } from "./IdentitySection";
+import type { AdminCtx } from "../../pages/AdminLayout";
 import type { AdminBootstrapContext, AdminOrgSummary } from '../../lib/types';
 import { SectionCard } from './common';
 
@@ -46,5 +50,24 @@ export function SummarySection({
         </div>
       </div>
     </SectionCard>
+  );
+}
+
+export function AdminOverviewPage({ ctx }: { ctx: AdminCtx }) {
+  const handleApplyIdentity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const resolved = setKnoxxAuthIdentity(ctx.identityForm);
+    ctx.setIdentityForm(resolved);
+    ctx.setNotice({ tone: 'success', text: `Switched to ${resolved.userEmail} in ${resolved.orgSlug}.` });
+    await ctx.refresh();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <IdentitySection identityForm={ctx.identityForm} setIdentityForm={ctx.setIdentityForm} context={ctx.context} onApplyIdentity={handleApplyIdentity} />
+        <SummarySection orgs={ctx.orgs} toolsCount={ctx.tools.length} permissionsCount={ctx.permissions.length} bootstrap={ctx.bootstrap} />
+      </div>
+    </div>
   );
 }

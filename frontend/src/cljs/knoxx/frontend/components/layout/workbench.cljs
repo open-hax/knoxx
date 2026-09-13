@@ -3,11 +3,10 @@
 
    Shared across all pages. Provides collapsible, resizable sidebars
    and a main content area."
-  (:require [helix.core :as hx :refer [$ defnc]]
-            [helix.hooks :as hooks]
+  (:require [helix.core :as hx]
             [helix.dom :as d]
-            [knoxx.frontend.components.layout.collapsed-panel-tab
-             :refer [collapsed-panel-tab]]
+            [helix.hooks :as hooks]
+            [knoxx.frontend.components.layout.collapsed-panel-tab :as collapsed]
             [knoxx.frontend.lib.storage :as storage]))
 
 (defn- stored-int-or [stored fallback min-value max-value]
@@ -18,7 +17,8 @@
 
 ;; ── WorkbenchShell ──────────────────────────────────────────────────────────
 
-(defnc WorkbenchShell
+(hx/defnc WorkbenchShell
+  "Constrain the shared workspace shell to the available viewport."
   [{:keys [children class-name]}]
   (d/div {:class-name (or class-name "")
           :style #js {:display "flex"
@@ -47,7 +47,8 @@
     (.addEventListener js/window "mousemove" move)
     (.addEventListener js/window "mouseup" up)))
 
-(defnc PanelHeader
+(hx/defnc PanelHeader
+  "Render an optional panel header with its collapse action."
   [{:keys [label header on-collapse subtle]}]
   (when header
     (d/div {:style #js {:flexShrink 0
@@ -74,7 +75,8 @@
                                   :flexShrink 0}}
                      "Collapse"))))
 
-(defnc SideResizeHandle
+(hx/defnc SideResizeHandle
+  "Resize a sidebar by dragging toward or away from its selected edge."
   [{:keys [label edge width min-width max-width on-resize]}]
   (d/button {:type "button"
              :aria-label (str "Resize " label)
@@ -101,10 +103,11 @@
                   "col-resize"
                   (fn [move-event]
                     (let [delta (* (- (.-clientX move-event) start-x) direction)
-                          next (min max-width (max min-width (+ start-width delta)))]
-                      (on-resize next))))))}))
+                          resized (min max-width (max min-width (+ start-width delta)))]
+                      (on-resize resized))))))}))
 
-(defnc SidePanelFrame
+(hx/defnc SidePanelFrame
+  "Frame a sidebar at its persisted width and preserve its scroll boundary."
   [{:keys [children edge label header class-name width on-collapse]}]
   (d/aside {:class-name (or class-name "")
             :style #js {:width width
@@ -118,7 +121,7 @@
                         :borderRight (when (= edge "left") "1px solid var(--token-colors-border-default)")
                         :borderLeft (when (= edge "right") "1px solid var(--token-colors-border-default)")
                         :flexShrink 0}}
-           ($ PanelHeader {:label label :header header :on-collapse on-collapse})
+           (hx/$ PanelHeader {:label label :header header :on-collapse on-collapse})
            (d/div {:style #js {:flex 1
                                :minHeight 0
                                :overflow "hidden"
@@ -128,62 +131,47 @@
 
 ;; ── WorkbenchPanel (left/right sidebar) ─────────────────────────────────────
 
-(defnc WorkbenchPanel
-  [{:keys [children edge label storage-key
-            default-width min-width max-width
-            class-name header]
-    :or {default-width 320
-         min-width 200
-         max-width 600}}]
+(defn- use-persisted-panel [storage-key dimension default-size min-size max-size]
   (let [[open? set-open!] (hooks/use-state #(initial-open? storage-key))
-         [width set-width!] (hooks/use-state
-                              (fn []
-                                (stored-int-or (storage/safe-get-item (str storage-key "_width"))
-                                               default-width
-                                               min-width
-                                               max-width)))]
+        [size set-size!] (hooks/use-state
+                         #(stored-int-or (storage/safe-get-item (str storage-key "_" dimension))
+                                         default-size min-size max-size))]
+    (hooks/use-effect [open?]
+      (storage/safe-set-item (str storage-key "_open") (str open?))
+      nil)
+    (hooks/use-effect [size]
+      (storage/safe-set-item (str storage-key "_" dimension) (str size))
+      nil)
+    {:open? open? :set-open! set-open! :size size :set-size! set-size!}))
 
-    (hooks/use-effect
-     [open?]
-     (storage/safe-set-item (str storage-key "_open") (str open?))
-     nil)
+(hx/defnc ExpandedSidePanel
+  "Place the resize handle on the inner edge of an expanded sidebar."
+  [{:keys [children edge label header class-name min-width max-width width on-resize on-collapse]}]
+  (let [resize-handle (hx/$ SideResizeHandle {:label label :edge edge :width width
+                                            :min-width min-width :max-width max-width :on-resize on-resize})]
+    (d/div {:style #js {:display "flex" :height "100%" :minHeight 0 :overflow "hidden" :flexShrink 0}}
+      (when (= edge "right") resize-handle)
+      (hx/$ SidePanelFrame {:label label :edge edge :header header :class-name class-name
+                             :width width :on-collapse on-collapse} children)
+      (when (= edge "left") resize-handle))))
 
-    (hooks/use-effect
-     [width]
-     (storage/safe-set-item (str storage-key "_width") (str width))
-     nil)
-
+(hx/defnc WorkbenchPanel
+  "Maintain a collapsible sidebar with bounded width persisted in local storage."
+  [{:keys [children edge label storage-key default-width min-width max-width class-name header]
+    :or {default-width 320 min-width 200 max-width 600}}]
+  (let [{:keys [open? set-open! size set-size!]}
+        (use-persisted-panel storage-key "width" default-width min-width max-width)]
     (if-not open?
-      ($ collapsed-panel-tab
-         {:label label
-          :edge edge
-          :on-expand #(set-open! true)
-          :title (str "Show " label " panel")})
-       (let [resize-handle ($ SideResizeHandle {:label label
-                                                :edge edge
-                                                :width width
-                                                :min-width min-width
-                                                :max-width max-width
-                                                :on-resize set-width!})
-             panel ($ SidePanelFrame {:label label
-                                      :edge edge
-                                      :header header
-                                      :class-name class-name
-                                      :width width
-                                      :on-collapse #(set-open! false)}
-                      children)]
-         (d/div {:style #js {:display "flex"
-                             :height "100%"
-                             :minHeight 0
-                             :overflow "hidden"
-                             :flexShrink 0}}
-                (when (= edge "right") resize-handle)
-                panel
-                (when (= edge "left") resize-handle))))))
+      (hx/$ collapsed/collapsed-panel-tab {:label label :edge edge :on-expand #(set-open! true)
+                                           :title (str "Show " label " panel")})
+      (hx/$ ExpandedSidePanel {:label label :edge edge :header header :class-name class-name
+                                :width size :min-width min-width :max-width max-width
+                                :on-resize set-size! :on-collapse #(set-open! false)} children))))
 
 ;; ── WorkbenchMain ───────────────────────────────────────────────────────────
 
-(defnc WorkbenchMain
+(hx/defnc WorkbenchMain
+  "Compose the flexible main viewport and optional bottom panel."
   [{:keys [children class-name bottom-panel]}]
   (d/div {:class-name (or class-name "")
           :style #js {:flex 1
@@ -202,7 +190,8 @@
 
 ;; ── WorkbenchBottomPanel ────────────────────────────────────────────────────
 
-(defnc BottomResizeHandle
+(hx/defnc BottomResizeHandle
+  "Resize the bottom panel with a vertically clamped drag."
   [{:keys [label height min-height max-height on-resize]}]
   (d/button {:type "button"
              :aria-label (str "Resize " label)
@@ -226,10 +215,11 @@
                   "row-resize"
                   (fn [move-event]
                     (let [delta (- start-y (.-clientY move-event))
-                          next (min max-height (max min-height (+ start-height delta)))]
-                      (on-resize next))))))}))
+                          resized (min max-height (max min-height (+ start-height delta)))]
+                      (on-resize resized))))))}))
 
-(defnc BottomPanelFrame
+(hx/defnc BottomPanelFrame
+  "Frame bottom content at its persisted height with an optional header."
   [{:keys [children label header class-name height on-collapse resize-handle]}]
   (d/div {:class-name (or class-name "")
           :style #js {:height height
@@ -243,52 +233,24 @@
                       :borderTop "1px solid var(--token-colors-border-default)"
                       :position "relative"}}
          resize-handle
-         ($ PanelHeader {:label label
+         (hx/$ PanelHeader {:label label
                          :header header
                          :on-collapse on-collapse
                          :subtle true})
          (d/div {:style #js {:flex 1 :minHeight 0 :overflow "hidden"}}
                 children)))
 
-(defnc WorkbenchBottomPanel
-  [{:keys [children label storage-key
-           default-height min-height max-height
-           class-name header]
-    :or {default-height 240
-         min-height 120
-         max-height 600}}]
-  (let [[open? set-open!] (hooks/use-state #(initial-open? storage-key))
-         [height set-height!] (hooks/use-state
-                               (fn []
-                                 (stored-int-or (storage/safe-get-item (str storage-key "_height"))
-                                                default-height
-                                                min-height
-                                                max-height)))]
-
-    (hooks/use-effect
-     [open?]
-     (storage/safe-set-item (str storage-key "_open") (str open?))
-     nil)
-
-    (hooks/use-effect
-     [height]
-     (storage/safe-set-item (str storage-key "_height") (str height))
-     nil)
-
+(hx/defnc WorkbenchBottomPanel
+  "Maintain a collapsible bottom panel with a bounded persisted height."
+  [{:keys [children label storage-key default-height min-height max-height class-name header]
+    :or {default-height 240 min-height 120 max-height 600}}]
+  (let [{:keys [open? set-open! size set-size!]}
+        (use-persisted-panel storage-key "height" default-height min-height max-height)]
     (if-not open?
-      ($ collapsed-panel-tab
-         {:label label
-          :edge "bottom"
-          :on-expand #(set-open! true)
-          :title (str "Show " label " panel")})
-      ($ BottomPanelFrame {:label label
-                           :header header
-                           :class-name class-name
-                           :height height
-                           :on-collapse #(set-open! false)
-                           :resize-handle ($ BottomResizeHandle {:label label
-                                                                 :height height
-                                                                 :min-height min-height
-                                                                 :max-height max-height
-                                                                 :on-resize set-height!})}
-         children))))
+      (hx/$ collapsed/collapsed-panel-tab {:label label :edge "bottom" :on-expand #(set-open! true)
+                                           :title (str "Show " label " panel")})
+      (hx/$ BottomPanelFrame {:label label :header header :class-name class-name :height size
+                               :on-collapse #(set-open! false)
+                               :resize-handle (hx/$ BottomResizeHandle {:label label :height size
+                                                                          :min-height min-height :max-height max-height
+                                                                          :on-resize set-size!})} children))))

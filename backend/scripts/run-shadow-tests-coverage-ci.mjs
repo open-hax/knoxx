@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { testCountersExitCode } from './run-shadow-tests-ci.mjs';
+import { testEnvironment } from './shadow-test-environment.mjs';
 
 const SHADOW_CMD = process.platform === 'win32' ? 'shadow-cljs.cmd' : 'shadow-cljs';
 const TEST_BUILD  = 'test-ci';
@@ -15,7 +17,7 @@ function spawnP(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      env: testEnvironment(),
       ...opts,
     });
     let combined = '';
@@ -28,14 +30,7 @@ function spawnP(cmd, args, opts = {}) {
 }
 
 function exitForTestCounters(output) {
-  const match = output.match(/\b(\d+) failures?,\s*(\d+) errors?\./);
-  if (match) {
-    const failures = Number(match[1] || 0);
-    const errors   = Number(match[2] || 0);
-    process.exit(failures > 0 || errors > 0 ? 1 : 0);
-  }
-  console.error('[knoxx] Could not determine CLJS test result counters from output.');
-  process.exit(1);
+  process.exit(testCountersExitCode(output));
 }
 
 async function main() {

@@ -1,86 +1,137 @@
 (ns knoxx.backend.auth-session-test
-  (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.infra.auth.session :as auth-session]))
+  (:require [axxium.domain.identity :as identity-domain]
+            [axxium.infra.identity :as axxium]
+            [axxium.infra.identity-store :as axxium-store]
+            [cljs.test :refer [deftest is]]
+            [knoxx.backend.extern.axxium :as transport]
+            [knoxx.backend.extern.identity-fixture :as fixture]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.auth.session :as session]
+            [knoxx.backend.infra.identity :as identity]
+            [knoxx.backend.infra.identity-bootstrap :as bootstrap]
+            [knoxx.backend.infra.identity-bindings :as bindings]))
 
-(defn- with-env!
-  [bindings f]
-  (let [env (.-env js/process)
-        previous (into {}
-                       (map (fn [[k _]] [k (aget env k)]))
-                       bindings)]
-    (doseq [[k v] bindings]
-      (aset env k v))
+(defn- ^:async open-context! [directory options]
+  (with-redefs [transport/options (fn [_] {:provider :edn :directory (str directory "/identity")
+                                           :public-base-url "http://localhost"})
+                transport/bootstrap-options (fn [options]
+                                              {:username "admin" :email (:bootstrapSystemAdminEmail options)
+                                               :password (:bootstrapSystemAdminPassword options)
+                                               :principal-id "fixed-test-administrator"})]
+    (await (bootstrap/create-context! {:policy-provider :edn :wiki-directory directory} options))))
+
+(defn- ^:async refused [operation]
+  (try (await (operation)) nil
+       (catch :default error (or (:status (ex-data error)) (:code (ex-data error))))))
+
+(defn- signup! [context username]
+  (axxium/signup! (:axxium-service context) {:username username :email (str username "@example.test")
+                                            :password "correct horse battery staple"}))
+
+(deftest ^:async authentication-cache-identity-partitions-new-logins-without-bearing-the-secret
+  (let [directory (fixture/directory!)]
     (try
-      (f)
-      (finally
-        (doseq [[k old-value] previous]
-          (aset env k (or old-value "")))))))
+      (let [context (await (open-context! directory {}))
+            first-token (:token (await (signup! context "cache-user")))
+            second-token (:token (await (axxium/login! (:axxium-service context)
+                                                       {:identifier "cache-user" :password "correct horse battery staple"})))
+            first-ctx (await (identity/resolve-request! context (fixture/request first-token)))
+            second-ctx (await (identity/resolve-request! context (fixture/request second-token)))
+            refreshed (await (identity/current-context! context first-ctx))]
+        (is (= (:axxium-principal first-ctx) (:axxium-principal second-ctx)))
+        (is (re-matches #"[0-9a-f]{64}" (:identity/authentication-id first-ctx)))
+        (is (not= first-token (:identity/authentication-id first-ctx)))
+        (is (not= (:identity/authentication-id first-ctx) (:identity/authentication-id second-ctx)))
+        (is (= (:identity/authentication-id first-ctx) (:identity/authentication-id refreshed))))
+      (finally (fixture/remove! directory)))))
 
-(deftest ^:async ensure-user-membership-syncs-user-contract-before-resolve
-  (let [calls* (atom [])
-        ctx {:user {:id "user-1"
-                    :email "foamy125@gmail.com"
-                    :username "foamy125@gmail.com"}
-             :actor {:id "foamy125_gmail_com"}
-             :membership {:id "membership-1"
-                          :actor-id "foamy125_gmail_com"}
-             :role-slugs ["system_admin"]}
-        policy-db {:sync-user-from-actor-contract!
-                   (fn [payload]
-                     (swap! calls* conj [:sync payload])
-                     (js/Promise.resolve {:ok true}))
-                   :resolve-context!
-                   (fn [headers]
-                     (swap! calls* conj [:resolve headers])
-                     (js/Promise.resolve ctx))}]
-    (let [result (await (auth-session/ensure-user-membership! policy-db #js {"id" "gh-1" "login" "foamy"} "foamy125@gmail.com"))]
-      (testing "GitHub email is used as the canonical Knoxx username and syncs user actor contracts first"
-        (is (= ctx result))
-        (is (= [[:sync {:email "foamy125@gmail.com"
-                        :display-name "foamy"
-                        :auth-provider "github"
-                        :external-subject "github:gh-1"}]
-                [:resolve {"x-knoxx-user-email" "foamy125@gmail.com"}]]
-               @calls*))))))
-
-(deftest ^:async ensure-user-membership-propagates-lookup-failure
-  (let [policy-db {:resolve-context!
-                   (fn [_headers]
-                     (js/Promise.reject (js/Error. "not whitelisted")))}]
+(deftest ^:async active-identity-binds-by-id-and-replays-without-email-authority
+  (let [directory (fixture/directory!)]
     (try
-      (await (auth-session/ensure-user-membership! policy-db #js {"id" "gh-2"} "nobody@example.com"))
-      (is nil "expected rejection when no canonical user exists")
-      (catch :default err
-        (is (= "not whitelisted" (.-message err)))))))
+      (let [context (await (open-context! directory {}))
+            created (await (signup! context "alice"))
+            token (:token created)
+            request (fixture/request token {"x-knoxx-user-email" "admin@example.test"
+                                            "x-knoxx-membership-id" "admin-member"} "GET")
+            first-context (await (session/resolve-auth-context request context))
+            reopened (await (open-context! directory {}))
+            next-context (await (session/resolve-auth-context request reopened))]
+        (is (= "alice@example.test" (get-in first-context [:user :email])))
+        (is (= (:principal created) (:axxium-principal first-context)))
+        (is (= (:identity-binding first-context) (:identity-binding next-context)))
+        (is (= ["basic-user"] (:role-slugs first-context)))
+        (is (not (authz/system-admin? first-context)))
+        (is (= 401 (await (refused #(session/resolve-auth-context
+                                     (fixture/request nil {"x-knoxx-user-email" "alice@example.test"} "GET") reopened)))))
+        (is (= 401 (await (refused #(session/resolve-auth-context
+                                     (fixture/request nil {"x-api-key" "pretend-admin"} "GET") reopened)))))
+        (is (= 401 (await (refused #(session/ensure-user-membership! reopened nil "alice@example.test")))))
+        (is (= 409 (await (refused #(bindings/bind! (:identity-bindings reopened)
+                                                    (assoc (:identity-binding first-context) :org-id "another-org"))))))
+        (axxium/logout! (:axxium-service reopened) token)
+        (is (= 401 (await (refused #(identity/current-context! reopened first-context)))))
+        (is (= 401 (await (refused #(session/resolve-auth-context request reopened))))))
+      (finally (fixture/remove! directory)))))
 
-(deftest ^:async resolve-auth-context-allows-configured-api-key-identity
-  (with-env! {"KNOXX_API_KEY" "dev-secret"
-              "KNOXX_API_KEY_USER_EMAIL" "pi@open-hax.local"
-              "NODE_ENV" "development"}
-    (^:async fn []
-      (let [calls* (atom [])
-            ctx {:user {:id "user-pi"
-                         :email "pi@open-hax.local"}
-                 :actor {:id "pi"}
-                 :membership {:id "membership-pi"
-                              :actor-id "pi"}
-                 :role-slugs ["system_admin"]}
-            req #js {"headers" #js {"x-api-key" "dev-secret"}
-                     "cookies" #js {}}
-            policy-db {:sync-user-from-actor-contract!
-                       (fn [payload]
-                         (swap! calls* conj [:sync payload])
-                         (js/Promise.resolve {:ok true}))
-                       :resolve-context!
-                       (fn [headers]
-                         (swap! calls* conj [:resolve headers])
-                         (js/Promise.resolve ctx))}
-            result (await (auth-session/resolve-auth-context req policy-db))]
-        (testing "API-key auth resolves the configured pi actor as a real user membership"
-          (is (= ctx result))
-          (is (= [[:sync {:email "pi@open-hax.local"
-                          :display-name "Pi"
-                          :auth-provider "api-key"
-                          :external-subject "api-key:pi@open-hax.local"}]
-                  [:resolve {"x-knoxx-user-email" "pi@open-hax.local"}]]
-                 @calls*)))))))
+(deftest ^:async mixed-malformed-and-foreign-origin-credentials-fail-closed
+  (let [directory (fixture/directory!)]
+    (try
+      (let [context (await (open-context! directory {}))
+            token (:token (await (signup! context "alice")))]
+        (doseq [header ["Basic malformed" "Bearer " (str "Bearer " token) "Bearer someone-else"]]
+          (is (= 401 (await (refused #(session/resolve-auth-context
+                                       (fixture/request token {"authorization" header} "GET") context))))))
+        (doseq [headers [{} {"origin" "https://attacker.example"}]]
+          (is (= 403 (await (refused #(session/resolve-auth-context
+                                       (fixture/request token headers "POST") context))))))
+        (is (= "alice" (get-in (await (session/resolve-auth-context
+                                       (fixture/request token {"origin" "http://localhost"} "POST") context))
+                                [:user :username]))))
+      (finally (fixture/remove! directory)))))
+
+(deftest ^:async principal-and-session-revocation-during-policy-hydration-is-rechecked
+  (let [directory (fixture/directory!)]
+    (try
+      (let [context (await (open-context! directory {}))
+            created (await (signup! context "alice"))
+            token (:token created)
+            hydrate identity/principal-context!]
+        (with-redefs [identity/principal-context!
+                      (fn ^:async revoke-after-hydration [ctx principal]
+                        (let [result (await (hydrate ctx principal))]
+                          (axxium/logout! (:axxium-service ctx) token)
+                          result))]
+          (is (= 401 (await (refused #(session/resolve-auth-context (fixture/request token) context))))))
+        (let [token (:token (await (axxium/login! (:axxium-service context)
+                                                 {:identifier "alice" :password "correct horse battery staple"})))
+              principal (:principal created)]
+          (axxium-store/transact! (get-in context [:axxium-service :store])
+                                  (fn [_] {:operation :fixture-suspend
+                                           :changes [(identity-domain/put :principals (:principal/id principal)
+                                                                          (assoc principal :principal/status :suspended))]}))
+          (is (= 401 (await (refused #(session/resolve-auth-context (fixture/request token) context)))))))
+      (finally (fixture/remove! directory)))))
+
+(deftest ^:async explicit-bootstrap-is-durable-and-never-promotes-a-signup-collision
+  (let [directory (fixture/directory!)
+        options {:bootstrapSystemAdminEmail "admin@example.test"
+                 :bootstrapSystemAdminPassword "correct administrator fixture password"}]
+    (try
+      (let [context (await (open-context! directory options))
+            login (await (axxium/login! (:axxium-service context)
+                                        {:identifier "admin" :password (:bootstrapSystemAdminPassword options)}))
+            ctx (await (session/resolve-auth-context (fixture/request (:token login)) context))]
+        (is (authz/system-admin? ctx))
+        (is (= "fixed-test-administrator" (get-in ctx [:axxium-principal :principal/id])))
+        (is (:axxium-service (await (open-context! directory options))))
+        (is (= :bootstrap-mismatch (await (refused #(open-context! directory
+                                                    (assoc options :bootstrapSystemAdminPassword "changed administrator fixture password")))))))
+      (finally (fixture/remove! directory))))
+  (let [directory (fixture/directory!)]
+    (try
+      (let [context (await (open-context! directory {}))]
+        (await (signup! context "admin"))
+        (is (= :bootstrap-collision (await (refused #(open-context! directory
+                                                     {:bootstrapSystemAdminEmail "admin@example.test"
+                                                      :bootstrapSystemAdminPassword "correct administrator fixture password"}))))))
+      (finally (fixture/remove! directory)))))

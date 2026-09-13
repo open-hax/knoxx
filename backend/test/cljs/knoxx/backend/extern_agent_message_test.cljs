@@ -1,5 +1,5 @@
 (ns knoxx.backend.extern-agent-message-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.extern.agent-message :as agent-message]
             [knoxx.backend.extern.json :as xjson]))
 

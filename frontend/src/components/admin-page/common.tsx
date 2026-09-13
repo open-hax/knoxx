@@ -46,3 +46,33 @@ export function Badge({ children, tone = 'default' }: { children: React.ReactNod
 
   return <span className={classNames('inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium', toneClass)}>{children}</span>;
 }
+
+export function CollapsiblePanel({
+  title,
+  description,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  description?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 open:bg-slate-950/55"
+    >
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold text-slate-100">{title}</div>
+            {description ? <div className="mt-1 text-xs text-slate-500">{description}</div> : null}
+          </div>
+          <span className="text-xs uppercase tracking-wide text-slate-500">toggle</span>
+        </div>
+      </summary>
+      <div className="mt-4">{children}</div>
+    </details>
+  );
+}

@@ -1,0 +1,147 @@
+/** Real browser identity ceremonies. The supervisor owns isolated keys, accounts and cleanup. */
+import assert from 'node:assert/strict';
+import {observeBrowserResponse} from './browser-response-observer.mjs';
+
+async function submit(page, label, suffix, status = 200, {readBody = true} = {}) {
+  const pending = observeBrowserResponse(page, response => response.request().method() === 'POST' &&
+    new URL(response.url()).pathname.endsWith(suffix), async response => ({status: response.status(),
+      body: readBody ? await response.json() : undefined}));
+  try {
+    await page.getByRole('button', {name: label, exact: true}).click();
+    const response = await pending.value();
+    assert.equal(response.status, status, `${suffix}: expected ${status}, got ${response.status}`);
+    return readBody ? response.body : {status: response.status};
+  } finally { pending.cancel(); }
+}
+async function signOut(page) {
+  await page.getByRole('button', {name: 'Account menu', exact: true}).click();
+  await submit(page, 'Sign out', '/api/auth/logout', 200, {readBody: false});
+  await page.getByText('Identity managed by Axxium', {exact: true}).waitFor();
+  assert.equal((await page.request.get('/api/auth/context')).status(), 401);
+}
+async function account(page, baseUrl) {
+  await page.goto(new URL('/account', baseUrl).href);
+  await page.getByRole('heading', {name: 'Account & sign-in', exact: true}).waitFor();
+  // Read after the rendered page has settled. DevTools response bodies from the previous
+  // document can disappear during navigation; this GET uses the browser's actual cookie jar.
+  const response = await page.request.get(new URL('/api/auth/context', baseUrl).href);
+  assert.equal(response.status(), 200);
+  return response.json();
+}
+async function passwordLogin(page, config, identifier) {
+  await page.getByLabel('Username or email', {exact: true}).fill(identifier);
+  await page.getByLabel('Password', {exact: true}).fill(config.password);
+  await submit(page, 'Sign in with password', '/api/auth/local/login', 200, {readBody: false});
+  return account(page, config.baseUrl);
+}
+async function pgpProof(page, config, enroll, status = 200) {
+  await page.getByLabel(enroll ? 'Armored public key' : 'PGP key fingerprint', {exact: true}).fill(enroll ? config.pgpPublicKey : config.pgpFingerprint);
+  await submit(page, 'Get signing challenge', '/pgp/challenge');
+  const challenge = await page.getByLabel('Exact signing challenge', {exact: true}).inputValue();
+  const signature = await config.signPgpChallenge(challenge);
+  assert.ok(signature.includes('BEGIN PGP SIGNATURE'));
+  await page.getByLabel('Armored detached signature', {exact: true}).fill(signature);
+  return submit(page, 'Verify PGP signature', enroll ? '/pgp/enroll' : '/pgp/verify', status, {readBody: enroll || status !== 200});
+}
+async function signupTour(page, config, original) {
+  const signup = config.signup;
+  assert.ok(signup.username && signup.email && signup.password && config.username && config.password);
+  await signOut(page);
+  let created = false;
+  try {
+    await page.getByRole('link', {name: 'Create an account', exact: true}).click();
+    await page.getByRole('heading', {name: 'Create your Knoxx account', exact: true}).waitFor();
+    for (const [label, value] of [['Username', signup.username], ['Email', signup.email],
+      ['Display name', signup.displayName || 'Sandbox member'], ['Password', signup.password], ['Confirm password', signup.password]]) {
+      await page.getByLabel(label, {exact: true}).fill(value);
+    }
+    await submit(page, 'Create account', '/api/auth/signup', 200, {readBody: false}); created = true;
+    const context = await account(page, config.baseUrl);
+    const principalId = context.actor?.id;
+    assert.ok(principalId, 'Signup must establish a verified principal in a fresh context');
+    assert.notEqual(principalId, original.actor.id); assert.notEqual(context.user.id, original.user.id);
+    assert.equal(context.user.email, signup.email);
+    assert.equal(context.isSystemAdmin, false);
+    for (const forbidden of ['platform.org.create', 'platform.roles.manage', 'org.users.create', 'org.members.update']) {
+      assert.ok(!context.permissions.includes(forbidden), `Signup must not grant ${forbidden}`);
+    }
+    await config.shot('identity-07-signup', 'The real signup form created a distinct Axxium principal with ordinary member permissions.', []);
+    await page.goto(new URL('/ops/admin/actors', config.baseUrl).href);
+    await page.waitForURL(url => url.pathname === '/');
+    assert.equal(await page.getByRole('button', {name: /^Create actor in /}).count(), 0);
+    await config.shot('identity-08-member-admin-denied', 'An ordinary member cannot open actor administration; the guarded route returned home.', []);
+    return {principalId, userId: context.user.id, signup: true, adminUiDenied: true};
+  } finally {
+    if (created) {
+      await account(page, config.baseUrl); await signOut(page);
+      assert.equal((await passwordLogin(page, config, config.username)).user.id, original.user.id);
+    }
+  }
+}
+async function revocationTour(page, config, original) {
+  await account(page, config.baseUrl);
+  const registryResponse = await page.request.get(new URL('/api/auth/config', config.baseUrl).href);
+  assert.equal(registryResponse.status(), 200);
+  const registry = await registryResponse.json();
+  if (!registry.credentialListUrl || !registry.credentialRevokeUrl) {
+    process.stdout.write('WARN Running Axxium does not advertise credential revocation.\n');
+    return {available: false, verified: false};
+  }
+  assert.ok(config.username && config.password, 'Revocation proof requires password recovery.');
+  const inventory = page.getByRole('region', {name: 'Manage sign-in credentials', exact: true});
+  const pgp = inventory.locator('[data-credential-method="pgp"]'); await pgp.waitFor();
+  assert.equal(await inventory.locator('[data-credential-method="passkey"]').count(), 1);
+  await pgp.getByRole('button', {name: /^Revoke /}).click();
+  await page.getByRole('group', {name: 'Confirm credential revocation', exact: true}).waitFor();
+  await config.shot('identity-09-revocation-confirmation', 'The inventory requires explicit confirmation before removing the PGP binding; another method remains available.', []);
+  // This successful command deliberately navigates. Chrome may discard its response body
+  // before CDP reads it; prove the real status and subsequent loss of authority instead.
+  await submit(page, 'Confirm revocation', '/api/auth/credentials/revoke', 200, {readBody: false});
+  await page.getByText('Axxium sessions ended; sign in again.', {exact: true}).waitFor();
+  const denied = await page.request.get(new URL('/api/auth/context', config.baseUrl).href);
+  assert.equal(denied.status(), 401, 'The browser cookie jar must no longer authorize an Axxium context');
+  await config.shot('identity-10-axxium-sessions-ended', 'Axxium revoked the binding and its sessions; a fresh context request returned 401. Independent MCP grants and external provider accounts are outside this operation.', []);
+  assert.equal((await pgpProof(page, config, false, 401)).code, 'invalid-credentials');
+  await page.getByText('Invalid PGP credential', {exact: true}).waitFor();
+  await config.shot('identity-11-revoked-pgp-denied', 'The original private key signed a fresh challenge, but login was refused after removal of its local binding.', []);
+  assert.equal((await passwordLogin(page, config, config.username)).user.id, original.user.id);
+  await page.locator('[data-credential-method="passkey"]').waitFor();
+  assert.equal(await page.locator('[data-credential-method="pgp"]').count(), 0);
+  await config.shot('identity-12-password-recovery', 'Password login restored the same account. The revoked PGP binding is absent; the passkey remains available.', []);
+  return {available: true, verified: true, revokedPgpDenied: true, passwordRecovery: true, passkeyPreserved: true};
+}
+export async function identityTour(page, config) {
+  assert.equal(typeof config.shot, 'function'); assert.equal(typeof config.signPgpChallenge, 'function');
+  assert.ok(config.pgpPublicKey?.includes('BEGIN PGP PUBLIC KEY BLOCK') && config.pgpFingerprint);
+  const original = await account(page, config.baseUrl);
+  const cdp = await page.context().newCDPSession(page); await cdp.send('WebAuthn.enable');
+  const {authenticatorId} = await cdp.send('WebAuthn.addVirtualAuthenticator', {options: {protocol: 'ctap2', transport: 'internal',
+    hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true}});
+  try {
+    await submit(page, 'Add a passkey', '/passkey/registration-verify');
+    await page.getByText('Passkey added to this account.', {exact: true}).waitFor();
+    assert.equal((await cdp.send('WebAuthn.getCredentials', {authenticatorId})).credentials.length, 1);
+    await config.shot('identity-01-passkey-enrolled', 'The browser created a real resident passkey and Axxium verified its enrollment.', []);
+    await signOut(page); await submit(page, 'Sign in with passkey', '/passkey/authentication-verify', 200, {readBody: false});
+    assert.equal((await account(page, config.baseUrl)).user.id, original.user.id);
+    await config.shot('identity-02-passkey-login', 'A fresh browser assertion restored the enrolled account.', []);
+    await pgpProof(page, config, true); await page.getByText('PGP key added to this account.', {exact: true}).waitFor();
+    await config.shot('identity-03-pgp-enrolled', 'A detached signature proved possession; only the public key was enrolled.', []);
+    await signOut(page); await pgpProof(page, config, false);
+    assert.equal((await account(page, config.baseUrl)).user.id, original.user.id);
+    await config.shot('identity-04-pgp-login', 'A fresh one-time challenge authenticated the enrolled PGP identity.', []);
+    for (const [identifier, step, caption] of [[config.username, 'identity-05-username-login', 'The username signs into the same verified account.'],
+      [config.email, 'identity-06-email-login', 'The separate email alias signs into the exact same account.']]) {
+      if (identifier && config.password) {
+        await signOut(page); assert.equal((await passwordLogin(page, config, identifier)).user.id, original.user.id);
+        await config.shot(step, caption, []);
+      }
+    }
+    const signup = config.signup ? await signupTour(page, config, original) : null;
+    const revocation = await revocationTour(page, config, original);
+    process.stdout.write('WARN External OAuth round trips require configured clients and consenting provider accounts; this tour does not invent them.\n');
+    return {passkeyEnrollment: true, passkeyLogin: true, pgpEnrollment: true, pgpLogin: true,
+      usernameLogin: Boolean(config.username && config.password), emailLogin: Boolean(config.email && config.password),
+      signup, revocation, externalOauthVerified: false};
+  } finally {await cdp.send('WebAuthn.removeVirtualAuthenticator', {authenticatorId}); await cdp.detach();}
+}

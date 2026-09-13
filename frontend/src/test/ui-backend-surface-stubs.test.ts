@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { uiBackendSurfaceMatrix } from "./ui-backend-surface-matrix";
+import { decodeUiBackendSurfaceMatrix, uiBackendSurfaceMatrix } from "./ui-backend-surface-matrix";
 
 describe("UI ↔ backend surface coverage matrix", () => {
   test("every surface has backend routes, behavior, and executable stub metadata", () => {
@@ -37,4 +37,24 @@ describe("UI ↔ backend surface coverage matrix", () => {
       }
     });
   }
+});
+
+
+describe("coverage matrix decoding", () => {
+  test("rejects unknown test kinds and ownership instead of silently skipping metadata", () => {
+    const entry = uiBackendSurfaceMatrix[0];
+    expect(() => decodeUiBackendSurfaceMatrix([{ ...entry, owner: "unknown" }])).toThrow("Invalid UI surface matrix row 0");
+    expect(() => decodeUiBackendSurfaceMatrix([{ ...entry, stubs: [{ ...entry.stubs[0], kind: "unknown" }] }])).toThrow("Invalid UI surface matrix row 0");
+  });
+
+  test("requires evidence references for an implemented case", () => {
+    const entry = uiBackendSurfaceMatrix[0];
+    expect(() => decodeUiBackendSurfaceMatrix([{ ...entry, stubs: [{ ...entry.stubs[0], status: "implemented", implementedBy: [] }] }])).toThrow("Invalid UI surface matrix row 0");
+  });
+
+  test("rejects duplicate surface identifiers and malformed top-level input", () => {
+    const entry = uiBackendSurfaceMatrix[0];
+    expect(() => decodeUiBackendSurfaceMatrix([entry, entry])).toThrow(`Duplicate UI surface matrix id: ${entry.id}`);
+    expect(() => decodeUiBackendSurfaceMatrix({})).toThrow("UI surface matrix must be an array");
+  });
 });

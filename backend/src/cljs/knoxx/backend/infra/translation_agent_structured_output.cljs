@@ -1,22 +1,20 @@
 (ns knoxx.backend.infra.translation-agent-structured-output
-  "A fail-closed Ollama completion boundary for admitted translation turns.
+  "A fail-closed provider completion boundary for admitted translation turns.
 
-  Ollama's native chat endpoint can enforce a JSON schema, but it cannot make
-  an OpenAI-style `tool_choice` mandatory. This adapter therefore asks the
-  model for exactly one untrusted value, `translated_text`, and keeps every
+  Exact admitted model contracts select Ollama, isolated OpenCode, or offline
+  Transformers.js transports. Each yields one untrusted `translated_text`
+  value, while this orchestration layer keeps every
   authority coordinate on the Knoxx side of the boundary. The existing
   translation-agent sink remains the only component that can persist candidate
   bytes, settle a dispatch claim, mint a receipt, or project translation
   events.
 
   Durable candidate prefixes are read before any provider request. A retry
-  calls Ollama only for missing admitted attempts. Sink submission itself is
+  calls its selected provider only for missing admitted attempts. Sink submission itself is
   replayed once with the exact same pair after an exception; this repairs the
   crash window in which the receipt became durable but its candidate-event
   projection failed, without translating the split again."
-  (:require [clojure.string :as str]
-            [knoxx.backend.domain.models :as models]
-            [knoxx.backend.extern.fetch :as xfetch]
+  (:require [knoxx.backend.infra.translation-agent-completion :as completion]
             [knoxx.backend.extern.promise :as xpromise]
             [knoxx.backend.extern.translation-agent-structured-output :as xstructured]
             [knoxx.backend.infra.translation-agent-sink :as sink]
@@ -24,12 +22,6 @@
             [knoxx.backend.law.translation-agent :as agent-law]
             [knoxx.backend.law.translation-dispatch :as dispatch-law]
             [knoxx.backend.law.translation-split :as split-law]))
-
-(def ^:private translated-text-schema
-  {:type "object"
-   :additionalProperties false
-   :properties {:translated_text {:type "string" :minLength 1}}
-   :required ["translated_text"]})
 
 (def ^:private default-timeout-ms
   ;; Local models may need substantially longer than the generic HTTP
@@ -40,21 +32,6 @@
   [type message data]
   (throw (ex-info message
                   (assoc data :translation-agent-structured-output/error type))))
-
-(defn- exact-ollama-model!
-  [config turn]
-  (let [model-id (get-in turn [:translation-turn/execution
-                               :translation-execution/model])
-        contract (models/resolve-model-contract config model-id)]
-    (when-not (= model-id (:id contract))
-      (fail! :model-contract-missing
-             "translation turn model has no exact model contract"
-             {:model model-id :resolved-model (:id contract)}))
-    (when-not (= "ollama" (:provider contract))
-      (fail! :model-provider-mismatch
-             "structured translation completion requires an Ollama model"
-             {:model model-id :provider (:provider contract)}))
-    model-id))
 
 (defn- dispatch-binding
   [record]
@@ -95,26 +72,6 @@
             :actual (turn-binding turn)}))
   turn)
 
-(defn- configured-ollama-base-url
-  [config]
-  (or (some-> (:ollama-base-url config) str str/trim not-empty)
-      (some-> (get (:provider-base-urls config) "ollama")
-              str str/trim not-empty)
-      (some-> (get (:provider-base-urls config) :ollama)
-              str str/trim not-empty)))
-
-(defn- native-chat-url!
-  [config]
-  (let [configured (configured-ollama-base-url config)]
-    (when-not configured
-      (fail! :ollama-base-url-missing
-             "Ollama base URL is not configured"
-             {}))
-    (-> configured
-        (str/replace #"/+$" "")
-        (str/replace #"/v1$" "")
-        (str "/api/chat"))))
-
 (defn- positive-number
   [value]
   (when (and (number? value) (pos? value)) value))
@@ -148,134 +105,6 @@
     (when-not (pos? remaining)
       (throw (timeout-error timeout-ms)))
     remaining))
-
-(defn- reviewed-memory-example
-  [example]
-  {:memory_id (:translation-memory/id example)
-   :review_receipt_id (:translation-memory/review-receipt-id example)
-   :candidate_digest (:translation-memory/candidate-digest example)
-   :source_locale (name (:translation-memory/source-locale example))
-   :target_locale (name (:translation-memory/target-locale example))
-   :source_text (:translation-memory/source-text example)
-   :translated_text (:translation-memory/target-text example)})
-
-(defn- split-input
-  [turn source-split]
-  (let [manifest (:translation-turn/manifest turn)
-        memory (:translation-turn/memory turn)]
-    {:instruction
-     (str "Translate exactly split.source_text from source_locale into "
-          "target_locale. Preserve Markdown structure and meaningful "
-          "whitespace. Reviewed memory examples are positive terminology "
-          "guidance only. Do not emit or imitate a tool call. Return exactly "
-          "one JSON object matching the response schema.")
-     :source_locale (name (:split-manifest/source-locale manifest))
-     :target_locale (name (:split-manifest/target-locale manifest))
-     :split {:split_id (:split/id source-split)
-             :segment_index (:split/index source-split)
-             :source_text (:split/source-text source-split)}
-     :reviewed_memory_examples
-     (mapv reviewed-memory-example
-           (:translation-memory-snapshot/examples memory))}))
-
-(defn- native-request
-  [config model-id turn source-split timeout-ms]
-  {:url (native-chat-url! config)
-   :opts
-   {:method "POST"
-    :headers {"Content-Type" "application/json"}
-    :json
-    {:model model-id
-     :messages
-     [{:role "system"
-       ;; This is the admitted, digested execution prompt. Appending provider
-       ;; instructions here would execute policy that the turn never admitted.
-       :content (get-in turn [:translation-turn/execution
-                              :translation-execution/system-prompt])}
-      {:role "user"
-       :content (xstructured/encode-request-content
-                 (split-input turn source-split))}]
-     :stream false
-     :think false
-     :format translated-text-schema
-     :options {:temperature 0 :seed 0}}}
-   :timeout-ms timeout-ms})
-
-(defn- ^:async request-json!
-  [deps request]
-  (if-let [request! (:request! deps)]
-    (await (request! request))
-    (await (xfetch/json! (or (:http-client deps) xfetch/default-client)
-                         request))))
-
-(defn- validated-response-body!
-  [model-id response]
-  (when-not (map? response)
-    (fail! :http-response-invalid
-           "Ollama returned no HTTP response map"
-           {:response-type (type response)}))
-  (when-not (and (true? (:ok response)) (= 200 (:status response)))
-    (fail! :http-response-failed
-           "Ollama structured translation request failed"
-           {:status (:status response) :body (:body response)}))
-  (let [body (:body response)]
-    (when-not (map? body)
-      (fail! :response-body-invalid
-             "Ollama response body is not a JSON object"
-             {:model model-id}))
-    (when (contains? body :error)
-      (fail! :provider-error
-             "Ollama refused the structured translation request"
-             {:model model-id :provider-error (:error body)}))
-    (when-not (= model-id (:model body))
-      (fail! :response-model-mismatch
-             "Ollama answered with a different model"
-             {:expected model-id :actual (:model body)}))
-    (when-not (and (true? (:done body)) (= "stop" (:done_reason body)))
-      (fail! :completion-incomplete
-             "Ollama did not finish the structured translation completion"
-             {:model model-id
-              :done (:done body)
-              :done-reason (:done_reason body)}))
-    body))
-
-(defn- validated-message-content!
-  [model-id body]
-  (let [message (:message body)]
-    (when-not (and (map? message) (= "assistant" (:role message)))
-      (fail! :message-invalid
-             "Ollama response has no assistant message"
-             {:model model-id}))
-    (when (seq (:tool_calls message))
-      (fail! :tool-calls-unexpected
-             "Ollama returned tool calls to a translation-only request"
-             {:model model-id}))
-    (let [content (:content message)]
-      (when-not (string? content)
-        (fail! :message-content-invalid
-               "Ollama assistant content is not a JSON string"
-               {:model model-id}))
-      content)))
-
-(defn- validated-translation!
-  [model-id response]
-  (let [body (validated-response-body! model-id response)
-        content (validated-message-content! model-id body)
-        parsed (xstructured/decode-response-content content)]
-    (when-not (map? parsed)
-      (fail! :structured-output-invalid
-             "Ollama assistant content is not a JSON object"
-             {:model model-id}))
-    (when-not (= #{:translated_text} (set (keys parsed)))
-      (fail! :structured-output-keys-invalid
-             "Ollama assistant JSON has fields outside the admitted schema"
-             {:model model-id :keys (set (keys parsed))}))
-    (let [translated-text (:translated_text parsed)]
-      (when-not (agent-law/nonblank-string? translated-text)
-        (fail! :translated-text-blank
-               "Ollama returned a blank translation"
-               {:model model-id}))
-      translated-text)))
 
 (defn- work-items
   [turn]
@@ -364,15 +193,12 @@
     (let [item (first remaining)
           request-timeout (remaining-timeout-ms!
                            deps deadline-ms timeout-ms)
-          response (await (request-json!
-                           deps
-                           (native-request config model-id turn
-                                           (:source-split item)
-                                           request-timeout)))
+          translated-text (await (completion/translate!
+                                  config deps model-id turn
+                                  (:source-split item) request-timeout))
           ;; An injected provider may ignore its request timeout. Refuse its
           ;; late bytes before they can cross the durable sink boundary.
           _ (remaining-timeout-ms! deps deadline-ms timeout-ms)
-          translated-text (validated-translation! model-id response)
           result (await (submit-pair-with-replay!
                          deps policies
                          (pair-for policies item translated-text)))]
@@ -387,7 +213,7 @@
   (let [checked-record (dispatch-law/assert-record! record)
         checked-turn (split-law/assert-turn-integrity! digest-hex turn)
         _ (assert-record-turn-binding! checked-record checked-turn)
-        model-id (exact-ollama-model! config checked-turn)
+        model-id (completion/model! config checked-turn)
         policies (agent-law/session-policies checked-record checked-turn)
         items (work-items checked-turn)
         candidates (await (split-store/candidate-splits-for-turn!
@@ -412,7 +238,7 @@
               deadline-ms timeout-ms)))))
 
 (defn complete-turn!
-  "Complete an admitted turn via native Ollama JSON schema; return a receipt or throw.
+  "Complete an admitted turn through its exact provider; return a receipt or throw.
 
    Every missing split shares one deadline. Event-triggered recovery is capped by
    the original event turn deadline; an explicit structured timeout can only

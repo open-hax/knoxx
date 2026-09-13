@@ -1,3 +1,5 @@
+import { useEffect, type Dispatch, type SetStateAction } from "react";
+type SetState<T> = Dispatch<SetStateAction<T>>;
 import type { ChangeEvent } from "react";
 import { Button, Card, Input } from "@open-hax/uxx";
 import type { ToolCatalogResponse } from "../../lib/types";
@@ -120,4 +122,81 @@ export function ChatScratchpadPanel({
       </div>
     </Card>
   );
+}
+
+type ScratchpadSnapshot = {
+  title?: string;
+  subject?: string;
+  path?: string;
+  recipients?: string;
+  cc?: string;
+  content?: string;
+};
+
+type UseScratchpadPersistenceParams = {
+  storageKey: string;
+  canvasTitle: string;
+  setCanvasTitle: SetState<string>;
+  canvasSubject: string;
+  setCanvasSubject: SetState<string>;
+  canvasPath: string;
+  setCanvasPath: SetState<string>;
+  canvasRecipients: string;
+  setCanvasRecipients: SetState<string>;
+  canvasCc: string;
+  setCanvasCc: SetState<string>;
+  canvasContent: string;
+  setCanvasContent: SetState<string>;
+};
+
+export function useScratchpadPersistence({
+  storageKey,
+  canvasTitle,
+  setCanvasTitle,
+  canvasSubject,
+  setCanvasSubject,
+  canvasPath,
+  setCanvasPath,
+  canvasRecipients,
+  setCanvasRecipients,
+  canvasCc,
+  setCanvasCc,
+  canvasContent,
+  setCanvasContent,
+}: UseScratchpadPersistenceParams) {
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as ScratchpadSnapshot;
+      if (typeof parsed.title === "string") setCanvasTitle(parsed.title);
+      if (typeof parsed.subject === "string") setCanvasSubject(parsed.subject);
+      if (typeof parsed.path === "string") setCanvasPath(parsed.path);
+      if (typeof parsed.recipients === "string") setCanvasRecipients(parsed.recipients);
+      if (typeof parsed.cc === "string") setCanvasCc(parsed.cc);
+      if (typeof parsed.content === "string") setCanvasContent(parsed.content);
+    } catch {
+      // ignore storage failures
+    }
+  }, [setCanvasCc, setCanvasContent, setCanvasPath, setCanvasRecipients, setCanvasSubject, setCanvasTitle, storageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          title: canvasTitle,
+          subject: canvasSubject,
+          path: canvasPath,
+          recipients: canvasRecipients,
+          cc: canvasCc,
+          content: canvasContent,
+        } satisfies ScratchpadSnapshot),
+      );
+    } catch {
+      // ignore storage failures
+    }
+  }, [storageKey, canvasTitle, canvasSubject, canvasPath, canvasRecipients, canvasCc, canvasContent]);
 }

@@ -17,25 +17,34 @@
 ;; Re-exported from `open-hax.publication-wire`, which the backend contracts are
 ;; also built from. Restating them here is what would let the two sides drift.
 
-(def decode-id wire/decode-id)
-(def encode-id wire/encode-id)
-(def decode-revision wire/decode-revision)
+(def decode-id
+  "Decode a qualified publication identity without dropping its namespace."
+  wire/decode-id)
+(def encode-id
+  "Encode a qualified publication identity for the backend JSON wire."
+  wire/encode-id)
+(def decode-revision
+  "Decode the shared publication revision selector."
+  wire/decode-revision)
 
 ;; ── Row decoders ───────────────────────────────────────────────────────────
 
 (defn decode-document-wire
+  "Decode document identity and source locale from JSON data."
   [wire]
   (-> wire
       (update :id decode-id)
       (update :source-locale keyword)))
 
 (defn decode-garden-wire
+  "Decode garden identity and availability status from JSON data."
   [wire]
   (-> wire
       (update :id decode-id)
       (update :status keyword)))
 
 (defn decode-publication-wire
+  "Decode publication references, lifecycle values, and blockers."
   [wire]
   (-> wire
       (update :id decode-id)
@@ -48,12 +57,14 @@
       (update :blockers #(mapv keyword (or % [])))))
 
 (defn decode-cms-document-wire
+  "Decode a CMS document and its publication rows."
   [wire]
   (-> wire
       (update :document decode-document-wire)
       (update :publications #(mapv decode-publication-wire %))))
 
 (defn decode-cms-list-wire
+  "Decode the complete CMS document and garden listing."
   [wire]
   (-> wire
       (update :documents #(mapv decode-cms-document-wire %))
@@ -61,9 +72,12 @@
 
 ;; ── Requests ───────────────────────────────────────────────────────────────
 
-(def list-path "/api/cms/publications/documents")
+(def list-path
+  "Backend endpoint for the publication topology listing."
+  "/api/cms/publications/documents")
 
 (defn intent-path
+  "Build the encoded endpoint for one publication intent."
   [publication-id]
   (str "/api/cms/publications/intents/"
        (js/encodeURIComponent (encode-id publication-id))))
@@ -86,14 +100,17 @@
                        :body (wire/state-patch-body state)})))
 
 (defn ^:async publish!
+  "Request published state for one publication intent."
   [publication-id]
   (await (set-publication-state! publication-id :published)))
 
 (defn ^:async unpublish!
+  "Request withheld state for one publication intent."
   [publication-id]
   (await (set-publication-state! publication-id :withheld)))
 
 (defn ^:async archive!
+  "Request archived state for one publication intent."
   [publication-id]
   (await (set-publication-state! publication-id :archived)))
 

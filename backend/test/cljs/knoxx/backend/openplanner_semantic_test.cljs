@@ -33,6 +33,7 @@
 (def rest-config
   {:openplanner-base-url "http://openplanner.test"
    :openplanner-api-key "test-key"
+   :openplanner-org-id "semantic-org"
    ;; These tests exercise the HTTP boundary and fake global fetch. Mongo is
    ;; the production default, so REST must be selected explicitly here.
    :openplanner-client-mode "rest"})
@@ -45,7 +46,7 @@
                                                                {:query "knoxx" :k 1}))]
         (is (= [{:url "http://openplanner.test/v1/search/vector"
                  :method "POST"
-                 :body {:q "knoxx" :k 1 :project "workspace-test"}}]
+                 :body {:org_id "semantic-org" :q "knoxx" :k 1 :project "workspace-test"}}]
                @requests*))
         (is (= :vector (:mode result)))
         (is (= [{:id "doc-1"
@@ -64,7 +65,7 @@
                                                                {:query "knoxx" :k 1}))]
         (is (= [{:url "http://openplanner.test/v1/search/vector"
                  :method "POST"
-                 :body {:q "knoxx" :k 1 :project "workspace"}}]
+                 :body {:org_id "semantic-org" :q "knoxx" :k 1 :project "workspace"}}]
                @requests*))
         (is (= :vector (:mode result))))
       (finally
@@ -83,7 +84,7 @@
             first-result (first (:results result))]
         (is (= [{:url "http://openplanner.test/v1/search/vector"
                  :method "POST"
-                 :body {:q "knoxx" :k 1 :project "workspace-test"}}]
+                 :body {:org_id "semantic-org" :q "knoxx" :k 1 :project "workspace-test"}}]
                @requests*))
         (is (= "knoxx" (:query result)))
         (is (= "docs/knoxx.md" (:path first-result)))

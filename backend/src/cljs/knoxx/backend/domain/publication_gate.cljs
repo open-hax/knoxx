@@ -52,23 +52,16 @@
     ((:current-source-revision facts) (:publication/document intent))
     (:publication/revision intent)))
 
-(defn publication-evidence
-  "THE evidence boundary. Resolves the revision selector once, then gathers
-   blockers against that single concrete revision.
-
-   Returns `{:concrete-revision r :blockers [...]}`. An unresolvable selector
-   short-circuits: no evidence lookup happens, because every lookup would be
-   keyed by a revision that does not exist."
-  [intent facts]
-  (let [revision (resolve-concrete-revision intent facts)
-        document (:publication/document intent)
+(defn- revision-blockers
+  [intent facts revision]
+  (let [document (:publication/document intent)
         garden (:publication/garden intent)
         locale (:publication/locale intent)]
-    (if (nil? revision)
-      {:concrete-revision nil :blockers [:publication-revision-unresolved]}
-      {:concrete-revision revision
-       :blockers
-       (cond-> []
+    (cond-> []
+         (and (:source-accepted? facts)
+              (not ((:source-accepted? facts) intent revision)))
+         (conj :source-review-required)
+
          (and (translation-required? intent)
               (not ((:translated-revision? facts) document garden locale revision)))
          (conj :translation-missing)
@@ -78,7 +71,19 @@
          (conj :translation-review-required)
 
          ((:source-revision-superseded? facts) intent revision)
-         (conj :translation-stale))})))
+         (conj :translation-stale))))
+
+(defn publication-evidence
+  "Resolve the selector once and gather blockers against that concrete revision.
+
+   An unresolvable selector short-circuits all receipt lookups. Every consumer
+   receives the same revision in the returned evidence map."
+  [intent facts]
+  (let [revision (resolve-concrete-revision intent facts)]
+    {:concrete-revision revision
+     :blockers (if (nil? revision)
+                 [:publication-revision-unresolved]
+                 (revision-blockers intent facts revision))}))
 
 ;; ── Consumers of one evidence result ───────────────────────────────────────
 ;;
@@ -87,6 +92,7 @@
 ;; queued, and the artifact materialized.
 
 (defn blockers
+  "Read the blockers from one already-computed evidence result."
   [evidence]
   (:blockers evidence))
 
@@ -119,6 +125,7 @@
         blocker-set (set (:blockers evidence))]
     (when (and (translation-work-eligible? intent)
                (some? concrete-revision)
+               (not (contains? blocker-set :source-review-required))
                (or (contains? blocker-set :translation-missing)
                    (contains? blocker-set :translation-stale)))
       {:action/id :actions/request-translation

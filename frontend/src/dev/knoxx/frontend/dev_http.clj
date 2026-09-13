@@ -1,5 +1,8 @@
 (ns knoxx.frontend.dev-http
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str])
+  (:import [shadow.http.server HttpRequest]))
+
+(set! *warn-on-reflection* true)
 
 (defn proxy-predicate
   "Decide which requests should be proxied from the shadow-cljs dev HTTP server
@@ -8,9 +11,9 @@
   We keep shadow's own devtools endpoints local (e.g. /api/remote-relay), while
   sending application API + WS traffic to the backend.
 
-  Signature required by shadow-cljs: (fn [undertow-exchange config] boolean)."
-  [ex _config]
-  (let [path ^String (.getRequestPath ex)]
+  Signature required by shadow-cljs: (fn [http-request config] boolean)."
+  [^HttpRequest request _config]
+  (let [path ^String (.getRequestPath request)]
     (cond
       ;; shadow-cljs devtools endpoints (must NOT be proxied)
       (str/starts-with? path "/api/remote-") false

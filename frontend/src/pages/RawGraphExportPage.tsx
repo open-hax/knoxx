@@ -5,28 +5,18 @@ import { ExternalLink, Filter, Move, Network, RefreshCw } from 'lucide-react';
 import {
   WebGLGraphView,
   rgba,
-  type GraphData as RenderGraphData,
-  type GraphEdge as RenderGraphEdge,
   type GraphNode as RenderGraphNode,
 } from '@octave-commons/webgl-graph-view';
 import { fetchGraphExport } from '../lib/nextApi';
-import type { GraphExportEdge, GraphExportNode, GraphExportResponse } from '../lib/types';
+import type { GraphExportResponse } from '../lib/types';
 import {
   CANONICAL_LAKES,
   LAKE_COLORS,
-  type LayoutEdge,
-  type LayoutNode,
-  type RenderEdgePayload,
-  type RenderNodePayload,
-  compareEdges,
-  compareNodes,
   edgeStyle,
-  inferEdgeType,
   inferLake,
   inferNodeType,
-  isCrossLake,
-  layoutGraph,
   nodeStyle,
+  projectGraphExport,
   shortNumber,
   toggleLake,
 } from './raw-graph-export/graph-helpers';
@@ -90,149 +80,10 @@ export default function VectorsPage() {
     };
   }, []);
 
-  const processed = useMemo(() => {
-    const nodes = payload?.nodes ?? [];
-    const edges = payload?.edges ?? [];
-    const selectedLakeSet = new Set(selectedLakes);
-
-    const visibleNodes = nodes.filter((node) => selectedLakeSet.has(inferLake(node)));
-    const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
-    const lakeCounts = new Map<string, number>();
-    const renderedLakeCounts = new Map<string, number>();
-
-    for (const node of visibleNodes) {
-      const lake = inferLake(node);
-      lakeCounts.set(lake, (lakeCounts.get(lake) ?? 0) + 1);
-    }
-
-    const visibleEdges = edges.filter((edge) => {
-      const sourceLakeAllowed = selectedLakeSet.has(edge.sourceLake);
-      const targetLakeAllowed = selectedLakeSet.has(edge.targetLake);
-      if (!sourceLakeAllowed || !targetLakeAllowed) return false;
-      if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) return false;
-      if (crossLakeOnly && !isCrossLake(edge)) return false;
-      return true;
-    });
-
-    const degree = new Map<string, number>();
-    const crossLakeNodes = new Set<string>();
-    for (const edge of visibleEdges) {
-      degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
-      degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
-      if (isCrossLake(edge)) {
-        crossLakeNodes.add(edge.source);
-        crossLakeNodes.add(edge.target);
-      }
-    }
-
-    const sortedNodes = [...visibleNodes].sort((a, b) => compareNodes(a, b, degree, crossLakeNodes));
-    const cappedNodeIds = new Set(sortedNodes.slice(0, maxNodes).map((node) => node.id));
-    const sortedEdges = visibleEdges
-      .filter((edge) => cappedNodeIds.has(edge.source) && cappedNodeIds.has(edge.target))
-      .sort((a, b) => compareEdges(a, b, degree));
-    const finalEdges = sortedEdges.slice(0, maxEdges);
-
-    const edgeNodeIds = new Set<string>();
-    for (const edge of finalEdges) {
-      edgeNodeIds.add(edge.source);
-      edgeNodeIds.add(edge.target);
-    }
-
-    const finalNodes: GraphExportNode[] = [];
-    const included = new Set<string>();
-    for (const node of sortedNodes) {
-      if (edgeNodeIds.has(node.id) && !included.has(node.id)) {
-        finalNodes.push(node);
-        included.add(node.id);
-      }
-    }
-    for (const node of sortedNodes) {
-      if (included.has(node.id)) continue;
-      if (finalNodes.length >= maxNodes) break;
-      finalNodes.push(node);
-      included.add(node.id);
-    }
-
-    for (const node of finalNodes) {
-      const lake = inferLake(node);
-      renderedLakeCounts.set(lake, (renderedLakeCounts.get(lake) ?? 0) + 1);
-    }
-
-    const layoutNodes: LayoutNode[] = finalNodes.map((node) => ({
-      id: node.id,
-      kind: node.kind,
-      label: node.label,
-      data: {
-        ...(node.data ?? {}),
-        lake: inferLake(node),
-        node_type: inferNodeType(node),
-      },
-    }));
-    const layoutEdges: LayoutEdge[] = finalEdges.map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      kind: inferEdgeType(edge),
-      data: {
-        ...(edge.data ?? {}),
-        edge_type: inferEdgeType(edge),
-        source_lake: edge.sourceLake,
-        target_lake: edge.targetLake,
-      },
-    }));
-    const positions = layoutGraph({ nodes: layoutNodes, edges: layoutEdges });
-
-    const renderNodes: RenderGraphNode[] = finalNodes.map((node) => {
-      const position = positions.get(node.id) ?? { x: 0, y: 0 };
-      return {
-        id: node.id,
-        x: position.x,
-        y: position.y,
-        kind: inferNodeType(node),
-        label: node.label,
-        data: {
-          exportNode: node,
-          degree: degree.get(node.id) ?? 0,
-        } satisfies RenderNodePayload,
-      };
-    });
-
-    const renderEdges: RenderGraphEdge[] = finalEdges.map((edge) => ({
-      source: edge.source,
-      target: edge.target,
-      kind: inferEdgeType(edge),
-      data: {
-        exportEdge: edge,
-      } satisfies RenderEdgePayload,
-    }));
-
-    const nodeMap = new Map(finalNodes.map((node) => [node.id, node]));
-    const edgesByNode = new Map<string, GraphExportEdge[]>();
-    for (const edge of finalEdges) {
-      const sourceRows = edgesByNode.get(edge.source) ?? [];
-      sourceRows.push(edge);
-      edgesByNode.set(edge.source, sourceRows);
-      const targetRows = edgesByNode.get(edge.target) ?? [];
-      targetRows.push(edge);
-      edgesByNode.set(edge.target, targetRows);
-    }
-
-    return {
-      graph: {
-        nodes: renderNodes,
-        edges: renderEdges,
-      } satisfies RenderGraphData,
-      nodeMap,
-      edgesByNode,
-      degree,
-      lakeCounts,
-      renderedLakeCounts,
-      rawNodeCount: nodes.length,
-      rawEdgeCount: edges.length,
-      filteredNodeCount: visibleNodes.length,
-      filteredEdgeCount: visibleEdges.length,
-    };
-  }, [payload, selectedLakes, crossLakeOnly, maxNodes, maxEdges]);
+  const processed = useMemo(
+    () => projectGraphExport(payload, selectedLakes, crossLakeOnly, maxNodes, maxEdges),
+    [payload, selectedLakes, crossLakeOnly, maxNodes, maxEdges],
+  );
 
   useEffect(() => {
     if (!selectedNodeId) return;
