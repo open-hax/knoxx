@@ -40,6 +40,12 @@ base with 428. Stale saves succeed as preserved sibling revisions. Responses inc
 `revision`, `revision_heads`, and `conflicted`; the write response contains the writer's
 own branch. JSON remains the HTTP wire encoding; persisted metadata is EDN.
 
+Document lists accept decimal `limit` (1–1000, default 100) and `offset`
+(0–2147483647, default 0). Invalid values return 400 before storage is opened.
+Garden/source-path filters run before stable document-ID ordering and pagination.
+Responses include `total`, `limit`, `offset` and `has_more`. This bounds the
+response; the underlying store still replays the organization's ledger.
+
 The editor's History view lets a reader inspect every version. Review each current
 head, compose the desired body/title in the editor, then choose **Save resolution from
 editor**. This appends a revision naming the reviewed heads. A newly arriving branch
@@ -81,11 +87,29 @@ provenance, explicit resolution, snapshot reconstruction, and migration preservi
 publication intent. It requires passing test counters even if Shadow exits zero.
 It does not verify deployed image identity or password login.
 
-The read-only browser tour is `scripts/verify-cms-history-tour.sh`. Supply
-`KNOXX_FRONTEND_URL`, the exact `KNOXX_DOCUMENT_TITLE`, and an already authenticated
-`KNOXX_BROWSER_SESSION`. It captures document and History screenshots under the
-ignored `docs/verification/screenshots/` directory. It modifies no application data;
-the fixture verifier covers writes. The deployed acceptance walkthrough separately
-uses fresh recipient login while the source Axxium service is stopped.
+Run `scripts/verify-cms-history-tour.sh` with `agent-browser`, Babashka (`bb`),
+`pnpm`, Clojure, Node, curl and ripgrep installed. It builds this checkout's
+frontend and a test-only loopback server containing the production CMS routes.
+It seeds a unique document with two revisions in a new temporary directory,
+checks anonymous refusal and retained history over HTTP, opens a fresh browser
+session, and captures the current document and its initial revision. No existing
+document, logged-in session or deployed-service configuration is required.
+
+The script records the checkout path, Git head and tracked diff digest alongside
+the fixture in `.ημ/tour.edn`. It stops its server, closes its browser session and
+removes its temporary data on normal exit, failure, INT or TERM. Only screenshots
+remain under the ignored `docs/verification/screenshots/cms-history-<run>/`
+directory (or `KNOXX_SHOT_DIR`). Fixture receipt/session data must not be committed.
+
+`--check` builds and verifies the HTTP fixture, then cleans up without opening a
+browser. `--serve` keeps that same fixture running for a manual browser tour;
+its private receipt contains the session-start URL. Stop with Ctrl-C to clean up.
+The default browser mode additionally checks that the UI shows each expected body.
+
+The identity and publication-topology responses are explicit fixture seams.
+The tour does not prove password authentication, publication execution, unrelated
+services, or the identity of an already deployed image. The deployed acceptance
+walkthrough separately uses fresh recipient login while the source Axxium
+service is stopped.
 
 Validation counts are recorded in the PR and deployment receipt for their exact revisions.

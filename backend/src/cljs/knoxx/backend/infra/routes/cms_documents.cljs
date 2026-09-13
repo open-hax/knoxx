@@ -5,11 +5,16 @@
 
 (defn list! [org query]
   (law/require-id! org)
-  {:documents (->> (store/list! org)
-                   (filter #(and (or (not (:garden_id query)) (= (:garden_id query) (:garden_id %)))
-                                  (or (not (:path_prefix query))
-                                      (= (:path_prefix query) (:source_path %))
-                                      (some #{(:path_prefix query)} (:source_paths %))))) vec)})
+  (let [{:keys [limit offset]} (law/require-page! query)
+        matches (->> (store/list! org)
+                     (filter #(and (or (not (:garden_id query)) (= (:garden_id query) (:garden_id %)))
+                                    (or (not (:path_prefix query))
+                                        (= (:path_prefix query) (:source_path %))
+                                        (some #{(:path_prefix query)} (:source_paths %)))))
+                     (sort-by :doc_id) vec)]
+    {:documents (vec (take limit (drop offset matches)))
+     :limit limit :offset offset :total (count matches)
+     :has_more (< (+ offset limit) (count matches))}))
 
 (defn read! [org id]
   (law/require-id! org) (law/require-id! id)

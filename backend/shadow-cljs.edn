@@ -156,6 +156,12 @@
     :infer-externs false,
     :macros {:knoxx.backend.macros true}}},
 
+  :cms-history-tour
+  {:target :node-script,
+   :output-to "target/cms-history-tour.cjs",
+   :main knoxx.backend.extern.cms-history-tour/main,
+   :compiler-options {:output-feature-set :es-next :infer-externs false}}
+
   :cms-history
   {:target :node-test,
    :output-to "target/test/cms-history.cjs",

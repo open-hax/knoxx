@@ -13,6 +13,7 @@
             [knoxx.backend.infra.cms-store :as store]
             [knoxx.backend.infra.http-server :as http]
             [knoxx.backend.infra.publication-source-revision :as source]
+            [knoxx.backend.infra.routes.cms-documents :as documents]
             [knoxx.backend.infra.routes.cms-publication :as publication]))
 
 (defn- temporary-root [] (.mkdtempSync fs (.join path (or (aget js/process.env "KNOXX_CMS_VERIFY_ROOT") (.tmpdir os)) "knoxx-cms-history-")))
@@ -28,6 +29,41 @@
                                                    :headers {"x-test-principal" principal "content-type" "application/json"}}
                                              payload (assoc :body (js/JSON.stringify (clj->js payload)))))))]
     {:status (.-status response) :body (js->clj (await (.json response)) :keywordize-keys true)}))
+
+(deftest ^:async http-document-pages-are-bounded-and-filtered-before-offset
+  (let [app (http/create-app!)
+        rows (vec (reverse (for [n (range 105)]
+                             {:doc_id (str (+ 1000 n)) :garden_id (if (even? n) "a" "b")
+                              :source_paths [(str "docs/" n ".md")]})))
+        opens (atom 0)]
+    (try
+      (transport/register! app nil
+                           {:route! (fn [app method url handler] (fastify/route! app {:method method :url url :handler handler}))
+                            :with-request-context! (fn [_ _ _ operation]
+                                                     (operation {:org-id "page-org" :actor-id "reader"
+                                                                 :permissions ["org.publications.read"]}))
+                            :ensure-permission! authz/ensure-permission!})
+      (await (.listen app #js {:host "127.0.0.1" :port 0}))
+      (with-redefs [store/list! (fn [_] (swap! opens inc) rows)]
+        (let [page (:body (await (request! app "GET" "/api/cms/documents" "reader" nil)))]
+          (is (= 100 (count (:documents page))))
+          (is (= 105 (:total page)))
+          (is (:has_more page)))
+        (let [page (:body (await (request! app "GET" "/api/cms/documents?garden_id=a&limit=2&offset=1" "reader" nil)))]
+          (is (= ["1002" "1004"] (mapv :doc_id (:documents page))))
+          (is (= 53 (:total page)))
+          (is (= 2 (:limit page)))
+          (is (= 1 (:offset page))))
+        (is (= ["1104"] (mapv :doc_id (:documents (:body (await (request! app "GET" "/api/cms/documents?path_prefix=docs%2F104.md&limit=1" "reader" nil)))))))
+        (let [page (documents/list! "page-org" {:offset "105"})]
+          (is (empty? (:documents page)))
+          (is (false? (:has_more page))))
+        (let [before @opens]
+          (doseq [query ["limit=0" "limit=-1" "limit=1001" "limit=1.5" "limit=2x" "limit="
+                         "offset=-1" "offset=1e2" "offset=2147483648" "offset=99999999999999999999"]]
+            (is (= 400 (:status (await (request! app "GET" (str "/api/cms/documents?" query) "reader" nil))))))
+          (is (= before @opens) "Malformed queries never open or migrate the store")))
+      (finally (await (.close app))))))
 
 (deftest ^:async authenticated-http-history-preserves-stale-saves
   (let [root (temporary-root)

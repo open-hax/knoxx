@@ -3,6 +3,20 @@
 (defn require-id! [value]
   (when-not (and (string? value) (re-matches #"[A-Za-z0-9_-]{1,100}" value))
     (throw (ex-info "Invalid CMS identity" {:status 400}))) value)
+
+(defn- page-number! [field value default maximum]
+  (let [number (if (nil? value) default
+                  (when (and (string? value) (re-matches #"[0-9]{1,10}" value))
+                    (parse-long value)))]
+    (when-not (and (integer? number) (<= (if (= field :limit) 1 0) number maximum))
+      (throw (ex-info "Invalid CMS pagination" {:status 400 :field field})))
+    number))
+
+(defn require-page!
+  "Validate HTTP pagination before opening the store. Limit defaults to 100."
+  [query]
+  {:limit (page-number! :limit (:limit query) 100 1000)
+   :offset (page-number! :offset (:offset query) 0 2147483647)})
 (defn require-body! [body]
   (when-not (and (map? body) (string? (:title body)) (<= 1 (count (str/trim (:title body))) 200)
                  (string? (:content body)) (<= (count (:content body)) 262144)
