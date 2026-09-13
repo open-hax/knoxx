@@ -8,7 +8,12 @@ if(!origin||!source||!email||!password)throw Error('Set KNOXX_VERIFY_ORIGIN, AXX
 for(const value of [origin,source])assert.equal(new URL(value).protocol,'https:');
 const checks=[];
 async function check(name,fn){await fn();checks.push({name,status:'passed'});}
-await check('source identity endpoint unavailable',async()=>{const r=await fetch(source+'/health');assert.ok(r.status>=500);});
+await check('source identity endpoint unavailable',async()=>{
+ let response;
+ try { response=await fetch(source+'/health',{signal:AbortSignal.timeout(10000)}); }
+ catch { return; } // A stopped direct endpoint can refuse the connection entirely.
+ assert.ok(response.status>=500,'The source still responds without a server failure');
+});
 let cookie;
 await check('fresh recipient password sign-in',async()=>{
  const r=await fetch(origin+'/api/auth/local/login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email,password})});

@@ -28,7 +28,7 @@
    :extra-deps
    {io.github.open-hax/katamorph   {:git/sha "b00316a64310190335e4cb1a31b08d601eff8bb0"}
     io.github.open-hax/document-history {:git/url "https://github.com/open-hax/eta-mu.git"
-                                        :git/sha "2a7ca613a179520f3fd693c34e3cf4b19c79c8c9"
+                                        :git/sha "a2f428afd7623dcd188d535512525ee521a5ba61"
                                         :deps/root "packages/document-history"}
     ;; ../shared/src/cljs, as a local lib rather than an external :extra-path
     ;; (tools.deps deprecates paths that escape the project directory).

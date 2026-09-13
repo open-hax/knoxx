@@ -295,6 +295,65 @@ describe("CmsPage CMS document backend interactions", () => {
     expect(await screen.findByRole("button", { name: "Publish" })).toBeInTheDocument();
   });
 
+  it.each([
+    { english: "withheld", spanish: "published", action: "Unpublish", next: "withheld", message: "Publication withheld", nextAction: "Publish" },
+    { english: "withheld", spanish: "withheld", action: "Publish", next: "published", message: "Publication requested", nextAction: "Unpublish" },
+  ] as const)("$action updates both English and Spanish intents in the selected garden", async ({ english, spanish, action, next, message, nextAction }) => {
+    const desired: Record<string, "published" | "withheld"> = { en: english, es: spanish };
+    const topology = () => {
+      const result = publicationTopology(desired.en);
+      const base = result.documents[0].publications[0];
+      result.documents[0].publications = ["en", "es"].map((locale) => ({ ...base, id: `knoxx.docs/existing-${locale}`, locale, desired: desired[locale] }));
+      result.documents[0].publications.push({ ...base, id: "knoxx.docs/other-garden", garden: "garden-b", desired: "withheld" });
+      return result;
+    };
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url === "/api/cms/publications/documents") return jsonResponse(topology());
+      if (url.startsWith("/api/cms/publications/intents/") && init?.method === "PATCH") {
+        const id = decodeURIComponent(url.split("/").pop()!);
+        const locale = id.split("-").pop()!;
+        desired[locale] = JSON.parse(String(init.body)).state;
+        return jsonResponse(topology().documents[0].publications.find((publication) => publication.id === id));
+      }
+    });
+    renderCmsPage();
+    fireEvent.click(await screen.findByRole("button", { name: action }));
+    await screen.findByText(message);
+    const patches = harness.requests.filter(({ url, init }) => url.startsWith("/api/cms/publications/intents/") && init?.method === "PATCH");
+    expect(patches.map(({ url }) => decodeURIComponent(url.split("/").pop()!))).toEqual(["knoxx.docs/existing-en", "knoxx.docs/existing-es"]);
+    expect(desired).toEqual({ en: next, es: next });
+    expect(screen.getByRole("button", { name: nextAction })).toBeEnabled();
+  });
+
+  it("reloads partial locale updates and reports the failed garden action", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const desired: Record<string, "published" | "withheld"> = { en: "published", es: "published" };
+    const topology = () => {
+      const result = publicationTopology(desired.en);
+      const base = result.documents[0].publications[0];
+      result.documents[0].publications = ["en", "es"].map((locale) => ({ ...base, id: `knoxx.docs/existing-${locale}`, locale, desired: desired[locale] }));
+      return result;
+    };
+    const harness = installCmsFetchMock(cmsDoc, "published", (url, init) => {
+      if (url === "/api/cms/publications/documents") return jsonResponse(topology());
+      if (url.startsWith("/api/cms/publications/intents/") && init?.method === "PATCH") {
+        const id = decodeURIComponent(url.split("/").pop()!);
+        if (id.endsWith("-es")) return jsonResponse({ error: "Spanish publication unavailable" }, { status: 503 });
+        desired.en = JSON.parse(String(init.body)).state;
+        return jsonResponse(topology().documents[0].publications[0]);
+      }
+    });
+    renderCmsPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Unpublish" }));
+    await screen.findByText(/Could not update every publication: 503.*Spanish publication unavailable/);
+    expect(desired).toEqual({ en: "withheld", es: "published" });
+    expect(screen.getByRole("button", { name: "Unpublish" })).toBeEnabled();
+    expect(screen.queryByText("Publication withheld")).not.toBeInTheDocument();
+    const failedIndex = harness.requests.findIndex(({ url, init }) => decodeURIComponent(url).endsWith("existing-es") && init?.method === "PATCH");
+    expect(harness.requests.slice(failedIndex + 1).some(({ url }) => url === "/api/cms/publications/documents")).toBe(true);
+    errorLog.mockRestore();
+  });
+
   it("keeps the editor's observed parent when a document-list refresh sees another writer", async () => {
     let otherWriterSaved = false;
     const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {

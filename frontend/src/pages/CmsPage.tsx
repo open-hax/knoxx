@@ -6,7 +6,6 @@ import { CollapsedPanelTab } from "../components/CollapsedPanelTab";
 import {
   findDocumentBySourcePath,
   listPublicationTopology,
-  publicationForGarden,
   publishedGardenIdsFor,
   setPublicationState,
   type CmsListWire,
@@ -796,10 +795,23 @@ function CmsPage() {
       if (editorRequestRef.current !== requestId) return;
       setPublicationTopology(topology);
       const document = savedPath ? findDocumentBySourcePath(topology, savedPath) : null;
-      const publication = publicationForGarden(document, selectedGardenId);
-      if (!publication) throw new Error("No publication is configured for this document and garden.");
-      await setPublicationState(publication.id, nextState);
-      await loadPublicationTopology();
+      const publications = document?.publications.filter((publication) => publication.garden === selectedGardenId) ?? [];
+      if (publications.length === 0) throw new Error("No publication is configured for this document and garden.");
+      let refreshedTopology: CmsListWire | null = null;
+      try {
+        // This control targets the garden, including every locale in it.
+        // Write each locale in sequence; intents may share a manifest.
+        for (const publication of publications) {
+          if (editorRequestRef.current !== requestId) return;
+          await setPublicationState(publication.id, nextState);
+        }
+      } catch (error) {
+        throw new Error(`Could not update every publication: ${error instanceof Error ? error.message : "unknown error"}`);
+      } finally {
+        // An earlier locale may have succeeded even when a later one failed.
+        refreshedTopology = await loadPublicationTopology();
+      }
+      if (!refreshedTopology) throw new Error("Could not reload publication state; refresh to confirm the update.");
       if (editorRequestRef.current !== requestId) return;
       setLastSaveMessage(nextState === "published" ? "Publication requested" : "Publication withheld");
     } catch (error) {
