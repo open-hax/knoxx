@@ -3,6 +3,7 @@
  :deps
  {org.clojure/clojure      {:mvn/version "1.12.0"}
   org.clojure/tools.reader {:mvn/version "1.5.2"}
+  org.clojure/data.json {:mvn/version "2.5.1"}
   rewrite-clj/rewrite-clj {:mvn/version "1.1.49"}}
 
  :aliases
@@ -26,6 +27,9 @@
   {:extra-paths ["src/cljs" "test/cljs" "test/e2e"]
    :extra-deps
    {io.github.open-hax/katamorph   {:git/sha "b00316a64310190335e4cb1a31b08d601eff8bb0"}
+    io.github.open-hax/document-history {:git/url "https://github.com/open-hax/eta-mu.git"
+                                        :git/sha "a2f428afd7623dcd188d535512525ee521a5ba61"
+                                        :deps/root "packages/document-history"}
     ;; ../shared/src/cljs, as a local lib rather than an external :extra-path
     ;; (tools.deps deprecates paths that escape the project directory).
     open-hax/knoxx-shared          {:local/root "../shared"}

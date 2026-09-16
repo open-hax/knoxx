@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import CmsPage from "./CmsPage";
@@ -22,9 +22,13 @@ vi.mock("react-markdown", () => ({
 }));
 
 vi.mock("../components/context-bar", () => ({
-  ContextBar: ({ onNewDocument }: { onNewDocument?: () => void }) => (
+  ContextBar: ({ onNewDocument, onOpenFile }: {
+    onNewDocument?: () => void;
+    onOpenFile?: (entry: { name: string; path: string; type: "file"; previewable: boolean }) => void;
+  }) => (
     <aside data-testid="context-bar">
       <button onClick={onNewDocument}>New document</button>
+      <button onClick={() => onOpenFile?.({ name: "existing.md", path: "docs/existing.md", type: "file", previewable: true })}>Open explorer file</button>
     </aside>
   ),
 }));
@@ -78,6 +82,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
 
 const cmsDoc = {
   doc_id: "cms-doc-1",
+  garden_id: "garden-a",
   title: "Existing CMS Doc",
   content: "Initial CMS body",
   source_path: "docs/existing.md",
@@ -85,6 +90,9 @@ const cmsDoc = {
   // No `garden_publications`. Publication state is no longer read from document
   // metadata — it comes from the resource-backed publication topology.
   metadata: {},
+  revision: "revision-1",
+  revision_heads: ["revision-1"],
+  conflicted: false,
 };
 
 function publicationTopology(desired: "published" | "withheld") {
@@ -116,7 +124,11 @@ function publicationTopology(desired: "published" | "withheld") {
   };
 }
 
-function installCmsFetchMock(doc = cmsDoc, initialDesired: "published" | "withheld" = "published") {
+function installCmsFetchMock(
+  doc = cmsDoc,
+  initialDesired: "published" | "withheld" = "published",
+  respond?: (url: string, init?: RequestInit) => Response | Promise<Response> | undefined,
+) {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   // Stateful on purpose: a PATCH changes the resource, and the page re-reads the
   // topology rather than predicting the new state locally. A fixed-response mock
@@ -125,6 +137,8 @@ function installCmsFetchMock(doc = cmsDoc, initialDesired: "published" | "withhe
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     requests.push({ url, init });
+    const overridden = await respond?.(url, init);
+    if (overridden) return overridden;
 
     if (url.startsWith("/api/ingestion/browse")) {
       return jsonResponse({ current_path: ".", entries: [] });
@@ -148,18 +162,16 @@ function installCmsFetchMock(doc = cmsDoc, initialDesired: "published" | "withhe
     if (url === "/api/ingestion/file?path=contracts/cms-templates.edn") {
       return jsonResponse({ content: ':article-page {:label "Article"}' });
     }
-    if (url.startsWith("/api/openplanner/v1/cms/documents?")) {
+    if (url.startsWith("/api/cms/documents?")) {
       return jsonResponse({ documents: [doc], total: 1 });
     }
-    if (url === "/api/openplanner/v1/cms/documents/cms-doc-1" && init?.method === "PATCH") {
+    if (url === "/api/cms/documents/cms-doc-1" && init?.method === "PATCH") {
       return jsonResponse({ ...doc, ...(JSON.parse(String(init.body)) as Record<string, unknown>) });
     }
-    if (url === "/api/openplanner/v1/cms/documents/cms-doc-1") {
+    if (url === "/api/cms/documents/cms-doc-1") {
       return jsonResponse(doc);
     }
-    if (url.startsWith("/api/openplanner/v1/cms/publish/cms-doc-1/garden-a")) {
-      return jsonResponse({ ok: true });
-    }
+
 
     return jsonResponse({ error: `Unexpected ${url}` }, { status: 404 });
   });
@@ -167,10 +179,16 @@ function installCmsFetchMock(doc = cmsDoc, initialDesired: "published" | "withhe
   return { fetchMock, requests };
 }
 
-function renderCmsPage(initialEntry = "/cms?doc=cms-doc-1") {
+function TestNavigation() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate("/cms?doc=other-doc")}>Navigate to another document</button>;
+}
+
+function renderCmsPage(initialEntry = "/cms?doc=cms-doc-1", navigation = false) {
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
+    <MemoryRouter initialEntries={[initialEntry]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <CmsPage />
+      {navigation ? <TestNavigation /> : null}
     </MemoryRouter>,
   );
 }
@@ -209,13 +227,14 @@ describe("CmsPage CMS document backend interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByText("Saved CMS draft");
-    const patchRequest = requests.find((request) => request.url === "/api/openplanner/v1/cms/documents/cms-doc-1" && request.init?.method === "PATCH");
+    const patchRequest = requests.find((request) => request.url === "/api/cms/documents/cms-doc-1" && request.init?.method === "PATCH");
     expect(patchRequest).toBeTruthy();
     expect(JSON.parse(String(patchRequest?.init?.body))).toMatchObject({
       title: "Existing CMS Doc",
       content: "Updated CMS body",
       source_path: "docs/existing.md",
-      visibility: "public",
+      visibility: "review",
+      parents: ["revision-1"],
     });
     expect(screen.getByDisplayValue("Updated CMS body")).toBeInTheDocument();
   });
@@ -262,15 +281,366 @@ describe("CmsPage CMS document backend interactions", () => {
       expect(patchedBody).not.toHaveProperty(identityField);
     }
 
+    expect(publishedHarness.requests.some((request) => request.url.startsWith("/api/openplanner/v1/cms/publish"))).toBe(false);
     unmount();
     const unpublishedHarness = installCmsFetchMock(cmsDoc);
     renderCmsPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Unpublish" }));
     await waitFor(() => expect(unpublishedHarness.requests.some((request) => (
-      request.url === "/api/openplanner/v1/cms/publish/cms-doc-1/garden-a"
-      && request.init?.method === "DELETE"
+      request.url.startsWith("/api/cms/publications/intents/")
+      && request.init?.method === "PATCH"
+      && JSON.parse(String(request.init.body)).state === "withheld"
     ))).toBe(true));
     expect(await screen.findByRole("button", { name: "Publish" })).toBeInTheDocument();
+  });
+
+  it.each([
+    { english: "withheld", spanish: "published", action: "Unpublish", next: "withheld", message: "Publication withheld", nextAction: "Publish" },
+    { english: "withheld", spanish: "withheld", action: "Publish", next: "published", message: "Publication requested", nextAction: "Unpublish" },
+  ] as const)("$action updates both English and Spanish intents in the selected garden", async ({ english, spanish, action, next, message, nextAction }) => {
+    const desired: Record<string, "published" | "withheld"> = { en: english, es: spanish };
+    const topology = () => {
+      const result = publicationTopology(desired.en);
+      const base = result.documents[0].publications[0];
+      result.documents[0].publications = ["en", "es"].map((locale) => ({ ...base, id: `knoxx.docs/existing-${locale}`, locale, desired: desired[locale] }));
+      result.documents[0].publications.push({ ...base, id: "knoxx.docs/other-garden", garden: "garden-b", desired: "withheld" });
+      return result;
+    };
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url === "/api/cms/publications/documents") return jsonResponse(topology());
+      if (url.startsWith("/api/cms/publications/intents/") && init?.method === "PATCH") {
+        const id = decodeURIComponent(url.split("/").pop()!);
+        const locale = id.split("-").pop()!;
+        desired[locale] = JSON.parse(String(init.body)).state;
+        return jsonResponse(topology().documents[0].publications.find((publication) => publication.id === id));
+      }
+    });
+    renderCmsPage();
+    fireEvent.click(await screen.findByRole("button", { name: action }));
+    await screen.findByText(message);
+    const patches = harness.requests.filter(({ url, init }) => url.startsWith("/api/cms/publications/intents/") && init?.method === "PATCH");
+    expect(patches.map(({ url }) => decodeURIComponent(url.split("/").pop()!))).toEqual(["knoxx.docs/existing-en", "knoxx.docs/existing-es"]);
+    expect(desired).toEqual({ en: next, es: next });
+    expect(screen.getByRole("button", { name: nextAction })).toBeEnabled();
+  });
+
+  it("reloads partial locale updates and reports the failed garden action", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const desired: Record<string, "published" | "withheld"> = { en: "published", es: "published" };
+    const topology = () => {
+      const result = publicationTopology(desired.en);
+      const base = result.documents[0].publications[0];
+      result.documents[0].publications = ["en", "es"].map((locale) => ({ ...base, id: `knoxx.docs/existing-${locale}`, locale, desired: desired[locale] }));
+      return result;
+    };
+    const harness = installCmsFetchMock(cmsDoc, "published", (url, init) => {
+      if (url === "/api/cms/publications/documents") return jsonResponse(topology());
+      if (url.startsWith("/api/cms/publications/intents/") && init?.method === "PATCH") {
+        const id = decodeURIComponent(url.split("/").pop()!);
+        if (id.endsWith("-es")) return jsonResponse({ error: "Spanish publication unavailable" }, { status: 503 });
+        desired.en = JSON.parse(String(init.body)).state;
+        return jsonResponse(topology().documents[0].publications[0]);
+      }
+    });
+    renderCmsPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Unpublish" }));
+    await screen.findByText(/Could not update every publication: 503.*Spanish publication unavailable/);
+    expect(desired).toEqual({ en: "withheld", es: "published" });
+    expect(screen.getByRole("button", { name: "Unpublish" })).toBeEnabled();
+    expect(screen.queryByText("Publication withheld")).not.toBeInTheDocument();
+    const failedIndex = harness.requests.findIndex(({ url, init }) => decodeURIComponent(url).endsWith("existing-es") && init?.method === "PATCH");
+    expect(harness.requests.slice(failedIndex + 1).some(({ url }) => url === "/api/cms/publications/documents")).toBe(true);
+    errorLog.mockRestore();
+  });
+
+  it("keeps the editor's observed parent when a document-list refresh sees another writer", async () => {
+    let otherWriterSaved = false;
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url.startsWith("/api/cms/documents?") && otherWriterSaved) {
+        return jsonResponse({ documents: [{ ...cmsDoc, content: "Other writer's edit", revision: "revision-2", revision_heads: ["revision-2"] }] });
+      }
+    });
+    renderCmsPage();
+    const editor = await screen.findByRole("textbox", { name: "Document content" });
+    fireEvent.change(editor, { target: { value: "My concurrent edit" } });
+    otherWriterSaved = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved CMS draft");
+    const patch = harness.requests.find(({ init }) => init?.method === "PATCH");
+    expect(JSON.parse(String(patch?.init?.body))).toMatchObject({ content: "My concurrent edit", parents: ["revision-1"] });
+  });
+
+  it("preserves unsaved content and its original parent after a failed append", async () => {
+    let failAppend = true;
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url === "/api/cms/documents/cms-doc-1" && init?.method === "PATCH" && failAppend) {
+        return new Response("Ledger temporarily unavailable", { status: 500 });
+      }
+    });
+    renderCmsPage();
+    const editor = await screen.findByRole("textbox", { name: "Document content" });
+    fireEvent.change(editor, { target: { value: "Keep my unsaved revision" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Ledger temporarily unavailable");
+    expect(editor).toHaveValue("Keep my unsaved revision");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    failAppend = false;
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved CMS draft");
+    const patches = harness.requests.filter(({ init }) => init?.method === "PATCH");
+    expect(patches).toHaveLength(2);
+    for (const patch of patches) {
+      expect(JSON.parse(String(patch.init?.body))).toMatchObject({ parents: ["revision-1"], content: "Keep my unsaved revision" });
+    }
+    errorLog.mockRestore();
+  });
+
+  it("shows complete revision history and joins only explicitly reviewed current versions", async () => {
+    const heads = ["revision-2", "revision-3"];
+    const revisions = [
+      { ...cmsDoc, revision: "revision-2", content: "First writer's full Markdown", actor: "alice", at: "2026-09-13T10:00:00.000Z", parents: ["revision-1"] },
+      { ...cmsDoc, revision: "revision-3", content: "Second writer's full Markdown", actor: "bob", at: "2026-09-13T10:00:00.000Z", parents: ["revision-1"] },
+    ];
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url.endsWith("/history")) return jsonResponse({ document: { ...cmsDoc, revision: "revision-2", revision_heads: heads, conflicted: true }, revisions });
+      if (url === "/api/cms/documents/cms-doc-1" && init?.method === "PATCH") {
+        return jsonResponse({ ...cmsDoc, ...JSON.parse(String(init.body)), revision: "revision-4", revision_heads: ["revision-4"], conflicted: false });
+      }
+    });
+    renderCmsPage();
+    const editor = await screen.findByRole("textbox", { name: "Document content" });
+    fireEvent.change(editor, { target: { value: "Combined both writers' ideas" } });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    const version = await screen.findByRole("combobox", { name: "History version" });
+    const resolve = screen.getByRole("button", { name: "Save resolution from editor" });
+    expect(editor).toHaveValue("Combined both writers' ideas");
+    expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+    expect(resolve).toBeDisabled();
+    fireEvent.change(version, { target: { value: "revision-2" } });
+    expect(screen.getByText("First writer's full Markdown")).toBeInTheDocument();
+    expect(screen.getByText("alice ·")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mark this version reviewed" }));
+    expect(resolve).toBeDisabled();
+    fireEvent.change(version, { target: { value: "revision-3" } });
+    expect(screen.getByText("Second writer's full Markdown")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mark this version reviewed" }));
+    expect(resolve).toBeEnabled();
+    fireEvent.click(resolve);
+    await screen.findByText("Saved CMS draft");
+    const patch = harness.requests.find(({ init }) => init?.method === "PATCH");
+    expect(JSON.parse(String(patch?.init?.body))).toMatchObject({ content: "Combined both writers' ideas", parents: heads });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("ignores a late history response after the user opens a different draft", async () => {
+    let finishHistory: (response: Response) => void = () => undefined;
+    installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url.endsWith("/history")) return new Promise<Response>((resolve) => { finishHistory = resolve; });
+    });
+    renderCmsPage();
+    await screen.findByRole("textbox", { name: "Document content" });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    await screen.findByText("Loading history…");
+    fireEvent.click(screen.getByRole("button", { name: "New document" }));
+    await act(async () => finishHistory(jsonResponse({
+      document: { ...cmsDoc, conflicted: true, revision_heads: ["old-head-a", "old-head-b"] },
+      revisions: [],
+    })));
+    expect(screen.getByRole("textbox", { name: "Document content" })).toHaveValue("");
+    expect(screen.queryByRole("region", { name: "Document history" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not replace intervening typing with an older document-load response", async () => {
+    let deferReload = false;
+    let finishReload: (response: Response) => void = () => undefined;
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url === "/api/cms/documents/cms-doc-1" && !init?.method && deferReload) {
+        return new Promise<Response>((resolve) => { finishReload = resolve; });
+      }
+    });
+    renderCmsPage();
+    const editor = await screen.findByRole("textbox", { name: "Document content" });
+    deferReload = true;
+    fireEvent.click(await screen.findByRole("button", { name: /Existing CMS Doc/ }));
+    fireEvent.change(editor, { target: { value: "Typing while the reload was pending" } });
+    await act(async () => finishReload(jsonResponse({ ...cmsDoc, content: "New remote body", revision: "revision-2" })));
+    expect(editor).toHaveValue("Typing while the reload was pending");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved CMS draft");
+    const patch = harness.requests.find(({ init }) => init?.method === "PATCH");
+    expect(JSON.parse(String(patch?.init?.body))).toMatchObject({ parents: ["revision-1"], content: "Typing while the reload was pending" });
+  });
+
+  it("keeps the newly navigated document when a previous document's save finishes", async () => {
+    let finishSave: (response: Response) => void = () => undefined;
+    const other = { ...cmsDoc, doc_id: "other-doc", title: "Other document", content: "Other document body", revision: "other-revision", source_path: "other.md" };
+    installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url === "/api/cms/documents/cms-doc-1" && init?.method === "PATCH") {
+        return new Promise<Response>((resolve) => { finishSave = resolve; });
+      }
+      if (url === "/api/cms/documents/other-doc") return jsonResponse(other);
+    });
+    renderCmsPage("/cms?doc=cms-doc-1", true);
+    const editor = await screen.findByRole("textbox", { name: "Document content" });
+    fireEvent.change(editor, { target: { value: "Saved on the previous document" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("button", { name: "Saving…" });
+    fireEvent.click(screen.getByRole("button", { name: "Navigate to another document" }));
+    await screen.findByDisplayValue("Other document body");
+    await act(async () => finishSave(jsonResponse({ ...cmsDoc, content: "Saved on the previous document", revision: "saved-revision" })));
+    expect(editor).toHaveValue("Other document body");
+    expect(screen.getByRole("textbox", { name: "Document title" })).toHaveValue("Other document");
+    expect(screen.queryByText("Saved CMS draft")).not.toBeInTheDocument();
+  });
+
+  it("shows a denied CMS lookup while preserving the editor and avoiding ingestion fallback", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url.startsWith("/api/cms/documents?path_prefix=")) return new Response("CMS access denied", { status: 403 });
+    });
+    renderCmsPage();
+    const editor = await screen.findByRole("textbox", { name: "Document content" });
+    fireEvent.change(editor, { target: { value: "Unsaved local draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open explorer file" }));
+    await screen.findByText("Could not load document: CMS access denied");
+    expect(editor).toHaveValue("Unsaved local draft");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/ingestion/file?path=docs"))).toBe(false);
+    errorLog.mockRestore();
+  });
+
+  it("shows a URL hydration failure without opening stale ingestion content", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url === "/api/cms/documents/cms-doc-1") return new Response("CMS history unavailable", { status: 500 });
+    });
+    renderCmsPage("/cms?path=docs%2Fexisting.md");
+    await screen.findByText("Could not load document: CMS history unavailable");
+    expect(screen.queryByRole("textbox", { name: "Document content" })).not.toBeInTheDocument();
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/ingestion/file?path=docs"))).toBe(false);
+    errorLog.mockRestore();
+  });
+
+  it("does not show an older lookup error after navigation to another document", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let failLookup: (response: Response) => void = () => undefined;
+    const other = { ...cmsDoc, doc_id: "other-doc", title: "Other document", content: "Other document body", revision: "other-revision", source_path: "other.md" };
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url.startsWith("/api/cms/documents?path_prefix=")) return new Promise<Response>((resolve) => { failLookup = resolve; });
+      if (url === "/api/cms/documents/other-doc") return jsonResponse(other);
+    });
+    renderCmsPage("/cms?path=docs%2Fexisting.md", true);
+    await waitFor(() => expect(harness.requests.some(({ url }) => url.startsWith("/api/cms/documents?path_prefix="))).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "Navigate to another document" }));
+    await screen.findByDisplayValue("Other document body");
+    await act(async () => failLookup(new Response("Old lookup failure", { status: 500 })));
+    expect(screen.getByRole("status")).toHaveTextContent("Loaded CMS draft");
+    expect(screen.queryByText(/Old lookup failure/)).not.toBeInTheDocument();
+    errorLog.mockRestore();
+  });
+
+  it("loads the current ledger body and revision together when a URL names an older source path", async () => {
+    const current = { ...cmsDoc, source_path: ".ημ/snapshots/new/content.md", source_paths: ["docs/old.md"], content: "Current ledger content", revision: "revision-7", revision_heads: ["revision-7"] };
+    const harness = installCmsFetchMock(current, "withheld");
+    renderCmsPage("/cms?path=docs%2Fold.md");
+    const editor = await screen.findByRole("textbox", { name: "Document content" });
+    await waitFor(() => expect(editor).toHaveValue("Current ledger content"));
+    fireEvent.change(editor, { target: { value: "Edit based on current content" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved CMS draft");
+    const patch = harness.requests.find(({ init }) => init?.method === "PATCH");
+    expect(JSON.parse(String(patch?.init?.body))).toMatchObject({ parents: ["revision-7"], content: "Edit based on current content" });
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/ingestion/file?path=docs"))).toBe(false);
+  });
+
+  it("finds a normalized logical alias after an absolute path lookup misses", async () => {
+    const current = { ...cmsDoc, source_path: "/state/.ημ/snapshots/new/content.md", source_paths: ["docs/source.md"] };
+    const harness = installCmsFetchMock(current, "withheld", (url) => {
+      if (url.startsWith("/api/cms/documents?path_prefix=%2Fdocs")) return jsonResponse({ documents: [] });
+    });
+    renderCmsPage("/cms?path=%2Fdocs%2Fsource.md");
+    await screen.findByDisplayValue("Initial CMS body");
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/cms/documents?path_prefix=docs%2Fsource.md"))).toBe(true);
+    expect(harness.requests.some(({ url }) => url.startsWith("/api/ingestion/file?path=%2Fdocs"))).toBe(false);
+  });
+
+  it("preserves an imported workspace file's logical path when its title changes before the first save", async () => {
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url.startsWith("/api/cms/documents?")) return jsonResponse({ documents: [] });
+      if (url === "/api/ingestion/file?path=docs%2Fexisting.md") return jsonResponse({ content: "Existing workspace content" });
+      if (url === "/api/cms/documents" && init?.method === "POST") {
+        return jsonResponse({ ...cmsDoc, ...JSON.parse(String(init.body)), source_path: "/state/.ημ/snapshots/imported/content.md" });
+      }
+    });
+    renderCmsPage("/cms?path=docs%2Fexisting.md");
+    await screen.findByDisplayValue("Existing workspace content");
+    fireEvent.change(screen.getByRole("textbox", { name: "Document title" }), { target: { value: "Renamed article" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved CMS draft");
+    const create = harness.requests.find(({ url, init }) => url === "/api/cms/documents" && init?.method === "POST");
+    expect(JSON.parse(String(create?.init?.body))).toMatchObject({ title: "Renamed article", source_path: "docs/existing.md", content: "Existing workspace content", parents: [] });
+  });
+
+  it("saves a new document into its assigned workspace garden before allowing publication", async () => {
+    const workspaceGarden = "cms.org/workspace";
+    let created = false;
+    let published = false;
+    const snapshot = ".ημ/snapshots/created/content.md";
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url, init) => {
+      if (url === "/api/cms/publications/documents") {
+        const topology = publicationTopology(published ? "published" : "withheld");
+        topology.documents[0].document.source.path = snapshot;
+        topology.documents[0].publications[0].garden = workspaceGarden;
+        if (created) topology.gardens.push({ id: workspaceGarden, title: "Workspace Publications", status: "active" });
+        return jsonResponse({ ...topology, documents: created ? topology.documents : [] });
+      }
+      if (url.startsWith("/api/cms/documents?")) return jsonResponse({ documents: [] });
+      if (url === "/api/cms/documents" && init?.method === "POST") {
+        created = true;
+        return jsonResponse({ ...cmsDoc, ...JSON.parse(String(init.body)), garden_id: workspaceGarden, source_path: snapshot });
+      }
+      if (url.startsWith("/api/cms/publications/intents/") && init?.method === "PATCH") {
+        published = true;
+        return jsonResponse(publicationTopology("published").documents[0].publications[0]);
+      }
+    });
+    renderCmsPage("/cms");
+    await screen.findByRole("option", { name: "Garden A" });
+    fireEvent.click(screen.getByRole("button", { name: "New document" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Document title" }), { target: { value: "New article" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Document content" }), { target: { value: "New article body" } });
+    expect(screen.getByRole("combobox", { name: "Garden" })).toBeDisabled();
+    expect(screen.getByRole("option", { name: "Workspace garden (assigned on save)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved CMS draft");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Garden" })).toHaveValue(workspaceGarden));
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await screen.findByText("Publication requested");
+    expect(harness.requests.filter(({ url, init }) => url === "/api/cms/documents" && init?.method === "POST")).toHaveLength(1);
+    expect(harness.requests.filter(({ url, init }) => url.startsWith("/api/cms/documents/") && init?.method === "PATCH")).toHaveLength(0);
+    const create = harness.requests.find(({ init }) => init?.method === "POST");
+    expect(JSON.parse(String(create?.init?.body))).toMatchObject({ parents: [], content: "New article body", source_path: "New article" });
+    expect(published).toBe(true);
+  });
+
+  it("does not report a publication success when the saved document has no matching intent", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const harness = installCmsFetchMock(cmsDoc, "withheld", (url) => {
+      if (url === "/api/cms/publications/documents") return jsonResponse({ ...publicationTopology("withheld"), documents: [] });
+    });
+    renderCmsPage();
+    await screen.findByRole("textbox", { name: "Document content" });
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await screen.findByText("No publication is configured for this document and garden.");
+    expect(harness.requests.some(({ init }) => init?.method === "PATCH")).toBe(false);
+    expect(screen.queryByText("Publication requested")).not.toBeInTheDocument();
+    errorLog.mockRestore();
   });
 });

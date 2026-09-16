@@ -1,0 +1,33 @@
+name: Install Knoxx verification toolchain
+description: Build the pinned SDK and install packages without deployment credentials
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '21'
+    - uses: DeLaGuardo/setup-clojure@13
+      with:
+        cli: latest
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10.20.0
+    - uses: actions/setup-node@v5
+      with:
+        node-version: '24'
+    - uses: actions/checkout@v5
+      with:
+        repository: open-hax/openplanner
+        ref: 07085d6557b75834ce6f50e6c54b8ca47e1c7c08
+        path: _deps/openplanner
+        persist-credentials: false
+    - shell: bash
+      run: |
+        set -euo pipefail
+        ln -sfn "$GITHUB_WORKSPACE/_deps/openplanner" "$GITHUB_WORKSPACE/../openplanner"
+        pnpm -C _deps/openplanner --filter @open-hax/openplanner-sdk... install --frozen-lockfile
+        pnpm -C _deps/openplanner --filter @open-hax/openplanner-sdk... run build
+        pnpm install --frozen-lockfile
+        pnpm -C backend install --frozen-lockfile
+        pnpm -C frontend install --frozen-lockfile

@@ -21,7 +21,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && corepack enable \
  && corepack prepare pnpm@10.14.0 --activate \
- && pnpm install --prod --no-frozen-lockfile --ignore-scripts
+ && pnpm install --prod --no-frozen-lockfile --ignore-scripts \
+ && pnpm rebuild fs-ext-extra-prebuilt
 
 # Compiled by `shadow-cljs release server` before `docker build`.
 COPY dist ./dist

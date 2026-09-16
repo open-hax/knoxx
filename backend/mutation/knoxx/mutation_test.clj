@@ -5,7 +5,8 @@
   overwrites the real source file per mutant, and delegates compile/test
   execution to shadow-cljs. It intentionally stays in Clojure so mutation
   operators work on Lisp data, not generated JavaScript."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
@@ -13,6 +14,7 @@
             [clojure.tools.reader.reader-types :as reader-types]
             [rewrite-clj.zip :as z])
   (:import [java.io File]
+           [java.security MessageDigest]
            [java.util.concurrent TimeUnit]))
 
 (def default-src-dir "src/cljs")
@@ -171,28 +173,34 @@
         rel (relative-path src-dir file)]
     (mutants-in-source rel source)))
 
-(defn assign-mutant-ids
-  [mutants]
-  (mapv (fn [idx mutant]
-          (assoc mutant :id (format "m%04d" (inc idx))))
-        (range)
-        mutants))
+(defn fingerprint
+  "Stable source mutation identity, independent of batch size and enumeration limits."
+  [mutant]
+  (let [bytes (.digest (MessageDigest/getInstance "SHA-256")
+                (.getBytes (pr-str (mapv mutant [:relative-path :line :column :operator :original :replacement])) "UTF-8"))]
+    (apply str (map #(format "%02x" (bit-and 0xff %)) bytes))))
+
+(defn assign-mutant-ids [mutants]
+  (mapv (fn [idx mutant] (assoc mutant :id (format "m%04d" (inc idx)) :ordinal idx
+                                      :fingerprint (fingerprint mutant)))
+        (range) mutants))
+
+(defn partition-mutants
+  "Disjoint deterministic batches; limiting happens after partitioning."
+  [mutants {:keys [batch-index batch-count limit] :or {batch-index 0 batch-count 1 limit default-limit}}]
+  (when-not (and (pos? batch-count) (<= 0 batch-index) (< batch-index batch-count))
+    (throw (ex-info "Invalid mutation batch index/count" {})))
+  (let [batch (filter #(= batch-index (mod (:ordinal %) batch-count)) mutants)]
+    (vec (if (pos? limit) (take limit batch) batch))))
 
 (defn discover-mutants
-  [{:keys [src-dir include-regex limit]
-    :or {src-dir default-src-dir
-         limit default-limit}}]
-  (let [include-pattern (when-not (str/blank? include-regex)
-                          (re-pattern include-regex))
-        candidates (->> (source-files src-dir)
-                        (filter (fn [file]
-                                  (or (nil? include-pattern)
-                                      (re-find include-pattern (relative-path src-dir file)))))
-                        (mapcat #(mutants-in-file src-dir %)))
-        limited (if (and limit (pos? limit))
-                  (take limit candidates)
-                  candidates)]
-    (assign-mutant-ids limited)))
+  [{:keys [src-dir include-regex] :or {src-dir default-src-dir} :as opts}]
+  (let [pattern (when-not (str/blank? include-regex) (re-pattern include-regex))]
+    (->> (source-files src-dir)
+         (filter #(or (nil? pattern) (re-find pattern (relative-path src-dir %))))
+         (mapcat #(mutants-in-file src-dir %))
+         assign-mutant-ids
+         (#(partition-mutants % opts)))))
 
 (defn same-position?
   [mutant loc]
@@ -287,19 +295,29 @@
         (.destroyForcibly process)
         (process-result 124 true @output-future)))))
 
-(defn test-counters
-  [output]
-  (when-let [[_ failures errors] (re-find #"(?m)\b(\d+) failures?,\s*(\d+) errors?\." output)]
-    {:failures (parse-long failures)
-     :errors (parse-long errors)}))
+(defn test-counters [output]
+  (let [counters (re-seq #"(?m)\b(\d+) failures?,\s*(\d+) errors?\." output)
+        totals (re-seq #"(?m)Ran (\d+) tests containing (\d+) assertions\." output)]
+    (when (and (seq counters) (seq totals))
+      {:failures (reduce + (map #(parse-long (nth % 1)) counters))
+       :errors (reduce + (map #(parse-long (nth % 2)) counters))
+       :assertions (reduce + (map #(parse-long (nth % 2)) totals))})))
 
 (defn killed?
-  [{:keys [exit-code timed-out? output]}]
-  (let [{:keys [failures errors]} (or (test-counters output) {})]
-    (or timed-out?
-        (not= 0 exit-code)
-        (pos? (or failures 0))
-        (pos? (or errors 0)))))
+  "Only completed test assertions can kill a source mutation."
+  [{:keys [timed-out? output]}]
+  (let [{:keys [failures errors assertions]} (test-counters output)]
+    (boolean (and (not timed-out?) (pos? (or assertions 0))
+                  (or (pos? failures) (pos? errors))))))
+
+(defn passed-tests? [{:keys [exit-code timed-out? output]}]
+  (let [{:keys [failures errors assertions]} (test-counters output)]
+    (boolean (and (zero? exit-code) (not timed-out?) (pos? (or assertions 0))
+                  (zero? failures) (zero? errors)))))
+
+(defn compiled? [{:keys [exit-code timed-out? output]}]
+  (and (zero? exit-code) (not timed-out?)
+       (not (re-find #"\b[1-9][0-9]* warnings" output))))
 
 (defn compile-mutant!
   [{:keys [shadow-build timeout-ms] :or {shadow-build default-shadow-build timeout-ms default-timeout-ms}}]
@@ -316,14 +334,16 @@
   (with-mutated-source! opts mutant
     (fn []
       (let [compile-result (compile-mutant! opts)]
-        (if (killed? compile-result)
+        (if-not (compiled? compile-result)
           (assoc mutant
-                 :status :killed
+                 :status :invalid
                  :phase :compile
                  :result (select-keys compile-result [:exit-code :timed-out?]))
           (let [test-result (run-mutant-tests! opts)]
             (assoc mutant
-                   :status (if (killed? test-result) :killed :survived)
+                   :status (cond (killed? test-result) :killed
+                                 (passed-tests? test-result) :survived
+                                 :else :invalid)
                    :phase :test
                    :result (merge (select-keys test-result [:exit-code :timed-out?])
                                   (or (test-counters (:output test-result)) {})))))))))
@@ -335,7 +355,8 @@
         survived (count (filter #(= :survived (:status %)) results))
         planned (count (filter #(= :planned (:status %)) results))
         evaluated (+ killed survived)]
-    {:total total
+    {:invalid (count (filter #(= :invalid (:status %)) results))
+     :total total
      :planned planned
      :evaluated evaluated
      :killed killed
@@ -344,13 +365,17 @@
               (double (/ killed evaluated)))}))
 
 (defn write-report!
-  [{:keys [output-dir report-file] :or {output-dir default-output-dir}}
-   results]
-  (let [report-file (or report-file (str output-dir "/report.edn"))
-        report {:summary (report-summary results)
-                :mutants results}]
-    (.mkdirs (.getParentFile (io/file report-file)))
-    (spit report-file (with-out-str (pprint/pprint report)))
+  [{:keys [output-dir report-file baseline source-sha batch-index min-evaluated run?]
+    :or {output-dir default-output-dir batch-index 0 min-evaluated 1}} results]
+  (let [path (io/file (or report-file (str output-dir "/report.edn")))
+        passed? (and run? (= :passed baseline) (>= (count results) min-evaluated)
+                     (every? #(and (= :killed (:status %)) (= :test (:phase %))) results))
+        report {:summary (report-summary results) :mutants results
+                :source_sha source-sha :batch_index batch-index :baseline baseline
+                :status (if passed? :passed (if run? :failed :planned))}]
+    (when-let [parent (.getParentFile path)] (.mkdirs parent))
+    (spit path (with-out-str (pprint/pprint report)))
+    (spit (str path ".json") (json/write-str (update report :mutants #(mapv (fn [mutant] (select-keys mutant [:id :fingerprint :status :phase :result])) %))))
     report))
 
 (defn parse-long-option
@@ -366,6 +391,7 @@
                :shadow-build default-shadow-build
                :timeout-ms default-timeout-ms
                :limit default-limit
+               :batch-index 0 :batch-count 1 :min-evaluated 1
                :run? false
                :dry-run? false}
          remaining args]
@@ -379,6 +405,9 @@
         "--shadow-build" (recur (assoc opts :shadow-build value) more)
         "--timeout-ms" (recur (assoc opts :timeout-ms (parse-long-option value default-timeout-ms)) more)
         "--limit" (recur (assoc opts :limit (parse-long-option value default-limit)) more)
+        "--batch-index" (recur (assoc opts :batch-index (parse-long-option value 0)) more)
+        "--batch-count" (recur (assoc opts :batch-count (parse-long-option value 1)) more)
+        "--min-evaluated" (recur (assoc opts :min-evaluated (parse-long-option value 1)) more)
         "--run" (recur (assoc opts :run? true) (cons value more))
         "--dry-run" (recur (assoc opts :dry-run? true) (cons value more))
         "--" (recur opts (cons value more))
@@ -391,6 +420,9 @@
        "  --src-dir DIR           Source directory, default src/cljs\n"
        "  --include-regex REGEX   Restrict mutants by source-relative file path\n"
        "  --limit N               Mutant limit, 0 means no limit; default 100\n"
+       "  --batch-index N         Zero-based deterministic partition index\n"
+       "  --batch-count N         Number of disjoint partitions\n"
+       "  --min-evaluated N       Minimum completed test-killed mutations to pass\n"
        "  --output-dir DIR        Mutation output dir, default target/mutation\n"
        "  --report FILE           Report EDN path, default target/mutation/report.edn\n"
        "  --shadow-build BUILD    Shadow build used for mutants, default test-ci\n"
@@ -413,19 +445,25 @@
       (println (format "%s %-9s %s:%s:%s %s %s => %s"
                        id (name status) relative-path line column (name operator) original replacement)))))
 
-(defn run-suite!
+(defn baseline!
+  "An already-failing suite cannot be mutation evidence."
   [opts]
-  (when (:run? opts)
-    (assert-clean-tree! opts))
-  (let [mutants (discover-mutants opts)
-        results (if (:run? opts)
-                  (mapv #(evaluate-mutant! opts %) mutants)
-                  (dry-run-results mutants))
-        report (write-report! opts results)]
+  (if (and (compiled? (compile-mutant! opts)) (passed-tests? (run-mutant-tests! opts)))
+    :passed :failed))
+
+(defn run-suite! [opts]
+  (when (:run? opts) (assert-clean-tree! opts))
+  (let [baseline (if (:run? opts) (baseline! opts) :not-run)
+        mutants (discover-mutants opts)
+        results (cond (not (:run? opts)) (dry-run-results mutants)
+                      (= :passed baseline) (mapv #(evaluate-mutant! opts %) mutants)
+                      :else [])
+        source-sha (str/trim (:out (shell/sh "git" "rev-parse" "HEAD")))
+        report (write-report! (assoc opts :baseline baseline :source-sha source-sha) results)]
     (print-summary! report)
-    (when (and (:run? opts)
-               (some #(= :survived (:status %)) results))
-      (System/exit 2))))
+    (when (and (:run? opts) (not= :passed (:status report)))
+      (throw (ex-info "Mutation qualification failed: require a green baseline and enough completed test kills" {:summary (:summary report)})))
+    report))
 
 (defn -main
   [& args]

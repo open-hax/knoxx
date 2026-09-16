@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import BroadcastStudioPage from "./BroadcastStudioPage";
@@ -149,7 +149,7 @@ function installAudioDomMocks() {
   });
 }
 
-function installBroadcastStudioFetchMock() {
+function installBroadcastStudioFetchMock(createStatus = 200) {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const appliedLabelIds = new Set<string>();
 
@@ -221,8 +221,9 @@ function installBroadcastStudioFetchMock() {
         content: "Bright news bed.",
       });
     }
-    if (url === "/api/openplanner/v1/gardens") {
-      return jsonResponse({ ok: true, gardens: [] });
+    if (url === "/api/cms/documents" && method === "POST") {
+      if (createStatus !== 200) return new Response("CMS creation denied", { status: createStatus });
+      return jsonResponse({ doc_id: "local-cms-draft", title: "Playlist publication", source_path: "/state/.ημ/snapshots/draft/content.md" });
     }
 
     return jsonResponse({ error: `Unexpected ${method} ${url}` }, { status: 404 });
@@ -232,10 +233,16 @@ function installBroadcastStudioFetchMock() {
   return { requests, appliedLabelIds };
 }
 
+function CurrentLocation() {
+  const location = useLocation();
+  return <output data-testid="current-location">{location.pathname}{location.search}</output>;
+}
+
 function renderBroadcastStudioPage() {
   return render(
-    <MemoryRouter>
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <BroadcastStudioPage />
+      <CurrentLocation />
     </MemoryRouter>,
   );
 }
@@ -283,6 +290,39 @@ describe("BroadcastStudioPage audio library, playlists, and labels", () => {
         ],
       });
     });
+  });
+
+  it("creates a revisioned playlist document in local CMS and opens its returned id", async () => {
+    const { requests } = installBroadcastStudioFetchMock();
+    renderBroadcastStudioPage();
+    fireEvent.click(await screen.findByText("Late Night"));
+    fireEvent.click(await screen.findByRole("button", { name: "Load" }));
+    const title = await screen.findByPlaceholderText("Playlist name...");
+    fireEvent.change(title, { target: { value: "Playlist publication" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create workspace draft" }));
+    await waitFor(() => expect(screen.getByTestId("current-location")).toHaveTextContent("/cms?doc=local-cms-draft"));
+    const create = requests.find(({ url, init }) => url === "/api/cms/documents" && init?.method === "POST");
+    expect(create).toBeTruthy();
+    const payload = JSON.parse(String(create?.init?.body));
+    expect(payload).toMatchObject({ title: "Playlist publication", visibility: "review", parents: [], metadata: { publication_kind: "playlist", block_schema_version: 1, source_audio_paths: ["intro.wav", "bumper.mp3"] } });
+    expect(payload.content).toContain("# Playlist publication");
+    expect(payload.source_path).toMatch(/^cms\/playlists\/.*playlist-publication\.md$/);
+    expect(payload).not.toHaveProperty("garden_id");
+    expect(payload).not.toHaveProperty("defer_index");
+    expect(requests.some(({ url }) => url.includes("/api/openplanner/v1/cms/documents") || url === "/api/openplanner/v1/gardens")).toBe(false);
+  });
+
+  it("keeps the queue open when local CMS creation is rejected", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { requests } = installBroadcastStudioFetchMock(403);
+    renderBroadcastStudioPage();
+    fireEvent.click(await screen.findByText("Late Night"));
+    fireEvent.click(await screen.findByRole("button", { name: "Load" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create workspace draft" }));
+    await screen.findByText(/Failed to create publication draft: 403.*CMS creation denied/);
+    expect(screen.getByTestId("current-location")).toHaveTextContent(/^\/$/);
+    expect(requests.some(({ url }) => url.includes("/api/openplanner/v1/cms/documents"))).toBe(false);
+    errorLog.mockRestore();
   });
 
   it("applies and removes graph labels for the selected audio file", async () => {

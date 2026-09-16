@@ -319,3 +319,32 @@
   color: var(--token-colors-text-muted);
   font-size: var(--token-font-size-sm);
 }
+
+.conflictNotice {
+  padding: var(--token-spacing-200) var(--token-spacing-400);
+  color: var(--token-colors-text-primary);
+  background: color-mix(in srgb, var(--token-colors-accent-amber) 15%, transparent);
+}
+
+.historyPanel {
+  max-height: 45%;
+  overflow: auto;
+  padding: var(--token-spacing-200) var(--token-spacing-400);
+  border-bottom: 1px solid var(--token-colors-border-default);
+  background: var(--token-colors-surface-secondary);
+}
+
+.historyContent {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: var(--token-spacing-200);
+  background: var(--token-colors-surface-primary);
+}
+
+.historyActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--token-spacing-200);
+  padding: var(--token-spacing-200) 0;
+}
