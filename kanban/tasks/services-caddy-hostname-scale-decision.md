@@ -9,6 +9,8 @@ labels:
   - deployment
   - ingress
   - has-parent
+created_at: "2026-09-03T00:00:00Z"
+category: tasks
 ---
 
 # Services — reopen the certificate decision before hostnames grow

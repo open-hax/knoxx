@@ -7,9 +7,10 @@ points: 2
 labels:
   - tasks
   - deployment
-  - migration
   - proxx
   - has-parent
+created_at: "2026-09-03T00:00:00Z"
+category: tasks
 ---
 
 # Services — proxx staging slot on DigitalOcean

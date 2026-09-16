@@ -11,6 +11,8 @@ labels:
   - integration
   - deployment
   - website
+created_at: "2026-09-03T00:00:00Z"
+category: epics
 ---
 
 # Translated publication to open-hax/website — the first real publication target

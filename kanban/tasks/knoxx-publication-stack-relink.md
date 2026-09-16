@@ -9,6 +9,8 @@ labels:
   - publication
   - process
   - has-parent
+created_at: "2026-09-03T00:00:00Z"
+category: tasks
 ---
 
 # Publication — relink the stranded PR stack onto main

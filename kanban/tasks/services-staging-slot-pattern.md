@@ -9,6 +9,8 @@ labels:
   - deployment
   - lifecycle
   - has-parent
+created_at: "2026-09-03T00:00:00Z"
+category: tasks
 ---
 
 # Services — what a staging slot is on a single host
