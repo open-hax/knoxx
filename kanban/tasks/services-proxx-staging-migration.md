@@ -23,7 +23,11 @@ category: tasks
 > **Superseded in part, 2026-09-16.** A testing/staging controller now exists:
 > `services#83` ("Add per-service HTTPS environments and gated promotion") adds
 > `.github/workflows/deploy-service-environment.yml`, which admits only
-> `testing|staging` for `knoxx|axxium` and deploys a per-PR environment. It is
+> `testing|staging` for `knoxx|axxium`. It deploys into a **shared** environment
+> per service and phase, not one per pull request: the `deploy` job takes
+> `environment: ${{ inputs.environment }}` verbatim and its concurrency group is
+> `promethean-<service>-<environment>`, so the PR number gates admission and
+> selects the source commit but does not partition the slot. It is
 > **not on `main`** — the PR is open. Knoxx `main` nevertheless already calls it:
 > `#306` shipped `.github/workflows/environment-promotion.yml` pinned to
 > `deploy-service-environment.yml@f9bfe172`, a commit on that unmerged branch.
@@ -34,6 +38,22 @@ category: tasks
 Proxx had **no staging phase at all** when this card was written — the slot went with the lane
 `services#67` removed, and nothing replaced it. As with Knoxx this is a
 creation, and the promotion rule needs its record.
+
+**The new controller does not reach Proxx, and not by omission.** Its admission
+step rejects the service outright:
+
+```bash
+[[ "$SERVICE" =~ ^(knoxx|axxium)$ ]]
+test "$SOURCE_REPOSITORY" = "open-hax/$SERVICE"
+```
+
+So Proxx cannot be promoted through `deploy-service-environment.yml` as pinned,
+and it has no caller of its own — `environment-promotion.yml` exists only in
+`open-hax/knoxx` and hardcodes `service: knoxx`. Landing `services#83` therefore
+resolves the Knoxx staging card and leaves this one where it was. Decide which:
+extend the controller's service set and its source-repository check to admit
+Proxx, or give Proxx a staging path that does not run through this controller.
+That decision is a precondition of the work below, not a detail inside it.
 
 ## Dependencies
 
@@ -63,6 +83,10 @@ if staging Knoxx is to point at staging Proxx.
 ## Definition of Done
 
 - Proxx staging deploys to DigitalOcean and its gate passes.
+- The deploy writes a Deployments API record the promotion check can read. This
+  is the point of the card: rule 3 compares production against a staging record,
+  and a deploy that leaves no record satisfies the mechanics without satisfying
+  the rule.
 - Container names and aliases carry the phase; no cross-phase collision.
 - The provider-credential posture for staging is recorded.
 - The bridge question is answered rather than inherited.

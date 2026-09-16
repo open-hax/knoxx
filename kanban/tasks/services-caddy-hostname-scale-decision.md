@@ -43,9 +43,16 @@ eroded one hostname at a time by whoever adds the next service.
   - **Wildcard via DNS-01.** One certificate, no per-hostname record ordering —
     but Cloudflare API credentials resident on the host and a wildcard held as
     host state, which is exactly what was rejected.
-- Note the rate limit either way: Let's Encrypt is per-hostname-per-week, and the
-  Caddy state volume comment already warns that losing `/data` means re-issuing.
-  A migration that re-issues many hostnames in one week is a real risk.
+- Note the rate limits either way, and note the right ones: Let's Encrypt does
+  not limit per hostname per week. It limits **certificates per registered
+  domain** per week, and separately limits **duplicate certificates** — the same
+  exact identifier set — with further account-level and failed-validation
+  limits. Both live hostname sets sit under one registered domain, so
+  per-hostname arithmetic understates the exposure: it is the number of
+  certificates issued under that domain that counts, and one certificate per
+  hostname on HTTP-01 spends that budget faster than one wildcard does. The
+  Caddy state volume comment already warns that losing `/data` means re-issuing,
+  so a migration that re-issues the whole set at once is the real risk.
 - Record the answer **in `compose.yaml`'s header**, replacing the "three
   hostnames" sentence, so the next reader sees the current reasoning and not the
   superseded one.

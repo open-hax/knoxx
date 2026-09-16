@@ -23,7 +23,11 @@ category: tasks
 > **Superseded in part, 2026-09-16.** A testing/staging controller now exists:
 > `services#83` ("Add per-service HTTPS environments and gated promotion") adds
 > `.github/workflows/deploy-service-environment.yml`, which admits only
-> `testing|staging` for `knoxx|axxium` and deploys a per-PR environment. It is
+> `testing|staging` for `knoxx|axxium`. It deploys into a **shared** environment
+> per service and phase, not one per pull request: the `deploy` job takes
+> `environment: ${{ inputs.environment }}` verbatim and its concurrency group is
+> `promethean-<service>-<environment>`, so the PR number gates admission and
+> selects the source commit but does not partition the slot. It is
 > **not on `main`** — the PR is open. Knoxx `main` nevertheless already calls it:
 > `#306` shipped `.github/workflows/environment-promotion.yml` pinned to
 > `deploy-service-environment.yml@f9bfe172`, a commit on that unmerged branch.

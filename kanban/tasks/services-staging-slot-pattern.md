@@ -23,7 +23,11 @@ category: tasks
 > **Superseded in part, 2026-09-16.** A testing/staging controller now exists:
 > `services#83` ("Add per-service HTTPS environments and gated promotion") adds
 > `.github/workflows/deploy-service-environment.yml`, which admits only
-> `testing|staging` for `knoxx|axxium` and deploys a per-PR environment. It is
+> `testing|staging` for `knoxx|axxium`. It deploys into a **shared** environment
+> per service and phase, not one per pull request: the `deploy` job takes
+> `environment: ${{ inputs.environment }}` verbatim and its concurrency group is
+> `promethean-<service>-<environment>`, so the PR number gates admission and
+> selects the source commit but does not partition the slot. It is
 > **not on `main`** — the PR is open. Knoxx `main` nevertheless already calls it:
 > `#306` shipped `.github/workflows/environment-promotion.yml` pinned to
 > `deploy-service-environment.yml@f9bfe172`, a commit on that unmerged branch.
@@ -107,3 +111,22 @@ and branch commits are reachable. Three things follow, and none is theoretical:
 The fix is ordering, not cleverness: land `services#83`, then repin
 `environment-promotion.yml` to the resulting `main` commit. Until that happens,
 this is a live cross-repo dependency on an open pull request.
+
+Repinning means **four** references, not one. Each of the two jobs carries the
+SHA twice — once in `uses:` and once as the `controller_sha` input:
+
+```yaml
+  testing:
+    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@f9bfe172…
+    with:
+      controller_sha: f9bfe172…
+  staging:
+    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@f9bfe172…
+    with:
+      controller_sha: f9bfe172…
+```
+
+`uses:` selects the workflow GitHub runs; `controller_sha` is what that workflow
+checks the controller out at for admission, build and deploy. Moving one without
+the other runs a new workflow against an old controller, or the reverse, and
+nothing in the caller catches the mismatch. Treat all four as one edit.

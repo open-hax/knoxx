@@ -3,7 +3,7 @@ uuid: knoxx-translated-publication-to-website
 title: Translated publication to open-hax/website — the first real publication target
 status: review
 priority: P1
-points: 10
+points: 12
 labels:
   - epics
   - publication
@@ -46,7 +46,7 @@ That is closed.
 
 | Slice | Landed as |
 |---|---|
-| Unblock the stranded PR ladder | `#247`, then `#233`–`#243` merged in order |
+| Unblock the stranded PR ladder | `#247`, then `#233` `#234` `#235` `#236` `#237` `#239` `#240` `#241` `#243` `#242`, in that order |
 | Artifact contract | `#248` |
 | Target registry | `#251` |
 | Locale catalog | `#250` |
@@ -104,5 +104,7 @@ The deployment model those definitions are built against is
 
 ## Done when
 
-The three unfinished slices above are complete and the live verification passes
-against the production origin.
+All three items under **What is not done** are complete — five cards in total:
+the live verification passes against the production origin, the certificate
+decision is recorded at its current hostname count, and the three staging cards
+have landed. The epic's `points: 12` is the sum of those three items, 2 + 2 + 8.
