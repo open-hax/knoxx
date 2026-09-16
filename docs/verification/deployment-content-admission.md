@@ -98,10 +98,10 @@ disables proxies for every request, so a proxy cannot receive the API key.
 - MongoDB and the embedded OpenPlanner indexing path are live. Event and vector
   reads are required checks, not optional diagnostics.
 - For the Services local deployment, host Ollama has both `gemma4:e2b` and
-  `nomic-embed-text`. The Services health verifier checks the model inventory
-  and a real 768-dimensional embedding before it calls admission. This script
+  `qwen3-embedding:8b`. The Services health verifier checks the model inventory
+  and a real 1024-dimensional embedding before it calls admission. This script
   independently proves that every source, index, and candidate event has an
-  exact 768-dimensional `nomic-embed-text` vector in the configured OpenPlanner
+  exact 1024-dimensional `qwen3-embedding:8b` vector in the configured OpenPlanner
   vector collection.
 - Generated verification additionally requires GNU `realpath` and the backend's
   exact `KNOXX_GENERATED_CONTRACTS_DIR`. The script rejects a generated root
@@ -234,8 +234,8 @@ admission. Exactly one `docs` row and one `publication.document.indexed` row
 must exist, and both retain the fixture document id and exact source revision.
 
 It then queries `event_chunks` by parent id. Both events must use
-`nomic-embed-text`, declare exactly 768 dimensions, and carry an embedding array
-of exactly 768 values. This is the end-to-end indexing assertion: a 200
+`qwen3-embedding:8b`, declare exactly 1024 dimensions, and carry an embedding array
+of exactly 1024 values. This is the end-to-end indexing assertion: a 200
 admission response without the requested searchable vectors is not green.
 
 ### 5. Translation agents finish and persist events
@@ -247,7 +247,7 @@ field in `extra`. It requires both Spanish and French output, nonblank source
 and translated text, at least one changed split per target locale,
 `in_review` status, the `knoxx-contract-agent` producer, and `gemma4:e2b` as the
 pinned execution model. It then extracts every stable candidate event id and
-requires at least one exact 768-dimensional `nomic-embed-text` vector for each.
+requires at least one exact 1024-dimensional `qwen3-embedding:8b` vector for each.
 A merely accepted dispatch or an event row without its vector projection cannot
 make this verifier green.
 
@@ -323,8 +323,8 @@ The live resource projection must prove that the generated document:
 
 Terminal generation does not disable translation. The script waits for Spanish
 and French `translation.segment` events for the generated source revision,
-requires the same Gemma metadata and exact nomic vectors as the original
-document, and checks that both target review rows remain unapproved. CMS must
+requires the same Gemma metadata and exact 1024-dimensional
+`qwen3-embedding:8b` vectors as the original document, and checks that both target review rows remain unapproved. CMS must
 show all three generated relations as desired drafts with no observed
 materialization, and the receipt journal must contain no generated-document
 publication receipt. As with the source translations, event output revisions

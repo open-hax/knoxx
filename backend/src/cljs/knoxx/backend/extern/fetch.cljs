@@ -46,22 +46,24 @@
       (assoc headers "Content-Type" "application/json"))))
 
 (defn- request-opts
-  [{:keys [opts method headers json body form]}]
-  (let [{:keys [method headers json body form]}
+  [{:keys [opts method headers json body form redirect]}]
+  (let [{:keys [method headers json body form redirect]}
         (if (map? opts)
           {:method (or (:method opts) method)
            :headers (or (:headers opts) headers)
            :json (or (:json opts) json)
            :body (or (:body opts) body)
-           :form (or (:form opts) form)}
+           :form (or (:form opts) form)
+           :redirect (or (:redirect opts) redirect)}
           {:method method
            :headers headers
            :json json
            :body body
-           :form form})]
+           :form form :redirect redirect})]
     (if (and opts (not (map? opts)))
       opts
       (cond-> {:method (or method "GET")}
+        (some? redirect) (assoc :redirect redirect)
         (seq headers) (assoc :headers headers)
         (some? json) (assoc :headers (json-headers headers)
                             :body (xjson/stringify json))

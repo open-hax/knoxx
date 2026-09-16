@@ -1,0 +1,8 @@
+{:cap/id :cap/github-event-observer
+ :cap/tools [:events.status
+             :events.dispatch
+             :actors.send-message
+             :agents.spawn
+             :graph_query
+             :semantic_read]
+ :cap/description "Inspect and dispatch normalized GitHub events, query their Knoxx projections, and hand admitted work to bounded agents. GitHub acquisition and hydration remain code-level source-driver effects rather than ambient agent tools."}

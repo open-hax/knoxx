@@ -48,6 +48,8 @@ run_check_in_dir "backend shadow-cljs compile" "$ROOT_DIR/backend" pnpm run type
 run_check_in_dir "ingestion clj-kondo" "$ROOT_DIR/ingestion" clj-kondo --lint src test
 run_check_in_dir "frontend size lint" "$ROOT_DIR/frontend" pnpm run lint:size
 run_check_in_dir "frontend typecheck" "$ROOT_DIR/frontend" pnpm run typecheck
+run_check_in_dir "frontend changed-surface CLJS lint" "$ROOT_DIR/frontend" pnpm run lint:cljs:changed
+run_check_in_dir "frontend migration manifest" "$ROOT_DIR/frontend" pnpm run migration:check
 run_check_in_dir "discord bot size lint" "$ROOT_DIR/discord-bot" pnpm run lint:size
 run_check_in_dir "discord bot typecheck" "$ROOT_DIR/discord-bot" pnpm run typecheck
 

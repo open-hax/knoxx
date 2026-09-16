@@ -19,7 +19,7 @@ import {
   type DiscordAudioScanResponse,
   type DiscordImageScanResponse,
 } from "../lib/api/runtime";
-import { API_BASE, buildKnoxxAuthHeaders, request } from "../lib/api/core";
+import { request } from "../lib/api/core";
 import { buildPlaylistPublicationDraft } from "../lib/cms/publicationDrafts";
 
 // ── Persistence keys ─────────────────────────────────────────────────
@@ -113,16 +113,9 @@ interface CmsDocumentCreatePayload {
   title: string;
   content: string;
   source_path: string;
-  visibility: "internal" | "review" | "public" | "archived";
+  visibility: "internal" | "review";
   metadata: Record<string, unknown>;
-  garden_id?: string;
-  defer_index?: boolean;
-}
-
-interface GardenSummary {
-  garden_id: string;
-  title: string;
-  status: string;
+  parents: string[];
 }
 
 interface BroadcastStudioUiAction {
@@ -342,45 +335,11 @@ async function savePlaylist(items: PlaylistItem[]): Promise<void> {
   }
 }
 
-async function findCmsDocumentBySourcePath(sourcePath: string): Promise<CmsDocumentCreateResponse | null> {
-  const normalize = (value: string | null | undefined) => (value ?? "").replace(/^\/+/, "");
-  const params = new URLSearchParams({ path_prefix: sourcePath, limit: "20" });
-  const response = await fetch(`${API_BASE}${OPENPLANNER_BASE}/cms/documents?${params.toString()}`, {
-    credentials: "include",
-    headers: buildKnoxxAuthHeaders(),
-  });
-  if (!response.ok) return null;
-  const body = (await response.json()) as { documents?: CmsDocumentCreateResponse[] };
-  return (body.documents ?? []).find((doc) => normalize(doc.source_path) === normalize(sourcePath)) ?? null;
-}
-
-async function createCmsPublicationDocument(payload: CmsDocumentCreatePayload): Promise<CmsDocumentCreateResponse | null> {
-  const response = await fetch(`${API_BASE}${OPENPLANNER_BASE}/cms/documents`, {
+async function createCmsPublicationDocument(payload: CmsDocumentCreatePayload): Promise<CmsDocumentCreateResponse> {
+  return await request<CmsDocumentCreateResponse>("/api/cms/documents", {
     method: "POST",
-    credentials: "include",
-    headers: buildKnoxxAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
-
-  if (response.ok) {
-    return (await response.json()) as CmsDocumentCreateResponse;
-  }
-
-  const text = await response.text();
-  if (response.status === 503) {
-    try {
-      const parsed = JSON.parse(text) as { persisted?: boolean };
-      if (parsed.persisted) {
-        const found = await findCmsDocumentBySourcePath(payload.source_path);
-        if (found) return found;
-        throw new Error("CMS saved the draft but indexing timed out and the document could not be refetched yet. Try opening CMS again in a moment.");
-      }
-    } catch {
-      // fall through to the normal error below
-    }
-  }
-
-  throw new Error(text || `${response.status} ${response.statusText}`);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -1018,8 +977,6 @@ export default function BroadcastStudioPage() {
   const [savingPlaylist, setSavingPlaylist] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
   const [playlistPublicationDescription, setPlaylistPublicationDescription] = useState("");
-  const [publicationGardens, setPublicationGardens] = useState<GardenSummary[]>([]);
-  const [selectedPublicationGardenId, setSelectedPublicationGardenId] = useState("");
   const [creatingPublicationDraft, setCreatingPublicationDraft] = useState(false);
   const [publicationDraftMessage, setPublicationDraftMessage] = useState<string | null>(null);
 
@@ -1103,28 +1060,6 @@ export default function BroadcastStudioPage() {
     void refreshLabelCatalog();
     void listPlaylists().then(res => setSavedPlaylists(res.playlists)).catch(() => {});
   }, [refreshLabelCatalog]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch(`${API_BASE}${OPENPLANNER_BASE}/gardens`, {
-      credentials: "include",
-      headers: buildKnoxxAuthHeaders(),
-    })
-      .then(async (response) => (response.ok ? (await response.json()) as { gardens?: GardenSummary[] } : { gardens: [] }))
-      .then((body) => {
-        if (cancelled) return;
-        const gardens = (body.gardens ?? []).filter((garden) => garden.status !== "archived");
-        setPublicationGardens(gardens);
-        setSelectedPublicationGardenId((current) => current || gardens[0]?.garden_id || "");
-      })
-      .catch((error) => {
-        console.error("Failed to load gardens for publication draft:", error);
-        if (!cancelled) setPublicationGardens([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!currentFile?.path) {
@@ -1385,13 +1320,12 @@ export default function BroadcastStudioPage() {
   }, [playlist, playlistName]);
 
   const createPublicationDraftFromQueue = useCallback(async () => {
-    if (playlist.length === 0 || !selectedPublicationGardenId) return;
+    if (playlist.length === 0) return;
     setCreatingPublicationDraft(true);
     setPublicationDraftMessage(null);
     try {
       const title = playlistName.trim() || `Broadcast playlist ${new Date().toISOString().slice(0, 10)}`;
-      const garden = publicationGardens.find((item) => item.garden_id === selectedPublicationGardenId);
-      setPublicationDraftMessage(`Creating ${garden?.title ?? selectedPublicationGardenId} CMS draft from cached queue data…`);
+      setPublicationDraftMessage("Creating a CMS draft in your workspace garden…");
       const tracks = playlist.map((item) => ({
         path: item.path,
         name: item.name,
@@ -1406,24 +1340,19 @@ export default function BroadcastStudioPage() {
         tracks,
       });
 
-      setPublicationDraftMessage(`Creating CMS block document in ${garden?.title ?? selectedPublicationGardenId}…`);
       const doc = await createCmsPublicationDocument({
         title: draft.title,
         content: draft.content,
         source_path: draft.sourcePath,
         visibility: "review",
-        garden_id: selectedPublicationGardenId,
-        defer_index: true,
-        metadata: {
-          ...draft.metadata,
-          garden_id: selectedPublicationGardenId,
-        },
+        parents: [],
+        metadata: draft.metadata,
       });
 
       if (!doc?.doc_id) {
         throw new Error("CMS did not return a document id for the draft.");
       }
-      setPublicationDraftMessage(`Created ${garden?.title ?? selectedPublicationGardenId} CMS draft: ${doc.title}`);
+      setPublicationDraftMessage(`Created workspace CMS draft: ${doc.title}`);
       navigate(`/cms?doc=${encodeURIComponent(doc.doc_id)}`);
     } catch (err) {
       console.error("Failed to create publication draft:", err);
@@ -1431,7 +1360,7 @@ export default function BroadcastStudioPage() {
     } finally {
       setCreatingPublicationDraft(false);
     }
-  }, [audioContextsByPath, navigate, playlist, playlistName, playlistPublicationDescription, publicationGardens, selectedPublicationGardenId]);
+  }, [audioContextsByPath, navigate, playlist, playlistName, playlistPublicationDescription]);
 
   const handlePersistCurrentTime = useCallback((time: number) => {
     currentTimeRef.current = time;
@@ -2289,24 +2218,12 @@ export default function BroadcastStudioPage() {
                           placeholder="Publication intro..."
                           style={{ width: 180, padding: "2px 6px", fontSize: tokens.fontSize.xs, borderRadius: 4, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
                         />
-                        <select
-                          value={selectedPublicationGardenId}
-                          onChange={e => setSelectedPublicationGardenId(e.target.value)}
-                          title="Garden/CMS destination"
-                          style={{ width: 160, padding: "2px 6px", fontSize: tokens.fontSize.xs, borderRadius: 4, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
-                        >
-                          <option value="">Select garden…</option>
-                          {publicationGardens.map((garden) => (
-                            <option key={garden.garden_id} value={garden.garden_id}>
-                              {garden.title || garden.garden_id}
-                            </option>
-                          ))}
-                        </select>
+                        <span title="CMS drafts are created in your workspace garden">Workspace garden</span>
                         <Button variant="ghost" size="sm" onClick={() => void savePlaylistToM3U()} disabled={savingPlaylist}>
                           {savingPlaylist ? "..." : "💾 Save"}
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => void createPublicationDraftFromQueue()} disabled={creatingPublicationDraft || !selectedPublicationGardenId} title={selectedPublicationGardenId ? "Create a review draft in this garden CMS" : "Select a garden first"}>
-                          {creatingPublicationDraft ? "Drafting…" : "Create garden draft"}
+                        <Button variant="ghost" size="sm" onClick={() => void createPublicationDraftFromQueue()} disabled={creatingPublicationDraft} title="Create a review draft in your workspace garden">
+                          {creatingPublicationDraft ? "Drafting…" : "Create workspace draft"}
                         </Button>
                         <Button variant="ghost" size="sm" onClick={shufflePlaylist}>🔀</Button>
                         <Button variant="ghost" size="sm" onClick={clearPlaylist}>Clear</Button>

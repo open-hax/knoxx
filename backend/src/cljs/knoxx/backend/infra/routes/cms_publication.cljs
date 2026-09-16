@@ -9,10 +9,13 @@
   document, garden, locale, revision — is immutable through this surface; a
   re-key is a separate, conflict-checked operation and never a side effect of
   publishing."
-  (:require [knoxx.backend.domain.cms-publication :as cms]
+  (:require [cljs.reader :as reader]
+            [knoxx.backend.domain.cms-publication :as cms]
             [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.extern.cms-store :as files]
+            [knoxx.backend.infra.cms-store :as cms-store]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-manifest :as manifest]))
@@ -69,41 +72,32 @@
                        :conflicts [{:publication/id publication-id
                                     :matches matches}]})))))
 
-(defn ^:async write-publication-state!
-  "Set `:publication/state` on one entry of the file that declares it.
-
-   Edits the one field in place rather than writing the resource over the file.
-   A manifest routinely declares a document, its garden, and its publications
-   together; `pr-str`-ing the patched intent over that file DELETED the document
-   and garden, and the very next projection failed with unresolved references.
-   Publishing must not destroy the thing being published."
-  [file-path publication-id next-state]
-  ;; Validated before the file is even read. This is a public function reachable
-  ;; with any value, and the read/patch/write below is the last boundary before
-  ;; the filesystem — persisting `:banana` as a publication state would leave the
-  ;; projection failing closed on a file nobody remembers editing.
-  ;;
-  ;; A state assertion is the whole of what this write needs. `unchanged-except?`
-  ;; below proves nothing else about the file moved, so a file that validated
-  ;; before the edit still validates after it exactly when the new state is
-  ;; lawful. Re-validating the whole manifest here would mean restating the
-  ;; loader's canonicalization — entries are written with namespace-local ids —
-  ;; and would prove nothing further.
+(defn- patched-publication-state [edn file-path publication-id next-state]
   (law/assert-valid! :publication/state law/PublicationState next-state)
-  (let [edn (await (resources/read-edn-file! file-path))]
-    (assert-unique-target! edn file-path publication-id)
-    (let [next-edn (manifest/assoc-entry-field edn :publication/id publication-id
-                                               :publication/state next-state)]
-      ;; Check the bytes about to be persisted, not the intent behind them. The
-      ;; transform is supposed to touch exactly one field; asserting that against
-      ;; the actual result is what keeps a future edit to it from quietly
-      ;; widening into the whole-file replacement this function exists to undo.
-      (when-not (manifest/unchanged-except? edn next-edn :publication/id
-                                            publication-id :publication/state)
-        (throw (ex-info "refusing to write: the edit changed more than publication state"
-                        {:publication/id publication-id
-                         :resource/file-path file-path})))
-      (await (resources/write-edn-file! file-path (str (pr-str next-edn) "\n"))))))
+  (assert-unique-target! edn file-path publication-id)
+  (let [next-edn (manifest/assoc-entry-field edn :publication/id publication-id
+                                             :publication/state next-state)]
+    (when-not (manifest/unchanged-except? edn next-edn :publication/id
+                                        publication-id :publication/state)
+      (throw (ex-info "refusing to write: the edit changed more than publication state"
+                      {:publication/id publication-id :resource/file-path file-path})))
+    next-edn))
+
+(defn ^:async write-publication-state!
+  "Patch one publication state, retaining all sibling resources in the manifest."
+  [file-path publication-id next-state]
+  (law/assert-valid! :publication/state law/PublicationState next-state)
+  (let [edn (await (resources/read-edn-file! file-path))
+        next-edn (patched-publication-state edn file-path publication-id next-state)]
+    (await (resources/write-edn-file! file-path (str (pr-str next-edn) "\n")))))
+
+(defn- write-cms-publication-state! [document file-path publication-id next-state]
+  ;; No await while holding the kernel lock. This makes head validation and the
+  ;; manifest write one operation relative to saves by other Knoxx processes.
+  (cms-store/with-publication-operation! document (= :published next-state)
+    #(files/replace-resource! file-path
+       (patched-publication-state (reader/read-string (files/read-resource-text file-path))
+                                  file-path publication-id next-state))))
 
 (defn ^:async publication-file-path!
   [config publication-id]
@@ -128,8 +122,11 @@
     (when-not current
       (throw (ex-info "unknown publication" {:publication/id publication-id})))
     (let [next-intent (cms/apply-state-patch current domain-patch)
-          file-path (await (publication-file-path! config publication-id))]
-      (await (write-publication-state! file-path publication-id
-                                       (:publication/state next-intent)))
+          file-path (await (publication-file-path! config publication-id))
+          document (get-in index [:documents (:publication/document current)])
+          next-state (:publication/state next-intent)]
+      (if (cms-store/document-key document)
+        (write-cms-publication-state! document file-path publication-id next-state)
+        (await (write-publication-state! file-path publication-id next-state)))
       (resources/invalidate-sync-resource-cache!)
       (cms/publication->wire {:observed nil :blockers []} next-intent))))
