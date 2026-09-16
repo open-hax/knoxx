@@ -19,7 +19,18 @@ labels:
 
 ## Purpose
 
-Proxx has **no staging phase at all** — the slot went with the lane
+> **Superseded in part, 2026-09-16.** A testing/staging controller now exists:
+> `services#83` ("Add per-service HTTPS environments and gated promotion") adds
+> `.github/workflows/deploy-service-environment.yml`, which admits only
+> `testing|staging` for `knoxx|axxium` and deploys a per-PR environment. It is
+> **not on `main`** — the PR is open. Knoxx `main` nevertheless already calls it:
+> `#306` shipped `.github/workflows/environment-promotion.yml` pinned to
+> `deploy-service-environment.yml@f9bfe172`, a commit on that unmerged branch.
+>
+> So this card is no longer "design staging from nothing". What remains is
+> reviewing and landing `services#83`, and closing the pin hazard below.
+
+Proxx had **no staging phase at all** when this card was written — the slot went with the lane
 `services#67` removed, and nothing replaced it. As with Knoxx this is a
 creation, and the promotion rule needs its record.
 

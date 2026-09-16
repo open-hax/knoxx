@@ -18,6 +18,17 @@ labels:
 
 ## Purpose
 
+> **Superseded in part, 2026-09-16.** A testing/staging controller now exists:
+> `services#83` ("Add per-service HTTPS environments and gated promotion") adds
+> `.github/workflows/deploy-service-environment.yml`, which admits only
+> `testing|staging` for `knoxx|axxium` and deploys a per-PR environment. It is
+> **not on `main`** — the PR is open. Knoxx `main` nevertheless already calls it:
+> `#306` shipped `.github/workflows/environment-promotion.yml` pinned to
+> `deploy-service-environment.yml@f9bfe172`, a commit on that unmerged branch.
+>
+> So this card is no longer "design staging from nothing". What remains is
+> reviewing and landing `services#83`, and closing the pin hazard below.
+
 Staging on the removed lane was a second set of compose projects on one machine —
 `proxx-staging`, `knoxx-staging`, `openplanner-staging`, `axxium-staging`, each
 with its own runtime root, project name, published port and `staging-` hostname.
@@ -62,3 +73,35 @@ doubles the hostname count, which is most of why that decision needs re-making.
 - Container names, aliases, ports, state paths and hostnames all carry the phase.
 - The database posture per phase is recorded.
 - A staging deploy produces a Deployments API record the promotion check can read.
+
+## The pin hazard this exposed
+
+`knoxx` `main` depends on a reusable workflow revision that has never been on
+`services` `main`:
+
+```text
+knoxx  .github/workflows/environment-promotion.yml
+  uses: open-hax/services/.github/workflows/deploy-service-environment.yml@f9bfe172
+                                                                            |
+  f9bfe172 "Add isolated testing and staging deployment controller"          |
+  reachable only from services branch codex/knoxx-nested-https  <------------+
+  (services#83, open; branch head is 31cd6dc8, i.e. NEWER than the pin)
+```
+
+It resolves today, because GitHub accepts any SHA reachable in the repository
+and branch commits are reachable. Three things follow, and none is theoretical:
+
+1. **Knoxx promotion runs an unreviewed controller.** The pinned revision has
+   not passed `services`' own merge gate. This is the same class of problem
+   `services#45` fixed by deriving deploy authorization from the frozen
+   merge-time payload rather than from mutable state.
+2. **It runs an *older* controller than the PR's own head.** `f9bfe172` is
+   behind `31cd6dc8`, so review findings already fixed on the branch are not
+   what Knoxx executes.
+3. **It breaks if the branch goes away.** Closing `services#83`, force-pushing
+   the branch, or deleting it after a squash-merge can make `f9bfe172`
+   unreachable, and Knoxx's testing/staging promotion stops resolving.
+
+The fix is ordering, not cleverness: land `services#83`, then repin
+`environment-promotion.yml` to the resulting `main` commit. Until that happens,
+this is a live cross-repo dependency on an open pull request.

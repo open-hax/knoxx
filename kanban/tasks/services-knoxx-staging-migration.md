@@ -19,7 +19,18 @@ labels:
 
 ## Purpose
 
-Knoxx has **no staging phase at all**. It had one on the second deploy lane;
+> **Superseded in part, 2026-09-16.** A testing/staging controller now exists:
+> `services#83` ("Add per-service HTTPS environments and gated promotion") adds
+> `.github/workflows/deploy-service-environment.yml`, which admits only
+> `testing|staging` for `knoxx|axxium` and deploys a per-PR environment. It is
+> **not on `main`** — the PR is open. Knoxx `main` nevertheless already calls it:
+> `#306` shipped `.github/workflows/environment-promotion.yml` pinned to
+> `deploy-service-environment.yml@f9bfe172`, a commit on that unmerged branch.
+>
+> So this card is no longer "design staging from nothing". What remains is
+> reviewing and landing `services#83`, and closing the pin hazard below.
+
+Knoxx had **no staging phase at all** when this card was written. It had one on the second deploy lane;
 `services#67` removed that lane and nothing replaced the slot, so today there is
 no `digitalocean/services/` definition and no hostname for it. This is a
 creation, not a migration.
