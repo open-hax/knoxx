@@ -16,7 +16,7 @@
   (let [provider (:provider dependencies)]
     (when-not (satisfies? store/ISourceReviewStore provider)
       (refuse! 503 "source_review_provider_unavailable" "Source review persistence is not configured")) provider))
-(defn- ^:async observed-source-in!
+(defn- ^:async declared-source-in!
   [config scope records index]
   (law/assert-valid! :source-review/scope law/Scope scope)
   (let [document (get-in index [:documents (:document scope)])]
@@ -28,20 +28,30 @@
                                      (= (:document scope) (:document/id (resolver/canonicalize-document
                                                                        (publications/single-kind-definition %))))) records))
           root (revisions/resource-source-root config (:resource/file-path record))
-          file (await (revisions/canonical-document-path! root document))
-          content (when file (await (files/read-text! file)))]
-      (when-not content (refuse! 404 "source_content_not_found" "Source content was not found"))
-      {:document document :record record :root root :path file :index index
-       :snapshot (law/assert-valid! :source-review/snapshot law/Snapshot
-                                    {:document (:document scope) :title (:document/title document)
-                                     :source-locale (:document/source-locale document)
-                                     :revision (revisions/content-revision content) :content content})})))
-(defn ^:async observed-source!
-  "Load one visible source through its actual resource file and canonical path guard."
+          file (await (revisions/canonical-document-path! root document))]
+      {:document document :record record :root root :path file :index index})))
+(defn- ^:async observe-declared-source!
+  [scope {:keys [document path] :as declared}]
+  (let [content (when path (await (files/read-text! path)))]
+    (when-not content (refuse! 404 "source_content_not_found" "Source content was not found"))
+    (assoc declared :snapshot
+           (law/assert-valid! :source-review/snapshot law/Snapshot
+                              {:document (:document scope) :title (:document/title document)
+                               :source-locale (:document/source-locale document)
+                               :revision (revisions/content-revision content) :content content}))))
+(defn- ^:async observed-source-in!
+  [config scope records index]
+  (await (observe-declared-source! scope (await (declared-source-in! config scope records index)))))
+(defn ^:async declared-source!
+  "Validate current visibility and canonical provenance even if projected bytes are missing."
   [config scope]
   (law/assert-valid! :source-review/scope law/Scope scope)
   (let [records (await (publications/resource-records! config))]
-    (await (observed-source-in! config scope records (publications/publication-index records)))))
+    (await (declared-source-in! config scope records (publications/publication-index records)))))
+(defn ^:async observed-source!
+  "Load one visible source through its actual resource file and canonical path guard."
+  [config scope]
+  (await (observe-declared-source! scope (await (declared-source! config scope)))))
 (defn- ^:async review-observed!
   [scope provider dependencies {:keys [snapshot document]}]
   (when-let [owner (:document/org-id document)]

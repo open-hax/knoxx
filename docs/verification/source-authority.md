@@ -57,6 +57,14 @@ Document sequencing retains each operation's result or rejection. Cleanup of a
 completed predecessor cannot remove a pending successor, and a rejected write
 cannot poison later repair.
 
+An exact save retry can also repair a deleted source projection after reopening
+the ledger. It restores the latest accepted bytes even when the retried command
+is older, and returns that command's original receipt without appending a fact.
+Recovery first validates the current declared resource, tenant ownership and
+canonical provenance. Changed resource metadata, conflicting existing bytes and
+symlink escapes remain refusals; a new save still requires observed source bytes.
+The filesystem regression covers these cases without a server or live services.
+
 This layer supplies independently testable ports and providers. Wiki HTTP and
 agent adapters, identity, writing assistance, translation provider composition,
 and the aggregate provider recovery suite remain assigned to later PRs. This
