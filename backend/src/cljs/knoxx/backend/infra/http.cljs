@@ -108,10 +108,9 @@
                                         :timeout-ms timeout-ms})))
 
 (defn http-error
+  "Construct a classified error while preserving the existing display prefix."
   [status code message]
-  (doto (ex-info (str status " " message) {:status status :code code})
-    (aset "statusCode" status)
-    (aset "code" code)))
+  (xfastify/http-error status code (str status " " message)))
 
 (defn error-status
   [err default-status]
