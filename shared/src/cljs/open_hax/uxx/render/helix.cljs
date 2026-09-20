@@ -3,9 +3,9 @@
 
    Interactive components may wrap this output, but event handlers are not part
    of the portable subset and are rejected by the shared attribute contract."
-  (:require [clojure.string :as str]
-            [open-hax.uxx.markup :as markup]
-            ["react" :as react]))
+  (:require ["react" :as react]
+            [clojure.string :as str]
+            [open-hax.uxx.markup :as markup]))
 
 (def ^:private react-attribute-names
   {"accept-charset" "acceptCharset"
@@ -26,14 +26,14 @@
    "tabindex" "tabIndex"})
 
 (defn- react-attribute-name
-  [name]
-  (or (get react-attribute-names name) name))
+  [attr-name]
+  (or (get react-attribute-names attr-name) attr-name))
 
 (defn- normalized-value
-  [name value]
+  [attr-name value]
   (cond
-    (= "class" name) (markup/normalize-class-value value)
-    (and (= "style" name) (map? value)) (clj->js value)
+    (= "class" attr-name) (markup/normalize-class-value value)
+    (and (= "style" attr-name) (map? value)) (clj->js value)
     :else value))
 
 (defn- props-js
@@ -41,11 +41,11 @@
   (let [props (js-obj)]
     (doseq [[attribute value :as entry] attrs]
       (markup/validate-attribute! entry)
-      (let [name (markup/attribute-name attribute)
-            value (normalized-value name value)]
+      (let [attr-name (markup/attribute-name attribute)
+            value (normalized-value attr-name value)]
         (when-not (or (nil? value)
-                      (and (= "class" name) (str/blank? value)))
-          (aset props (react-attribute-name name) value))))
+                      (and (= "class" attr-name) (str/blank? value)))
+          (aset props (react-attribute-name attr-name) value))))
     props))
 
 (defn- explicit-key?

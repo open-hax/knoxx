@@ -101,6 +101,7 @@ jobs:
         uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: ${{ env.CLOJURE_TOOLS_VERSION }}
+          clj-kondo: latest
 
       - name: Install root dependencies
         id: install_root

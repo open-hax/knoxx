@@ -8,6 +8,7 @@
     "param" "source" "track" "wbr"})
 
 (defn escape-text
+  "Escape HTML text delimiters without interpreting the input as markup."
   [value]
   (-> (str (or value ""))
       (str/replace "&" "&amp;")
@@ -15,6 +16,7 @@
       (str/replace ">" "&gt;")))
 
 (defn escape-attribute
+  "Escape HTML delimiters and both quote characters in an attribute value."
   [value]
   (-> (escape-text value)
       (str/replace "\"" "&quot;")
@@ -23,19 +25,19 @@
 (defn- normalized-attribute
   [[attribute value :as entry]]
   (markup/validate-attribute! entry)
-  (let [name (markup/attribute-name attribute)
-        value (if (= "class" name)
+  (let [attr-name (markup/attribute-name attribute)
+        value (if (= "class" attr-name)
                 (not-empty (markup/normalize-class-value value))
                 value)]
-    [name value]))
+    [attr-name value]))
 
 (defn- render-attribute
-  [[name value]]
+  [[attr-name value]]
   (cond
-    (= "key" name) ""
+    (= "key" attr-name) ""
     (or (nil? value) (false? value)) ""
-    (true? value) (str " " name)
-    :else (str " " name "=\"" (escape-attribute value) "\"")))
+    (true? value) (str " " attr-name)
+    :else (str " " attr-name "=\"" (escape-attribute value) "\"")))
 
 (defn- render-attributes
   [attrs]

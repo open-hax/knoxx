@@ -6,11 +6,14 @@
   "description": "Knoxx - Knowledge mining and RAG platform",
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @open-hax/knoxx-frontend dev",
+    "dev": "pnpm -C frontend run dev",
     "local:check": "./scripts/verify-local-resources.sh",
     "local:start": "./scripts/start-local-knoxx.sh",
     "verify:translation:browser": "./scripts/verify-translation-browser-ci.sh",
-    "build": "pnpm --filter @open-hax/knoxx-frontend build",
+    "build": "pnpm -C backend run build && pnpm -C frontend run build",
+    "test": "pnpm -C backend run test && pnpm -C frontend run test:cljs && pnpm -C frontend run test",
+    "lint": "pnpm -C backend run lint && pnpm -C frontend run lint && pnpm run lint:size",
+    "typecheck": "pnpm -C backend run typecheck && pnpm -C frontend run typecheck",
     "lint:size": "node scripts/lint-file-sizes.mjs",
     "scan:duplication": "pnpm dlx jscpd@4.2.3 --config .jscpd.json"
   },

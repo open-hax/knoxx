@@ -71,6 +71,7 @@ jobs:
           # its classpath (including the katamorph Git dependency) through
           # tools.deps and needs the clojure CLI on PATH.
           cli: latest
+          clj-kondo: latest
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
