@@ -21,6 +21,19 @@ filesystem projection. Successful no-op writes with explicit operation IDs have
 durable receipts without false state-change notifications. Implicit random-ID
 no-ops retain their existing behavior of appending no fact.
 
+Source and review provider retry IDs are scoped by organization, project and
+document. The same ID can name separate operations in those scopes. After
+reopening and intervening work, a server-time-only retry returns the original
+fact with `existing? true`; conflicting content is refused without appending.
+These providers keep domain IDs distinct from ledger-global explicit Clio IDs.
+
+Acceptance facts load resource records and build their canonical index once for
+the documents selected by the caller. The proof uses two selected documents and
+an unrelated missing source: the selected documents share one resource load,
+and the returned acceptance predicate performs no I/O. A selected missing source,
+resource or review provider failure, or pending source projection still refuses
+the facts. This does not make source file reads atomic across documents.
+
 The regressions also load equal document declarations from two real checkout
 roots in both orders, read the last declaration's bytes, and prove that saving
 changes only that checkout. Wire locale strings must satisfy the existing
