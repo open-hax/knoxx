@@ -5,6 +5,7 @@
             [knoxx.backend.domain.time :as time]
             [knoxx.backend.infra.agent.session :as sessions]
             [knoxx.backend.infra.agent.transcript :as transcript]
+            [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.stores.mongo-session-store :as threads]))
 
 (defn ^:async complete!
@@ -14,13 +15,30 @@
                   agent-spec (transcript/transcript-after-turn session fallback-messages))]
     (await (threads/complete-session! session-id conversation-id (assoc payload :messages messages)))))
 
+(defn- release-turn-resources!
+  "Release the owned sink, the agent session and the run's queue entries in turn.
+   Each release runs even when an earlier one throws; retirement is last because
+   `settle!` has already flushed the queue and surfaced any failure to its owner."
+  [run-id conversation-id event-stream-sink]
+  (try (state/clear-event-stream-sink-if! event-stream-sink)
+       (finally
+         (try (sessions/remove-agent-session! conversation-id)
+              (finally (when run-id (run-events/retire! run-id)))))))
+
 (defn ^:async settle!
   "Always attempt thread completion, release the owned sink, then remove the agent session.
-   A secondary completion failure is observed without hiding the mandatory persistence failure."
-  [{:keys [conversation-id event-stream-sink] :as context} persist! complete!]
+   A secondary completion failure is observed without hiding the mandatory persistence failure.
+   The run's event queue is flushed inside that persistence boundary, and retired
+   last, so no failed terminal write is discarded before its owner observes it."
+  [{:keys [run-id conversation-id event-stream-sink] :as context} persist! complete!]
   (let [failure* (volatile! nil)]
     (try
       (try (await (persist!))
+           ;; Callers append the terminal event immediately before settling, and
+           ;; the memory-indexing path that would flush it is skipped when the
+           ;; heap run has already been evicted. Observe the queue here so a
+           ;; failed terminal write cannot be retired unobserved below.
+           (when run-id (await (run-events/flush! run-id)))
            (catch :default error (vreset! failure* error) (throw error)))
       (finally
         (try
@@ -32,8 +50,7 @@
                                           (select-keys (or (ex-data error) {}) [:status :code])))
               (throw error)))
           (finally
-            (try (state/clear-event-stream-sink-if! event-stream-sink)
-                 (finally (sessions/remove-agent-session! conversation-id)))))))))
+            (release-turn-resources! run-id conversation-id event-stream-sink)))))))
 
 (defn refusal-diagnostic!
   "Record the existing refusal diagnostic with its run and agent coordinates."

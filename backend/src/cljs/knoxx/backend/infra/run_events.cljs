@@ -24,6 +24,12 @@
   (when-let [writer @installed*] (await ((:flush! writer) run-id)))
   true)
 
+(defn retire!
+  "Discard an abandoned run's queue state after its owner observed the failure."
+  [run-id]
+  (when-let [writer @installed*] ((:retire! writer) run-id))
+  true)
+
 (defn ^:async persist-run!
   "Persist a run snapshot after its ordered events, without duplicating events."
   [run]

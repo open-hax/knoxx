@@ -43,16 +43,23 @@
         run-receipt (await (startup/prepare! @registry/session-store* run-id (dissoc base-run :events)))
         thread-receipt (await (startup/prepare! (session-store/startup-provider) session-id thread))
         attempted* (atom [])]
-    (await (startup/attempt!
-            attempted*
-            (^:async fn []
-              (await (run-events/flush! run-id))
-              (await (startup/claim! attempted* run-receipt))
-              (await (startup/claim! attempted* thread-receipt))
-              (store-run! run-id base-run)
-              (await (publish-run-started! run-id (:conversation_id base-run) session-id mode (:model base-run) thinking-level))
-              (await (emit-action-task-rendered-event! run-id (:conversation_id base-run) session-id agent-spec))
-              (await (before-prompt!)))))))
+    (try
+      (await (startup/attempt!
+              attempted*
+              (^:async fn []
+                (await (run-events/flush! run-id))
+                (await (startup/claim! attempted* run-receipt))
+                (await (startup/claim! attempted* thread-receipt))
+                (store-run! run-id base-run)
+                (await (publish-run-started! run-id (:conversation_id base-run) session-id mode (:model base-run) thinking-level))
+                (await (emit-action-task-rendered-event! run-id (:conversation_id base-run) session-id agent-spec))
+                (await (before-prompt!)))))
+      (catch :default failure
+        ;; Settlement above already observed this failure. The abandoned run
+        ;; accepts no further events, so release its queue entries rather than
+        ;; retaining them for the lifetime of the process.
+        (run-events/retire! run-id)
+        (throw failure)))))
 
 (defn ^:async create-initial-run!
   "Admit startup and its continuation, conditionally settling any partial failure."
