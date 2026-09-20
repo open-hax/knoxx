@@ -281,6 +281,10 @@
         legacy-receipt {:translation/revision "legacy-revision"}
         receipt {:translation/candidate-set-id "candidate-set-1"
                  :translation/revision "candidate-revision-1"}
+        corrected (assoc receipt :translation/revision "corrected-revision"
+                         :translation/split-review-order 1)
+        revoked (assoc receipt :translation/revision "revoked-revision"
+                       :translation/split-review-order 2)
         candidate-set {:candidate-set/id "candidate-set-1"}
         turn {:translation-turn/id "turn-1"}
         client (direct-client)
@@ -289,7 +293,7 @@
                   (fn [store actual-scope]
                     (is (= :evidence store))
                     (is (= scope actual-scope))
-                    (js/Promise.resolve [legacy-receipt receipt]))
+                    (js/Promise.resolve [corrected legacy-receipt receipt revoked]))
                   split-store/candidate-set-by-id!
                   (fn [store candidate-set-id]
                     (is (= :splits store))
@@ -320,6 +324,6 @@
                  :candidate-set candidate-set}]
                @projected))
         (is (= 1 (:translation/event-repair-receipt-count result)))
-        (is (= 1 (:translation/event-repair-skipped-count result)))
+        (is (= 3 (:translation/event-repair-skipped-count result)))
         (is (= 1 (:translation/event-repair-recorded-count result)))
         (is (zero? (:translation/event-repair-existing-count result)))))))

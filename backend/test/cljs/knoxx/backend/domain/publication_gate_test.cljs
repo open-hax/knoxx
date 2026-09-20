@@ -40,6 +40,21 @@
 (defn- clean-facts []
   (recording-facts {:revision "probe-revision" :translated? true :approved? true}))
 
+(deftest unaccepted-source-blocks-publishing-and-translation-work
+  (let [{:keys [facts]} (clean-facts)
+        unaccepted (assoc facts :source-accepted? (constantly false))
+        source (assoc spanish-intent :publication/locale :en)
+        waiting (gate/gate spanish-intent (assoc unaccepted :translated-revision? (constantly false)))]
+    (is (= [:source-review-required] (:blockers (gate/gate source unaccepted))))
+    (is (false? (:admissible? (gate/gate spanish-intent unaccepted))))
+    (is (nil? (:translation-work waiting)))
+    (is (some? (:translation-work
+                (gate/gate spanish-intent
+                           (assoc unaccepted :translated-revision? (constantly false)
+                                  :source-accepted? (fn [intent revision]
+                                                      (and (= spanish-intent intent)
+                                                           (= "probe-revision" revision))))))))))
+
 ;; ── 1/2/3 revision resolution ──────────────────────────────────────────────
 
 (deftest source-current-resolves-once

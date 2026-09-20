@@ -142,6 +142,29 @@
                     :content (xjson/stringify
                               {:translated_text translated-text})}}})
 
+(defn- local-response [model translated-text]
+  {:ok true :status 200
+   :body {:model model
+          :choices [{:finish_reason "stop"
+                     :message {:role "assistant" :content (xjson/stringify {:translated_text translated-text})}}]
+          :local_generation {:provider "transformers-js" :offline true
+                             :structured_output "transport_wrapped_generated_text"}}})
+
+(deftest ^:async local-model-completes-the-existing-sink-and-replays-without-generation
+  (let [model "onnx-community/Qwen2.5-0.5B-Instruct"
+        {:keys [record turn splits] :as state} (await (admitted! {:model model}))
+        cfg {:contracts-dir "test/fixtures/translation-local-model-contracts"
+             :wiki-model-base-url "http://127.0.0.1:4333/v1"}
+        requests (atom 0)
+        deps (assoc (base-deps "/tmp/knoxx-translation-structured-output/local-model" state)
+                    :request! (fn [_] (local-response model (nth translations (dec (swap! requests inc))))))
+        result (await (sut/complete-turn! cfg deps record turn))]
+    (is (some? (:translation/receipt result)))
+    (is (= 2 @requests))
+    (is (= translations (mapv :candidate/text (await (split-store/candidate-splits-for-turn! splits (:translation-turn/id turn))))))
+    (is (= (:translation/receipt result) (:translation/receipt (await (sut/complete-turn! cfg deps record turn)))))
+    (is (= 2 @requests))))
+
 (defn- pair
   [turn index translated-text]
   (let [source-split (get-in turn [:translation-turn/manifest

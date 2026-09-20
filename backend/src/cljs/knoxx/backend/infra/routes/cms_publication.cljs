@@ -13,6 +13,7 @@
             [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.domain.wiki-publication :as ownership]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-manifest :as manifest]))
@@ -127,6 +128,7 @@
                      first)]
     (when-not current
       (throw (ex-info "unknown publication" {:publication/id publication-id})))
+    (ownership/owned-intent! index (assoc scope :document (:publication/document current)) publication-id)
     (let [next-intent (cms/apply-state-patch current domain-patch)
           file-path (await (publication-file-path! config publication-id))]
       (await (write-publication-state! file-path publication-id

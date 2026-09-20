@@ -1,12 +1,16 @@
 (ns knoxx.backend.triggers.trigger-matching-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is testing use-fixtures]]
             [cljs.reader :as reader]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
             [knoxx.backend.domain.event.normalize :as event-normalize]
             [knoxx.backend.domain.condition.builtin :as condition-builtins]
             [knoxx.backend.domain.condition.registry :as condition-registry]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
-            [knoxx.backend.domain.resources.loader :as resources]))
+            [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.triggers.action-fixture :as action-fixture]))
+
+(def action-calls (atom []))
+(use-fixtures :each (action-fixture/recording-fixture action-calls))
 
 ;; Load the actual trigger EDN from string so symbols are not compiled
 (def trigger-edn
@@ -87,4 +91,5 @@
                                             :channelId "123"
                                             :id "msg-1"}}))]
         (is (= ["ussyverse_social_replies_event"] (:matchedTriggers result))
-            (str "Expected trigger to match but got: " (pr-str result)))))))
+            (str "Expected trigger to match but got: " (pr-str result)))
+        (is (= 1 (count @action-calls)))))))

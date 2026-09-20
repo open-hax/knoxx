@@ -68,6 +68,16 @@
       (name value))
     (str value)))
 
+(defn raw-candidate-completion?
+  "Whether a validated receipt owns the original candidate event projection.
+
+  Reviewed receipts retain candidate lineage but describe a later effective
+  revision. Their explicit review order distinguishes them from raw completion
+  facts; the full candidate binding is still validated before projecting."
+  [receipt]
+  (and (some? (:translation/candidate-set-id receipt))
+       (not (contains? receipt :translation/split-review-order))))
+
 (defn- completion-binding
   [receipt]
   [(:translation/org-id receipt)

@@ -31,13 +31,16 @@
    :archived "archived"})
 
 (def state-wire-values
+  "Sorted wire tokens accepted by publication state contracts."
   (vec (sort (vals state-values))))
 
 (defn encode-state
+  "Encode a known publication state keyword, returning nil for unknown states."
   [state]
   (get state-values state))
 
 (defn decode-state
+  "Decode a known state token, returning nil for unknown wire values."
   [wire-state]
   (get (into {} (map (fn [[k v]] [v k])) state-values) wire-state))
 
@@ -50,9 +53,11 @@
 ;; ── Garden status ──────────────────────────────────────────────────────────
 
 (def garden-status-values
+  "Domain garden status keywords and their corresponding wire tokens."
   {:active "active" :archived "archived"})
 
 (def garden-status-wire-values
+  "Sorted wire tokens accepted by garden status contracts."
   (vec (sort (vals garden-status-values))))
 
 ;; ── Revision selectors ─────────────────────────────────────────────────────
@@ -66,6 +71,7 @@
   {"source/current" :source/current})
 
 (defn encode-revision
+  "Encode selector keywords while retaining concrete revision values."
   [revision]
   (if (keyword? revision)
     (if-let [ns-part (namespace revision)]
@@ -74,17 +80,28 @@
     revision))
 
 (defn decode-revision
+  "Decode known selector tokens and preserve concrete revision strings."
   [wire-revision]
   (get revision-selector-tokens wire-revision wire-revision))
 
 ;; ── Row key sets ───────────────────────────────────────────────────────────
 
-(def document-keys [:id :title :source-locale :source])
-(def garden-keys [:id :title :status])
-(def publication-keys [:id :document :garden :locale :revision :path
+(def document-keys
+  "Fields shared by document row encoders and validators."
+  [:id :title :source-locale :source])
+(def garden-keys
+  "Fields shared by garden row encoders and validators."
+  [:id :title :status])
+(def publication-keys
+  "Fields shared by publication row encoders and validators."
+  [:id :document :garden :locale :revision :path
                        :desired :observed :blockers])
-(def document-view-keys [:document :publications])
-(def list-view-keys [:documents :gardens])
+(def document-view-keys
+  "Top-level fields in a document detail response."
+  [:document :publications])
+(def list-view-keys
+  "Top-level fields in a publication index response."
+  [:documents :gardens])
 
 ;; ── Identity ───────────────────────────────────────────────────────────────
 
