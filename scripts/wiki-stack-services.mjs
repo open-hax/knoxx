@@ -35,7 +35,8 @@ function logStream(stream, destination, secrets) {
   stream.on('end', () => { if (pending) write(pending); });
 }
 
-function managedProcess(command, args, cwd, env, logFile) {
+/** Own one detached process group, including descendants whose leader exits first. */
+export function managedProcess(command, args, cwd, env, logFile) {
   const output = createWriteStream(logFile, { flags: 'a', mode: 0o600 });
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const secrets = Object.entries(env).filter(([key, value]) => /password|secret|token|api_key/i.test(key)
@@ -44,6 +45,7 @@ function managedProcess(command, args, cwd, env, logFile) {
   logStream(child.stderr, output, secrets);
   let failure;
   let ended = false;
+  let stopPromise;
   child.once('error', error => { failure = error; });
   const exited = new Promise(resolve => child.once('close', (code, signal) => {
     ended = true;
@@ -59,11 +61,21 @@ function managedProcess(command, args, cwd, env, logFile) {
       }
     },
     async stop() {
-      if (ended) return;
-      const signal = name => { try { process.kill(-child.pid, name); } catch (error) { if (error.code !== 'ESRCH') throw error; } };
-      signal('SIGTERM');
-      await Promise.race([exited, pause(5000)]);
-      if (!ended) { signal('SIGKILL'); await exited; }
+      stopPromise ||= (async () => {
+        // Failed spawn has no group. A closed leader can still have living descendants.
+        if (!Number.isInteger(child.pid)) { await exited; return; }
+        const signal = name => { try { process.kill(-child.pid, name); } catch (error) { if (error.code !== 'ESRCH') throw error; } };
+        signal('SIGTERM');
+        if (!ended) {
+          let timer;
+          try { await Promise.race([exited, new Promise(resolve => { timer = setTimeout(resolve, 5000); })]); }
+          finally { clearTimeout(timer); }
+        }
+        // The leader's close event only proves its own exit and closed stdio.
+        signal('SIGKILL');
+        await exited;
+      })();
+      return stopPromise;
     },
   };
 }

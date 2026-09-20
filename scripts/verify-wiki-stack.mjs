@@ -8,6 +8,7 @@ import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {randomBytes, randomUUID} from 'node:crypto';
 import {startServices} from './wiki-stack-services.mjs';
+import {cleanupWikiStack} from './wiki-stack-cleanup.mjs';
 import {annotatedScreenshot, tour} from './wiki-browser-tour.mjs';
 import {identityTour} from './identity-browser-tour.mjs';
 import {adminIdentityTour} from './admin-identity-browser-tour.mjs';
@@ -26,8 +27,6 @@ const frontendPort = parseInt(process.env.WIKI_FRONTEND_PORT || '8311',10);
 const backendPort = parseInt(process.env.WIKI_BACKEND_PORT || '8312',10);
 const evidence = {startedAt: new Date().toISOString(), mode: bootOnly ? 'boot-only' : 'full', checks: [], screenshots: [], failures: []};
 let services, browser, artifactServer, client, page;
-await fs.mkdir(outputDir, {recursive:true});
-await fs.writeFile(path.join(outputDir, 'fixture-owner.json'), `${JSON.stringify({fixtureDirectory, owner:'verify-wiki-stack', pid:process.pid})}\n`, {mode:0o600});
 const check = (description, details = {}) => { evidence.checks.push({description, ...details}); console.log(`PASS ${description}`); };
 
 async function seedContracts() {
@@ -123,13 +122,10 @@ let cleanupPromise;
 async function cleanup() {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = (async () => {
-    for (const close of [async()=>client?.close(), async()=>browser?.close(),
-      async()=>artifactServer && new Promise(resolve=>artifactServer.close(resolve)), async()=>services?.stop()]) {
-      try {await close();} catch(error) {evidence.failures.push({stage:'cleanup',message:error.message});process.exitCode=1;}
-    }
-    evidence.finishedAt=new Date().toISOString();
-    await fs.writeFile(path.join(outputDir,'result.json'),`${JSON.stringify(evidence,null,2)}\n`);
-    await fs.rm(fixtureDirectory,{recursive:true,force:true});
+    await cleanupWikiStack({evidence, fixtureDirectory, outputDir,
+      close: [async()=>client?.close(), async()=>browser?.close(),
+        async()=>artifactServer && new Promise(resolve=>artifactServer.close(resolve)), async()=>services?.stop()]});
+    if (evidence.failures.length) process.exitCode=1;
     console.log(`Evidence: ${outputDir}`);
   })();
   return cleanupPromise;
@@ -152,6 +148,8 @@ process.once('SIGINT', onInterrupt);
 process.once('SIGTERM', onTerminate);
 process.once('unhandledRejection', onFatal);
 try {
+  await fs.mkdir(outputDir, {recursive:true});
+  await fs.writeFile(path.join(outputDir, 'fixture-owner.json'), `${JSON.stringify({fixtureDirectory, owner:'verify-wiki-stack', pid:process.pid})}\n`, {mode:0o600});
   await seedContracts();
   services = await startServices({repo, fixtureDirectory, outputDir, username, email, password,
     frontendPort, backendPort,

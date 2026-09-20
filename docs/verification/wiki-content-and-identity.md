@@ -1,5 +1,18 @@
 # Wiki content and identity walkthrough
 
+## Disposable cleanup checks — 20 September 2026
+
+`node --test scripts/browser-response-observer.test.mjs scripts/wiki-build-snapshot.test.mjs scripts/wiki-stack-services.test.mjs scripts/wiki-stack-cleanup.test.mjs`
+checks the response observers, recursive build fingerprints, owned process groups,
+fixture removal and final evidence. The process test starts only disposable Node
+children: a descendant that ignores SIGTERM must be killed even after its leader
+exits, and a failed spawn has no process group to signal. Evidence-write failure
+must not retain fixtures; cleanup failure must mark the result incomplete.
+These checks do not start Knoxx, model services, browsers or PM2 and do not prove
+the outstanding live publication cycles.
+
+## Live workflow
+
 The live CMS is `/cms`; `/cms/editor/*` mounts the same native Helix wiki. It reads real resource identities, saved source bytes and revision-bound review history. Humans invoke the same authenticated commands available to agents with their roles. A writing suggestion remains a proposal until a writer explicitly adopts and saves it.
 
 `scripts/wiki-browser-tour.mjs` exports `tour(page, config)` for the isolated stack supervisor. The supervisor must start the actual services, seed a disposable organization and active garden, authenticate the browser, verify which checkout is being served, and remove its fixtures and processes on success, failure or interruption. The stage does not provision its own permissions or replace HTTP responses.
