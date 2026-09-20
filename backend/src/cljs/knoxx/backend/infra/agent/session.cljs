@@ -18,7 +18,8 @@
             [knoxx.backend.infra.openplanner.scope :as planner-scope]
             [knoxx.backend.extern.actor-tools :as actor-tools]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
-            [knoxx.backend.shape.agent :refer [set-thinking-level!]]))
+            [knoxx.backend.shape.agent :refer [set-thinking-level!]]
+            [knoxx.backend.shape.session-authority :as session-authority]))
 
 (defonce sessions* (atom {}))
 
@@ -129,6 +130,7 @@
     :org-id (authz/ctx-org-id auth-context) :user-id (authz/ctx-user-id auth-context)
     :membership-id (authz/ctx-membership-id auth-context) :actor-id (authz/ctx-actor-binding auth-context)
     :permissions (sort (authz/ctx-permissions auth-context))
+    :resource-policies (session-authority/resource-policy-signature (:resourcePolicies auth-context))
     :tool-policies (sort-by #(str (or (:tool-id %) (:toolId %)))
                             (or (:tool-policies auth-context) (:toolPolicies auth-context)))}))
 

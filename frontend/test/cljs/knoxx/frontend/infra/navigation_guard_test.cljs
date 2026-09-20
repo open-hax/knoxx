@@ -34,3 +34,19 @@
     (t/is (= push (.-pushState (.-history js/window))))
     (t/is (= original-replace (.-replaceState (.-history js/window))))
     (t/is (navigation/request-sign-out!))))
+
+(t/deftest explicit-router-navigation-honors-current-dirty-state-and-cleanup
+  (let [original (.-confirm js/window) dirty? (atom true) destinations (atom [])
+        cleanup (navigation/install! #(deref dirty?))]
+    (set! (.-confirm js/window) (constantly false))
+    (try
+      (navigation/navigate! #(swap! destinations conj %) "/cancelled")
+      (t/is (empty? @destinations))
+      (reset! dirty? false)
+      (navigation/navigate! #(swap! destinations conj %) "/clean")
+      (t/is (= ["/clean"] @destinations))
+      (reset! dirty? true)
+      (cleanup)
+      (navigation/navigate! #(swap! destinations conj %) "/unmounted")
+      (t/is (= ["/clean" "/unmounted"] @destinations))
+      (finally (cleanup) (set! (.-confirm js/window) original)))))

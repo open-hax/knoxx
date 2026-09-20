@@ -105,7 +105,7 @@
    (hx/$ Route {:path routes/cms-route
                :key "route-6" :element (hx/$ ProtectedSurface {:children (hx/$ cms/cms-page {:Markdown frontend/Markdown})})})
    (hx/$ Route {:path (str routes/cms-editor-route "/*")
-               :key "route-7" :element (hx/$ ProtectedSurface {:children (hx/$ cms/cms-page {:Markdown frontend/Markdown})})})
+               :key "route-7" :element (hx/$ ProtectedSurface {:children (hx/$ app/VisualCmsEditorPage)})})
    (hx/$ Route {:path routes/contracts-route
                :key "route-8" :element (hx/$ ProtectedSurface
                                         {:children (hx/$ contracts-page/ContractsPage
