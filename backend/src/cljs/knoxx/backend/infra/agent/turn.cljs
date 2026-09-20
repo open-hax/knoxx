@@ -34,6 +34,7 @@
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.shape.agent :refer [send-user-message! subscribe!]]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
+            [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
@@ -614,7 +615,7 @@
       (js/Promise.resolve parts)
       (xpromise/all-vec
        (mapv #(materialize-part! runtime config auth-context max-bytes %) parts)))))
-(defn- emit-hydration-event!
+(defn- ^:async emit-hydration-event!
   [run-id conversation-id session-id event-type hydration resource-patch]
   (let [event (run-payload/tool-event-payload run-id conversation-id session-id event-type
                                   {:status "ok"
@@ -626,7 +627,17 @@
                        (update :resources merge resource-patch)
                        (assoc :updated_at (now-iso)))))
     (append-run-event! run-id event)
+    (await (run-events/flush! run-id))
     (broadcast-ws-session! session-id "events" event)))
+
+(defn- ^:async publish-hydration!
+  [run-id conversation-id session-id hydration memory-hydration]
+  (when hydration
+    (await (emit-hydration-event! run-id conversation-id session-id "passive_hydration"
+                                  hydration {:passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results])})))
+  (when (seq (:hits memory-hydration))
+    (await (emit-hydration-event! run-id conversation-id session-id "memory_hydration"
+                                  memory-hydration {:memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])}))))
 
 (defn- resolve-turn-model
   "Resolve the effective model-id for a turn."
@@ -743,13 +754,8 @@
           event-stream-sink (install-openplanner-event-sink! config)]
       (await (initial-admission/create-run!
               {:conversation-id conversation-id :startup-owner startup-owner :sink event-stream-sink}
-              [run-id session-id conversation-id started-at model-id mode thinking-level agent-spec auth-extra request-messages config]))
-      (when hydration
-        (emit-hydration-event! run-id conversation-id session-id "passive_hydration"
-                               hydration {:passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results])}))
-      (when (seq (:hits memory-hydration))
-        (emit-hydration-event! run-id conversation-id session-id "memory_hydration"
-                               memory-hydration {:memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])}))
+              [run-id session-id conversation-id started-at model-id mode thinking-level agent-spec auth-extra request-messages config]
+              #(publish-hydration! run-id conversation-id session-id hydration memory-hydration)))
       (let [persisted-request-messages (prune-session-messages
                                         agent-spec
                                         (transcript/transcript-before-prompt session user-message agent-spec))]

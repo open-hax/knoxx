@@ -55,9 +55,11 @@
     (catch :default failure (refuse! context failure))))
 
 (defn ^:async create-run!
-  "Create and flush the initial run inside its startup ownership boundary."
-  [context arguments]
+  "Keep startup and pre-prompt admissions inside the same ownership boundary."
+  ([context arguments] (create-run! context arguments (fn [] nil)))
+  ([context arguments before-prompt!]
   (await (admit! context
                  (^:async fn []
                    (await (apply admission/create-initial-run! arguments))
-                   (await (events/flush! (first arguments)))))))
+                   (await (events/flush! (first arguments)))
+                   (await (before-prompt!)))))))

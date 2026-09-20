@@ -8,6 +8,6 @@
                          :output-to (if native? "target/run-events-native-proof/tests.cjs"
                                         "target/run-events-proof/tests.cjs")
                          :ns-regexp (if native? "knoxx\\.backend\\.mongo-(run-events|thread-atomicity|event-chunks)-e2e$"
-                                      "knoxx\\.backend\\.((mongo-event-chunks|run-event-provider|run-queries-recovery|openplanner-session-store|mongo-thread-cache|agent-run-persistence)-test|infra\\.stores\\.mongo-(run|session)-store-test|extern\\.(initial-admission-cleanup|startup-publication|async-spawn-durability|agent-control-persistence|cache-startup|turn-finalization|turn-sink-ownership|bootstrap-readiness|run-provider-startup|event-queue-admission|event-queue-retention)-test)$")))]
+                                      "knoxx\\.backend\\.((mongo-event-chunks|run-event-provider|run-queries-recovery|openplanner-session-store|mongo-thread-cache|agent-run-persistence)-test|infra\\.stores\\.mongo-(run|session)-store-test|extern\\.(hydration-publication|initial-admission-cleanup|startup-publication|async-spawn-durability|agent-control-persistence|cache-startup|turn-finalization|turn-sink-ownership|bootstrap-readiness|run-provider-startup|event-queue-admission|event-queue-retention)-test)$")))]
     (shadow/compile* build {}))
   nil)
