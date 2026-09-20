@@ -1,6 +1,7 @@
 (ns knoxx.backend.mcp-http-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :as t]
             [clojure.string :as str]
+            [knoxx.backend.extern.mcp-oauth-fixture :as oauth-fixture]
             [knoxx.backend.infra.routes.mcp :as mcp]))
 
 ;; ─────────────────────────────────────────────────────────
@@ -35,7 +36,7 @@
 
 (defn- fake-mcp-server []
   (let [tools (atom {})]
-    (doto #js {:registerTool (fn [name _opts _fn] (swap! tools assoc name true))
+    (doto #js {:registerTool (fn [tool-name _opts _fn] (swap! tools assoc tool-name true))
                :connect      (fn [_] (js/Promise.resolve nil))}
       (aset "tools" tools))))
 
@@ -77,8 +78,8 @@
 
 ;; ── test 1: no bearer → 401 synchronously ────────────────
 
-(deftest ^:async mcp-post-no-bearer-returns-401
-  (testing "missing bearer token writes 401 to raw-res without Fastify"
+(t/deftest ^:async mcp-post-no-bearer-returns-401
+  (t/testing "missing bearer token writes 401 to raw-res without Fastify"
     (let [raw-res (fake-raw-res)
           invoke  (make-invoke-mcp-post!
                     {:base "http://localhost:3000"
@@ -87,14 +88,14 @@
                      :make-transport fake-transport})]
       (await (invoke #js {} raw-res ""))
       (let [s (raw-res-state raw-res)]
-        (is (= 401 (:status s)) "status is 401")
-        (is (= "Unauthorized" (:body s)) "body is Unauthorized")
-        (is (:ended s) "response was ended")))))
+        (t/is (= 401 (:status s)) "status is 401")
+        (t/is (= "Unauthorized" (:body s)) "body is Unauthorized")
+        (t/is (:ended s) "response was ended")))))
 
 ;; ── test 2: token not in store → 401 ─────────────────────
 
-(deftest ^:async mcp-post-unknown-token-returns-401
-  (testing "unknown bearer token (store miss) writes 401 to raw-res"
+(t/deftest ^:async mcp-post-unknown-token-returns-401
+  (t/testing "unknown bearer token (store miss) writes 401 to raw-res"
     (let [raw-res (fake-raw-res)
           invoke  (make-invoke-mcp-post!
                     {:base "http://localhost:3000"
@@ -103,13 +104,13 @@
                      :make-transport fake-transport})]
       (await (js/Promise.resolve (invoke #js {} raw-res "dead-token")))
       (let [s (raw-res-state raw-res)]
-        (is (= 401 (:status s)) "status is 401")
-        (is (= "Unauthorized" (:body s)) "body is Unauthorized")))))
+        (t/is (= 401 (:status s)) "status is 401")
+        (t/is (= "Unauthorized" (:body s)) "body is Unauthorized")))))
 
 ;; ── test 3: valid token → transport.handleRequest called ─
 
-(deftest ^:async mcp-post-valid-token-calls-transport
-  (testing "valid token: hijack path calls transport.handleRequest with raw req/res"
+(t/deftest ^:async mcp-post-valid-token-calls-transport
+  (t/testing "valid token: hijack path calls transport.handleRequest with raw req/res"
     (let [raw-req   #js {:url "/mcp" :method "POST"}
           raw-res   (fake-raw-res)
           transport (fake-transport)
@@ -123,11 +124,11 @@
                        :make-transport (constantly transport)})]
       (await (invoke raw-req raw-res "abc-token"))
       (let [calls @(aget transport "calls")]
-        (is (= 1 (count calls)) "handleRequest called once")
-        (is (= raw-req (:req (first calls))) "raw req passed")
-        (is (= raw-res (:res (first calls))) "raw res passed")
+        (t/is (= 1 (count calls)) "handleRequest called once")
+        (t/is (= raw-req (:req (first calls))) "raw req passed")
+        (t/is (= raw-res (:res (first calls))) "raw res passed")
         (let [rs (raw-res-state raw-res)]
-          (is (nil? (:status rs)) "Fastify reply never wrote headers"))))))
+          (t/is (nil? (:status rs)) "Fastify reply never wrote headers"))))))
 
 ;; ── OAuth discovery documents ────────────────────────────
 ;;
@@ -195,37 +196,37 @@
       (let [app (recording-app)]
         (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})
         (let [route (registered-route app method url)]
-          (is (some? route) (str "route " method " " url " is registered"))
+          (t/is (some? route) (str "route " method " " url " is registered"))
           (let [reply (fake-reply)]
             ;; Guards run first and must not answer for a public document.
             (when-let [pre (aget route "preHandler")]
               (let [done? (atom false)]
                 (pre #js {} reply (fn [] (reset! done? true)))
-                (is @done? (str method " " url " ran no blocking guard"))))
+                (t/is @done? (str method " " url " ran no blocking guard"))))
             ((aget route "handler") #js {} reply)
             @(aget reply "state")))))))
 
-(deftest mcp-authorization-server-metadata-is-served
-  (testing "/.well-known/oauth-authorization-server answers 200 with the endpoint set"
+(t/deftest mcp-authorization-server-metadata-is-served
+  (t/testing "/.well-known/oauth-authorization-server answers 200 with the endpoint set"
     (let [{:keys [status payload]} (serve "GET" "/.well-known/oauth-authorization-server")]
-      (is (= 200 status) "status is 200, not a 500 from a nil dep")
-      (is (= test-base (aget payload "issuer")) "issuer has no trailing slash")
-      (is (= (str test-base "/api/mcp/oauth/authorize")
+      (t/is (= 200 status) "status is 200, not a 500 from a nil dep")
+      (t/is (= test-base (aget payload "issuer")) "issuer has no trailing slash")
+      (t/is (= (str test-base "/api/mcp/oauth/authorize")
              (aget payload "authorization_endpoint")))
-      (is (= (str test-base "/api/mcp/oauth/token")
+      (t/is (= (str test-base "/api/mcp/oauth/token")
              (aget payload "token_endpoint")))
-      (is (= (str test-base "/api/mcp/oauth/register")
+      (t/is (= (str test-base "/api/mcp/oauth/register")
              (aget payload "registration_endpoint")))
-      (is (= ["S256"] (js->clj (aget payload "code_challenge_methods_supported")))))))
+      (t/is (= ["S256"] (js->clj (aget payload "code_challenge_methods_supported")))))))
 
-(deftest mcp-protected-resource-metadata-is-served
-  (testing "/.well-known/oauth-protected-resource answers 200 and points at /mcp"
+(t/deftest mcp-protected-resource-metadata-is-served
+  (t/testing "/.well-known/oauth-protected-resource answers 200 and points at /mcp"
     (let [{:keys [status payload]} (serve "GET" "/.well-known/oauth-protected-resource")]
-      (is (= 200 status) "status is 200, not a 500 from a nil dep")
-      (is (= (str test-base "/mcp") (aget payload "resource"))
+      (t/is (= 200 status) "status is 200, not a 500 from a nil dep")
+      (t/is (= (str test-base "/mcp") (aget payload "resource"))
           "names the resource the 401 challenge protects")
-      (is (= [test-base] (js->clj (aget payload "authorization_servers"))))
-      (is (= ["header"] (js->clj (aget payload "bearer_methods_supported")))))))
+      (t/is (= [test-base] (js->clj (aget payload "authorization_servers"))))
+      (t/is (= ["header"] (js->clj (aget payload "bearer_methods_supported")))))))
 
 ;; ── the consent page reads a CLJS auth context ───────────
 ;;
@@ -247,8 +248,8 @@
    :org        {:id "o-1" :slug "acme"}
    :role-slugs ["knowledge_worker"]})
 
-(deftest ^:async consent-page-renders-from-a-cljs-auth-context
-  (testing "GET /api/mcp/oauth/authorize renders rather than 500ing"
+(t/deftest ^:async consent-page-renders-from-a-cljs-auth-context
+  (t/testing "GET /api/mcp/oauth/authorize renders rather than 500ing"
     (let [app (recording-app)]
       (with-public-base-url test-base
         (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
@@ -260,25 +261,25 @@
                                    "code_challenge"        "challenge"
                                    "code_challenge_method" "S256"
                                    "state"                 "st"}}]
-        (is (some? route) "the authorize route is registered")
+        (t/is (some? route) "the authorize route is registered")
         ;; Caught rather than awaited bare: the regression throws, and an
         ;; unhandled rejection here takes the whole runner down mid-suite
         ;; instead of reporting one failed test.
         (let [outcome (try (await ((aget route "handler") req reply)) :ok
                            (catch :default e e))]
-          (is (= :ok outcome)
+          (t/is (= :ok outcome)
               (str "the authorize handler must not throw: " outcome))
           (when (= :ok outcome)
             (let [html (str (:payload @(aget reply "state")))]
-              (is (str/includes? html "Authorize MCP Client")
+              (t/is (str/includes? html "Authorize MCP Client")
                   "the consent page rendered")
-              (is (str/includes? html "someone@example.test")
+              (t/is (str/includes? html "someone@example.test")
                   "the signed-in user's email is read off the CLJS map, not aget-ed off a JS object")
-              (is (str/includes? html "acme")
+              (t/is (str/includes? html "acme")
                   "the org slug is read the same way"))))))))
 
-(deftest resource-metadata-is-served-at-every-well-known-location
-  (testing "RFC 9728 inserts the resource path, and some clients try a suffix"
+(t/deftest resource-metadata-is-served-at-every-well-known-location
+  (t/testing "RFC 9728 inserts the resource path, and some clients try a suffix"
     ;; ChatGPT probes /.well-known/oauth-protected-resource/mcp first and got
     ;; 404 for it and for the /mcp/.well-known variant, relying on a fallback
     ;; to the root document. Serve all three.
@@ -286,31 +287,36 @@
                  "/.well-known/oauth-protected-resource/mcp"
                  "/mcp/.well-known/oauth-protected-resource"]]
       (let [{:keys [status payload]} (serve "GET" url)]
-        (is (= 200 status) (str url " must answer 200"))
-        (is (= (str test-base "/mcp") (aget payload "resource"))
+        (t/is (= 200 status) (str url " must answer 200"))
+        (t/is (= (str test-base "/mcp") (aget payload "resource"))
             (str url " must name the same resource"))
-        (is (= [test-base] (js->clj (aget payload "authorization_servers")))
+        (t/is (= [test-base] (js->clj (aget payload "authorization_servers")))
             (str url " must name the same authorization server"))))))
 
-(deftest ^:async token-routes-read-membership-from-a-cljs-auth-context
-  (testing "GET /api/mcp/tokens resolves the membership instead of throwing or 400ing"
+(t/deftest ^:async token-routes-read-membership-from-a-cljs-auth-context
+  (t/testing "GET /api/mcp/tokens resolves the membership instead of throwing or 400ing"
     ;; These two routes carried the same (aget ctx "membership" "id") expression
     ;; as the consent page. Nobody had reached them yet, so the breakage was
     ;; latent rather than reported — cover them alongside.
-    (let [app (recording-app)]
-      (with-public-base-url test-base
-        (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
-      (let [route (registered-route app "GET" "/api/mcp/tokens")
-            reply (fake-reply)
-            outcome (try (await ((aget route "handler")
-                                 #js {:authContext cljs-auth-context} reply))
-                         :ok
-                         (catch :default e e))]
-        (is (= :ok outcome)
-            (str "a resolvable membership must not raise: " outcome))
-        (is (= 200 (:status @(aget reply "state")))))))
+    (await (oauth-fixture/with-tokens!
+            [["inventory-token-m1" "m-1"] ["inventory-token-m2" "m-2"]]
+            (^:async fn []
+              (let [app (recording-app)]
+                (with-public-base-url test-base
+                  (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
+                (let [route (registered-route app "GET" "/api/mcp/tokens")
+                      reply (fake-reply)
+                      outcome (try (await ((aget route "handler")
+                                           #js {:authContext cljs-auth-context} reply))
+                                   :ok
+                                   (catch :default e e))]
+                  (t/is (= :ok outcome)
+                      (str "a resolvable membership must not raise: " outcome))
+                  (t/is (= 200 (:status @(aget reply "state"))))
+                  (t/is (= [(oauth-fixture/token-id "inventory-token-m1")]
+                         (oauth-fixture/inventory-token-ids (:payload @(aget reply "state")))))))))))
 
-  (testing "a context with no membership is refused rather than treated as empty"
+  (t/testing "a context with no membership is refused rather than treated as empty"
     (let [app (recording-app)]
       (with-public-base-url test-base
         (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
@@ -320,12 +326,12 @@
                                  (fake-reply)))
                          :ok
                          (catch :default e e))]
-        (is (not= :ok outcome) "a blank membership must be rejected")
+        (t/is (not= :ok outcome) "a blank membership must be rejected")
         (when (not= :ok outcome)
-          (is (= 400 (aget outcome "statusCode"))))))))
+          (t/is (= 400 (aget outcome "statusCode"))))))))
 
-(deftest ^:async client-errors-carry-their-http-status
-  (testing "a rejected registration surfaces as 400, not 500"
+(t/deftest ^:async client-errors-carry-their-http-status
+  (t/testing "a rejected registration surfaces as 400, not 500"
     ;; Fastify's default error handler reads statusCode off the thrown object
     ;; and falls back to 500. A bare ex-info keeps its status in ex-data, where
     ;; Fastify cannot see it, so every client error in these routes was
@@ -335,29 +341,29 @@
       (with-public-base-url test-base
         (fn [] (mcp/register-mcp-http-routes! app nil {:knoxx-base-url test-base})))
       (let [route (registered-route app "POST" "/api/mcp/oauth/register")]
-        (is (some? route) "the registration route is registered")
+        (t/is (some? route) "the registration route is registered")
         (let [outcome (try
                         (await ((aget route "handler") #js {:body #js {}} (fake-reply)))
                         :resolved
                         (catch :default e e))]
-          (is (not= :resolved outcome) "a body with no redirect_uris must be rejected")
+          (t/is (not= :resolved outcome) "a body with no redirect_uris must be rejected")
           (when (not= :resolved outcome)
-            (is (= 400 (aget outcome "statusCode"))
+            (t/is (= 400 (aget outcome "statusCode"))
                 "the status Fastify actually reads must be the intended one")))))))
 
-(deftest mcp-discovery-tests-leave-the-environment-alone
-  (testing "the pinned KNOXX_PUBLIC_BASE_URL does not leak into later tests"
+(t/deftest mcp-discovery-tests-leave-the-environment-alone
+  (t/testing "the pinned KNOXX_PUBLIC_BASE_URL does not leak into later tests"
     (let [had?     (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL")
           original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")]
       (with-public-base-url "https://leaked.example.test" (fn [] nil))
-      (is (= had? (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL"))
+      (t/is (= had? (.hasOwnProperty js/process.env "KNOXX_PUBLIC_BASE_URL"))
           "presence of the variable is restored")
-      (is (= original (aget js/process.env "KNOXX_PUBLIC_BASE_URL"))
+      (t/is (= original (aget js/process.env "KNOXX_PUBLIC_BASE_URL"))
           "value of the variable is restored"))
-    (testing "even when the body throws"
+    (t/testing "even when the body throws"
       (let [original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")]
         (try
           (with-public-base-url "https://leaked.example.test"
             (fn [] (throw (js/Error. "boom"))))
           (catch :default _ nil))
-        (is (= original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")))))))
+        (t/is (= original (aget js/process.env "KNOXX_PUBLIC_BASE_URL")))))))

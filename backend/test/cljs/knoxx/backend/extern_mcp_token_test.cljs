@@ -7,6 +7,8 @@
   (let [record (mcp-token/native-record
                 {:accessToken "authentication-contract"
                  :clientId "knoxx-authentication-contract"
+                 :axxiumPrincipalId "principal-1"
+                 :axxiumEntityId "entity-1"
                  :userEmail "admin@example.test"
                  :actorId "system_admin"
                  :tools ["semantic_query" "read"]})]
@@ -19,7 +21,11 @@
              (vec (array-seq (aget record "tools"))))))))
 
 (deftest native-record-preserves-absence
-  (is (nil? (mcp-token/native-record nil))))
+  (is (nil? (mcp-token/native-record nil)))
+  (let [native (mcp-token/native-record {:accessToken "token" :clientId "client"
+                                        :axxiumPrincipalId "principal" :axxiumEntityId "entity" :tools []})]
+    (is (= "principal" (aget native "axxiumPrincipalId")))
+    (is (nil? (aget native "userEmail")))))
 
 (deftest native-record-refuses-malformed-authorization-data
   (testing "required identity is checked before native conversion"
@@ -39,4 +45,6 @@
           {:accessToken "authentication-contract"
            :clientId "knoxx-authentication-contract"
            :userEmail "admin@example.test"
+           :axxiumPrincipalId "principal-1"
+           :axxiumEntityId "entity-1"
            :tools :all})))))
