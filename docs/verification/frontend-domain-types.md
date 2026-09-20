@@ -1,5 +1,21 @@
 # Frontend domain type ownership
 
+## Review partition qualification
+
+PR #355 includes the chat, administration, and ingestion type owners together
+with the compatibility exports that depend on them. These three files are
+byte-for-byte copies of the original #305 head (`1d3b207a`); moving them earlier
+changes review ownership, not the final implementation.
+
+On the original partition, `pnpm -C frontend typecheck` reported 75 TypeScript
+errors, including absent chat/admin exports and `IngestionProxySourceAudit`.
+With the owners included, the same complete command passes with zero TypeScript
+errors. The environment still reports an unresolved optional `NPM_TOKEN`
+placeholder in the user npm configuration. No registry credential is needed or
+read by this typecheck. This check does not establish live browser behavior.
+
+## Original implementation evidence
+
 The inherited `lib/types.ts` was 814 lines, exceeding the repository size gate's
 800-line error limit. It now retains 273 lines and type-only compatibility
 exports. Existing chat, administration and translation modules own their exact
