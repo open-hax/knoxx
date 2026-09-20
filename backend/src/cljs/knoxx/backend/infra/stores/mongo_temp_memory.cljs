@@ -5,10 +5,10 @@
 (def COLLECTION_NAME "knoxx_temp_memory")
 (defn setup-indexes! "Initialize explicit Mongo indexes." [db] (cache/setup-indexes! db))
 
-(defn get-memory!
+(defn ^:async get-memory!
   "Read the selected provider's unexpired value."
-  ([key] (get-memory! nil key))
-  ([db key] (cache/read! db :temp-memory key)))
+  ([key] (await (get-memory! nil key)))
+  ([db key] (await (cache/read! db :temp-memory key))))
 
 (defn ^:async set-memory!
   "Admit temporary memory for an explicit duration in seconds."

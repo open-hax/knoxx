@@ -7,7 +7,7 @@
                                                                 passive-hydration! passive-memory-hydration!
                                                                 build-agent-user-message
                                                                 hydration-sources]]
-            [knoxx.backend.infra.agent.session :refer [ensure-agent-session! remove-agent-session! prune-session-messages]]
+            [knoxx.backend.infra.agent.session :refer [ensure-agent-session! prune-session-messages]]
             [knoxx.backend.infra.agent.message :as msg]
             [knoxx.backend.extern.agent-turn-media :as xturn-media]
             [knoxx.backend.extern.agent-turn-node :as xturn-node]
@@ -20,6 +20,7 @@
             [knoxx.backend.infra.agent.policy :as policy]
             [knoxx.backend.infra.agent.stream :as stream]
             [knoxx.backend.infra.agent.transcript :as transcript]
+            [knoxx.backend.infra.agent.turn-finalization :as finalization]
             [knoxx.backend.infra.auth.authz :as authz :refer [auth-snapshot]]
             [knoxx.backend.infra.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -29,7 +30,7 @@
             [knoxx.backend.domain.action.run-state :refer [append-run-event! update-run!
                                                            finalize-run-trace-blocks!
                                                            record-retrieval-sample! latest-assistant-message
-                                                           set-event-stream-sink! clear-event-stream-sink!]]
+                                                           set-event-stream-sink!]]
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.shape.agent :refer [send-user-message! subscribe!]]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
@@ -223,53 +224,29 @@
   [config session run-id conversation-id session-id started-ms model-id persisted-request-messages agent-spec completed-run merged-content-parts output-failure]
   (let [{:keys [diagnostic-type message reason]} output-failure
         err (js/Error. message)
-        diagnostic (errors/log-error! diagnostic-type
-                                      {:run-id run-id
-                                       :conversation-id conversation-id
-                                       :session-id session-id
-                                       :model model-id
-                                       :contract-id (:contract-id agent-spec)
-                                       :actor-id (:actor-id agent-spec)
-                                       :trigger-id (:trigger-id agent-spec)
-                                       :task-source (:task-source agent-spec)}
-                                      err)
+        diagnostic (finalization/refusal-diagnostic!
+                    {:run-id run-id :conversation-id conversation-id :session-id session-id :model model-id}
+                    agent-spec diagnostic-type err)
         err-text (:message diagnostic)
         failed-event (run-payload/tool-event-payload run-id conversation-id session-id "run_failed"
                                          {:status "failed"
                                           :error err-text
                                           :reason reason})
-        failed-run (update-run! run-id
-                                (fn [run]
-                                  (assoc run
-                                         :updated_at (now-iso)
-                                         :status "failed"
-                                         :total_time_ms (- (.now js/Date) started-ms)
-                                         :error err-text
-                                         :reason reason)))]
+        failed-run (finalization/mark-failed!
+                    run-id {:total_time_ms (- (.now js/Date) started-ms)
+                            :error err-text :reason reason})]
     (append-run-event! run-id failed-event)
     (broadcast-ws-session! session-id "events" failed-event)
-    (when failed-run
-      (await (openplanner-memory/index-run-memory! config failed-run extract-mentioned-devel-paths extract-mentioned-urls)))
-    (let [final-messages (prune-session-messages agent-spec (transcript/transcript-after-turn session persisted-request-messages))]
-      (await (session-store/complete-session! session-id
-                                             conversation-id
-                                             {:status "failed"
-                                              :error err-text
-                                              :messages final-messages})))
-    (clear-event-stream-sink!)
-    (remove-agent-session! conversation-id)
-    {:answer ""
-     :error err-text
-     :run_id run-id
-     :runId run-id
-     :conversation_id conversation-id
-     :conversationId conversation-id
-     :session_id session-id
-     :model model-id
-     :content_parts merged-content-parts
-     :sources (:sources completed-run)
-    :message_parts []
-    :compare nil}))
+    (await (finalization/settle!
+            {:run-id run-id :conversation-id conversation-id :session-id session-id}
+            (^:async fn []
+              (when failed-run
+                (await (openplanner-memory/index-run-memory! config failed-run extract-mentioned-devel-paths extract-mentioned-urls))))
+            #(finalization/complete! session agent-spec session-id conversation-id
+                                    {:status "failed" :error err-text} persisted-request-messages)))
+    (assoc (build-turn-completed-response run-id conversation-id session-id model-id ""
+                                          merged-content-parts (:sources completed-run) [])
+           :error err-text)))
 
 (defn- ^:async finalize-accepted-turn-output!
   [config session run-id conversation-id session-id model-id answer reasoning-text
@@ -287,25 +264,18 @@
          run-id conversation-id session-id model-id answer
          merged-content-parts sources message-parts)]
     (append-run-event! run-id completed-event)
-    (when completed-run
-      (await (openplanner-memory/index-run-memory!
-              config completed-run extract-mentioned-devel-paths extract-mentioned-urls)))
-    (broadcast-ws-session! session-id "events" completed-event)
-    (let [assistant-entry (cond-> {:role "assistant" :content answer}
-                            (seq merged-content-parts)
-                            (assoc :content-parts merged-content-parts))
-          final-messages
-          (prune-session-messages
-           agent-spec
-           (transcript/transcript-after-turn
-            session (conj persisted-request-messages assistant-entry)))]
-      (await (session-store/complete-session!
-              session-id conversation-id
-              {:status "completed"
-               :answer answer
-               :messages final-messages})))
-    (clear-event-stream-sink!)
-    (remove-agent-session! conversation-id)
+    (await (finalization/settle!
+            {:run-id run-id :conversation-id conversation-id :session-id session-id}
+            (^:async fn []
+              (when completed-run
+                (await (openplanner-memory/index-run-memory!
+                        config completed-run extract-mentioned-devel-paths extract-mentioned-urls)))
+              (broadcast-ws-session! session-id "events" completed-event))
+            #(finalization/complete!
+              session agent-spec session-id conversation-id {:status "completed" :answer answer}
+              (conj persisted-request-messages
+                    (cond-> {:role "assistant" :content answer}
+                      (seq merged-content-parts) (assoc :content-parts merged-content-parts))))))
     response))
 
 (defn- ^:async finalize-turn-success!
@@ -365,31 +335,20 @@
                                         {:status "failed"
                                          :error err-text})]
     (finalize-run-trace-blocks! run-id "error")
-    (let [failed-run (update-run! run-id
-                                  (fn [run]
-                                    (let [resource-patch (cond-> {}
-                                                           hydration (assoc :passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results]))
-                                                           memory-hydration (assoc :memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])))]
-                                      (-> run
-                                          (assoc :updated_at (now-iso)
-                                                 :status "failed"
-                                                 :total_time_ms (- (.now js/Date) started-ms)
-                                                 :reasoning (apply str @(:reasoning-chunks state))
-                                                 :error err-text)
-                                          (update :resources merge resource-patch)))))]
+    (let [failed-run (finalization/fail-run!
+                      run-id {:total_time_ms (- (.now js/Date) started-ms)
+                              :reasoning (apply str @(:reasoning-chunks state)) :error err-text}
+                      hydration memory-hydration)]
       (append-run-event! run-id error-event)
-      (when failed-run
-        (await (openplanner-memory/index-run-memory!
-                config failed-run extract-mentioned-devel-paths extract-mentioned-urls)))
-      (broadcast-ws-session! session-id "events" error-event)
-      (let [final-messages (prune-session-messages agent-spec (transcript/transcript-after-turn session persisted-request-messages))]
-        (await (session-store/complete-session! session-id
-                                               conversation-id
-                                               {:status "failed"
-                                                :error err-text
-                                                :messages final-messages})))
-      (clear-event-stream-sink!)
-      (remove-agent-session! conversation-id))
+      (await (finalization/settle!
+              {:run-id run-id :conversation-id conversation-id :session-id session-id}
+              (^:async fn []
+                (when failed-run
+                  (await (openplanner-memory/index-run-memory!
+                          config failed-run extract-mentioned-devel-paths extract-mentioned-urls)))
+                (broadcast-ws-session! session-id "events" error-event))
+              #(finalization/complete! session agent-spec session-id conversation-id
+                                      {:status "failed" :error err-text} persisted-request-messages))))
     (throw err)))
 (defn content-part-type [part]
   (cond

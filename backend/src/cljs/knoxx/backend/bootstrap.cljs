@@ -173,14 +173,14 @@
 (defn- ^:async start-mongo-indexes!
   "Create every collection's indexes, then publish the stores that need them.
 
-   Extracted from `start-mongo-persistence!` so that function stays about
+   Extracted from `start-required-persistence!` so that function stays about
    lifecycle — connect, index, resume, schedule — rather than growing one line
    per collection."
   [db log]
   (await (mongo-session-store/setup-indexes! db))
   ;; Cache stores for session titles, temp memory, memory sessions
-  (mongo-session-titles/setup-indexes! db)
-  (mongo-temp-memory/setup-indexes! db)
+  (await (mongo-session-titles/setup-indexes! db))
+  (await (mongo-temp-memory/setup-indexes! db))
   (mongo-memory-sessions/setup-indexes! db)
   ;; MCP OAuth store
   (mongo-mcp-oauth/setup-indexes! db)

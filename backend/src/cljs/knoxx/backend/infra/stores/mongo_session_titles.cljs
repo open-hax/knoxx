@@ -5,10 +5,10 @@
 (def COLLECTION_NAME "knoxx_thread_titles")
 (defn setup-indexes! "Initialize explicit Mongo indexes." [db] (cache/setup-indexes! db))
 
-(defn get-title!
+(defn ^:async get-title!
   "Read the selected provider's unexpired value."
-  ([session-id] (get-title! nil session-id))
-  ([db session-id] (cache/read! db :titles session-id)))
+  ([session-id] (await (get-title! nil session-id)))
+  ([db session-id] (await (cache/read! db :titles session-id))))
 
 (defn ^:async upsert-title!
   "Admit a title before returning its existing response shape."
