@@ -66,7 +66,7 @@
                     hydration/passive-hydration! (fn ([_ _ _ _] nil) ([_ _ _ _ _] nil))
                     hydration/passive-memory-hydration! (fn ([_ _ _] nil) ([_ _ _ _] nil) ([_ _ _ _ _] nil))
                     titles/maybe-prime-session-title! (fn [& _] nil)
-                    turns/prompt-and-await! (fn [& _] (swap! prompts* inc))
+                    turns/prompt-and-await! (fixture/prompt-stub #(swap! prompts* inc))
                     startup/claim-startup! (:claim! writes)
                     runs/append-event! (:event! writes)]
         (await (assert-owned-cleanup!
@@ -152,7 +152,7 @@
                   hydration/passive-memory-hydration! (fn ([_ _ _] nil) ([_ _ _ _] nil) ([_ _ _ _ _] nil))
                   titles/maybe-prime-session-title! (fn [& _] nil)
                   turns/materialize-content-parts! (^:async fn [& _] (reset! entered* true) (await (:promise materialization)) (throw failure))
-                  turns/prompt-and-await! (fn [& _] (swap! prompts* inc))]
+                  turns/prompt-and-await! (fixture/prompt-stub #(swap! prompts* inc))]
       (let [work ((^:async fn [] (reset! outcome* (await (outcome! request)))))]
         (try
           (await (assert-hydration-failure!

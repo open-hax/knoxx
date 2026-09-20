@@ -72,7 +72,7 @@
                   hydration/passive-hydration! passive-result!
                   hydration/passive-memory-hydration! memory-result!
                   titles/maybe-prime-session-title! (fn [& _] nil)
-                  turns/prompt-and-await! (fn [& _] (swap! prompts* inc) :prompted)
+                  turns/prompt-and-await! (fixture/prompt-stub (fn [] (swap! prompts* inc) :prompted))
                   realtime/broadcast-ws-session! (fn [_ _ event] (swap! published* conj (:type event)))
                   runs/append-event! (^:async fn [store event]
                                        (when (= phase (:type event))

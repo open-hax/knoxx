@@ -25,7 +25,7 @@
                       startup/claim-startup! (^:async fn [store record view]
                                                 (if (identical? store provider)
                                                   (await (claim! store record view)) (throw failure)))
-                      turns/prompt-and-await! (fn [& _] (swap! model-calls inc))]
+                      turns/prompt-and-await! (fixture/prompt-stub #(swap! model-calls inc))]
           (try
             (await (turns/send-agent-turn!
                     {} {} {:run-id "refused-run" :session-id "refused-session"

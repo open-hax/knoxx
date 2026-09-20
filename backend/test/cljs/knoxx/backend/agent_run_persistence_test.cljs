@@ -27,7 +27,7 @@
                       titles/maybe-prime-session-title! (fn [& _] nil)
                       turns/hydrate-and-materialize! (fn [& _] [nil nil [] nil])
                       startup/claim-startup! (^:async fn [_store _record _view] (throw failure))
-                      turns/prompt-and-await! (fn [& _] (reset! called* true))]
+                      turns/prompt-and-await! (fixture/prompt-stub #(reset! called* true))]
           (try
             (await (turns/send-agent-turn! {} {}
                      {:run-id "provider-refused-run" :session-id "provider-refused-session"

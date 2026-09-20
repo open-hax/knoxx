@@ -36,3 +36,14 @@
                (reset! state/runs* previous-heap)
                (reset! state/run-order* previous-order)
                (disk/remove! directory)))))))
+
+(defn prompt-stub
+  "Replace either public prompt arity while retaining compiled arity dispatch."
+  [operation]
+  (fn
+    ([_config _session-id _run-id _conversation-id _started-ms _model-id _mode
+      _session _message _parts _hydration _memory _messages _agent-spec]
+     (operation))
+    ([_config _session-id _run-id _conversation-id _started-ms _model-id _mode
+      _session _message _parts _hydration _memory _messages _agent-spec _sink]
+     (operation))))

@@ -15,9 +15,9 @@
     (await (threads/complete-session! session-id conversation-id (assoc payload :messages messages)))))
 
 (defn ^:async settle!
-  "Always attempt thread completion, clear the sink, then remove the agent session.
+  "Always attempt thread completion, release the owned sink, then remove the agent session.
    A secondary completion failure is observed without hiding the mandatory persistence failure."
-  [{:keys [conversation-id] :as context} persist! complete!]
+  [{:keys [conversation-id event-stream-sink] :as context} persist! complete!]
   (let [failure* (volatile! nil)]
     (try
       (try (await (persist!))
@@ -27,12 +27,12 @@
           (await (complete!))
           (catch :default error
             (if @failure*
-              (errors/log-error! :agent-turn/session-completion-failed context
+              (errors/log-error! :agent-turn/session-completion-failed (dissoc context :event-stream-sink)
                                  (ex-info "Session completion failed during run cleanup"
                                           (select-keys (or (ex-data error) {}) [:status :code])))
               (throw error)))
           (finally
-            (try (state/clear-event-stream-sink!)
+            (try (state/clear-event-stream-sink-if! event-stream-sink)
                  (finally (sessions/remove-agent-session! conversation-id)))))))))
 
 (defn refusal-diagnostic!
