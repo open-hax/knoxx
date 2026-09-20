@@ -85,6 +85,7 @@
 (defn startup-view
   "Capture a conversation preimage and version for exact conditional admission."
   [state id]
+  (law/assert-valid! :thread/id law/NonBlank id)
   {:entry (get-in state [:threads id]) :version (get-in state [:versions id] 0)})
 
 (defn- startup-state [state {:keys [thread-id thread stamp phase expected]}]

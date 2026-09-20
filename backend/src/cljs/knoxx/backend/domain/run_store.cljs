@@ -64,6 +64,7 @@
 (defn startup-view
   "Capture bounded run authority without loading its event history."
   [state id]
+  (law/require! law/NonBlank id)
   {:entry (get-in state [:runs id]) :binding (get-in state [:bindings id])})
 
 (defn- startup-transition [state {:keys [run-id run stamp phase expected]}]

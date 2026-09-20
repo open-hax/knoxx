@@ -136,3 +136,9 @@
                     (test/is (identical? failure (await work)))
                     (test/is (= "failed" (:status (await (runs/get-run provider "held")))))
                     (finally (@release* true) (await work))))))))))
+
+(test/deftest ^:async both-clio-startup-capabilities-refuse-invalid-identifiers
+  (await (fixture/with-run! seed
+          (^:async fn []
+            (doseq [store [@registry/session-store* (threads/startup-provider)] id [nil "" " "]]
+              (test/is (some? (await (refusal! #(startup/startup-view store id))))))))))
