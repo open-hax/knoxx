@@ -11,7 +11,9 @@ This command freshly releases `:route-registration-proof`, then imports its ESM
 export in Node with the asynchronous error guard enabled. The target uses the
 production server's `:simple` optimization and imports the actual
 `knoxx.backend.infra.routes.app/register-routes!` graph. A development compile
-alone is not this check. The verification export is not reachable from the
+alone is not this check. The required `knoxx (backend + frontend)` CI job runs
+the production server release and this route proof before its translation
+browser contract. The verification export is not reachable from the
 production server target.
 
 The fixture creates real Fastify instances with the normal app plugins, an
