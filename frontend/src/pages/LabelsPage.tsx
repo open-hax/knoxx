@@ -2,23 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { opsRoutes } from '../lib/app-routes';
 
-interface LabelNode {
-  label_id: string;
-  label: string;
-  emoji: string | null;
-  description: string;
-  color: string | null;
-  tenant_id: string;
-  project: string | null;
-  created_by: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface LabeledNode {
-  node_id: string;
-  event: any;
-}
+import type { GraphLabelNode as LabelNode, GraphLabeledNode as LabeledNode } from "../lib/types";
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(path, opts);

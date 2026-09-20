@@ -1,7 +1,7 @@
 (ns knoxx.frontend.components.layout.collapsed-panel-tab
   "Collapsed edge tab that re-expands a workbench panel.
    Helix port of src/components/CollapsedPanelTab.tsx."
-  (:require [helix.core :refer [defnc]]
+  (:require [helix.core :as hx]
             [helix.dom :as d]))
 
 (defn- tab-style [edge vertical?]
@@ -23,7 +23,7 @@
            "bottom" {:borderTop "1px solid var(--token-colors-border-default)"}
            {})))
 
-(defnc collapsed-panel-tab
+(hx/defnc collapsed-panel-tab
   "Thin clickable strip shown where a collapsed panel used to be.
    `edge` is \"left\", \"right\" or \"bottom\"; left/right render the label
    rotated (vertical-rl)."

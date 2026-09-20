@@ -1,21 +1,21 @@
 (ns knoxx.frontend.core
-  "shadow-cljs browser entrypoint.
-
-   This bundle is loaded into the Vite app as a plain script. It MUST NOT
-   mount into #root (Vite owns the main React tree).
-
-   Its job is to ensure CLJS namespaces are loaded so exported components are
-   available under window.knoxx.* for TS wrappers to call." 
-  (:require [knoxx.frontend.app :as app]
-            [knoxx.frontend.admin.event-agents-panel]
+  "Browser entry point for the Shadow-owned application root and hot reload.
+   Loading this bundle also exposes native component namespaces to existing
+   TypeScript adapters. The app namespace owns the retained React root."
+  (:require [knoxx.frontend.admin.event-agents-panel]
+            [knoxx.frontend.app :as app]
             [knoxx.frontend.pages.documents.page]
             [knoxx.frontend.pages.settings.view]
             [knoxx.frontend.pages.source-doc.view]))
 
-(defn ^:dev/after-load after-load []
+(defn ^:dev/after-load after-load
+  "Render updated application code into the retained browser root."
+  []
   (js/console.log "[knoxx-frontend] hot reload")
   (app/mount!))
 
-(defn ^:dev/once init []
+(defn ^:dev/once init
+  "Mount the authenticated application when the browser bundle loads."
+  []
   (js/console.log "[knoxx-frontend] cljs bundle loaded")
   (app/mount!))
