@@ -194,3 +194,23 @@
       (is (every? #(= :fulfilled (:status %)) results))
       (is (= [{:role "system" :content "Keep"}]
              (:messages (await (protocol/read-thread provider "rewind-race"))))))))
+
+(deftest ^:async invalid-legacy-thread-refuses-mutation-before-native-write
+  (await (fixture/with-clock! at
+    (^:async fn []
+      (doseq [operation [:patch :rewind]]
+        (let [messages [{:role "user" :content "Keep"}]
+              {:keys [db]} (fixture/database
+                             {native/COLLECTION_NAME
+                              [{:session_id "opaque" :status "completed" :messages messages
+                                :legacy_value (fixture/date at) :expiresAt (fixture/date (+ at 1000))}]})
+              provider (mongo/create-store db)]
+          (try
+            (await (if (= operation :patch)
+                     (protocol/patch-thread! provider "opaque" {:status "running"})
+                     (protocol/rewind-thread! provider "opaque" 1)))
+            (is false "Opaque legacy state must refuse before mutation")
+            (catch :default error (is (= "thread_store_invalid" (:code (ex-data error))))))
+          (let [stored (await (protocol/read-thread provider "opaque"))]
+            (is (= "completed" (:status stored)))
+            (is (= messages (:messages stored))))))))))

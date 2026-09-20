@@ -13,25 +13,29 @@
     (law/assert-valid! :thread/value law/Thread (await (native/upsert-session! db thread)))))
 
 (defn- ^:async patch! [db id patch]
-  ;; The native put merges only these fields with atomic $set. Reading a full
-  ;; snapshot here would replay stale fields over another concurrent patch.
+  ;; Validate the merged view, then write only supplied fields with atomic $set.
+  ;; Writing the full snapshot would replay stale fields over a concurrent patch.
   (law/assert-valid! :thread/patch law/DataMap patch)
-  (await (put! db (assoc patch :session_id id :updated_at (clock/now-ms)))))
+  (let [fields (assoc patch :session_id id :updated_at (clock/now-ms))
+        current (await (native/find-session db id))]
+    (law/assert-valid! :thread/value law/Thread (merge current fields))
+    (await (put! db fields))))
 
 (defn- ^:async rewind! [db id turns]
   (loop [attempt 0]
     (when-let [current (await (native/find-session db id))]
-      (let [messages (domain/rewind-messages (:messages current) turns)]
+      (let [messages (domain/rewind-messages (:messages current) turns)
+            fields {:messages messages :status "waiting_input" :has_active_stream false
+                    :answer nil :error nil :updated_at (clock/now-ms)
+                    :system_instance_id (instance/current-id)}]
         (if (= messages (vec (or (:messages current) []))) current
-          (if-let [written (await (native/patch-if-messages!
-                                   db id (:messages current)
-                                   {:messages messages :status "waiting_input" :has_active_stream false
-                                    :answer nil :error nil :updated_at (clock/now-ms)
-                                    :system_instance_id (instance/current-id)}))]
-            (law/assert-valid! :thread/value law/Thread written)
-            (if (< attempt 31) (recur (inc attempt))
-              (throw (ex-info "Thread changed repeatedly during rewind"
-                              {:status 503 :code "thread_store_contention"})))))))))
+          (do
+            (law/assert-valid! :thread/value law/Thread (merge current fields))
+            (if-let [written (await (native/patch-if-messages! db id (:messages current) fields))]
+              (law/assert-valid! :thread/value law/Thread written)
+              (if (< attempt 31) (recur (inc attempt))
+                (throw (ex-info "Thread changed repeatedly during rewind"
+                                {:status 503 :code "thread_store_contention"}))))))))))
 
 (defrecord MongoThreadStore [db]
   protocol/IThreadStore
