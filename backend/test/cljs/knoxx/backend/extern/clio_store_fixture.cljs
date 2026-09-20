@@ -15,3 +15,16 @@
   [value]
   (and (path/isAbsolute (paths/resolve-directory value))
        (= (path/resolve value) (paths/resolve-directory value))))
+
+(defn deferred
+  "Expose a controllable promise for admission-order proofs."
+  []
+  (let [settlers (atom nil)
+        pending (js/Promise. (fn [resolve reject]
+                               (reset! settlers {:resolve! resolve :reject! reject})))]
+    (assoc @settlers :promise pending)))
+
+(defn drain!
+  "Let pending write and observer continuations run without a wall-clock delay."
+  []
+  (js/Promise. (fn [resolve _reject] (js/setImmediate resolve))))
