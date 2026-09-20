@@ -1,11 +1,12 @@
 (ns knoxx.backend.law.run-store
   "Finite run persistence contracts, independent from any database provider."
   (:require [clojure.string :as str]
+            [knoxx.backend.law.persistence-instant :as instant]
             [malli.core :as m]))
 
 (def NonBlank [:and :string [:fn #(not (str/blank? %))]])
 (def Milliseconds [:int {:min 0 :max 8640000000000000}])
-(def Instant [:re #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"])
+(def Instant instant/Instant)
 (def Event [:map [:run_id NonBlank] [:session_id NonBlank] [:conversation_id NonBlank]
             [:type NonBlank] [:at Instant]])
 (def Stamp [:map {:closed true} [:at Instant] [:at-ms Milliseconds]
