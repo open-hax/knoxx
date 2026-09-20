@@ -13,15 +13,25 @@
     (law/assert-valid! :thread/value law/Thread (await (native/upsert-session! db thread)))))
 
 (defn- ^:async patch! [db id patch]
-  (let [current (await (native/find-session db id))]
-    (await (put! db (merge current patch {:session_id id :updated_at (clock/now-ms)})))))
+  ;; The native put merges only these fields with atomic $set. Reading a full
+  ;; snapshot here would replay stale fields over another concurrent patch.
+  (law/assert-valid! :thread/patch law/DataMap patch)
+  (await (put! db (assoc patch :session_id id :updated_at (clock/now-ms)))))
 
 (defn- ^:async rewind! [db id turns]
-  (when-let [current (await (native/find-session db id))]
-    (let [messages (domain/rewind-messages (:messages current) turns)]
-      (if (= messages (vec (or (:messages current) []))) current
-        (await (put! db (assoc current :messages messages :status "waiting_input"
-                                :has_active_stream false :answer nil :error nil :updated_at (clock/now-ms))))))))
+  (loop [attempt 0]
+    (when-let [current (await (native/find-session db id))]
+      (let [messages (domain/rewind-messages (:messages current) turns)]
+        (if (= messages (vec (or (:messages current) []))) current
+          (if-let [written (await (native/patch-if-messages!
+                                   db id (:messages current)
+                                   {:messages messages :status "waiting_input" :has_active_stream false
+                                    :answer nil :error nil :updated_at (clock/now-ms)
+                                    :system_instance_id (instance/current-id)}))]
+            (law/assert-valid! :thread/value law/Thread written)
+            (if (< attempt 31) (recur (inc attempt))
+              (throw (ex-info "Thread changed repeatedly during rewind"
+                              {:status 503 :code "thread_store_contention"})))))))))
 
 (defrecord MongoThreadStore [db]
   protocol/IThreadStore

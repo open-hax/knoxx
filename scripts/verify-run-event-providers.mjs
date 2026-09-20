@@ -56,7 +56,7 @@ async function prove(native) {
     Number(tests) < 1 || Number(assertions) < 1 || Number(failures) !== 0 || Number(errors) !== 0)) {
     throw new Error('A positive test/assertion summary with zero failures and errors is required');
   }
-  console.log(native ? 'PASS: actual Mongo concurrent admission, process restart, retry and expiry' :
+  console.log(native ? 'PASS: actual Mongo concurrent run admission, thread patch/rewind, process restart, retry and expiry' :
     'PASS: selected provider events, authorized durable query ports, startup barrier, FIFO admission and cache expiry');
 }
 

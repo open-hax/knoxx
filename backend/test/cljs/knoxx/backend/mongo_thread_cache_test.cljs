@@ -3,6 +3,7 @@
             [knoxx.backend.extern.mongo-cache :as cache]
             [knoxx.backend.extern.mongo-cache-fixture :as fixture]
             [knoxx.backend.extern.mongo-thread :as native]
+            [knoxx.backend.extern.provider-recovery-fixture :as concurrent]
             [knoxx.backend.extern.thread-store :as clock]
             [knoxx.backend.infra.stores.mongo-session-store :as sessions]
             [knoxx.backend.infra.stores.mongo-thread-store :as mongo]
@@ -163,3 +164,33 @@
         (fn []
           (is (nil? (sessions/get-session-sync "live"))))))
       (finally (sessions/install! previous)))))
+
+(deftest ^:async concurrent-thread-patches-retain-independent-fields
+  (let [{:keys [db]} (fixture/database {})
+        provider (mongo/create-store db)
+        messages [{:role "user" :content "New transcript"}]]
+    (await (protocol/put-thread! provider {:session_id "patch-race" :status "running"
+                                         :messages [] :has_active_stream false :run_id "old"}))
+    (let [results (await (concurrent/settled
+                         [(protocol/patch-thread! provider "patch-race" {:messages messages :run_id "new"})
+                          (protocol/patch-thread! provider "patch-race" {:has_active_stream true})]))
+          stored (await (protocol/read-thread provider "patch-race"))]
+      (is (every? #(= :fulfilled (:status %)) results))
+      (is (= messages (:messages stored)))
+      (is (= "new" (:run_id stored)))
+      (is (true? (:has_active_stream stored))))))
+
+(deftest ^:async concurrent-rewinds-remove-distinct-latest-turns
+  (let [{:keys [db]} (fixture/database {})
+        provider (mongo/create-store db)]
+    (await (protocol/put-thread! provider {:session_id "rewind-race" :status "completed"
+                                         :messages [{:role "system" :content "Keep"}
+                                                    {:role "user" :content "First"}
+                                                    {:role "assistant" :content "First reply"}
+                                                    {:role "user" :content "Second"}]}))
+    (let [results (await (concurrent/settled
+                         [(protocol/rewind-thread! provider "rewind-race" 1)
+                          (protocol/rewind-thread! provider "rewind-race" 1)]))]
+      (is (every? #(= :fulfilled (:status %)) results))
+      (is (= [{:role "system" :content "Keep"}]
+             (:messages (await (protocol/read-thread provider "rewind-race"))))))))

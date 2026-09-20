@@ -31,10 +31,17 @@ The default proof shows:
 - Mongo thread queries hide expiry before TTL cleanup, portable expiry survives
   decoding, legacy cache metadata stays outside application values, and the
   disposable session cache is bounded with provider ownership preserved.
+- Concurrent thread patches update only their supplied fields, retaining the
+  other writer's transcript, run and streaming state. Rewinds compare the observed
+  transcript before applying their fields and retry a changed transcript; two
+  concurrent rewinds remove two turns instead of silently losing one operation.
 
 The optional Mongo proof admits concurrent events, checks stable retry and
 collision behavior, restarts the actual owned process and recovers ordered
-history. It uses `--nounixsocket` and a 0.25 GB WiredTiger cache. Missing or failed
+history. It also writes independent thread patches concurrently, rewinds twice
+concurrently, and verifies the combined state after an actual process restart.
+The thread/cache expiry and legacy decoding cases still use driver-shaped
+fixtures. It uses `--nounixsocket` and a 0.25 GB WiredTiger cache. Missing or failed
 native execution remains visible; the default proof does not substitute for it.
 
 ## Layer boundary and limitations

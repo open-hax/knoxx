@@ -60,6 +60,18 @@
              #js {"$set" (clj->js set-doc)}
              #js {"returnDocument" "after"})))))
 
+(defn ^:async patch-if-messages!
+  "Atomically patch a live thread only if its transcript still matches the observed value."
+  [db session-id messages updates]
+  (let [now (.now js/Date)
+        fields (assoc updates :updatedAt (js/Date. now)
+                              :expiresAt (js/Date. (+ now (* 1000 (session-ttl-seconds session-id)))))]
+    (decode-session
+     (await (.findOneAndUpdate (.collection db COLLECTION_NAME)
+                              (live-query {:session_id session-id :messages messages})
+                              #js {"$set" (clj->js fields)}
+                              #js {"returnDocument" "after"})))))
+
 (defn ^:async delete-session! [db session-id]
   (let [coll (.collection db COLLECTION_NAME)]
     (await (.deleteOne coll #js {"session_id" session-id}))

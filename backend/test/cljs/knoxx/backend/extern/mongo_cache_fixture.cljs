@@ -26,6 +26,17 @@
               (and (map? value) (contains? value :$in)) (contains? (set (:$in value)) (get row field))
               :else (= value (get row field)))) query))
 
+(defn- update-row! [state name query update options]
+  (let [query (js->clj query :keywordize-keys true)
+        update (js->clj update :keywordize-keys true)
+        previous (first (filter #(matches? % query true) (get @state name [])))
+        row (merge (when-not previous (:$setOnInsert update)) previous query (:$set update))]
+    (if (or previous (aget options "upsert"))
+      (do (swap! state update-in [name]
+                 (fn [rows] (conj (filterv #(not (matches? % query true)) rows) row)))
+          (js/Promise.resolve (clj->js row)))
+      (js/Promise.resolve nil))))
+
 (defn database
   "Provide native row responses and record queries; optional stale responses test decode-time expiry."
   ([rows] (database rows true))
@@ -42,14 +53,7 @@
                       :find (fn [query]
                               #js {:toArray (fn [] (js/Promise.resolve (clj->js (find-rows name query))))})
                       :findOneAndUpdate
-                      (fn [query update _options]
-                        (let [query (js->clj query :keywordize-keys true)
-                              update (js->clj update :keywordize-keys true)
-                              previous (first (filter #(matches? % query true) (get @state name [])))
-                              row (merge (when-not previous (:$setOnInsert update)) previous query (:$set update))]
-                          (swap! state update-in [name]
-                                 (fn [rows] (conj (filterv #(not (matches? % query true)) rows) row)))
-                          (js/Promise.resolve (clj->js row))))
+                      (fn [query update options] (update-row! state name query update options))
                       :deleteOne (fn [query]
                                    (let [query (js->clj query :keywordize-keys true)]
                                      (swap! state update name #(filterv (fn [row] (not (matches? row query true))) %))
