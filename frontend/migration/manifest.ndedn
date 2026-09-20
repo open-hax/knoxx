@@ -266,7 +266,7 @@
 {:record/id "legacy-test-suite:frontend/src/test/ui-backend-surface-stubs.test.ts", :path "frontend/src/test/ui-backend-surface-stubs.test.ts", :kind :legacy-test-suite, :island :test-infrastructure, :disposition :port, :status :legacy}
 {:record/id "route:\"*\"", :path "frontend/src/cljs/knoxx/frontend/app.cljs", :kind :route, :route "\"*\"", :implementation "Navigate", :status :native}
 {:record/id "route:\"/account\"", :path "frontend/src/cljs/knoxx/frontend/app.cljs", :kind :route, :route "\"/account\"", :implementation "account/account-page", :status :native}
-{:record/id "route:(str routes/cms-editor-route \"/*\")", :path "frontend/src/cljs/knoxx/frontend/app.cljs", :kind :route, :route "(str routes/cms-editor-route \"/*\")", :implementation "cms/cms-page", :status :native}
+{:record/id "route:(str routes/cms-editor-route \"/*\")", :path "frontend/src/cljs/knoxx/frontend/app.cljs", :kind :route, :route "(str routes/cms-editor-route \"/*\")", :implementation "app/VisualCmsEditorPage", :status :legacy}
 {:record/id "route:(str routes/data-route \"/:tab\")", :path "frontend/src/cljs/knoxx/frontend/app.cljs", :kind :route, :route "(str routes/data-route \"/:tab\")", :implementation "app/DataPage", :status :legacy}
 {:record/id "route:(str routes/legacy-ops-base-path \"/*\")", :path "frontend/src/cljs/knoxx/frontend/app.cljs", :kind :route, :route "(str routes/legacy-ops-base-path \"/*\")", :implementation "LegacyOpsRedirect", :status :native}
 {:record/id "route:(str routes/ops-base-path \"/*\")", :path "frontend/src/cljs/knoxx/frontend/app.cljs", :kind :route, :route "(str routes/ops-base-path \"/*\")", :implementation "app/OpsRoot", :status :legacy}
