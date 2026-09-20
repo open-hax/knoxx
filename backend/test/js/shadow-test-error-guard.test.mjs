@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,6 +105,31 @@ test('runner detects a nested failing process even if the Shadow launcher exits 
     assert.equal(result.status, 1);
     assert.match(result.stdout, /0 failures, 0 errors/);
     assert.match(result.stderr, /nested-await-failure/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('frontend package command rejects fatal child errors behind green Shadow summaries', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'knoxx-frontend-test-command-'));
+  const frontend = fileURLToPath(new URL('../../../frontend/', import.meta.url));
+  const command = JSON.parse(readFileSync(join(frontend, 'package.json'), 'utf8')).scripts['test:cljs'];
+  try {
+    mkdirSync(join(directory, 'bin'));
+    const fakeShadow = join(directory, 'bin', 'shadow-cljs');
+    for (const fail of [false, true]) {
+      const body = fail ? "throw Error('frontend-before-first-is');" : 'await Promise.resolve();';
+      const child = `(async () => { try { ${body} } finally { ${done} } })();`;
+      writeFileSync(fakeShadow, `#!${process.execPath}\nrequire('node:child_process').spawnSync(process.execPath,['-e',${JSON.stringify(child)}],{stdio:'inherit',env:process.env});\nprocess.exit(0);\n`, { mode: 0o755 });
+      const result = spawnSync(command, {
+        shell: true, cwd: frontend, encoding: 'utf8', timeout: 10000,
+        env: { ...process.env, NODE_OPTIONS: '', PATH: `${join(directory, 'bin')}:${process.env.PATH}` },
+      });
+      assert.ifError(result.error);
+      assert.match(result.stdout, /0 failures, 0 errors/);
+      assert.equal(result.status, fail ? 1 : 0);
+      if (fail) assert.match(result.stderr, /FATAL unhandled rejection: Error: frontend-before-first-is/);
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

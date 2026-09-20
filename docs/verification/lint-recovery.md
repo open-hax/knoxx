@@ -1,9 +1,11 @@
 # Lint recovery and trustworthy failures
 
 The recovered standalone size command lacked `size-lint.config.mjs` and failed
-before reading source. The restored configuration uses the existing 400-line
-warning and 800-line error thresholds, across backend, frontend and shared
-source. It does not exempt existing oversized files.
+before reading source. The current configuration uses the README's 350-line
+warning and 500-line error thresholds across backend, frontend and shared
+source. These differ from the CLJS hooks' existing 400/800 thresholds; neither
+gate exempts existing oversized files. See the later
+[build size-gate repair](build-size-gates.md) for the budget correction.
 
 The two CLJS lint hooks also used `:filename` from node metadata, which is absent
 in the actual clj-kondo hook API. All files shared the empty-string key. Findings
