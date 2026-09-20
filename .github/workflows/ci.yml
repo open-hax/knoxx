@@ -3,7 +3,7 @@ name: knoxx-ci
 on:
   pull_request:
     # Infrastructure admission depends on the current PR body.
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
     branches:
       - main
   push:
@@ -82,7 +82,7 @@ jobs:
           # its classpath (including the katamorph Git dependency) through
           # tools.deps and needs the clojure CLI on PATH.
           cli: latest
-          clj-kondo: latest
+          clj-kondo: "2025.07.28"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -121,8 +121,15 @@ jobs:
       - name: Backend typecheck (shadow-cljs compile app)
         run: pnpm -C backend run typecheck
 
-      # Verify the browser against the backend artifact immediately after the
-      # compile that produces it. Keeping this isolated from later coverage and
+      - name: Backend production release
+        run: pnpm -C backend run build
+
+      - name: Production ESM route registration
+        run: pnpm -C backend run test:routes:release
+
+      # Verify the browser against the production backend artifact.
+      # The route proof writes to a separate verification output directory.
+      # Keeping these checks isolated from later coverage and
       # e2e processes makes the required visual contract deterministic and
       # lets browser regressions fail fast without weakening the job: every
       # remaining suite below must still pass before this required check does.

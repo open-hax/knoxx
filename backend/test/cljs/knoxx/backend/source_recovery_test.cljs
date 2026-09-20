@@ -31,6 +31,27 @@
 (defn- command [id action current]
   {:operation-id id :revision (:revision current) :source-locale (:source-locale current)
    :expected-head (:head current) :action action})
+
+(test/deftest ^:async document-sequencing-survives-a-failed-predecessor
+  (let [key (str (random-uuid))
+        first-gate (disk/deferred)
+        second-gate (disk/deferred)
+        started (atom [])
+        first-task (files/with-document-lock! key #(do (swap! started conj :first) (:promise first-gate)))
+        first-outcome (refused (fn [] first-task))
+        second-task (files/with-document-lock! key #(do (swap! started conj :second) (:promise second-gate)))]
+    (test/is (= [:first] @started))
+    ((:reject! first-gate) (ex-info "Rejected source operation" {:status 409}))
+    (test/is (= 409 (:status (await first-outcome))))
+    (await (disk/drain!))
+    (test/is (= [:first :second] @started))
+    (let [third-task (files/with-document-lock! key #(do (swap! started conj :third) :third-result))]
+      (test/is (= [:first :second] @started) "An old cleanup cannot remove the still-pending successor")
+      ((:resolve! second-gate) :second-result)
+      (test/is (= :second-result (await second-task)))
+      (test/is (= :third-result (await third-task)))
+      (test/is (= [:first :second :third] @started)))))
+
 (defn- ^:async accept! [config document dependencies]
   (let [current (await (review/read! config document dependencies))
         submitted (await (review/command! config document actor (command "submit-one" :submit current) dependencies))]

@@ -114,6 +114,24 @@ something incomplete outside its own scope, print it every run so it stays
 visible, but do not fail the run for it — a permanently red verification script
 stops being read.
 
+## PR Review and Merge Ownership
+
+When the user authorizes merging, use the repository's
+[`pr-review-to-merge` skill](.agents/skills/pr-review-to-merge/SKILL.md) and
+[operator guide](docs/review/pr-review-to-merge.md). Own the result through
+confirmed GitHub merge, including CI, real prerequisites and base integration.
+Keep one eligible stack PR active and ready for review; later layers stay draft.
+Reply to every actionable bot thread with evidence, fix or justify disagreement,
+and obtain CodeRabbit and Codex follow-up on the latest head. Resolve only
+verified addressed findings or reviewer-adjudicated disagreements. Merge only
+when all required checks pass, no actionable findings or unresolved conversations
+remain, and an exact-head SHA guard succeeds. Preserve branch protections; never
+force push, amend, or use administrator bypass. After merge, retarget and qualify
+the next authorized layer. Quotas require a durable continuation that pursues
+merge, with notifications only for meaningful changes. Review requests, intake
+comments and enabled auto-merge do not complete a merge task. Review-only and
+draft-preparation requests do not grant merge permission.
+
 ## Author's Walkthrough on Your Own PRs
 
 Before requesting review, walk your own diff as inline PR comments. The practice

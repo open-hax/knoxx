@@ -147,3 +147,12 @@
   spore: none
   receipt-refs: 2026-08-30T00:57:53.346Z
   note: An installed logical decision is already-linearized history and must be compared and returned before current-head or quorum derivation; only an empty slot evaluates current evidence, while later head advancement forms a distinct unresolved conflict generation.
+- ts: 2026-09-20T05:28:17.328696690Z
+  session: /tmp/knoxx-pr305-split/merge-workflow-docs
+  task: Persist authorized review-to-merge ownership
+  p-efficiency: 0.86
+  p-friction: 0.28
+  p-skill-candidate: 0.2
+  spore: none
+  receipt-refs: pr-review-to-merge
+  note: A review queue needs a merged-state completion gate and a continuation objective that still owns fixes, reviewers and merge. Direct user-requested skill authored; no additional spore or automatic distribution. Separate worktrees preserve concurrent global skill edits.

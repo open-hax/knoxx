@@ -1,30 +1,24 @@
 (ns hooks.promise-chain
   (:require [clj-kondo.hooks-api :as api]))
 
-;; file-state: {filename -> {:max-row int :loc meta :reported? bool}}
+;; Each hook invocation supplies its owning filename separately from node metadata.
+;; Emit while visiting that file: waiting for the next namespace misses the last
+;; file and attributes findings to an unrelated analyzer context.
 (def ^:private file-state (atom {}))
 
-(defn- update-file-max! [filename end-row loc]
-  (swap! file-state
-         (fn [m]
-           (let [cur  (get m filename {:max-row 0 :reported? false})
-                 nmax (max (:max-row cur) (or end-row 0))]
-             (assoc m filename (assoc cur :max-row nmax :loc loc))))))
-
-(defn- emit-file-finding! [filename]
-  (let [st (get @file-state filename)]
-    (when (and st (not (:reported? st)))
-      (swap! file-state assoc-in [filename :reported?] true)
-      (let [n (:max-row st) loc (:loc st)]
-        (cond
-          (>= n 800) (api/reg-finding!
-                      (assoc loc
-                             :message (str "file ~" n " lines (error >=800)")
-                             :type :file-length/too-long :level :error))
-          (>= n 400) (api/reg-finding!
-                      (assoc loc
-                             :message (str "file ~" n " lines (warning >=400)")
-                             :type :file-length/long :level :warning)))))))
+(defn- check-file-length! [filename node]
+  (let [loc (assoc (meta node) :filename filename)
+        lines (or (:end-row loc) 0)
+        severity (cond (>= lines 800) 2 (>= lines 400) 1 :else 0)
+        previous (get @file-state filename 0)]
+    (when (> severity previous)
+      (swap! file-state assoc filename severity)
+      (api/reg-finding!
+       (assoc loc
+              :message (str "file at least " lines " lines ("
+                            (if (= severity 2) "error >=800" "warning >=400") ")")
+              :type (if (= severity 2) :file-length/too-long :file-length/long)
+              :level (if (= severity 2) :error :warning))))))
 
 (defn- promise-method? [node]
   "Returns the method symbol if node is a (.then ...) or (.catch ...) call."
@@ -74,7 +68,6 @@
         nm   (when (> (count (:children node)) 1)
                (api/sexpr (second (:children node))))
         span (- (or (:end-row loc) 0) (or (:row loc) 0))]
-    (update-file-max! (or (:filename loc) "") (or (:end-row loc) 0) loc)
     (cond
       (>= span 60) (api/reg-finding!
                     (assoc loc
@@ -112,17 +105,12 @@
                             :message (str nm " complexity " score " >=15")
                             :type :complexity/high :level :warning)))))
 
-(defn check-ns [{:keys [node]}]
-  (let [loc      (meta node)
-        filename (or (:filename loc) "")]
-    (doseq [[f _] @file-state] (emit-file-finding! f))
-    (when-not (get @file-state filename)
-      (swap! file-state assoc filename
-             {:max-row (or (:end-row loc) 0)
-              :loc      loc
-              :reported? false}))))
+(defn check-ns [{:keys [node filename]}]
+  (swap! file-state assoc filename 0)
+  (check-file-length! filename node))
 
-(defn check-defn [{:keys [node]}]
+(defn check-defn [{:keys [node filename]}]
+  (check-file-length! filename node)
   (doseq [c (:children node)] (walk! c))
   (check-fn-length node)
   (check-complexity node))
