@@ -4,17 +4,23 @@
    src/components/agent-audit/AgentAuditSessionList.tsx."
   (:require [clojure.string :as str]))
 
-(defn normalize-search [value]
+(defn normalize-search
+  "Trim and lowercase an optional search query."
+  [value]
   (-> (or value "") str/trim str/lower-case))
 
-(defn format-maybe-date [value]
+(defn format-maybe-date
+  "Render a valid date locally; preserve unparseable input for inspection."
+  [value]
   (when (some? value)
     (let [date (js/Date. value)]
       (if (js/Number.isNaN (.getTime date))
         (str value)
         (.toLocaleString date)))))
 
-(defn spec-string [spec ks]
+(defn spec-string
+  "Read the first nonblank string among supported specification keys."
+  [spec ks]
   (some (fn [k]
           (let [v (get spec k)]
             (when (and (string? v) (not (str/blank? v)))
@@ -25,37 +31,65 @@
 
 (defn- run-string [run ks] (spec-string (run-spec run) ks))
 
-(defn run-sub-agent-id [run] (run-string run [:subAgentId :sub_agent_id :sub-agent-id]))
-(defn run-parent-agent-id [run] (run-string run [:parentAgentId :parent_agent_id :parent-agent-id]))
-(defn run-role [run] (run-string run [:role]))
-(defn run-contract-id [run] (run-string run [:contractId :contract_id :contract-id]))
-(defn run-actor-id [run] (run-string run [:actorId :actor_id :actor-id]))
-(defn run-trigger-id [run] (run-string run [:triggerId :trigger_id :trigger-id]))
-(defn run-event-type [run]
+(defn run-sub-agent-id
+  "Read the sub-agent identifier across supported key spellings."
+  [run] (run-string run [:subAgentId :sub_agent_id :sub-agent-id]))
+(defn run-parent-agent-id
+  "Read the parent-agent identifier across supported key spellings."
+  [run] (run-string run [:parentAgentId :parent_agent_id :parent-agent-id]))
+(defn run-role
+  "Read the explicit role from a run specification."
+  [run] (run-string run [:role]))
+(defn run-contract-id
+  "Read the contract identifier across supported key spellings."
+  [run] (run-string run [:contractId :contract_id :contract-id]))
+(defn run-actor-id
+  "Read the actor identifier across supported key spellings."
+  [run] (run-string run [:actorId :actor_id :actor-id]))
+(defn run-trigger-id
+  "Read the trigger identifier across supported key spellings."
+  [run] (run-string run [:triggerId :trigger_id :trigger-id]))
+(defn run-event-type
+  "Read the event type, including legacy trigger-event spellings."
+  [run]
   (run-string run [:eventType :event_type :event-type
                    :triggerEventType :trigger_event_type :trigger-event-type]))
-(defn run-event-id [run] (run-string run [:eventId :event_id :event-id]))
-(defn run-event-scope-id [run] (run-string run [:eventScopeId :event_scope_id :event-scope-id]))
-(defn run-schedule-id [run] (run-string run [:scheduleId :schedule_id :schedule-id]))
+(defn run-event-id
+  "Read the event identifier across supported key spellings."
+  [run] (run-string run [:eventId :event_id :event-id]))
+(defn run-event-scope-id
+  "Read the event scope across supported key spellings."
+  [run] (run-string run [:eventScopeId :event_scope_id :event-scope-id]))
+(defn run-schedule-id
+  "Read the schedule identifier across supported key spellings."
+  [run] (run-string run [:scheduleId :schedule_id :schedule-id]))
 
-(defn run-event-types [run]
+(defn run-event-types
+  "Retain nonblank event types from a sequential specification value."
+  [run]
   (let [spec (run-spec run)
         values (or (:eventTypes spec) (:event_types spec) (get spec :event-types))]
     (when (sequential? values)
       (let [normalized (filterv #(and (string? %) (seq (str/trim %))) values)]
         (when (seq normalized) normalized)))))
 
-(defn run-title [run]
+(defn run-title
+  "Prefer the sub-agent label, then contract, role and runtime identifiers."
+  [run]
   (if-let [sub-agent-id (run-sub-agent-id run)]
     (str "sub-agent " sub-agent-id)
     (or (run-contract-id run) (run-role run)
         (:conversation_id run) (:session_id run) (:run_id run))))
 
-(defn session-timestamp [session]
+(defn session-timestamp
+  "Read the last activity timestamp, using zero for invalid or absent dates."
+  [session]
   (let [parsed (js/Date.parse (or (:last_ts session) ""))]
     (if (js/Number.isFinite parsed) parsed 0)))
 
-(defn activity-score [session]
+(defn activity-score
+  "Rank live, queued and waiting activity ahead of archived sessions."
+  [session]
   (cond
     (:has_active_stream session) 50
     (= "running" (:active_status session)) 45
@@ -70,7 +104,9 @@
     (when (and (seq target) (not= target "new-agent"))
       target)))
 
-(defn session-matches-contract? [session contract-id]
+(defn session-matches-contract?
+  "Match a memory session against a contract or its participating actors."
+  [session contract-id]
   (if-let [target (contract-target contract-id)]
     (boolean (or (= (:contract_id session) target)
                  (= (:sub_agent_id session) target)
@@ -78,7 +114,9 @@
                  (some #{target} (:contract_actors session))))
     true))
 
-(defn run-matches-contract? [run contract-id]
+(defn run-matches-contract?
+  "Match active runs by contract, sub-agent, parent or role."
+  [run contract-id]
   (if-let [target (contract-target contract-id)]
     (boolean (or (= (run-contract-id run) target)
                  (= (run-sub-agent-id run) target)
@@ -189,7 +227,9 @@
        (sort session-order)
        vec))
 
-(defn session-status [session]
+(defn session-status
+  "Describe activity using the established label and badge variant."
+  [session]
   (cond
     (:has_active_stream session) {:label "Live" :variant :warning}
     (= "running" (:active_status session)) {:label "Active" :variant :success}
@@ -198,7 +238,9 @@
     (:is_active session) {:label "Active" :variant :success}
     :else {:label "History" :variant :default}))
 
-(defn session-search-text [session]
+(defn session-search-text
+  "Collect visible session text and identifiers for case-insensitive search."
+  [session]
   (-> (str/join " "
                 [(:session session) (or (:title session) "")
                  (or (:actor_id session) "") (or (:contract_id session) "")
