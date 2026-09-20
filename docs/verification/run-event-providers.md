@@ -46,6 +46,17 @@ The default proof shows:
   its observed continuation removes the late construction only when no other
   claimant needs it. Cleanup or diagnostic logging failures cannot mask the
   original refusal. This does not add provider cancellation or timeouts.
+- Partial startup is conditionally settled before returning its original failure.
+  One private server token connects a FIFO reservation to its turn; IDs alone
+  cannot claim an existing run or a running thread. Run, thread, startup-event
+  and hydration-continuation failures retain accepted facts but mark only the
+  owned attempt failed. The real Clio proof includes delayed settlement,
+  accepted writes with lost acknowledgments, same-session retry with a new run,
+  and current-provider cache invalidation without erasing a replacement's cache.
+  Each attempted provider is settled independently. If a settlement cannot be
+  confirmed, the original error remains primary and a fixed
+  `startup_compensation_unconfirmed` diagnostic remains visible; no cross-store
+  transaction, cancellation, automatic uncertain retry, or rollback is claimed.
 - `run_started` and `action_task_rendered` broadcasts follow their own durable
   event flushes. Delayed writes produce no premature broadcast; rejected writes
   preserve prior accepted facts and publish no refused event. This narrow repair
@@ -166,3 +177,27 @@ authority.
 `run-event-recovery-manifest.json` records the historical reconstruction. Its old
 lost-workspace evidence is not evidence for the current checkout; use this
 verifier and the current PR's exact-head validation record.
+
+### Conditional startup against native Mongo
+
+The optional native proof now exercises run and thread claim/settlement through
+actual standalone Mongo with majority+journal writes. It delays a write before
+Mongo executes it, loses acknowledgments after accepted writes, preserves a
+replacement owner, and restarts to verify accepted history. Run deletion and
+logical expiry retain the head's immutable binding and failure fence.
+
+Preparing an absent thread reserves an inert, uniquely generated BSON row.
+Normal reads, conversation lookup, active/recovery lists and cache diagnostics
+hide it; a legacy thread write removes the marker. A startup claim or failure
+settlement only replaces the exact observed BSON generation, never upserts.
+Deleting the fence, including TTL retirement, cannot resurrect a delayed old
+insert because there is no delayed insert after preparation. A lost preparation
+acknowledgment can leave only that invisible placeholder until expiry.
+
+Thread admission reserves command capacity for both its full BSON comparison and
+its later failure settlement. Oversized transcripts are refused with classified
+413 `thread_startup_too_large` before becoming running; a legacy oversized row
+remains unchanged. This conservative bound is below Mongo's document limit
+because compare-and-set carries both the preimage and replacement. The verifier
+does not claim replica failover, hard process-kill recovery of an invocation, or
+recovery from independently unavailable compensation providers.

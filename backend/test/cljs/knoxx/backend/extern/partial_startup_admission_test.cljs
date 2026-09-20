@@ -112,3 +112,27 @@
                 (test/is (= "replacement" (:run_id (threads/get-session-sync "cache-thread"))))
                 (test/is (= "running" (:status (threads/get-session-sync "cache-thread"))))
                 (finally (threads/install! original) (disk/remove! directory))))))))
+
+(test/deftest ^:async original-failure-waits-for-owned-settlement-before-returning
+  (await (fixture/with-run!
+          seed
+          (^:async fn []
+            (let [provider @registry/session-store* settle! startup/settle-startup!
+                  failure (ex-info "Continuation refused" {:code "first"})
+                  release* (atom nil) entered* (atom nil) result* (atom nil)
+                  gate (js/Promise. (fn [release _] (reset! release* release)))
+                  entered (js/Promise. (fn [release _] (reset! entered* release)))]
+              (with-redefs [startup/settle-startup!
+                            (^:async fn [store record view]
+                              (when (identical? provider store) (@entered* true) (await gate))
+                              (await (settle! store record view)))]
+                (let [work ((^:async fn [] (reset! result* (await (refusal! #(start! "held" "held-thread" (fn [] (throw failure))))))))]
+                  (try
+                    (await entered)
+                    (test/is (nil? @result*) "The caller cannot observe refusal while settlement remains pending")
+                    (test/is (= "running" (:status (await (runs/get-run provider "held")))))
+                    (test/is (= "failed" (:status (await (threads/get-session "held-thread")))))
+                    (@release* true)
+                    (test/is (identical? failure (await work)))
+                    (test/is (= "failed" (:status (await (runs/get-run provider "held")))))
+                    (finally (@release* true) (await work))))))))))

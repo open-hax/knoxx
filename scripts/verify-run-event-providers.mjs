@@ -40,8 +40,8 @@ async function prove(native) {
     Number(tests) < 1 || Number(assertions) < 1 || Number(failures) !== 0 || Number(errors) !== 0)) {
     throw new Error('A positive test/assertion summary with zero failures and errors is required');
   }
-  console.log(native ? 'PASS: actual Mongo >16MiB event history and single-event fragmentation, bounded append writes, interrupted publication/migration, retry, graceful process restart, thread patch/rewind and expiry' :
-    'PASS: selected provider events, authorized durable query ports, pre-listen readiness, FIFO/live-control admission, finalizer cleanup and cache expiry');
+  console.log(native ? 'PASS: actual Mongo >16MiB event history and single-event fragmentation, bounded append writes, interrupted publication/migration, retry, graceful process restart, thread patch/rewind, expiry and conditional startup settlement across lost acknowledgments and retired generations' :
+    'PASS: selected provider events, authorized durable query ports, pre-listen readiness, FIFO/live-control admission, owned partial startup settlement, finalizer cleanup and cache expiry');
 }
 
 await prove(false);
