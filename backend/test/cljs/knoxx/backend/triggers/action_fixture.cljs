@@ -5,7 +5,7 @@
 (defn recording-fixture
   "Capture each start-agent invocation and restore the real MultiFn method after every test."
   ([calls]
-   (recording-fixture calls (fn [_ctx _action] (js/Promise.resolve {:ok true}))))
+   (recording-fixture calls (fn ^:async [_ctx _action] {:ok true})))
   ([calls respond!]
    (let [kind :actions/start-agent-session
          original (atom nil)]
