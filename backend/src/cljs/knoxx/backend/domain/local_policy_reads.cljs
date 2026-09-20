@@ -14,19 +14,17 @@
                  [row member (get-in state [:users (:user-id row)]) (get-in state [:orgs (:org-id row)])]))))
 
 (defn scoped-credential
-  "Require all supplied actor, membership and org coordinates; ambiguous ownership is refused."
+  "Require an exact membership and org scope before resolving its matching actor's credential."
   [state actor-id provider {:keys [org-id membership-id]}]
-  (let [members (filter #(and (= actor-id (:actor-id %))
-                               (or (nil? org-id) (= org-id (:org-id %)))
-                               (or (nil? membership-id) (= membership-id (:id %))))
-                         (vals (:memberships state)))]
-    (when (> (count members) 1)
-      (law/refuse! 409 "local_policy_ambiguous_actor" "Actor credential lookup requires an exact membership scope"))
-    (when-let [member (first members)]
-      (some #(when (and (= [(:user-id member) (:org-id member) provider]
-                           [(:user-id %) (:org-id %) (:provider %)])
-                        (active-credential? state %)) %)
-            (vals (:credentials state))))))
+  (when (and (string? org-id) (not (str/blank? org-id))
+             (string? membership-id) (not (str/blank? membership-id)))
+    (let [member (get-in state [:memberships membership-id])]
+      (when (and member (= membership-id (:id member))
+                 (= actor-id (:actor-id member)) (= org-id (:org-id member)))
+        (some #(when (and (= [(:user-id member) org-id provider]
+                             [(:user-id %) (:org-id %) (:provider %)])
+                          (active-credential? state %)) %)
+              (vals (:credentials state)))))))
 
 (defn authorize-read!
   "Recheck scoped directory read authority against the exact projection being returned."
