@@ -1,5 +1,11 @@
 # Publication compatibility and run query recovery
 
+This is a historical integrated-source proof from PR #305, not qualification of
+the standalone provider layer. Its publication/HTTP fixtures and aggregate counts
+belong to that source snapshot; those consumers land in later replacement PRs.
+For the current run/event provider implementation, runnable proof and limits, see
+[Run, event, thread and cache providers](run-event-providers.md).
+
 The compatibility publication routes now share the Wiki publish command guard: publish capability, explicit `wiki_publish` denial, exact document ownership, and the reviewed source revision under the shared document lock. Public read visibility does not permit changing another organization's publication. A missing placement returns an opaque 404 before constructing a document scope.
 
 Run queries return the selected provider's actual run. Missing or expired durable records never revive a stale memory record. Ordinary own-run access also requires the selected organization to match; only explicit platform administration or `agent.runs.read_all` can cross that boundary. A missing context returns 401 before accessing a provider. Event authorization runs before flushing queued events.
@@ -17,4 +23,9 @@ The focused compilation and direct guarded execution pass 34 tests containing 17
 
 The first recovery run exposed an incorrect test double: `source-dependencies` has zero- and one-argument entry points, and replacing it with a generic constant function broke the compiler's static arity dispatch. Preserving both actual arities fixed the fixture. The seven failed assertions from that attempt remain recorded; they are not counted as a passing run.
 
-Legacy Mongo and OpenPlanner run adapters currently lack the separate ordered-event protocol. Their existing event-memory compatibility behavior is outside this focused recovery. The EDN Clio provider implements both run and event ports, and its restart/expiry behavior is covered here.
+The historical proof above covered the EDN Clio run/event provider. The current
+Mongo provider also implements ordered durable events using revision CAS, with
+its real-process restart/concurrency proof documented in
+[the current provider verifier](run-event-providers.md). OpenPlanner remains an
+archival projection and cannot be selected as an exact ordered-event authority.
+This provider change does not qualify the later publication/HTTP consumer layer.
