@@ -132,6 +132,12 @@ merge, with notifications only for meaningful changes. Review requests, intake
 comments and enabled auto-merge do not complete a merge task. Review-only and
 draft-preparation requests do not grant merge permission.
 
+Inspect ready-triggered auto-merge automation and `autoMergeRequest`. Disable an
+early queued auto-merge after its enabling job finishes and verify it is absent
+before resolving the final conversations. If automation merges before required
+review completion, finish that review and any fixes before advancing the stack;
+record the review gap rather than treating the merged state as approval.
+
 ## Author's Walkthrough on Your Own PRs
 
 Before requesting review, walk your own diff as inline PR comments. The practice

@@ -1,17 +1,19 @@
 (ns knoxx.backend.infra.agent.recovery
   "Session recovery after restarts: resume or abort stale runs."
   (:require [clojure.string :as str]
-            [knoxx.backend.infra.agent.session :refer [ensure-agent-session!]]
+            [knoxx.backend.extern.agent-recovery :as native]
+            [knoxx.backend.extern.agent-turn-node :as host]
+            [knoxx.backend.extern.promise :as promise]
+            [knoxx.backend.infra.agent.startup-settlement :as startup]
+            [knoxx.backend.infra.agent.session :as sessions :refer [ensure-agent-session!]]
+            [knoxx.backend.shape.agent :as agent]
             [knoxx.backend.infra.agent.turn :as turn]
-            [knoxx.backend.infra.auth.authz :as authz :refer [auth-snapshot-has-principal?]]
+            [knoxx.backend.infra.auth.authz :refer [auth-snapshot-has-principal?]]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
-            [knoxx.backend.domain.voice.turn-control :as turn-control]
-            [knoxx.backend.domain.time :refer [now-iso]]))
-
-(def ^:private RECOVERED-SESSION-KICKOFF-TIMEOUT-MS 5000)
-(def ^:private RECOVERED-SESSION-KICKOFF-POLL-MS 25)
+            [knoxx.backend.domain.voice.turn-control :as turn-control]))
 
 (defn recovered-auth-context
+  "Restore the persisted authorization snapshot after provider admission."
   [session]
   {:orgId (:org_id session)
    :orgSlug (:org_slug session)
@@ -26,6 +28,7 @@
    :isSystemAdmin (boolean (:is_system_admin session))})
 
 (defn recovered-agent-spec
+  "Normalize the historical persisted agent specification."
   [session]
   (when-let [agent-spec (or (:agent_spec session)
                             (:agent-spec session)
@@ -44,6 +47,7 @@
         tools-choice (assoc :tools-choice tools-choice)))))
 
 (defn restored-conversation-access!
+  "Restore conversation access only after the observed owner was admitted for recovery."
   [session]
   (let [conversation-id (str (or (:conversation_id session) ""))
         snapshot (select-keys session [:org_id
@@ -62,6 +66,7 @@
       (swap! turn/conversation-access* assoc conversation-id snapshot))))
 
 (defn last-session-user-message
+  "Find the pending user message preserved by the recovered transcript."
   [session]
   (some (fn [message]
           (let [role (some-> (:role message) str str/lower-case)
@@ -71,130 +76,65 @@
               content)))
         (reverse (vec (or (:messages session) [])))))
 
-(defn- wait-for-recovered-turn-kickoff!
-  [conversation-id launch-promise]
-  (if (some? (turn-control/active-turn conversation-id))
-    (js/Promise.resolve true)
-    (js/Promise.
-     (fn [resolve reject]
-       (let [done? (atom false)
-             started-ms (.now js/Date)
-             check! (fn check! []
-                      (cond
-                        @done? nil
-                        (some? (turn-control/active-turn conversation-id))
-                        (do
-                          (reset! done? true)
-                          (resolve true))
+(defn- recovery-result [session extras]
+  (merge {:session_id (:session_id session) :conversation_id (:conversation_id session)} extras))
 
-                        (> (- (.now js/Date) started-ms) RECOVERED-SESSION-KICKOFF-TIMEOUT-MS)
-                        (do
-                          (reset! done? true)
-                          (reject (js/Error. (str "Timed out waiting for recovered session kickoff: " conversation-id))))
+(defn- resume-request [session config]
+  {:conversation-id (:conversation_id session)
+   :session-id (:session_id session)
+   ;; A recovered turn is a new attempt. Neither old run ID nor old token grants admission.
+   :run-id (host/random-uuid!)
+   :message (last-session-user-message session)
+   :model (:model session) :mode (or (:mode session) "direct")
+   :thinking-level (or (:thinking_level session) (:agent-thinking-level config) "off")
+   :auth-context (recovered-auth-context session) :agent-spec (recovered-agent-spec session)})
 
-                        :else
-                        (js/setTimeout check! RECOVERED-SESSION-KICKOFF-POLL-MS)))]
-         ;; Forward a launch failure to reject. The js/Promise. executor itself
-         ;; cannot be async, so we await launch-promise in a small non-awaited
-         ;; async closure rather than blocking the executor.
-         ((^:async fn []
-            (try
-              (await launch-promise)
-              (catch :default err
-                (when-not @done?
-                  (reset! done? true)
-                  (reject err))))))
-         (check!))))))
+(defn- ^:async launch-recovery! [runtime config session request wait-for]
+  (let [launch (turn/send-agent-turn! runtime (dissoc config startup/reservation-key) request)]
+    (if (= wait-for :kickoff)
+      (do
+        (native/observe-launch! launch (:session_id session) (:conversation_id session))
+        (await (native/wait-for-kickoff! #(= (:run-id request) (:run_id (turn-control/active-turn (:conversation_id session)))) launch))
+        (recovery-result session {:resumed true :wait_for "kickoff"
+                                  :run_id (:run-id request) :previous_run_id (:run_id session)}))
+      (do (await launch) (recovery-result session {:resumed true :run_id (:run-id request)
+                                                        :previous_run_id (:run_id session)})))))
 
-(defn- ^:async log-kickoff-failure!
-  [send-promise session-id conversation-id]
-  (try
-    (await send-promise)
-    (catch :default err
-      (js/console.error "[knoxx] recovered session failed after kickoff"
-                        #js {:sessionId session-id :conversationId conversation-id :error (str err)})
-      nil)))
+(defn- ^:async recover-claimed! [runtime config session opts]
+  (let [request (resume-request session config)]
+    (restored-conversation-access! session)
+    (if (str/blank? (:message request))
+      (do
+        (await (ensure-agent-session! runtime config (:conversation-id request) (:model request)
+                                       (:auth-context request) (:thinking-level request)
+                                       (:session-id request) (:agent-spec request)))
+        (recovery-result session {:resumed false :reason "no pending user message to resume"}))
+      (await (launch-recovery! runtime config session request (or (:wait-for opts) :completion))))))
 
-(defn ^:async resume-with-message!
-  [runtime config session-id conversation-id run-id message model-id mode
-   thinking-level auth-context agent-spec wait-for resume-failed!]
-  (try
-    (await (session-store/update-session! session-id
-                                          {:status "running" :has_active_stream false :recovered_at (now-iso)}))
-    (let [send-promise (turn/send-agent-turn! runtime config {:conversation-id conversation-id
-                                                               :session-id session-id
-                                                               :run-id run-id
-                                                               :message message
-                                                               :model model-id
-                                                               :mode mode
-                                                               :thinking-level thinking-level
-                                                               :auth-context auth-context
-                                                               :agent-spec agent-spec})]
-      (if (= wait-for :kickoff)
-        (do
-          (log-kickoff-failure! send-promise session-id conversation-id)
-          (await (wait-for-recovered-turn-kickoff! conversation-id send-promise))
-          {:session_id session-id :conversation_id conversation-id :resumed true :wait_for "kickoff"})
-        (do
-          (await send-promise)
-          {:session_id session-id :conversation_id conversation-id :resumed true})))
-    (catch :default err
-      (resume-failed! err))))
+(defn- locally-active? [conversation-id]
+  (or (turn-control/active-turn conversation-id)
+      (when-let [session (sessions/active-agent-session conversation-id)]
+        (or (agent/streaming? session) (agent/current-turn session)))))
 
 (defn ^:async resume-recovered-session!
-  ([runtime config session]
-   (resume-recovered-session! runtime config session nil))
+  "Release an exact eligible persisted owner, then admit a distinct ordinary attempt."
+  ([runtime config session] (resume-recovered-session! runtime config session nil))
   ([runtime config session opts]
-   (let [conversation-id (str (or (:conversation_id session) ""))
-         session-id (str (or (:session_id session) ""))
-         run-id (or (:run_id session) nil)
-         model-id (or (:model session) nil)
-         mode (or (:mode session) "direct")
-         wait-for (or (:wait-for opts) :completion)
-         thinking-level (or (:thinking_level session)
-                            (:agent-thinking-level config)
-                            "off")
-         auth-context (recovered-auth-context session)
-         agent-spec (recovered-agent-spec session)
-         message (last-session-user-message session)
-         resume-failed! (^:async fn [err]
-                          (js/console.error "[knoxx] failed to resume recovered session"
-                                            #js {:sessionId session-id
-                                                 :conversationId conversation-id
-                                                 :error (str err)})
-                          (await (session-store/complete-session! session-id
-                                                                  conversation-id
-                                                                  {:status "failed"
-                                                                   :error (str "Session recovery failed: " err)
-                                                                   :messages (:messages session)}))
-                          {:session_id session-id
-                           :conversation_id conversation-id
-                           :resumed false
-                           :error (str err)})]
-     (restored-conversation-access! session)
-     (cond
-       (or (str/blank? conversation-id)
-           (str/blank? session-id))
-       {:session_id session-id :conversation_id conversation-id :resumed false :reason "missing session or conversation id"}
-
-       (str/blank? message)
-       (do
-         (await (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec))
-          (await (session-store/update-session! session-id
-                                                {:status "waiting_input"
-                                                 :has_active_stream false
-                                                 :recovered_at (now-iso)}))
-         {:session_id session-id :conversation_id conversation-id :resumed false :reason "no pending user message to resume"})
-
-       :else
-       (await (resume-with-message! runtime config session-id conversation-id run-id message model-id mode
-                                    thinking-level auth-context agent-spec wait-for resume-failed!))))))
+   (try
+     (when (locally-active? (:conversation_id session))
+       (throw (ex-info "Conversation already has an active turn"
+                       {:status 409 :code "thread_recovery_conflict"})))
+     ;; This is the only recovery write. The provider fences both value and generation;
+     ;; failures after release belong to normal turn admission/finalization, not this snapshot.
+     (await (session-store/release-recovery! session))
+     (await (recover-claimed! runtime config session opts))
+     (catch :default error
+       (let [diagnostic (native/report-failure! (:session_id session) (:conversation_id session) error)]
+         (recovery-result session {:resumed false :error (str error) :code (:code (ex-data error))
+                                  :diagnostic diagnostic}))))))
 
 (defn ^:async recover-active-agent-sessions!
+  "Read authoritative running snapshots and independently attempt their conditional recovery."
   [runtime config]
-  (let [sessions (await (session-store/recover-sessions!))
-        items (vec sessions)]
-    (if (seq items)
-      (let [results (await (.all js/Promise (clj->js (mapv #(resume-recovered-session! runtime config %) items))))]
-        (vec (js->clj results :keywordize-keys true)))
-      [])))
+  (let [sessions (await (session-store/recover-sessions!))]
+    (await (promise/all-vec (mapv #(resume-recovered-session! runtime config %) sessions)))))

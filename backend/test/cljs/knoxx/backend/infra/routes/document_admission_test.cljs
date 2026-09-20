@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.routes.document-admission-test
-  (:require ["@open-hax/openplanner-sdk" :as sdk-mod]
+  (:require [knoxx.backend.extern.event-queue-fixture :as queue-fixture]
+            ["@open-hax/openplanner-sdk" :as sdk-mod]
             [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.openplanner-sdk :as xsdk]
             [knoxx.backend.infra.agent.runner :as agent-runner]
@@ -739,6 +740,7 @@
                            [:results 0 :document/draft-generation-needed?])))))))
 
 (deftest ^:async re-admission-redelivers-a-transiently-rejected-draft-settlement
+  (await (queue-fixture/with-queue! (^:async fn []
   (agent-runner/reset-event-turn-queue!)
   (agent-runner/reset-event-turn-settlers!)
   (let [doc (document :knoxx.docs/redeliver-draft
@@ -768,7 +770,7 @@
                              {} dependencies scope {:generate-drafts? true}))
         event-id (get-in first-result [:results 0 :index/event-id])
         run-id "draft-settlement-redelivery"]
-    (agent-runner/enqueue-event-turn!
+    (await (agent-runner/enqueue-event-turn!
      {:llmModel "test-model" :collection-name "test"}
      {:run-id run-id
       :conversation-id run-id
@@ -776,8 +778,8 @@
       :message "craft the draft"
       :agent-spec {:trigger-id "craft-post-from-indexed-document"
                    :event-id event-id}}
-     (fn [] (js/Promise.resolve {:ok true})))
-    (await (flush-promises!))
+     (fn [] (js/Promise.resolve {:ok true}))))
+    (await (queue-fixture/wait-idle!))
     (is (= 2 @checks)
         "the first terminal draft check rejected and remained cached")
     (is (= [event-id] @releases)
@@ -795,7 +797,7 @@
                                  [:results 0 :index/event-status])))))
 
     (testing "the redelivered owner is re-armed for the newly emitted turn"
-      (agent-runner/enqueue-event-turn!
+      (await (agent-runner/enqueue-event-turn!
        {:llmModel "test-model" :collection-name "test"}
        {:run-id (str run-id "-retry")
         :conversation-id (str run-id "-retry")
@@ -803,13 +805,14 @@
         :message "craft the retried draft"
         :agent-spec {:trigger-id "craft-post-from-indexed-document"
                      :event-id event-id}}
-       (fn [] (js/Promise.resolve {:ok true})))
-      (await (flush-promises!))
+       (fn [] (js/Promise.resolve {:ok true}))))
+      (await (queue-fixture/wait-idle!))
       (is (= [event-id event-id event-id] @releases)))
     (agent-runner/reset-event-turn-queue!)
-    (agent-runner/reset-event-turn-settlers!)))
+    (agent-runner/reset-event-turn-settlers!))))))
 
 (deftest ^:async repeatedly-rejected-draft-settlement-fails-admission
+  (await (queue-fixture/with-queue! (^:async fn []
   (agent-runner/reset-event-turn-queue!)
   (agent-runner/reset-event-turn-settlers!)
   (let [doc (document :knoxx.docs/repeated-draft-redelivery
@@ -838,7 +841,7 @@
                              {} dependencies scope {:generate-drafts? true}))
         event-id (get-in first-result [:results 0 :index/event-id])
         run-id "draft-settlement-repeated-redelivery"]
-    (agent-runner/enqueue-event-turn!
+    (await (agent-runner/enqueue-event-turn!
      {:llmModel "test-model" :collection-name "test"}
      {:run-id run-id
       :conversation-id run-id
@@ -846,8 +849,8 @@
       :message "craft the draft"
       :agent-spec {:trigger-id "craft-post-from-indexed-document"
                    :event-id event-id}}
-     (fn [] (js/Promise.resolve {:ok true})))
-    (await (flush-promises!))
+     (fn [] (js/Promise.resolve {:ok true}))))
+    (await (queue-fixture/wait-idle!))
     (is (= [event-id] @releases)
         "the first rejected completion read releases its exact event")
 
@@ -872,7 +875,7 @@
         (is (= [event-id event-id event-id] @releases))
         (is (= [event-id event-id] @emitted))))
     (agent-runner/reset-event-turn-queue!)
-    (agent-runner/reset-event-turn-settlers!)))
+    (agent-runner/reset-event-turn-settlers!))))))
 
 (deftest ^:async default-openplanner-persistence-detects-a-replay
   (let [event {:schema "openplanner.event.v1"

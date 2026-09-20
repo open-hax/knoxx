@@ -187,8 +187,47 @@
            (set-thinking-level! session thinking-level)
            session))))))
 
+(defn- claim-startup-session!
+  "Join a pending construction; established sessions never become startup-owned."
+  [conversation-id session owner]
+  (swap! sessions*
+         (fn [entries]
+           (let [entry (get entries conversation-id)]
+             (if (and (identical? session (:session entry)) (::startup-owners entry))
+               (assoc entries conversation-id
+                      (if owner (update entry ::startup-owners conj owner)
+                          (dissoc entry ::startup-owners)))
+               entries)))))
+
+(defn- shutdown-session-entry! [conversation-id entry]
+  (let [ctx (ext-runtime/build-extension-ctx
+             (extension-extern/empty-event-payload) {}
+             :conversation-id conversation-id :session-id (:session-id entry))]
+    (ext-runtime/dispatch-event "session_shutdown"
+                               (extension-extern/event-payload {:conversationId conversation-id}) ctx)))
+
+(defn settle-startup-session!
+  "Promote a successful construction or release only this pending startup claim.
+   The last failed claimant removes an unadmitted construction. A replacement,
+   established session or another pending claimant is never removed."
+  [conversation-id owner admitted?]
+  (loop []
+    (let [before @sessions* entry (get before conversation-id) owners (::startup-owners entry)]
+      (when (and owner (contains? owners owner))
+        (let [remaining (disj owners owner)
+              next-entry (cond admitted? (dissoc entry ::startup-owners)
+                               (seq remaining) (assoc entry ::startup-owners remaining))
+              after (if next-entry (assoc before conversation-id next-entry) (dissoc before conversation-id))]
+          (if (compare-and-set! sessions* before after)
+            (when-not next-entry (shutdown-session-entry! conversation-id entry))
+            (recur))))))
+  nil)
+
 (defn ^:async construct-session-and-ext-ctx!
-  [runtime config conversation-id model-id auth-context thinking-level session-id agent-spec current-tool-signature life-cycle-event-name]
+  ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec current-tool-signature life-cycle-event-name]
+   (construct-session-and-ext-ctx! runtime config conversation-id model-id auth-context thinking-level
+                                   session-id agent-spec current-tool-signature life-cycle-event-name nil))
+  ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec current-tool-signature life-cycle-event-name owner]
   (let [next-session (await (create-session-manager! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec))
         ctx (ext-runtime/build-extension-ctx runtime config
                                              :conversation-id conversation-id
@@ -201,13 +240,20 @@
                                 ctx)
     (session-registry/put-active-session! active-session-registry
                                           conversation-id
-                                          {:session next-session
+                                          (cond-> {:session next-session
                                            :model-id model-id
                                            :tool-signature current-tool-signature
                                            :session-id session-id
-                                           :actor-id (:actor-id agent-spec)})
+                                           :actor-id (:actor-id agent-spec)}
+                                            owner (assoc ::startup-owners #{owner})))
     (register-actor-live-route! runtime conversation-id session-id agent-spec)
-    next-session))
+    next-session)))
+
+(defn- reuse-session! [runtime conversation-id session-id agent-spec session thinking-level owner]
+  (claim-startup-session! conversation-id session owner)
+  (set-thinking-level! session thinking-level)
+  (register-actor-live-route! runtime conversation-id session-id agent-spec)
+  (js/Promise.resolve session))
 
 (defn ensure-agent-session!
   ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
@@ -217,6 +263,8 @@
   ([runtime config conversation-id model-id auth-context thinking-level session-id]
    (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id nil))
   ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec]
+   (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec nil))
+  ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec owner]
    (let [thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
                                                                       thinking-level
                                                                       (:agent-thinking-level config)
@@ -231,23 +279,14 @@
          (if (and (some? session)
                   (= (str active-model) (str model-id))
                   (= (str (or active-tool-signature "")) (str (or current-tool-signature ""))))
-           (do
-             (set-thinking-level! session thinking-level)
-             (register-actor-live-route! runtime conversation-id session-id agent-spec)
-             (js/Promise.resolve session))
-           (construct-this-session! "session_switch")))
-       (construct-this-session! "session_start")))))
+           (reuse-session! runtime conversation-id session-id agent-spec session thinking-level owner)
+           (construct-this-session! "session_switch" owner)))
+       (construct-this-session! "session_start" owner)))))
 
 (defn remove-agent-session!
   "Dispatch session_shutdown to extensions, then release the in-process session entry."
   [conversation-id]
   (when-let [entry (active-session-entry conversation-id)]
-    (let [ctx (ext-runtime/build-extension-ctx
-               (extension-extern/empty-event-payload) {}
-               :conversation-id conversation-id
-               :session-id (:session-id entry))]
-      (ext-runtime/dispatch-event "session_shutdown"
-                                  (extension-extern/event-payload {:conversationId conversation-id})
-                                  ctx)))
+    (shutdown-session-entry! conversation-id entry))
   (session-registry/remove-active-session! active-session-registry conversation-id)
   nil)

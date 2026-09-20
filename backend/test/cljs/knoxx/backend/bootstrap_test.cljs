@@ -94,6 +94,8 @@
          :register-ws-routes! (async-record! :register-ws-routes)
          :add-session-hook! (async-record! :add-session-hook)
          :register-http-routes! (async-record! :register-http-routes)
+         :start-persistence! (async-record! :start-persistence)
+         :close! (record! :close)
          :listen! (fn [_app host port]
                     (swap! events* conj [:listen host port])
                     (js/Promise.resolve nil))
@@ -101,7 +103,7 @@
          {:remember-app! (record! :remember-app)
           :install-shutdown! (record! :install-shutdown)
           :notify-ready! (record! :notify-ready)
-          :start-persistence! (record! :start-persistence)}}
+          :start-recovery! (record! :start-recovery)}}
         policy-context {:primary-org {:id "org"}}
         result (await (bootstrap/start-http!
                        #js {} {:host "127.0.0.1" :port 8123}
@@ -115,11 +117,12 @@
             :register-ws-routes
             :add-session-hook
             :register-http-routes
+            :start-persistence
             [:listen "127.0.0.1" 8123]
             :remember-app
             :install-shutdown
+            :start-recovery
             :notify-ready
-            :log-listening
-            :start-persistence]
+            :log-listening]
            @events*))))
 

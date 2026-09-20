@@ -99,3 +99,9 @@
   (delete-run! [store run-id]
     "Remove a run from this store. Idempotent.
      Resolves to true."))
+
+(defprotocol IRunEventStore
+  (append-event! [store event]
+    "Durably admit one runtime event and assign a stable per-run sequence.")
+  (events-since [store run-id since]
+    "Read events strictly after a sequence or legacy ISO timestamp; nil returns all."))

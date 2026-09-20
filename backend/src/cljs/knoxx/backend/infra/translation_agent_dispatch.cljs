@@ -20,11 +20,12 @@
   successful trigger action. So a failure here is retriable, and there is no
   remote batch to observe or adopt.
 
-  Durable replay closes the process-local queue's restart gap. An accepted
-  claim is re-announced with the same deterministic event id: the live process'
-  dispatcher deduplicates it, while a restarted process has no in-memory event
-  owner and enqueues it again. The immutable split turn is reused when present
-  and reconstructed only when the process died before admitting it.
+  Reconciliation re-announces an accepted claim's deterministic event. The live
+  dispatcher deduplicates it. After restart, an event whose run was never admitted
+  can start normally; an existing run refuses adoption by a fresh invocation.
+  That refusal makes the dispatch retriable, and the next reconciliation creates
+  a fresh run/turn. A complete durable candidate set can still settle directly.
+  Immutable old run history is never overwritten to resume an unknown owner.
 
   The runner's full-turn settlement callback also moves an exact claim that did
   not complete to retriable failure. That covers provider rejection, tool
@@ -196,7 +197,7 @@
    :translation/run-id run-id
    :dispatch/detail
    (str "the translation event is already owned by this live process; durable"
-        " replay will enqueue it after a restart")})
+        " restart reconciliation may require a fresh attempt after ownership refusal")})
 
 (defn- settlement-redelivery-failure
   [record run-id detail]

@@ -1,0 +1,144 @@
+(ns knoxx.backend.extern.partial-startup-admission-test
+  "Partial startup failures become conditionally failed facts, never phantom active work."
+  (:require [cljs.test :as test]
+            [knoxx.backend.domain.error-observatory :as errors]
+            [knoxx.backend.extern.agent-turn-fixture :as fixture]
+            [knoxx.backend.extern.provider-recovery-fixture :as disk]
+            [knoxx.backend.infra.agent.initial-admission :as initial]
+            [knoxx.backend.infra.run-events :as events]
+            [knoxx.backend.infra.stores.clio-thread-store :as clio-threads]
+            [knoxx.backend.infra.stores.mongo-session-store :as threads]
+            [knoxx.backend.infra.stores.session-store-registry :as registry]
+            [knoxx.backend.shape.session-persistence :as runs]
+            [knoxx.backend.shape.startup-admission :as startup]))
+
+(def ^:private seed {:run_id "seed" :session_id "seed-session" :conversation_id "seed-conversation"})
+(defn- arguments [id session]
+  [id session "startup-conversation" "2026-09-20T00:00:00.000Z" "owned-model" "direct" "off"
+   nil {:org_id "owned-org" :user_id "owned-user"} [] {}])
+(defn- ^:async start! [id session continuation]
+  (await (initial/create-run! {:conversation-id "startup-conversation"} (arguments id session) continuation)))
+(defn- ^:async refusal! [operation]
+  (try (await (operation)) nil (catch :default error error)))
+
+(defn- controls [phase lost-ack? failure]
+  (let [run-store @registry/session-store* claim! startup/claim-startup! append! runs/append-event!]
+    {:claim! (^:async fn [store record view]
+               (let [target? (= phase (if (identical? store run-store) :run :thread))]
+                 (when (and target? (not lost-ack?)) (throw failure))
+                 (let [result (await (claim! store record view))]
+                   (when target? (throw failure)) result)))
+     :event! (^:async fn [store event]
+               (when (= phase :event) (throw failure))
+               (await (append! store event)))}))
+
+(defn- ^:async verify-failure! [phase lost-ack?]
+  (let [id (str "attempt-" (name phase) "-" lost-ack?) session (str "thread-" id)
+        provider @registry/session-store* failure (ex-info "Owned private refusal" {:status 503 :code "owned_refusal"})
+        ports (controls phase lost-ack? failure) model* (atom 0)]
+    (with-redefs [startup/claim-startup! (:claim! ports) runs/append-event! (:event! ports)]
+      (test/is (identical? failure (await (refusal! #(start! id session
+                                                        (fn [] (if (= phase :continuation) (throw failure)
+                                                                  (swap! model* inc)))))))))
+    (test/is (zero? @model*))
+    (test/is (= "failed" (:status (await (runs/get-run provider id)))))
+    (test/is (empty? (await (runs/list-active-runs provider session))))
+    (test/is (:can-send (threads/session-can-send? (await (threads/get-session session))))
+             "No failed startup leaves a busy conversation")
+    (test/is (= (if (= phase :continuation) ["run_started"] [])
+                (mapv :type (await (runs/events-since provider id nil))))
+             "Accepted event facts survive compensation")
+    (events/install! provider)
+    (test/is (nil? (await (refusal! #(start! (str id "-retry") session (fn []))))))
+    (test/is (= (str id "-retry") (:run_id (await (threads/get-session session)))))))
+
+(test/deftest ^:async each-partial-admission-and-lost-ack-settles-before-retry
+  (doseq [phase [:run :thread :event :continuation] lost-ack? [false true]]
+    (await (fixture/with-run! seed #(verify-failure! phase lost-ack?)))))
+
+(test/deftest ^:async old-run-or-active-thread-is-never-claimed-by-new-attempt
+  (await (fixture/with-run!
+          seed
+          (^:async fn []
+            (let [provider @registry/session-store* old (await (runs/get-run provider "seed"))
+                  old-thread (await (threads/get-session "seed-session"))]
+              (test/is (= "startup_admission_conflict"
+                          (:code (ex-data (await (refusal! #(start! "seed" "seed-session" (fn []))))))))
+              (test/is (= old (await (runs/get-run provider "seed"))))
+              (test/is (= old-thread (await (threads/get-session "seed-session"))))
+              (let [args (assoc (arguments "new-run" "seed-session") 2 "seed-conversation")]
+                (test/is (= "startup_admission_conflict"
+                            (:code (ex-data (await (refusal! #(initial/create-run! {} args))))))))
+              (test/is (= old-thread (await (threads/get-session "seed-session")))))))))
+
+(test/deftest ^:async unconfirmed-settlement-is-visible-with-original-error-preserved
+  (await (fixture/with-run!
+          seed
+          (^:async fn []
+            (let [provider @registry/session-store* settle! startup/settle-startup!
+                  failure (ex-info "Original admission refusal" {:code "first"}) diagnostics* (atom [])]
+              (with-redefs [startup/settle-startup!
+                            (^:async fn [store record view]
+                              (if (identical? provider store) (throw (ex-info "Storage unavailable" {}))
+                                  (await (settle! store record view))))
+                            errors/log-error! (fn [kind _ error] (swap! diagnostics* conj [kind (:code (ex-data error))]))]
+                (test/is (identical? failure (await (refusal! #(start! "unconfirmed" "unconfirmed-thread" (fn [] (throw failure)))))))
+                (test/is (= [[:agent-turn/startup-compensation-unconfirmed "startup_compensation_unconfirmed"]] @diagnostics*))
+                (test/is (= "running" (:status (await (runs/get-run provider "unconfirmed"))))
+                         "An unavailable provider is not reported as settled")
+                (test/is (= "failed" (:status (await (threads/get-session "unconfirmed-thread")))))
+                (test/is (:can-send (threads/session-can-send? (await (threads/get-session "unconfirmed-thread")))))))))))
+
+(test/deftest ^:async conditional-thread-writes-invalidate-only-their-provider-cache
+  (await (fixture/with-run!
+          seed
+          (^:async fn []
+            (let [record {:startup_token "cache-owner" :run_id "cache-run" :session_id "cache-thread"
+                          :conversation_id "cache-conversation" :status "running"}
+                  captured (threads/startup-provider)
+                  view (await (startup/startup-view captured "cache-thread"))
+                  original @threads/provider* directory (disk/temporary-directory)]
+              (try
+                (await (startup/claim-startup! captured record view))
+                (await (threads/get-session "cache-thread"))
+                (test/is (= "running" (:status (threads/get-session-sync "cache-thread"))))
+                (await (startup/settle-startup! captured record view))
+                (test/is (nil? (threads/get-session-sync "cache-thread")))
+                (test/is (not-any? #(= "cache-thread" (:session_id %)) (threads/active-session-snapshots)))
+                (test/is (= "failed" (:status (await (threads/get-session "cache-thread")))))
+                (threads/install! (clio-threads/open! {:directory directory}))
+                (await (threads/put-session! (assoc record :run_id "replacement" :startup_token "replacement")))
+                (await (startup/settle-startup! captured record view))
+                (test/is (= "replacement" (:run_id (threads/get-session-sync "cache-thread"))))
+                (test/is (= "running" (:status (threads/get-session-sync "cache-thread"))))
+                (finally (threads/install! original) (disk/remove! directory))))))))
+
+(test/deftest ^:async original-failure-waits-for-owned-settlement-before-returning
+  (await (fixture/with-run!
+          seed
+          (^:async fn []
+            (let [provider @registry/session-store* settle! startup/settle-startup!
+                  failure (ex-info "Continuation refused" {:code "first"})
+                  release* (atom nil) entered* (atom nil) result* (atom nil)
+                  gate (js/Promise. (fn [release _] (reset! release* release)))
+                  entered (js/Promise. (fn [release _] (reset! entered* release)))]
+              (with-redefs [startup/settle-startup!
+                            (^:async fn [store record view]
+                              (when (identical? provider store) (@entered* true) (await gate))
+                              (await (settle! store record view)))]
+                (let [work ((^:async fn [] (reset! result* (await (refusal! #(start! "held" "held-thread" (fn [] (throw failure))))))))]
+                  (try
+                    (await entered)
+                    (test/is (nil? @result*) "The caller cannot observe refusal while settlement remains pending")
+                    (test/is (= "running" (:status (await (runs/get-run provider "held")))))
+                    (test/is (= "failed" (:status (await (threads/get-session "held-thread")))))
+                    (@release* true)
+                    (test/is (identical? failure (await work)))
+                    (test/is (= "failed" (:status (await (runs/get-run provider "held")))))
+                    (finally (@release* true) (await work))))))))))
+
+(test/deftest ^:async both-clio-startup-capabilities-refuse-invalid-identifiers
+  (await (fixture/with-run! seed
+          (^:async fn []
+            (doseq [store [@registry/session-store* (threads/startup-provider)] id [nil "" " "]]
+              (test/is (some? (await (refusal! #(startup/startup-view store id))))))))))

@@ -1,7 +1,9 @@
 (ns knoxx.backend.infra.agent.runtime
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.run-event-payload :as run-payload]
+            [knoxx.backend.infra.run-events :as run-events]
+            [clojure.string :as str]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.domain.action.run-state :refer [tool-event-payload append-run-event!]]
+            [knoxx.backend.domain.action.run-state :refer [append-run-event!]]
             [knoxx.backend.domain.extension-runtime :as ext-runtime]
             [knoxx.backend.infra.agent.session :refer [active-agent-session]]
             [knoxx.backend.shape.agent :refer [streaming? follow-up! steer!]]
@@ -74,8 +76,35 @@
       (throw (js/Error. "Path escapes allowed workspace roots")))
     candidate))
 
+(defn- control-event
+  [{:keys [conversation-id session-id run-id message kind metadata]} status error]
+  (let [event-type (str (if (= kind "follow_up") "follow_up" "steer") "_" status)
+        preview (if (> (count message) 240) (str (subs message 0 240) "…") message)
+        payload (cond-> {:status status :preview preview :metadata (or metadata {})}
+                  (= status "failed") (assoc :error (str error)))]
+    (run-payload/tool-event-payload run-id conversation-id session-id event-type payload)))
+
+(defn- ^:async publish-control-event!
+  [{:keys [run-id session-id] :as control} status error]
+  (let [event (control-event control status error)]
+    (when run-id
+      (append-run-event! run-id event)
+      (await (run-events/flush! run-id)))
+    (broadcast-ws-session! session-id "events" event)))
+
+(defn- ^:async deliver-control!
+  [session {:keys [conversation-id session-id run-id message kind] :as control}]
+  (try
+    (await (if (= kind "follow_up") (follow-up! session message) (steer! session message)))
+    (await (publish-control-event! control "queued" nil))
+    {:ok true :conversation_id conversation-id :session_id session-id :run_id run-id :kind kind}
+    (catch :default error
+      (await (publish-control-event! control "failed" error))
+      (throw error))))
+
 (defn ^:async queue-agent-control!
-  [_runtime _config {:keys [conversation-id session-id run-id message kind metadata]}]
+  "Publish and acknowledge live controls only after their audit event is durable."
+  [_runtime _config {:keys [conversation-id message] :as control}]
   (cond
     (str/blank? conversation-id)
     (js/Promise.reject (js/Error. "conversation_id is required for live controls"))
@@ -87,37 +116,5 @@
     (if-let [session (active-agent-session conversation-id)]
       (if-not (streaming? session)
         (js/Promise.reject (js/Error. "No active running turn is available for live controls"))
-        (let [preview (if (> (count message) 240)
-                        (str (subs message 0 240) "…")
-                        message)
-              event-type (if (= kind "follow_up") "follow_up_queued" "steer_queued")
-              failure-type (if (= kind "follow_up") "follow_up_failed" "steer_failed")
-              metadata (or metadata {})
-              invoke (if (= kind "follow_up")
-                       #(follow-up! session message)
-                       #(steer! session message))]
-          (try
-            (await (invoke))
-            (let [event (tool-event-payload run-id conversation-id session-id event-type
-                                            {:status "queued"
-                                             :preview preview
-                                             :metadata metadata})]
-              (when run-id
-                (append-run-event! run-id event))
-              (broadcast-ws-session! session-id "events" event)
-              {:ok true
-               :conversation_id conversation-id
-               :session_id session-id
-               :run_id run-id
-               :kind kind})
-            (catch :default err
-              (let [event (tool-event-payload run-id conversation-id session-id failure-type
-                                              {:status "failed"
-                                               :error (str err)
-                                               :preview preview
-                                               :metadata metadata})]
-                (when run-id
-                  (append-run-event! run-id event))
-                (broadcast-ws-session! session-id "events" event))
-              (throw err)))))
+        (await (deliver-control! session control)))
       (js/Promise.reject (js/Error. "Conversation is not active in the agent runtime")))))

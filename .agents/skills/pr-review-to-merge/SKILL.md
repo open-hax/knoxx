@@ -42,6 +42,11 @@ receipt location; do not create a competing queue or record credentials.
    Make the active PR ready for review once its actual prerequisites and base
    integration are present. Parallel workers may prepare independent fixes;
    one coordinator owns branch propagation, external review requests and merge.
+   Inspect `autoMergeRequest` and ready-triggered repository automation. If a bot
+   queues auto-merge before the review gate, wait for that job to finish, disable
+   auto-merge on this PR, and verify it is absent before resolving the final
+   conversations. Recheck this after readiness transitions; do not change global
+   repository settings or assume a green bot status means its review completed.
 2. **Make the active change mergeable.** Reproduce failures and repair code,
    tests, build configuration and integration conflicts within the authorized
    scope. Bring real prerequisites into the active dependency chain or repair
@@ -77,6 +82,10 @@ receipt location; do not create a competing queue or record credentials.
    If the head/base changes or merge is refused, refresh evidence and return to
    the relevant gate. Queuing auto-merge is still pending work: observe the
    actual GitHub merged state and merge commit before declaring completion.
+   Check actual PR state during review waits too. If another actor or automation
+   merges early, record the missing evidence, finish the outstanding review and
+   land any required follow-up before advancing. Do not report that the intended
+   review gate passed merely because the PR merged.
 8. **Advance the stack.** Record the merged PR and commit, retarget the next
    authorized layer to the correct surviving base, check its actual diff and
    dependencies, propagate changes without rewriting history, and repeat.
@@ -97,7 +106,8 @@ that limitation and preserve a resumable handoff; do not promise background work
 
 ## Completion and output
 
-An individual merge task is complete only after GitHub confirms that PR merged.
+An individual merge task is complete only after GitHub confirms that PR merged
+and the required review/fix loop is closed, including any early-merge recovery.
 An authorized stack is complete only after every in-scope PR merged, unless the
 user changes the scope. A draft, review request, green suite, resolved-thread
 list, or enabled auto-merge is an intermediate state. Report merged PR/commit

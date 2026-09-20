@@ -1,8 +1,7 @@
 (ns knoxx.backend.infra.openplanner.memory
   (:require [clojure.string :as str]
-            [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+            [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.shape.session-persistence :refer [put-run!]]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.label.quality :as quality-labels]
@@ -267,9 +266,9 @@
       [])))
 
 (defn ^:async openplanner-memory-search!
-  [config {:keys [query k session-id]}]
   "Search OpenPlanner's indexed document corpus via vector similarity.
    Returns {:query, :mode, :hits} where each hit has :id, :document, :metadata, :distance. "
+  [config {:keys [query k session-id]}]
   (let [query (str/trim (or query ""))
         {:keys [k fetch-k]} (expansion-policy/bounded-search-params
                              (policy-registry/get-policy)
@@ -548,24 +547,13 @@
                        :fail-open      true}))
       nil)))
 
-(defn index-run-memory!
-  "Persist the completed run to the session store AND project it into the
-   OpenPlanner event ledger. Both writes are required: the store is the
-   authoritative run record (knoxx_runs), while the ledger projection
-   (knoxx.message / knoxx.run events) is the only source the /v1/sessions
-   list and resume reads consume. Treating these as either/or made every
-   post-cutover thread invisible to the REST API (regression 2026-06-06)."
+(defn ^:async index-run-memory!
+  "Persist authoritative run state even without OpenPlanner; optional projection is best effort."
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
-  (if-not (openplanner-configured? config)
-    (js/Promise.resolve nil)
-    (fail-open-indexing!
-     run
-     (let [store @store-registry/session-store*
-           store-write (if store
-                         (put-run! store run)
-                         (js/Promise.resolve nil))
-           ledger-write (project-run-into-event-ledger! config run extract-mentioned-devel-paths extract-mentioned-urls)]
-       (js/Promise.all #js [store-write ledger-write])))))
+  (await (run-events/persist-run! run))
+  (when (openplanner-configured? config)
+    (await (fail-open-indexing!
+            run (project-run-into-event-ledger! config run extract-mentioned-devel-paths extract-mentioned-urls)))))
 
 (defn- legacy-run-context
   [config run]
