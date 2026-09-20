@@ -24,6 +24,25 @@ legacy again (seven legacy routes, thirteen native); this corrects the capabilit
 claim rather than recording a completed native editor migration. No migration
 ratchet is weakened. Apply the shell route correction before checking this inventory.
 
+The follow-up production review found that restoring the route also required
+restoring the named `VisualCmsEditorPage` app-bridge export and the HTML link to
+the CSS extracted by that bridge. The earlier shell check reused a prebuilt
+bridge, so it did not establish that the repaired route survived regeneration.
+Run `pnpm -C frontend test:production-bridge` to build the app bridge and HTML in
+an empty temporary directory, import the emitted module, mount its real loading
+state under the draft-path route, and check the emitted layout rules and stylesheet
+link. This check does not mock the bridge or editor and removes its output after
+completion. Run `pnpm -C frontend build` separately for the full production build
+and `pnpm -C frontend migration:check` for the regenerated ownership inventory.
+The main frontend CI path runs the production bridge regression after typecheck;
+it rebuilds only the app bridge and HTML, without repeating the Shadow release.
+The live browser walkthrough remains a separate qualification requirement.
+
+The current manifest check passes. The revision-relative ratchet against the
+preceding shell layer still rejects the already-present `EdnEditor` export and
+`UsersMembershipsSection.test.tsx` inventory additions. Those partition prerequisites
+remain open; restoring the visual editor changes no ratchet rule or exemption.
+
 The full advertised frontend build passes: both Vite bridges, HTML entry, advanced
 Shadow application and Tailwind stylesheet. The advanced build covers 181 files
 with zero warnings. It includes the restored frontend, native Contracts view,
