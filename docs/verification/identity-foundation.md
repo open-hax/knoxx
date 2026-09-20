@@ -20,7 +20,9 @@ Run the standalone proof from this checkout:
 ```
 
 It requires the repository's pinned Clojure dependencies, installed backend
-packages, Clojure CLI, Volta and ripgrep. It runs Node 24.14.1 explicitly. The
+packages, Clojure CLI, Node 24 or newer, and ripgrep on `PATH`. It refuses an
+older Node before compiling or creating fixture data; no version manager is
+required. Qualification used Node 24.14.1. The
 script prints its checkout and Git head, warns about local modifications,
 compiles a fresh proof artifact and executes it through the asynchronous-error
 guard. It never talks to a running Knoxx, an external identity service or Mongo.
