@@ -12,6 +12,22 @@ Legacy cache/thread/MCP entry points select the installed provider for omitted
 or nil database arguments. An explicit Mongo handle selects Mongo. A refused or
 failed Clio operation never falls back to Mongo or publishes staged cache state.
 
+An explicitly supplied operation ID binds the successful method, arguments and
+answer even when the projection does not change. That accepted receipt carries
+`:operation/state-changed? false`; replay checks both the original answer and
+the unchanged projection. Existing facts without the optional field continue to
+require a state transition and retain their original schema references. Retrying
+the ID after later writes returns its recorded answer; different arguments are
+refused. Calls using an internally generated random ID retain the previous
+behavior of recording no fact for a no-op.
+
+Every new durable append, including an explicit-ID no-op receipt, awaits its
+live `before-append` guard. Rejection prevents the fact and success response.
+No-op receipts invoke neither state-change subscribers nor `after-append`;
+state-changing appends retain their notification order. Replay and exact ID
+retries never repeat these hooks. A guard that waits while another writer wins
+still receives the existing stale-head refusal from the ledger's admission lock.
+
 Run events preserve runtime `run_id`, `session_id`, `conversation_id`, `type` and
 `at` fields. The provider assigns each event a stable per-run `sequence`; a
 caller-supplied event ID cannot be reused with a changed payload. Numeric cursors
