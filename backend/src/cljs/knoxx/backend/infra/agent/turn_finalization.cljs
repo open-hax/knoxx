@@ -5,6 +5,7 @@
             [knoxx.backend.domain.time :as time]
             [knoxx.backend.infra.agent.session :as sessions]
             [knoxx.backend.infra.agent.transcript :as transcript]
+            [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.stores.mongo-session-store :as threads]))
 
 (defn ^:async complete!
@@ -16,8 +17,9 @@
 
 (defn ^:async settle!
   "Always attempt thread completion, release the owned sink, then remove the agent session.
-   A secondary completion failure is observed without hiding the mandatory persistence failure."
-  [{:keys [conversation-id event-stream-sink] :as context} persist! complete!]
+   A secondary completion failure is observed without hiding the mandatory persistence failure.
+   Retirement last discards this run's queue entries once its failure has been observed."
+  [{:keys [run-id conversation-id event-stream-sink] :as context} persist! complete!]
   (let [failure* (volatile! nil)]
     (try
       (try (await (persist!))
@@ -33,7 +35,12 @@
               (throw error)))
           (finally
             (try (state/clear-event-stream-sink-if! event-stream-sink)
-                 (finally (sessions/remove-agent-session! conversation-id)))))))))
+                 (finally
+                   (try (sessions/remove-agent-session! conversation-id)
+                        ;; `persist!` above already surfaced any durable event
+                        ;; failure to this owner, and the turn admits no further
+                        ;; events, so release the run's queue entries here.
+                        (finally (run-events/retire! run-id)))))))))))
 
 (defn refusal-diagnostic!
   "Record the existing refusal diagnostic with its run and agent coordinates."
