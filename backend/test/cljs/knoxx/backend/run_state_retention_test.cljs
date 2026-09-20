@@ -41,6 +41,27 @@
     (t/is (identical? portable (:tool_receipts value)))
     (t/is (= "running" (:status value)))))
 
+(t/deftest admitted-owners-outlive-diagnostic-retention-and-release-independently
+  (with-empty-heap
+    (fn []
+      (let [ids (mapv #(str "owned-" %) (range 257))]
+        (try
+          (doseq [id ids]
+            (state/retain-owned-run! id id)
+            (state/store-run! id {:run_id id :status "queued"}))
+          (state/retain-owned-run! "second-owner" (first ids))
+          (t/is (= 257 (count @state/runs*)) "default active plus pending capacity remains addressable")
+          (t/is (= state/MAX_RUNS (count @state/run-order*)))
+          (doseq [id ids] (state/release-owned-run! id))
+          (t/is (= (inc state/MAX_RUNS) (count @state/runs*)))
+          (t/is (some? (get @state/runs* (first ids))) "one owner cannot release another owner's run")
+          (state/release-owned-run! "second-owner")
+          (t/is (= state/MAX_RUNS (count @state/runs*)))
+          (t/is (= (set @state/run-order*) (set (keys @state/runs*))))
+          (finally
+            (doseq [id ids] (state/release-owned-run! id))
+            (state/release-owned-run! "second-owner")))))))
+
 (t/deftest tool-lifecycle-retains-input-and-bounds-progress
   (with-empty-heap
     (fn []
