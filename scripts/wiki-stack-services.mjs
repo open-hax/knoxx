@@ -64,14 +64,16 @@ export function managedProcess(command, args, cwd, env, logFile) {
       stopPromise ||= (async () => {
         // Failed spawn has no group. A closed leader can still have living descendants.
         if (!Number.isInteger(child.pid)) { await exited; return; }
-        const signal = name => { try { process.kill(-child.pid, name); } catch (error) { if (error.code !== 'ESRCH') throw error; } };
+        const signal = name => {
+          try { process.kill(-child.pid, name); return true; }
+          catch (error) { if (error.code !== 'ESRCH') throw error; return false; }
+        };
         signal('SIGTERM');
-        if (!ended) {
-          let timer;
-          try { await Promise.race([exited, new Promise(resolve => { timer = setTimeout(resolve, 5000); })]); }
-          finally { clearTimeout(timer); }
+        // Grace belongs to the entire group, not just its possibly closed leader.
+        const deadline = Date.now() + 5000;
+        while (signal(0) && Date.now() < deadline) {
+          await pause(Math.min(50, deadline - Date.now()));
         }
-        // The leader's close event only proves its own exit and closed stdio.
         signal('SIGKILL');
         await exited;
       })();
