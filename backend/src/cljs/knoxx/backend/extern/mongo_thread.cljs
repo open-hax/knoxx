@@ -1,6 +1,7 @@
 (ns knoxx.backend.extern.mongo-thread
   "Named Mongo native boundary for conversation documents and indexes."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.law.thread-store :as law]))
 
 (def COLLECTION_NAME "knoxx_threads")
 (def ACTIVE_STATUS #{"running" "queued" "waiting_input"})
@@ -33,6 +34,29 @@
         result (await (.findOne coll (live-query {:conversation_id conversation-id})))]
     (decode-session result)))
 
+(defn duplicate-key?
+  "Identify only the driver's unique-index conflict classification."
+  [error] (= 11000 (.-code ^js error)))
+
+(defn duplicate-conversation?
+  "Distinguish the unique conversation binding from a raced session insert."
+  [error] (some? (some-> error .-keyPattern (aget "conversation_id"))))
+
+(defn- identity-query [session]
+  ;; Each supplied identity field is atomically unbound or exactly equal. The
+  ;; shared law requires scalar strings, avoiding Mongo's array-match semantics.
+  (reduce (fn [query field]
+            (if (contains? session field)
+              (assoc query field {:$in [nil (get session field)]}) query))
+          {:session_id (:session_id session)} law/identity-fields))
+
+(defn- ^:async retire-expired! [coll session now]
+  ;; Match expiry in the delete itself: a competing renewal cannot be removed.
+  ;; Re-admission starts empty, never adopting an expired owner's transcript.
+  (await (.deleteOne coll (clj->js {:session_id (:session_id session) :expiresAt {:$lte now}})))
+  (when-let [conversation (:conversation_id session)]
+    (await (.deleteOne coll (clj->js {:conversation_id conversation :expiresAt {:$lte now}})))))
+
 (defn ^:async upsert-session! [db session]
   (let [coll (.collection db COLLECTION_NAME)
         ttl (session-ttl-seconds (:session_id session))
@@ -40,12 +64,15 @@
         doc (-> session
                 (assoc :expiresAt (js/Date. (+ (.getTime now) (* ttl 1000)))
                        :updatedAt now)
-                (dissoc :createdAt))]
+                (dissoc :createdAt)
+                (cond-> (nil? (:conversation_id session)) (dissoc :conversation_id)))]
+    (await (retire-expired! coll session now))
     (decode-session (await (.findOneAndUpdate
              coll
-             #js {"session_id" (:session_id session)}
-             #js {"$set" (clj->js doc)
-                  "$setOnInsert" (clj->js {:createdAt now})}
+             (clj->js (identity-query session))
+             (clj->js (cond-> {:$set doc :$setOnInsert {:createdAt now}}
+                        (and (contains? session :conversation_id) (nil? (:conversation_id session)))
+                        (assoc :$unset {:conversation_id ""})))
              #js {"upsert" true "returnDocument" "after"})))))
 
 (defn ^:async update-session-doc! [db session-id updates]

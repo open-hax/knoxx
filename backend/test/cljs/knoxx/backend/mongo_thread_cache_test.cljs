@@ -8,7 +8,8 @@
             [knoxx.backend.infra.stores.mongo-session-store :as sessions]
             [knoxx.backend.infra.stores.mongo-thread-store :as mongo]
             [knoxx.backend.law.thread-store :as law]
-            [knoxx.backend.shape.thread-store :as protocol]))
+            [knoxx.backend.shape.thread-store :as protocol]
+            [knoxx.backend.thread-identity-proof :as identity-proof]))
 
 (def ^:private at 1000000000000)
 
@@ -214,3 +215,36 @@
           (let [stored (await (protocol/read-thread provider "opaque"))]
             (is (= "completed" (:status stored)))
             (is (= messages (:messages stored))))))))))
+
+(deftest ^:async mongo-thread-identity-cannot-be-rebound
+  (let [{:keys [db]} (fixture/database {})]
+    (await (identity-proof/check-rebinding! (mongo/create-store db)))))
+
+(deftest ^:async mongo-thread-initial-identity-assignment-is-atomic
+  (let [{:keys [db]} (fixture/database {})]
+    (await (identity-proof/check-initial-assignment! (mongo/create-store db)))))
+
+(deftest ^:async mongo-thread-rejects-malformed-and-aliased-identities
+  (let [{:keys [db]} (fixture/database {})]
+    (await (identity-proof/check-invalid-identity! (mongo/create-store db)))))
+
+(deftest ^:async expired-thread-readmission-does-not-adopt-private-history
+  (let [{:keys [db]} (fixture/database {})
+        provider (mongo/create-store db)]
+    (await (fixture/with-clock! at
+      (^:async fn []
+        (await (protocol/put-thread! provider
+                 {:session_id "expired-owner" :conversation_id "expired-conversation" :org_id "org-old"
+                  :user_id "user-old" :messages [{:role "user" :content "Private old tenant"}]})))))
+    (await (fixture/with-clock! (+ at (law/ttl-ms "expired-owner"))
+      (^:async fn []
+        (is (nil? (await (protocol/read-thread provider "expired-owner"))))
+        (let [written (await (protocol/patch-thread! provider "expired-owner" {:org_id "org-new" :user_id "user-new"}))]
+          (is (= "org-new" (:org_id written)))
+          (is (= "user-new" (:user_id written)))
+          (is (not (contains? written :messages)))
+          (is (not (contains? written :conversation_id)))))))))
+
+(deftest ^:async mongo-thread-compatible-owners-and-conversation-uniqueness
+  (let [{:keys [db]} (fixture/database {})]
+    (await (identity-proof/check-compatible-and-unique! (mongo/create-store db)))))

@@ -19,12 +19,28 @@
     (or (vector? value) (list? value) (set? value)) (every? edn-value? value)
     :else false))
 
+(def identity-fields
+  "Canonical slots whose non-null values cannot change within a live thread."
+  [:conversation_id :org_id :user_id])
+
+(defn canonical-identity-keys?
+  "Refuse aliases that encode to a canonical identity field at a native boundary."
+  [value]
+  (every? (fn [key]
+            (or (not (or (keyword? key) (string? key) (symbol? key)))
+                (not (contains? #{"session_id" "conversation_id" "org_id" "user_id"}
+                                (first (str/split (name key) #"\."))))
+                (contains? #{:session_id :conversation_id :org_id :user_id} key)))
+          (keys value)))
+
 (def DataMap [:and :map [:fn edn-value?]])
 (def Thread
   [:and [:map [:session_id NonBlank]
          [:conversation_id {:optional true} [:maybe NonBlank]]
+         [:org_id {:optional true} [:maybe NonBlank]]
+         [:user_id {:optional true} [:maybe NonBlank]]
          [:status {:optional true} :string]]
-   [:fn edn-value?]])
+   [:fn edn-value?] [:fn canonical-identity-keys?]])
 (def Stamp
   [:and [:map {:closed true} [:at Instant] [:at-ms Milliseconds]
          [:expires-at Instant] [:expires-ms Milliseconds] [:instance-id NonBlank]]

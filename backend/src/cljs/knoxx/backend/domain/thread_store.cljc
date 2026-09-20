@@ -51,12 +51,13 @@
     (= "failed" (:status session)) {:can-send true :reason "Previous session failed. Starting new turn."}
     :else {:can-send true :reason nil}))
 
-(defn- assert-identity!
+(defn assert-identity!
+  "Reject changing any established conversation, tenant or user binding."
   [current proposed thread-id]
   (when-not (= thread-id (:session_id proposed))
     (throw (ex-info "A mutation cannot rename its conversation"
                     {:status 409 :code "thread_store_identity_conflict"})))
-  (doseq [field [:conversation_id :org_id :user_id]]
+  (doseq [field law/identity-fields]
     (when (and (some? (get current field)) (not= (get current field) (get proposed field)))
       (throw (ex-info "An admitted thread cannot change its conversation, tenant or user"
                       {:status 409 :code "thread_store_identity_conflict"})))))

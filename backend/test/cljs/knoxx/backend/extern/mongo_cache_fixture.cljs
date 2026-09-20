@@ -22,17 +22,34 @@
             (cond
               (= field :expiresAt) (or (not honor-expiry?)
                                       (and (instance? js/Date (:expiresAt row))
-                                           (> (.getTime (:expiresAt row)) (.getTime (:$gt value)))))
+                                           (if (contains? value :$lte)
+                                             (<= (.getTime (:expiresAt row)) (.getTime (:$lte value)))
+                                             (> (.getTime (:expiresAt row)) (.getTime (:$gt value))))))
               (and (map? value) (contains? value :$in)) (contains? (set (:$in value)) (get row field))
               :else (= value (get row field)))) query))
+
+(defn- assert-unique! [name rows previous proposed]
+  (when (= name "knoxx_threads")
+    (doseq [field [:session_id :conversation_id]
+            :when (some? (get proposed field))
+            other rows
+            :when (and (not= other previous) (= (get other field) (get proposed field)))]
+      (let [error (js/Error. "Fixture unique index conflict")]
+        (set! (.-code error) 11000)
+        (set! (.-keyPattern error) (clj->js {field 1}))
+        (throw error)))))
 
 (defn- update-row! [state name query update options]
   (let [query (js->clj query :keywordize-keys true)
         update (js->clj update :keywordize-keys true)
         previous (first (filter #(matches? % query true) (get @state name [])))
-        row (merge (when-not previous (:$setOnInsert update)) previous query (:$set update))]
+        equality-fields (into {} (remove (fn [[_ value]]
+                                           (and (map? value) (some #{:$in :$gt :$lte} (keys value))))) query)
+        row (apply dissoc (merge (when-not previous (merge equality-fields (:$setOnInsert update)))
+                                 previous (:$set update)) (keys (:$unset update)))]
     (if (or previous (aget options "upsert"))
-      (do (swap! state update-in [name]
+      (do (assert-unique! name (get @state name []) previous row)
+          (swap! state update-in [name]
                  (fn [rows] (conj (filterv #(not (matches? % query true)) rows) row)))
           (js/Promise.resolve (clj->js row)))
       (js/Promise.resolve nil))))

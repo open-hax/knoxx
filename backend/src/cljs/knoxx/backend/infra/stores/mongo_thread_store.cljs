@@ -7,19 +7,36 @@
             [knoxx.backend.law.thread-store :as law]
             [knoxx.backend.shape.thread-store :as protocol]))
 
+(defn- ^:async write-fields! [db fields]
+  (try {:written (await (native/upsert-session! db fields))}
+       (catch :default error
+         (if (native/duplicate-key? error)
+           (if (native/duplicate-conversation? error)
+             (throw (ex-info "Conversation already has a thread"
+                             {:status 409 :code "thread_store_conversation_conflict"}))
+             {:retry? true})
+           (throw error)))))
+
 (defn- ^:async put! [db thread]
   (law/assert-valid! :thread/value law/Thread thread)
-  (let [thread (assoc thread :system_instance_id (instance/current-id))]
-    (law/assert-valid! :thread/value law/Thread (await (native/upsert-session! db thread)))))
+  (let [fields (assoc thread :system_instance_id (instance/current-id))
+        id (:session_id fields)]
+    (loop [attempt 0]
+      (let [current (await (native/find-session db id))
+            proposed (merge current fields)]
+        (law/assert-valid! :thread/value law/Thread proposed)
+        (domain/assert-identity! current proposed id)
+        (let [{:keys [written retry?]} (await (write-fields! db fields))]
+          (if-not retry?
+            (law/assert-valid! :thread/value law/Thread written)
+            (if (< attempt 31) (recur (inc attempt))
+              (throw (ex-info "Thread changed repeatedly during identity admission"
+                              {:status 503 :code "thread_store_contention"})))))))))
 
 (defn- ^:async patch! [db id patch]
-  ;; Validate the merged view, then write only supplied fields with atomic $set.
-  ;; Writing the full snapshot would replay stale fields over a concurrent patch.
+  ;; put! validates the merged view, then writes only these atomic partial fields.
   (law/assert-valid! :thread/patch law/DataMap patch)
-  (let [fields (assoc patch :session_id id :updated_at (clock/now-ms))
-        current (await (native/find-session db id))]
-    (law/assert-valid! :thread/value law/Thread (merge current fields))
-    (await (put! db fields))))
+  (await (put! db (assoc patch :session_id id :updated_at (clock/now-ms)))))
 
 (defn- ^:async rewind! [db id turns]
   (loop [attempt 0]

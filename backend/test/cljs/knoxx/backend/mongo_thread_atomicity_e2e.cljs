@@ -4,7 +4,8 @@
             [knoxx.backend.extern.mongo-run-native-fixture :as native]
             [knoxx.backend.extern.provider-recovery-fixture :as concurrent]
             [knoxx.backend.infra.stores.mongo-thread-store :as store]
-            [knoxx.backend.shape.thread-store :as protocol]))
+            [knoxx.backend.shape.thread-store :as protocol]
+            [knoxx.backend.thread-identity-proof :as identity-proof]))
 
 (deftest ^:async native-concurrent-patches-and-rewinds-survive-restart
   (let [fixture (atom (await (native/open!)))
@@ -35,3 +36,14 @@
         (is (false? (:has_active_stream current)))
         (doseq [patch (take 20 patches)] (is (= patch (select-keys current (keys patch))))))
       (finally (await (native/close! @fixture))))))
+
+(deftest ^:async native-thread-identity-guards-both-write-entry-points
+  (let [fixture (await (native/open!))]
+    (try
+      (await (store/setup-indexes! (:db fixture)))
+      (let [provider (store/create-store (:db fixture))]
+        (await (identity-proof/check-rebinding! provider))
+        (await (identity-proof/check-initial-assignment! provider))
+        (await (identity-proof/check-invalid-identity! provider))
+        (await (identity-proof/check-compatible-and-unique! provider)))
+      (finally (await (native/close! fixture))))))
