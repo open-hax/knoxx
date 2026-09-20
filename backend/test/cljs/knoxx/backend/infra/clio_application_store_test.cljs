@@ -26,6 +26,86 @@
   (try {:value (await (operation))}
        (catch :default cause {:error (ex-data cause)})))
 
+(defn- guarded-write! [directory]
+  (let [gate (fixture/deferred)
+        entered (fixture/deferred)
+        calls (atom 0)
+        observed (atom [])
+        answer (atom :pending)
+        store (assoc (open! directory)
+                     :before-append (fn [_] (swap! calls inc)
+                                      ((:resolve! entered) nil)
+                                      (:promise gate))
+                     :after-append (fn [_] (swap! observed conj :after)))
+        unsubscribe (clio/subscribe! #(swap! observed conj :change))
+        ;; Observe rejection independently so the pre-fix ignored promise can
+        ;; be asserted without an unrelated unhandled-rejection fatal exit.
+        guard-result (attempt #(:promise gate))
+        pending ((^:async fn []
+                   (let [result (await (attempt #(clio/write! store "guarded" :test/put [:key :accepted])))]
+                     (reset! answer result)
+                     result)))]
+    {:store store :gate gate :entered (:promise entered) :calls calls
+     :observed observed :answer answer :pending pending
+     :guard-result guard-result :unsubscribe unsubscribe}))
+
+(deftest ^:async pending-admission-stays-private-and-success-appends-once
+  (let [directory (fixture/temp-directory!)
+        {:keys [store gate entered observed answer calls pending unsubscribe]} (guarded-write! directory)]
+    (try
+      (await entered)
+      (await (fixture/drain!))
+      (is (empty? (clio/history store)))
+      (is (= :pending @answer))
+      (is (empty? @observed))
+      ((:resolve! gate) :allowed)
+      (is (= {:value :accepted} (await pending)))
+      (await (fixture/drain!))
+      (is (= 1 (count (clio/history store))))
+      (is (= [:change :after] @observed))
+      (is (= :accepted (await (clio/write! store "guarded" :test/put [:key :accepted]))))
+      (is (= 1 @calls))
+      (is (= 1 (count (clio/history store))))
+      (finally (unsubscribe) (fs/remove-tree! directory)))))
+
+(deftest ^:async rejected-admission-never-becomes-a-fact-or-success
+  (let [directory (fixture/temp-directory!)
+        {:keys [store gate entered observed pending guard-result unsubscribe]} (guarded-write! directory)
+        refusal {:status 403 :code "admission_revoked"}]
+    (try
+      (await entered)
+      ((:reject! gate) (ex-info "Admission revoked" refusal))
+      (is (= {:error refusal} (await guard-result)))
+      (is (= {:error refusal} (await pending)))
+      (await (fixture/drain!))
+      (is (empty? (clio/history store)))
+      (is (nil? (await (clio/read! store :test/get [:key]))))
+      (is (empty? @observed))
+      (finally (unsubscribe) (fs/remove-tree! directory)))))
+
+(deftest ^:async delayed-admission-retains-stale-slot-refusal
+  (let [directory (fixture/temp-directory!)
+        {:keys [store gate entered observed pending unsubscribe]} (guarded-write! directory)]
+    (try
+      (await entered)
+      (is (= :winner (await (clio/write! (open! directory) "winner" :test/put [:key :winner]))))
+      ((:resolve! gate) :allowed)
+      (is (= "clio_application_stale_head" (get-in (await pending) [:error :code])))
+      (is (= 409 (get-in (await pending) [:error :status])))
+      (is (= 1 (count (clio/history store))))
+      (is (= :winner (await (clio/read! store :test/get [:key]))))
+      (is (= [:change] @observed) "only the winning append notifies observers")
+      (finally (unsubscribe) (fs/remove-tree! directory)))))
+
+(deftest ^:async synchronous-admission-refusal-still-prevents-append
+  (let [directory (fixture/temp-directory!)]
+    (try
+      (let [store (assoc (open! directory) :before-append
+                         (fn [_] (throw (ex-info "Refused" {:status 403}))))]
+        (is (= {:error {:status 403}} (await (attempt #(clio/write! store :test/put [:key :refused])))))
+        (is (empty? (clio/history store))))
+      (finally (fs/remove-tree! directory)))))
+
 (deftest ^:async durable-restart-and-lost-response-idempotence
   (let [directory (fixture/temp-directory!)]
     (try

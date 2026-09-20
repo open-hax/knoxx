@@ -100,7 +100,7 @@
   (let [view (await (replay! store (history store)))]
     (await (invoke! (:reads store) (:store view) method args))))
 
-(defn- append-operation!
+(defn- ^:async append-operation!
   "Admit one immutable operation at the exact stream slot that was inspected."
   [{:keys [file runtime stream before-append after-append]} events operation]
   (let [previous (last events)
@@ -118,7 +118,7 @@
     (try
       ;; Optional live admissibility guard runs only for a new append. It never
       ;; rewrites accepted arguments/results and never runs during replay.
-      (when before-append (before-append operation))
+      (when before-append (await (before-append operation)))
       (ledger/append-event! (:schema/revisions (runtime/refresh runtime)) file fact)
       (notify-changed!)
       (when after-append (paths/notify-subscriber! #(after-append operation)))
@@ -159,8 +159,8 @@
        (let [before (snapshot)
              result (await (invoke! (:writes store) provider method args))]
          (when (not= before (snapshot))
-           (append-operation! store events
-                              {:operation/id operation-id
-                               :operation/method method :operation/args args
-                               :operation/result result}))
+           (await (append-operation! store events
+                                     {:operation/id operation-id
+                                      :operation/method method :operation/args args
+                                      :operation/result result})))
          result)))))
