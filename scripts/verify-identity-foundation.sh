@@ -4,8 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root/backend"
 command -v clojure >/dev/null
-command -v volta >/dev/null
+command -v node >/dev/null
 command -v rg >/dev/null
+node -e 'if (Number(process.versions.node.split(".")[0]) < 24) { console.error("Identity foundation proof requires Node >=24; found " + process.version); process.exit(1); }'
 export CONTRACTS_DIR="$repo_root/backend/test/fixtures/empty-contracts"
 fixture_root="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_root"' EXIT
@@ -17,11 +18,11 @@ printf 'Identity foundation proof: %s based on %s\n' "$repo_root" "$(git rev-par
 if [[ -n "$(git status --porcelain)" ]]; then
   printf '%s\n' 'WARN working tree has local changes; this run compiles those changes.'
 fi
-volta run --node 24.14.1 node --version
+node --version
 # A failed compile must never reuse an earlier successful proof artifact.
 rm -rf -- target/identity-foundation-proof
-volta run --node 24.14.1 clojure -M:cljs scripts/compile-identity-foundation-proof.clj 2>&1 | tee "$log"
-volta run --node 24.14.1 node --require ./scripts/shadow-test-error-guard.cjs target/identity-foundation-proof/tests.cjs 2>&1 | tee -a "$log"
+clojure -M:cljs scripts/compile-identity-foundation-proof.clj 2>&1 | tee "$log"
+node --require ./scripts/shadow-test-error-guard.cjs target/identity-foundation-proof/tests.cjs 2>&1 | tee -a "$log"
 rg -q '^Ran [1-9][0-9]* tests containing [1-9][0-9]* assertions\.' "$log"
 rg -q '^0 failures, 0 errors\.' "$log"
 if rg -q '^FAIL|^ERROR|\[shadow-test-guard\] FATAL|[1-9][0-9]* warnings' "$log"; then exit 1; fi
