@@ -65,7 +65,9 @@
     (.once raw "close" close!)
     (.once raw "error" close!)
     (swap! (:subscriptions* state) conj (commands/subscribe! enqueue!)
-           (clio/subscribe! #(enqueue! (assoc scope :document nil))))
+           (clio/subscribe! {:streams #{"knoxx/source-authoring" "knoxx/source-review"}
+                             :scope scope}
+                            (fn [_stream] (enqueue! (assoc scope :document nil)))))
     (reset! (:interval* state) (js/setInterval #(enqueue! (assoc scope :document nil)) 15000))
     (enqueue! (assoc scope :document nil))))
 
