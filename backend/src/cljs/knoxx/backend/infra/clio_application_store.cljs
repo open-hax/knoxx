@@ -16,20 +16,37 @@
 (defonce ^:private change-listeners (atom {}))
 
 (defn subscribe!
-  "Observe this process's successful state-changing appends without receiving private facts.
-   Returns an unsubscribe function. Other processes require a separate watcher."
-  [listener]
-  (when-not (fn? listener)
-    (throw (ex-info "Clio change subscriber must be a function" {:cause :clio-application/invalid-subscriber})))
-  (let [id (gensym "clio-change-")]
-    (swap! change-listeners assoc id listener)
-    (fn [] (swap! change-listeners dissoc id) nil)))
+  "Observe successful state changes in this process; returns an unsubscribe function.
+   Legacy listeners receive no arguments. Selected listeners receive only a stream
+   name, never operation facts. :scope matches provider-declared scope internally;
+   a provider without a scope extractor cannot notify a scoped subscription."
+  ([listener]
+   (law/assert-subscription! {} listener)
+   (subscribe! {} (fn [_stream] (listener))))
+  ([selection listener]
+   (law/assert-subscription! selection listener)
+   (let [id (gensym "clio-change-")]
+     (swap! change-listeners assoc id (assoc selection :listener listener))
+     (fn [] (swap! change-listeners dissoc id) nil))))
 
-(defn- notify-changed! []
-  (doseq [listener (vals @change-listeners)]
+(defn- selected-change?
+  [{:keys [streams scope]} {:keys [stream change-scope]} operation]
+  (and (or (nil? streams) (contains? streams stream))
+       (or (nil? scope)
+           (when change-scope
+             (let [actual (change-scope operation)]
+               (when-not (map? actual)
+                 (throw (ex-info "Clio change scope must be a map"
+                                 {:cause :clio-application/invalid-change-scope})))
+               (= scope (select-keys actual (keys scope))))))))
+
+(defn- notify-changed! [store operation]
+  (doseq [{:keys [listener] :as selection} (vals @change-listeners)]
     ;; Delivery deliberately cannot turn an accepted durable write into a
-    ;; refusal; the named extern contains and reports async observer failures.
-    (paths/notify-subscriber! listener)))
+    ;; refusal. Scope extraction and sync/async observer failures are contained
+    ;; after admission; failed extraction skips this observer and is reported.
+    (paths/notify-subscriber! #(when (selected-change? selection store operation)
+                                (listener (:stream store))))))
 
 (defn history
   "Read canonical history, refusing missing, malformed or causally invalid facts."
@@ -38,19 +55,26 @@
    (ledger/canonicalize-files (:schema/revisions (runtime/refresh runtime))
                               [file])))
 
+(defn- assert-provider-options!
+  [{:keys [stream projection reads writes before-append after-append change-scope]}]
+  (when-not (and (string? stream) (seq stream) (fn? projection)
+                 (map? reads) (map? writes) (or (nil? before-append) (fn? before-append))
+                 (or (nil? after-append) (fn? after-append))
+                 (or (nil? change-scope) (fn? change-scope))
+                 (every? qualified-keyword? (concat (keys reads) (keys writes)))
+                 (every? fn? (concat (vals reads) (vals writes))))
+    (throw (ex-info "invalid Clio application provider"
+                    {:cause :clio-application/invalid-provider}))))
+
 (defn open!
   "Open an isolated ledger with a protocol operation table and reference factory.
 
   `projection` returns {:store protocol-provider :snapshot (fn [] plain-state)}.
-  The snapshot must exclude transient method answers. It is never persisted."
-  [{:keys [directory stream projection reads writes before-append after-append]}]
-  (when-not (and (string? stream) (seq stream) (fn? projection)
-                 (map? reads) (map? writes) (or (nil? before-append) (fn? before-append))
-                 (or (nil? after-append) (fn? after-append))
-                 (every? qualified-keyword? (concat (keys reads) (keys writes)))
-                 (every? fn? (concat (vals reads) (vals writes))))
-    (throw (ex-info "invalid Clio application provider"
-                    {:cause :clio-application/invalid-provider})))
+  The snapshot must exclude transient method answers. It is never persisted.
+  Optional change-scope synchronously selects a scope map for observer filtering;
+  it receives an accepted operation privately and must not perform effects."
+  [{:keys [directory stream projection reads writes before-append after-append change-scope] :as options}]
+  (assert-provider-options! options)
   (let [directory (paths/resolve-directory directory)
         file (str directory "/events.edn")
         schemas (str directory "/schemas")
@@ -64,7 +88,8 @@
     (let [store {:directory directory :file file :stream stream
                  :runtime (runtime/open schemas law/catalog)
                  :projection projection :reads reads :writes writes
-                 :before-append before-append :after-append after-append}]
+                 :before-append before-append :after-append after-append
+                 :change-scope change-scope}]
       (history store)
       store)))
 
@@ -105,7 +130,7 @@
 
 (defn- ^:async append-operation!
   "Admit one immutable operation at the exact stream slot that was inspected."
-  [{:keys [file runtime stream before-append after-append]} events operation]
+  [{:keys [file runtime stream before-append after-append] :as store} events operation]
   (let [previous (last events)
         fact (event/make-event
               (:schema/current runtime) :knoxx.application/operation-accepted
@@ -124,7 +149,7 @@
       (when before-append (await (before-append operation)))
       (ledger/append-event! (:schema/revisions (runtime/refresh runtime)) file fact)
       (when (not= false (:operation/state-changed? operation))
-        (notify-changed!)
+        (notify-changed! store operation)
         (when after-append (paths/notify-subscriber! #(after-append operation))))
       (catch :default cause
         (if (= :clio.ledger/concurrent-stream-write (:clio/error (ex-data cause)))

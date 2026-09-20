@@ -9,6 +9,7 @@
 (defn open! "Open the explicit review ledger directory, refusing corrupt accepted history." [{:keys [directory]}]
   (->ClioSourceReviewStore
    (clio/open! {:directory directory :stream "knoxx/source-review"
+                :change-scope #(select-keys (first (:operation/args %)) [:org-id :project :document])
                 :projection #(let [store (reference/memory-store)] {:store store :snapshot (fn [] @(:state store))})
                 :reads {:source-review/read reference/read-source-review-events!}
                 :writes {:source-review/admit reference/admit-source-review!}})))
