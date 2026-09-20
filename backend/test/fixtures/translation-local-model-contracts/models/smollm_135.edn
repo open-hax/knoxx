@@ -1,0 +1,11 @@
+{:model/id "HuggingFaceTB/SmolLM2-135M-Instruct"
+ :model/provider :transformers-js
+ :model/api "openai-completions"
+ :model/label "HuggingFaceTB/SmolLM2-135M-Instruct"
+ :model/allowlisted true
+ :model/reasoning false
+ :model/default-thinking :off
+ :model/thinking-levels [:off]
+ :model/context-window 32768
+ :model/max-tokens 2048
+ :model/input [:text]}

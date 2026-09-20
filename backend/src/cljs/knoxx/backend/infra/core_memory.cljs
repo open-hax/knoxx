@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.core-memory
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.extern.promise :as promise]
@@ -299,8 +300,7 @@
   [config session-id mode opts]
   (let [body (await (openplanner-client/session! (openplanner-client/client config)
                                                  session-id
-                                                 (merge {:project (:session-project-name config)
-                                                         :mode mode}
+                                                 (merge (assoc (planner-scope/session-options config) :mode mode)
                                                         opts)))]
     (vec (or (:rows body) []))))
 
@@ -314,7 +314,8 @@
 
 (defn ^:async authorized-session-ids!
   [config ctx session-ids]
-  (let [session-ids (->> session-ids
+  (let [config (planner-scope/scoped-config config ctx)
+        session-ids (->> session-ids
                          (map str)
                          (remove str/blank?)
                          distinct

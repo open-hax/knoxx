@@ -60,6 +60,21 @@
   (ensure-event-vectors! [client event-ids]
     "Ensure every named event has a valid vector projection."))
 
+(defprotocol IOpenPlannerEventLookup
+  "Optional direct lookup of an immutable event by its stable producer id."
+  (-event-by-id! [client event-id]))
+
+(defn ^:async event-by-id!
+  "Read one stable event through the selected driver; compatibility stays here."
+  [client event-id]
+  (when-not (and (string? event-id) (not (str/blank? event-id)))
+    (throw (ex-info "OpenPlanner event id is required" {:status 400})))
+  (if (satisfies? IOpenPlannerEventLookup client)
+    (await (-event-by-id! client event-id))
+    (let [result (await (mongo-query! client {:collection "events" :filter {:id event-id}
+                                             :projection {:id 1} :limit 1}))]
+      (first (filter #(= event-id (:id %)) (:rows result))))))
+
 (defn event-projection-repair-supported?
   "True when `client` can await and repair event projections."
   [client]
@@ -295,6 +310,14 @@
   [factory]
   (reset! direct-client-factory* factory))
 
+(defonce local-client-factory* (atom nil))
+
+(defn register-local-client-factory!
+  "Register the canonical Clio driver without a client/provider require cycle."
+  [factory]
+  (when-not (fn? factory) (throw (ex-info "Local OpenPlanner factory must be callable" {:status 500})))
+  (reset! local-client-factory* factory))
+
 (defn client
   "Build the OpenPlanner client for internal use. Mode comes from
    :openplanner-client-mode (KNOXX_OPENPLANNER_CLIENT_MODE): \"mongo\"
@@ -305,6 +328,11 @@
    (let [rest-client (->FetchOpenPlannerClient config (or http-client xfetch/default-client) (or timeout-ms 60000))
          selected-mode (or mode (:openplanner-client-mode config) "mongo")
          make-direct @direct-client-factory*]
-     (if (and (= selected-mode "mongo") make-direct)
-       (make-direct config rest-client)
-       rest-client))))
+     (cond
+       (contains? #{"edn" "clio"} selected-mode)
+       (if-let [factory @local-client-factory*] (factory config)
+           (throw (ex-info "Selected local OpenPlanner provider is not installed"
+                           {:status 503 :code "openplanner_local_provider_missing"})))
+       (and (= selected-mode "mongo") make-direct) (make-direct config rest-client)
+       (contains? #{"mongo" "rest"} selected-mode) rest-client
+       :else (throw (ex-info "Unknown OpenPlanner provider" {:status 400 :provider selected-mode}))))))

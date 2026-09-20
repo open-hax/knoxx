@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.stores.openplanner-message-source
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [clojure.string :as str]
             [knoxx.backend.infra.stores.message-source :refer [IMessageSource]]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.agent.message :as msg]))
@@ -11,7 +12,7 @@
     (if (or (str/blank? conversation-id)
             (not (openplanner-client/enabled? client)))
       []
-      (let [response (await (openplanner-client/session! client conversation-id nil))]
+      (let [response (await (openplanner-client/session! client conversation-id (planner-scope/session-options config)))]
         (->> (or (:rows response) [])
              (keep msg/planner-row->stored-session-message)
              vec)))))

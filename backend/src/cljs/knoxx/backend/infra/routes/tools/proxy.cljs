@@ -4,6 +4,11 @@
    These used to live in src/server.mjs; keeping them in CLJS ensures the Node
    host shim stays a pure dependency injector."
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.extern.local-openplanner :as local-host]
+            [knoxx.backend.extern.openplanner-proxy :as planner-proxy]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.openplanner.scope :as planner-scope]
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.infra.core-memory :as core-memory]
@@ -260,44 +265,49 @@
             (js/Reflect.deleteProperty headers "content-length")
             (proxy-fetch! target-url req reply headers "Ingestion proxy error")))))
 
+(defn ^:async openplanner-session-page!
+  "List sessions through the selected service using verified tenant authority."
+  [config ctx query]
+  (let [config (planner-scope/scoped-config config ctx)
+        _ (authz/ensure-permission! ctx "agent.memory.read")
+        pagination (local-host/query-options (select-keys query [:limit :offset]))
+        body (await (openplanner-client/sessions! (openplanner-client/client config)
+                                                  (merge pagination (planner-scope/session-options config))))
+        allowed (await (core-memory/authorized-session-ids! config ctx (map :session (:rows body))))
+        rows (filterv #(contains? allowed (str (:session %))) (:rows body))]
+    (assoc body :rows (await (promise/all-vec (map #(enrich-session-summary! config %) rows)))
+                :sessions rows)))
+
 (defn- ^:async openplanner-proxy-handler!
-  [config req reply]
-  (try
-    (let [body (request-body req)
-          sub-path (aget (aget req "params") "*")
-          fwd-headers {"x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
-                       "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}
-          request* (cond-> {:method (aget req "method")
-                            :path sub-path
-                            :query-string (request-query-string req)
-                            :headers fwd-headers}
-                     (not= body js/undefined) (assoc :body body))
-          resp (await (openplanner-client/forward-v1! (openplanner-client/client config) request*))
-          content-type (json-content-type resp)
-          resp-body (await (if (str/includes? content-type "application/json")
-                             (safe-json resp)
-                             (safe-text resp)))]
-      (reply-send-with-content-type! reply (.-status resp) content-type resp-body))
-    (catch :default err
-      (send-proxy-error! reply "OpenPlanner proxy error" err))))
+  [config ctx request reply]
+  (let [config (planner-scope/scoped-config config ctx)]
+    (when-not (authz/system-admin? ctx)
+      (throw (ex-info "Generic OpenPlanner administration requires a system administrator"
+                      {:status 403 :code "openplanner_admin_required"})))
+    (await (planner-proxy/send-response!
+            reply (await (openplanner-client/forward-v1!
+                           (openplanner-client/client config)
+                           (planner-proxy/forward-request request (planner-scope/session-options config))))))))
 
 (defn- register-openplanner-proxy-routes!
-  [^js app config]
-  (.get app "/api/openplanner/v1/sessions"
-        (^:async fn [req reply]
-          (let [body (await (openplanner-client/sessions!
-                             (openplanner-client/client config)
-                             (js->clj (or (aget req "query") (js/Object.)) :keywordize-keys true)))
-                enriched (await (js/Promise.all
-                                  (clj->js (map #(enrich-session-summary! config %) (vec (or (:rows body) []))))))]
-            (.send reply (clj->js (assoc body :rows (vec (array-seq enriched))))))))
-  (.all app "/api/openplanner/*"
-        (fn [req reply]
-          (openplanner-proxy-handler! config req reply))))
+  [app runtime config]
+  (fastify/route!
+   app {:method "GET" :url "/api/openplanner/v1/sessions"
+        :handler (^:async fn [request reply]
+                   (await (authz/with-request-context!
+                           runtime request reply
+                           (^:async fn [ctx]
+                             (fastify/send-json! reply 200
+                                               (await (openplanner-session-page! config ctx (fastify/request-query request))))))))})
+  (fastify/route!
+   app {:method ["GET" "POST" "PATCH" "PUT" "DELETE"] :url "/api/openplanner/*"
+        :handler (fn [request reply]
+                   (authz/with-request-context! runtime request reply
+                                               #(openplanner-proxy-handler! config % request reply)))}))
 
 (defn register-proxy-routes!
   "Register all proxy endpoints on the fastify app."
-  [^js app config]
+  [^js app runtime config]
   (register-session-status-route! app config "/api/admin/eta-mu-sessions/status" :legacy eta-mu-sessions/get-eta-mu-ingest-status "eta-mu-sessions")
   (register-eta-mu-session-list-route! app)
   (register-session-ingest-route! app config "/api/admin/eta-mu-sessions/ingest" "eta-mu-sessions")
@@ -305,4 +315,4 @@
   (register-opencode-session-list-route! app)
   (register-session-ingest-route! app config "/api/admin/opencode-sessions/ingest" "opencode-sessions")
   (register-ingestion-service-proxy-route! app config)
-  (register-openplanner-proxy-routes! app config))
+  (register-openplanner-proxy-routes! app runtime config))

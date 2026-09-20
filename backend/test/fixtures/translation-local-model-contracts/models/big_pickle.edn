@@ -1,0 +1,11 @@
+{:model/id "opencode/big-pickle"
+ :model/provider :opencode
+ :model/api "openai-completions"
+ :model/label "opencode/big-pickle"
+ :model/allowlisted true
+ :model/reasoning false
+ :model/default-thinking :off
+ :model/thinking-levels [:off]
+ :model/context-window 32768
+ :model/max-tokens 2048
+ :model/input [:text]}

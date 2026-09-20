@@ -1,11 +1,13 @@
 (ns knoxx.backend.infra.routes.models
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.infra.run-queries :as run-queries]
             [knoxx.backend.infra.agent.hydration :refer [settings-state*]]
             [knoxx.backend.shape.app-shapes :refer [route!]]
-            [knoxx.backend.infra.auth.authz :refer [with-request-context! run-visible? ensure-permission! ctx-tool-constraints]]
+            [knoxx.backend.infra.auth.authz :refer [with-request-context! ensure-permission! ctx-tool-constraints]]
             [knoxx.backend.infra.clients.proxx :as proxx-client]
-            [knoxx.backend.infra.http :refer [json-response! require-openai-key! openai-auth-error send-fetch-response! error-response! http-error request-body request-query-string]]
-            [knoxx.backend.domain.action.run-state :as run-state :refer [runs* run-order* summarize-run]]
+            [knoxx.backend.infra.http :refer [json-response! require-openai-key! openai-auth-error send-fetch-response! error-response! request-body request-query-string]]
+            [knoxx.backend.domain.action.run-state :refer [summarize-run]]
             [knoxx.backend.domain.models :refer [allowlisted-model-id?]]
             [knoxx.backend.domain.time :refer [now-iso]]))
 
@@ -296,69 +298,31 @@
         (catch :default err
           (openai-auth-error reply 502 (str "Embedding generation failed: " err) "upstream_error"))))))
 
-(defn- event-session-id
-  [events]
-  (some (fn [event]
-          (some-> (:session_id event) str str/trim not-empty))
-        events))
-
-(defn- run-from-session-and-events
-  [run-id session events]
-  (let [messages (vec (or (:messages session) []))
-        assistant (last (filter #(= "assistant" (some-> (:role %) str str/lower-case)) messages))]
-    {:run_id run-id
-     :session_id (:session_id session)
-     :conversation_id (:conversation_id session)
-     :created_at (:created_at session)
-     :updated_at (:updated_at session)
-     :status (:status session)
-     :model (:model session)
-     :ttft_ms nil
-     :total_time_ms nil
-     :input_tokens nil
-     :output_tokens nil
-     :tokens_per_s nil
-     :error (:error session)
-     :answer (or (:answer session) (:content assistant) "")
-     :content_parts (or (:content-parts assistant) (:content_parts assistant) [])
-     :events events
-     :trace_blocks []
-     :tool_receipts []
-     :request_messages (vec (remove #(= "assistant" (some-> (:role %) str str/lower-case)) messages))
-     :settings (cond-> {}
-                 (:agent_spec session) (assoc :agentSpec (:agent_spec session)))
-     :resources {}}))
-
 (defn- ^:async respond-run-detail!
   [reply ctx run-id]
-  (if-let [run (get @runs* run-id)]
-    (if (run-visible? ctx run)
-      (json-response! reply 200 run)
-      (error-response! reply (http-error 403 "run_scope_denied" "Run is outside the current Knoxx scope")))
-    (json-response! reply 404 {:detail "Run not found"})))
+  (try
+    (json-response! reply 200 (await (run-queries/read! ctx run-id)))
+    (catch :default cause (error-response! reply cause))))
+
+(defn- ^:async respond-run-list!
+  [request reply ctx]
+  (try
+    (let [raw (get (fastify/request-query-string-map request) "limit")
+          limit (if (nil? raw) 100 (when (and (string? raw) (re-matches #"[0-9]+" raw)) (parse-long raw)))
+          runs (await (run-queries/list! ctx limit))]
+      (json-response! reply 200 {:runs (mapv summarize-run runs)}))
+    (catch :default cause (error-response! reply cause))))
 
 (defn- register-run-routes!
   [app runtime]
   (route! app "GET" "/api/runs"
           (fn [request reply]
             (with-request-context! runtime request reply
-              (fn [ctx]
-                (let [limit-raw (aget request "query" "limit")
-                      limit (if (string? limit-raw) (js/parseInt limit-raw 10) 100)
-                      items (->> @run-order*
-                                  (map #(get @runs* %))
-                                  (filter some?)
-                                  (filter #(run-visible? ctx %))
-                                  (take (max 1 (or limit 100)))
-                                  (map summarize-run)
-                                  vec)]
-                  (json-response! reply 200 {:runs items}))))))
+              (fn [ctx] (respond-run-list! request reply ctx)))))
   (route! app "GET" "/api/runs/:runId"
           (fn [request reply]
             (with-request-context! runtime request reply
-              (^:async fn [ctx]
-                (let [run-id (aget request "params" "runId")]
-                  (await (respond-run-detail! reply ctx run-id))))))))
+              (fn [ctx] (respond-run-detail! reply ctx (fastify/request-param request :runId)))))))
 
 (defn- register-openai-compatible-routes!
   [app config]
