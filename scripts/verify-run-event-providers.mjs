@@ -15,12 +15,14 @@ const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 
 if (revision.status !== 0) throw new Error('Run this verifier in its Git checkout');
 console.log('Verifying current checkout ' + revision.stdout.trim());
 
+/** Run a bounded compiler or proof command from this checkout with guarded test settings. */
 function run(command, commandArgs, environment) {
   return runProofProcess(command, commandArgs, {
     cwd: backend, env: testEnvironment({ ...process.env, ...environment })
   });
 }
 
+/** Compile and execute the selected proof, requiring exercised assertions and no warnings or failures. */
 async function prove(native) {
   const environment = { KNOXX_RUN_EVENTS_NATIVE: native ? '1' : '0' };
   if (mongod) environment.KNOXX_TEST_MONGOD = mongod;

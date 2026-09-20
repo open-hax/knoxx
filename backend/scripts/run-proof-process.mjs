@@ -1,7 +1,11 @@
 import { spawn } from 'node:child_process';
 
-// A proof owns its process group so a timed-out compiler's descendants cannot
-// retain output pipes or escape cleanup when the direct child ignores SIGTERM.
+/**
+ * Run an owned proof process and return its combined output only on success.
+ * Reject on spawn failure, timeout, nonzero exit, or the fatal async-test marker.
+ * On POSIX, terminate its process group and escalate after killGraceMs so a
+ * descendant cannot retain output pipes after the direct child exits.
+ */
 export function runProofProcess(command, args, {
   cwd, env = process.env, timeoutMs = 300_000, killGraceMs = 5_000,
   onOutput = text => process.stdout.write(text)
@@ -12,6 +16,7 @@ export function runProofProcess(command, args, {
     let output = '';
     let timedOut = false;
     let killTimer;
+    /** Signal the owned process group, or the direct child on Windows. */
     function signal(name) {
       try {
         if (grouped && child.pid) process.kill(-child.pid, name);
@@ -25,6 +30,7 @@ export function runProofProcess(command, args, {
       signal('SIGTERM');
       killTimer = setTimeout(() => signal('SIGKILL'), killGraceMs);
     }, timeoutMs);
+    /** Release both deadline timers after process failure or final close. */
     const clearTimers = () => { clearTimeout(timer); clearTimeout(killTimer); };
     for (const stream of [child.stdout, child.stderr]) {
       stream.on('data', chunk => { const text = chunk.toString(); output += text; onOutput(text); });
