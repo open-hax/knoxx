@@ -24,7 +24,8 @@
     "build:cljs": "shadow-cljs release app",
     "compile:legacy": "tsc -p tsconfig.legacy.json",
     "build:bridge": "vite build --config vite.bridge.config.ts",
-    "build:app-bridge": "vite build --config vite.app-bridge.config.ts"
+    "build:app-bridge": "vite build --config vite.app-bridge.config.ts",
+    "lint": "clj-kondo --lint src/cljs src/dev src/e2e test/cljs ../shared/src/cljs --fail-level warning"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
