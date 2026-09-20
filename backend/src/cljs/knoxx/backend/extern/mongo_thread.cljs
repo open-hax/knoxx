@@ -142,6 +142,7 @@
   "Capture a primary BSON generation; absence reserves an invisible journaled placeholder.
    Claims only replace this generation, so physical deletion cannot resurrect a late insert."
   [db id]
+  (law/assert-valid! :thread/id law/NonBlank id)
   (let [coll (.collection db COLLECTION_NAME)]
     (loop [attempt 0]
       (if-let [row (or (await (.findOne coll #js {"session_id" id} #js {"readPreference" "primary"}))
