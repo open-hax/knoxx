@@ -1,89 +1,55 @@
 (ns knoxx.frontend.pages.documents.api
-  "Documents/lakes REST calls. CLJS port of the document + database-profile
-   functions in src/lib/nextApi.ts (sessionRequest: knoxx auth headers +
-   a sessionStorage-persisted x-knoxx-session-id)."
-  (:require [knoxx.frontend.lib.api :as lib-api]))
+  "Document and lake operations through the session-aware browser HTTP boundary."
+  (:require [knoxx.frontend.lib.documents :as documents]))
 
-(def ^:private session-key "knoxx_session_id")
+(def fetch-documents
+  "List documents in the session's active lake."
+  documents/fetch-documents)
 
-(defn- session-id []
-  (try
-    (or (.getItem js/sessionStorage session-key)
-        (let [id (if (and (exists? js/crypto) (.-randomUUID js/crypto))
-                   (.randomUUID js/crypto)
-                   (str "sess-" (.getTime (js/Date.)) "-" (subs (.toString (js/Math.random) 36) 2 10)))]
-          (.setItem js/sessionStorage session-key id)
-          id))
-    (catch :default _ "")))
-
-(defn- session-request
-  ([path] (session-request path nil))
-  ([path {:keys [method body]}]
-   (let [headers (lib-api/auth-headers)
-         init #js {:headers headers}]
-     (.set headers "x-knoxx-session-id" (session-id))
-     (when method (set! (.-method init) method))
-     (when (some? body)
-       (.set headers "Content-Type" "application/json")
-       (set! (.-body init) (js/JSON.stringify (clj->js body))))
-     (-> (js/fetch path init)
-         (.then (fn [^js res]
-                  (if (.-ok res)
-                    (.json res)
-                    (-> (.text res)
-                        (.then (fn [text]
-                                 (throw (js/Error. (if (seq text)
-                                                     text
-                                                     (str "Request failed: " (.-status res)))))))))))
-         (.then #(js->clj % :keywordize-keys true))))))
-
-(defn fetch-documents [] (session-request "/api/documents"))
-
-(defn upload-documents
+(def upload-documents
   "Multipart upload of JS File objects, optionally auto-ingesting."
-  [files auto-ingest?]
-  (let [form (js/FormData.)
-        headers (lib-api/auth-headers)]
-    (doseq [file files] (.append form "files" file))
-    (.append form "autoIngest" (str (boolean auto-ingest?)))
-    (.set headers "x-knoxx-session-id" (session-id))
-    (-> (js/fetch "/api/documents/upload" #js {:method "POST" :headers headers :body form})
-        (.then (fn [^js res]
-                 (if (.-ok res)
-                   (.json res)
-                   (throw (js/Error. "Failed to upload documents")))))
-        (.then #(js->clj % :keywordize-keys true)))))
+  documents/upload-documents)
 
-(defn delete-document [path]
-  (session-request (str "/api/documents/" (js/encodeURIComponent path)) {:method "DELETE"}))
+(def delete-document
+  "Delete the document named by its encoded relative path."
+  documents/delete-document)
 
-(defn ingest-documents [options]
-  (session-request "/api/documents/ingest" {:method "POST" :body (or options {})}))
+(def ingest-documents
+  "Start ingestion using the supplied selection or full-run options."
+  documents/ingest-documents)
 
-(defn restart-ingestion [force-fresh?]
-  (session-request "/api/documents/ingest/restart"
-                   {:method "POST" :body {:forceFresh (boolean force-fresh?)}}))
+(def restart-ingestion
+  "Restart or resume ingestion with an explicit fresh-run flag."
+  documents/restart-ingestion)
 
-(defn ingestion-progress [] (session-request "/api/documents/ingestion-progress"))
+(def ingestion-progress
+  "Read active ingestion and resumable checkpoint state."
+  documents/ingestion-progress)
 
-(defn ingestion-history [] (session-request "/api/documents/ingestion-history"))
+(def ingestion-history
+  "Read completed ingestion runs for the active lake."
+  documents/ingestion-history)
 
-(defn list-databases [] (session-request "/api/settings/databases"))
+(def list-databases
+  "List lake profiles and the active runtime profile."
+  documents/list-databases)
 
-(defn create-database [payload]
-  (session-request "/api/settings/databases" {:method "POST" :body payload}))
+(def create-database
+  "Create a lake profile from its wire payload."
+  documents/create-database)
 
-(defn activate-database [id]
-  (session-request "/api/settings/databases/activate" {:method "POST" :body {:id id}}))
+(def activate-database
+  "Activate the selected lake profile."
+  documents/activate-database)
 
-(defn update-database [id payload]
-  (session-request (str "/api/settings/databases/" (js/encodeURIComponent id))
-                   {:method "PATCH" :body payload}))
+(def update-database
+  "Patch the selected lake profile."
+  documents/update-database)
 
-(defn delete-database [id]
-  (session-request (str "/api/settings/databases/" (js/encodeURIComponent id))
-                   {:method "DELETE"}))
+(def delete-database
+  "Delete the selected lake profile."
+  documents/delete-database)
 
-(defn make-database-private [id]
-  (session-request (str "/api/settings/databases/" (js/encodeURIComponent id) "/make-private")
-                   {:method "POST"}))
+(def make-database-private
+  "Restrict the selected lake profile to this browser session."
+  documents/make-database-private)

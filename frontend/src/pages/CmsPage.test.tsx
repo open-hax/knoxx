@@ -169,7 +169,7 @@ function installCmsFetchMock(doc = cmsDoc, initialDesired: "published" | "withhe
 
 function renderCmsPage(initialEntry = "/cms?doc=cms-doc-1") {
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[initialEntry]}>
       <CmsPage />
     </MemoryRouter>,
   );

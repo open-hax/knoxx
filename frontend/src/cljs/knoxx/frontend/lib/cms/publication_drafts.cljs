@@ -14,6 +14,7 @@
     (if (= "" t) "Broadcast Playlist" t)))
 
 (defn slugify-publication-title
+  "Normalize a playlist title into a bounded publication slug."
   [title]
   (let [base (-> (clean-title title)
                  str/lower-case
@@ -89,6 +90,7 @@
     (str/join "\n" lines)))
 
 (defn build-playlist-publication-draft
+  "Build publication content and block metadata from a playlist snapshot."
   [input]
   (let [title (clean-title (:title input))
         slug (slugify-publication-title title)

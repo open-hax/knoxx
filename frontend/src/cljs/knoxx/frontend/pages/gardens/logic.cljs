@@ -7,12 +7,15 @@
   (:require [clojure.string :as str]))
 
 (def available-languages
+  "Display labels for locales supported by the garden review surface."
   {"en" "English" "es" "Español" "fr" "Français" "de" "Deutsch"
    "ja" "日本語" "zh" "中文" "ko" "한국어" "pt" "Português"
    "ru" "Русский" "it" "Italiano" "ar" "العربية" "hi" "हिन्दी"
    "nl" "Nederlands" "pl" "Polski" "tr" "Türkçe" "vi" "Tiếng Việt"})
 
-(defn language-name [code]
+(defn language-name
+  "Use the display label when known, preserving unrecognized locale codes."
+  [code]
   (get available-languages code code))
 
 (defn- trim-trailing-slash [value]
