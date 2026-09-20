@@ -222,6 +222,17 @@
          (fn [^js req ^js reply]
            (logout-handler! req reply public-base-url))))
 
+(defn- ^:async redeem-invite-session!
+  [req reply policy-context public-base-url code email]
+  (let [result (await (policy-db/redeem-invite! (policy-db/context-pool policy-context) code email))
+        invite (:invite result)
+        ctx (await (policy-db/resolve-context!
+                    policy-context {"x-knoxx-user-email" (:email invite) "x-knoxx-org-id" (:org-id invite)}))
+        session (await (auth-session/create-session-from-context!
+                        reply (request-base-url req public-base-url) ctx
+                        {:email (:email invite) :display-name (:email invite) :auth-provider "invite"}))]
+    (.send reply (clj->js (assoc session :ok true :invite invite)))))
+
 (defn- ^:async invite-redeem-handler!
   [req reply policy-context public-base-url]
   (try
@@ -239,18 +250,7 @@
         (.send (.code reply 400) (clj->js {:error "email is required"}))
         
         :else
-        (let [result (await (policy-db/redeem-invite! (policy-db/context-pool policy-context) code email))
-              invite (:invite result)
-              ctx (await (policy-db/resolve-context!
-                          policy-context
-                          {"x-knoxx-user-email" (:email invite)
-                           "x-knoxx-org-id" (:org-id invite)}))
-              session (await (auth-session/create-session-from-context!
-                              reply (request-base-url req public-base-url) ctx
-                              {:email (:email invite)
-                               :display-name (:email invite)
-                               :auth-provider "invite"}))]
-          (.send reply (clj->js (assoc session :ok true :invite invite))))))
+        (await (redeem-invite-session! req reply policy-context public-base-url code email))))
     (catch :default err
       (.send (.code reply (or (:status (ex-data err)) (.-statusCode err) (.-status err) 500))
              (clj->js {:error (or (.-message err) "Invite redemption failed")})))))

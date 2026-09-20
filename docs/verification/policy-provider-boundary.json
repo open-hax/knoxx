@@ -1,0 +1,328 @@
+{
+  "task": "https://github.com/open-hax/knoxx/issues/374",
+  "baseline331": "3c6a1c1bc31f1e86adce4b40fd0d3810686c68c9",
+  "qualifiedFoundationA": "baa061e368fd016a878010542d619a645fba102b",
+  "preservedIntegratedIdentity": "6d08aee0a6f608f89e01d8108fd0209f8d49db8b",
+  "integration": "Exact14Ablobs initially seeded; qualified A merged ordinarily. No A production source changed.",
+  "moves": [
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/bootstrap.cljs",
+      "sourceBlob": "a8a16a53fc3b3179ced9ed660f6cb0b4f2bccd59",
+      "candidateBlob": "a8a16a53fc3b3179ced9ed660f6cb0b4f2bccd59",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/connection.cljs",
+      "sourceBlob": "344582d68b48b713e549de8ca25068e58811486d",
+      "candidateBlob": "344582d68b48b713e549de8ca25068e58811486d",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/credentials.cljs",
+      "sourceBlob": "46f086036a2ecbf35026ee9788ec50132893b635",
+      "candidateBlob": "46f086036a2ecbf35026ee9788ec50132893b635",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/hydration.cljs",
+      "sourceBlob": "5a15d7a9105162231ddcfc4afef6c7b96bda97b6",
+      "candidateBlob": "5a15d7a9105162231ddcfc4afef6c7b96bda97b6",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/invites.cljs",
+      "sourceBlob": "43450db90b6ee15da373d92110d29a13c84daed1",
+      "candidateBlob": "43450db90b6ee15da373d92110d29a13c84daed1",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/organizations.cljs",
+      "sourceBlob": "18b2277f1d0a5e83b3f4d1081ceb2ffd8522c333",
+      "candidateBlob": "18b2277f1d0a5e83b3f4d1081ceb2ffd8522c333",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/projection.cljs",
+      "sourceBlob": "0e0e3a358094b1c42596a07a00286ea8c2f08192",
+      "candidateBlob": "0e0e3a358094b1c42596a07a00286ea8c2f08192",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/role_queries.cljs",
+      "sourceBlob": "338d617275e2b91ddbbc98bb415c4bb1e86d16dd",
+      "candidateBlob": "338d617275e2b91ddbbc98bb415c4bb1e86d16dd",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/roles.cljs",
+      "sourceBlob": "a94f7392878b6275c18f440253e2d6b6c3abfd0b",
+      "candidateBlob": "a94f7392878b6275c18f440253e2d6b6c3abfd0b",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/sessions.cljs",
+      "sourceBlob": "2880c91c8709950faa308f4d2ad33857f8f36026",
+      "candidateBlob": "2880c91c8709950faa308f4d2ad33857f8f36026",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/support.cljs",
+      "sourceBlob": "89943a337fb29995e38f1ddbcb77640972d800ad",
+      "candidateBlob": "89943a337fb29995e38f1ddbcb77640972d800ad",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy/users.cljs",
+      "sourceBlob": "402797f61cd52f92b1a4b156928f82125660f13c",
+      "candidateBlob": "402797f61cd52f92b1a4b156928f82125660f13c",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/law/policy_values.cljc",
+      "sourceBlob": "619314cdc715a8560c80bc9190fe8d50d80ae23a",
+      "candidateBlob": "619314cdc715a8560c80bc9190fe8d50d80ae23a",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/law/membership_actor.cljc",
+      "sourceBlob": "ffbb23eec4189811e2a32646d499580392968a43",
+      "candidateBlob": "ffbb23eec4189811e2a32646d499580392968a43",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/policy.cljs",
+      "sourceBlob": "32e851ba91a3b0445441562697920cc094ed13eb",
+      "candidateBlob": "32e851ba91a3b0445441562697920cc094ed13eb",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/extern/mongo_policy_invites.cljs",
+      "sourceBlob": "0ecd74f3ee7fc00feb6194497d2362974286537c",
+      "candidateBlob": "0ecd74f3ee7fc00feb6194497d2362974286537c",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/db/actors.cljs",
+      "sourceBlob": "a0083750726d0e25f87578613d77b46b4b20acbe",
+      "candidateBlob": "a0083750726d0e25f87578613d77b46b4b20acbe",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/stores/mongo_policy_directory.cljs",
+      "sourceBlob": "72c5d5699971b7315290fb07a4f816164b5c0639",
+      "candidateBlob": "72c5d5699971b7315290fb07a4f816164b5c0639",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/domain/policy/edn_adapter.cljs",
+      "sourceBlob": "9d7971841d69633994b4915dc009cbcfb5e49e64",
+      "candidateBlob": "9d7971841d69633994b4915dc009cbcfb5e49e64",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/law/policy_values_test.cljc",
+      "sourceBlob": "b1070289578301484259c457a20d28ab3fdc9a83",
+      "candidateBlob": "b1070289578301484259c457a20d28ab3fdc9a83",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/admin_credential_routes_test.cljs",
+      "sourceBlob": "e43d844109e21692336d770a39e962c14b7b9a77",
+      "candidateBlob": "afadc46155e322d6cafae78c021b647b35f75fbe",
+      "mode": "scoped-intermediate-adaptation"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/policy_db_credentials_test.cljs",
+      "sourceBlob": "1e3878e924af01b324db89e03c51babda5436b11",
+      "candidateBlob": "1e3878e924af01b324db89e03c51babda5436b11",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/infra/stores/mongo_policy_directory_test.cljs",
+      "sourceBlob": "ee411213069eb68ab27139c165706be04c8e6568",
+      "candidateBlob": "ee411213069eb68ab27139c165706be04c8e6568",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/mongo_policy_mutations_test.cljs",
+      "sourceBlob": "7c3c487b0e817dc991f09ae12d5f64b329f40040",
+      "candidateBlob": "7c3c487b0e817dc991f09ae12d5f64b329f40040",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/mongo_policy_invites_test.cljs",
+      "sourceBlob": "2d990b5d78613f0206a32f27f1c26d96b27f7d95",
+      "candidateBlob": "2d990b5d78613f0206a32f27f1c26d96b27f7d95",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/mongo_policy_invites_e2e.cljs",
+      "sourceBlob": "f2c9922b45c8bcd25ba11b27a63f5bbc770300b2",
+      "candidateBlob": "f2c9922b45c8bcd25ba11b27a63f5bbc770300b2",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/mongo_actor_coordinate_e2e.cljs",
+      "sourceBlob": "b820af64d70b60e6e9b220207b08db857d4033b8",
+      "candidateBlob": "b820af64d70b60e6e9b220207b08db857d4033b8",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/mongo_actor_coordinate_fixture.cljs",
+      "sourceBlob": "8eb6a1c71e376461646076c8c9985bb7572860e1",
+      "candidateBlob": "8eb6a1c71e376461646076c8c9985bb7572860e1",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/mongo_invite_fixture.cljs",
+      "sourceBlob": "b6769e50eb1cbb7858e0823075b48ec8e3e6fd67",
+      "candidateBlob": "b6769e50eb1cbb7858e0823075b48ec8e3e6fd67",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/mongo_remote_identity_fixture.cljs",
+      "sourceBlob": "a05f312094db84b86012c86bc65ec2955f8b0cf1",
+      "candidateBlob": "a05f312094db84b86012c86bc65ec2955f8b0cf1",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/identity_fixture.cljs",
+      "sourceBlob": "e61a93e6f9bd7031be12d92a13d4cae25a0ad810",
+      "candidateBlob": "e61a93e6f9bd7031be12d92a13d4cae25a0ad810",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/scripts/compile-policy-proof.clj",
+      "sourceBlob": "6c007903f57d7b8ad33dbdaf2424e779b1602006",
+      "candidateBlob": "4d1dbfc26d2a38f1dde766d6430869ee47f91fee",
+      "mode": "scoped-intermediate-adaptation"
+    },
+    {
+      "path": "docs/verification/actor-coordinate-immutability.md",
+      "sourceBlob": "c03edd2265b45afb321007e29d5ea92c316e9620",
+      "candidateBlob": "c03edd2265b45afb321007e29d5ea92c316e9620",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "docs/verification/policy-module-recovery.md",
+      "sourceBlob": "eb15744991395b9f4013c9bd33e995b7b063db13",
+      "candidateBlob": "f9907b993d97ac1974ec89f0bfbb19d512363321",
+      "mode": "scoped-intermediate-adaptation"
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/auth/axxium.cljs",
+      "sourceBlob": "5b637a2b7eafbb7d8f5b3b3b34e5f15a206b9237",
+      "candidateBlob": "5b637a2b7eafbb7d8f5b3b3b34e5f15a206b9237",
+      "mode": "exact-qualified-source"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/remote_identity_fixture.cljs",
+      "sourceBlob": "5336c406c7f9c4dec6d37482486c01cb5513c226",
+      "candidateBlob": "5336c406c7f9c4dec6d37482486c01cb5513c226",
+      "mode": "pure-native-scaffold-moved-earlier-for-legacy-runtime-proof"
+    },
+    {
+      "path": "backend/test/cljs/knoxx/backend/extern/mongo_identity_replica_fixture.cljs",
+      "sourceBlob": "70d19a14a8004c9942de48636da19eb90462f18c",
+      "candidateBlob": "70d19a14a8004c9942de48636da19eb90462f18c",
+      "mode": "pure-native-scaffold-moved-earlier-for-legacy-runtime-proof"
+    }
+  ],
+  "callerHunks": [
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/routes/users/admin.cljs",
+      "symbol": "actor-update-payload",
+      "source": "6d08aee0",
+      "reason": "Omission must remain absent while explicit empty roles clear membership."
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/routes/auth.cljs",
+      "symbol": "invite-redeem-handler! and extracted redeem-invite-session!",
+      "source": "331 route preserved with classified exception status and small sequence extraction",
+      "reason": "New CAS exceptions retain403/409/503; touched handler no longer exceeds its function-size budget."
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/extern/fastify.cljs",
+      "symbols": [
+        "error-status",
+        "error-code"
+      ],
+      "source": "6d08aee0 exact helper definitions",
+      "reason": "Actual preceding admin route otherwise turns new provider400/409 into500 and loses error_code."
+    }
+  ],
+  "movedTest": {
+    "from": "backend/test/cljs/knoxx/backend/local_policy_api_recovery_test.cljs",
+    "to": "backend/test/cljs/knoxx/backend/admin_credential_routes_test.cljs",
+    "symbol": "profile-payload-preserves-omitted-fields-and-explicit-removals",
+    "laterActivationAction": "Keep one copy; remove the duplicate when assembling C."
+  },
+  "precedingRuntimePreserved": [
+    {
+      "path": "backend/src/cljs/knoxx/backend/bootstrap.cljs",
+      "blob": "0c43700cc4ecf12ecf6034dab787eb18f2a00136",
+      "baselineBlob": "0c43700cc4ecf12ecf6034dab787eb18f2a00136",
+      "unchanged": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/config.cljs",
+      "blob": "ac51a6f4b014d1bc73f3d31da2f735144b003bb9",
+      "baselineBlob": "ac51a6f4b014d1bc73f3d31da2f735144b003bb9",
+      "unchanged": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/auth/session.cljs",
+      "blob": "af5af50ca4661f7ef3eff14db7a747009dbbedfd",
+      "baselineBlob": "af5af50ca4661f7ef3eff14db7a747009dbbedfd",
+      "unchanged": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/auth/authz.cljs",
+      "blob": "3b46004ff638988997b389392b3494623e20a17e",
+      "baselineBlob": "3b46004ff638988997b389392b3494623e20a17e",
+      "unchanged": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/routes/admin.cljs",
+      "blob": "0fed75e68a391127b4b729eb55e5da2063b35d8e",
+      "baselineBlob": "0fed75e68a391127b4b729eb55e5da2063b35d8e",
+      "unchanged": true
+    }
+  ],
+  "deferredCompositionAbsent": [
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/identity.cljs",
+      "absent": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/identity_bootstrap.cljs",
+      "absent": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/identity_invites.cljs",
+      "absent": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/remote_identity.cljs",
+      "absent": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/infra/local_identity.cljs",
+      "absent": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/extern/axxium.cljs",
+      "absent": true
+    },
+    {
+      "path": "backend/src/cljs/knoxx/backend/extern/invitation_http.cljs",
+      "absent": true
+    }
+  ],
+  "frontendUnchanged": true,
+  "limits": [
+    "Native fixture reuse does not import activated identity composition.",
+    "No production authentication migration or new frontend behavior is claimed.",
+    "Integrated C must retain these provider changes and exact helper semantics when later restacked."
+  ]
+}
