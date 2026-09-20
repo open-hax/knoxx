@@ -27,6 +27,15 @@ reopening and intervening work, a server-time-only retry returns the original
 fact with `existing? true`; conflicting content is refused without appending.
 These providers keep domain IDs distinct from ledger-global explicit Clio IDs.
 
+Clio observers can select stream names and provider-declared scope. Scoped
+listeners receive only the matching stream name; operation arguments, results
+and scope facts stay inside the provider. Providers without a scope extractor
+cannot notify scoped subscriptions. Legacy listeners still receive no arguments.
+The proof covers unrelated streams, other organizations/projects/documents,
+unsubscribe, and thrown or rejected observer failures after a successful durable
+write. The separate Wiki integration owns its HTTP stream and authorization
+checks; this layer supplies the tested observer contract it needs.
+
 Acceptance facts load resource records and build their canonical index once for
 the documents selected by the caller. The proof uses two selected documents and
 an unrelated missing source: the selected documents share one resource load,

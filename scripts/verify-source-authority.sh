@@ -27,5 +27,6 @@ printf '%s\n' \
   'PASS selected acceptance facts share one resource snapshot; scoped IDs and timestamp-only retries preserve original facts.' \
   'PASS stale identities, corrupt history, conflicting retries and refused admission fail visibly.' \
   'PASS explicit-ID no-ops retain their original result; failed document writes preserve successor sequencing.' \
+  'PASS stream/scope observers receive only selected stream names; observer failures cannot undo durable writes.' \
   'PASS source reads and saves use matching provenance; malformed wire locales and incomplete create facts are refused.' \
   'WARN Wiki HTTP, agent tools, provider composition, password login and browser workflows arrive in later layers.'
