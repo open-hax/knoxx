@@ -41,62 +41,48 @@
      " is bound to this session, so tools that use stored credentials (Discord, Bluesky) will fail when called. Assign an actor to this membership in Admin → Actors first if you need them."]
     [:div {} [:strong {} "Acting as:"] " " actor-id]))
 
-(defn- confirm-url
-  [base client-id redirect-uri state code-challenge requested-scope]
-  (let [url (js/URL. "/api/mcp/oauth/authorize/confirm" base)]
-    (.set (.-searchParams url) "client_id" client-id)
-    (.set (.-searchParams url) "redirect_uri" redirect-uri)
-    (when state (.set (.-searchParams url) "state" state))
-    (.set (.-searchParams url) "code_challenge" code-challenge)
-    (.set (.-searchParams url) "code_challenge_method" "S256")
-    (when-not (str/blank? (str (or requested-scope "")))
-      (.set (.-searchParams url) "scope" requested-scope))
-    url))
-
 (defn- hidden-input
   [name value]
   [:input {:type "hidden" :name name :value (str (or value ""))}])
 
+(defn- approval-form
+  [{:keys [client-id redirect-uri state code-challenge requested-scope tools selected]} actor-id]
+  [:form {:method "POST" :action "/api/mcp/oauth/authorize/confirm"}
+   (hidden-input "client_id" client-id)
+   (hidden-input "redirect_uri" redirect-uri)
+   (hidden-input "state" state)
+   (hidden-input "code_challenge" code-challenge)
+   (hidden-input "code_challenge_method" "S256")
+   (hidden-input "scope" requested-scope)
+   ;; A displayed witness, never a client-selected identity.
+   (hidden-input "actor_id" actor-id)
+   [:h2 {} "Capabilities"]
+   [:p {} "Select exactly which Knoxx tools this client can call. You can always revoke tokens later."]
+   [:div {:class [:tools]} (map #(tool-checkbox-node % selected) (array-seq tools))]
+   [:div {:class ["actions"]}
+    [:button {:type "submit"} "Authorize"]
+    [:a {:href "/"} "Cancel"]]])
+
 (defn page-node
-  "Build the consent document from a normalized, policy-free view model."
-  [{:keys [base auth-context client-id redirect-uri state code-challenge
-           requested-scope tools selected]}]
-  (let [action (.-pathname (confirm-url base client-id redirect-uri state
-                                        code-challenge requested-scope))
-        user-email (str (or (authz/ctx-user-email auth-context) ""))
+  "Build the consent document from its resolved identity and selected tools."
+  [{:keys [auth-context client-id redirect-uri] :as view-model}]
+  (let [user-label (or (not-empty (str (authz/ctx-user-email auth-context)))
+                       (get-in auth-context [:user :username])
+                       (get-in auth-context [:axxium-principal :principal/id]) "")
         org-slug (str (or (authz/ctx-org-slug auth-context) ""))
         actor-id (str (or (authz/ctx-actor-binding auth-context) ""))]
     [:html {}
-     [:head {}
-      [:meta {:charset "utf-8"}]
-      [:title {} "Authorize MCP Client"]
-      [:style {} styles]]
+     [:head {} [:meta {:charset "utf-8"}] [:title {} "Authorize MCP Client"] [:style {} styles]]
      [:body {}
       [:div {:class ["box"]}
        [:h1 {} "Authorize MCP Client"]
        [:div {:class {:meta true}}
         [:div {} [:strong {} "Client:"] " " client-id]
         [:div {} [:strong {} "Redirect URI:"] " " redirect-uri]
-        [:div {} [:strong {} "User:"] " " user-email]
+        [:div {} [:strong {} "User:"] " " user-label]
         [:div {} [:strong {} "Org:"] " " org-slug]]
        (actor-node actor-id)
-       [:form {:method "GET" :action action}
-        (hidden-input "client_id" client-id)
-        (hidden-input "redirect_uri" redirect-uri)
-        (hidden-input "state" state)
-        (hidden-input "code_challenge" code-challenge)
-        (hidden-input "code_challenge_method" "S256")
-        (hidden-input "scope" requested-scope)
-        ;; Witness what the user saw. Confirmation refuses if the membership's
-        ;; actor changes while this page is open.
-        (hidden-input "actor_id" actor-id)
-        [:h2 {} "Capabilities"]
-        [:p {} "Select exactly which Knoxx tools this client can call. You can always revoke tokens later."]
-        [:div {:class [:tools]}
-         (map #(tool-checkbox-node % selected) (array-seq tools))]
-        [:div {:class ["actions"]}
-         [:button {:type "submit"} "Authorize"]
-         [:a {:href "/"} "Cancel"]]]]]]))
+       (approval-form view-model actor-id)]]]))
 
 (defn page
   "Render the consent page as a complete HTML document."

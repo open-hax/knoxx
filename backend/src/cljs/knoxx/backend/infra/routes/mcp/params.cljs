@@ -7,6 +7,7 @@
    http-error, because the parsers and the error they throw are one concern and
    splitting them would have left a cycle."
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.mcp-token :as native]
             [malli.core :as m]
             [malli.error :as me]))
 
@@ -58,15 +59,7 @@
 (defn http-error
   ([status error detail]      (http-error status error detail nil))
   ([status error detail data]
-   (let [e (ex-info detail (merge {:status status :error error :detail detail} data))]
-     (aset e "statusCode" status)
-     ;; And the code where a hijacked route looks. /mcp writes its own response,
-     ;; so it reads the error off the object rather than through Fastify — and
-     ;; ex-data is invisible from JS, so without this every refusal reported as
-     ;; mcp_post_failed and a client could not tell actor_reassigned from a
-     ;; crash.
-     (aset e "code" error)
-     e)))
+   (native/http-error status error detail data)))
 
 (defn- validation-detail [schema value]
   (some-> (m/explain schema value) me/humanize pr-str))
@@ -123,7 +116,7 @@
                {:status 400 :error "invalid_request"})))
 
 (defn parse-authorize-confirm-query [req]
-  (let [q (or (aget req "query") (js/Object.))]
+  (let [q (or (aget req "body") (js/Object.))]
     (validate! AuthorizeConfirmQuery
                {:client-id             (str (or (aget q "client_id") ""))
                 :redirect-uri          (str (or (aget q "redirect_uri") ""))
@@ -150,4 +143,3 @@
     (validate! RevokeTokenParams
                {:token-id (str (or (aget params "tokenId") ""))}
                {:status 400 :error "invalid_request"})))
-
