@@ -1,11 +1,12 @@
 (ns knoxx.backend.law.thread-store
   "Portable contracts for durable conversation state and stamped admissions."
   (:require [clojure.string :as str]
+            [knoxx.backend.law.persistence-instant :as instant]
             [malli.core :as m]))
 
 (def NonBlank [:and :string [:fn #(not (str/blank? %))]])
 (def Milliseconds [:and :int [:fn #(<= 0 %)]])
-(def Instant [:and NonBlank [:re #"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$"]])
+(def Instant instant/Instant)
 (def active-statuses #{"running" "queued" "waiting_input"})
 
 (defn edn-value?

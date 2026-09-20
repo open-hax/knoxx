@@ -6,6 +6,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 const rootManifest = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url)));
+const childManifests = Object.fromEntries(['backend', 'frontend'].map(child => [
+  child, JSON.parse(readFileSync(new URL(`../../../${child}/package.json`, import.meta.url))),
+]));
 const routes = {
   dev: ['frontend:dev'],
   build: ['backend:build', 'frontend:build'],
@@ -41,9 +44,9 @@ function fixture(t) {
   for (const child of ['backend', 'frontend']) {
     mkdirSync(join(root, child));
     writeFileSync(join(root, child, 'package.json'), JSON.stringify({
-      name: child === 'backend' ? '@open-hax/knoxx-backend-cljs' : '@open-hax/knoxx-frontend',
+      name: childManifests[child].name,
       private: true,
-      scripts: Object.fromEntries(['dev', 'build', 'test', 'test:cljs', 'lint', 'typecheck']
+      scripts: Object.fromEntries(Object.keys(childManifests[child].scripts)
         .map(action => [action, `node ../record.mjs ${child}:${action}`])),
     }));
   }
