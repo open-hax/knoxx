@@ -1,12 +1,11 @@
 (ns knoxx.frontend.pages.translations.split-review-panel
   "Reusable editor for one authenticated resource translation split."
-  (:require [helix.core :refer [$ defnc]]
+  (:require [helix.core :as hx]
             [helix.dom :as d]
             [knoxx.frontend.components.ui :as ui]
             [knoxx.frontend.pages.translations.logic :as logic]
             [knoxx.frontend.pages.translations.review-controls :as review-controls]
-            [knoxx.frontend.pages.translations.review-history
-             :refer [review-history]]))
+            [knoxx.frontend.pages.translations.review-history :as history]))
 
 (defn- status-badge
   [status]
@@ -25,15 +24,15 @@
 (defn- review-actions
   [saving on-submit on-skip]
   (d/div {:class-name "flex flex-wrap gap-2"}
-         ($ ui/button {:disabled saving :on-click #(on-submit "approved")}
+         (hx/$ ui/button {:disabled saving :on-click #(on-submit "approved")}
             "Approve split")
-         ($ ui/button {:variant :secondary :disabled saving
+         (hx/$ ui/button {:variant :secondary :disabled saving
                        :on-click #(on-submit "in-review")}
             "Submit review")
-         ($ ui/button {:variant :ghost :disabled saving
+         (hx/$ ui/button {:variant :ghost :disabled saving
                        :on-click #(on-submit "rejected")}
             "Reject split")
-         ($ ui/button {:variant :ghost :disabled (or saving (nil? on-skip))
+         (hx/$ ui/button {:variant :ghost :disabled (or saving (nil? on-skip))
                        :on-click on-skip}
             "Skip")))
 
@@ -41,7 +40,7 @@
   [form on-change]
   (d/div
    {:class-name "space-y-4"}
-   ($ review-controls/score-fields {:form form :on-change on-change})
+   (hx/$ review-controls/score-fields {:form form :on-change on-change})
    (review-controls/textarea
     "Corrected translation" (:corrected_text form)
     "Optional. An approved correction becomes this split's effective target and future translation memory."
@@ -51,7 +50,7 @@
     "Terminology caveats, tone issues, reviewer rationale, etc."
     3 #(on-change (assoc form :editor_notes (.. % -target -value))))))
 
-(defnc split-review-panel
+(hx/defnc split-review-panel
   "Render the historical granular review card for one resource split."
   [{:keys [split form saving on-change on-submit on-skip]}]
   (if-not split
@@ -73,6 +72,6 @@
            (d/p {:class-name "text-xs text-slate-500"}
                 "Submit review keeps this split in review. Approve selects the correction above, or the candidate when it is blank; scores and notes remain attached to this split's review history.")
            (review-actions saving on-submit on-skip)
-           ($ review-history {:labels (:labels split)
+           (hx/$ history/review-history {:labels (:labels split)
                               :title "Existing labels"
                               :empty-copy "No labels yet."}))))

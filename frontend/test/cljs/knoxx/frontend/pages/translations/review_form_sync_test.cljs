@@ -1,21 +1,21 @@
 (ns knoxx.frontend.pages.translations.review-form-sync-test
   "Same-split form synchronization follows immutable review identity."
-  (:require [cljs.test :refer [deftest is use-fixtures]]
-            ["@testing-library/react" :as rtl]
-            [helix.core :refer [$ defnc]]
+  (:require ["@testing-library/react" :as rtl]
+            [cljs.test :as t]
+            [helix.core :as hx]
             [helix.dom :as d]
             [helix.hooks :as hooks]
             [knoxx.frontend.pages.translations.logic :as logic]
-            [knoxx.frontend.pages.translations.review-form-sync
-             :refer [use-review-form-sync!]]))
+            [knoxx.frontend.pages.translations.review-form-sync :as sync]))
 
-(use-fixtures :each
+(t/use-fixtures :each
   {:after rtl/cleanup})
 
-(defnc form-sync-harness
+(hx/defnc form-sync-harness
+  "Expose form state after immutable review identity changes."
   [{:keys [split]}]
   (let [[form set-form!] (hooks/use-state logic/default-label)]
-    (use-review-form-sync! split set-form!)
+    (sync/use-review-form-sync! split set-form!)
     (d/div
      (d/output {:data-testid "adequacy"} (:adequacy form))
      (d/output {:data-testid "fluency"} (:fluency form))
@@ -31,7 +31,7 @@
      (when-not (= expected (.-textContent (.getByTestId rendered test-id)))
        (throw (js/Error. (str "still waiting for " test-id " = " expected)))))))
 
-(deftest ^:async same-split-external-review-rehydrates-correction-and-scores
+(t/deftest ^:async same-split-external-review-rehydrates-correction-and-scores
   (let [initial {:id "split/0"
                  :split_id "split/0"
                  :resource_split true
@@ -51,13 +51,13 @@
                        :risk "safe"
                        :corrected_text "Remote correction"
                        :editor_notes "Remote note"})
-        rendered (rtl/render ($ form-sync-harness {:split initial}))]
+        rendered (rtl/render (hx/$ form-sync-harness {:split initial}))]
     (await (wait-for-value rendered "correction" "Initial correction"))
-    (.rerender rendered ($ form-sync-harness {:split remote}))
+    (.rerender rendered (hx/$ form-sync-harness {:split remote}))
     (await (wait-for-value rendered "correction" "Remote correction"))
-    (is (= "poor" (.-textContent (.getByTestId rendered "adequacy"))))
-    (is (= "adequate" (.-textContent (.getByTestId rendered "fluency"))))
-    (is (= "major_errors"
+    (t/is (= "poor" (.-textContent (.getByTestId rendered "adequacy"))))
+    (t/is (= "adequate" (.-textContent (.getByTestId rendered "fluency"))))
+    (t/is (= "major_errors"
            (.-textContent (.getByTestId rendered "terminology"))))
-    (is (= "safe" (.-textContent (.getByTestId rendered "risk"))))
-    (is (= "Remote note" (.-textContent (.getByTestId rendered "notes"))))))
+    (t/is (= "safe" (.-textContent (.getByTestId rendered "risk"))))
+    (t/is (= "Remote note" (.-textContent (.getByTestId rendered "notes"))))))

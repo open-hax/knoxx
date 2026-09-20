@@ -4,7 +4,7 @@
             [knoxx.frontend.lib.api :as http]
             [knoxx.frontend.pages.translations.api :as api]))
 
-(def calls (atom []))
+(def ^:private calls (atom []))
 (def ^:private original-request http/request)
 
 (t/use-fixtures

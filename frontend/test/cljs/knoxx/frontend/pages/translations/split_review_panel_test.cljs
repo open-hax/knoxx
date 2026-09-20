@@ -1,19 +1,18 @@
 (ns knoxx.frontend.pages.translations.split-review-panel-test
   "Rendered history parity for the resource-backed split review card."
-  (:require [cljs.test :refer [deftest is use-fixtures]]
+  (:require ["@testing-library/react" :as rtl]
+            [cljs.test :as t]
             [clojure.string :as str]
-            ["@testing-library/react" :as rtl]
-            [helix.core :refer [$]]
-            [knoxx.frontend.pages.translations.split-review-panel
-             :refer [split-review-panel]]))
+            [helix.core :as hx]
+            [knoxx.frontend.pages.translations.split-review-panel :as panel]))
 
-(use-fixtures :each
+(t/use-fixtures :each
   {:after rtl/cleanup})
 
 (defn- render-panel
   [labels]
   (rtl/render
-   ($ split-review-panel
+   (hx/$ panel/split-review-panel
       {:split {:split_id "split/0"
                :segment_index 0
                :status "approved"
@@ -33,7 +32,7 @@
        :on-submit (fn [_])
        :on-skip (fn [])})))
 
-(deftest split-panel-renders-immutable-existing-label-history
+(t/deftest split-panel-renders-immutable-existing-label-history
   (let [r (render-panel
            [{:id "review/2"
              :review_id "review/2"
@@ -61,9 +60,9 @@
                       "safe risk"
                       "Hola, mundo"
                       "Keep the product name literal."]]
-      (is (str/includes? text fragment) fragment))))
+      (t/is (str/includes? text fragment) fragment))))
 
-(deftest split-panel-keeps-history-shape-visible-before-first-label
+(t/deftest split-panel-keeps-history-shape-visible-before-first-label
   (let [r (render-panel [])]
-    (is (some? (.queryByText r "Existing labels")))
-    (is (some? (.queryByText r "No labels yet.")))))
+    (t/is (some? (.queryByText r "Existing labels")))
+    (t/is (some? (.queryByText r "No labels yet.")))))

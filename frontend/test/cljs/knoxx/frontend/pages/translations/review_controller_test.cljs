@@ -1,13 +1,13 @@
 (ns knoxx.frontend.pages.translations.review-controller-test
   "Availability boundaries between resource work and legacy enrichment."
-  (:require [cljs.test :refer [deftest is use-fixtures]]
+  (:require [cljs.test :as t]
             [knoxx.frontend.pages.translations.api :as api]
             [knoxx.frontend.pages.translations.review-controller :as controller]))
 
 (def ^:private original-list-documents api/list-documents)
 (def ^:private original-list-publication-reviews api/list-publication-reviews)
 
-(use-fixtures
+(t/use-fixtures
   :each
   {:after (fn []
             (set! api/list-documents original-list-documents)
@@ -17,9 +17,9 @@
 (defn- completion
   []
   (let [resolve! (atom nil)
-        promise (js/Promise. (fn [resolve _reject]
-                               (reset! resolve! resolve)))]
-    {:promise promise :resolve! #(when-let [resolve @resolve!] (resolve %))}))
+        promise (js/Promise. (fn [resolve-value _reject]
+                               (reset! resolve! resolve-value)))]
+    {:promise promise :resolve! #(when-let [finish @resolve!] (finish %))}))
 
 (defn- controller-state
   [completed]
@@ -56,7 +56,7 @@
    :approved false
    :allowed_actions ["dispatch"]})
 
-(deftest ^:async resource-inventory-survives-legacy-list-failure
+(t/deftest ^:async resource-inventory-survives-legacy-list-failure
   (let [completed (completion)
         {:keys [state setters]} (controller-state completed)]
     (set! api/list-publication-reviews
@@ -68,14 +68,14 @@
             (js/Promise.reject (js/Error. "OpenPlanner unavailable"))))
     (controller/load-documents! "devel" "" #js {:current 0} setters)
     (await (:promise completed))
-    (is (= "Resource survives"
+    (t/is (= "Resource survives"
            (:title (first (:documents @state)))))
-    (is (= "publications/resource-es"
+    (t/is (= "publications/resource-es"
            (:publication (first (:documents @state)))))
-    (is (nil? (:error @state)))
-    (is (false? (:loading @state)))))
+    (t/is (nil? (:error @state)))
+    (t/is (false? (:loading @state)))))
 
-(deftest ^:async legacy-only-list-failure-remains-visible
+(t/deftest ^:async legacy-only-list-failure-remains-visible
   (let [completed (completion)
         {:keys [state setters]} (controller-state completed)]
     (set! api/list-publication-reviews
@@ -86,6 +86,6 @@
             (js/Promise.reject (js/Error. "OpenPlanner unavailable"))))
     (controller/load-documents! "devel" "" #js {:current 0} setters)
     (await (:promise completed))
-    (is (= [] (:documents @state)))
-    (is (= "OpenPlanner unavailable" (:error @state)))
-    (is (false? (:loading @state)))))
+    (t/is (= [] (:documents @state)))
+    (t/is (= "OpenPlanner unavailable" (:error @state)))
+    (t/is (false? (:loading @state)))))
