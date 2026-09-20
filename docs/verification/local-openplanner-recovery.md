@@ -35,6 +35,25 @@ integration check.
 
 ## Fresh verification
 
+The review regression for document metadata exercises the real local provider
+with an isolated Clio directory and deterministic embeddings. It covers
+metadata-only changes, restoration of an earlier metadata value, equal retries
+with reordered map keys, restart, duplicate document IDs across projects and
+gardens, an organization-wide listing, and missing document/locale/scope reads.
+The original implementation failed nine assertions. After the repair, the
+expanded provider suite passes **9 tests / 72 assertions**, with zero failures,
+errors, compiler warnings, or warnings from linting the three changed code files.
+This is provider-level proof; the live website/browser gate remains pending.
+
+Document revisions bind the entire persisted metadata map and the preceding
+revision in the same exact scope. Equal current retries reuse their immutable
+event; restoring old metadata creates a new revision. Historical facts remain
+readable. Translation point reads and grouped listings select metadata from the
+segment relation's exact organization, project, and garden. Missing relations
+return not-found rather than a synthetic empty document.
+
+### Original recovery evidence
+
 The recovered provider's eight tests ran with the fatal asynchronous test guard
 together with source review, source authoring repair, publication gates and the
 translation receipt writer: **50 tests, 274 assertions, zero failures/errors;

@@ -12,7 +12,8 @@
   (try
     (fastify/send-json! reply 200 (identity/encode-wire-values (await (operation))))
     (catch :default error
-      (let [status (or (:status (ex-data error)) (fastify/error-status error nil) 500)]
+      (let [candidate (or (:status (ex-data error)) (fastify/error-status error nil) 500)
+            status (if (and (integer? candidate) (<= 400 candidate 599)) candidate 500)]
         (when-not (errors/classified? status)
           (fastify/log-unclassified-failure! "wiki" error))
         (fastify/send-json! reply status (errors/error-body error status))))))
