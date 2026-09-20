@@ -193,47 +193,48 @@
   ;; so an incompatible new index cannot take established persistence down.
   (await (start-translation-splits! db log))
   ;; ensure-indexes! (not setup-indexes!): it catches index
-  ;; failures so a bad index spec can never crash-loop the
-  ;; process from this fire-and-forget bootstrap path.
+  ;; failures in this optional policy-event index remain isolated.
+  ;; The mandatory run provider below must finish before listening.
   (mongo-policy-store/ensure-indexes! db)
   (await (run-provider-startup/install-mongo! db)))
 
-(defn- ^:async start-mongo-persistence!
-  [runtime app cfg log]
-  (try
-    (let [db (await (mongo-client/init-mongo!))]
-      (when db
-        (.info log "MongoDB connected for session persistence")
-        (await (start-mongo-indexes! db log))
-        ;; Fire-and-forget: must not block startup.
-        ;; Guarded so shadow-cljs hot reload does not spawn
-        ;; recovery jobs as if the Node process had restarted.
-        (agent-resume/resume-on-process-startup! runtime app cfg)
-        (agent-resume/start-periodic-recovery! runtime app cfg)
-        (session-flush/start-periodic-flush! (:run-stale-flush-ms cfg))))
-    (catch :default err
-      (.warn log "MongoDB initialization failed" err))))
+(defn ^:async start-required-persistence!
+  "Connect and install mandatory persistence before opening HTTP or reporting ready."
+  ([log]
+   (await (start-required-persistence!
+           log {:connect! mongo-client/init-mongo! :initialize! start-mongo-indexes!})))
+  ([log {:keys [connect! initialize!]}]
+   (let [db (await (connect!))]
+     (when-not db
+       (throw (ex-info "MongoDB is required before Knoxx can listen"
+                       {:code :run_provider_unavailable})))
+     (await (initialize! db log))
+     db)))
 
-(defn- start-session-persistence!
-  [runtime app cfg log]
-  (start-mongo-persistence! runtime app cfg log))
+(defn- start-session-recovery!
+  [runtime app cfg]
+  ;; These background jobs remain after successful listener startup. Process
+  ;; recovery is guarded so a hot reload cannot replay process-start work.
+  (agent-resume/resume-on-process-startup! runtime app cfg)
+  (agent-resume/start-periodic-recovery! runtime app cfg)
+  (session-flush/start-periodic-flush! (:run-stale-flush-ms cfg)))
 
 (defn- listening-deps
   []
   {:remember-app! lifecycle/remember-app!
    :install-shutdown! graceful-shutdown/install!
    :notify-ready! notify-ready!
-   :start-persistence! start-session-persistence!})
+   :start-recovery! start-session-recovery!})
 
 (defn- handle-app-listening!
   [runtime app cfg {:keys [remember-app! install-shutdown! notify-ready!
-                           start-persistence!]}]
+                           start-recovery!]}]
   (remember-app! app)
   (install-shutdown! app cfg)
+  (start-recovery! runtime app cfg)
   (notify-ready!)
   (let [^js log (.-log app)]
     (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
-    (start-persistence! runtime app cfg log)
     app))
 
 (defn- http-start-deps
@@ -246,34 +247,43 @@
    :register-ws-routes! register-ws-routes-plugin!
    :add-session-hook! add-session-hook!
    :register-http-routes! register-http-routes!
+   :start-persistence! start-required-persistence!
    :listen! http-server/listen!
+   :close! http-server/close!
    :listening (listening-deps)})
 
-(defn ^:async start-http!
-  "Create a fresh Fastify app and bind HTTP routes around durable runtime state.
+(defn- ^:async prepare-http!
+  [runtime app cfg policy-context cookie-hook?
+   {:keys [ensure-json-parser! add-debug-hook! register-default-plugins!
+           register-ws-routes! add-session-hook! register-http-routes!]}]
+  (ensure-json-parser! app)
+  (add-debug-hook! app)
+  (await (register-default-plugins! app))
+  (await (register-ws-routes! runtime app))
+  (await (add-session-hook! app policy-context cookie-hook?))
+  (await (register-http-routes! runtime app cfg policy-context)))
 
-   A CLJS policy context is a composition precondition. The dependency arity
-   makes the route/listen/readiness ordering directly testable without opening
-   a socket."
+(defn ^:async start-http!
+  "Compose routes and mandatory persistence before accepting HTTP or signaling ready.
+
+   Failed startup closes its unpublished app and propagates to the caller."
   ([runtime cfg policy-context cookie-hook?]
-   (await (start-http! runtime cfg policy-context cookie-hook?
-                       (http-start-deps))))
+   (await (start-http! runtime cfg policy-context cookie-hook? (http-start-deps))))
   ([runtime cfg policy-context cookie-hook?
-    {:keys [remember-runtime-context! create-app! ensure-json-parser!
-            add-debug-hook! register-default-plugins! register-ws-routes!
-            add-session-hook! register-http-routes! listen! listening]}]
+    {:keys [remember-runtime-context! create-app! start-persistence! listen! close! listening]
+     :as deps}]
    (when-not (map? policy-context)
      (throw (js/Error. "Knoxx policy context is required before HTTP composition")))
    (remember-runtime-context! runtime cfg policy-context)
    (let [app (create-app!)]
-     (ensure-json-parser! app)
-     (add-debug-hook! app)
-     (await (register-default-plugins! app))
-     (await (register-ws-routes! runtime app))
-     (await (add-session-hook! app policy-context cookie-hook?))
-     (await (register-http-routes! runtime app cfg policy-context))
-     (await (listen! app (:host cfg) (:port cfg)))
-     (handle-app-listening! runtime app cfg listening))))
+     (try
+       (await (prepare-http! runtime app cfg policy-context cookie-hook? deps))
+       (await (start-persistence! (.-log app)))
+       (await (listen! app (:host cfg) (:port cfg)))
+       (handle-app-listening! runtime app cfg listening)
+       (catch :default error
+         (await (close! app))
+         (throw error))))))
 
 (defn ^:async start-policy-http!
   "Create the policy context before allowing HTTP composition to begin.
@@ -313,7 +323,7 @@
     (try
       (await (start-policy-http! cfg cookie-hook? (policy-options)))
       (catch :default err
-        (.error js/console "Knoxx policy DB failed to initialize" err)
+        (.error js/console "Knoxx startup failed before readiness" err)
         (js/process.exit 1)))))
 
 (defn ^:async ^:dev/before-load-async stop-http-before-load!
@@ -340,7 +350,7 @@
   ;; env vars take effect without a full process restart — the durable runtime
   ;; and policy-context handles survive, only the (data) config is refreshed.
   ;; This refresh also flows into the stale-run flush, which start-http! restarts
-  ;; via start-session-persistence!. Event/cron turns already read (cfg) fresh
+  ;; via start-session-recovery!. Event/cron turns already read (cfg) fresh
   ;; per dispatch, so this closes the gap for the HTTP-served path and the flush.
   (let [{:keys [runtime policy-context cookie-hook?]} (lifecycle/context)
         config (contract-runtime-deps/inject-deps!

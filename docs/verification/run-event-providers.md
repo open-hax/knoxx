@@ -20,9 +20,13 @@ The default proof shows:
   sequences and durable reconnect queries after reopen. Heap events and sequence
   fields cannot replace the provider's authoritative history.
 - Unauthorized and cross-tenant durable query requests are refused. These are
-  direct query-port calls; no HTTP listener is exercised in this layer.
+  direct query-port calls; authenticated route selection remains a later layer.
 - The unique Mongo run index must complete before the provider is published;
   the installed event writer handles the first event immediately after startup.
+- The actual HTTP lifecycle waits for mandatory persistence before opening its
+  listener or signaling PM2 readiness. Delayed installation leaves a real Fastify
+  listener closed; missing Mongo or a rejected index closes the unpublished app
+  and propagates failure. Background recovery starts only after successful listen.
 - A queue acknowledgment waits for the run and its first event. Pending turns
   cannot start before their own admission, failed admissions release their exact
   slot, and diagnostic history trimming cannot evict owned runs.
@@ -47,9 +51,11 @@ native execution remains visible; the default proof does not substitute for it.
 ## Layer boundary and limitations
 
 Mongo is the existing bootstrap authority here. Startup awaits the unique run
-index and installs the durable event writer. EDN/Clio providers are exercised
-through explicit provider selection in fixtures. Deployment selection and
-application lifecycle composition remain in the later integration layer.
+index and installs the durable event writer before listening or signaling ready.
+The proof uses controlled connection/index boundaries and an owned Fastify TCP
+listener; it does not launch PM2 or claim deployed startup acceptance. EDN/Clio
+providers are exercised through explicit provider selection in fixtures. Broader
+deployment selection remains in the later integration layer.
 
 The existing HTTP routes and browser are not yet switched to the durable query
 ports in this PR. The verifier prints this limitation every run. The later HTTP
