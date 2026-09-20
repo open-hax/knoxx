@@ -11,6 +11,7 @@
     "test:coverage": "NODE_ENV=test vitest run --config vitest.config.ts --coverage",
     "test:watch": "NODE_ENV=test vitest --config vitest.config.ts",
     "test:cljs": "node ../backend/scripts/run-shadow-tests-ci.mjs test",
+    "test:production-bridge": "node --test scripts/app-bridge-production.test.mjs",
     "lint:cljs:changed": "../scripts/lint-frontend-cljs-changed.sh",
     "migration:compile": "shadow-cljs compile migration-manifest",
     "migration:write": "shadow-cljs compile migration-manifest && node dist/migration/frontend-migration-manifest.cjs --write",
