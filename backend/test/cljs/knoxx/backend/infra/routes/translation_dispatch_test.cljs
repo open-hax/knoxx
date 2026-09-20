@@ -5,6 +5,7 @@
   shapes for several reasons. Which of them resolves a binding, which records a
   failure, and which does neither is decided here — so it is tested here."
   (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.extern.accepted-source-fixture :as accepted-source]
             [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-source-revision :as source-revision]
@@ -187,6 +188,10 @@
         (is (= "translation_publication_not_found" (:code (ex-data error))))))))
 
 (deftest ^:async exact-publication-dispatch-emits-exactly-one-agent-event
+  (await (accepted-source/with-source!
+          {:org-id "org-1" :project "knoxx-session" :document :knoxx.docs/probe}
+          {:accepted true :revision "sha256-aaa111bbb222" :source-locale :en}
+          (^:async fn []
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
@@ -255,9 +260,13 @@
                          [:event/payload :resource-policies :garden_id])))
           (is (not= "knoxx.gardens/a"
                     (get-in event
-                            [:event/payload :resource-policies :garden_id]))))))))
+                            [:event/payload :resource-policies :garden_id])))))))))))
 
 (deftest ^:async a-completed-claim-with-lost-candidate-bytes-is-reopened
+  (await (accepted-source/with-source!
+          {:org-id "org-1" :project "knoxx-session" :document :knoxx.docs/probe}
+          {:accepted true :revision "sha256-aaa111bbb222" :source-locale :en}
+          (^:async fn []
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
@@ -347,7 +356,7 @@
                  (:dispatch/outcome (first (:dispatched result)))))
           (is (= :dispatch/accepted (:dispatch/outcome current)))
           (is (= :candidate-unavailable (:dispatch/recovery-reason current)))
-          (is (not= "old-run" (:dispatch/batch-id current))))))))
+          (is (not= "old-run" (:dispatch/batch-id current)))))))))))
 
 (defn- ^:async seeded-store!
   "A store holding one in-flight claim bound to `batch-1`."

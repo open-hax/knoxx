@@ -62,14 +62,7 @@
 
 (defn- ^:async event-id-exists?
   [client event-id]
-  (let [result (await
-                (openplanner-client/mongo-query!
-                 client
-                 {:collection "events"
-                  :filter {:id event-id}
-                  :projection {:id 1}
-                  :limit 1}))]
-    (boolean (some #(= event-id (:id %)) (:rows result)))))
+  (boolean (await (openplanner-client/event-by-id! client event-id))))
 
 (defn- ^:async existing-event-ids!
   [client event-ids]
@@ -124,7 +117,7 @@
 
 (defn- candidate-backed-receipts
   [receipts]
-  (filterv #(some? (:translation/candidate-set-id %)) receipts))
+  (filterv event/raw-candidate-completion? receipts))
 
 (defn- missing-lineage!
   [kind receipt]
@@ -180,9 +173,9 @@
 
   This seam is intentionally independent of the agent tool replay path. A
   later admission/dispatch pass can call it with the tenant-scoped evidence and
-  split stores plus `{:org-id ... :project ...}`. Legacy worker receipts without
-  split lineage are reported as skipped; every split-backed receipt must still
-  resolve its immutable candidate set and owning turn or repair fails visibly."
+  split stores plus `{:org-id ... :project ...}`. Legacy worker receipts and
+  derived review receipts are reported as skipped. Every raw completion must
+  still resolve and match its immutable candidate set and owning turn."
   [{:keys [evidence-store split-store] :as dependencies} scope]
   (assert-repair-stores! evidence-store split-store)
   (let [client (:openplanner-client dependencies)]

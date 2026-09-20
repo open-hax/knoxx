@@ -6,6 +6,7 @@
   request into a whole-corpus sweep, which is the most expensive thing this
   route can do."
   (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.extern.accepted-source-fixture :as accepted-source]
             [knoxx.backend.extern.fastify.translation-dispatch :as adapter]
             [knoxx.backend.infra.translation-evidence-store :as evidence-store]
             [knoxx.backend.law.openplanner-translation :as openplanner-law]
@@ -325,6 +326,10 @@
         (is (= 200 (:status @response)))))))
 
 (deftest ^:async a-registered-publication-command-narrows-the-real-facade
+  (await (accepted-source/with-source!
+          {:org-id "org-1" :project "review-stage" :document :knoxx.docs/probe}
+          {:accepted true :revision "sha256-aaa111bbb222" :source-locale :en}
+          (^:async fn []
   (let [document {:document/id :knoxx.docs/probe
                   :document/title "Probe"
                   :document/source-locale :en
@@ -433,7 +438,7 @@
         (is (= 1 (get-in @response [:body :admissible])))
         (is (= ["knoxx.publications/probe-es-b"]
                (mapv :id
-                     (get-in @response [:body :dispatched]))))))))
+                     (get-in @response [:body :dispatched])))))))))))
 
 (deftest dispatched-batches-are-filed-in-the-project-the-review-surfaces-read
   ;; With no project the OpenPlanner batch store defaults to "devel", while the
