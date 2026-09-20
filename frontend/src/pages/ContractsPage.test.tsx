@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ContractListItem } from "../lib/api/contracts";
-import ContractsPage from "./ContractsPage";
+import { useContractsController } from "./ContractsPage";
 
 const mockListContracts = vi.fn();
 const mockGetContract = vi.fn();
@@ -153,49 +153,47 @@ beforeEach(() => {
 
 describe("ContractsPage backend interactions", () => {
   it("validates and saves the current EDN draft with the inferred contract id", async () => {
-    render(<ContractsPage />);
-
-    const editor = await screen.findByLabelText("Full contract EDN") as HTMLTextAreaElement;
-    await waitFor(() => expect(editor.value).toContain('"existing_agent"'));
-
-    fireEvent.change(editor, { target: { value: editedEdn } });
-    fireEvent.click(screen.getByRole("button", { name: "✓ Validate" }));
-
-    await screen.findByText("Validation passed.");
+    const { result } = renderHook(useContractsController);
+    await waitFor(() => expect(result.current.state["edn-draft"]).toContain('"existing_agent"'));
+    act(() => result.current.actions["set-draft"](editedEdn));
+    await act(async () => { await result.current.actions.validate(); });
+    expect(result.current.state.notice?.text).toBe("Validation passed.");
     expect(mockValidateContract).toHaveBeenCalledWith(editedEdn, "agents");
-
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await screen.findByText("Saved saved_agent.");
+    await act(async () => { await result.current.actions.save(); });
+    expect(result.current.state.notice?.text).toBe("Saved saved_agent.");
     expect(mockSaveContract).toHaveBeenCalledWith("saved_agent", editedEdn, "agents");
     expect(mockPinContextItem).toHaveBeenCalledWith(expect.objectContaining({
-      id: "contract:existing_agent",
-      path: "/ops/contracts/agents/existing_agent",
+      id: "contract:existing_agent", path: "/ops/contracts/agents/existing_agent",
     }));
   });
 
   it("switches selected contract class when a trigger contract is selected", async () => {
-    render(<ContractsPage />);
-
-    const editor = await screen.findByLabelText("Full contract EDN") as HTMLTextAreaElement;
-    await waitFor(() => expect(editor.value).toContain('"existing_agent"'));
-    fireEvent.click(screen.getByRole("button", { name: /trigger_contract/ }));
-
+    const { result } = renderHook(useContractsController);
+    await waitFor(() => expect(result.current.state["edn-draft"]).toContain('"existing_agent"'));
+    act(() => result.current.actions["select-contract"]("trigger_contract", "triggers"));
     await waitFor(() => expect(mockGetContract).toHaveBeenCalledWith("trigger_contract", "triggers"));
-    await waitFor(() => expect(editor.value).toContain(":contract/kind :trigger"));
+    await waitFor(() => expect(result.current.state["edn-draft"]).toContain(":contract/kind :trigger"));
   });
 
   it("copies the selected contract to a new id and focuses the returned draft", async () => {
-    render(<ContractsPage />);
-
-    const editor = await screen.findByLabelText("Full contract EDN") as HTMLTextAreaElement;
-    await waitFor(() => expect(editor.value).toContain('"existing_agent"'));
-    fireEvent.click(screen.getAllByRole("button", { name: "Clone" })[0]);
-    fireEvent.change(screen.getByPlaceholderText("new-contract-id"), { target: { value: "copy_agent" } });
-    fireEvent.click(screen.getAllByRole("button", { name: "Clone" })[1]);
-
-    await screen.findByText("Copied existing_agent → copy_agent.");
+    const { result } = renderHook(useContractsController);
+    await waitFor(() => expect(result.current.state["edn-draft"]).toContain('"existing_agent"'));
+    act(() => result.current.actions["set-copy-target"]("copy_agent"));
+    await act(async () => { await result.current.actions.copy(); });
+    expect(result.current.state.notice?.text).toBe("Copied existing_agent → copy_agent.");
     expect(mockCopyContract).toHaveBeenCalledWith("existing_agent", "copy_agent", "agents");
-    await waitFor(() => expect(editor.value).toContain('"copy_agent"'));
+    await waitFor(() => expect(result.current.state["edn-draft"]).toContain('"copy_agent"'));
+  });
+
+  it("retains an unsaved draft and clears the busy flag when saving fails", async () => {
+    const { result } = renderHook(useContractsController);
+    await waitFor(() => expect(result.current.state["edn-draft"]).toContain('"existing_agent"'));
+    mockSaveContract.mockRejectedValueOnce(new Error("Ledger refused the update"));
+    act(() => result.current.actions["set-draft"](editedEdn));
+    await act(async () => { await result.current.actions.save(); });
+    expect(result.current.state.notice).toEqual({ tone: "error", text: "Ledger refused the update" });
+    expect(result.current.state["edn-draft"]).toBe(editedEdn);
+    expect(result.current.state["is-dirty"]).toBe(true);
+    expect(result.current.state.saving).toBe(false);
   });
 });
