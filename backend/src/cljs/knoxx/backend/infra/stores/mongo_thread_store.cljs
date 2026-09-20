@@ -1,11 +1,13 @@
 (ns knoxx.backend.infra.stores.mongo-thread-store
   "Explicit Mongo implementation of the finite conversation persistence port."
   (:require [knoxx.backend.domain.thread-store :as domain]
+            [knoxx.backend.domain.thread-recovery :as recovery-domain]
             [knoxx.backend.extern.mongo-thread :as native]
             [knoxx.backend.extern.thread-store :as clock]
             [knoxx.backend.infra.system-instance :as instance]
             [knoxx.backend.law.thread-store :as law]
             [knoxx.backend.domain.startup-admission :as startup-domain]
+            [knoxx.backend.shape.thread-recovery :as recovery]
             [knoxx.backend.shape.thread-store :as protocol]
             [knoxx.backend.shape.startup-admission :as startup]))
 
@@ -84,11 +86,25 @@
               (throw (ex-info "Thread changed repeatedly during startup settlement"
                               {:status 503 :code "thread_store_contention"})))))))))
 
+(defn- ^:async release-recovery! [db observed]
+  (if-let [expected (get (meta observed) recovery/view-key)]
+    (let [id (:session_id observed)
+          current (native/startup-value expected)
+          stamp (clock/stamp id (clock/now-ms) (instance/current-id))
+          proposed (recovery-domain/release current observed true stamp)]
+      (or (await (native/startup-cas! db expected (assoc proposed :system_instance_id (instance/current-id))))
+          (throw (ex-info "Thread changed during recovery release"
+                          {:status 409 :code "thread_recovery_conflict"}))))
+    (throw (ex-info "Recovery requires an original provider read receipt"
+                    {:status 409 :code "thread_recovery_conflict"}))))
+
 (defrecord MongoThreadStore [db]
   startup/IStartupAdmission
   (startup-view [_ id] (native/startup-view! db id))
   (claim-startup! [_ record view] (startup! db :claim record view))
   (settle-startup! [_ record view] (startup! db :settle record view))
+  recovery/IThreadRecovery
+  (release-recovery! [_ observed] (release-recovery! db observed))
   protocol/IThreadStore
   (read-thread [_ id] (native/find-session db id))
   (conversation-thread [_ id] (native/find-session-by-conversation db id))

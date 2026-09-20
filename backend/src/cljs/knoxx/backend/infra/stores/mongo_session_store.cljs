@@ -6,6 +6,7 @@
             [knoxx.backend.infra.stores.mongo-thread-store :as mongo]
             [knoxx.backend.law.thread-store :as law]
             [knoxx.backend.shape.startup-admission :as startup]
+            [knoxx.backend.shape.thread-recovery :as recovery]
             [knoxx.backend.shape.thread-store :as protocol]))
 
 (def SESSION_TTL_SECONDS 3600)
@@ -70,12 +71,13 @@
     (swap! cache-owners select-keys (keys retained))))
 
 (defn- remember! [owner id value]
-  (when (and value (identical? owner (or @provider* (mongo-client/get-db))))
-    (let [now (clock/now-ms)]
-      (swap! cache-owners assoc id owner)
-      (swap! session-cache* assoc id (assoc value :cached-at now))
-      (prune-cache! now)))
-  value)
+  (let [value (when value (vary-meta value assoc recovery/owner-key owner))]
+    (when (and value (identical? owner (or @provider* (mongo-client/get-db))))
+      (let [now (clock/now-ms)]
+        (swap! cache-owners assoc id owner)
+        (swap! session-cache* assoc id (assoc value :cached-at now))
+        (prune-cache! now)))
+    value))
 
 (defn ^:async get-session
   "Read current provider state; stale heap state never overrides durable expiry or revocation."
@@ -138,8 +140,21 @@
   ([db]
    (let [{:keys [provider owner]} (selected db)
          sessions (await (protocol/active-threads provider))]
-     (doseq [session sessions] (remember! owner (:session_id session) session))
-     (filterv #(= "running" (:status %)) sessions))))
+     (->> sessions
+          (mapv #(remember! owner (:session_id %) %))
+          (filterv #(= "running" (:status %)))))))
+
+(defn ^:async release-recovery!
+  "Release the exact receipted snapshot through its currently selected provider."
+  [observed]
+  (let [{:keys [provider owner]} (selected nil)]
+    (when-not (and (identical? owner (get (meta observed) recovery/owner-key))
+                   (satisfies? recovery/IThreadRecovery provider))
+      (throw (ex-info "Recovery snapshot does not belong to the selected provider"
+                      {:status 409 :code "thread_recovery_conflict"})))
+    (let [released (try (await (recovery/release-recovery! provider observed))
+                        (finally (forget! owner (:session_id observed))))]
+      (remember! owner (:session_id observed) released))))
 
 (defn mark-session-streaming!
   "Durably update stream state."
