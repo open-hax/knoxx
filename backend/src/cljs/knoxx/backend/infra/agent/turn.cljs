@@ -2,7 +2,7 @@
   "Main turn orchestrator: send-agent-turn! and supporting lifecycle functions."
   (:require [knoxx.backend.infra.run-event-payload :as run-payload]
             [clojure.string :as str]
-            [knoxx.backend.infra.agent.run-admission :as run-admission]
+            [knoxx.backend.infra.agent.initial-admission :as initial-admission]
             [knoxx.backend.infra.agent.hydration :refer [settings-state* ensure-settings!
                                                                 passive-hydration! passive-memory-hydration!
                                                                 build-agent-user-message
@@ -34,7 +34,6 @@
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.shape.agent :refer [send-user-message! subscribe!]]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
-            [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
@@ -692,36 +691,37 @@
 (defn ^:async hydrate-and-materialize!
   "Run passive hydration, memory hydration, content materialization, and session
    setup in parallel.  Returns a promise that resolves to the 4-element result vector."
-  [runtime config {:keys [conversation-id session-id message mode model-id thinking-level agent-spec auth-context]} content-parts]
+  [runtime config {:keys [conversation-id session-id message mode model-id thinking-level agent-spec auth-context startup-owner] :as context} content-parts]
   (let [max-bytes 32000000]
     (await
      (xpromise/all-vec
       [(passive-hydration! runtime config mode message auth-context)
        (passive-memory-hydration! config conversation-id message auth-context agent-spec)
        (materialize-content-parts! runtime config model-id auth-context max-bytes content-parts)
-       (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)]))))
+       (initial-admission/construct-session! context
+        #(ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec startup-owner))]))))
 
 (defn ^:async send-agent-turn!
   "Orchestrate a full agent turn: validate, hydrate, create run, prompt, and stream.
    Returns a Promise that resolves with the turn response or rejects on error."
   [runtime config {:keys [content-parts] :as turn-request}]
-  (let [ctx (prepare-turn-context runtime config turn-request)
+  (let [ctx (assoc (prepare-turn-context runtime config turn-request) :startup-owner (xturn-node/random-uuid!) :startup-failed* (atom false))
         {:keys [conversation-id session-id run-id started-at started-ms model-id mode
-                thinking-level agent-spec auth-extra seeded-messages message]} ctx]
+                thinking-level agent-spec auth-extra seeded-messages message startup-owner]} ctx]
     ;; Enforce model allow-list and rate limits
     (await (policy/enforce-chat-policy! (:auth-context ctx) model-id))
     (maybe-prime-session-title! runtime config conversation-id message)
     ;; Parallel: hydration, memory, content materialization, session setup
-    (let [hydration-results (await (hydrate-and-materialize! runtime config ctx content-parts))
+    (let [hydration-results (await (initial-admission/hydrate! ctx #(hydrate-and-materialize! runtime config ctx content-parts)))
           start-turn! (process-hydration-results-and-start-turn!
                         runtime config run-id session-id conversation-id started-at started-ms model-id mode thinking-level
-                        agent-spec auth-extra seeded-messages message)]
+                        agent-spec auth-extra seeded-messages message startup-owner)]
       ;; Create run, emit events, and start prompting
       (await (start-turn! hydration-results)))))
 
 (defn- process-hydration-results-and-start-turn!
   [_runtime config run-id session-id conversation-id started-at started-ms model-id mode thinking-level
-   agent-spec auth-extra seeded-messages message]
+   agent-spec auth-extra seeded-messages message startup-owner]
   (^:async fn [[hydration memory-hydration materialized-content-parts session]]
     (let [materialized-content-parts (vec (or materialized-content-parts []))
           turn-message (content/nonblank message)
@@ -730,10 +730,9 @@
                          {:role "user" :content turn-message})
           prompt-content-parts (model-ready-content-parts config model-id materialized-content-parts)
           request-messages (prune-session-messages agent-spec (conj seeded-messages user-message))]
-      (install-openplanner-event-sink! config)
-      (await (run-admission/create-initial-run! run-id session-id conversation-id started-at model-id mode thinking-level
-                                  agent-spec auth-extra request-messages config))
-      (await (run-events/flush! run-id))
+      (await (initial-admission/create-run!
+              {:conversation-id conversation-id :startup-owner startup-owner :sink (install-openplanner-event-sink! config)}
+              [run-id session-id conversation-id started-at model-id mode thinking-level agent-spec auth-extra request-messages config]))
       (when hydration
         (emit-hydration-event! run-id conversation-id session-id "passive_hydration"
                                hydration {:passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results])}))

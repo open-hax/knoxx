@@ -38,6 +38,19 @@ The default proof shows:
   already dispatched, and this boundary does not claim exactly-once control retry.
 - Completed runs and final events persist without OpenPlanner. Its optional
   archival projection remains best effort; durable run persistence fails visibly.
+- Initial run, thread or event refusal releases only the invocation's newly
+  constructed session and exact observer callback. The proof runs actual session
+  construction with an owned provider adapter and real Clio admission. Replacement
+  sessions/observers, established sessions and other pending claimants survive.
+  Failed hydration returns promptly even while session construction is pending;
+  its observed continuation removes the late construction only when no other
+  claimant needs it. Cleanup or diagnostic logging failures cannot mask the
+  original refusal. This does not add provider cancellation or timeouts.
+- `run_started` and `action_task_rendered` broadcasts follow their own durable
+  event flushes. Delayed writes produce no premature broadcast; rejected writes
+  preserve prior accepted facts and publish no refused event. This narrow repair
+  moved forward from private PR341 admission work; no HTTP202 handshake or
+  process-wide OpenPlanner observer activation moves into this provider layer.
 - Spawn failures before admission stay in the private operator log. The proof
   rejects 24 actual turns during hydration, verifies no missing-run events or nil
   registry entries remain, then admits the same run ID successfully. Admitted

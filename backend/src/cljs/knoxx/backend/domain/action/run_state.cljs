@@ -37,6 +37,11 @@
   "Remove the best-effort run event observer."
   []
   (reset! event-stream-sink* nil))
+(defn clear-event-stream-sink-if!
+  "Release one invocation's observer only while its exact callback is still installed."
+  [sink]
+  (when sink (compare-and-set! event-stream-sink* sink nil)))
+
 (defn latest-assistant-message
   "Return the latest assistant message from an opaque agent session."
   [session]
