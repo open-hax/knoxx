@@ -38,6 +38,11 @@
    [:fn {:error/message "a create manifest must contain its exact source document and valid publication references"}
     creation-manifest-valid?]])
 
+(defn operation-key
+  "Observations have a separate identity domain from caller create/save commands."
+  [event]
+  [(if (= :observe (:source/action event)) :observation :command) (:source/id event)])
+
 (def SaveCommand
   "Only source text changes; resource identity and metadata cannot be replaced."
   [:map {:closed true}

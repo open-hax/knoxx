@@ -45,6 +45,25 @@
         command {:operation-id id :expected-revision (:revision current) :content content}]
     {:command command :result (await (authoring/save! config scope actor command dependencies))}))
 
+(test/deftest ^:async caller-save-id-cannot-collide-with-synthetic-observation
+  (await (fixture!
+    (^:async fn [{:keys [directory config dependencies]}]
+      (let [current (await (review/read! config scope dependencies))
+            command {:operation-id (str "observe/" (:revision current))
+                     :expected-revision (:revision current) :content "Accepted collision-safe save."}
+            outcome (await (attempt #(authoring/save! config scope actor command dependencies)))
+            reopened (assoc dependencies :source-provider (sources/open! {:directory directory}))]
+        (test/is (nil? (:error outcome)))
+        (test/is (= :save (get-in outcome [:result :event :source/action])))
+        (test/is (= "Accepted collision-safe save." (get-in outcome [:result :review :content])))
+        (let [retry (await (attempt #(authoring/save! config scope actor command reopened)))
+              history (await (store/source-events! (:source-provider reopened) scope))]
+          (test/is (nil? (:error retry)))
+          (test/is (true? (get-in retry [:result :existing?])))
+          (test/is (= (get-in outcome [:result :event]) (get-in retry [:result :event])))
+          (test/is (= [:observe :save] (mapv :source/action history)))
+          (test/is (= [(:operation-id command) (:operation-id command)] (mapv :source/id history)))))))))
+
 (test/deftest ^:async exact-save-retry-restores-latest-bytes-after-projection-loss-and-reopen
   (await (fixture!
     (^:async fn [{:keys [root directory config dependencies] :as fixture}]
