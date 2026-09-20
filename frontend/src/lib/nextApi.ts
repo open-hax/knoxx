@@ -1,45 +1,9 @@
 export * from "./api";
-import { buildKnoxxAuthHeaders } from "./api";
+import { buildKnoxxAuthHeaders, getKnoxxSessionId, ProxyApiError, sessionRequest } from "./api/core";
+import type { Source as IngestionSource, Job as IngestionJob, IngestionProxySourceAudit as SourceAudit } from "../pages/ingestion-page/types";
+export type { Source as IngestionSource, Job as IngestionJob, IngestionProxySourceAudit as SourceAudit } from "../pages/ingestion-page/types";
+export { ProxyApiError } from "./api/core";
 import type { GraphExportResponse } from './types';
-
-const KNOXX_SESSION_KEY = 'knoxx_session_id';
-
-export class ProxyApiError extends Error {
-  status: number;
-  body: string;
-
-  constructor(status: number, body: string) {
-    super(body || `Proxy request failed: ${status}`);
-    this.status = status;
-    this.body = body;
-    this.name = 'ProxyApiError';
-  }
-}
-
-function getKnoxxSessionId(): string {
-  if (typeof window === 'undefined') return '';
-  let current = sessionStorage.getItem(KNOXX_SESSION_KEY);
-  if (current) return current;
-  current = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  sessionStorage.setItem(KNOXX_SESSION_KEY, current);
-  return current;
-}
-
-async function sessionRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = buildKnoxxAuthHeaders(init?.headers);
-  headers.set('x-knoxx-session-id', getKnoxxSessionId());
-  const res = await fetch(path, {
-    ...init,
-    headers,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new ProxyApiError(res.status, text || `Request failed: ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
 
 export async function fetchDocuments() {
   return sessionRequest<any>('/api/documents');
@@ -278,57 +242,6 @@ export async function fetchGraphExport(params: {
 }
 
 // ── Ingestion proxy API ──────────────────────────────────────────────────
-
-export interface IngestionSource {
-  source_id: string;
-  tenant_id: string;
-  driver_type: string;
-  name: string;
-  config: Record<string, unknown>;
-  state: Record<string, unknown>;
-  collections?: string[];
-  file_types?: string[];
-  include_patterns?: string[];
-  exclude_patterns?: string[];
-  last_scan_at: string | null;
-  last_error: string | null;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface IngestionJob {
-  job_id: string;
-  source_id: string;
-  tenant_id: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  total_files: number;
-  processed_files: number;
-  failed_files: number;
-  skipped_files: number;
-  chunks_created: number;
-  started_at: string | null;
-  completed_at: string | null;
-  error_message: string | null;
-  created_at: string;
-}
-
-export interface SourceAudit {
-  source_id: string;
-  tenant_id: string;
-  driver_type: string;
-  root_path: string | null;
-  collections: string[];
-  file_types: string[];
-  matching_files: number;
-  new_files: number;
-  changed_files: number;
-  unchanged_files: number;
-  state_ingested_files: number;
-  state_failed_files: number;
-  openplanner_documents: number;
-  coverage_delta: number;
-}
 
 async function ingestionRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = buildKnoxxAuthHeaders(init?.headers);

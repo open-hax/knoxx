@@ -12,36 +12,36 @@
 
 (defn safe-get-item
   "Returns the stored string, or nil if missing or storage throws."
-  [key]
+  [storage-key]
   (try
-    (.getItem (local-storage) key)
+    (.getItem (local-storage) storage-key)
     (catch :default _ nil)))
 
 (defn safe-set-item
-  "Stores `value` under `key`. On quota errors, evicts the oldest half of
-   knoxx_-prefixed keys (never `key` itself) and retries once. Returns
+  "Stores `value` under `storage-key`. On quota errors, evicts the oldest half of
+   knoxx_-prefixed keys (never `storage-key` itself) and retries once. Returns
    true when the value was stored, false otherwise."
-  [key value]
+  [storage-key value]
   (let [ls (local-storage)]
     (try
-      (.setItem ls key value)
+      (.setItem ls storage-key value)
       true
       (catch :default _
         (try
           (let [evictable (filterv #(and (str/starts-with? % "knoxx_")
-                                         (not= % key))
+                                         (not= % storage-key))
                                    (all-keys ls))]
             (doseq [k (take (js/Math.floor (/ (count evictable) 2)) evictable)]
               (try (.removeItem ls k) (catch :default _ nil))))
-          (.setItem ls key value)
+          (.setItem ls storage-key value)
           true
           (catch :default _ false))))))
 
 (defn safe-remove-item
-  "Removes `key`; never throws."
-  [key]
+  "Removes `storage-key`; never throws."
+  [storage-key]
   (try
-    (.removeItem (local-storage) key)
+    (.removeItem (local-storage) storage-key)
     (catch :default _ nil))
   nil)
 
