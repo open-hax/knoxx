@@ -1,141 +1,17 @@
+import { ActorIdentityEditors } from "./IdentitySection";
 import { useEffect, useMemo, useState } from 'react';
 import type React from 'react';
-import type { AdminActorCredentialSummary, AdminRoleSummary, AdminToolDefinition, AdminUserSummary } from '../../lib/types';
-import { membershipForOrg, toggleListValue, toolDraftMap } from './helpers';
+import type { AdminRoleSummary, AdminToolDefinition, AdminUserSummary } from '../../lib/types';
+import { CREDENTIAL_DESCRIPTORS, credentialKey, draftProfileForUser, draftCredentialForDescriptor, actorSearchText, membershipForOrg, toggleListValue, toolDraftMap } from './helpers';
 import { Badge, SectionCard } from './common';
-import type { ToolDraftEffect, UserFormState } from './types';
-
-type ActorProfileDraft = {
-  actorId: string;
-  displayName: string;
-  email: string;
-  status: string;
-};
-
-type ActorCredentialDraft = {
-  kind: string;
-  accountIdentifier: string;
-  secretJson: Record<string, string>;
-};
-
-type CredentialDescriptor = {
-  provider: string;
-  label: string;
-  kind: string;
-  accountPlaceholder: string;
-  fields: Array<{ key: string; label: string; secret?: boolean; placeholder?: string }>;
-};
-
-const CREDENTIAL_DESCRIPTORS: CredentialDescriptor[] = [
-  {
-    provider: 'bluesky',
-    label: 'Bluesky',
-    kind: 'app-password',
-    accountPlaceholder: 'handle.bsky.social',
-    fields: [
-      { key: 'identifier', label: 'Identifier / handle', placeholder: 'handle.bsky.social' },
-      { key: 'appPassword', label: 'App password', secret: true, placeholder: 'xxxx-xxxx-xxxx-xxxx' },
-    ],
-  },
-  {
-    provider: 'twitch',
-    label: 'Twitch',
-    kind: 'oauth-login',
-    accountPlaceholder: 'twitch username',
-    fields: [
-      { key: 'username', label: 'Username', placeholder: 'channel_or_login' },
-      { key: 'oauthToken', label: 'OAuth token', secret: true, placeholder: 'oauth:… or raw token' },
-    ],
-  },
-  {
-    provider: 'discord_bot',
-    label: 'Discord bot',
-    kind: 'bot-token',
-    accountPlaceholder: 'bot application/client id',
-    fields: [
-      { key: 'botToken', label: 'Bot token', secret: true, placeholder: 'Bot token' },
-      { key: 'applicationId', label: 'Application ID', placeholder: 'Discord application id' },
-      { key: 'publicKey', label: 'Public key', placeholder: 'Optional interactions public key' },
-    ],
-  },
-  {
-    provider: 'discord_oauth',
-    label: 'Discord OAuth login',
-    kind: 'oauth-login',
-    accountPlaceholder: 'discord user id or username',
-    fields: [
-      { key: 'clientId', label: 'Client ID', placeholder: 'OAuth client id' },
-      { key: 'clientSecret', label: 'Client secret', secret: true, placeholder: 'OAuth client secret' },
-      { key: 'accessToken', label: 'Access token', secret: true, placeholder: 'Optional current access token' },
-      { key: 'refreshToken', label: 'Refresh token', secret: true, placeholder: 'Optional refresh token' },
-    ],
-  },
-];
-
-function credentialForProvider(credentials: AdminActorCredentialSummary[] | undefined, provider: string): AdminActorCredentialSummary | null {
-  return credentials?.find((credential) => credential.provider === provider) ?? null;
-}
-
-function credentialKey(userId: string, provider: string): string {
-  return `${userId}:${provider}`;
-}
-
-function draftProfileForUser(user: AdminUserSummary, selectedOrgId: string): ActorProfileDraft {
-  const membership = membershipForOrg(user, selectedOrgId);
-  return {
-    actorId: membership?.actorId ?? '',
-    displayName: user.displayName ?? '',
-    email: user.email ?? '',
-    status: user.status ?? 'active',
-  };
-}
-
-function draftCredentialForDescriptor(
-  user: AdminUserSummary,
-  descriptor: CredentialDescriptor,
-): ActorCredentialDraft {
-  const current = credentialForProvider(user.credentials, descriptor.provider);
-  return {
-    kind: current?.kind || descriptor.kind,
-    accountIdentifier: current?.accountIdentifier || '',
-    secretJson: descriptor.fields.reduce<Record<string, string>>((acc, field) => {
-      acc[field.key] = current?.secretJson?.[field.key] || '';
-      return acc;
-    }, {}),
-  };
-}
-
-function configuredFieldLabel(current: AdminActorCredentialSummary | null, fieldKey: string): string {
-  return current?.configuredFields.includes(fieldKey) ? 'configured' : 'not set';
-}
-
-function actorSearchText(user: AdminUserSummary, selectedOrgId: string): string {
-  const membership = membershipForOrg(user, selectedOrgId);
-  return [
-    user.displayName,
-    user.email,
-    user.authProvider,
-    user.externalSubject,
-    user.status,
-    membership?.actorId,
-    membership?.status,
-    ...(membership?.roles.map((role) => `${role.slug} ${role.name}`) ?? []),
-    ...(membership?.toolPolicies.map((policy) => `${policy.toolId} ${policy.effect}`) ?? []),
-    ...(user.credentials?.flatMap((credential) => [
-      credential.provider,
-      credential.label,
-      credential.kind,
-      credential.accountIdentifier,
-      ...credential.configuredFields,
-    ]) ?? []),
-  ].filter(Boolean).join(' ').toLowerCase();
-}
+import type { ActorProfileDraft, ActorCredentialDraft, ToolDraftEffect, UserFormState } from './types';
 
 export function UsersMembershipsSection({
   selectedOrgId,
   selectedOrgName,
   canCreateUsers,
   canUpdateMemberships,
+  canUpdateGlobalStatus = false,
   canUpdateUserPolicies,
   users,
   roles,
@@ -158,6 +34,7 @@ export function UsersMembershipsSection({
   selectedOrgName: string;
   canCreateUsers: boolean;
   canUpdateMemberships: boolean;
+  canUpdateGlobalStatus?: boolean;
   canUpdateUserPolicies: boolean;
   users: AdminUserSummary[];
   roles: AdminRoleSummary[];
@@ -244,22 +121,35 @@ export function UsersMembershipsSection({
         <form className="mb-5 grid gap-3 rounded-xl border border-slate-800 bg-slate-900/80 p-4 md:grid-cols-4" onSubmit={onCreateUser}>
           <input
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+            aria-label="New actor ID"
+            disabled={Boolean(userForm.axxiumPrincipalId?.trim())}
             placeholder="actor id, e.g. discord_automation"
             value={userForm.actorId}
             onChange={(event) => setUserForm((current) => ({ ...current, actorId: event.target.value }))}
           />
           <input
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
-            placeholder="email or leave blank for @actors.local"
+            aria-label="New actor contact email"
+            disabled={Boolean(userForm.axxiumPrincipalId?.trim())}
+            placeholder="Optional directory contact email"
             value={userForm.email}
             onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
           />
           <input
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+            aria-label="New actor display name"
             placeholder="Display name"
             value={userForm.displayName}
             onChange={(event) => setUserForm((current) => ({ ...current, displayName: event.target.value }))}
           />
+          <label className="text-xs text-slate-300">
+            Existing Axxium principal ID (optional)
+            <input aria-label="Existing Axxium principal ID (optional)"
+              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
+              value={userForm.axxiumPrincipalId || ''}
+              onChange={event => setUserForm(current => ({ ...current, axxiumPrincipalId: event.target.value }))} />
+            <span className="block mt-2">A verified principal receives membership here. Leave blank to create a directory actor requiring identity enrollment.</span>
+          </label>
           <div>
             <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">Initial roles</div>
             <div className="flex flex-wrap gap-2">
@@ -281,7 +171,7 @@ export function UsersMembershipsSection({
           <div className="md:col-span-4 flex justify-end">
             <button
               type="submit"
-              disabled={creatingUser || (!userForm.email.trim() && !userForm.actorId.trim())}
+              disabled={creatingUser || (!userForm.email.trim() && !userForm.actorId.trim() && !userForm.displayName.trim() && !userForm.axxiumPrincipalId?.trim())}
               className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {creatingUser ? 'Creating…' : `Create actor in ${orgActorLabel}`}
@@ -295,6 +185,7 @@ export function UsersMembershipsSection({
           Search actors
           <input
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 placeholder:text-slate-600"
+            aria-label="Search actors"
             placeholder="Search actor id, email, display name, role, credential provider, tool…"
             value={actorSearch}
             onChange={(event) => setActorSearch(event.target.value)}
@@ -381,137 +272,12 @@ export function UsersMembershipsSection({
 
               {isExpanded ? (
                 <>
-              <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-                  <div className="mb-3 text-sm font-semibold text-slate-100">Actor profile</div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="flex flex-col gap-1 text-xs text-slate-300">
-                      Actor ID
-                      <input
-                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
-                        value={actorDraft.actorId}
-                        onChange={(event) => setActorDrafts((current) => ({
-                          ...current,
-                          [user.id]: { ...actorDraft, actorId: event.target.value },
-                        }))}
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1 text-xs text-slate-300">
-                      Display name
-                      <input
-                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
-                        value={actorDraft.displayName}
-                        onChange={(event) => setActorDrafts((current) => ({
-                          ...current,
-                          [user.id]: { ...actorDraft, displayName: event.target.value },
-                        }))}
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1 text-xs text-slate-300">
-                      Email / login identifier
-                      <input
-                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
-                        value={actorDraft.email}
-                        onChange={(event) => setActorDrafts((current) => ({
-                          ...current,
-                          [user.id]: { ...actorDraft, email: event.target.value },
-                        }))}
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1 text-xs text-slate-300">
-                      Status
-                      <select
-                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
-                        value={actorDraft.status}
-                        onChange={(event) => setActorDrafts((current) => ({
-                          ...current,
-                          [user.id]: { ...actorDraft, status: event.target.value },
-                        }))}
-                      >
-                        <option value="active">active</option>
-                        <option value="disabled">disabled</option>
-                      </select>
-                    </label>
-                  </div>
-                  {canUpdateMemberships ? (
-                    <button
-                      type="button"
-                      onClick={() => void saveActorProfile(user.id)}
-                      disabled={savingActorId === user.id || !actorDraft.actorId.trim() || !actorDraft.email.trim()}
-                      className="mt-4 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-200 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {savingActorId === user.id ? 'Saving…' : 'Save actor profile'}
-                    </button>
-                  ) : null}
-                </div>
-
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-                  <div className="mb-3 text-sm font-semibold text-slate-100">Actor credentials</div>
-                  <div className="space-y-4">
-                    {CREDENTIAL_DESCRIPTORS.map((descriptor) => {
-                      const key = credentialKey(user.id, descriptor.provider);
-                      const draft = credentialDrafts[key] || draftCredentialForDescriptor(user, descriptor);
-                      const current = credentialForProvider(user.credentials, descriptor.provider);
-                      return (
-                        <div key={descriptor.provider} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
-                          <div className="mb-2 flex items-center justify-between gap-3">
-                            <div>
-                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">{descriptor.label}</div>
-                              <div className="text-[11px] text-slate-500">{current ? `Saved ${current.configuredFields.length} field(s)` : 'No credential saved yet'}</div>
-                            </div>
-                            <Badge tone={current ? 'success' : 'default'}>{current ? 'configured' : 'empty'}</Badge>
-                          </div>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <label className="flex flex-col gap-1 text-[11px] text-slate-400 sm:col-span-2">
-                              Account identifier
-                              <input
-                                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                                placeholder={descriptor.accountPlaceholder}
-                                value={draft.accountIdentifier}
-                                onChange={(event) => setCredentialDrafts((currentDrafts) => ({
-                                  ...currentDrafts,
-                                  [key]: { ...draft, accountIdentifier: event.target.value },
-                                }))}
-                              />
-                            </label>
-                            {descriptor.fields.map((field) => (
-                              <label key={field.key} className="flex flex-col gap-1 text-[11px] text-slate-400">
-                                <span className="flex items-center justify-between gap-2">
-                                  {field.label}
-                                  <span className="text-[10px] text-slate-500">{configuredFieldLabel(current, field.key)}</span>
-                                </span>
-                                <input
-                                  type={field.secret ? 'password' : 'text'}
-                                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                                  placeholder={field.placeholder || (field.secret ? 'leave blank to keep saved value' : '')}
-                                  value={draft.secretJson[field.key] || ''}
-                                  onChange={(event) => setCredentialDrafts((currentDrafts) => ({
-                                    ...currentDrafts,
-                                    [key]: {
-                                      ...draft,
-                                      secretJson: { ...draft.secretJson, [field.key]: event.target.value },
-                                    },
-                                  }))}
-                                />
-                              </label>
-                            ))}
-                          </div>
-                          {canUpdateUserPolicies ? (
-                            <button
-                              type="button"
-                              onClick={() => void saveCredential(user.id, descriptor.provider)}
-                              disabled={savingCredential === key}
-                              className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {savingCredential === key ? 'Saving…' : `Save ${descriptor.label}`}
-                            </button>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+              <ActorIdentityEditors user={user} actorDraft={actorDraft} setActorDrafts={setActorDrafts}
+                canUpdateGlobalStatus={canUpdateGlobalStatus} canUpdateMemberships={canUpdateMemberships}
+                canUpdateUserPolicies={canUpdateUserPolicies} savingActorId={savingActorId}
+                saveActorProfile={saveActorProfile} credentialDrafts={credentialDrafts}
+                setCredentialDrafts={setCredentialDrafts} savingCredential={savingCredential}
+                saveCredential={saveCredential} />
 
               <div className="mt-4 grid gap-4 xl:grid-cols-2">
                 <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">

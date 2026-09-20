@@ -1,3 +1,5 @@
+import { errorMessage } from "./helpers";
+import type { AdminCtx } from "../../pages/AdminLayout";
 import React, { useCallback, useEffect, useState } from "react";
 import { Badge, SectionCard } from "./common";
 import type { LakeFormState } from "./types";
@@ -324,5 +326,27 @@ export function DataLakesSection({
         <CreateSourceModal onClose={() => setShowCreateSource(false)} onCreate={handleCreateSource} />
       ) : null}
     </SectionCard>
+  );
+}
+
+const DATA_LAKE_KIND_OPTIONS = ['workspace_docs', 'analytics', 'notes', 'uploads'];
+
+export function AdminLakesPage({ ctx }: { ctx: AdminCtx }) {
+  const handleCreateLake = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!ctx.selectedOrgId) return;
+    ctx.setCreatingLake(true); ctx.setNotice(null);
+    try {
+      await (await import('../../lib/nextApi')).createOrgDataLake(ctx.selectedOrgId, { name: ctx.lakeForm.name.trim(), slug: ctx.lakeForm.slug.trim() || undefined, kind: ctx.lakeForm.kind, config: ctx.lakeForm.workspaceRoot.trim() ? { workspaceRoot: ctx.lakeForm.workspaceRoot.trim() } : {} });
+      ctx.setLakeForm({ name: '', slug: '', kind: 'workspace_docs', workspaceRoot: ctx.selectedOrg ? `orgs/${ctx.selectedOrg.slug}` : '' });
+      ctx.setNotice({ tone: 'success', text: 'Lake created.' }); await ctx.refresh();
+    } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingLake(false); }
+  };
+
+  return (
+    <DataLakesSection
+      selectedOrgName={ctx.selectedOrg?.name || ''} canCreateDataLakes={Boolean(ctx.selectedOrg && ctx.hasPermission('org.datalakes.create'))}
+      lakeForm={ctx.lakeForm} setLakeForm={ctx.setLakeForm} creatingLake={ctx.creatingLake}
+      dataLakes={ctx.dataLakes} dataLakeKindOptions={DATA_LAKE_KIND_OPTIONS} onCreateLake={handleCreateLake}
+    />
   );
 }

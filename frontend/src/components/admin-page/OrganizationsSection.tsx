@@ -1,3 +1,7 @@
+import { createAdminOrg } from "../../lib/nextApi";
+import { errorMessage } from "./helpers";
+import { SelectedOrgSection } from "./SelectedOrgSection";
+import type { AdminCtx } from "../../pages/AdminLayout";
 import type React from 'react';
 import type { AdminOrgSummary, KnoxxAuthContext } from '../../lib/types';
 import { Badge, SectionCard, classNames } from './common';
@@ -101,5 +105,28 @@ export function OrganizationsSection({
         </form>
       ) : null}
     </SectionCard>
+  );
+}
+
+const ORG_KIND_OPTIONS = ['platform_owner', 'customer', 'internal', 'partner'];
+
+export function AdminOrgsPage({ ctx }: { ctx: AdminCtx }) {
+  const handleCreateOrg = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!ctx.hasPermission('platform.org.create')) return;
+    ctx.setCreatingOrg(true); ctx.setNotice(null);
+    try {
+      const r = await createAdminOrg({ name: ctx.orgForm.name.trim(), slug: ctx.orgForm.slug.trim() || undefined, kind: ctx.orgForm.kind });
+      ctx.setOrgForm({ name: '', slug: '', kind: 'customer' });
+      ctx.setNotice({ tone: 'success', text: `Created ${r.org.name}.` }); await ctx.refresh(); ctx.setSelectedOrgId(r.org.id);
+    } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingOrg(false); }
+  };
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+      <OrganizationsSection context={ctx.context} orgs={ctx.orgs} selectedOrgId={ctx.selectedOrgId} setSelectedOrgId={ctx.setSelectedOrgId}
+        canCreateOrgs={ctx.hasPermission('platform.org.create')} orgForm={ctx.orgForm} setOrgForm={ctx.setOrgForm}
+        creatingOrg={ctx.creatingOrg} onCreateOrg={handleCreateOrg} orgKindOptions={ORG_KIND_OPTIONS} />
+      <SelectedOrgSection selectedOrg={ctx.selectedOrg} context={ctx.context} />
+    </div>
   );
 }

@@ -13,7 +13,7 @@
   [ctx]
   (reset! instance ctx))
 
-(defn context-instance ^js []
+(defn context-instance "Return the shared React authentication context." ^js []
   (or @instance
       (reset! instance (react/createContext nil))))
 
