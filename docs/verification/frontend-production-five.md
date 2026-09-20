@@ -16,6 +16,14 @@ source ownership. The inventory gate also compares the file against Git HEAD;
 the correction therefore had to be committed before its final full verification.
 Both obstacles and the final green run are retained in the runtime evidence logs.
 
+The later shell review found another incorrect native-route claim: `/cms/editor/*`
+had been pointed at the generic Wiki page, which does not consume the draft path
+or load and save its visual contract. The shell correction restores the existing
+`VisualCmsEditorPage` bridge route. Its generated inventory row is therefore
+legacy again (seven legacy routes, thirteen native); this corrects the capability
+claim rather than recording a completed native editor migration. No migration
+ratchet is weakened. Apply the shell route correction before checking this inventory.
+
 The full advertised frontend build passes: both Vite bridges, HTML entry, advanced
 Shadow application and Tailwind stylesheet. The advanced build covers 181 files
 with zero warnings. It includes the restored frontend, native Contracts view,

@@ -7,6 +7,12 @@
   []
   (.dispatchEvent js/window (js/window.Event. "knoxx:before-sign-out" #js {:cancelable true})))
 
+(defn navigate!
+  "Ask mounted editors before invoking a programmatic router navigation."
+  [navigate destination]
+  (when (.dispatchEvent js/window (js/window.Event. "knoxx:before-navigate" #js {:cancelable true}))
+    (navigate destination)))
+
 (defn- indexed-state [state]
   (let [index (some-> ^js state .-idx)]
     (when (js/Number.isInteger index) index)))
@@ -57,7 +63,7 @@
       (when (= replace! (.-replaceState (.-history js/window))) (set! (.-replaceState (.-history js/window)) original-replace)))))
 
 (defn install!
-  "Guard links, sign-out, page exit and indexed Back/Forward until cleanup."
+  "Guard links, explicit navigation, sign-out, page exit and indexed Back/Forward."
   [dirty?]
   (let [allow-unload? (atom false)
         approval-timer (atom nil)
@@ -68,17 +74,19 @@
         unload! (fn [^js event]
                   (when (and (dirty?) (not @allow-unload?))
                     (.preventDefault event) (set! (.-returnValue event) "")))
-        sign-out! (fn [^js event] (when-not (confirm!) (.preventDefault event)))
+        leaving! (fn [^js event] (when-not (confirm!) (.preventDefault event)))
         history-pop! (history-listener index restoring? confirm!)
         restore-history! (track-history! index)]
     (.addEventListener js/document "click" click! true)
     (.addEventListener js/window "beforeunload" unload!)
-    (.addEventListener js/window "knoxx:before-sign-out" sign-out!)
+    (.addEventListener js/window "knoxx:before-navigate" leaving!)
+    (.addEventListener js/window "knoxx:before-sign-out" leaving!)
     (.addEventListener js/window "popstate" history-pop! true)
     (fn []
       (.removeEventListener js/document "click" click! true)
       (.removeEventListener js/window "beforeunload" unload!)
-      (.removeEventListener js/window "knoxx:before-sign-out" sign-out!)
+      (.removeEventListener js/window "knoxx:before-navigate" leaving!)
+      (.removeEventListener js/window "knoxx:before-sign-out" leaving!)
       (.removeEventListener js/window "popstate" history-pop! true)
       (when @approval-timer (js/clearTimeout @approval-timer))
       (restore-history!))))

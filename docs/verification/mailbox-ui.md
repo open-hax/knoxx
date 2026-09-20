@@ -15,7 +15,18 @@ success.
 Mailbox SSE refreshes the inventory and an open full-message view; reconnect
 also reconciles current state. Neither path clears the compose draft. Old
 requests cannot overwrite a later filter or message selection, and leaving the
-page closes its live subscription. Navigation guards protect unfinished text.
+page closes its live subscription. Navigation guards protect unfinished text,
+including the card's Open run, Open session and Open event buttons. Cancelling
+the confirmation retains the current form; confirming follows the reference
+and closes the mailbox subscription.
+
+`pnpm -C frontend test:cljs` includes a rendered mailbox test with real router
+navigation for those cancel/confirm paths, plus guard cleanup checks. It also
+checks that `/cms/editor/*` remains bound to the existing visual draft editor;
+the generic Wiki page cannot load or save the draft identified by that URL.
+`pnpm -C frontend exec vitest run --config vitest.config.ts src/pages/VisualCmsEditorPage.test.tsx` exercises
+the editor's draft-path load and save behavior. These checks do not replace
+the live browser acceptance run.
 
 `scripts/mail-browser-tour.mjs` is a supervisor helper: give it a real page,
 the supervisor's disposable principal/Clio storage, screenshot callback and a

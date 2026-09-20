@@ -5,6 +5,7 @@
    mail.view."
   (:require [helix.core :as hx]
             [helix.dom :as d]
+            [knoxx.frontend.infra.navigation-guard :as navigation]
             [knoxx.frontend.pages.mail.card :as card]
             [knoxx.frontend.pages.mail.compose :as compose]
             [knoxx.frontend.pages.mail.controller :as controller]
@@ -104,5 +105,5 @@
            (hx/$ compose/compose-message {:capabilities capabilities :on-sent refresh!})
            (hx/$ full-message {& state})
            (hx/$ mail-entries {:loading loading :error error :box box :entries entries
-                            :acking-id acking-id :on-ack ack! :on-navigate navigate
+                            :acking-id acking-id :on-ack ack! :on-navigate #(navigation/navigate! navigate %)
                             :on-read read! :can-ack? (true? (:acknowledge capabilities))}))))

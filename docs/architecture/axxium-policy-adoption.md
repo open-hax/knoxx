@@ -58,3 +58,17 @@ Native OAuth response composition and MCP SDK/schema/lifetime handling live in
 Provider login configuration and browser credential-management behavior belong
 to Axxium's package documentation. Local issuer and crypto tests do not establish
 that an unconfigured live third-party OAuth consent flow has succeeded.
+
+EDN service-credential lookup requires nonblank organization and membership IDs
+from the authenticated acting scope, and the requested actor must match that
+exact membership. Missing, partial, blank, or mismatched scope returns no
+credential, even when the actor ID has only one owner. An agent specification
+alone cannot establish that scope; credential-backed agent work must enter the
+authenticated actor scope before invoking a tool.
+
+The focused policy proof in `docs/verification/policy-module-recovery.md` runs
+`unique-actor-credentials-require-complete-exact-membership-scope` and
+`agent-spec-alone-cannot-select-another-members-credentials` against real local
+Axxium/Clio state. These regressions seed and remove their own temporary
+directories, exercise the formerly leaking lookup and the agent adapter, and
+also confirm that the exact owner scope still retrieves its credential.

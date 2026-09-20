@@ -48,18 +48,17 @@
       (:llmModel config)
       (:proxx-default-model config)))
 
-(defn- queue-snapshot-from-state [state] (queue-shape/snapshot state))
-
 (defn event-turn-queue-snapshot
   "Return observable, serialization-safe state for the event-agent FIFO."
   []
-  (queue-snapshot-from-state @event-turn-queue*))
+  (queue-shape/snapshot @event-turn-queue*))
 
 (defn reset-event-turn-queue!
   "Reset limiter bookkeeping for tests or a stopped runtime.
-
-   This does not cancel a turn that is already executing."
+   Executing turns retain ownership and are not cancelled."
   []
+  (doseq [entry (:pending @event-turn-queue*)]
+    (run-state/release-owned-run! (:queue-id entry)))
   (reset! event-turn-queue* (initial-event-turn-queue-state))
   (event-turn-queue-snapshot))
 
@@ -173,14 +172,18 @@
           (event-turn-reservation before entry concurrency queue-limit)]
       (cond
         queue-full? result
-        (compare-and-set! event-turn-queue* before after) result
+        (compare-and-set! event-turn-queue* before after)
+        (do (run-state/retain-owned-run! (:queue-id entry) (get-in entry [:body :run-id]))
+          result)
         :else (recur)))))
 
 (defn- release-event-turn! [queue-id]
   (loop []
     (let [before @event-turn-queue*]
       (when-let [{:keys [after next-entry]} (queue-shape/release-entry before queue-id)]
-        (if (compare-and-set! event-turn-queue* before after) next-entry (recur))))))
+        (if (compare-and-set! event-turn-queue* before after)
+          (do (run-state/release-owned-run! queue-id) next-entry)
+          (recur))))))
 
 (defn- accepted-response
   ([body]
@@ -323,6 +326,7 @@
     (catch :default error
       (xrunner/log-async-spawn-error! body error))
     (finally
+      (run-state/release-owned-run! queue-id)
       (when-let [next-entry (release-event-turn! queue-id)]
         (execute-event-turn! next-entry)))))
 
