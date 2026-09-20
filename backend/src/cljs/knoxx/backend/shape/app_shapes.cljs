@@ -261,7 +261,7 @@
    - a plain function  → classic-mode (no preHandlers)
    - a JS options obj  → preHandler-mode from defroute macro;
      its keys are merged into the base route options so that
-     @fastify/websocket receives a proper :handler fn, not a
+     the @fastify/websocket plugin receives a proper :handler fn, not a
      nested object (which causes `handler.call is not a function`)."
   [app method url handler-or-opts]
   (if (fn? handler-or-opts)
