@@ -1,10 +1,10 @@
 (ns knoxx.frontend.pages.translations.review-controls
   "Reusable controls for the legacy and resource granular review cards."
-  (:require [helix.core :refer [defnc]]
+  (:require [helix.core :as hx]
             [helix.dom :as d]
             [knoxx.frontend.pages.translations.review-contract :as review-contract]))
 
-(defnc score-fields
+(hx/defnc score-fields
   "Render the closed adequacy, fluency, terminology, and risk selectors."
   [{:keys [form on-change]}]
   (d/div {:class-name "grid gap-3"}
@@ -14,7 +14,7 @@
                              "mb-1 block font-medium capitalize text-slate-200"}
                             (name field))
                     (d/select
-                     {:value (get form field)
+                     {:aria-label (name field) :value (get form field)
                       :on-change #(on-change
                                    (assoc form field (.. % -target -value)))
                       :class-name
@@ -29,7 +29,7 @@
            (d/span {:class-name "mb-1 block font-medium text-slate-200"}
                    label)
            (d/textarea
-            {:value (or value "")
+            {:aria-label label :value (or value "")
              :on-change on-change
              :rows rows
              :placeholder placeholder
