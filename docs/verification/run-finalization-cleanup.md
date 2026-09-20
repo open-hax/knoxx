@@ -15,6 +15,21 @@ visible to the caller. Provider messages and unrelated error data never enter
 that secondary diagnostic. Successful finalizer responses retain their
 existing shape and transcript behavior.
 
+The refusal regression enters the actual completion selector with either a
+`required-first` tool obligation and no tool receipt, or an empty assistant
+output. It pauses each mandatory write separately: the ordered event append and
+the final run snapshot. Before either write settles, neither the response nor the
+WebSocket `run_failed` publication may escape. Successful settlement persists the
+failed run before exactly one publication; a rejected write remains visible to
+the caller, emits no WebSocket failure event, and still completes the thread,
+clears the observer and removes the active agent session in order.
+
+The event and snapshot are separate durable operations. A snapshot rejection can
+leave its already accepted failure event in the ledger; this proof does not claim
+cross-operation rollback. The best-effort OpenPlanner observer remains outside
+the WebSocket publication guarantee. The verifier selects these regressions
+through `extern.turn-finalization-test` without any additional flags.
+
 The startup proof delays or rejects each titles/temp-memory cache index. Required
 persistence cannot finish or publish the run provider until both indexes complete.
 The two cache reader facades also deliver provider failures asynchronously in both

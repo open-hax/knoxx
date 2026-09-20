@@ -236,12 +236,12 @@
                     run-id {:total_time_ms (- (.now js/Date) started-ms)
                             :error err-text :reason reason})]
     (append-run-event! run-id failed-event)
-    (broadcast-ws-session! session-id "events" failed-event)
     (await (finalization/settle!
             {:run-id run-id :conversation-id conversation-id :session-id session-id}
             (^:async fn []
               (when failed-run
-                (await (openplanner-memory/index-run-memory! config failed-run extract-mentioned-devel-paths extract-mentioned-urls))))
+                (await (openplanner-memory/index-run-memory! config failed-run extract-mentioned-devel-paths extract-mentioned-urls)))
+              (broadcast-ws-session! session-id "events" failed-event))
             #(finalization/complete! session agent-spec session-id conversation-id
                                     {:status "failed" :error err-text} persisted-request-messages)))
     (assoc (build-turn-completed-response run-id conversation-id session-id model-id ""
