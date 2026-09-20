@@ -1,3 +1,4 @@
+import type { EventAgentControlResponse } from "./admin";
 import { request } from "./core";
 import type { ContractsClass } from "../types";
 
@@ -268,3 +269,70 @@ export const THINKING_OPTIONS = [
   "high",
   "xhigh",
 ] as const;
+
+export interface ContractSidebarEntry {
+  id: string;
+  contractClass: ContractsClass;
+  label: string;
+  title?: string;
+  version?: number;
+  status: "running" | "idle" | "disabled" | "error" | "unknown";
+  triggerKind: string;
+  sourceKind: string;
+  model?: string;
+  lastStatus?: string;
+  isContract: boolean;       // true if from contracts list
+  isRuntimeJob: boolean;     // true if from event-agent runtime
+  enabled: boolean;
+}
+
+export function mergeContractEntries(contracts: ContractListItem[], agentControl: EventAgentControlResponse | null): ContractSidebarEntry[] {
+  // Build merged entries
+  const runtimeJobs = agentControl?.runtime?.jobs ?? [];
+  const controlJobs = agentControl?.control?.jobs ?? [];
+
+  const entries: ContractSidebarEntry[] = [];
+
+  // From stored contracts
+  for (const c of contracts) {
+    const runtimeJob = c.contractClass === "agents" ? runtimeJobs.find((j) => j.id === c.id) : undefined;
+    const controlJob = c.contractClass === "agents" ? controlJobs.find((j) => j.id === c.id) : undefined;
+    const isRunning = runtimeJob?.running ?? false;
+    const isEnabled = controlJob?.enabled ?? c.enabled;
+
+    entries.push({
+      id: c.id,
+      contractClass: c.contractClass,
+      label: c.id,
+      title: c.title,
+      version: c.version,
+      status: isEnabled ? (isRunning ? "running" : "idle") : "disabled",
+      triggerKind: controlJob?.trigger?.kind ?? c.contractClass.slice(0, -1),
+      sourceKind: controlJob?.source?.kind ?? c.contractClass,
+      model: undefined,
+      lastStatus: runtimeJob?.lastStatus,
+      isContract: true,
+      isRuntimeJob: Boolean(runtimeJob),
+      enabled: isEnabled,
+    });
+  }
+
+  // Runtime-only jobs (only applicable to agents)
+  for (const j of runtimeJobs) {
+    if (entries.some((e) => e.id === j.id && e.contractClass === "agents")) continue;
+    entries.push({
+      id: j.id,
+      contractClass: "agents",
+      label: j.id,
+      status: j.running ? "running" : "idle",
+      triggerKind: "event",
+      sourceKind: "unknown",
+      lastStatus: j.lastStatus,
+      isContract: false,
+      isRuntimeJob: true,
+      enabled: true,
+    });
+  }
+
+  return Array.from(new Map(entries.map((entry) => [`${entry.contractClass}:${entry.id}`, entry] as const)).values());
+}

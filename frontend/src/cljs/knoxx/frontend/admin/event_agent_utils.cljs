@@ -51,14 +51,14 @@
 (defn compact-text
   "Compact text to a max length, appending ellipsis if truncated."
   ([value] (compact-text value 120))
-  ([value max]
+  ([value maximum]
    (let [normalized (-> (str (or value ""))
                          (str/replace #"\s+" " ")
                          str/trim)]
      (cond
        (empty? normalized) "No description"
-       (<= (count normalized) max) normalized
-       :else (str (subs normalized 0 (dec max)) "…")))))
+       (<= (count normalized) maximum) normalized
+       :else (str (subs normalized 0 (dec maximum)) "…")))))
 
 (defn normalize-search
   "Lowercase and trim a search string."
