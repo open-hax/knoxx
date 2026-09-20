@@ -6,6 +6,7 @@
             [knoxx.backend.extern.source-authoring :as files]
             [knoxx.backend.infra.publication-source-revision :as revisions]
             [knoxx.backend.infra.routes.publications :as publications]
+            [knoxx.backend.infra.source-authoring-store :as sources]
             [knoxx.backend.infra.source-projection-health :as health]
             [knoxx.backend.infra.source-review-store :as store]
             [knoxx.backend.law.source-review :as law]
@@ -63,6 +64,20 @@
   (let [provider (provider! dependencies)
         observed (await (observed-source! config scope))]
     (await (review-observed! scope provider dependencies observed))))
+(defn ^:async read-recovered-source!
+  "Read actual repaired bytes using an accepted creation's scoped document authority."
+  [config scope dependencies]
+  (law/assert-valid! :source-review/scope law/Scope scope)
+  (let [source-provider (:source-provider dependencies)]
+    (when-not (satisfies? sources/ISourceAuthoringStore source-provider)
+      (refuse! 503 "source_authoring_provider_unavailable" "Recovery requires accepted source history"))
+    (let [events (sources/validated-history scope (await (sources/source-events! source-provider scope)))]
+      (when-not (= :create (:source/action (first events)))
+        (refuse! 409 "source_authoring_creation_required" "Recovery requires an accepted creation manifest"))
+      (let [document (:source/document (peek events))
+            path (await (revisions/canonical-document-path! (revisions/source-root config) document))
+            observed (await (observe-declared-source! scope {:document document :path path}))]
+        (await (review-observed! scope (provider! dependencies) dependencies observed))))))
 (defn ^:async command!
   "Validate the real current revision, then let the store atomically check its review head."
   [config scope actor command dependencies]

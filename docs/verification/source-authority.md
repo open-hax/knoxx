@@ -26,6 +26,10 @@ document. The same ID can name separate operations in those scopes. After
 reopening and intervening work, a server-time-only retry returns the original
 fact with `existing? true`; conflicting content is refused without appending.
 These providers keep domain IDs distinct from ledger-global explicit Clio IDs.
+Within a source scope, observations and caller create/save commands use separate
+operation keys. Existing observation facts keep their stored string IDs, but a
+caller may use the same string for a save without colliding with the observation.
+The regression saves with `observe/<current revision>` and reopens/retries it.
 
 Clio observers can select stream names and provider-declared scope. Scoped
 listeners receive only the matching stream name; operation arguments, results
@@ -52,6 +56,17 @@ construction, admission and replay: a namespace, the exact source document and
 one or more schema-valid publications referring to that document. Interrupted creation retains the document and its
 publication intents through ledger reopening, while missing or malformed manifests
 leave the durable ledger empty.
+
+An already accepted create is checked against its original actor, content, title,
+source locale and publication destinations before consulting any mutable garden.
+The accepted manifest supplies its recovery metadata even if that garden is now
+archived, no longer supports a locale, or was removed. New creates still require
+current garden admission. After repair, the retry reads actual source bytes and
+validates its accepted source history and review history; it does not require a
+now-missing garden to reconstruct its original receipt. Ordinary publication
+topology validation remains unchanged. The proof interrupts initial projection,
+changes each garden condition, reopens the ledger, repairs both files and checks
+that no additional source fact was appended. Changed commands and actors refuse.
 
 Document sequencing retains each operation's result or rejection. Cleanup of a
 completed predecessor cannot remove a pending successor, and a rejected write

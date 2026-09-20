@@ -29,4 +29,5 @@ printf '%s\n' \
   'PASS explicit-ID no-ops retain their original result; failed document writes preserve successor sequencing.' \
   'PASS stream/scope observers receive only selected stream names; observer failures cannot undo durable writes.' \
   'PASS source reads and saves use matching provenance; malformed wire locales and incomplete create facts are refused.' \
+  'PASS accepted creates recover after garden changes; synthetic observations cannot collide with caller save IDs.' \
   'WARN Wiki HTTP, agent tools, provider composition, password login and browser workflows arrive in later layers.'

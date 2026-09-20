@@ -36,7 +36,7 @@
   (review/assert-valid! :source-authoring/scope review/Scope scope)
   (when-not (vector? events) (refuse! "source_authoring_history_invalid" "Source history must be ordered"))
   (reduce (fn [history event]
-            (when (some #(= (:source/id event) (:source/id %)) history)
+            (when (some #(= (law/operation-key event) (law/operation-key %)) history)
               (refuse! "source_authoring_duplicate_operation" "Source operation already exists"))
             (append-event history scope event)) [] events))
 (defn admit-in-state [state scope expected-revision event]
@@ -44,7 +44,7 @@
   (when-not (= expected-revision (:source/previous-revision event))
     (refuse! "source_authoring_stale_revision" "Source predecessor differs from requested CAS"))
   (let [events (validated-history scope (get state scope []))
-        existing (some #(when (= (:source/id event) (:source/id %)) %) events)]
+        existing (some #(when (= (law/operation-key event) (law/operation-key %)) %) events)]
     (if existing
       (if (= (dissoc existing :source/recorded-at) (dissoc event :source/recorded-at))
         [state {:existing? true :event existing}]

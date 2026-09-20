@@ -19,7 +19,7 @@
   (when-not (and (:document/org-id document) (= (:org-id scope) (:document/org-id document)))
     (refuse! 403 "source_authoring_owner_required" "Writing a source requires explicit document ownership")) document)
 (defn- existing-operation [events command]
-  (some #(when (= (:operation-id command) (:source/id %)) %) events))
+  (some #(when (= [:command (:operation-id command)] (law/operation-key %)) %) events))
 (defn- assert-save-retry! [event actor command]
   (when-not (= [actor (:expected-revision command) (:content command) :save]
                [(:source/actor event) (:source/previous-revision event) (:source/content event) (:source/action event)])
@@ -74,10 +74,13 @@
   (review-law/assert-valid! :source-authoring/actor review-law/Actor actor)
   (review-law/assert-valid! :source-authoring/save law/SaveCommand command)
   (await (files/with-document-lock! scope #(save-locked! config scope actor command dependencies))))
-(defn- assert-create-retry! [event actor command resources]
-  (when-not (= [actor (:content command) (:resource resources) (:manifest resources) :create]
-               [(:source/actor event) (:source/content event) (:source/document event) (:source/manifest event) (:source/action event)])
-    (refuse! 409 "source_authoring_operation_conflict" "Create identity has different content or destinations")))
+(defn- assert-create-retry! [event actor command]
+  (let [document (:source/document event) publications (rest (get-in event [:source/manifest :resources]))]
+    (when-not (= [actor (:content command) (:title command) (:source-locale command) #{(:garden command)}
+                  (set (cons (:source-locale command) (:target-locales command))) :create]
+                 [(:source/actor event) (:source/content event) (:document/title document) (:document/source-locale document)
+                  (set (map :publication/garden publications)) (set (map :publication/locale publications)) (:source/action event)])
+      (refuse! 409 "source_authoring_operation_conflict" "Create identity has different content or destinations"))))
 (defn- ^:async project-creation! [config resources events]
   (let [root (revisions/source-root config) contract-root (contracts/contracts-dir-path config)
         relative (:manifest-path resources) manifest-file (await (files/contained-path! contract-root relative))
@@ -86,29 +89,36 @@
       (refuse! 409 "source_manifest_conflict" "Creation manifest has different identity or resource siblings"))
     (await (project-latest! root events))
     (when-not current (await (files/write-text! contract-root relative (files/manifest-text (:manifest resources)))))))
-(defn- ^:async create-locked! [config scope actor command resources dependencies]
+(defn- ^:async create-locked! [config scope actor command identity dependencies]
   (let [provider (provider! dependencies) events (await (store/source-events! provider scope))
-        admission (if-let [existing (existing-operation events command)]
-                    (do (assert-create-retry! existing actor command resources) {:existing? true :event existing})
-                    (do
-                      (when (seq events) (refuse! 409 "source_authoring_identity_conflict" "This document already has source history"))
+        existing (existing-operation events command)
+        resources (if existing
+                    (do (assert-create-retry! existing actor command)
+                        (assoc identity :resource (:source/document existing) :manifest (:source/manifest existing)))
+                    (do (when (seq events)
+                          (refuse! 409 "source_authoring_identity_conflict" "This document already has source history"))
+                        (let [index (await (publications/publication-index! config))]
+                          (domain/creation-resources scope command (get-in index [:gardens (:garden command)])))))
+        admission (if existing {:existing? true :event existing}
                       (let [event (domain/source-event scope actor (:operation-id command) :create nil
                                                        (:resource resources) (:content command)
                                                        (revisions/content-revision (:content command))
                                                        ((:now! dependencies)) (:manifest resources))]
-                        (await (store/admit-source! provider scope nil event)))))]
-    (await (project-creation! config resources (await (store/source-events! provider scope))))
-    (await (result! config scope dependencies admission))))
+                        (await (store/admit-source! provider scope nil event))))
+        current (await (store/source-events! provider scope))]
+    (await (project-creation! config resources current))
+    (if existing
+      (assoc admission :review (await (review/read-recovered-source! config scope dependencies)))
+      (await (result! config scope dependencies admission)))))
 (defn ^:async create!
   "Choose an explicit garden/locales and admit full bytes before projecting its resource."
   [config scope actor command dependencies]
   (review-law/assert-valid! :source-authoring/actor review-law/Actor actor)
   (review-law/assert-valid! :source-authoring/create law/CreateCommand command)
-  (let [index (await (publications/publication-index! config))
-        resources (domain/creation-resources scope command (get-in index [:gardens (:garden command)]))
-        scope (assoc scope :document (:document resources))]
+  (let [identity (domain/creation-identity scope command)
+        scope (assoc scope :document (:document identity))]
     (review-law/assert-valid! :source-authoring/scope review-law/Scope scope)
-    (await (files/with-document-lock! scope #(create-locked! config scope actor command resources dependencies)))))
+    (await (files/with-document-lock! scope #(create-locked! config scope actor command identity dependencies)))))
 (defn list! "List the actual scoped resource document inventory." [config scope _dependencies]
   (publications/list-publication-documents! config scope))
 (defn ^:async assist-input!
