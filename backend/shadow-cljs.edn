@@ -199,6 +199,21 @@
                         :readManifest knoxx.backend.extern.wiki-verification/read-manifest}}}
    :compiler-options {:output-feature-set :es-next :optimizations :simple
                       :source-map true :warnings-as-errors true}}
+  ;; Release this target to verify the real app route graph under :simple ESM.
+  ;; Its fixture export is absent from the production server graph.
+  :route-registration-proof
+  {:target :esm
+   :runtime :node
+   :output-dir "dist-route-registration-proof"
+   :modules {:proof {:exports {:createApp knoxx.backend.extern.route-registration-proof/create-app!}}}
+   :js-options {:js-provider :import
+                :keep-as-import #{"puppeteer-core" "@modelcontextprotocol/sdk"
+                                  "node:child_process" "node:fs/promises" "node:crypto"
+                                  "node:fs" "node:path" "node:url" "@open-hax/eta-mu-cli"
+                                  "discord.js" "@discordjs/voice" "libsodium-wrappers"}}
+   :compiler-options {:output-feature-set :es-next :optimizations :simple
+                      :source-map true :infer-externs false}}
+
   :cms-history-tour
   {:target :node-script,
    :output-to "target/cms-history-tour.cjs",
