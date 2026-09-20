@@ -5,7 +5,7 @@
             [knoxx.backend.extern.thread-store :as clock]
             [knoxx.backend.infra.system-instance :as instance]
             [knoxx.backend.law.thread-store :as law]
-            [knoxx.backend.law.startup-admission :as startup-law]
+            [knoxx.backend.domain.startup-admission :as startup-domain]
             [knoxx.backend.shape.thread-store :as protocol]
             [knoxx.backend.shape.startup-admission :as startup]))
 
@@ -71,7 +71,7 @@
   (loop [attempt 0]
     (let [view (await (native/startup-view! db (:session_id record)))
           current (native/startup-value view)
-          proposed (startup-law/decide :thread phase current (some? current)
+          proposed (startup-domain/decide :thread phase current (some? current)
                                        (native/same-startup-view? view expected) record)]
       (if-not proposed {:settled? false :reason :superseded}
         (do

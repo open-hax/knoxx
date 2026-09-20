@@ -2,6 +2,7 @@
   "Owned startup attempts and conditional compensation across independent providers."
   (:require [knoxx.backend.domain.action.run-state :as state]
             [knoxx.backend.domain.error-observatory :as errors]
+            [knoxx.backend.domain.startup-admission :as domain]
             [knoxx.backend.law.startup-admission :as law]
             [knoxx.backend.shape.startup-admission :as port]))
 
@@ -39,7 +40,7 @@
     (let [result (await (port/settle-startup! store record view))
           current (get @state/runs* (:run_id record))]
       (when (and current (:startup_failure result) (law/same-owner? current record))
-        (state/update-run! (:run_id record) #(law/failed-record % record)))
+        (state/update-run! (:run_id record) #(domain/failed-record % record)))
       result)
     (catch :default _failure (observe-unconfirmed! record))))
 

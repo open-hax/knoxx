@@ -2,7 +2,7 @@
   "Pure run and ordered event transitions. Expiry hides views, never accepted facts."
   (:require [knoxx.backend.law.run-event :as event-law]
             [knoxx.backend.law.run-store :as law]
-            [knoxx.backend.law.startup-admission :as startup]
+            [knoxx.backend.domain.startup-admission :as startup]
             [knoxx.backend.shape.session-persistence :as contract]))
 
 (def empty-state {:runs {} :events {} :bindings {}})

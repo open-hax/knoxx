@@ -1,7 +1,7 @@
 (ns knoxx.backend.domain.thread-store
   "Pure conversation transitions, uniqueness, expiry, and transcript rewind."
   (:require [knoxx.backend.law.thread-store :as law]
-            [knoxx.backend.law.startup-admission :as startup]))
+            [knoxx.backend.domain.startup-admission :as startup]))
 
 (def empty-state {:threads {} :versions {}})
 (def active-statuses law/active-statuses)
