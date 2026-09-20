@@ -1,11 +1,11 @@
 (ns knoxx.frontend.uxx-renderer-parity-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require ["react-dom/server" :as rds]
+            [cljs.test :as t]
             [open-hax.uxx.markup :as markup]
             [open-hax.uxx.render.helix :as helix]
-            [open-hax.uxx.render.html :as html]
-            ["react-dom/server" :as rds]))
+            [open-hax.uxx.render.html :as html]))
 
-(def fixture
+(def ^:private fixture
   [:section {:id "fixture" :class ["shell" {:active true}]}
    [:h1 {} "Shared <markup>"]
    [:<> [:p {:key "first"} "one"]
@@ -46,17 +46,17 @@
     (set! (.-innerHTML template) source)
     (node-shape (.-content template))))
 
-(deftest portable-fixture-has-HTML-React-parity
+(t/deftest portable-fixture-has-HTML-React-parity
   (let [direct (html-shape (html/render fixture))
         react (html-shape (rds/renderToStaticMarkup (helix/render fixture)))]
-    (is (= direct react))))
+    (t/is (= direct react))))
 
-(deftest React-adapter-keeps-portable-safety-boundary
-  (testing "browser event handlers are not smuggled through the portable AST"
-    (is (thrown? js/Error (helix/render [:button {:onClick (fn [])} "bad"]))))
-  (testing "URL policy is shared with the server renderer"
-    (is (thrown? js/Error (helix/render [:a {:href "javascript:alert(1)"} "bad"]))))
-  (testing "reviewed raw HTML is explicit and parent-owned"
+(t/deftest React-adapter-keeps-portable-safety-boundary
+  (t/testing "browser event handlers are not smuggled through the portable AST"
+    (t/is (thrown? js/Error (helix/render [:button {:onClick (fn [])} "bad"]))))
+  (t/testing "URL policy is shared with the server renderer"
+    (t/is (thrown? js/Error (helix/render [:a {:href "javascript:alert(1)"} "bad"]))))
+  (t/testing "reviewed raw HTML is explicit and parent-owned"
     (let [node [:div {} (markup/raw-html (markup/trusted-html "<em>ok</em>"))]]
-      (is (= "<div><em>ok</em></div>"
+      (t/is (= "<div><em>ok</em></div>"
              (rds/renderToStaticMarkup (helix/render node)))))))
