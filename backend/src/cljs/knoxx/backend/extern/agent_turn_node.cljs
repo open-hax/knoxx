@@ -37,5 +37,5 @@
   "Report the native admission error without changing the exception being propagated."
   [session-id error]
   (.error js/console "[turn] failed to persist initial session"
-          (clj->js {:session-id session-id :error (ex-message error)
-                    :error-data (or (ex-data error) {})})))
+          (clj->js {:session-id session-id
+                    :error-data (select-keys (or (ex-data error) {}) [:status :code])})))

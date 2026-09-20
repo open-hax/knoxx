@@ -106,7 +106,8 @@ that limitation and preserve a resumable handoff; do not promise background work
 
 ## Completion and output
 
-An individual merge task is complete only after GitHub confirms that PR merged.
+An individual merge task is complete only after GitHub confirms that PR merged
+and the required review/fix loop is closed, including any early-merge recovery.
 An authorized stack is complete only after every in-scope PR merged, unless the
 user changes the scope. A draft, review request, green suite, resolved-thread
 list, or enabled auto-merge is an intermediate state. Report merged PR/commit

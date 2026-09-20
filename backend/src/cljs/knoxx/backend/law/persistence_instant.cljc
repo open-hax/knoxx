@@ -32,12 +32,12 @@
            day (parse-long (subs value 8 10))
            hour (parse-long (subs value 11 13))
            minute (parse-long (subs value 14 16))
-           second (parse-long (subs value 17 19))]
+           sec (parse-long (subs value 17 19))]
        (and (<= 1 month 12)
             (<= 1 day (days-in-month year month))
             (<= 0 hour 23)
             (<= 0 minute 59)
-            (<= 0 second 59))))))
+            (<= 0 sec 59))))))
 
 (def Instant
   "A calendar-valid UTC timestamp in the existing persistence wire format."

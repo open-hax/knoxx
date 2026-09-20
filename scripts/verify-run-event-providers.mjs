@@ -1,7 +1,8 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
 import { testEnvironment } from '../backend/scripts/shadow-test-environment.mjs';
+import { runProofProcess } from '../backend/scripts/run-proof-process.mjs';
 
 const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const backend = join(root, 'backend');
@@ -15,27 +16,8 @@ if (revision.status !== 0) throw new Error('Run this verifier in its Git checkou
 console.log('Verifying current checkout ' + revision.stdout.trim());
 
 function run(command, commandArgs, environment) {
-  return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, commandArgs, {
-      cwd: backend, env: testEnvironment({ ...process.env, ...environment }),
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-    let output = '';
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, 300_000);
-    for (const stream of [child.stdout, child.stderr]) {
-      stream.on('data', chunk => { output += chunk.toString(); process.stdout.write(chunk); });
-    }
-    child.once('error', error => { clearTimeout(timer); rejectRun(error); });
-    child.once('close', (code, signal) => {
-      clearTimeout(timer);
-      if (timedOut || code !== 0 || output.includes('[shadow-test-guard] FATAL')) {
-        rejectRun(new Error(command + ' failed: code=' + code + ', signal=' + signal + ', timedOut=' + timedOut));
-      } else resolveRun(output);
-    });
+  return runProofProcess(command, commandArgs, {
+    cwd: backend, env: testEnvironment({ ...process.env, ...environment })
   });
 }
 
