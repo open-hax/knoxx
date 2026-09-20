@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.clients.openplanner-clio
   "Canonical Clio OpenPlanner driver with real, repairable local embeddings."
-  (:require [clojure.string :as str]
+  (:require [clio.shape.canonical :as canonical]
+            [clojure.string :as str]
             [knoxx.backend.domain.local-openplanner-events :as events]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.extern.local-openplanner :as host]
@@ -104,12 +105,21 @@
 (defn- ^:async upsert-document! [provider document]
   (law/scope! document)
   (law/assert-valid! [:map [:id law/NonBlank] [:content law/NonBlank]] document)
-  (let [id (str "document-" (crypto/sha256-hex (pr-str [(:org_id document) (:id document) (:content document)])))
-        previous (await (read-query! provider {:kind :event :id id}))
-        event (or previous {:id id :schema "openplanner.event.v1" :ts (now provider)
+  (let [rows (await (read-query! provider {:kind :events :opts (select-keys document [:org_id :project])}))
+        current-id (:id (last (filter #(and (= "document" (:kind %))
+                                            (= (:id document) (get-in % [:extra :document_id]))
+                                            (= (:project document) (events/event-project %))
+                                            (= (:garden_id document) (get-in % [:extra :garden_id]))) rows)))
+        previous (when current-id (await (read-query! provider {:kind :event :id current-id})))
+        extra (assoc document :document_id (:id document))
+        unchanged? (= extra (:extra previous))
+        id (if unchanged? current-id
+               (str "document-" (crypto/sha256-hex (canonical/canonical-edn [document current-id]))))
+        event (if unchanged? previous
+                  {:id id :schema "openplanner.event.v1" :ts (now provider)
                             :source (or (:source document) "knoxx") :kind "document"
                             :text (:content document) :source_ref {:project (:project document)}
-                            :extra (assoc document :document_id (:id document))})]
+                            :extra extra})]
     (await (ingest! provider [event]))
     {:ok true :document document :indexed true}))
 

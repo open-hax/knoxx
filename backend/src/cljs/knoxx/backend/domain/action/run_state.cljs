@@ -9,6 +9,7 @@
   runs* (atom {}))
 (defonce ^{:doc "Most recent run IDs in retention order."}
   run-order* (atom []))
+(defonce ^:private run-owners* (atom {}))
 (defonce ^{:doc "Process-owned bounded retrieval timing samples."}
   retrieval-stats* (atom {:samples []
                                  :avgRetrievalMs 0
@@ -50,20 +51,36 @@
      :output_tokens (or (aget usage "output") 0)}))
 
 (def MAX_RUNS
-  "Maximum retained run records." 200)
+  "Maximum diagnostic run records, excluding runs retained by bounded queue owners." 200)
+
+(defn- prune-unowned-runs! []
+  (let [retained (into (set @run-order*) (vals @run-owners*))]
+    (swap! runs* #(select-keys % retained))))
+
+(defn retain-owned-run!
+  "Pin a run for one admitted queue owner; the caller must bound and release ownership."
+  [owner-id run-id]
+  (swap! run-owners* assoc owner-id run-id)
+  nil)
+
+(defn release-owned-run!
+  "Release one exact owner, then prune runs absent from diagnostic retention."
+  [owner-id]
+  (swap! run-owners* dissoc owner-id)
+  (prune-unowned-runs!)
+  nil)
 
 (defn store-run!
-  "Store a normalized run and keep heap keys bounded by the retained run order."
+  "Store a normalized run within diagnostic retention plus admitted queue ownership."
   [run-id run]
   (let [clean (run-record/normalize-run run)]
     (swap! runs* assoc run-id clean)
-    (let [live-order (swap! run-order*
-                            (fn [order]
-                              (->> (cons run-id (remove #{run-id} order))
-                                   (take MAX_RUNS)
-                                   vec)))]
-      (when (> (count @runs*) MAX_RUNS)
-        (swap! runs* #(select-keys % live-order))))
+    (swap! run-order*
+           (fn [order]
+             (->> (cons run-id (remove #{run-id} order))
+                  (take MAX_RUNS)
+                  vec)))
+    (prune-unowned-runs!)
     clean))
 
 (defn summarize-run
