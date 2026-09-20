@@ -11,9 +11,10 @@
             [:type NonBlank] [:at Instant]])
 (def Stamp [:map {:closed true} [:at Instant] [:at-ms Milliseconds]
             [:expires-ms Milliseconds] [:instance-id NonBlank]])
-(def Operation [:map {:closed true} [:kind [:enum :put :patch :delete :event]]
+(def Operation [:map {:closed true} [:kind [:enum :put :patch :delete :event :startup]]
                 [:run-id NonBlank] [:stamp Stamp]
                 [:run {:optional true} :map] [:patch {:optional true} :map]
+                [:phase {:optional true} [:enum :claim :settle]] [:expected {:optional true} :map]
                 [:event {:optional true} Event] [:event-id {:optional true} NonBlank]])
 (def ttl-ms (* 2 60 60 1000))
 

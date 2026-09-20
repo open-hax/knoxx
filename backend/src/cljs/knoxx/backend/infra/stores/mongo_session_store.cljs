@@ -37,6 +37,11 @@
                 {:provider (mongo/create-store handle) :owner handle}
                 (throw (ex-info "Thread persistence is not initialized" {:status 503 :code "thread_provider_unavailable"})))))
 
+(defn startup-provider
+  "Return the currently selected conversation provider for conditional startup admission."
+  []
+  (:provider (selected nil)))
+
 (defn- forget! [owner id]
   (when (identical? owner (get @cache-owners id))
     (swap! cache-owners dissoc id)

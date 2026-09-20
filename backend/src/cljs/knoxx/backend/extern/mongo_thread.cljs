@@ -1,6 +1,8 @@
 (ns knoxx.backend.extern.mongo-thread
   "Named Mongo native boundary for conversation documents and indexes."
-  (:require [clojure.string :as str]
+  (:require ["mongodb" :refer [BSON]]
+            ["node:crypto" :as crypto]
+            [clojure.string :as str]
             [knoxx.backend.law.thread-store :as law]))
 
 (def COLLECTION_NAME "knoxx_threads")
@@ -18,7 +20,7 @@
       ;; portable expiry so caching cannot grant it another full lifetime.
       (when (and (js/Number.isFinite expiry) (> expiry (.now js/Date)))
         (-> (js->clj native :keywordize-keys true)
-            (dissoc :_id :createdAt :updatedAt)
+            (dissoc :_id :createdAt :updatedAt :startup_cas_token)
             (assoc :expiresAt (.toISOString (js/Date. expiry))))))))
 
 (defn- live-query [fields]
@@ -123,3 +125,57 @@
     (await (.createIndex coll #js {"org_id" 1}))
     (await (.createIndex coll #js {"status" 1}))
     (await (.createIndex coll #js {"expiresAt" 1} #js {"expireAfterSeconds" 0}))))
+
+(defn ^:async startup-view!
+  "Capture an opaque primary BSON preimage, including metadata and expired rows."
+  [db id]
+  {:native (await (.findOne (.collection db COLLECTION_NAME) #js {"session_id" id}
+                            #js {"readPreference" "primary"}))})
+
+(defn startup-value
+  "Expose only the live portable conversation from an opaque startup preimage."
+  [view]
+  (decode-session (:native view)))
+
+(defn same-startup-view?
+  "Compare the exact BSON preimages without promoting driver metadata to domain data."
+  [left right]
+  (let [a (:native left) b (:native right)]
+    (if (and a b) (.equals (.serialize BSON a) (.serialize BSON b)) (= a b))))
+
+(defn- startup-document [view record]
+  (let [now (js/Date.) old (:native view)
+        visible (decode-session old)
+        created (if visible (aget old "createdAt") now)
+        expires (if (and visible (= (:startup_token visible) (:startup_token record)))
+                  (aget old "expiresAt")
+                  (js/Date. (+ (.getTime now) (* 1000 (session-ttl-seconds (:session_id record))))))
+        document (clj->js (assoc (dissoc record :_id :createdAt :updatedAt)
+                                  :createdAt created :updatedAt now :expiresAt expires
+                                  :startup_cas_token (crypto/randomUUID)))]
+    (when old (aset document "_id" (aget old "_id")))
+    document))
+
+(defn ^:async startup-cas!
+  "Journal a full-preimage startup claim/fence; a late old write cannot overwrite it."
+  [db view record]
+  (let [coll (.collection db COLLECTION_NAME) old (:native view)
+        document (startup-document view record)
+        options #js {"writeConcern" #js {"w" "majority" "j" true}}]
+    (try
+      (if old
+        (let [query #js {"_id" (aget old "_id")
+                        "$expr" #js {"$eq" #js ["$$ROOT" #js {"$literal" old}]}}
+              _ (when (> (+ (.calculateObjectSize BSON query) (.calculateObjectSize BSON document) 4096)
+                         (* 16 1024 1024))
+                  (throw (ex-info "Thread startup CAS exceeds its bounded command size"
+                                  {:status 413 :code "thread_startup_too_large"})))
+              result (await (.replaceOne coll query document options))]
+          (when (= 1 (.-matchedCount result)) (decode-session document)))
+        (do
+          (when (> (+ (.calculateObjectSize BSON document) 4096) (* 16 1024 1024))
+            (throw (ex-info "Thread startup record exceeds its bounded size"
+                            {:status 413 :code "thread_startup_too_large"})))
+          (await (.insertOne coll document options)) (decode-session document)))
+      (catch :default error
+        (if (duplicate-key? error) nil (throw error))))))

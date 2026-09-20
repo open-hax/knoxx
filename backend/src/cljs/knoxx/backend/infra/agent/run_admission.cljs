@@ -5,6 +5,8 @@
             [knoxx.backend.domain.agent.run-admission :as data]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.extern.agent-turn-node :as host]
+            [knoxx.backend.infra.agent.startup-settlement :as startup]
+            [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.infra.run-event-payload :refer [tool-event-payload]]
             [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]))
@@ -23,14 +25,6 @@
       (await (run-events/flush! run-id))
       (broadcast-ws-session! session-id "events" task-event))))
 
-(defn- ^:async persist-initial-session!
-  [session-payload session-id]
-  (try
-    (await (session-store/put-session! session-payload))
-    (catch :default err
-      (host/log-initial-session-failure! session-id err)
-      (throw err))))
-
 (defn- ^:async publish-run-started! [run-id conversation-id session-id mode model-id thinking-level]
   (let [event (tool-event-payload run-id conversation-id session-id "run_started"
                                   {:status "running" :mode mode :model model-id :thinking_level thinking-level})]
@@ -38,27 +32,40 @@
     (await (run-events/flush! run-id))
     (broadcast-ws-session! session-id "events" event)))
 
+(defn- initial-thread [base-run agent-spec auth-extra request-messages token]
+  (merge (cond-> (assoc (select-keys base-run [:run_id :session_id :conversation_id :status :model :mode
+                                              :thinking_level :created_at :updated_at])
+                         :has_active_stream false :messages request-messages :startup_token token)
+           agent-spec (assoc :agent_spec (data/agent-spec-summary agent-spec))) auth-extra))
+
+(defn- ^:async create-owned-run! [base-run thread before-prompt! agent-spec mode thinking-level]
+  (let [run-id (:run_id base-run) session-id (:session_id base-run)
+        run-receipt (await (startup/prepare! @registry/session-store* run-id (dissoc base-run :events)))
+        thread-receipt (await (startup/prepare! (session-store/startup-provider) session-id thread))
+        attempted* (atom [])]
+    (await (startup/attempt!
+            attempted*
+            (^:async fn []
+              (await (run-events/flush! run-id))
+              (await (startup/claim! attempted* run-receipt))
+              (await (startup/claim! attempted* thread-receipt))
+              (store-run! run-id base-run)
+              (await (publish-run-started! run-id (:conversation_id base-run) session-id mode (:model base-run) thinking-level))
+              (await (emit-action-task-rendered-event! run-id (:conversation_id base-run) session-id agent-spec))
+              (await (before-prompt!)))))))
+
 (defn ^:async create-initial-run!
-  "Await run, thread and startup event admission before their live publication."
-  [run-id session-id conversation-id started-at model-id mode thinking-level
-   agent-spec auth-extra request-messages config]
-  (let [base-run (data/build-initial-run run-id session-id conversation-id started-at model-id mode thinking-level
-                                    agent-spec auth-extra request-messages config)]
-    (await (run-events/persist-run! base-run))
-    (await (persist-initial-session! (merge (cond-> {:session_id session-id
-                                              :conversation_id conversation-id
-                                              :run_id run-id
-                                              :status "running"
-                                              :model model-id
-                                              :mode mode
-                                              :thinking_level thinking-level
-                                              :created_at started-at
-                                              :updated_at started-at
-                                              :has_active_stream false
-                                              :messages request-messages}
-                                       agent-spec (assoc :agent_spec (data/agent-spec-summary agent-spec)))
-                                     auth-extra)
-                              session-id))
-    (store-run! run-id base-run)
-    (await (publish-run-started! run-id conversation-id session-id mode model-id thinking-level))
-    (await (emit-action-task-rendered-event! run-id conversation-id session-id agent-spec))))
+  "Admit startup and its continuation, conditionally settling any partial failure."
+  ([run-id session-id conversation-id started-at model-id mode thinking-level
+    agent-spec auth-extra request-messages config]
+   (await (create-initial-run! run-id session-id conversation-id started-at model-id mode thinking-level
+                               agent-spec auth-extra request-messages config (fn []))))
+  ([run-id session-id conversation-id started-at model-id mode thinking-level
+    agent-spec auth-extra request-messages config before-prompt!]
+   (let [token (or (get config startup/reservation-key) (host/random-uuid!))
+         base-run (assoc (data/build-initial-run run-id session-id conversation-id started-at model-id mode thinking-level
+                                                  agent-spec auth-extra request-messages config)
+                         :startup_token token)
+         thread (assoc (initial-thread base-run agent-spec auth-extra request-messages token)
+                        :mode mode :thinking_level thinking-level)]
+     (await (create-owned-run! base-run thread before-prompt! agent-spec mode thinking-level)))))

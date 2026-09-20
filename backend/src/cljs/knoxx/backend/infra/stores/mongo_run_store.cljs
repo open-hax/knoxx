@@ -12,7 +12,8 @@
             [knoxx.backend.law.run-event :as event-law]
             [knoxx.backend.law.run-store :as law]
             [knoxx.backend.shape.run-directory :as directory-port]
-            [knoxx.backend.shape.session-persistence :as protocol]))
+            [knoxx.backend.shape.session-persistence :as protocol]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (defn- sample [store] (host/stamp ((:clock! store)) (:instance-id store)))
 
@@ -83,6 +84,12 @@
              (domain/visible-run (snapshot/restore record run-id) run-id at)) records) scope)))
 
 (defrecord MongoRunStore [db clock! instance-id]
+  startup/IStartupAdmission
+  (startup-view [store id] ((^:async fn [] (domain/startup-view (await (read-state! store id)) id))))
+  (claim-startup! [store record view]
+    (mutate! store {:kind :startup :phase :claim :run-id (:run_id record) :run record :expected view}))
+  (settle-startup! [store record view]
+    (mutate! store {:kind :startup :phase :settle :run-id (:run_id record) :run record :expected view}))
   protocol/ISessionStore
   (put-run! [store run] (mutate! store {:kind :put :run-id (:run_id run) :run run}))
   (get-run [store id] (visible! store id))

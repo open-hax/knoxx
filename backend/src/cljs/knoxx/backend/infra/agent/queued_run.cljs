@@ -3,6 +3,8 @@
   (:require [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.time :as time]
             [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.agent.startup-settlement :as startup]
+            [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.infra.run-event-payload :as run-payload]
             [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.shape.event-turn-queue :as queue-shape]))
@@ -57,8 +59,14 @@
   (let [run-id (:run-id body)
         run (merge (event-queue-run config body queue-result status event-type error)
                    (authz/auth-snapshot (:auth-context body)))
-        event (first (:events run))]
-    (await (run-events/persist-run! run))
-    (run-state/store-run! run-id (assoc run :events []))
-    (run-state/append-run-event! run-id event)
-    (await (run-events/flush! run-id))))
+        run (assoc run :startup_token (get config startup/reservation-key))
+        event (first (:events run))
+        receipt (await (startup/prepare! @registry/session-store* run-id (dissoc run :events)))
+        attempted* (atom [])]
+    (await (startup/attempt!
+            attempted*
+            (^:async fn []
+              (await (startup/claim! attempted* receipt))
+              (run-state/store-run! run-id (assoc run :events []))
+              (run-state/append-run-event! run-id event)
+              (await (run-events/flush! run-id)))))))

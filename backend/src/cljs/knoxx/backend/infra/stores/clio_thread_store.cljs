@@ -5,7 +5,8 @@
             [knoxx.backend.infra.stores.thread-store-reference :as reference]
             [knoxx.backend.infra.system-instance :as instance]
             [knoxx.backend.law.thread-store :as law]
-            [knoxx.backend.shape.thread-store :as protocol]))
+            [knoxx.backend.shape.thread-store :as protocol]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (defn- ^:async mutate!
   [{:keys [engine directory now-ms instance-id]} operation]
@@ -19,6 +20,12 @@
                   (await (clio/read! engine :thread/read [thread-id (now-ms)])))))))))
 
 (defrecord ClioThreadStore [engine directory now-ms instance-id]
+  startup/IStartupAdmission
+  (startup-view [_ id] (clio/read! engine :thread/startup-view [id]))
+  (claim-startup! [store record view]
+    (mutate! store {:kind :startup :phase :claim :thread-id (:session_id record) :thread record :expected view}))
+  (settle-startup! [store record view]
+    (mutate! store {:kind :startup :phase :settle :thread-id (:session_id record) :thread record :expected view}))
   protocol/IThreadStore
   (read-thread [_ thread-id] (clio/read! engine :thread/read [thread-id (now-ms)]))
   (conversation-thread [_ conversation-id] (clio/read! engine :thread/conversation [conversation-id (now-ms)]))

@@ -8,7 +8,8 @@
             [knoxx.backend.infra.clio-application-store :as clio]
             [knoxx.backend.infra.system-instance :as instance]
             [knoxx.backend.shape.run-directory :as directory-port]
-            [knoxx.backend.shape.session-persistence :as protocol]))
+            [knoxx.backend.shape.session-persistence :as protocol]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (defn- projection []
   (let [state (atom domain/empty-state)] {:store state :snapshot #(deref state)}))
@@ -23,6 +24,12 @@
           (fn [] (clio/write! (:engine store) :run/admit [(assoc operation :stamp (sample store))])))))
 
 (defrecord ClioRunStore [engine directory clock! instance-id]
+  startup/IStartupAdmission
+  (startup-view [_ id] (clio/read! engine :run/startup-view [id]))
+  (claim-startup! [store record view]
+    (mutate! store {:kind :startup :phase :claim :run-id (:run_id record) :run record :expected view}))
+  (settle-startup! [store record view]
+    (mutate! store {:kind :startup :phase :settle :run-id (:run_id record) :run record :expected view}))
   protocol/ISessionStore
   (put-run! [store run] (mutate! store {:kind :put :run-id (:run_id run) :run run}))
   (get-run [store run-id] (clio/read! engine :run/read [run-id (:at-ms (sample store))]))
@@ -49,7 +56,8 @@
   (let [instance-id (or instance-id (instance/current-id))
         _ (host/stamp (clock!) instance-id)
         engine (clio/open! {:directory directory :stream "knoxx/runs" :projection projection
-                            :reads {:run/read (fn [state id at] (domain/visible-run @state id at))
+                            :reads {:run/startup-view (fn [state id] (domain/startup-view @state id))
+                                    :run/read (fn [state id at] (domain/visible-run @state id at))
                                     :run/active (fn [state id at] (domain/active-runs @state id at))
                                     :run/directory (fn [state scope at] (directory-view/visible @state scope at))
                                     :run/events (fn [state id since at] (domain/events-since @state id since at))}

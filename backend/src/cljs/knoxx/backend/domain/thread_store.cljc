@@ -1,6 +1,7 @@
 (ns knoxx.backend.domain.thread-store
   "Pure conversation transitions, uniqueness, expiry, and transcript rewind."
-  (:require [knoxx.backend.law.thread-store :as law]))
+  (:require [knoxx.backend.law.thread-store :as law]
+            [knoxx.backend.law.startup-admission :as startup]))
 
 (def empty-state {:threads {} :versions {}})
 (def active-statuses law/active-statuses)
@@ -81,10 +82,23 @@
       (-> state (assoc-in [:threads thread-id] entry)
           (update-in [:versions thread-id] (fnil inc 0))))))
 
+(defn startup-view
+  "Capture a conversation preimage and version for exact conditional admission."
+  [state id]
+  {:entry (get-in state [:threads id]) :version (get-in state [:versions id] 0)})
+
+(defn- startup-state [state {:keys [thread-id thread stamp phase expected]}]
+  (let [current (visible-thread state thread-id (:at-ms stamp))
+        proposed (startup/decide :thread phase current (some? current)
+                                 (= expected (startup-view state thread-id)) thread)]
+    (if proposed (install state thread-id proposed stamp) state)))
+
 (defn- mutate
-  [state {:keys [kind thread-id thread patch stamp turns]}]
+  [state {:keys [kind thread-id thread patch stamp turns] :as operation}]
   (let [current (visible-thread state thread-id (:at-ms stamp))]
     (case kind
+      :startup (startup-state state {:kind kind :thread-id thread-id :thread thread :stamp stamp
+                                     :phase (:phase operation) :expected (:expected operation)})
       :put (install state thread-id (merge current thread) stamp)
       :patch (install state thread-id
                       (merge {:session_id thread-id} current patch {:updated_at (:at-ms stamp)}) stamp)

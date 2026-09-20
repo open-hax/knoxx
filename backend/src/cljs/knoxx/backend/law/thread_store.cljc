@@ -47,6 +47,8 @@
    [:fn #(< (:at-ms %) (:expires-ms %))]])
 (def Operation
   [:multi {:dispatch :kind}
+   [:startup [:map {:closed true} [:kind [:= :startup]] [:thread-id NonBlank]
+              [:thread Thread] [:expected :map] [:phase [:enum :claim :settle]] [:stamp Stamp]]]
    [:put [:map {:closed true} [:kind [:= :put]] [:thread-id NonBlank] [:thread Thread] [:stamp Stamp]]]
    [:patch [:map {:closed true} [:kind [:= :patch]] [:thread-id NonBlank] [:patch DataMap] [:stamp Stamp]]]
    [:rewind [:map {:closed true} [:kind [:= :rewind]] [:thread-id NonBlank]

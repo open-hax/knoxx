@@ -13,6 +13,7 @@
 
 (def reads
   "All finite read operations evaluate one explicitly supplied view clock."
-  {:thread/read (fn [state thread-id at] (domain/visible-thread @state thread-id at))
+  {:thread/startup-view (fn [state id] (domain/startup-view @state id))
+   :thread/read (fn [state thread-id at] (domain/visible-thread @state thread-id at))
    :thread/conversation (fn [state conversation-id at] (domain/conversation-thread @state conversation-id at))
    :thread/active (fn [state at] (domain/active-threads @state at))})

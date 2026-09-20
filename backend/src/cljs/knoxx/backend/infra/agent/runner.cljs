@@ -11,6 +11,7 @@
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.infra.agent.policy :as agent-policy]
             [knoxx.backend.infra.agent.queued-run :as queued-run]
+            [knoxx.backend.infra.agent.startup-settlement :as startup]
             [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.extern.event-turn-admission :as admission]
             [knoxx.backend.shape.event-turn-queue :as queue-shape]
@@ -484,7 +485,8 @@
   Await this result. The reservation precedes I/O; a promoted pending entry waits
   for its own admission before starting. Durable event replay owns restart recovery."
   [config body start-turn!]
-  (let [{:keys [concurrency queue-limit]} (event-queue-settings config)
+  (let [config (assoc config startup/reservation-key (or (get config startup/reservation-key) (xturn-node/random-uuid!)))
+        {:keys [concurrency queue-limit]} (event-queue-settings config)
         gate (admission/gate)
         entry {:queue-id (xturn-node/random-uuid!) :body body :admission (:promise gate)
                :event-turn-timeout-ms (:event-agent-turn-timeout-ms config) :start-turn! start-turn!}
@@ -503,11 +505,10 @@
   [runtime config body]
   (await (agent-policy/validate-chat-policy! (:auth-context body) (policy-model config body)))
   (if (event-triggered-turn? body)
-    (await (enqueue-event-turn!
-            config body
-            (fn []
-              (agent-turns/send-agent-turn!
-               runtime (event-turn-config config) body))))
+    (let [config (assoc (event-turn-config config) startup/reservation-key (xturn-node/random-uuid!))]
+      (await (enqueue-event-turn!
+              config body
+              (fn [] (agent-turns/send-agent-turn! runtime config body)))))
     (do
       (send-turn-and-record! runtime config body)
       (accepted-response body))))

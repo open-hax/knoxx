@@ -3,8 +3,7 @@
   (:require [knoxx.backend.domain.action.run-state :as state]
             [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.infra.agent.session :as sessions]
-            [knoxx.backend.infra.agent.run-admission :as admission]
-            [knoxx.backend.infra.run-events :as events]))
+            [knoxx.backend.infra.agent.run-admission :as admission]))
 
 (defn- release! [{:keys [conversation-id startup-owner sink]}]
   (try
@@ -55,9 +54,8 @@
     (catch :default failure (refuse! context failure))))
 
 (defn ^:async create-run!
-  "Create and flush the initial run inside its startup ownership boundary."
-  [context arguments]
-  (await (admit! context
-                 (^:async fn []
-                   (await (apply admission/create-initial-run! arguments))
-                   (await (events/flush! (first arguments)))))))
+  "Keep startup facts and the pre-prompt continuation inside one ownership boundary."
+  ([context arguments] (await (create-run! context arguments (fn []))))
+  ([context arguments before-prompt!]
+   (await (admit! context
+                  (fn [] (apply admission/create-initial-run! (conj (vec arguments) before-prompt!)))))))

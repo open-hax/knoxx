@@ -5,7 +5,9 @@
             [knoxx.backend.extern.thread-store :as clock]
             [knoxx.backend.infra.system-instance :as instance]
             [knoxx.backend.law.thread-store :as law]
-            [knoxx.backend.shape.thread-store :as protocol]))
+            [knoxx.backend.law.startup-admission :as startup-law]
+            [knoxx.backend.shape.thread-store :as protocol]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (defn- ^:async write-fields! [db fields observed]
   (try {:written (await (native/upsert-session! db fields observed))}
@@ -65,7 +67,28 @@
                 (throw (ex-info "Thread changed repeatedly during rewind"
                                 {:status 503 :code "thread_store_contention"}))))))))))
 
+(defn- ^:async startup! [db phase record expected]
+  (loop [attempt 0]
+    (let [view (await (native/startup-view! db (:session_id record)))
+          current (native/startup-value view)
+          proposed (startup-law/decide :thread phase current (some? current)
+                                       (native/same-startup-view? view expected) record)]
+      (if-not proposed {:settled? false :reason :superseded}
+        (do
+          (domain/assert-identity! current proposed (:session_id record))
+          (law/assert-valid! :thread/value law/Thread proposed)
+          (if-let [written (await (native/startup-cas! db view
+                                  (assoc proposed :system_instance_id (instance/current-id))))]
+            written
+            (if (< attempt 31) (recur (inc attempt))
+              (throw (ex-info "Thread changed repeatedly during startup settlement"
+                              {:status 503 :code "thread_store_contention"})))))))))
+
 (defrecord MongoThreadStore [db]
+  startup/IStartupAdmission
+  (startup-view [_ id] (native/startup-view! db id))
+  (claim-startup! [_ record view] (startup! db :claim record view))
+  (settle-startup! [_ record view] (startup! db :settle record view))
   protocol/IThreadStore
   (read-thread [_ id] (native/find-session db id))
   (conversation-thread [_ id] (native/find-session-by-conversation db id))

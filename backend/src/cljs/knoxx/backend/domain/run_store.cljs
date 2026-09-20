@@ -2,6 +2,7 @@
   "Pure run and ordered event transitions. Expiry hides views, never accepted facts."
   (:require [knoxx.backend.law.run-event :as event-law]
             [knoxx.backend.law.run-store :as law]
+            [knoxx.backend.law.startup-admission :as startup]
             [knoxx.backend.shape.session-persistence :as contract]))
 
 (def empty-state {:runs {} :events {} :bindings {}})
@@ -60,6 +61,17 @@
       [(-> state (update-in [:events run-id] (fnil conj []) accepted)
            (assoc-in [:runs run-id :expires-ms] (:expires-ms stamp))) accepted])))
 
+(defn startup-view
+  "Capture bounded run authority without loading its event history."
+  [state id]
+  {:entry (get-in state [:runs id]) :binding (get-in state [:bindings id])})
+
+(defn- startup-transition [state {:keys [run-id run stamp phase expected]}]
+  (let [view (startup-view state run-id) current (get-in view [:entry :run])
+        proposed (startup/decide :run phase current (some? (:binding view)) (= expected view) run)]
+    (if proposed (install state run-id proposed stamp)
+      [state {:settled? false :reason :superseded}])))
+
 (defn transition
   "Admit one finite stamped operation with no host effects or implicit upserts."
   [state {:keys [kind run-id stamp run patch] :as operation}]
@@ -67,6 +79,7 @@
   (when-not (= law/ttl-ms (- (:expires-ms stamp) (:at-ms stamp)))
     (law/conflict! "Run expiry differs from its declared TTL"))
   (case kind
+    :startup (startup-transition state operation)
     :put (install state run-id run stamp)
     :patch (do (when (some #(contains? patch %) [:events :run_events :sequence])
                  (law/conflict! "Ordered events require their dedicated admission method"))
