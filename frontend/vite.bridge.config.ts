@@ -8,6 +8,7 @@ export default defineConfig({
     jsxDev: false,
   },
   build: {
+    copyPublicDir: false,
     // Do not emit source maps for shadow-consumed bridge files. shadow-cljs
     // follows source map metadata when file-resolving ESM and can rehydrate
     // dev JSX (`jsxDEV`) into the optimized bundle, which crashes under the

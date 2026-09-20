@@ -64,7 +64,7 @@
    ;; node-test harness uses __dirname (CommonJS). A .js output would be loaded
    ;; as ESM and crash on __dirname.
    :output-to "dist/test/frontend-tests.cjs"
-   :ns-regex ["knoxx.frontend.*-test$"]
+   :ns-regexp "^knoxx\\.frontend\\..*-test$"
    :autorun true
    ;; jsdom globals MUST exist before react-dom's module load: React
    ;; feature-detects event support at load time, and without a document it
