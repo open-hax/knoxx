@@ -51,6 +51,12 @@ The default proof shows:
   preserve prior accepted facts and publish no refused event. This narrow repair
   moved forward from private PR341 admission work; no HTTP202 handshake or
   process-wide OpenPlanner observer activation moves into this provider layer.
+- Passive and memory hydration events also flush before their broadcasts and
+  before model execution. The actual turn proof delays and rejects each write
+  independently against real Clio replay. A rejected write preserves the original
+  error, never invokes the provider, and releases its startup session and sink.
+  Hydration publication stays inside initial admission, before claim promotion;
+  this ordering alone does not claim atomic rollback of earlier durable writes.
 - Spawn failures before admission stay in the private operator log. The proof
   rejects 24 actual turns during hydration, verifies no missing-run events or nil
   registry entries remain, then admits the same run ID successfully. A separate
