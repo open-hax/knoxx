@@ -2,6 +2,7 @@
   "task": "https://github.com/open-hax/knoxx/issues/374",
   "baseline331": "3c6a1c1bc31f1e86adce4b40fd0d3810686c68c9",
   "qualifiedFoundationA": "baa061e368fd016a878010542d619a645fba102b",
+  "currentFoundationA": "424d47d1509680f20c048cccf1aa3808fe28d2c1",
   "preservedIntegratedIdentity": "6d08aee0a6f608f89e01d8108fd0209f8d49db8b",
   "integration": "Exact14Ablobs initially seeded; qualified A merged ordinarily. No A production source changed.",
   "moves": [
@@ -206,7 +207,7 @@
     {
       "path": "docs/verification/policy-module-recovery.md",
       "sourceBlob": "eb15744991395b9f4013c9bd33e995b7b063db13",
-      "candidateBlob": "f9907b993d97ac1974ec89f0bfbb19d512363321",
+      "candidateBlob": "a5b43d7a6b015fd8bcba86a7aa0f4f40e5077e6c",
       "mode": "scoped-intermediate-adaptation"
     },
     {

@@ -9,8 +9,8 @@ place. The later identity activation is qualified separately.
 
 ## Run it
 
-With frozen dependencies, the built sibling OpenPlanner SDK, Clojure, Volta's
-Node 24.14.1, and OpenSSL available:
+With frozen dependencies, the built sibling OpenPlanner SDK, Clojure, Node >=24
+on PATH, and OpenSSL available:
 
 ```sh
 scripts/verify-policy-provider-foundation.sh

@@ -7,9 +7,10 @@ if [[ $# -gt 1 || ( $# -eq 1 && "$1" != '--native' ) ]]; then
   exit 2
 fi
 command -v clojure >/dev/null
-command -v volta >/dev/null
+command -v node >/dev/null
 command -v rg >/dev/null
 cd "$repo_root/backend"
+node -e 'if (Number(process.versions.node.split(".")[0]) < 24) { console.error("Policy provider proof requires Node >=24; found " + process.version); process.exit(1); }'
 if [[ "${1:-}" == '--native' ]]; then
   : "${KNOXX_TEST_MONGOD:?Set an absolute path to a qualified local MongoDB executable}"
   [[ "$KNOXX_TEST_MONGOD" == /* && -x "$KNOXX_TEST_MONGOD" ]] || exit 2
@@ -32,10 +33,10 @@ export TMPDIR="$fixture_root" CONTRACTS_DIR="$repo_root/backend/test/fixtures/em
 log="$fixture_root/results.log"
 printf 'Policy provider proof: %s at %s\n' "$repo_root" "$(git rev-parse HEAD)"
 if [[ -n "$(git status --porcelain)" ]]; then printf '%s\n' 'WARN this run includes working-tree changes.'; fi
-volta run --node 24.14.1 node --version
+node --version
 rm -rf -- target/policy-proof
-volta run --node 24.14.1 clojure -M:cljs scripts/compile-policy-proof.clj 2>&1 | tee "$log"
-volta run --node 24.14.1 node --require ./scripts/shadow-test-error-guard.cjs target/policy-proof/tests.cjs >> "$log" 2>&1 &
+clojure -M:cljs scripts/compile-policy-proof.clj 2>&1 | tee "$log"
+node --require ./scripts/shadow-test-error-guard.cjs target/policy-proof/tests.cjs >> "$log" 2>&1 &
 proof_pid=$!
 result=0
 wait "$proof_pid" || result=$?
