@@ -14,6 +14,13 @@ with its actual target branch. Make that candidate ready for review and keep
 later slices draft. Parallel fixes may be prepared in separate worktrees; one
 coordinator propagates commits, requests reviews and advances the stack.
 
+Inspect `autoMergeRequest` when making a PR ready. Knoxx's Auto Merge workflow
+can queue a squash merge on `ready_for_review`; required CI and resolved threads
+alone do not prove both requested bots completed review. Wait for its enabling
+job to finish, use `gh pr merge --disable-auto` for the active PR, and verify the
+request is absent before resolving the final conversations. Check again after
+any later readiness transition. Preserve the repository's global settings.
+
 Distinguish a source defect from a missing prerequisite in an intermediate
 slice, but repair either before that slice merges. Full-stack green results
 cannot qualify a smaller tree with unresolved namespaces or incompatible APIs.
@@ -75,6 +82,13 @@ If auto-merge or a merge queue is required, continue observing it until GitHub
 confirms `MERGED` and supplies the merge commit. Scheduling a merge is not the
 completion event.
 
+Inspect the actual PR state during waits. On #329, repository automation merged
+the qualified source while CodeRabbit was still reviewing it. Such a merge
+requires an explicit review-gap record, completion of the outstanding review,
+and a reviewed follow-up for any findings before the next layer advances. A bot
+status can also report success for a rate-limited review; read its completion
+evidence rather than using the status color as approval.
+
 After confirmation, record the PR/merge commit, retarget the next authorized PR
 to the correct surviving base, inspect its actual diff, and repeat qualification.
 Do not assume retargeting alone removes predecessor changes after a squash:
@@ -105,7 +119,8 @@ for a merge, meaningful progress, a new failure or a required user decision.
 If the harness cannot schedule continuation, state that limitation and preserve
 the checkpoint rather than claiming background execution.
 
-An individual task completes when its PR is confirmed merged. The stack task
+An individual task completes when its PR is confirmed merged and its required
+review/fix loop is closed. The stack task
 completes only after all authorized PRs merge, unless the user changes its scope.
 Do not label a blocked or waiting stack complete.
 
