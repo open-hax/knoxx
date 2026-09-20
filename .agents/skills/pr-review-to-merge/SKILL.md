@@ -18,12 +18,14 @@ metadata:
 - The request is only to review, split, task out, or prepare draft PRs. Those
   actions do not grant merge authorization.
 - The user pauses or cancels merging, or the next PR is outside the authorized scope.
-- The work changes deployment qualification; use the repository's promotion
-  workflow for that separate boundary.
 
 Follow the active harness, user instructions, project AGENTS.md, and applicable
 canonical principles. Existing session authorization persists; do not ask again
 merely because a turn ended, a reviewer replied, or a quota reset is needed.
+
+For PRs that change deployment qualification, also apply the repository's
+promotion workflow. This skill still owns their review and merge; it does not
+replace any required deployment qualification or promotion gate.
 
 ## Inputs and durable state
 
