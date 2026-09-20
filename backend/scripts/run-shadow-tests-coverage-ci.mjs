@@ -45,7 +45,8 @@ function exitForTestCounters(output) {
 }
 
 /**
- * Compile test-ci, then run its guarded bundle under c8 with production-only includes.
+ * Compile test-ci, then run its guarded bundle under c8 with explicit backend includes.
+ * Test-suffixed modules are excluded; supporting fixture modules may still be included.
  * Writes coverage reports and requests exit from child status and test evidence;
  * absent production output, signals, failures and incomplete summaries fail closed.
  * @returns {Promise<void>} Rejects spawn/filesystem errors for the CLI catch handler.
