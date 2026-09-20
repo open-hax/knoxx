@@ -12,18 +12,39 @@ export const pin = Object.freeze({
   sha256: 'd6449daf243516fdc703f0629cb077ddfbe1981a5e21a3d1421708f22d1b6ce7',
 });
 const script = fileURLToPath(import.meta.url);
+/**
+ * Hash archive bytes without decoding or changing them.
+ * @returns {string} The lowercase hexadecimal SHA-256 digest for pin comparison.
+ */
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
+/**
+ * Require the host platform and architecture declared by the trusted release pin.
+ * @returns {void} Returns only when both host fields match.
+ * @throws {Error} On an unsupported host, before download or extraction.
+ */
 function requireHost(expected, host) {
   if (host.platform !== expected.platform || host.arch !== expected.arch) {
     throw new Error(`clj-kondo bundle requires ${expected.platform}/${expected.arch}; got ${host.platform}/${host.arch}`);
   }
 }
 
+/**
+ * Check archive bytes against a trusted SHA-256 pin before extraction or storage.
+ * @returns {void} Returns only when the digest matches; never supplies a fallback.
+ * @throws {Error} When the archive digest differs from the expected checksum.
+ */
 function verifyChecksum(bytes, expected) {
   if (digest(bytes) !== expected.sha256) throw new Error('clj-kondo archive checksum mismatch');
 }
 
+/**
+ * Download the pinned archive, verify its digest, and package it with metadata
+ * and this restore script under BUNDLE/toolchain for subsequent offline use.
+ * @returns {Promise<void>} Resolves after writing the bundle, without extraction.
+ * Rejects on host, download/timeout, checksum or filesystem failure; filesystem
+ * writes are not transactional and may leave a partial bundle on failure.
+ */
 export async function collect(bundle) {
   requireHost(pin, process);
   const url = `https://github.com/clj-kondo/clj-kondo/releases/download/v${pin.version}/${pin.archive}`;
@@ -38,8 +59,13 @@ export async function collect(bundle) {
   copyFileSync(script, path.join(toolchain, path.basename(script)));
 }
 
-// The CLI always supplies the fixed release pin; explicit parameters let tests
-// exercise checksum, host, archive-shape and executable-version failure paths.
+/**
+ * Verify host, digest, archive shape and executable version before installation.
+ * The CLI uses the fixed pin; expected/host are trusted test injection parameters.
+ * @returns {string} The absolute installed bin directory; does not modify PATH.
+ * @throws {Error} On validation, unzip or filesystem failure. Once staging is
+ * created, it is removed on both success and failure.
+ */
 export function restoreArchive(archive, destination, expected = pin, host = process) {
   requireHost(expected, host);
   verifyChecksum(readFileSync(archive), expected);
@@ -66,6 +92,12 @@ export function restoreArchive(archive, destination, expected = pin, host = proc
   }
 }
 
+/**
+ * Dispatch describe (pin JSON), collect (bundle files), or restore (print bin path).
+ * @returns {Promise<void>} Resolves when the selected CLI operation completes.
+ * Rejects invalid arguments or toolchain failures; the CLI caller reports them
+ * and sets a nonzero exit status.
+ */
 async function main([action, bundle, destination, ...extra]) {
   if (action === 'describe' && !bundle) {
     console.log(JSON.stringify({ ...pin, archive: `toolchain/${pin.archive}`,

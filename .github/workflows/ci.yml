@@ -81,7 +81,7 @@ jobs:
           # backend/shadow-cljs.edn runs in :deps mode, so shadow-cljs resolves
           # its classpath (including the katamorph Git dependency) through
           # tools.deps and needs the clojure CLI on PATH.
-          cli: latest
+          cli: '1.12.5.1654'
           clj-kondo: "2025.07.28"
 
       - uses: pnpm/action-setup@v4

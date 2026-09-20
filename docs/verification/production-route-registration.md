@@ -64,3 +64,7 @@ starting a line with an npm scope. Closure interpreted the old `@fastify` text
 as an unknown JSDoc tag: its warning appeared even while Shadow's summary
 reported zero warnings. The fresh server release log was checked for that
 warning as well as its summary.
+
+CodeRabbit [withdrew the inherited finding after inspecting this proof](https://github.com/open-hax/knoxx/pull/305#discussion_r4056249861)
+on 2026-09-20. That adjudication covers the reported binding failure; hosted
+CI and the other merge gates remain independently required.

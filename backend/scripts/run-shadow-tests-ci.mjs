@@ -22,6 +22,11 @@ export function parseTestCounters(output) {
   };
 }
 
+/**
+ * Decide success from all captured summaries, not just the last green result.
+ * Fatal markers, failed/missing/mismatched summaries, and empty runs fail closed.
+ * @returns {0 | 1} The exit status; this function does not exit the process.
+ */
 export function testCountersExitCode(output) {
   const text = String(output);
   if (text.includes('[shadow-test-guard] FATAL')) return 1;
@@ -32,6 +37,12 @@ export function testCountersExitCode(output) {
   return summaries.every(([, tests, assertions]) => Number(tests) > 0 && Number(assertions) > 0) ? 0 : 1;
 }
 
+/**
+ * Start a guarded test/e2e Shadow build in the caller's package directory.
+ * Streams output, then requests process exit from child status and test evidence.
+ * @returns {void} Starts the child immediately; no completion Promise is returned.
+ * @throws {Error} For an unsupported build; spawn/test failures exit nonzero.
+ */
 export function run(rawBuild) {
   const build = normalizeBuild(rawBuild);
   const cmd = process.platform === 'win32' ? 'shadow-cljs.cmd' : 'shadow-cljs';

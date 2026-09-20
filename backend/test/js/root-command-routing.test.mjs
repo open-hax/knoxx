@@ -17,6 +17,13 @@ const routes = {
   typecheck: ['backend:typecheck', 'frontend:typecheck'],
 };
 
+/**
+ * Create an isolated enclosing workspace whose package scripts record their calls.
+ * Register recursive cleanup with t; run(action, failStage) returns child status,
+ * output and cumulative records, allowing tests to inspect intentional failures.
+ * @returns {{root: string, run: Function}} The fixture root and synchronous runner.
+ * @throws {Error} On fixture I/O, process launch/timeout or malformed ledger data.
+ */
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'knoxx-root-commands-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

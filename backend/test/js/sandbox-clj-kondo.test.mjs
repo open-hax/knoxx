@@ -5,8 +5,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { collect, pin, restoreArchive } from '../../../scripts/sandbox-clj-kondo.mjs';
 
+/** Create a disposable test archive with configurable contents and its matching digest; t owns cleanup. */
 function fixture(t, { version = pin.version, extraEntry = false } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'knoxx-sandbox-kondo-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -59,8 +61,8 @@ test('restore rejects a wrong executable version and cleans its staging director
 
 test('CLI fails rather than falling back to an installed clj-kondo when the archive is missing', t => {
   const { destination } = fixture(t);
-  const script = new URL('../../../scripts/sandbox-clj-kondo.mjs', import.meta.url);
-  const result = spawnSync(process.execPath, [script.pathname, 'restore', destination, destination],
+  const script = fileURLToPath(new URL('../../../scripts/sandbox-clj-kondo.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [script, 'restore', destination, destination],
     { encoding: 'utf8' });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /ENOENT/);

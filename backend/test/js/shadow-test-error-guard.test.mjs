@@ -11,6 +11,12 @@ import { testEnvironment, testErrorGuard } from '../../scripts/shadow-test-envir
 const summary = 'Ran 8 tests containing 46 assertions.\n0 failures, 0 errors.';
 const done = `console.log(${JSON.stringify(summary)}); process.exit(0);`;
 
+/**
+ * Run a Node snippet with only the requested guard, clearing inherited Node options.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} Captured output
+ * and status, including intentional nonzero exits for the caller to assert.
+ * @throws {Error} On launch failure, timeout or signal termination.
+ */
 function execute(code, guarded = true) {
   const result = spawnSync(process.execPath,
     [...(guarded ? ['--require', testErrorGuard] : []), '-e', code],
