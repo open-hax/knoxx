@@ -59,6 +59,30 @@
                  "a retired generation's late failure cannot reach the successor")
         (test/is (= [1 2] @writes*) "the successor's own write still runs"))))))
 
+(test/deftest ^:async a-retired-incarnations-pending-write-still-precedes-its-successor
+  (await
+   ((^:async fn []
+      (let [abandoned (deferred)
+            writes* (atom [])
+            {:keys [submit! flush! retire!]}
+            (queue/create (fn [event]
+                            (swap! writes* conj (:sequence event))
+                            (if (= 1 (:sequence event))
+                              (:promise abandoned)
+                              (js/Promise.resolve true))))]
+        (submit! (event "reused" 1))
+        (retire! "reused")
+        (submit! (event "reused" 2))
+        (await (tick!))
+        (await (tick!))
+        (test/is (= [1] @writes*)
+                 "the successor cannot write while the retired incarnation is unsettled")
+        ((:complete! abandoned) true)
+        (test/is (true? (:value (await (outcome! #(flush! "reused")))))
+                 "the successor settles once the abandoned write lands")
+        (test/is (= [1 2] @writes*)
+                 "the retired incarnation's write precedes the successor's"))))))
+
 (test/deftest ^:async retiring-an-unknown-run-is-a-safe-release
   (await
    ((^:async fn []

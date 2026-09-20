@@ -18,12 +18,37 @@
   [{:keys [generations]} id generation]
   (= generation (get @generations id)))
 
-(defn- release!
-  "Drop every entry this run owns and retire the generation that held them."
+(defn- forget!
+  "Drop every entry this run owns, once its tail is known to have settled."
   [{:keys [generations tails failures]} id]
   (swap! generations dissoc id)
   (swap! tails dissoc id)
   (swap! failures dissoc id)
+  nil)
+
+(defn- ^:async release-when-settled!
+  "Release a retired incarnation's tail once its in-flight write lands.
+   The tail never rejects, so this cannot produce an unobserved rejection."
+  [{:keys [tails]} id tail]
+  (await tail)
+  ;; A successor may already own this run ID; release only the retired tail.
+  (when (identical? tail (get @tails id))
+    (swap! tails dissoc id))
+  nil)
+
+(defn- retire!
+  "Abandon this run: its generation and failure go now, its tail once settled.
+
+   A write issued before retirement cannot be recalled, so dropping the tail
+   immediately would let a successor reusing this run ID interleave with the
+   abandoned incarnation. Holding the tail until it settles keeps the successor
+   ordered behind that write, and releases the entry as soon as it lands."
+  [{:keys [generations failures tails] :as queue} id]
+  (swap! generations dissoc id)
+  (swap! failures dissoc id)
+  (if-let [tail (get @tails id)]
+    (release-when-settled! queue id tail)
+    (forget! queue id))
   nil)
 
 (defn- submit!
@@ -52,7 +77,7 @@
       (when tail (await tail))
       (when-let [failure (get @failures id)] (throw failure))
       (if (identical? tail (get @tails id))
-        (do (release! queue id) true)
+        (do (forget! queue id) true)
         (recur)))))
 
 (defn create
@@ -64,4 +89,4 @@
      :flush! (^:async fn [id] (await (flush! queue id)))
      ;; Terminal abandonment only: the owner has already observed the failure
      ;; through flush, and no further event for this run will be admitted.
-     :retire! (fn [id] (release! queue id))}))
+     :retire! (fn [id] (retire! queue id))}))
