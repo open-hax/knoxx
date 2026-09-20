@@ -1,6 +1,7 @@
 (ns knoxx.backend.domain.run-store
   "Pure run and ordered event transitions. Expiry hides views, never accepted facts."
-  (:require [knoxx.backend.law.run-store :as law]
+  (:require [knoxx.backend.law.run-event :as event-law]
+            [knoxx.backend.law.run-store :as law]
             [knoxx.backend.shape.session-persistence :as contract]))
 
 (def empty-state {:runs {} :events {} :bindings {}})
@@ -53,20 +54,11 @@
 (defn- append-event [state {:keys [run-id event event-id stamp]}]
   (let [run (current! state run-id stamp)
         events (get-in state [:events run-id] [])
-        existing (some #(when (= event-id (:event_id %)) %) events)]
-    (law/require! law/Event event)
-    (law/require! law/NonBlank event-id)
-    (when-not (= (select-keys run [:run_id :session_id :conversation_id])
-                 (select-keys event [:run_id :session_id :conversation_id]))
-      (law/conflict! "Run event has a different conversation or session"))
-    (when (or (contains? event :sequence) (contains? event :run_events))
-      (law/conflict! "Event sequence is assigned by the durable provider"))
-    (if existing
-      (if (= (dissoc existing :sequence) (assoc event :event_id event-id)) [state existing]
-        (law/conflict! "Run event ID is already bound to another payload"))
-      (let [accepted (assoc event :event_id event-id :sequence (inc (count events)))]
-        [(-> state (update-in [:events run-id] (fnil conj []) accepted)
-             (assoc-in [:runs run-id :expires-ms] (:expires-ms stamp))) accepted]))))
+        existing (some #(when (= event-id (:event_id %)) %) events)
+        {:keys [existing?] accepted :event} (event-law/admit run event event-id existing (count events))]
+    (if existing? [state accepted]
+      [(-> state (update-in [:events run-id] (fnil conj []) accepted)
+           (assoc-in [:runs run-id :expires-ms] (:expires-ms stamp))) accepted])))
 
 (defn transition
   "Admit one finite stamped operation with no host effects or implicit upserts."

@@ -76,7 +76,10 @@
     (is (= [] (await (protocol/events-since provider "run" nil))))
     (is (= 404 (:status (await (refusal #(protocol/append-event! provider (assoc event :event_id "late")))))))
     (is (= 409 (:status (await (refusal #(protocol/put-run! provider (assoc run :user_id "different")))))))
-    (is (= [1] (mapv :sequence (get-in (fixture/persisted-state db "run") [:events "run"]))))))
+    (is (= 1 (get-in (fixture/persisted-state db "run") [:event-chain :last-sequence])))
+    (await (protocol/put-run! provider run))
+    (is (= [1] (mapv :sequence (await (protocol/events-since provider "run" nil)))))
+    (is (= 2 (:sequence (await (protocol/append-event! provider (assoc event :event_id "after-reopen"))))))))
 
 (deftest ^:async legacy-unordered-events-and-corrupt-snapshots-refuse
   (let [db (fixture/create) provider (open db (atom at))]
@@ -114,7 +117,7 @@
   (let [db (fixture/create) provider (open db (atom at))]
     (await (protocol/put-run! provider run))
     (let [history (mapv #(assoc event :sequence % :event_id (str "seed-" %)) (range 1 1001))
-          state (assoc-in (fixture/persisted-state db "run") [:events "run"] history)]
+          state (assoc-in (select-keys (fixture/persisted-state db "run") [:runs :bindings]) [:events "run"] history)]
       (swap! (:documents db) update "run" assoc :run_state_edn (pr-str state)))
     (is (= 1001 (:sequence (await (protocol/append-event! provider event)))))
     (is (= 1001 (count (await (protocol/events-since provider "run" nil)))))

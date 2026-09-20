@@ -4,9 +4,12 @@
             [knoxx.backend.domain.run-directory :as directory]
             [knoxx.backend.domain.run-store :as domain]
             [knoxx.backend.extern.clock :as clock]
+            [knoxx.backend.extern.mongo-run-events :as native-events]
             [knoxx.backend.extern.mongo-run-store :as mongo]
             [knoxx.backend.extern.run-store :as host]
+            [knoxx.backend.infra.mongo-run-events :as events]
             [knoxx.backend.infra.system-instance :as instance]
+            [knoxx.backend.law.run-event :as event-law]
             [knoxx.backend.law.run-store :as law]
             [knoxx.backend.shape.run-directory :as directory-port]
             [knoxx.backend.shape.session-persistence :as protocol]))
@@ -16,6 +19,21 @@
 (defn- ^:async read-state! [store id]
   (snapshot/restore (await (mongo/read! (:db store) id)) id))
 
+(defn- current-run! [state run-id stamp]
+  (or (domain/visible-run state run-id (:at-ms stamp))
+      (throw (ex-info "Run is absent or expired" {:status 404 :code "run_store_not_found"}))))
+
+(defn- ^:async event-transition! [store previous state {:keys [run-id event event-id]}]
+  ;; An old retry after expiry/delete is still an append and must refuse.
+  (current-run! state run-id (sample store))
+  (let [existing (await (events/existing! (:db store) previous state run-id event-id))
+        stamp (sample store)
+        last-sequence (or (get-in previous [:event-chain :last-sequence])
+                          (count (get-in state [:events run-id])))
+        admitted (event-law/admit (current-run! state run-id stamp) event event-id existing last-sequence)]
+    [(if (:existing? admitted) state (assoc-in state [:runs run-id :expires-ms] (:expires-ms stamp)))
+     (:event admitted) (not (:existing? admitted))]))
+
 (defn- ^:async mutate! [store operation]
   (let [id (:run-id operation)]
     (loop [attempt 0]
@@ -24,13 +42,17 @@
                         {:status 409 :code "run_store_concurrent_write"})))
       (let [previous (await (mongo/read! (:db store) id))
             state (snapshot/restore previous id)
-            [next-state result] (domain/transition state (assoc operation :stamp (sample store)))]
-        ;; Even exact retries rewrite the same state with a new storage revision:
-        ;; a previous write may be visible after its journal acknowledgement failed.
-        (if (or (and (nil? previous) (= state next-state))
-                (await (mongo/compare-and-swap! (:db store) id previous next-state)))
-          result
-          (recur (inc attempt)))))))
+            [next-state result append?] (if (= :event (:kind operation))
+                                         (await (event-transition! store previous state operation))
+                                         (domain/transition state (assoc operation :stamp (sample store))))]
+        (if (and (nil? previous) (= state next-state)) result
+          (let [chain (await (events/prepare-history! (:db store) previous state id))
+                next-chain (if append? (await (native-events/prepare! (:db store) result (:tail chain))) chain)]
+            ;; Even exact retries force a revision write: visible history alone
+            ;; cannot repair a prior ambiguous journal acknowledgement.
+            (if (await (mongo/compare-and-swap! (:db store) id previous next-state next-chain))
+              result
+              (recur (inc attempt)))))))))
 
 (defn- ^:async visible! [store id]
   (domain/visible-run (await (read-state! store id)) id (:at-ms (sample store))))
@@ -44,7 +66,14 @@
          (sort-by :run_id) vec)))
 
 (defn- ^:async events! [store run-id since]
-  (domain/events-since (await (read-state! store run-id)) run-id since (:at-ms (sample store))))
+  (law/require! [:or :nil [:int {:min 0}] law/Instant] since)
+  (let [record (await (mongo/read! (:db store) run-id))
+        state (snapshot/restore record run-id)]
+    (if-let [chain (:event-chain record)]
+      (if (domain/visible-run state run-id (:at-ms (sample store)))
+        (await (events/replay! (:db store) (get-in state [:bindings run-id]) chain since))
+        [])
+      (domain/events-since state run-id since (:at-ms (sample store))))))
 
 (defn- ^:async directory! [store scope]
   (let [records (await (mongo/directory! (:db store) scope))
@@ -88,7 +117,8 @@
   (when-not (= run-id (:run_id event)) (law/conflict! "Run event identity differs from requested run"))
   (await (protocol/append-event! (create-mongo-run-store db) event)))
 
-(defn setup-indexes!
+(defn ^:async setup-indexes!
   "Create the actual provider's unique run identity and active-session indexes."
   [db]
-  (mongo/setup-indexes! db))
+  (await (mongo/setup-indexes! db))
+  (await (native-events/setup-indexes! db)))

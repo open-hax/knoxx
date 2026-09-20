@@ -54,4 +54,8 @@
                   (let [payload (dissoc legacy :run_events :events :sequence)]
                     {:runs {run-id {:run payload :expires-ms (:expires-ms record)}}
                      :events {} :bindings {run-id (select-keys payload run/identity-fields)}})))]
-    (validate-state! state run-id)))
+    (validate-state! state run-id)
+    (when (and (pos? (or (get-in record [:event-chain :last-sequence]) 0))
+               (nil? (get-in state [:bindings run-id])))
+      (corrupt!))
+    state))

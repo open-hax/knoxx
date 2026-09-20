@@ -34,6 +34,8 @@ The default proof shows:
   before responding or publishing over WebSocket. Delayed and rejected event
   writes are exercised on both successful and failed provider-control paths;
   rejected durability cannot produce a successful acknowledgment or broadcast.
+  Dispatch happens before audit admission: audit rejection cannot undo a control
+  already dispatched, and this boundary does not claim exactly-once control retry.
 - Completed runs and final events persist without OpenPlanner. Its optional
   archival projection remains best effort; durable run persistence fails visibly.
 - Mongo thread queries hide expiry before TTL cleanup, portable expiry survives
@@ -45,8 +47,17 @@ The default proof shows:
   concurrent rewinds remove two turns instead of silently losing one operation.
 
 The optional Mongo proof admits concurrent events, checks stable retry and
-collision behavior, restarts the actual owned process and recovers ordered
-history. It also writes independent thread patches concurrently, rewinds twice
+collision behavior, gracefully restarts the actual owned process and recovers
+ordered history. It also admits 1,001 events totaling more than 16 MiB and a
+single event larger than 16 MiB, measures actual fresh-append BSON command sizes,
+and checks exact Unicode reconstruction across fragments. It injects lost
+acknowledgments after real fragment, header, migration-fence and head writes;
+these are application-side faults around actual journaled writes, not network
+fault or replica-failover simulation. Canonical migration races an old writer,
+and native revisionless migration compares BSON Date/ObjectId-bearing records.
+Large v2 metadata remains writable; oversized metadata refuses before head
+publication. Missing accepted fragments refuse full replay rather than return a
+partial history. It also writes independent thread patches concurrently, rewinds twice
 concurrently, and verifies the combined state after an actual process restart.
 The thread/cache expiry and legacy decoding cases still use driver-shaped
 fixtures. It uses `--nounixsocket` and a 0.25 GB WiredTiger cache. Missing or failed
@@ -66,14 +77,59 @@ ports in this PR. The verifier prints this limitation every run. The later HTTP
 layer owns actual authenticated route/reconnect and browser acceptance; these
 checks do not claim that user surface is already migrated.
 
-Mongo retains immutable run identity and event history in one document using
-revision CAS, majority acknowledgment and journaling. Expired runs are hidden,
-while their facts and ownership bindings remain retained. This increases storage;
-Mongo's 16 MB document limit remains a practical bound. Oversized histories fail
-instead of silently trimming events. Legacy nonempty histories lacking stable
-IDs/sequences refuse with `run_events_migration_required`; ordering is not
-fabricated. OpenPlanner remains an archival projection and cannot be installed
-as an exact event authority.
+Mongo stores each event in immutable preparations: bounded UTF-16LE byte
+fragments and a content-addressed header. Only membership in the chain referenced
+by the accepted run head makes a preparation an accepted fact. All preparations
+are majority-acknowledged and journaled before one head CAS publishes the tail.
+A fresh UUID head token fences concurrent replacements and revision reuse.
+
+```text
+run head --accepted tail--> event header --> previous event header --> ...
+                              |                    |
+                         payload fragments    payload fragments
+
+unreferenced preparations: retained, but neither accepted facts nor ID reservations
+```
+
+The head contains run metadata, immutable ownership coordinates and one chain
+reference, never the history vector. A fresh event ID uses a bounded indexed
+candidate lookup; a hit requires actual accepted-chain membership before retry
+or collision handling. Normal append writes are proportional to the new payload,
+independent of accepted history length. Each fragment is at most 64 KiB before
+base64 encoding (96 KiB BSON ceiling); headers have a 4 KiB ceiling. Full Unicode
+code units, namespaced EDN values and contiguous sequences survive reconstruction.
+Digest indexes are hints; reconstructed identities and payloads decide equality.
+Exact retry requires a visible run, preserves expiry/history, and performs a new
+journaled revision write instead of treating a read-visible result as durable ack.
+
+The native proof verifies histories beyond Mongo's former 16 MiB history ceiling.
+Run metadata itself still has a bounded BSON head/command capacity, with `413
+run_store_record_too_large` before publication. Old ordered canonical snapshots
+migrate by validating their entire history, preparing immutable events, stamping
+an exact observed snapshot with a small token and revision increment, then
+replacing only that token/revision. A preceding canonical writer replaces away
+the token, forcing migration to retry. The closed v2 envelope makes that preceding
+snapshot provider refuse new heads rather than treat them as empty histories.
+
+Revisionless native legacy rows retain a complete BSON equality predicate during
+adoption. If that predicate plus the replacement exceeds the safe driver command
+bound, `413 run_store_legacy_record_too_large` leaves the legacy row byte-for-byte
+unchanged. Such rows need explicit recovery with old writers quiesced; automatic
+migration does not discard fields or invent chronology. Prepared but unaccepted
+event fragments may remain after refusal. Legacy nonempty histories lacking stable
+IDs/sequences still refuse with `run_events_migration_required`. Arbitrary older
+clients that issue blind native writes must be quiesced before adoption; this is
+not a guarantee for those clients' rolling upgrades.
+
+Limits remain explicit: unaccepted preparations accumulate without automatic GC;
+old-ID retries/collisions and time-cursor replay may walk the accepted history;
+normal fresh admission checks the tail and candidate index without rereading all
+old payloads. Replay validates each requested event and refuses corruption. Expiry
+and deletion hide the view while retaining history and owner bindings. Native
+qualification uses standalone Mongo with journaling, graceful restarts and
+instrumented lost acknowledgments; it does not establish replica failover behavior.
+OpenPlanner remains an archival projection and cannot be installed as exact event
+authority.
 
 `run-event-recovery-manifest.json` records the historical reconstruction. Its old
 lost-workspace evidence is not evidence for the current checkout; use this
