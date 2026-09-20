@@ -49,6 +49,9 @@
   [:multi {:dispatch :kind}
    [:startup [:map {:closed true} [:kind [:= :startup]] [:thread-id NonBlank]
               [:thread Thread] [:expected :map] [:phase [:enum :claim :settle]] [:stamp Stamp]]]
+   [:recovery [:map {:closed true} [:kind [:= :recovery]] [:thread-id NonBlank]
+               [:observed Thread] [:expected :map]
+               [:stamp Stamp]]]
    [:put [:map {:closed true} [:kind [:= :put]] [:thread-id NonBlank] [:thread Thread] [:stamp Stamp]]]
    [:patch [:map {:closed true} [:kind [:= :patch]] [:thread-id NonBlank] [:patch DataMap] [:stamp Stamp]]]
    [:rewind [:map {:closed true} [:kind [:= :rewind]] [:thread-id NonBlank]

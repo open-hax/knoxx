@@ -1,7 +1,8 @@
 (ns knoxx.backend.domain.thread-store
   "Pure conversation transitions, uniqueness, expiry, and transcript rewind."
   (:require [knoxx.backend.law.thread-store :as law]
-            [knoxx.backend.domain.startup-admission :as startup]))
+            [knoxx.backend.domain.startup-admission :as startup]
+            [knoxx.backend.domain.thread-recovery :as recovery]))
 
 (def empty-state {:threads {} :versions {}})
 (def active-statuses law/active-statuses)
@@ -68,7 +69,7 @@
   (let [current (visible-thread state thread-id (:at-ms stamp))
         bound (when (some? (:conversation_id proposed))
                 (conversation-thread state (:conversation_id proposed) (:at-ms stamp)))
-        thread (-> proposed (dissoc :cached-at)
+        thread (-> (with-meta proposed nil) (dissoc :cached-at)
                    (assoc :createdAt (or (:createdAt current) (:at stamp))
                           :updatedAt (:at stamp) :expiresAt (:expires-at stamp)
                           :system_instance_id (:instance-id stamp)))
@@ -100,6 +101,9 @@
     (case kind
       :startup (startup-state state {:kind kind :thread-id thread-id :thread thread :stamp stamp
                                      :phase (:phase operation) :expected (:expected operation)})
+      :recovery (install state thread-id
+                         (recovery/release current (:observed operation)
+                                           (= (:expected operation) (startup-view state thread-id)) stamp) stamp)
       :put (install state thread-id (merge current thread) stamp)
       :patch (install state thread-id
                       (merge {:session_id thread-id} current patch {:updated_at (:at-ms stamp)}) stamp)

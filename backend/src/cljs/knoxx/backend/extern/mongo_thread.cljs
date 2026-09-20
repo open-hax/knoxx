@@ -3,7 +3,8 @@
   (:require ["mongodb" :refer [BSON]]
             ["node:crypto" :as crypto]
             [clojure.string :as str]
-            [knoxx.backend.law.thread-store :as law]))
+            [knoxx.backend.law.thread-store :as law]
+            [knoxx.backend.shape.thread-recovery :as recovery]))
 
 (def COLLECTION_NAME "knoxx_threads")
 (def ACTIVE_STATUS #{"running" "queued" "waiting_input"})
@@ -21,7 +22,8 @@
       (when (and (not (true? (aget native "startup_placeholder"))) (js/Number.isFinite expiry) (> expiry (.now js/Date)))
         (-> (js->clj native :keywordize-keys true)
             (dissoc :_id :createdAt :updatedAt :startup_cas_token)
-            (assoc :expiresAt (.toISOString (js/Date. expiry))))))))
+            (assoc :expiresAt (.toISOString (js/Date. expiry)))
+            (with-meta {recovery/view-key {:native native}}))))))
 
 (defn- live-query [fields]
   (clj->js (assoc fields :expiresAt {:$gt (js/Date. (.now js/Date))})))

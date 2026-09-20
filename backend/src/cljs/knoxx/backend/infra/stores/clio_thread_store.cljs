@@ -5,6 +5,7 @@
             [knoxx.backend.infra.stores.thread-store-reference :as reference]
             [knoxx.backend.infra.system-instance :as instance]
             [knoxx.backend.law.thread-store :as law]
+            [knoxx.backend.shape.thread-recovery :as recovery]
             [knoxx.backend.shape.thread-store :as protocol]
             [knoxx.backend.shape.startup-admission :as startup]))
 
@@ -26,6 +27,13 @@
     (mutate! store {:kind :startup :phase :claim :thread-id (:session_id record) :thread record :expected view}))
   (settle-startup! [store record view]
     (mutate! store {:kind :startup :phase :settle :thread-id (:session_id record) :thread record :expected view}))
+  recovery/IThreadRecovery
+  (release-recovery! [store observed]
+    (if-let [view (get (meta observed) recovery/view-key)]
+      (mutate! store {:kind :recovery :thread-id (:session_id observed)
+                      :observed (with-meta (dissoc observed :cached-at) nil) :expected view})
+      (throw (ex-info "Recovery requires an original provider read receipt"
+                      {:status 409 :code "thread_recovery_conflict"}))))
   protocol/IThreadStore
   (read-thread [_ thread-id] (clio/read! engine :thread/read [thread-id (now-ms)]))
   (conversation-thread [_ conversation-id] (clio/read! engine :thread/conversation [conversation-id (now-ms)]))
