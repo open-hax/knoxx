@@ -26,9 +26,10 @@ roots in both orders, read the last declaration's bytes, and prove that saving
 changes only that checkout. Wire locale strings must satisfy the existing
 publication language-tag grammar before conversion to keywords; catalog admission
 remains a separate garden obligation. A creation fact requires its manifest at
-construction and admission. Interrupted creation retains the document and its
-publication intents through ledger reopening, while a missing-manifest attempt
-leaves the durable ledger empty.
+construction, admission and replay: a namespace, the exact source document and
+one or more schema-valid publications referring to that document. Interrupted creation retains the document and its
+publication intents through ledger reopening, while missing or malformed manifests
+leave the durable ledger empty.
 
 Document sequencing retains each operation's result or rejection. Cleanup of a
 completed predecessor cannot remove a pending successor, and a rejected write

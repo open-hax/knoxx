@@ -226,7 +226,11 @@
           (test/is (true? (:existing? repaired)))
           (test/is (= event (:event repaired)))
           (test/is (= "Original source." (get-in repaired [:review :content])))
-          (test/is (= 400 (:status (await (refused #(source-store/admit-source! empty-provider document-scope nil
-                                                                 (dissoc event :source/manifest)))))))
+          (doseq [malformed [(dissoc event :source/manifest)
+                             (assoc event :source/manifest {})
+                             (assoc event :source/manifest (dissoc manifest :resources))
+                             (assoc-in event [:source/manifest :resources 1 :publication/document] :docs/unrelated)]]
+            (test/is (= 400 (:status (await (refused #(source-store/admit-source! empty-provider document-scope nil malformed))))))
+            (test/is (empty? (clio/history (:ledger empty-provider)))))
           (test/is (empty? (clio/history (:ledger empty-provider))))
           (test/is (empty? (await (source-store/source-events! (sources/open! empty-options) document-scope))))))))))

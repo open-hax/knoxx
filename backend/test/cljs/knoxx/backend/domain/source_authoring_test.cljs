@@ -12,6 +12,11 @@
 (def ^:private document {:document/id :docs/source :document/title "Source"
                         :document/source-locale :en :document/org-id "org-a"
                         :document/visibility :private :document/source {:path "source.md"}})
+(def ^:private publication {:publication/id :docs/source-en :publication/document :docs/source
+                           :publication/garden :test/garden :publication/locale :en
+                           :publication/revision :source/current :publication/state :draft
+                           :publication/path "/en/wiki/source/" :translation/review :none})
+(def ^:private manifest {:namespace :docs :resources [document publication]})
 (def ^:private wire {:operation_id "create" :title "Source" :content "Original."
                     :source_locale "en" :target_locales ["es"] :garden "test/garden"})
 (defn- refusal [operation]
@@ -37,8 +42,7 @@
     (test/is (m/validate law/Event (assoc observed :source/action :save)))
     (test/is (false? (m/validate law/Event missing)))
     (test/is (false? (m/validate law/Event (assoc missing :source/manifest nil))))
-    (let [manifest {:namespace :docs :resources [document]}
-          created (authoring/source-event scope actor "create" :create nil document
+    (let [created (authoring/source-event scope actor "create" :create nil document
                                           "Original." (:source/revision observed) "now" manifest)]
       (test/is (m/validate law/Event created))
       (test/is (= manifest (:source/manifest created))))
@@ -47,3 +51,24 @@
     (let [provider (store/memory-store)]
       (test/is (= 400 (:status (refusal #(store/admit-source! provider scope nil missing)))))
       (test/is (empty? (store/source-events! provider scope))))))
+
+(test/deftest creation-manifest-admission-and-replay-reject-malformed-resource-data
+  (let [event (authoring/source-event scope actor "create" :create nil document "Original."
+                                      (revisions/content-revision "Original.") "now" manifest)]
+    (doseq [invalid [{}
+                     (dissoc manifest :namespace)
+                     (dissoc manifest :resources)
+                     (assoc manifest :resources [])
+                     (assoc manifest :resources [document])
+                     (assoc-in manifest [:resources 1] (dissoc publication :publication/path))
+                     (assoc-in manifest [:resources 0 :document/title] "Different document bytes")
+                     (assoc-in manifest [:resources 1 :publication/document] :docs/unrelated)]]
+      (let [malformed (assoc event :source/manifest invalid)
+            provider (store/memory-store)]
+        (test/is (false? (m/validate law/Event malformed)))
+        (test/is (= 400 (:status (refusal #(store/admit-source! provider scope nil malformed)))))
+        (test/is (empty? (store/source-events! provider scope)))
+        (test/is (= 400 (:status (refusal #(store/validated-history scope [malformed])))))))
+    (let [provider (store/memory-store)]
+      (test/is (= event (:event (store/admit-source! provider scope nil event))))
+      (test/is (= [event] (store/validated-history scope [event]))))))
