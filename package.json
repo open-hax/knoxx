@@ -18,7 +18,7 @@
     "scan:duplication": "pnpm dlx jscpd@4.2.3 --config .jscpd.json"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "@open-hax/uxx": "0.2.2"

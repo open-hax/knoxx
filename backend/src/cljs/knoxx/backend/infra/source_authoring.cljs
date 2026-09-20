@@ -45,13 +45,17 @@
                                        (:document observed) (:content snapshot) (:revision snapshot) ((:now! dependencies)))]
         (await (store/admit-source! provider scope nil event))))))
 (defn- ^:async save-locked! [config scope actor command dependencies]
-  (let [provider (provider! dependencies) observed (await (review/observed-source! config scope))
-        _ (own-document! scope (:document observed)) events (await (store/source-events! provider scope))]
+  (let [provider (provider! dependencies) declared (await (review/declared-source! config scope))
+        _ (own-document! scope (:document declared)) events (await (store/source-events! provider scope))]
     (if-let [existing (existing-operation events command)]
       (do (assert-save-retry! existing actor command)
-          (await (project-latest! (:root observed) events))
+          (when-not (= (:document declared) (:source/document (peek events)))
+            (refuse! 409 "source_authoring_document_conflict" "Retry cannot replace changed resource metadata"))
+          (await (project-latest! (:root declared) events))
           (await (result! config scope dependencies {:existing? true :event existing})))
-      (let [snapshot (:snapshot observed) latest (peek events)]
+      (let [observed (await (review/observed-source! config scope))
+            _ (own-document! scope (:document observed))
+            snapshot (:snapshot observed) latest (peek events)]
         (when-not (= (:expected-revision command) (:revision snapshot))
           (refuse! 409 "source_authoring_stale_revision" "Source changed; refresh before saving"))
         (when (and latest (not= (:source/revision latest) (:revision snapshot)))

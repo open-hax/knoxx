@@ -234,3 +234,75 @@
             (test/is (empty? (clio/history (:ledger empty-provider)))))
           (test/is (empty? (clio/history (:ledger empty-provider))))
           (test/is (empty? (await (source-store/source-events! (sources/open! empty-options) document-scope))))))))))
+
+(defn- retry-scopes []
+  [(assoc scope :document :docs/one)
+   (assoc scope :document :docs/two)
+   (assoc scope :document :docs/one :project "other-project")
+   (assoc scope :document :docs/one :org-id "org-b")])
+
+(test/deftest ^:async source-provider-retry-identity-is-scoped-and-preserves-the-first-fact
+  (await (fixture!
+    (^:async fn [_config dependencies options]
+      (let [scopes (retry-scopes)
+            content "Original provider source."
+            events (mapv (fn [document-scope]
+                           (authoring-domain/source-event document-scope actor "shared-id" :observe nil
+                             {:document/id (:document document-scope) :document/title "Scoped source"
+                              :document/org-id (:org-id document-scope) :document/visibility :private
+                              :document/source-locale :en :document/source {:path "source.md"}}
+                             content (revisions/content-revision content) "2026-09-12T12:00:00Z")) scopes)
+            provider (:source-provider dependencies)]
+        (doseq [[document-scope event] (map vector scopes events)]
+          (test/is (false? (:existing? (await (source-store/admit-source! provider document-scope nil event))))))
+        (let [original (first events)
+              saved (assoc original :source/id "intervening-save" :source/action :save
+                            :source/previous-revision (:source/revision original)
+                            :source/content "Intervening source bytes."
+                            :source/revision (revisions/content-revision "Intervening source bytes."))]
+          (await (source-store/admit-source! provider (first scopes) (:source/revision original) saved)))
+        (let [restarted (sources/open! (:source options))]
+          (doseq [[document-scope event] (map vector scopes events)]
+            (let [retry (assoc event :source/recorded-at "2026-09-13T12:00:00Z")
+                  result (await (source-store/admit-source! restarted document-scope nil retry))
+                  conflicting (assoc retry :source/content "Conflicting bytes."
+                                           :source/revision (revisions/content-revision "Conflicting bytes."))]
+              (test/is (true? (:existing? result)))
+              (test/is (= event (:event result)) "A later server time retains the original durable receipt")
+              (test/is (= "source_authoring_operation_conflict"
+                          (:code (await (refused #(source-store/admit-source! restarted document-scope nil conflicting))))))))
+          (test/is (= 5 (count (clio/history (:ledger restarted)))) "Retries and conflicts append no additional fact"))
+        (let [reopened (sources/open! (:source options))]
+          (doseq [[document-scope event] (map vector scopes events)]
+            (let [history (await (source-store/source-events! reopened document-scope))]
+              (test/is (= event (first history)))
+              (test/is (= (if (= document-scope (first scopes)) 2 1) (count history)))))))))))
+
+(test/deftest ^:async review-provider-retry-identity-is-scoped-and-preserves-the-first-fact
+  (await (fixture!
+    (^:async fn [_config dependencies options]
+      (let [scopes (retry-scopes)
+            operation {:operation-id "shared-id" :revision "sha256-one" :source-locale :en :expected-head nil :action :submit}
+            events (mapv #(domain/event-for-command % actor operation "2026-09-12T12:00:00Z") scopes)
+            provider (:provider dependencies)]
+        (doseq [[document-scope event] (map vector scopes events)]
+          (test/is (false? (:existing? (await (review-store/admit-source-review! provider document-scope nil event))))))
+        (await (review-store/admit-source-review! provider (first scopes) "shared-id"
+                 (domain/event-for-command (first scopes) actor
+                   (assoc operation :operation-id "intervening-comment" :expected-head "shared-id"
+                                    :action :comment :notes "A later review fact.") "2026-09-12T13:00:00Z")))
+        (let [restarted (reviews/open! (:review options))]
+          (doseq [[document-scope event] (map vector scopes events)]
+            (let [retry (assoc event :review/recorded-at "2026-09-13T12:00:00Z")
+                  result (await (review-store/admit-source-review! restarted document-scope nil retry))]
+              (test/is (true? (:existing? result)))
+              (test/is (= event (:event result)) "A later server time retains the original durable receipt")
+              (test/is (= "source_review_operation_conflict"
+                          (:code (await (refused #(review-store/admit-source-review! restarted document-scope nil
+                                                   (assoc retry :review/notes "Conflicting content.")))))))))
+          (test/is (= 5 (count (clio/history (:ledger restarted)))) "Retries and conflicts append no additional fact"))
+        (let [reopened (reviews/open! (:review options))]
+          (doseq [[document-scope event] (map vector scopes events)]
+            (let [history (await (review-store/read-source-review-events! reopened document-scope))]
+              (test/is (= event (first history)))
+              (test/is (= (if (= document-scope (first scopes)) 2 1) (count history)))))))))))

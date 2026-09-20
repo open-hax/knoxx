@@ -28,3 +28,8 @@
   "Let pending write and observer continuations run without a wall-clock delay."
   []
   (js/Promise. (fn [resolve _reject] (js/setImmediate resolve))))
+
+(defn symlink!
+  "Create an owned filesystem fixture link for canonical containment checks."
+  [target link]
+  (fs/symlinkSync target link))

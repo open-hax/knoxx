@@ -7,7 +7,7 @@
           build (-> (get-in config [:builds :test-ci])
                     (assoc :build-id :source-authority-proof
                            :output-to "target/source-authority-proof/tests.cjs"
-                           :ns-regexp "^knoxx\\.backend\\.(domain\\.source-review-test|domain\\.source-authoring-test|infra\\.clio-application-store-test|source-recovery-test)$"))]
+                           :ns-regexp "^knoxx\\.backend\\.(domain\\.source-review-test|domain\\.source-authoring-test|infra\\.clio-application-store-test|infra\\.clio-subscription-test|source-recovery-test|source-projection-recovery-test|source-acceptance-test)$"))]
       (shadow/compile* build {}))
     nil)
   (catch Throwable error

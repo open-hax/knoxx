@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "build": "shadow-cljs release server",
     "watch": "shadow-cljs watch server-dev",

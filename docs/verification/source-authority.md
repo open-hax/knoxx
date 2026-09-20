@@ -21,6 +21,28 @@ filesystem projection. Successful no-op writes with explicit operation IDs have
 durable receipts without false state-change notifications. Implicit random-ID
 no-ops retain their existing behavior of appending no fact.
 
+Source and review provider retry IDs are scoped by organization, project and
+document. The same ID can name separate operations in those scopes. After
+reopening and intervening work, a server-time-only retry returns the original
+fact with `existing? true`; conflicting content is refused without appending.
+These providers keep domain IDs distinct from ledger-global explicit Clio IDs.
+
+Clio observers can select stream names and provider-declared scope. Scoped
+listeners receive only the matching stream name; operation arguments, results
+and scope facts stay inside the provider. Providers without a scope extractor
+cannot notify scoped subscriptions. Legacy listeners still receive no arguments.
+The proof covers unrelated streams, other organizations/projects/documents,
+unsubscribe, and thrown or rejected observer failures after a successful durable
+write. The separate Wiki integration owns its HTTP stream and authorization
+checks; this layer supplies the tested observer contract it needs.
+
+Acceptance facts load resource records and build their canonical index once for
+the documents selected by the caller. The proof uses two selected documents and
+an unrelated missing source: the selected documents share one resource load,
+and the returned acceptance predicate performs no I/O. A selected missing source,
+resource or review provider failure, or pending source projection still refuses
+the facts. This does not make source file reads atomic across documents.
+
 The regressions also load equal document declarations from two real checkout
 roots in both orders, read the last declaration's bytes, and prove that saving
 changes only that checkout. Wire locale strings must satisfy the existing
@@ -34,6 +56,14 @@ leave the durable ledger empty.
 Document sequencing retains each operation's result or rejection. Cleanup of a
 completed predecessor cannot remove a pending successor, and a rejected write
 cannot poison later repair.
+
+An exact save retry can also repair a deleted source projection after reopening
+the ledger. It restores the latest accepted bytes even when the retried command
+is older, and returns that command's original receipt without appending a fact.
+Recovery first validates the current declared resource, tenant ownership and
+canonical provenance. Changed resource metadata, conflicting existing bytes and
+symlink escapes remain refusals; a new save still requires observed source bytes.
+The filesystem regression covers these cases without a server or live services.
 
 This layer supplies independently testable ports and providers. Wiki HTTP and
 agent adapters, identity, writing assistance, translation provider composition,
