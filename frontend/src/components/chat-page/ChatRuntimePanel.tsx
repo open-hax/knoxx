@@ -1,5 +1,6 @@
+import type { UIEvent } from "react";
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
-import type { RunDetail, RunEvent, ToolReceipt } from "../../lib/types";
+import type { MemorySearchHit, MemorySessionSummary, RunDetail, RunEvent, ToolReceipt } from "../../lib/types";
 import type { HydrationSource } from "./types";
 import { asMarkdownPreview, formatMaybeDate, truncateText } from "./utils";
 
@@ -165,4 +166,172 @@ export function ChatRuntimePanel({
       ) : null}
     </Card>
   );
+}
+
+type RecentChatSessionsProps = {
+  recentSessions: MemorySessionSummary[];
+  recentSessionsHasMore: boolean;
+  recentSessionsTotal: number;
+  loadingRecentSessions: boolean;
+  loadingMoreRecentSessions: boolean;
+  loadingMemorySessionId: string | null;
+  conversationId: string | null;
+  onRefreshRecentSessions: () => void | Promise<void>;
+  onLoadMoreRecentSessions: () => void | Promise<void>;
+  onResumeMemorySession: (sessionId: string) => void | Promise<void>;
+};
+
+export function RecentChatSessions({
+  recentSessions, recentSessionsHasMore, recentSessionsTotal,
+  loadingRecentSessions, loadingMoreRecentSessions, loadingMemorySessionId,
+  conversationId, onRefreshRecentSessions, onLoadMoreRecentSessions,
+  onResumeMemorySession,
+}: RecentChatSessionsProps) {
+  const handleRecentSessionsScroll = (event: UIEvent<HTMLDivElement>) => loadMoreSessionsOnScroll(event,
+    recentSessionsHasMore, loadingMoreRecentSessions, loadingRecentSessions, onLoadMoreRecentSessions);
+
+  return (
+    <Card variant="outlined" padding="sm" style={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                      <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, flexShrink: 0 }}>
+                          <div style={{ fontSize: 11, fontWeight: 600 }}>Recent Sessions</div>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <Badge size="sm" variant="default">{recentSessionsTotal > 0 ? `${recentSessions.length}/${recentSessionsTotal}` : recentSessions.length}</Badge>
+                            <Button variant="ghost" size="sm" loading={loadingRecentSessions} onClick={() => void onRefreshRecentSessions()}>
+                              Refresh
+                            </Button>
+                          </div>
+                        </div>
+                        {recentSessions.length === 0 ? (
+                          <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", lineHeight: 1.5 }}>
+                            No OpenPlanner-backed Knoxx sessions yet.
+                          </div>
+                        ) : (
+                          <div
+                            role="region"
+                            aria-label="Recent chat sessions"
+                            onScroll={handleRecentSessionsScroll}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 8,
+                              flex: 1,
+                              minHeight: 0,
+                              overflowY: "auto",
+                              overflowX: "hidden",
+                              overscrollBehavior: "contain",
+                              paddingRight: 4,
+                            }}
+                          >
+                            {recentSessions.map((item) => {
+                              const isSelected = conversationId === item.session;
+                              const isLive = Boolean(item.is_active);
+                              const statusLabel = item.has_active_stream
+                                ? "Live"
+                                : item.active_status === "waiting_input"
+                                  ? "Waiting"
+                                  : item.active_status === "running"
+                                    ? "Active"
+                                    : "Idle";
+                              const statusVariant = item.has_active_stream
+                                ? "warning"
+                                : isLive
+                                  ? "info"
+                                  : "default";
+                              return (
+                                <div
+                                  key={item.session}
+                                  style={{
+                                    minWidth: 0,
+                                    maxWidth: "100%",
+                                    flexShrink: 0,
+                                    overflow: "hidden",
+                                    border: `1px solid ${isSelected ? "var(--token-colors-accent-cyan)" : isLive ? "var(--token-colors-accent-green)" : "var(--token-colors-border-default)"}`,
+                                    borderRadius: 8,
+                                    padding: 10,
+                                    background: isSelected
+                                      ? "var(--token-colors-alpha-blue-_15)"
+                                      : isLive
+                                        ? "var(--token-colors-alpha-green-_14)"
+                                        : "var(--token-colors-alpha-bg-_08)",
+                                  }}
+                                >
+                                  <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {item.title || item.session}
+                                      </div>
+                                      <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {item.title ? `${item.session} • ` : ""}
+                                        {formatMaybeDate(item.last_ts) ?? item.last_ts ?? "unknown time"}
+                                      </div>
+                                    </div>
+                                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                      {isSelected ? <Badge size="sm" variant="info">Open</Badge> : null}
+                                      <Badge size="sm" variant={statusVariant}>{statusLabel}</Badge>
+                                      <Badge size="sm" variant={isSelected ? "info" : "default"}>{item.event_count ?? 0} ev</Badge>
+                                      <Button variant="ghost" size="sm" loading={loadingMemorySessionId === item.session} onClick={() => void onResumeMemorySession(item.session)}>
+                                        {isSelected ? "Reload" : "Resume"}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {loadingMoreRecentSessions ? (
+                              <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", padding: "4px 0 8px" }}>
+                                Loading more sessions…
+                              </div>
+                            ) : recentSessionsHasMore ? (
+                              <Button variant="ghost" size="sm" onClick={() => void onLoadMoreRecentSessions()}>
+                                Load more
+                              </Button>
+                            ) : recentSessions.length > 0 ? (
+                              <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", padding: "4px 0 8px" }}>
+                                End of recent sessions.
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+  );
+}
+
+export function groupSessionSearchHits(sessionSearchHits: MemorySearchHit[] | undefined, recentSessions: MemorySessionSummary[] | undefined) {
+  const bySession = new Map<string, { session: string; snippet: string; hitCount: number; title?: string }>();
+  for (const hit of sessionSearchHits ?? []) {
+    const session = typeof hit.session === "string"
+      ? hit.session
+      : typeof hit.metadata?.session === "string"
+        ? hit.metadata.session
+        : "";
+    if (!session) continue;
+    const snippet = typeof hit.snippet === "string"
+      ? hit.snippet
+      : typeof hit.text === "string"
+        ? hit.text
+        : typeof hit.document === "string"
+          ? hit.document
+          : "";
+    const title = recentSessions?.find((item) => item.session === session)?.title ?? undefined;
+    const existing = bySession.get(session);
+    if (existing) {
+      existing.hitCount += 1;
+      if (!existing.snippet && snippet) existing.snippet = snippet;
+    } else {
+      bySession.set(session, { session, snippet, hitCount: 1, title });
+    }
+  }
+  return [...bySession.values()];
+}
+
+export function loadMoreSessionsOnScroll(
+  event: UIEvent<HTMLDivElement>, hasMore: boolean | undefined, loadingMore: boolean | undefined,
+  loading: boolean | undefined, loadMore: (() => void | Promise<void>) | undefined,
+) {
+  if (!hasMore || loadingMore || loading || !loadMore) return;
+  const target = event.currentTarget;
+  const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+  if (remaining <= 120) void loadMore();
 }

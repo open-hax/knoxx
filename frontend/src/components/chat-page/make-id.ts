@@ -5,3 +5,7 @@ export function makeId(): string {
   }
   return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
+
+export function makeAttachmentId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}

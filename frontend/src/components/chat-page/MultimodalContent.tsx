@@ -7,6 +7,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Badge, Button } from "@open-hax/uxx";
+import type { MultimodalAttachment } from "./types";
 
 export interface ContentPart {
   type: "text" | "image" | "audio" | "video" | "document";
@@ -90,7 +91,7 @@ function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   );
 }
 
-function formatSize(bytes: number): string {
+export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
@@ -349,3 +350,36 @@ export function MultimodalContent({
 }
 
 export default MultimodalContent;
+
+// Browser media preview creation shares the same content-type boundary.
+export const DEFAULT_ATTACHMENT_MAX_SIZE = 50 * 1024 * 1024; // 50MB
+
+export const DEFAULT_ATTACHMENT_ACCEPT: Record<string, string[]> = {
+  "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"],
+  "audio/*": [".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"],
+  "video/*": [".mp4", ".webm", ".mov", ".avi", ".mkv"],
+  "application/pdf": [".pdf"],
+  "text/*": [".txt", ".md", ".json", ".csv"],
+};
+
+export function getAttachmentType(file: File): MultimodalAttachment["type"] {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("audio/")) return "audio";
+  if (file.type.startsWith("video/")) return "video";
+  return "document";
+}
+
+export async function createAttachmentPreview(file: File, type: MultimodalAttachment["type"]): Promise<string | undefined> {
+  if (type === "image") {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(undefined);
+      reader.readAsDataURL(file);
+    });
+  }
+  if (type === "audio" || type === "video") {
+    return URL.createObjectURL(file);
+  }
+  return undefined;
+}

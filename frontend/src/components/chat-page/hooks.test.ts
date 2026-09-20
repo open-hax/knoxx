@@ -1,7 +1,8 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  getChatStorage,
   initializePersistedChatSession,
   listPersistedChatSessions,
   persistChatSessionSnapshot,
@@ -16,6 +17,7 @@ vi.mock("../../lib/api", () => ({
   proxxHealth: vi.fn(),
 }));
 
+import { migrateSessionStateFromLegacy } from "../../lib/storage";
 import { getRun, getSessionStatus } from "../../lib/api";
 
 const SESSION_STATE_KEY = "knoxx_chat_session_state:test";
@@ -140,5 +142,44 @@ describe("chat session persistence helpers", () => {
       expect(setConversationId).toHaveBeenCalledWith("conversation-recover");
       expect(setIsSending).toHaveBeenCalledWith(true);
     });
+  });
+});
+
+
+describe("chat storage availability and migration", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("falls back to session storage when persistent storage access is denied", () => {
+    const fallback = window.sessionStorage;
+    vi.spyOn(window, "localStorage", "get").mockImplementation(() => { throw new DOMException("Denied", "SecurityError"); });
+    expect(getChatStorage()).toBe(fallback);
+    vi.spyOn(window, "sessionStorage", "get").mockImplementation(() => { throw new DOMException("Denied", "SecurityError"); });
+    expect(getChatStorage()).toBeNull();
+  });
+
+  it("copies only the requested legacy session family and protects current snapshots", () => {
+    const key = "knoxx_chat_migration_fixture";
+    const oldKey = `${key}:old`;
+    const liveKey = `${key}:live`;
+    const unrelated = "unrelated_migration_fixture";
+    const keys = [oldKey, liveKey, unrelated];
+    const before = keys.map(name => [name, localStorage.getItem(name), sessionStorage.getItem(name)] as const);
+    try {
+      sessionStorage.setItem(oldKey, "legacy snapshot");
+      sessionStorage.setItem(liveKey, "stale snapshot");
+      sessionStorage.setItem(unrelated, "unrelated value");
+      localStorage.setItem(liveKey, "current snapshot");
+      localStorage.removeItem(oldKey);
+      localStorage.removeItem(unrelated);
+      migrateSessionStateFromLegacy({ sessionStateKey: key, store: localStorage, legacy: sessionStorage });
+      expect(localStorage.getItem(oldKey)).toBe("legacy snapshot");
+      expect(localStorage.getItem(liveKey)).toBe("current snapshot");
+      expect(localStorage.getItem(unrelated)).toBeNull();
+    } finally {
+      for (const [name, local, session] of before) {
+        if (local === null) localStorage.removeItem(name); else localStorage.setItem(name, local);
+        if (session === null) sessionStorage.removeItem(name); else sessionStorage.setItem(name, session);
+      }
+    }
   });
 });

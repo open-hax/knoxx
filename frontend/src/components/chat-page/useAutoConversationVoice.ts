@@ -1,3 +1,4 @@
+import { useVoiceRecorder } from "./useVoiceRecorder";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { voiceTtsSynthesize } from "../../lib/api";
@@ -136,4 +137,104 @@ export function useAutoConversationVoice({
   }, [available, enabled, messages, defaultVoiceId, cleanup]);
 
   return { status, error };
+}
+
+type ConversationVoiceControlsOptions = {
+  messages: ChatMessage[];
+  ttsEnabled: boolean;
+  sttEnabled: boolean;
+  ttsDefaultVoiceId: string;
+  isSending: boolean;
+  onSend: (text: string) => void;
+};
+
+/** Coordinate the existing automatic reply playback and silence-triggered recording. */
+export function useConversationVoiceControls({
+  messages, ttsEnabled, sttEnabled, ttsDefaultVoiceId, isSending, onSend,
+}: ConversationVoiceControlsOptions) {
+  const [autoConversationEnabled, setAutoConversationEnabled] = useState(false);
+  const [autoRecording, setAutoRecording] = useState(false);
+  const [voiceThreshold, setVoiceThreshold] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('knoxx_voice_threshold');
+      if (saved) {
+        const parsed = parseFloat(saved);
+        if (!isNaN(parsed)) return Math.max(0.001, Math.min(0.1, parsed));
+      }
+    }
+    return 0.015;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('knoxx_voice_threshold', String(voiceThreshold));
+  }, [voiceThreshold]);
+
+  const autoConversationVoice = useAutoConversationVoice({
+    enabled: autoConversationEnabled,
+    available: ttsEnabled,
+    messages,
+    defaultVoiceId: ttsDefaultVoiceId,
+    onPlaybackEnded: () => {
+      if (sttEnabled) {
+        setAutoRecording(true);
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (!ttsEnabled && autoConversationEnabled) {
+      setAutoConversationEnabled(false);
+    }
+  }, [autoConversationEnabled, ttsEnabled]);
+
+  useEffect(() => {
+    if (!autoConversationEnabled && autoRecording) {
+      setAutoRecording(false);
+    }
+  }, [autoConversationEnabled, autoRecording]);
+
+  const prevAutoConversationEnabledRef = useRef(false);
+
+  const { state: autoRecorderState, startRecording: startAutoRecording, stopRecording: stopAutoRecording, audioLevelRef } = useVoiceRecorder({
+    onTranscript: (text) => {
+      setAutoRecording(false);
+      onSend(text);
+    },
+    conversationMode: true,
+    silenceThreshold: voiceThreshold,
+  });
+
+  // Start recording immediately when user toggles auto-conversation ON
+  useEffect(() => {
+    if (!prevAutoConversationEnabledRef.current && autoConversationEnabled && sttEnabled && !isSending) {
+      setAutoRecording(true);
+    }
+    prevAutoConversationEnabledRef.current = autoConversationEnabled;
+  }, [autoConversationEnabled, sttEnabled, isSending]);
+
+  // Stop recording when assistant starts generating
+  useEffect(() => {
+    if (isSending && autoRecording) {
+      setAutoRecording(false);
+    }
+  }, [isSending, autoRecording]);
+
+  // Start/stop the actual recorder based on autoRecording state
+  useEffect(() => {
+    if (autoRecording && autoRecorderState.status === "idle") {
+      void startAutoRecording();
+    }
+  }, [autoRecording, autoRecorderState.status, startAutoRecording]);
+
+  useEffect(() => {
+    if (!autoRecording && autoRecorderState.status === "recording") {
+      stopAutoRecording();
+    }
+  }, [autoRecording, autoRecorderState.status, stopAutoRecording]);
+
+  return {
+    autoConversationEnabled, setAutoConversationEnabled, autoRecording,
+    voiceThreshold, setVoiceThreshold, autoConversationVoice,
+    autoRecorderState, audioLevelRef,
+  };
 }
