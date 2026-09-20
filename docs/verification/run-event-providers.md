@@ -201,3 +201,14 @@ remains unchanged. This conservative bound is below Mongo's document limit
 because compare-and-set carries both the preimage and replacement. The verifier
 does not claim replica failover, hard process-kill recovery of an invocation, or
 recovery from independently unavailable compensation providers.
+
+A restarted translation dispatcher cannot use an old run ID as a new invocation's
+ownership credential. If the split turn existed but no run was admitted, its
+ordinary replay still works. If the old run was already admitted, the first
+reconciliation records that dispatch as failed/retriable and the next trigger
+creates a fresh run and turn. There is no automatic retry timer: the verifier
+prints this two-trigger recovery limitation. Its actual dispatch → FIFO → Clio
+admission → split-receipt proof reopens the provider, observes refusal without
+changing the prior run/history, then completes a new translation candidate on the
+next reconciliation. It uses an owned deterministic translation adapter, not a
+paid model or a deployed background scheduler.

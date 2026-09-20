@@ -47,5 +47,6 @@ async function prove(native) {
 await prove(false);
 if (mongod) await prove(true);
 else console.warn('WARN: native Mongo proof requires --mongod or KNOXX_TEST_MONGOD.');
+console.warn('WARN: restarting an already admitted translation attempt first records an ownership refusal; its next reconciliation uses a fresh run. There is no automatic retry timer.');
 console.warn('WARN: HTTP route selection, deployment provider configuration and browser reconnect belong to the later HTTP/composition layer; this proof exercises its durable query ports directly.');
 console.log('Each native fixture owns its temporary directory and process; no application database is used.');

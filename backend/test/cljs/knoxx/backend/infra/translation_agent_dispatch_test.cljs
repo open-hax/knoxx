@@ -148,7 +148,7 @@
       (is (re-find #"already owned by this live process"
                    (:dispatch/detail second-pass))))))
 
-(deftest ^:async a-restart-replays-process-lost-queued-work-with-the-same-turn
+(deftest ^:async a-restart-replays-a-turn-whose-run-was-never-admitted
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)
         first-events (atom [])
@@ -176,7 +176,7 @@
                                                    restarted-triggered
                                                    restarted-process-seen))
                        work context source))]
-    (testing "a fresh process ledger accepts the durable attempt again"
+    (testing "an event-only crash window can reuse its split turn before run admission"
       (is (= :dispatch/accepted (:dispatch/outcome replay)))
       (is (= run-id (:translation/run-id replay)))
       (is (= [(dispatch/event-id run-id)] @first-triggered))
@@ -584,16 +584,18 @@
                         (get-in first-pass [:dispatch/record :dispatch/key]))))))
         (is (= 2 @settlement-deliveries))))
 
-    (testing "a skipped old event does not retain its re-armed callback"
-      (await (agent-runner/enqueue-event-turn!
-       {:llmModel "test-model" :collection-name "test"}
-       {:run-id (:translation/run-id first-pass)
-        :conversation-id (:translation/run-id first-pass)
-        :session-id (:translation/run-id first-pass)
-        :message "stale event"
-        :agent-spec {:trigger-id "publication-translation"
-                     :event-id first-event-id}}
-       (fn [] (js/Promise.resolve {:ok true}))))
+    (testing "a stale old event cannot claim the prior run or revive its callback"
+      (try
+        (await (agent-runner/enqueue-event-turn!
+                {:llmModel "test-model" :collection-name "test"}
+                {:run-id (:translation/run-id first-pass)
+                 :conversation-id (:translation/run-id first-pass)
+                 :session-id (:translation/run-id first-pass)
+                 :message "stale event"
+                 :agent-spec {:trigger-id "publication-translation" :event-id first-event-id}}
+                (fn [] {:ok true})))
+        (is false "A new invocation cannot adopt an already admitted run ID")
+        (catch :default error (is (= "startup_admission_conflict" (:code (ex-data error))))))
       (await (queue-fixture/wait-idle!))
       (is (= 2 @settlement-deliveries)))
 
