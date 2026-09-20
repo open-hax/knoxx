@@ -134,7 +134,8 @@
                          "expiresAt" (js/Date. (+ (.getTime now) (* 1000 (session-ttl-seconds id))))}]
     (try
       (await (.insertOne coll placeholder #js {"writeConcern" #js {"w" "majority" "j" true}}))
-      placeholder
+      ;; Read the stored BSON order, including Mongo's leading _id, as the preimage.
+      (await (.findOne coll #js {"session_id" id} #js {"readPreference" "primary"}))
       (catch :default error (if (duplicate-key? error) nil (throw error))))))
 
 (defn ^:async startup-view!
