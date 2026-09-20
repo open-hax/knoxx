@@ -510,18 +510,29 @@
     {:content content :parts-count (count parts) :media-parts-count (count media-parts)
      :omitted-count omitted-count}))
 
-(defn ^:async prompt-and-await!
-  "Send, stream and finalize a turn, releasing only its explicitly owned observer.
-   The legacy arity does not claim an ambient observer installed by another turn."
-  ([config session-id run-id conversation-id started-ms model-id mode
-    session message prompt-content-parts hydration memory-hydration
-    persisted-request-messages agent-spec]
-   (prompt-and-await! config session-id run-id conversation-id started-ms model-id mode
-                      session message prompt-content-parts hydration memory-hydration
-                      persisted-request-messages agent-spec nil))
-  ([config session-id run-id conversation-id started-ms model-id mode
-    session message prompt-content-parts hydration memory-hydration
-    persisted-request-messages agent-spec event-stream-sink]
+(defn- ^:async await-provider-prompt!
+  "Settle provider output or refusal, retaining fail-stop behavior for an unsafe abort."
+  [config state session prompt abort! unsubscribe success! failure!]
+  (try
+    (await (send-user-message-with-timeout! session (:content prompt) (:agent-turn-timeout-ms config)))
+    (agent-ctx/clear-context!)
+    (unsubscribe)
+    (await (success!))
+    (catch :default err
+      ;; A timed-out provider must stop before failure settlement can release its FIFO.
+      (when (agent-turn-timeout? err)
+        (await (abort-timed-out-turn!
+                config abort! err (select-keys state [:run-id :conversation-id :session-id]))))
+      (agent-ctx/clear-context!)
+      (unsubscribe)
+      (turn-control/unregister-active-turn! (:conversation-id state) (:run-id state))
+      (await (failure! err)))))
+
+(defn- ^:async prompt-with-owned-observer!
+  "Bind the invocation's observer to every terminal continuation before awaiting the provider."
+  [config session-id run-id conversation-id started-ms model-id mode
+   session message prompt-content-parts hydration memory-hydration
+   persisted-request-messages agent-spec event-stream-sink]
   (let [state (assoc (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms xturn-node/random-uuid!)
                      :event-stream-sink event-stream-sink)
         abort! (fn [reason] (stream/request-abort! state session reason))
@@ -530,35 +541,30 @@
         prompt (build-turn-prompt message agent-spec prompt-content-parts hydration memory-hydration)]
     (xturn-prompt/log-prompt! (assoc prompt :run-id run-id :session-id session-id
                                   :conversation-id conversation-id :model-id model-id :mode mode))
-    (agent-ctx/set-context! {:session-id session-id
-                             :conversation-id conversation-id
-                             :run-id run-id
-                             :agent-spec agent-spec})
-    (try
-      (let [_ (await (send-user-message-with-timeout! session (:content prompt) (:agent-turn-timeout-ms config)))]
-        (agent-ctx/clear-context!)
-        (unsubscribe)
-        (await (finalize-turn-success!
-                config state
-                session run-id conversation-id session-id started-ms model-id mode
-                hydration memory-hydration persisted-request-messages agent-spec)))
-      (catch :default err
-        ;; Promise.race does not cancel its losing provider promise. Abort the
-        ;; registered provider session before failure settlement releases an
-        ;; event FIFO slot, otherwise the timed-out turn could still execute a
-        ;; late tool call concurrently with the next queued turn.
-        (when (agent-turn-timeout? err)
-          (await (abort-timed-out-turn!
-                  config abort! err {:run-id run-id
-                                     :conversation-id conversation-id
-                                     :session-id session-id})))
-        (agent-ctx/clear-context!)
-        (unsubscribe)
-        (turn-control/unregister-active-turn! conversation-id run-id)
-        (await (finalize-turn-failure! config state session run-id conversation-id session-id started-ms
-                                      hydration memory-hydration persisted-request-messages agent-spec err)))))))
+    (agent-ctx/set-context! {:session-id session-id :conversation-id conversation-id
+                             :run-id run-id :agent-spec agent-spec})
+    (await (await-provider-prompt!
+            config state session prompt abort! unsubscribe
+            #(finalize-turn-success! config state session run-id conversation-id session-id started-ms model-id mode
+                                     hydration memory-hydration persisted-request-messages agent-spec)
+            #(finalize-turn-failure! config state session run-id conversation-id session-id started-ms
+                                     hydration memory-hydration persisted-request-messages agent-spec %)))))
 
-
+(defn ^:async prompt-and-await!
+  "Send, stream and finalize a turn, releasing only its explicitly owned observer.
+   The legacy arity does not claim an ambient observer installed by another turn."
+  ([config session-id run-id conversation-id started-ms model-id mode
+    session message prompt-content-parts hydration memory-hydration
+    persisted-request-messages agent-spec]
+   (prompt-with-owned-observer! config session-id run-id conversation-id started-ms model-id mode
+                                session message prompt-content-parts hydration memory-hydration
+                                persisted-request-messages agent-spec nil))
+  ([config session-id run-id conversation-id started-ms model-id mode
+    session message prompt-content-parts hydration memory-hydration
+    persisted-request-messages agent-spec event-stream-sink]
+   (prompt-with-owned-observer! config session-id run-id conversation-id started-ms model-id mode
+                                session message prompt-content-parts hydration memory-hydration
+                                persisted-request-messages agent-spec event-stream-sink)))
 
 (defn studio-stream-path
   [value]
