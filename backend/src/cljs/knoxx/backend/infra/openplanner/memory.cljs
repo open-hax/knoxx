@@ -1,8 +1,8 @@
 (ns knoxx.backend.infra.openplanner.memory
-  (:require [clojure.string :as str]
-            [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [knoxx.backend.extern.local-openplanner :as planner-host]
+            [clojure.string :as str]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.shape.session-persistence :refer [put-run!]]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.label.quality :as quality-labels]
@@ -38,41 +38,28 @@
       (contains? #{"csv" "tsv" "sql" "xml"} ext) "data"
       :else "docs")))
 
-(defn ^:async upsert-openplanner-document!
-  "Send a document to OpenPlanner's /v1/documents endpoint for indexing.
-   Returns {:ok true, :document ...} on success, or {:ok false ...} on failure."
+(defn- document-payload
   [config {:keys [id rel-path content project kind title source-path domain visibility extra]}]
+  (let [doc-id (or id (str "knoxx-doc:" (or rel-path (planner-host/uuid!))))]
+    {:org_id (planner-scope/org-id! config)
+     :id doc-id :title (or title (some-> rel-path (str/split #"/") last) doc-id)
+     :content (str (or content "")) :project (or project (:project-name config) "workspace")
+     :kind (or kind (guess-document-kind rel-path)) :visibility (or visibility "internal")
+     :source "knoxx-ingestion" :sourcePath (or source-path rel-path)
+     :domain (or domain "general") :language "en" :createdBy "knoxx-ingestion"
+     :metadata (merge {:indexed_from "knoxx"} extra)}))
+
+(defn ^:async upsert-openplanner-document!
+  "Index a document with explicitly bound organization scope; retain a real failure."
+  [config {:keys [rel-path] :as document}]
   (when-not (openplanner-configured? config)
-    (throw (js/Error. "OpenPlanner is not configured")))
-  (let [doc-id (or id (str "knoxx-doc:" (or rel-path (.randomUUID js/crypto))))
-        doc-kind (or kind (guess-document-kind rel-path))
-        doc-title (or title (some-> rel-path (str/split #"/") last) doc-id)
-        doc-content (str (or content ""))
-        doc-project (or project (:project-name config) "workspace")
-        payload {:document {:id doc-id
-                            :title doc-title
-                            :content doc-content
-                            :project doc-project
-                            :kind doc-kind
-                            :visibility (or visibility "internal")
-                            :source "knoxx-ingestion"
-                            :sourcePath (or source-path rel-path)
-                            :domain (or domain "general")
-                            :language "en"
-                            :createdBy "knoxx-ingestion"
-                            :metadata (merge {:indexed_from "knoxx"}
-                                             extra)}}]
+    (throw (ex-info "OpenPlanner is not configured" {:status 503})))
+  (let [payload (document-payload config document)]
     (try
-      (let [resp (await (openplanner-client/upsert-document! (openplanner-client/client config) (:document payload)))]
-        {:ok true
-         :document (:document resp)
-         :indexed (:indexed resp)
-         :rel-path rel-path})
-      (catch :default err
-        (.warn js/console "[knoxx] failed to index document into OpenPlanner:" rel-path err)
-        {:ok false
-         :error (str err)
-         :rel-path rel-path}))))
+      (let [response (await (openplanner-client/upsert-document! (openplanner-client/client config) payload))]
+        {:ok true :document (:document response) :indexed (:indexed response) :rel-path rel-path})
+      (catch :default error
+        {:ok false :error (str error) :rel-path rel-path}))))
 
 (defn ^:async batch-upsert-openplanner-documents!
   "Ingest multiple documents into OpenPlanner with concurrency control.
@@ -163,7 +150,7 @@
           (not (openplanner-configured? config)))
     session-manager
     (try
-      (let [body (await (openplanner-client/session! (openplanner-client/client config) conversation-id nil))]
+      (let [body (await (openplanner-client/session! (openplanner-client/client config) conversation-id (planner-scope/session-options config)))]
         (doseq [row (or (:rows body) [])]
           (when-let [message (planner-row->agent-message row)]
             (.appendMessage session-manager message)))
@@ -239,7 +226,7 @@
 
 (defn- ^:async fetch-session-summary!
   [config session-id]
-  (let [rows (or (:rows (await (openplanner-client/session! (openplanner-client/client config) session-id nil))) [])
+  (let [rows (or (:rows (await (openplanner-client/session! (openplanner-client/client config) session-id (planner-scope/session-options config)))) [])
         row (or (last (filter #(and (contains? #{"assistant" "system"} (:role %))
                                    (default-memory-hit? %))
                                rows))
@@ -253,7 +240,7 @@
   [config]
   (let [session-ids (->> (or (:rows (await (openplanner-client/sessions!
                                             (openplanner-client/client config)
-                                            {:project (:session-project-name config)}))) [])
+                                            (planner-scope/session-options config)))) [])
                          (map :session)
                          (remove str/blank?)
                          distinct
@@ -267,9 +254,9 @@
       [])))
 
 (defn ^:async openplanner-memory-search!
-  [config {:keys [query k session-id]}]
   "Search OpenPlanner's indexed document corpus via vector similarity.
-   Returns {:query, :mode, :hits} where each hit has :id, :document, :metadata, :distance. "
+   Returns {:query, :mode, :hits} where each hit has :id, :document, :metadata, :distance."
+  [config {:keys [query k session-id]}]
   (let [query (str/trim (or query ""))
         {:keys [k fetch-k]} (expansion-policy/bounded-search-params
                              (policy-registry/get-policy)
@@ -280,7 +267,8 @@
        :mode :vector
        :hits (default-memory-hits (vector-result-hits (:result (await (openplanner-client/vector-search!
                                                                         (openplanner-client/client config)
-                                                                        (cond-> {:q query
+                                                                        (cond-> {:org_id (planner-scope/org-id! config)
+                                                                                 :q query
                                                                                  :k fetch-k
                                                                                  :source "knoxx"
                                                                                  :project (:session-project-name config)}
@@ -312,7 +300,7 @@
       {:query "" :hits [] :mode :none}
       (let [body (await (openplanner-client/vector-search!
                          (openplanner-client/client config)
-                         (cond-> {:q query :k k :project (or project (:project-name config) "workspace")}
+                         (cond-> {:org_id (planner-scope/org-id! config) :q query :k k :project (or project (:project-name config) "workspace")}
                            source (assoc :source source)
                            kind (assoc :kind kind)
                            visibility (assoc :visibility visibility))))]
@@ -549,23 +537,15 @@
       nil)))
 
 (defn index-run-memory!
-  "Persist the completed run to the session store AND project it into the
-   OpenPlanner event ledger. Both writes are required: the store is the
-   authoritative run record (knoxx_runs), while the ledger projection
-   (knoxx.message / knoxx.run events) is the only source the /v1/sessions
-   list and resume reads consume. Treating these as either/or made every
-   post-cutover thread invisible to the REST API (regression 2026-06-06)."
+  "Project a completed run into optional searchable memory. Durable run admission
+   belongs to the awaited lifecycle, never this best-effort projection."
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
   (if-not (openplanner-configured? config)
     (js/Promise.resolve nil)
     (fail-open-indexing!
      run
-     (let [store @store-registry/session-store*
-           store-write (if store
-                         (put-run! store run)
-                         (js/Promise.resolve nil))
-           ledger-write (project-run-into-event-ledger! config run extract-mentioned-devel-paths extract-mentioned-urls)]
-       (js/Promise.all #js [store-write ledger-write])))))
+     (project-run-into-event-ledger! (assoc config :openplanner-org-id (:org_id run))
+                                    run extract-mentioned-devel-paths extract-mentioned-urls))))
 
 (defn- legacy-run-context
   [config run]
@@ -780,9 +760,7 @@
                  (legacy-media-events config run ctx)))))
 
 (defn- ^:async project-run-into-event-ledger!
-  "Translate a completed run into openplanner.event.v1 envelopes and append
-   them to the event ledger via the REST client. REST (not direct Mongo) so
-   the run text still flows through vector indexing and graph derivation."
+  "Project completed-run envelopes through the explicitly selected driver."
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
   (let [all-events (legacy-run-events config run extract-mentioned-devel-paths extract-mentioned-urls)]
     (try

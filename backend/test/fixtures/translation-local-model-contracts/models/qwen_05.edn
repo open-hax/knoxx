@@ -1,0 +1,11 @@
+{:model/id "onnx-community/Qwen2.5-0.5B-Instruct"
+ :model/provider :transformers-js
+ :model/api "openai-completions"
+ :model/label "onnx-community/Qwen2.5-0.5B-Instruct"
+ :model/allowlisted true
+ :model/reasoning false
+ :model/default-thinking :off
+ :model/thinking-levels [:off]
+ :model/context-window 32768
+ :model/max-tokens 2048
+ :model/input [:text]}
