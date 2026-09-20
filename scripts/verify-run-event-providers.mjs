@@ -40,13 +40,14 @@ async function prove(native) {
     Number(tests) < 1 || Number(assertions) < 1 || Number(failures) !== 0 || Number(errors) !== 0)) {
     throw new Error('A positive test/assertion summary with zero failures and errors is required');
   }
-  console.log(native ? 'PASS: actual Mongo >16MiB event history and single-event fragmentation, bounded append writes, interrupted publication/migration, retry, graceful process restart, thread patch/rewind, expiry and conditional startup settlement across lost acknowledgments and retired generations' :
-    'PASS: selected provider events, authorized durable query ports, pre-listen readiness, FIFO/live-control admission, owned partial startup settlement, finalizer cleanup and cache expiry');
+  console.log(native ? 'PASS: actual Mongo >16MiB event history and single-event fragmentation, bounded append writes, interrupted publication/migration, retry, graceful process restart, thread patch/rewind, expiry and conditional startup settlement across lost acknowledgments, retired generations and conditional prior-process recovery' :
+    'PASS: selected provider events, authorized durable query ports, pre-listen readiness, FIFO/live-control admission, owned partial startup settlement, exact recovered-owner handoff, finalizer cleanup and cache expiry');
 }
 
 await prove(false);
 if (mongod) await prove(true);
 else console.warn('WARN: native Mongo proof requires --mongod or KNOXX_TEST_MONGOD.');
+console.warn('WARN: automatic session recovery releases only an exact previous-process or historical unstamped running owner; same-process stale recovery is refused, without an age-based takeover.');
 console.warn('WARN: restarting an already admitted translation attempt first records an ownership refusal; its next reconciliation uses a fresh run. There is no automatic retry timer.');
 console.warn('WARN: HTTP route selection, deployment provider configuration and browser reconnect belong to the later HTTP/composition layer; this proof exercises its durable query ports directly.');
 console.log('Each native fixture owns its temporary directory and process; no application database is used.');

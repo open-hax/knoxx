@@ -212,3 +212,30 @@ admission → split-receipt proof reopens the provider, observes refusal without
 changing the prior run/history, then completes a new translation candidate on the
 next reconciliation. It uses an owned deterministic translation adapter, not a
 paid model or a deployed background scheduler.
+
+
+### Recovery after process restart
+
+Automatic session recovery must present the complete provider-read snapshot and
+its opaque generation receipt. The provider conditionally releases only that
+exact running owner from a previous process, or a historical owner without a
+process stamp. A changed value, native BSON type, generation, selected provider
+or locally active turn refuses recovery. The release changes the thread to
+`waiting_input` and records `recovered_from_run_id`; it does not rewrite the old
+run or accepted events.
+
+Recovery then enters ordinary startup with a fresh run ID and private admission
+token. A successor can win between release and new admission; normal startup
+refuses it without overwriting the successor. No-message and failed recovery
+paths issue no unconditional completion against the old snapshot. Kickoff mode
+recognizes only the requested new run, and observes later launch failure without
+writing stale state. The focused proof exercises the actual recovery entrypoint
+through real Clio admission; the native proof repeats the conditional handoff
+against an owned standalone Mongo process.
+
+This is a prior-process recovery rule, not a lease or an age-based takeover.
+Same-process stale recovery now refuses explicitly because elapsed time alone
+cannot prove that the old invocation has stopped. The existing separate stale
+abort and shutdown paths remain outside this conditional recovery repair. A lost
+release acknowledgment may leave the thread idle with a visible recovery error;
+it does not authorize replaying the old receipt or adopting its startup token.
