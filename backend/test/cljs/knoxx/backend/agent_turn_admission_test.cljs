@@ -23,7 +23,7 @@
                       titles/maybe-prime-session-title! (fn [& _] nil)
                       turns/hydrate-and-materialize! (fn [& _] [nil nil [] nil])
                       sessions/put-session! (fn ([_] (throw failure)) ([_ _] (throw failure)))
-                      turns/prompt-and-await! (fn [& _] (swap! model-calls inc))]
+                      turns/prompt-and-await! (fixture/prompt-stub #(swap! model-calls inc))]
           (try
             (await (turns/send-agent-turn!
                     {} {} {:run-id "refused-run" :session-id "refused-session"

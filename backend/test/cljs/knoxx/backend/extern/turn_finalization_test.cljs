@@ -23,12 +23,12 @@
     (case mode
       :accepted (#'turns/finalize-accepted-turn-output!
                  {} session run_id conversation_id session_id "model" "answer" ""
-                 [] [] 1 {:input-tokens 1 :output-tokens 1} [] nil nil [] {} {:type "run_completed"})
+                 [] [] 1 {:input-tokens 1 :output-tokens 1} [] nil nil [] {} {:type "run_completed"} @state/event-stream-sink*)
       :refused (#'turns/finalize-refused-turn-output!
                 {} session run_id conversation_id session_id at "model" [] {} {} []
-                {:diagnostic-type :fixture/refused :message "refused" :reason "empty_output"})
+                {:diagnostic-type :fixture/refused :message "refused" :reason "empty_output"} @state/event-stream-sink*)
       :failed (#'turns/finalize-turn-failure!
-               {} {:abort-reason* (atom nil) :reasoning-chunks (atom [])}
+               {} {:abort-reason* (atom nil) :reasoning-chunks (atom []) :event-stream-sink @state/event-stream-sink*}
                session run_id conversation_id session_id at nil nil [] {} (ex-info "provider failed" {})))))
 
 (defn- ^:async finalization-outcome [mode session]
@@ -40,16 +40,16 @@
                                   {:status 503 :code "thread_completion_failed" :credential "secret-provider-data"})
         complete! (^:async fn [] (swap! order* conj :complete) (when complete-fails? (throw completion-error)))
         previous-sink @state/event-stream-sink* previous-sessions @sessions/sessions*
-        clear! state/clear-event-stream-sink! remove! sessions/remove-agent-session!
+        clear! state/clear-event-stream-sink-if! remove! sessions/remove-agent-session!
         session (reify agent/IAgentSession (messages [_] []))]
     (try
       (state/set-event-stream-sink! (fn [_]))
       (swap! sessions/sessions* assoc (:conversation_id coordinates) {:session session})
       (with-redefs [events/persist-run! (^:async fn [_] (swap! order* conj :persist) (when persist-fails? (throw persist-error)))
                     threads/complete-session! (fn ([_ _ _] (complete!)) ([_ _ _ _] (complete!)))
-                    state/clear-event-stream-sink! (fn [] (swap! order* conj :clear) (clear!))
+                    state/clear-event-stream-sink-if! (fn [sink] (swap! order* conj :clear) (clear! sink))
                     sessions/remove-agent-session! (fn [id] (swap! order* conj :remove) (remove! id))
-                    errors/log-error! (fn [boundary _context error] (swap! diagnostics* conj {:boundary boundary :data (ex-data error) :message (ex-message error)}) {:message (ex-message error)})]
+                    errors/log-error! (fn [boundary context error] (swap! diagnostics* conj {:boundary boundary :context context :data (ex-data error) :message (ex-message error)}) {:message (ex-message error)})]
         (let [result (await (finalization-outcome mode session))]
           (test/is (identical? (if persist-fails? persist-error completion-error) result))
           (test/is (= [:persist :complete :clear :remove] @order*))
@@ -58,6 +58,7 @@
           (when (and persist-fails? complete-fails?)
             (let [secondary (last @diagnostics*)]
               (test/is (= :agent-turn/session-completion-failed (:boundary secondary)))
+              (test/is (not (contains? (:context secondary) :event-stream-sink)))
               (test/is (= {:status 503 :code "thread_completion_failed"} (:data secondary)))
               (test/is (not (re-find #"secret-provider" (pr-str @diagnostics*))))))))
       (finally (reset! state/event-stream-sink* previous-sink) (reset! sessions/sessions* previous-sessions)))))
@@ -102,7 +103,7 @@
   (try
     {:value (await (#'turns/finalize-turn-success!
                     {} {:chunks (atom (if (= reason "empty_output") [] ["No tool was called"]))
-                        :reasoning-chunks (atom [])}
+                        :reasoning-chunks (atom []) :event-stream-sink @state/event-stream-sink*}
                     session (:run_id coordinates) (:conversation_id coordinates) (:session_id coordinates)
                     (disk/now-ms) "model" nil nil nil []
                     (if (= reason "required_tool_not_called") {:tools-choice "required-first"} {})))}
@@ -148,14 +149,14 @@
 (defn- ^:async exercise-refusal! [reason phase failure session]
   (let [gate (settlement-gate) entered* (atom false) settled* (atom false) order* (atom [])
         controlled (controlled-persistence phase gate entered* order*)
-        complete! threads/complete-session! clear! state/clear-event-stream-sink!
+        complete! threads/complete-session! clear! state/clear-event-stream-sink-if!
         remove! sessions/remove-agent-session! provider @registry/session-store*]
     (with-redefs [persistence/append-event! (:append! controlled)
                   persistence/put-run! (:put! controlled)
                   realtime/broadcast-ws-session! (fn [_ _ event] (swap! order* conj [:broadcast (:type event) (:reason event)]))
                   threads/complete-session! (fn ([id conversation payload] (swap! order* conj :complete) (complete! nil id conversation payload))
                                              ([db id conversation payload] (swap! order* conj :complete) (complete! db id conversation payload)))
-                  state/clear-event-stream-sink! (fn [] (swap! order* conj :clear) (clear!))
+                  state/clear-event-stream-sink-if! (fn [sink] (swap! order* conj :clear) (clear! sink))
                   sessions/remove-agent-session! (fn [id] (swap! order* conj :remove) (remove! id))
                   errors/log-error! (fn [_ _ error] {:message (ex-message error)})]
       (let [work (refused-outcome! reason session settled*)]

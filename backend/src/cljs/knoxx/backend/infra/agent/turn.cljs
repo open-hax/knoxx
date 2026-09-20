@@ -220,7 +220,7 @@
     :else nil))
 
 (defn- ^:async finalize-refused-turn-output!
-  [config session run-id conversation-id session-id started-ms model-id persisted-request-messages agent-spec completed-run merged-content-parts output-failure]
+  [config session run-id conversation-id session-id started-ms model-id persisted-request-messages agent-spec completed-run merged-content-parts output-failure event-stream-sink]
   (let [{:keys [diagnostic-type message reason]} output-failure
         err (js/Error. message)
         diagnostic (finalization/refusal-diagnostic!
@@ -236,7 +236,8 @@
                             :error err-text :reason reason})]
     (append-run-event! run-id failed-event)
     (await (finalization/settle!
-            {:run-id run-id :conversation-id conversation-id :session-id session-id}
+            {:run-id run-id :conversation-id conversation-id :session-id session-id
+             :event-stream-sink event-stream-sink}
             (^:async fn []
               (when failed-run
                 (await (openplanner-memory/index-run-memory! config failed-run extract-mentioned-devel-paths extract-mentioned-urls)))
@@ -250,7 +251,7 @@
 (defn- ^:async finalize-accepted-turn-output!
   [config session run-id conversation-id session-id model-id answer reasoning-text
    sources message-parts elapsed usage-tokens assistant-content-parts hydration
-   memory-hydration persisted-request-messages agent-spec completed-event]
+   memory-hydration persisted-request-messages agent-spec completed-event event-stream-sink]
   (finalize-run-trace-blocks! run-id "done")
   (let [completed-run
         (finalize-run-record!
@@ -264,7 +265,8 @@
          merged-content-parts sources message-parts)]
     (append-run-event! run-id completed-event)
     (await (finalization/settle!
-            {:run-id run-id :conversation-id conversation-id :session-id session-id}
+            {:run-id run-id :conversation-id conversation-id :session-id session-id
+             :event-stream-sink event-stream-sink}
             (^:async fn []
               (when completed-run
                 (await (openplanner-memory/index-run-memory!
@@ -319,12 +321,12 @@
           (await (finalize-refused-turn-output!
                   config session run-id conversation-id session-id started-ms
                   model-id persisted-request-messages agent-spec running-run
-                  pending-content-parts output-failure)))
+                  pending-content-parts output-failure (:event-stream-sink state))))
         (await (finalize-accepted-turn-output!
                 config session run-id conversation-id session-id model-id answer
                 reasoning-text sources message-parts elapsed usage-tokens
                 assistant-content-parts hydration memory-hydration
-                persisted-request-messages agent-spec completed-event))))))
+                persisted-request-messages agent-spec completed-event (:event-stream-sink state)))))))
 
 (defn- ^:async finalize-turn-failure!
   [config state session run-id conversation-id session-id started-ms
@@ -340,7 +342,8 @@
                       hydration memory-hydration)]
       (append-run-event! run-id error-event)
       (await (finalization/settle!
-              {:run-id run-id :conversation-id conversation-id :session-id session-id}
+              {:run-id run-id :conversation-id conversation-id :session-id session-id
+               :event-stream-sink (:event-stream-sink state)}
               (^:async fn []
                 (when failed-run
                   (await (openplanner-memory/index-run-memory!
@@ -486,17 +489,10 @@
                  :session-id session-id}
                 abort-error)))))
 
-(defn ^:async prompt-and-await!
-  "Send the user message to the provider, stream the response, and finalize the turn.
-   Returns a promise that resolves with the turn response or rejects on error."
-  [config session-id run-id conversation-id started-ms model-id mode
-   session message prompt-content-parts hydration memory-hydration
-   persisted-request-messages agent-spec]
-  (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms xturn-node/random-uuid!)
-        abort! (fn [reason] (stream/request-abort! state session reason))
-        _registered (stream/register-active-turn! state abort! agent-spec)
-        unsubscribe (subscribe! session (stream/build-subscribe-handler state session))
-        parts (or prompt-content-parts [])
+(defn- build-turn-prompt
+  "Build prompt content and its logging counts before starting provider work."
+  [message agent-spec prompt-content-parts hydration memory-hydration]
+  (let [parts (or prompt-content-parts [])
         media-parts (->> parts (keep media-part->eta-mu-attachment) vec)
         omitted-count (max 0 (- (count parts) (count media-parts)))
         turn-message (or (content/nonblank message)
@@ -510,21 +506,35 @@
                      (pos? omitted-count)
                      (str "\n\n" "[Note: " omitted-count " unsupported attachment(s) were omitted for this model/runtime.]"))
         content (xturn-prompt/prompt-content media-parts final-text)]
-    (xturn-prompt/log-prompt! {:run-id run-id
-                               :session-id session-id
-                               :conversation-id conversation-id
-                               :model-id model-id
-                               :mode mode
-                               :parts-count (count parts)
-                               :media-parts-count (count media-parts)
-                               :omitted-count omitted-count
-                               :content content})
+    {:content content :parts-count (count parts) :media-parts-count (count media-parts)
+     :omitted-count omitted-count}))
+
+(defn ^:async prompt-and-await!
+  "Send, stream and finalize a turn, releasing only its explicitly owned observer.
+   The legacy arity does not claim an ambient observer installed by another turn."
+  ([config session-id run-id conversation-id started-ms model-id mode
+    session message prompt-content-parts hydration memory-hydration
+    persisted-request-messages agent-spec]
+   (prompt-and-await! config session-id run-id conversation-id started-ms model-id mode
+                      session message prompt-content-parts hydration memory-hydration
+                      persisted-request-messages agent-spec nil))
+  ([config session-id run-id conversation-id started-ms model-id mode
+    session message prompt-content-parts hydration memory-hydration
+    persisted-request-messages agent-spec event-stream-sink]
+  (let [state (assoc (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms xturn-node/random-uuid!)
+                     :event-stream-sink event-stream-sink)
+        abort! (fn [reason] (stream/request-abort! state session reason))
+        _registered (stream/register-active-turn! state abort! agent-spec)
+        unsubscribe (subscribe! session (stream/build-subscribe-handler state session))
+        prompt (build-turn-prompt message agent-spec prompt-content-parts hydration memory-hydration)]
+    (xturn-prompt/log-prompt! (assoc prompt :run-id run-id :session-id session-id
+                                  :conversation-id conversation-id :model-id model-id :mode mode))
     (agent-ctx/set-context! {:session-id session-id
                              :conversation-id conversation-id
                              :run-id run-id
                              :agent-spec agent-spec})
     (try
-      (let [_ (await (send-user-message-with-timeout! session content (:agent-turn-timeout-ms config)))]
+      (let [_ (await (send-user-message-with-timeout! session (:content prompt) (:agent-turn-timeout-ms config)))]
         (agent-ctx/clear-context!)
         (unsubscribe)
         (await (finalize-turn-success!
@@ -545,7 +555,7 @@
         (unsubscribe)
         (turn-control/unregister-active-turn! conversation-id run-id)
         (await (finalize-turn-failure! config state session run-id conversation-id session-id started-ms
-                                      hydration memory-hydration persisted-request-messages agent-spec err))))))
+                                      hydration memory-hydration persisted-request-messages agent-spec err)))))))
 
 
 
@@ -729,9 +739,10 @@
                          {:role "user" :content turn-message :content-parts materialized-content-parts}
                          {:role "user" :content turn-message})
           prompt-content-parts (model-ready-content-parts config model-id materialized-content-parts)
-          request-messages (prune-session-messages agent-spec (conj seeded-messages user-message))]
+          request-messages (prune-session-messages agent-spec (conj seeded-messages user-message))
+          event-stream-sink (install-openplanner-event-sink! config)]
       (await (initial-admission/create-run!
-              {:conversation-id conversation-id :startup-owner startup-owner :sink (install-openplanner-event-sink! config)}
+              {:conversation-id conversation-id :startup-owner startup-owner :sink event-stream-sink}
               [run-id session-id conversation-id started-at model-id mode thinking-level agent-spec auth-extra request-messages config]))
       (when hydration
         (emit-hydration-event! run-id conversation-id session-id "passive_hydration"
@@ -745,4 +756,4 @@
         (persist-running-session-update! session-id conversation-id run-id persisted-request-messages)
         (prompt-and-await! config session-id run-id conversation-id started-ms model-id mode
                            session turn-message prompt-content-parts hydration memory-hydration
-                           persisted-request-messages agent-spec)))))
+                           persisted-request-messages agent-spec event-stream-sink)))))
