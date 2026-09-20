@@ -22,7 +22,7 @@
             [knoxx.backend.infra.db.policy :as policy-db]
              [knoxx.backend.infra.mongo-client :as mongo-client]
              [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy-store]
-             [knoxx.backend.infra.stores.mongo-run-store :as mongo-run-store]
+             [knoxx.backend.infra.stores.run-provider-startup :as run-provider-startup]
              [knoxx.backend.infra.stores.mongo-session-store :as mongo-session-store]
              [knoxx.backend.infra.stores.mongo-session-titles :as mongo-session-titles]
              [knoxx.backend.infra.stores.mongo-temp-memory :as mongo-temp-memory]
@@ -32,7 +32,6 @@
              [knoxx.backend.infra.stores.mongo-translation-evidence :as mongo-translation-evidence]
              [knoxx.backend.infra.stores.mongo-translation-split :as mongo-translation-split]
              [knoxx.backend.infra.stores.session-flush :as session-flush]
-             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
              [knoxx.backend.infra.stores.translation-evidence-registry :as translation-evidence-registry]
              [knoxx.backend.infra.stores.translation-split-registry :as translation-split-registry]
             [knoxx.backend.infra.routes.auth :as auth-routes]
@@ -178,8 +177,7 @@
    lifecycle — connect, index, resume, schedule — rather than growing one line
    per collection."
   [db log]
-  (mongo-session-store/setup-indexes! db)
-  (mongo-run-store/setup-indexes! db)
+  (await (mongo-session-store/setup-indexes! db))
   ;; Cache stores for session titles, temp memory, memory sessions
   (mongo-session-titles/setup-indexes! db)
   (mongo-temp-memory/setup-indexes! db)
@@ -198,8 +196,7 @@
   ;; failures so a bad index spec can never crash-loop the
   ;; process from this fire-and-forget bootstrap path.
   (mongo-policy-store/ensure-indexes! db)
-  (reset! store-registry/session-store*
-          (mongo-run-store/create-mongo-run-store db)))
+  (await (run-provider-startup/install-mongo! db)))
 
 (defn- ^:async start-mongo-persistence!
   [runtime app cfg log]

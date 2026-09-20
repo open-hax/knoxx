@@ -57,10 +57,11 @@ async function prove(native) {
     throw new Error('A positive test/assertion summary with zero failures and errors is required');
   }
   console.log(native ? 'PASS: actual Mongo concurrent admission, process restart, retry and expiry' :
-    'PASS: selected provider events, authorized durable routes and producer identity');
+    'PASS: selected provider events, authorized durable query ports, startup barrier, FIFO admission and cache expiry');
 }
 
 await prove(false);
 if (mongod) await prove(true);
-else console.warn('NOT VERIFIED: native Mongo proof requires --mongod or KNOXX_TEST_MONGOD.');
+else console.warn('WARN: native Mongo proof requires --mongod or KNOXX_TEST_MONGOD.');
+console.warn('WARN: HTTP route selection, deployment provider configuration and browser reconnect belong to the later HTTP/composition layer; this proof exercises its durable query ports directly.');
 console.log('Each native fixture owns its temporary directory and process; no application database is used.');

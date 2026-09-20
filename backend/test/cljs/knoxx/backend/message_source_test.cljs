@@ -88,7 +88,9 @@
         (is (= [{:role "user" :content "from lookup"}] result))))))
 
 (deftest ^:async mongo-source-returns-empty-when-no-session
-  (with-redefs [session-store/get-session (fn [_] (js/Promise.resolve nil))]
+  (with-redefs [session-store/get-conversation-active-session (fn ([_] nil) ([_ _] nil))
+                session-store/get-session (fn ([_] (throw (ex-info "Unexpected session read" {})))
+                                            ([_ _] (throw (ex-info "Unexpected session read" {}))))]
     (let [src    (->MongoMessageSource nil)
           result (await (fetch-messages! src "conv-x"))]
       (testing "returns empty vec when no session found"

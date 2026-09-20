@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.translation-agent-dispatch-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [knoxx.backend.extern.event-queue-fixture :as queue-fixture]
+            [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.translation-agent-dispatch :as dispatch]
             [knoxx.backend.infra.translation-agent-sink :as agent-sink]
@@ -29,11 +30,6 @@
 (def ^:private source "Open Hax is a garden for tools, research, art, and systems.")
 
 (defn- digest-hex [value] (str "h" (hash value)))
-
-(defn- flush-promises!
-  []
-  (js/Promise. (fn [resolve _reject]
-                 (js/setTimeout resolve 0))))
 
 (defn- deps
   "Dispatch dependencies over a recording emitter."
@@ -529,6 +525,7 @@
         (await (.rm fs temp-root #js {:recursive true :force true}))))))
 
 (deftest ^:async a-rejected-settlement-callback-is-redelivered-on-reconciliation
+  (await (queue-fixture/with-queue! (^:async fn []
   (agent-runner/reset-event-turn-queue!)
   (agent-runner/reset-event-turn-settlers!)
   (let [evidence-store (store/memory-store)
@@ -556,7 +553,7 @@
                 agent-runner/unregister-event-turn-settler!)
         first-pass (await (dispatch/dispatch-work! d work context source))
         first-event-id (dispatch/event-id (:translation/run-id first-pass))]
-    (agent-runner/enqueue-event-turn!
+    (await (agent-runner/enqueue-event-turn!
      {:llmModel "test-model" :collection-name "test"}
      {:run-id (:translation/run-id first-pass)
       :conversation-id (:translation/run-id first-pass)
@@ -564,8 +561,8 @@
       :message "translate"
       :agent-spec {:trigger-id "publication-translation"
                    :event-id first-event-id}}
-     (fn [] (js/Promise.reject (js/Error. "provider unavailable"))))
-    (await (flush-promises!))
+     (fn [] (js/Promise.reject (js/Error. "provider unavailable")))))
+    (await (queue-fixture/wait-idle!))
 
     (testing "the rejected callback leaves the original claim accepted"
       (is (= :dispatch/accepted
@@ -588,7 +585,7 @@
         (is (= 2 @settlement-deliveries))))
 
     (testing "a skipped old event does not retain its re-armed callback"
-      (agent-runner/enqueue-event-turn!
+      (await (agent-runner/enqueue-event-turn!
        {:llmModel "test-model" :collection-name "test"}
        {:run-id (:translation/run-id first-pass)
         :conversation-id (:translation/run-id first-pass)
@@ -596,8 +593,8 @@
         :message "stale event"
         :agent-spec {:trigger-id "publication-translation"
                      :event-id first-event-id}}
-       (fn [] (js/Promise.resolve {:ok true})))
-      (await (flush-promises!))
+       (fn [] (js/Promise.resolve {:ok true}))))
+      (await (queue-fixture/wait-idle!))
       (is (= 2 @settlement-deliveries)))
 
     (let [retry (await (dispatch/dispatch-work! d work context source))]
@@ -607,7 +604,7 @@
                   (:translation/run-id retry)))
         (is (= 2 (count @triggered)))))
     (agent-runner/reset-event-turn-queue!)
-    (agent-runner/reset-event-turn-settlers!)))
+    (agent-runner/reset-event-turn-settlers!))))))
 
 (deftest ^:async an-event-nobody-subscribes-to-fails-the-retriable-claim
   (let [evidence-store (store/memory-store)
