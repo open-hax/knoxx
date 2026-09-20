@@ -2,8 +2,8 @@
   "Content-part, media, and text helpers for agent turns."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.text-delta :as text-delta]
-            [knoxx.backend.domain.models :refer [model-supports-input?]]
-            [knoxx.backend.domain.text :refer [value->preview-text content-part-text]]))
+            [knoxx.backend.domain.models :as models]
+            [knoxx.backend.domain.text :as text]))
 
 (defn nonblank
   "Return s when it is a non-blank string (after trim)."
@@ -16,16 +16,18 @@
 (defn preview-text-nonblank
   "Like value->preview-text, but returns nil for blank previews so OR chains keep searching."
   [value max-chars]
-  (let [preview (some-> (value->preview-text value max-chars) nonblank)
+  (let [preview (some-> (text/value->preview-text value max-chars) nonblank)
         lowered (some-> preview str/lower-case)]
     (when-not (contains? #{"null" "undefined"} lowered)
       preview)))
 
 (defn fenced
+  "Wrap text in a language-labelled Markdown code fence."
   [lang text]
   (str "```" lang "\n" (or text "") "\n```"))
 
 (defn json-preview-nonblank
+  "Render a native value as indented JSON, refusing blank or unserializable previews."
   [value max-chars]
   (when (and value (not= value js/undefined))
     (try
@@ -34,19 +36,13 @@
           (preview-text-nonblank json max-chars)))
       (catch :default _ nil))))
 
-(defn- duplicate-normalized-text
-  [s]
-  (str/lower-case (str/replace (str s) #"[\s\W_]+" "")))
-
-(defn- boundary-ended?
-  [s]
-  (boolean (re-find #"[\s\W_]$" s)))
-
 (defn diff-appended-text
+  "Delegate streamed text reconciliation to the portable text-delta owner."
   [previous current]
   (text-delta/diff-appended-text previous current))
 
 (defn media-part-url
+  "Read the supported native provider URL aliases for one media part."
   [part]
   (or (nonblank (aget part "url"))
       (nonblank (aget part "file_url"))
@@ -72,6 +68,7 @@
           (nonblank (aget source "url"))))))
 
 (defn media-part-data
+  "Read native inline media data from the supported provider shapes."
   [part]
   (or (nonblank (aget part "data"))
       (nonblank (aget part "b64_json"))
@@ -88,6 +85,7 @@
           (nonblank (aget source "data"))))))
 
 (defn media-part-mime-type
+  "Prefer explicit native media metadata, then the declared kind default."
   [part media-kind]
   (or (nonblank (aget part "mimeType"))
       (nonblank (aget part "mime_type"))
@@ -115,6 +113,7 @@
         nil)))
 
 (defn media-part-filename
+  "Read a nonblank display name from native media metadata."
   [part]
   (or (nonblank (aget part "filename"))
       (nonblank (aget part "file_name"))
@@ -122,6 +121,7 @@
       (nonblank (aget part "name"))))
 
 (defn media-part-size
+  "Return native media byte metadata only when it is numeric."
   [part]
   (let [value (or (aget part "size")
                   (aget part "bytes")
@@ -131,6 +131,7 @@
       value)))
 
 (defn assistant-media-part
+  "Decode one supported native assistant media part into a Clojure map."
   [part]
   (let [raw-type (some-> (aget part "type") str str/lower-case)
         media-kind (cond
@@ -157,6 +158,7 @@
         size (assoc :size size)))))
 
 (defn assistant-content-parts
+  "Collect supported media parts from a native assistant message."
   [assistant-message]
   (let [content (when assistant-message
                   (aget assistant-message "content"))]
@@ -167,18 +169,20 @@
       [])))
 
 (defn session-message-text
+  "Read session text, joining textual parts while omitting blank parts."
   [message]
   (let [content (aget message "content")]
     (cond
       (string? content) content
       (array? content) (->> (array-seq content)
-                            (map content-part-text)
+                            (map text/content-part-text)
                             (remove str/blank?)
                             (str/join "\n\n"))
       (string? (aget message "text")) (aget message "text")
       :else "")))
 
 (defn content-part-label
+  "Name a Clojure-shaped media kind for an attachment description."
   [part]
   (let [part-type (cond
                     (keyword? (:type part)) (name (:type part))
@@ -192,12 +196,14 @@
       "attachment")))
 
 (defn content-part-name
+  "Prefer the attachment filename or URL over its generic kind label."
   [part]
   (or (:filename part)
       (:url part)
       (content-part-label part)))
 
 (defn tool-result-media-type
+  "Normalize a supported tool media type to its display kind."
   [value]
   (case (some-> value str str/lower-case)
     ("image" "image_url" "output_image") "image"
@@ -207,6 +213,7 @@
     nil))
 
 (defn tool-result-content-part
+  "Decode one native tool attachment with a data or URL payload."
   [part]
   (let [media-type (tool-result-media-type (aget part "type"))
         data (nonblank (aget part "data"))
@@ -233,6 +240,7 @@
         size (assoc :size size)))))
 
 (defn tool-result-content-parts
+  "Collect attachments from supported native tool result locations."
   [tool-result]
   (let [details (when tool-result (aget tool-result "details"))
         raw-parts (or (when tool-result (aget tool-result "content_parts"))
@@ -247,6 +255,7 @@
       [])))
 
 (defn merge-content-parts
+  "Combine attachment groups while preserving first occurrence order."
   [& groups]
   (->> groups
        (mapcat #(or % []))
@@ -258,6 +267,7 @@
        vec))
 
 (defn reply-attachment-content-parts
+  "Collect explicitly attached workspace media from tool receipts."
   [tool-receipts]
   (->> (or tool-receipts [])
        (filter #(= "workspace_media.attach" (:tool_name %)))
@@ -265,6 +275,7 @@
        vec))
 
 (defn model-ready-content-parts
+  "Retain supported input parts and describe unsupported media as text."
   [config model-id content-parts]
   (->> (or content-parts [])
        (mapcat (fn [part]
@@ -276,7 +287,7 @@
                    (cond
                      (or (nil? part-type)
                          (= part-type "text")
-                         (model-supports-input? config model-id part-type))
+                         (models/model-supports-input? config model-id part-type))
                      [part]
 
                      (= part-type "audio")

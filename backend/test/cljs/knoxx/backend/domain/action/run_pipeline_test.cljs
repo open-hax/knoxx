@@ -1,5 +1,5 @@
 (ns knoxx.backend.domain.action.run-pipeline-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is]]
             [clojure.string :as str]
             [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.action.run-pipeline]))

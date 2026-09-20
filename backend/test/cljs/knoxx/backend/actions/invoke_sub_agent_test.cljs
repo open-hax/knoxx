@@ -1,5 +1,5 @@
 (ns knoxx.backend.actions.invoke-sub-agent-test
-  (:require [cljs.test :refer [async deftest is testing]]
+  (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
             [knoxx.backend.domain.action.invoke-sub-agent]
             [knoxx.backend.domain.action.registry :as registry]

@@ -3,17 +3,17 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [knoxx.backend.domain.action.registry :as action-registry]
-            [knoxx.backend.domain.action.start-agent-session]
             [knoxx.backend.domain.action.run-pipeline]
+            [knoxx.backend.domain.action.start-agent-session]
             [knoxx.backend.domain.condition.registry :as condition-registry]
             [knoxx.backend.domain.event.normalize :as event-normalize]
+            [knoxx.backend.domain.models :as runtime-models]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
-            [knoxx.backend.infra.config :as runtime-config]
-            [knoxx.backend.domain.models :as runtime-models]))
+            [knoxx.backend.infra.config :as runtime-config]))
 
-(defonce dispatched-event-states* (atom {}))
-(defonce recent-events* (atom []))
+(defonce ^{:doc "Original process-local exact-event ownership and completion ledger."} dispatched-event-states* (atom {}))
+(defonce ^{:doc "The bounded recent-event view for runtime diagnostics."} recent-events* (atom []))
 
 (defn- cfg
   []
@@ -222,35 +222,34 @@
   ([config event]
    (await (dispatch-with-provenance! config event false))))
 
+(defn- trigger-status [trigger]
+  {:id (:trigger/id trigger)
+   :enabled (:trigger/enabled? trigger)
+   :kind (:trigger/kind trigger)
+   :events (:trigger/events trigger)
+   :action (:trigger/action trigger)
+   :agent (get-in trigger [:trigger/with :agent-id])
+   :listener (:trigger/listener trigger)
+   :emitter (:trigger/emitter trigger)
+   :condition (some? (:trigger/condition trigger))
+   :resourcePoliciesFromEvent
+   (true? (get-in trigger [:trigger/with :resource-policies-from-event]))
+   :executionSnapshotFromEvent
+   (true? (get-in trigger [:trigger/with :execution-snapshot-from-event]))
+   :scopeFromEvent
+   (boolean (or (get-in trigger [:trigger/with :scope-from-event])
+                (get-in trigger [:trigger/with :scopeFromEvent])))})
+
 (defn status-snapshot
+  "Report normalized loaded triggers, including their explicit event-scope opt-in."
   [config]
-  (let [triggers (->> (load-trigger-resources config)
-                      (map trigger-normalize/normalize-trigger)
-                      vec)]
-    {:running true
-     :configured true
-     :events {:recentEvents @recent-events*}
-     :triggers (mapv (fn [trigger]
-                       {:id (:trigger/id trigger)
-                        :enabled (:trigger/enabled? trigger)
-                        :kind (:trigger/kind trigger)
-                        :events (:trigger/events trigger)
-                        :action (:trigger/action trigger)
-                        :agent (get-in trigger [:trigger/with :agent-id])
-                        :listener (:trigger/listener trigger)
-                        :emitter (:trigger/emitter trigger)
-                        :condition (some? (:trigger/condition trigger))
-                        :resourcePoliciesFromEvent
-                        (true? (get-in trigger
-                                       [:trigger/with
-                                        :resource-policies-from-event]))
-                        :executionSnapshotFromEvent
-                        (true? (get-in trigger
-                                       [:trigger/with
-                                        :execution-snapshot-from-event]))})
-                     triggers)}))
+  {:running true :configured true
+   :events {:recentEvents @recent-events*}
+   :triggers (mapv (comp trigger-status trigger-normalize/normalize-trigger)
+                   (load-trigger-resources config))})
 
 (defn reset-dedup!
+  "Reset event ownership and recent diagnostics for a stopped runtime or test."
   []
   (reset! dispatched-event-states* {})
   (reset! recent-events* []))

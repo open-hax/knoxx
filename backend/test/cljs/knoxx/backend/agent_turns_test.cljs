@@ -2,6 +2,7 @@
   (:require [knoxx.backend.infra.auth.authz :as authz]
              [cljs.test :refer [deftest is testing]]
              [knoxx.backend.domain.agent.content :as content]
+             [knoxx.backend.domain.agent.run-admission :as run-admission]
              [knoxx.backend.domain.models :as models]
              [knoxx.backend.infra.agent.tools :as tools]
              [knoxx.backend.infra.agent.transcript :as transcript]
@@ -23,7 +24,7 @@
 (deftest active-run-agent-summary-preserves-tools-choice
   (is (= "required-first"
          (:toolsChoice
-          (#'agent-turns/agent-spec-summary
+          (run-admission/agent-spec-summary
            {:contract-id "publication_translator"
             :tools-choice "required-first"})))))
 
