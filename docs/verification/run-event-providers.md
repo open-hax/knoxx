@@ -40,8 +40,13 @@ The default proof shows:
   archival projection remains best effort; durable run persistence fails visibly.
 - Spawn failures before admission stay in the private operator log. The proof
   rejects 24 actual turns during hydration, verifies no missing-run events or nil
-  registry entries remain, then admits the same run ID successfully. Admitted
-  failures still produce an event, but replay and snapshots contain only fixed
+  registry entries remain, then admits the same run ID successfully. A separate
+  pre-admission invocation reuses an existing ID and leaves its heap record,
+  durable status and event history unchanged. Generic spawn-error handlers are
+  log-only: an ID lookup cannot establish ownership of an invocation. Only the
+  queue's explicit paths after their own awaited run/event admission record
+  these failures; ordinary turn finalizers retain their own durable settlement.
+  Admitted FIFO failures still produce an event, but replay and snapshots contain only fixed
   public text, a validated HTTP error status and a stable failure code. Raw
   upstream messages, stacks and nested diagnostic data remain private log data.
   Diagnostic events for already evicted heap runs likewise remain log-only;

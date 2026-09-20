@@ -4,6 +4,7 @@
             [knoxx.backend.domain.action.run-state :as state]
             [knoxx.backend.extern.agent-runner :as diagnostics]
             [knoxx.backend.extern.agent-turn-fixture :as fixture]
+            [knoxx.backend.extern.event-queue-fixture :as queue-fixture]
             [knoxx.backend.infra.agent.policy :as policy]
             [knoxx.backend.infra.agent.run-admission :as admission]
             [knoxx.backend.infra.agent.runner :as runner]
@@ -63,12 +64,38 @@
                           (mapv :type (await (persistence/events-since @registry/session-store* id nil)))))
               (catch :default _ (test/is false "A failed spawn must allow later admission with the same ID"))))))))))
 
-(test/deftest ^:async admitted-spawn-errors-persist-only-validated-public-diagnostics
+(test/deftest ^:async pre-admission-reuse-cannot-alter-an-existing-run
   (await
    (fixture/with-run!
     coordinates
     (^:async fn []
       (let [id (:run_id coordinates)
+            before (get @state/runs* id)
+            provider @registry/session-store*
+            persisted (await (persistence/get-run provider id))
+            history (await (persistence/events-since provider id nil))
+            request {:run-id id :session-id "spawn-session" :conversation-id "spawn-conversation"
+                     :model "test-model" :message "A different invocation reuses this ID."}
+            failure (ex-info "Failed before this invocation was admitted" {:status 503})]
+        (with-redefs [policy/enforce-chat-policy! (fn [& _] true)
+                      titles/maybe-prime-session-title! (fn [& _] nil)
+                      turn/hydrate-and-materialize! (^:async fn [& _] (throw failure))
+                      diagnostics/log-async-spawn-error! (fn [& _] nil)]
+          (try (await (turn/send-agent-turn! {} {} request))
+               (test/is false "The new invocation must fail before admission")
+               (catch :default error
+                 (test/is (identical? failure error))
+                 (runner/log-and-record-async-spawn-error! request error))))
+        (await (events/flush! id))
+        (test/is (= before (get @state/runs* id)))
+        (test/is (= persisted (await (persistence/get-run provider id))))
+        (test/is (= history (await (persistence/events-since provider id nil)))))))))
+
+(test/deftest ^:async admitted-spawn-errors-persist-only-validated-public-diagnostics
+  (await
+   (queue-fixture/with-queue!
+    (^:async fn []
+      (let [id "admitted-private-error"
             secret "private-provider-bearer-fixture"
             error (ex-info (str "Provider failed with " secret)
                            {:status 503 :code secret :authorization secret :nested {:token secret}})
@@ -77,15 +104,19 @@
                     :status 503 :code "async_spawn_failed"}]
         (set! (.-stack error) (str "internal stack " secret))
         (with-redefs [diagnostics/log-async-spawn-error! (fn [_ supplied] (reset! logged* supplied))]
-          (let [local (runner/log-and-record-async-spawn-error!
-                       {:run-id id :session-id "spawn-session" :conversation-id "spawn-conversation"} error)]
-            (test/is (= secret (get-in local [:data :authorization])))))
-        (await (events/persist-run! (get @state/runs* id)))
+          (await (runner/enqueue-event-turn!
+                  {:event-agent-concurrency 1 :event-agent-queue-limit 1}
+                  {:run-id id :session-id "spawn-session" :conversation-id "spawn-conversation"
+                   :model "test-model" :message "An admitted queue invocation fails."
+                   :agent-spec {:event-id "admitted-private-error-event"}}
+                  (^:async fn [] (throw error))))
+          (await (queue-fixture/wait-idle!)))
         (let [replay (await (persistence/events-since @registry/session-store* id nil))
+              failures (filterv #(= "async_spawn_failed" (:type %)) replay)
               stored (await (persistence/get-run @registry/session-store* id))]
           (test/is (identical? error @logged*) "Private operator diagnostics retain the original error")
-          (test/is (= ["async_spawn_failed"] (mapv :type replay)))
-          (test/is (= public (:diagnostic (first replay))))
-          (test/is (= (:message public) (:error (first replay)) (:error stored)))
+          (test/is (= 1 (count failures)))
+          (test/is (= public (:diagnostic (first failures))))
+          (test/is (= (:message public) (:error (first failures)) (:error stored)))
           (test/is (not (.includes (pr-str [replay stored]) secret))
                    "Neither replay nor the durable snapshot contains stack, ex-data or raw upstream text")))))))
