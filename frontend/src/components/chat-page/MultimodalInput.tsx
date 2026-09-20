@@ -7,61 +7,13 @@
 
 import { useState, useRef, useCallback, type ChangeEvent, type DragEvent } from "react";
 import { Button, Badge } from "@open-hax/uxx";
-
-export interface MultimodalAttachment {
-  id: string;
-  file: File;
-  preview?: string; // Data URL for images, object URL for audio/video
-  type: "image" | "audio" | "video" | "document";
-  uploading?: boolean;
-  error?: string;
-}
-
-interface MultimodalInputProps {
-  attachments: MultimodalAttachment[];
-  onAttachmentsChange: (attachments: MultimodalAttachment[]) => void;
-  maxSizeBytes?: number;
-  accept?: Record<string, string[]>;
-  disabled?: boolean;
-  /** Hide inline attachment previews (useful when parent manages previews) */
-  hidePreviews?: boolean;
-}
-
-const DEFAULT_MAX_SIZE = 50 * 1024 * 1024; // 50MB
-
-const DEFAULT_ACCEPT: Record<string, string[]> = {
-  "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"],
-  "audio/*": [".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"],
-  "video/*": [".mp4", ".webm", ".mov", ".avi", ".mkv"],
-  "application/pdf": [".pdf"],
-  "text/*": [".txt", ".md", ".json", ".csv"],
-};
-
-function getAttachmentType(file: File): MultimodalAttachment["type"] {
-  if (file.type.startsWith("image/")) return "image";
-  if (file.type.startsWith("audio/")) return "audio";
-  if (file.type.startsWith("video/")) return "video";
-  return "document";
-}
-
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-}
-
-async function createPreview(file: File, type: MultimodalAttachment["type"]): Promise<string | undefined> {
-  if (type === "image") {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(undefined);
-      reader.readAsDataURL(file);
-    });
-  }
-  if (type === "audio" || type === "video") {
-    return URL.createObjectURL(file);
-  }
-  return undefined;
-}
+import type { MultimodalAttachment, MultimodalInputProps } from "./types";
+import { makeAttachmentId as generateId } from "./make-id";
+import {
+  createAttachmentPreview as createPreview, formatSize, getAttachmentType,
+  DEFAULT_ATTACHMENT_MAX_SIZE as DEFAULT_MAX_SIZE, DEFAULT_ATTACHMENT_ACCEPT as DEFAULT_ACCEPT,
+} from "./MultimodalContent";
+export type { MultimodalAttachment } from "./types";
 
 export function MultimodalInput({
   attachments,
@@ -182,12 +134,6 @@ export function MultimodalInput({
   const openFileDialog = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
-
-  const formatSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes}B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-  };
 
   const typeColors: Record<MultimodalAttachment["type"], string> = {
     image: "var(--token-colors-alpha-green-_30)",

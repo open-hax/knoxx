@@ -1,3 +1,5 @@
+import type { ChatMessage } from "../../lib/types";
+import type { ChatSessionSnapshot } from "./types";
 import type { ChangeEvent } from "react";
 import { Badge, Card } from "@open-hax/uxx";
 import type { AgentContractCatalogItem, ToolCatalogResponse } from "../../lib/types";
@@ -256,4 +258,89 @@ export function ChatSettingsPanel({
       </div>
     </Card>
   );
+}
+
+export function preferredSessionModelForResume(
+  snapshot: ChatSessionSnapshot | null,
+  transcript: ChatMessage[],
+): string {
+  const persisted = typeof snapshot?.selectedModel === "string" ? snapshot.selectedModel.trim() : "";
+  if (persisted) {
+    return persisted;
+  }
+
+  const transcriptModel = [...transcript]
+    .reverse()
+    .find((message) => message.role === "assistant" && typeof message.model === "string" && message.model.trim().length > 0)
+    ?.model;
+
+  return typeof transcriptModel === "string" ? transcriptModel.trim() : "";
+}
+
+export const SESSION_ACTOR_FILTER_KEY = "knoxx_session_actor_filter";
+export const EXCLUDE_ETA_MU_SESSIONS_KEY = "knoxx_exclude_eta_mu_sessions";
+export const LAST_CHAT_SETTINGS_KEY = "knoxx_last_chat_settings";
+
+type LastChatSettings = {
+  activeAgentId?: string;
+  selectedModel?: string;
+  selectedThinkingLevel?: string;
+};
+
+export function readLastChatSettings(): LastChatSettings {
+  try {
+    const raw = window.localStorage.getItem(LAST_CHAT_SETTINGS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as LastChatSettings;
+  } catch {
+    return {};
+  }
+}
+
+export function writeLastChatSettings(settings: LastChatSettings): void {
+  try {
+    window.localStorage.setItem(LAST_CHAT_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+export function readStoredString(key: string, fallback: string): string {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value && value.trim().length > 0 ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function readStoredBoolean(key: string, fallback: boolean): boolean {
+  try {
+    const value = window.localStorage.getItem(key);
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function shouldApplyAgentModelSelection({
+  activeAgentId,
+  previousAgentId,
+  selectedModel,
+  agentModel,
+}: {
+  activeAgentId: string;
+  previousAgentId: string | null;
+  selectedModel: string;
+  agentModel?: string | null;
+}): boolean {
+  if (!activeAgentId || !agentModel) return false;
+  // On initial mount (previousAgentId is null), only apply the agent's default
+  // model if no model was already selected/persisted.
+  if (previousAgentId === null) {
+    return !selectedModel;
+  }
+  return previousAgentId !== activeAgentId;
 }

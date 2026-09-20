@@ -1,7 +1,10 @@
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import { mergeSessionPages, sortSessions } from "../../lib/storage";
+import { normalizedSessionActorFilter, excludedSessionActorIds, persistedSessionVisibleForFilter } from "./chat-page-config";
+import { preferredSessionModelForResume } from "./ChatSettingsPanel";
+import type { ChatWorkspaceActionParams } from "../context-bar/types";
 import { getAgentHistorySession, getMemorySession, listMemorySessions, searchMemory } from "../../lib/api";
 import type { ChatMessage, MemorySearchHit, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
-import { findPersistedChatSessionByConversation, listPersistedChatSessions, readPersistedChatSessionSnapshot, type ChatSessionSnapshot } from "./hooks";
+import { findPersistedChatSessionByConversation, listPersistedChatSessions, readPersistedChatSessionSnapshot } from "./hooks";
 import type {
   BrowseResponse,
   IngestionSource,
@@ -12,199 +15,7 @@ import type {
 } from "./types";
 import { isWorkspaceSource, memoryRowRunId, memoryRowsToMessages, selectWorkspaceJob } from "./utils";
 
-type SetState<T> = Dispatch<SetStateAction<T>>;
-
 const RECENT_SESSION_PAGE_SIZE = 20;
-const DEFAULT_EXCLUDED_SESSION_ACTOR = "eta-mu";
-
-function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
-  const statusScore = (item: MemorySessionSummary): number => {
-    if (item.has_active_stream) return 50;
-    const status = typeof item.active_status === "string" ? item.active_status : "";
-    if (status === "running") return 40;
-    if (status === "queued") return 35;
-    if (status === "waiting_input") return 30;
-    if (status === "failed") return 20;
-    if (status === "completed") return 10;
-    if (item.is_active) return 5;
-    return 0;
-  };
-
-  const parseTs = (value?: string | null): number => {
-    if (!value) return 0;
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  };
-
-  const mergeEntry = (left: MemorySessionSummary, right: MemorySessionSummary): MemorySessionSummary => {
-    const leftScore = statusScore(left);
-    const rightScore = statusScore(right);
-    const live = leftScore >= rightScore ? left : right;
-    const lastTs = parseTs(left.last_ts ?? null) >= parseTs(right.last_ts ?? null) ? left.last_ts : right.last_ts;
-
-    return {
-      session: left.session,
-      title: left.title || right.title,
-      title_model: left.title_model ?? right.title_model ?? null,
-      last_ts: lastTs,
-      event_count: Math.max(left.event_count ?? 0, right.event_count ?? 0),
-
-      // Liveness should always prefer the most-active view (local snapshot or Redis-enriched remote row).
-      is_active: Boolean(live.is_active),
-      active_status: live.active_status ?? left.active_status ?? right.active_status,
-      has_active_stream: Boolean(live.has_active_stream),
-
-      // Prefer the active session id from whichever side is live; otherwise keep any known id.
-      active_session_id: live.active_session_id ?? left.active_session_id ?? right.active_session_id ?? null,
-
-      // Only truly local-only if both sides are local-only.
-      local_only: Boolean(left.local_only) && Boolean(right.local_only),
-    };
-  };
-
-  const byId = new Map<string, MemorySessionSummary>();
-  for (const item of primary) {
-    byId.set(item.session, item);
-  }
-  for (const item of secondary) {
-    const existing = byId.get(item.session);
-    byId.set(item.session, existing ? mergeEntry(existing, item) : item);
-  }
-  return [...byId.values()];
-}
-
-function sortSessions(items: MemorySessionSummary[]): MemorySessionSummary[] {
-  return [...items].sort((left, right) => {
-    const leftTime = Date.parse(left.last_ts ?? "") || 0;
-    const rightTime = Date.parse(right.last_ts ?? "") || 0;
-    if (rightTime !== leftTime) {
-      return rightTime - leftTime;
-    }
-    if (left.is_active !== right.is_active) {
-      return left.is_active ? -1 : 1;
-    }
-    return (left.title ?? left.session).localeCompare(right.title ?? right.session);
-  });
-}
-
-export function preferredSessionModelForResume(
-  snapshot: ChatSessionSnapshot | null,
-  transcript: ChatMessage[],
-): string {
-  const persisted = typeof snapshot?.selectedModel === "string" ? snapshot.selectedModel.trim() : "";
-  if (persisted) {
-    return persisted;
-  }
-
-  const transcriptModel = [...transcript]
-    .reverse()
-    .find((message) => message.role === "assistant" && typeof message.model === "string" && message.model.trim().length > 0)
-    ?.model;
-
-  return typeof transcriptModel === "string" ? transcriptModel.trim() : "";
-}
-
-export function persistedSessionVisibleForActor(
-  sessionStateKey: string,
-  summary: MemorySessionSummary,
-  activeActorId: string,
-  visibleAgentIds: ReadonlySet<string>,
-): boolean {
-  return persistedSessionVisibleForFilter(sessionStateKey, summary, activeActorId, false, visibleAgentIds);
-}
-
-function normalizedSessionActorFilter(actorId: string): string | null {
-  const trimmed = actorId.trim();
-  return trimmed.length > 0 && trimmed !== "all" ? trimmed : null;
-}
-
-function excludedSessionActorIds(actorFilter: string, excludeEtaMuSessions: boolean): string[] {
-  if (!excludeEtaMuSessions) return [];
-  return normalizedSessionActorFilter(actorFilter) === DEFAULT_EXCLUDED_SESSION_ACTOR
-    ? []
-    : [DEFAULT_EXCLUDED_SESSION_ACTOR];
-}
-
-export function persistedSessionVisibleForFilter(
-  sessionStateKey: string,
-  summary: MemorySessionSummary,
-  actorFilter: string,
-  excludeEtaMuSessions: boolean,
-  visibleAgentIds: ReadonlySet<string>,
-): boolean {
-  const snapshot = summary.active_session_id
-    ? readPersistedChatSessionSnapshot(sessionStateKey, summary.active_session_id)
-    : null;
-  const normalizedActiveActorId = normalizedSessionActorFilter(actorFilter);
-
-  // Remote sessions carry actor_id directly from the API; local-only drafts fall back to snapshot.
-  const sessionActorId = summary.actor_id
-    ?? (typeof snapshot?.activeActorId === "string" && snapshot.activeActorId.trim().length > 0
-      ? snapshot.activeActorId.trim()
-      : "chat_primary");
-
-  if (excludeEtaMuSessions && normalizedActiveActorId !== DEFAULT_EXCLUDED_SESSION_ACTOR && sessionActorId === DEFAULT_EXCLUDED_SESSION_ACTOR) {
-    return false;
-  }
-
-  if (!normalizedActiveActorId) {
-    return true;
-  }
-
-  const sessionAgentId = typeof snapshot?.activeAgentId === "string" ? snapshot.activeAgentId.trim() : "";
-  if (sessionAgentId && visibleAgentIds.size > 0) {
-    return visibleAgentIds.has(sessionAgentId);
-  }
-  return sessionActorId === normalizedActiveActorId;
-}
-
-type ChatWorkspaceActionParams = {
-  visibleAgentIds: ReadonlySet<string>;
-  currentPath: string;
-  showFiles: boolean;
-  browseData: BrowseResponse | null;
-  semanticQuery: string;
-  sessionActorFilter: string;
-  excludeEtaMuSessions: boolean;
-  setBrowseData: SetState<BrowseResponse | null>;
-  setPreviewData: SetState<PreviewResponse | null>;
-  setLoadingBrowse: SetState<boolean>;
-  setLoadingPreview: SetState<boolean>;
-  setSemanticResults: SetState<SemanticSearchMatch[]>;
-  setSemanticProjects: SetState<string[]>;
-  setSemanticSearching: SetState<boolean>;
-  setSessionSearchHits: SetState<MemorySearchHit[]>;
-  setSessionSearchMode: SetState<string>;
-  setSyncingWorkspace: SetState<boolean>;
-  setWorkspaceSourceId: SetState<string | null>;
-  setWorkspaceJob: SetState<WorkspaceJob | null>;
-  recentSessionsRef: MutableRefObject<MemorySessionSummary[]>;
-  remoteRecentSessionsRef: MutableRefObject<MemorySessionSummary[]>;
-  setRecentSessions: SetState<MemorySessionSummary[]>;
-  setRecentSessionsHasMore: SetState<boolean>;
-  setRecentSessionsTotal: SetState<number>;
-  setLoadingRecentSessions: SetState<boolean>;
-  setLoadingMoreRecentSessions: SetState<boolean>;
-  setLoadingMemorySessionId: SetState<string | null>;
-  setMessages: SetState<ChatMessage[]>;
-  setSelectedModel: SetState<string>;
-  setSessionId: SetState<string>;
-  setConversationId: SetState<string | null>;
-  setLatestRun: SetState<RunDetail | null>;
-  setRuntimeEvents: SetState<RunEvent[]>;
-  setLiveControlText: SetState<string>;
-  setIsSending: SetState<boolean>;
-  setConsoleLines: SetState<string[]>;
-  pendingAssistantIdRef: MutableRefObject<string | null>;
-  activeRunIdRef: MutableRefObject<string | null>;
-  makeId: () => string;
-  sessionStateKey: string;
-  fetchPreviewData: (path: string) => Promise<PreviewResponse>;
-  loadRunDetail: (runId: string) => void | Promise<void>;
-  defaultSyncIntervalMinutes: number;
-  defaultFileTypes: string[];
-  defaultExcludePatterns: string[];
-};
 
 export function createChatWorkspaceActions({
   visibleAgentIds,
@@ -557,3 +368,6 @@ export function createChatWorkspaceActions({
     semanticQuery,
   };
 }
+
+export { preferredSessionModelForResume } from "./ChatSettingsPanel";
+export { persistedSessionVisibleForActor, persistedSessionVisibleForFilter } from "./chat-page-config";
