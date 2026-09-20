@@ -19,6 +19,20 @@
   {:knoxx.application/operation-accepted
    (clio-schema/event-schema :knoxx.application/operation-accepted Operation)})
 
+(def Subscription
+  "Optional stream and provider-scope filters; neither exposes operation facts."
+  [:map {:closed true}
+   [:streams {:optional true} [:set [:string {:min 1}]]]
+   [:scope {:optional true} [:map-of :keyword :any]]])
+
+(defn assert-subscription!
+  "Validate observer selection before registering a process-local listener."
+  [selection listener]
+  (when-not (and (m/validate Subscription selection) (fn? listener))
+    (throw (ex-info "Invalid Clio change subscription"
+                    {:cause :clio-application/invalid-subscriber})))
+  selection)
+
 (defn assert-operation!
   "Check one accepted operation at the persistence and replay boundary."
   [operation]
