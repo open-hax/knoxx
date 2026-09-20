@@ -64,4 +64,3 @@
                               :collection (:collection-name config)}
                        (get agent-spec :resource-policies) (assoc :agentResourcePolicies (get agent-spec :resource-policies)))}
          auth-extra))
-

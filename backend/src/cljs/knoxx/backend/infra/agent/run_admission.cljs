@@ -60,4 +60,3 @@
       (append-run-event! run-id initial-event)
       (broadcast-ws-session! session-id "events" initial-event))
     (emit-action-task-rendered-event! run-id conversation-id session-id agent-spec)))
-
