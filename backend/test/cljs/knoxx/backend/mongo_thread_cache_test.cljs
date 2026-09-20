@@ -248,3 +248,26 @@
 (deftest ^:async mongo-thread-compatible-owners-and-conversation-uniqueness
   (let [{:keys [db]} (fixture/database {})]
     (await (identity-proof/check-compatible-and-unique! (mongo/create-store db)))))
+
+(deftest ^:async compatible-conversation-index-race-retries-instead-of-refusing
+  (let [{:keys [db]} (fixture/database {})
+        provider (mongo/create-store db)
+        original native/upsert-session!
+        calls (atom 0)
+        thread {:session_id "same-admission" :conversation_id "same-conversation" :org_id "same-org"}]
+    (with-redefs [native/upsert-session!
+                  (^:async fn [handle fields observed]
+                    (let [written (await (original handle fields observed))]
+                      ;; A competing compatible writer has just won insertion;
+                      ;; this admission receives the driver's other unique index.
+                      (if (= 1 (swap! calls inc))
+                        (throw (fixture/duplicate-error :conversation_id)) written)))]
+      (try
+        (is (= thread (select-keys (await (protocol/put-thread! provider thread)) (keys thread))))
+        (catch :default _ (is false "A compatible conversation owner must retry"))))
+    (is (= 2 @calls))
+    (is (= thread (select-keys (await (protocol/read-thread provider "same-admission")) (keys thread))))))
+
+(deftest ^:async thread-mutations-refuse-a-recreated-owner-after-observation
+  (let [{:keys [db]} (fixture/database {})]
+    (await (identity-proof/check-recreated-owner! (mongo/create-store db) db))))

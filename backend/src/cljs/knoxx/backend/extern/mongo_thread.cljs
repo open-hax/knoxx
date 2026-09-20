@@ -42,12 +42,11 @@
   "Distinguish the unique conversation binding from a raced session insert."
   [error] (some? (some-> error .-keyPattern (aget "conversation_id"))))
 
-(defn- identity-query [session]
-  ;; Each supplied identity field is atomically unbound or exactly equal. The
-  ;; shared law requires scalar strings, avoiding Mongo's array-match semantics.
+(defn- identity-query [session observed]
+  ;; Preserve every observed binding, including fields omitted by a partial
+  ;; write. An unbound field can accept only this write's initial assignment.
   (reduce (fn [query field]
-            (if (contains? session field)
-              (assoc query field {:$in [nil (get session field)]}) query))
+            (assoc query field (or (get observed field) {:$in [nil (get session field)]})))
           {:session_id (:session_id session)} law/identity-fields))
 
 (defn- ^:async retire-expired! [coll session now]
@@ -57,22 +56,23 @@
   (when-let [conversation (:conversation_id session)]
     (await (.deleteOne coll (clj->js {:conversation_id conversation :expiresAt {:$lte now}})))))
 
-(defn ^:async upsert-session! [db session]
+(defn ^:async upsert-session! [db session observed]
   (let [coll (.collection db COLLECTION_NAME)
         ttl (session-ttl-seconds (:session_id session))
         now (js/Date. (.now js/Date))
-        doc (-> session
-                (assoc :expiresAt (js/Date. (+ (.getTime now) (* ttl 1000)))
-                       :updatedAt now)
-                (dissoc :createdAt)
-                (cond-> (nil? (:conversation_id session)) (dissoc :conversation_id)))]
+        ;; Explicitly remove unbound fields: an upsert predicate can synthesize
+        ;; null, which would otherwise occupy the sparse conversation index.
+        unbound (filter #(and (nil? (get session %)) (nil? (get observed %))) law/identity-fields)
+        doc (apply dissoc (-> session
+                              (assoc :expiresAt (js/Date. (+ (.getTime now) (* ttl 1000)))
+                                     :updatedAt now)
+                              (dissoc :createdAt)) unbound)]
     (await (retire-expired! coll session now))
     (decode-session (await (.findOneAndUpdate
              coll
-             (clj->js (identity-query session))
+             (clj->js (identity-query session observed))
              (clj->js (cond-> {:$set doc :$setOnInsert {:createdAt now}}
-                        (and (contains? session :conversation_id) (nil? (:conversation_id session)))
-                        (assoc :$unset {:conversation_id ""})))
+                        (seq unbound) (assoc :$unset (zipmap unbound (repeat "")))))
              #js {"upsert" true "returnDocument" "after"})))))
 
 (defn ^:async update-session-doc! [db session-id updates]
@@ -88,14 +88,17 @@
              #js {"returnDocument" "after"})))))
 
 (defn ^:async patch-if-messages!
-  "Atomically patch a live thread only if its transcript still matches the observed value."
-  [db session-id messages updates]
-  (let [now (.now js/Date)
+  "Patch only the observed live identity and transcript, including unbound owner fields."
+  [db observed updates]
+  (let [session-id (:session_id observed)
+        query (merge {:session_id session-id :messages (:messages observed)}
+                     (zipmap law/identity-fields (map observed law/identity-fields)))
+        now (.now js/Date)
         fields (assoc updates :updatedAt (js/Date. now)
                               :expiresAt (js/Date. (+ now (* 1000 (session-ttl-seconds session-id)))))]
     (decode-session
      (await (.findOneAndUpdate (.collection db COLLECTION_NAME)
-                              (live-query {:session_id session-id :messages messages})
+                              (live-query query)
                               #js {"$set" (clj->js fields)}
                               #js {"returnDocument" "after"})))))
 

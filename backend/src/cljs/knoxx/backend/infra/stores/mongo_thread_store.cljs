@@ -7,13 +7,17 @@
             [knoxx.backend.law.thread-store :as law]
             [knoxx.backend.shape.thread-store :as protocol]))
 
-(defn- ^:async write-fields! [db fields]
-  (try {:written (await (native/upsert-session! db fields))}
+(defn- ^:async write-fields! [db fields observed]
+  (try {:written (await (native/upsert-session! db fields observed))}
        (catch :default error
          (if (native/duplicate-key? error)
-           (if (native/duplicate-conversation? error)
-             (throw (ex-info "Conversation already has a thread"
-                             {:status 409 :code "thread_store_conversation_conflict"}))
+           (do
+             (when (native/duplicate-conversation? error)
+               (when-let [bound (await (native/find-session-by-conversation
+                                       db (or (:conversation_id fields) (:conversation_id observed))))]
+                 (when-not (= (:session_id fields) (:session_id bound))
+                   (throw (ex-info "Conversation already has a thread"
+                                   {:status 409 :code "thread_store_conversation_conflict"})))))
              {:retry? true})
            (throw error)))))
 
@@ -21,15 +25,17 @@
   (law/assert-valid! :thread/value law/Thread thread)
   (let [fields (assoc thread :system_instance_id (instance/current-id))
         id (:session_id fields)]
-    (loop [attempt 0]
+    (loop [attempt 0 initial nil]
       (let [current (await (native/find-session db id))
+            origin (if (zero? attempt) current initial)
             proposed (merge current fields)]
+        (domain/assert-identity! origin (assoc current :session_id id) id)
         (law/assert-valid! :thread/value law/Thread proposed)
         (domain/assert-identity! current proposed id)
-        (let [{:keys [written retry?]} (await (write-fields! db fields))]
+        (let [{:keys [written retry?]} (await (write-fields! db fields current))]
           (if-not retry?
             (law/assert-valid! :thread/value law/Thread written)
-            (if (< attempt 31) (recur (inc attempt))
+            (if (< attempt 31) (recur (inc attempt) origin)
               (throw (ex-info "Thread changed repeatedly during identity admission"
                               {:status 503 :code "thread_store_contention"})))))))))
 
@@ -39,18 +45,23 @@
   (await (put! db (assoc patch :session_id id :updated_at (clock/now-ms)))))
 
 (defn- ^:async rewind! [db id turns]
-  (loop [attempt 0]
+  (loop [attempt 0 initial nil]
     (when-let [current (await (native/find-session db id))]
-      (let [messages (domain/rewind-messages (:messages current) turns)
+      (let [origin (if (zero? attempt) current initial)
+            messages (domain/rewind-messages (:messages current) turns)
             fields {:messages messages :status "waiting_input" :has_active_stream false
                     :answer nil :error nil :updated_at (clock/now-ms)
                     :system_instance_id (instance/current-id)}]
+        ;; Both directions preserve the rewind's exact identity, even when the
+        ;; first observation was unbound and a concurrent writer assigns it.
+        (domain/assert-identity! origin current id)
+        (domain/assert-identity! current origin id)
         (if (= messages (vec (or (:messages current) []))) current
           (do
             (law/assert-valid! :thread/value law/Thread (merge current fields))
-            (if-let [written (await (native/patch-if-messages! db id (:messages current) fields))]
+            (if-let [written (await (native/patch-if-messages! db current fields))]
               (law/assert-valid! :thread/value law/Thread written)
-              (if (< attempt 31) (recur (inc attempt))
+              (if (< attempt 31) (recur (inc attempt) origin)
                 (throw (ex-info "Thread changed repeatedly during rewind"
                                 {:status 503 :code "thread_store_contention"}))))))))))
 

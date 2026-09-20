@@ -28,16 +28,21 @@
               (and (map? value) (contains? value :$in)) (contains? (set (:$in value)) (get row field))
               :else (= value (get row field)))) query))
 
+(defn duplicate-error
+  "A driver-classified duplicate index error for a deterministic admission race."
+  [field]
+  (let [error (js/Error. "Fixture unique index conflict")]
+    (set! (.-code error) 11000)
+    (set! (.-keyPattern error) (clj->js {field 1}))
+    error))
+
 (defn- assert-unique! [name rows previous proposed]
   (when (= name "knoxx_threads")
     (doseq [field [:session_id :conversation_id]
             :when (some? (get proposed field))
             other rows
             :when (and (not= other previous) (= (get other field) (get proposed field)))]
-      (let [error (js/Error. "Fixture unique index conflict")]
-        (set! (.-code error) 11000)
-        (set! (.-keyPattern error) (clj->js {field 1}))
-        (throw error)))))
+      (throw (duplicate-error field)))))
 
 (defn- update-row! [state name query update options]
   (let [query (js->clj query :keywordize-keys true)

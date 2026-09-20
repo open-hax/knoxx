@@ -45,5 +45,6 @@
         (await (identity-proof/check-rebinding! provider))
         (await (identity-proof/check-initial-assignment! provider))
         (await (identity-proof/check-invalid-identity! provider))
-        (await (identity-proof/check-compatible-and-unique! provider)))
+        (await (identity-proof/check-compatible-and-unique! provider))
+        (await (identity-proof/check-recreated-owner! provider (:db fixture))))
       (finally (await (native/close! fixture))))))
