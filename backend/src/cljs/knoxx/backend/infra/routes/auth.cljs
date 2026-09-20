@@ -252,7 +252,7 @@
                                :auth-provider "invite"}))]
           (.send reply (clj->js (assoc session :ok true :invite invite))))))
     (catch :default err
-      (.send (.code reply (or (.-status err) 500))
+      (.send (.code reply (or (:status (ex-data err)) (.-statusCode err) (.-status err) 500))
              (clj->js {:error (or (.-message err) "Invite redemption failed")})))))
 
 (defn- register-invite-redeem-route!
