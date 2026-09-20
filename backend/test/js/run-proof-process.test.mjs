@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { runProofProcess } from '../../scripts/run-proof-process.mjs';
 
-const quiet = { onOutput() {} };
+const quiet = {
+  /** Suppress child output when the test checks the returned result or rejection. */
+  onOutput() {}
+};
 test('proof deadline kills a process that ignores SIGTERM', { timeout: 5000 }, async () => {
   let observed = '';
   await assert.rejects(runProofProcess(process.execPath, ['-e', `
