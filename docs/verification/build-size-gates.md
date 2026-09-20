@@ -42,3 +42,36 @@ existing source files, not changes in this repair. The gate continues to
 return a failure rather than hiding them with larger thresholds. This evidence
 does not establish a passing full source lint, a production build, or CI on
 the subsequently merged head.
+
+The subsequent default-discovery repair adds `ingestion/src` to the normal
+root scan. The earlier defaults omitted that source tree even though the
+budget applied to Clojure sources. The regression copies the real CLI and
+configuration into a disposable repository with an oversized file in each of
+the four source roots. It invokes the CLI with no positional targets or custom
+configuration and requires all four failures to be reported. Before the fix,
+the CLI reported only three; the eight explicit-file threshold tests still
+passed. All nine size-CLI tests pass after the fix.
+
+Measured from parent commit `226fcd48913aa2f613813b647033c64f9cfe6e42` with only
+the default root added, the complete scan remains **failing**: 690 files,
+66 errors and 55 warnings, compared with 661 files, 62 errors and 49 warnings
+before ingestion was included. The newly visible ingestion findings are:
+
+| Source path under `ingestion/src/kms_ingestion/` | Lines | Finding |
+| --- | ---: | --- |
+| `translation/worker.clj` | 694 | error |
+| `api/routes.clj` | 661 | error |
+| `graph.clj` | 570 | error |
+| `drivers/opencode_sessions.clj` | 515 | error |
+| `server.clj` | 465 | warning |
+| `drivers/github.clj` | 461 | warning |
+| `db.clj` | 394 | warning |
+| `jobs/worker.clj` | 388 | warning |
+| `drivers/eta_mu_sessions.clj` | 371 | warning |
+| `drivers/audio.clj` | 353 | warning |
+
+All 29 ingestion source files are unchanged from main commit
+`c33b762340a2ab665e0166195c9b3f075dde6ccb`. This repair exposes that inherited
+debt; it does not exempt it or change either threshold. Reproduce the ingestion
+inventory with `node scripts/lint-file-sizes.mjs ingestion/src` and the default
+scan with `pnpm run lint:size`; both return nonzero for these existing errors.
