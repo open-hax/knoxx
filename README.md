@@ -362,6 +362,33 @@ Start here when changing behavior:
 
 ## Testing and verification
 
+The repository root exposes the following commands, including when Knoxx is
+nested inside Foresight's pnpm workspace. Dependencies must already be installed
+in the backend and frontend packages.
+
+| Root command | Owned child commands, in order |
+| --- | --- |
+| `pnpm run dev` | Frontend development server; use the local startup instructions above for the backend and services |
+| `pnpm run build` | Backend release, then frontend release |
+| `pnpm run test` | Backend Node and CLJS tests, frontend CLJS tests, then frontend Vitest tests |
+| `pnpm run lint` | Backend full CLJS lint, frontend full CLJS lint, then repository file-size checks |
+| `pnpm run typecheck` | Backend compile, then frontend TypeScript checks |
+
+Commands stop when a child fails and preserve a nonzero status. Both full CLJS
+lint commands reject warnings. These root commands select child directories
+explicitly: Knoxx does not declare a pnpm workspace, and a package-name filter
+can otherwise exit successfully without selecting any project. Integration,
+browser and coverage commands remain the separate gates documented below.
+
+The routing regression runs the actual root scripts with pnpm inside a temporary
+enclosing workspace and checks child working directories, order, failure
+propagation and missing packages. Its fixture child scripts exercise routing;
+they do not replace the application suites:
+
+```bash
+node --test backend/test/js/root-command-routing.test.mjs
+```
+
 Backend:
 
 ```bash
