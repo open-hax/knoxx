@@ -349,14 +349,20 @@
        :restart_aware false}))))
 
 (defn log-and-record-async-spawn-error!
-  "Log private diagnostics; retain a public failure only for an admitted live run."
+  "Log and return private diagnostics without claiming this invocation was admitted.
+   This compatibility entrypoint must never mutate a run found only by request ID."
   [body err]
-  (let [diagnostic (xrunner/error-diagnostic body err)
+  (xrunner/log-async-spawn-error! body err)
+  (xrunner/error-diagnostic body err))
+
+(defn- record-admitted-event-turn-failure!
+  "Record a queue invocation whose own initial run/event admission already succeeded.
+   Only the two queue paths below may call this after their awaited admission gate."
+  [body err]
+  (let [diagnostic (log-and-record-async-spawn-error! body err)
         run-id (:run-id body)]
-    (xrunner/log-async-spawn-error! body err)
-    ;; Both production store-run! callers await durable initial admission first.
-    ;; A failed pre-admission spawn (or an evicted diagnostic run) stays local;
-    ;; it must not create an orphan event queue or a nil run registry entry.
+    ;; Admission evidence is the caller's completed queue gate, not this lookup.
+    ;; The lookup only avoids recreating an already evicted diagnostic record.
     (when (get @run-state/runs* run-id)
       (let [public (spawn-diagnostic/public-diagnostic diagnostic)
             event (run-payload/tool-event-payload run-id (:conversation-id body) (:session-id body)
@@ -441,7 +447,7 @@
     (let [result (await (start-turn!))]
       (await (notify-event-turn-settler! body (event-turn-settlement result deadline-ms))))
     (catch :default err
-      (log-and-record-async-spawn-error! body err)
+      (record-admitted-event-turn-failure! body err)
       (await (run-events/persist-run! (get @run-state/runs* (:run-id body))))
       (await (notify-event-turn-settler! body (event-turn-failure err deadline-ms))))))
 
@@ -486,7 +492,7 @@
         rejection (await (admit-event-reservation! config body queue-result entry gate))]
     (if rejection
       (do
-        (log-and-record-async-spawn-error! body (js/Error. rejection))
+        (record-admitted-event-turn-failure! body (js/Error. rejection))
         (await (run-events/flush! (:run-id body)))
         (await (busy-error rejection)))
       (do
