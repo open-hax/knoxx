@@ -1,0 +1,157 @@
+{
+  "goldenCommit": "959f17947dfbf9f80060ae3849315dd60a27767b",
+  "historicalEvidenceProvesCurrentBytes": false,
+  "status": "Auth/app/Admin/browser source checkpoint; current frontend tests and build in progress; fresh browser replay pending",
+  "files": [
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/app.cljs",
+      "goldenSha256": "d2fb4f0a003fb7d45ca00cae50ec9fe71bb0b7c2d051288f55a697e6b22abc1a",
+      "recoveredSha256": "718e3d02c08668a48f748ab79be31dcd604e32a09626ebbabc828aa945abd8b5",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/account.cljs",
+      "goldenSha256": "8105e2085529a1e2f47b5f9fd14bc1dcbbe6e064b09922a026e82d3731e65f41",
+      "recoveredSha256": "7610b50b5e439fd67023bd02d54301ae062e567eff401af264dc5a30a1241664",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/api.cljs",
+      "goldenSha256": "a954f3114292a4f72044135cde708bde162f9dccb76fbe4594fece97c52c7ea6",
+      "recoveredSha256": "ef96961dcb25bbface419a65ea2d5b7a94d081e953fcf09cb4d771d7d1de700e",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/boundary.cljs",
+      "goldenSha256": "26d4ef5ac9ada7547dd9e96f034c739c69ffdf439156628c9ae41692ead36f6d",
+      "recoveredSha256": "58aefdc3914d97512d55b3d0b9078b40e2c693c0683c5aabba166373bffc743e",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/context.cljs",
+      "goldenSha256": null,
+      "recoveredSha256": "73ef415d53fff007e2d6023c80d033100adc10be71241772dbeb495c801c032b",
+      "classification": "retained-or-repaired-baseline"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/credential_inventory.cljs",
+      "goldenSha256": "856b0ac79a70aaca899c6aa9f8736b579ae690b9b2306122e65aeb3b25919638",
+      "recoveredSha256": "b9c30ff8d8872f03cbed5de5b733ea8c497ae796b6c0df4c938b919a6a3b792c",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/credentials.cljs",
+      "goldenSha256": "3c52ae62654f3d5f20f2c9de1f223a8c22d89ccf420ffa9acda771ac05d132c9",
+      "recoveredSha256": "aa52ef5f16a7ca4e7163732c1d66177eec5efd988cd182f3d511623053ec8156",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/forms.cljs",
+      "goldenSha256": "6ec1eabe792efb3e3aa9ba6c9c865effd6ecc486e311421baa10de65183903b7",
+      "recoveredSha256": "312189d6c48de94c4fb242d9a0174078564d8e37c809fba964e03c252acf3151",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/login.cljs",
+      "goldenSha256": "7d260f4e9d851b6f6f637dfc9b5ab0c4b57f366576bd8550fd0c16336a5abaa4",
+      "recoveredSha256": "a6c946ae04c27062fac4a46f45fe6ba5c868aac7c9ad2ad21106f29fc6630c53",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/methods.cljs",
+      "goldenSha256": "09c83c28a8a9d4e7dd32ed1903d0bf650b4cf713a133dc5d8d73af76f09325d4",
+      "recoveredSha256": "8d5070128544dff815eabfed27465ec0caa7dfbe533c7a4653d6a78e36a1a28e",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/oauth_link.cljs",
+      "goldenSha256": "46fa4def88670edde2c0c776b31754a03c8f8db1c477cf7d48b6468e2050df3e",
+      "recoveredSha256": "c00c9a5fb8763048c626e8ebac8c33cd1c2088716814f35eecdacc45626bd094",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/signup.cljs",
+      "goldenSha256": "be89ab9aaa067a79ce81669aa2503f0163f7e80f12e4db2e873489d32f0c8f65",
+      "recoveredSha256": "7bc22b8e52f8985df9074edacd6c5a88500ec9be461ca4e81ec80eb68cbf6794",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/cljs/knoxx/frontend/auth/webauthn.cljs",
+      "goldenSha256": "2069e3471bb15bd8c8f9174864a3c1183b365bf74accad1a940e45efea643894",
+      "recoveredSha256": "c9ec5498314a501eb775928a1d50b34975225652c1dd290e550560ad9d5f4caf",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/test/cljs/knoxx/frontend/auth/boundary_interaction_test.cljs",
+      "goldenSha256": "41159d4421240905f8a6a51691352b59c461b738a41971711cbedaabb3ef4959",
+      "recoveredSha256": "e11ac874bfc87994a6e42259901f7c52ff5168762409edc56fcbd33f586d7d6a",
+      "classification": "reconstructed"
+    },
+    {
+      "file": "frontend/src/components/admin-page/UsersMembershipsSection.tsx",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "d0cd2d24d399a836f7c9a7289be9bf640a82794c3c8cc4af6ac23b9871eec999"
+    },
+    {
+      "file": "frontend/src/components/admin-page/UsersMembershipsSection.test.tsx",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "22c3aa409bbb65bcc98fdec48c0a92a082e03be2a01ae19324ad33ff64d9e1bc"
+    },
+    {
+      "file": "frontend/src/components/admin-page/types.ts",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "83eb7f73841b80b63e6dcf93224a0df741a079e7023fa1c30dbaca4f74b20e65"
+    },
+    {
+      "file": "frontend/src/lib/api/admin.test.ts",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "d9e372622793c2248a5584f03e7241a1d64fff4f117c81ddde928ec3a73cbecf"
+    },
+    {
+      "file": "frontend/src/lib/api/admin.ts",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "c070ccf94c440d93db79e36fee31c3820505c91cd36c07adb79b584913101dd8"
+    },
+    {
+      "file": "frontend/src/lib/types.ts",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "06d79f94528a88d0e19365a4a998eb8194909dfa7b60c7918e60018fb6888281"
+    },
+    {
+      "file": "frontend/src/pages/AdminLayout.tsx",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "554432db630cb3ec45690ab68b6998bec70a4a11308a819a0a1bae6f354edeb5"
+    },
+    {
+      "file": "scripts/admin-identity-browser-tour.mjs",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "89e2ad86a7a8073b54a80d465e4a493e9ed80180ae4ee264b5cb713732aee1b0"
+    },
+    {
+      "file": "scripts/identity-browser-tour.mjs",
+      "goldenSha256": null,
+      "classification": "reconstructed",
+      "recoveredSha256": "6480f83c67ec8b777303b879653bd2f769b0dfb845d86b79d8036b3071f812ee"
+    }
+  ],
+  "verification": {
+    "adminFocusedTests": {
+      "tests": 17,
+      "failures": 0
+    },
+    "frontendTypeScript": "passed",
+    "authAppCljKondo": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "browserHelpers": "node --check passed; live execution pending"
+  }
+}

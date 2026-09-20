@@ -106,10 +106,14 @@
     (is (true?  (authz/principal-match? ctx {:user_id "user-1"})))
     (is (false? (authz/principal-match? ctx {:user_id "user-99"})))))
 
-(deftest principal-match-email-fallback-case-insensitive
+(deftest principal-match-refuses-email-as-account-authority
   (let [ctx (-> base-ctx (dissoc :membershipId) (dissoc :userId))]
-    (is (true?  (authz/principal-match? ctx {:user_email "ALICE@EXAMPLE.COM"})))
-    (is (false? (authz/principal-match? ctx {:user_email "bob@example.com"})))))
+    (is (false? (authz/principal-match? ctx {:user_email "ALICE@EXAMPLE.COM"})))
+    (is (false? (authz/principal-match? ctx {:user_email "alice@example.com"})))
+    (is (false? (authz/principal-match? ctx {:user_email "bob@example.com"})))
+    (is (false? (authz/auth-snapshot-has-principal? {:user_email "alice@example.com"})))
+    (is (true? (authz/principal-match? (assoc ctx :actorId "verified_actor")
+                                     {:actor_id "verified_actor" :user_email "stale@example.com"})))))
 
 (deftest principal-match-system-admin-always-true
   (let [admin (assoc base-ctx :roleSlugs ["system_admin"])]
