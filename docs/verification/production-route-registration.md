@@ -21,15 +21,22 @@ owned temporary workspace, and a loopback-only OpenPlanner fixture. It invokes
 the complete app registration function and checks 17 route-group sentinels,
 including memory, documents, and the final translation group. It then verifies:
 
+- Missing, malformed and unknown ESM options are rejected by the named fixture
+  contract immediately after decoding, before app allocation or route setup.
+  The release verifier exercises 18 invalid option sets, including every
+  missing required key and an invalid or non-loopback upstream origin.
 - A graph-export request without its permission returns 403 before an upstream
   call, through the production authorization helper.
 - A permitted graph-export request returns the loopback fixture's graph through
   the injected `openplanner-graph-export!` local.
 - A permitted memory-session request returns the fixture's scoped row through
   the injected `fetch-openplanner-session-rows!` local.
-- Both Fastify instances close and the temporary workspace is removed before
-  the verifier exits. The test error guard prevents unhandled promise failures
-  from being hidden by the exit.
+- Cleanup attempts both Fastify closes and removal of the temporary workspace
+  even if an earlier cleanup rejects. Failures remain visible alongside the
+  original verification error, set a failing exit code, and prevent a success
+  report. Node regressions inject synchronous and asynchronous close failures,
+  verify actual directory removal, and cover removal failure and partial setup.
+  The test error guard prevents unhandled promise failures from being hidden.
 
 Auth contexts are seeded at the existing request-context cache seam with a
 non-admin organization/member/user fixture. This verifies permission handling

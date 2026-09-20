@@ -2,7 +2,7 @@
 
 The recovered standalone size command lacked `size-lint.config.mjs` and failed
 before reading source. The current configuration uses the README's 350-line
-warning and 500-line error thresholds across backend, frontend and shared
+warning and 500-line error thresholds across backend, frontend, shared and ingestion
 source. These differ from the CLJS hooks' existing 400/800 thresholds; neither
 gate exempts existing oversized files. See the later
 [build size-gate repair](build-size-gates.md) for the budget correction.
