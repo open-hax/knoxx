@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.agent.stream
   "Streaming event handling for agent turns."
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.run-event-payload :as run-payload]
+            [clojure.string :as str]
             [knoxx.backend.domain.agent.reasoning :as reasoning]
             [knoxx.backend.domain.agent.text-delta :as text-delta]
             [knoxx.backend.domain.agent.tool-lifecycle :as tool-lifecycle]
@@ -8,7 +9,7 @@
             [knoxx.backend.infra.agent.stream.provider-events :as provider-events]
             [knoxx.backend.infra.agent.stream.sinks :as sinks]
             [knoxx.backend.infra.agent.tools :refer [tool-call-preview-from-part assistant-tool-call-previews]]
-            [knoxx.backend.domain.action.run-state :refer [append-limited tool-event-payload]]
+            [knoxx.backend.domain.action.run-state :refer [append-limited]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.shape.agent :as agent-shape]
@@ -119,7 +120,7 @@
                  (not @ttft-recorded?))
         (reset! ttft-recorded? true)
         (let [ttft-ms (- (.now js/Date) started-ms)
-              ttft-event (tool-event-payload run-id conversation-id session-id "assistant_first_token"
+              ttft-event (run-payload/tool-event-payload run-id conversation-id session-id "assistant_first_token"
                                              {:status "streaming"
                                               :ttft_ms ttft-ms})]
           (sinks/update-run-state! (sinks/sink-or-default state) run-id #(assoc % :ttft_ms ttft-ms))
@@ -170,7 +171,7 @@
         (reset! abort-reason* reason)
         (let [sink (sinks/sink-or-default state)]
           (sinks/update-session-record! sink session-id {:op :mark-streaming :active? false})
-          (let [abort-event (tool-event-payload run-id conversation-id session-id "abort_requested"
+          (let [abort-event (run-payload/tool-event-payload run-id conversation-id session-id "abort_requested"
                                                 {:status "aborting"
                                                  :reason reason})]
             (sinks/emit-run-event! sink abort-event)))
@@ -250,7 +251,7 @@
                                               :aborting? @(:aborting? state)})]
     (reset! (:tool-loop* state) (:state guard))
     (when (:abort? guard)
-      (let [spiral-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "death_spiral_detected"
+      (let [spiral-event (run-payload/tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "death_spiral_detected"
                                              (tool-lifecycle/run-event-extra :death-spiral
                                                                              (merge event
                                                                                     {:count (:count guard)
@@ -260,7 +261,7 @@
     (let [at (now-iso)
           event (assoc event :at at)
           first-event? (first-lifecycle-event? state "tool_start" tool-call-id)
-          tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_start"
+          tool-event (run-payload/tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_start"
                                          (tool-lifecycle/run-event-extra :start event))]
       (sinks/update-tool-receipt! (sinks/sink-or-default state) (:run-id state) tool-call-id {:tool_name tool-name}
                                   #(tool-lifecycle/start-receipt % event))
@@ -283,7 +284,7 @@
                                 #(tool-lifecycle/update-receipt % event))
     (sinks/apply-tool-trace-event! (sinks/sink-or-default state) (:run-id state) (tool-lifecycle/trace-event :update event))
     (when preview
-      (let [tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_update"
+      (let [tool-event (run-payload/tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_update"
                                            (tool-lifecycle/run-event-extra :update event))]
         (sinks/emit-run-event! (sinks/sink-or-default state) tool-event)))))
 
@@ -297,7 +298,7 @@
                      :tool-call-id tool-call-id
                      :at at)
         first-event? (first-lifecycle-event? state "tool_end" tool-call-id)
-        tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_end"
+        tool-event (run-payload/tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_end"
                                        (tool-lifecycle/run-event-extra :end event))]
     (sinks/update-tool-receipt! (sinks/sink-or-default state) (:run-id state) tool-call-id {:tool_name tool-name}
                                 #(tool-lifecycle/end-receipt % event))
@@ -307,7 +308,7 @@
 
 (defn- handle-turn-end!
   [state event]
-  (let [turn-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "turn_end"
+  (let [turn-event (run-payload/tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "turn_end"
                                        {:status "completed"
                                         :tool_result_count (:tool-result-count event)})]
     (sinks/emit-run-event! (sinks/sink-or-default state) turn-event)))
@@ -315,7 +316,7 @@
 (defn- handle-agent-end!
   [state _event]
   (sinks/emit-run-event! (sinks/sink-or-default state)
-                         (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "agent_end"
+                         (run-payload/tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "agent_end"
                                              {:status "completed"})))
 
 (defn build-subscribe-handler

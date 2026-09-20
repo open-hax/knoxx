@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.agent.turn
   "Main turn orchestrator: send-agent-turn! and supporting lifecycle functions."
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.run-event-payload :as run-payload]
+            [clojure.string :as str]
             [knoxx.backend.infra.agent.hydration :refer [settings-state* ensure-settings!
                                                                 passive-hydration! passive-memory-hydration!
                                                                 build-agent-user-message
@@ -25,7 +26,7 @@
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.domain.action.run-state :refer [store-run! append-run-event! update-run!
-                                                           finalize-run-trace-blocks! tool-event-payload
+                                                           finalize-run-trace-blocks!
                                                            record-retrieval-sample! latest-assistant-message
                                                            set-event-stream-sink! clear-event-stream-sink!]]
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
@@ -158,7 +159,7 @@
 (defn- emit-action-task-rendered-event!
   [run-id conversation-id session-id agent-spec]
   (when-let [rendered-task (content/nonblank (:rendered-task-prompt agent-spec))]
-    (let [task-event (tool-event-payload
+    (let [task-event (run-payload/tool-event-payload
                       run-id conversation-id session-id "action_task_rendered"
                       (cond-> {:preview rendered-task}
                         (:task-source agent-spec) (assoc :task_source (:task-source agent-spec))
@@ -243,7 +244,7 @@
                                        agent-spec (assoc :agent_spec (agent-spec-summary agent-spec)))
                                      auth-extra)
                               session-id)
-    (let [initial-event (tool-event-payload run-id conversation-id session-id "run_started"
+    (let [initial-event (run-payload/tool-event-payload run-id conversation-id session-id "run_started"
                                             {:status "running"
                                              :mode mode
                                              :model model-id
@@ -360,7 +361,7 @@
                                        :task-source (:task-source agent-spec)}
                                       err)
         err-text (:message diagnostic)
-        failed-event (tool-event-payload run-id conversation-id session-id "run_failed"
+        failed-event (run-payload/tool-event-payload run-id conversation-id session-id "run_failed"
                                          {:status "failed"
                                           :error err-text
                                           :reason reason})
@@ -455,7 +456,7 @@
                         (not (str/blank? answer))
                         (conj {:role "assistant"
                                :content answer}))
-        completed-event (tool-event-payload run-id conversation-id session-id "run_completed"
+        completed-event (run-payload/tool-event-payload run-id conversation-id session-id "run_completed"
                                             {:status "completed"
                                              :model model-id
                                              :sources_count (count sources)})]
@@ -488,7 +489,7 @@
   [config state session run-id conversation-id session-id started-ms
    hydration memory-hydration persisted-request-messages agent-spec err]
   (let [err-text (or @(:abort-reason* state) (str err))
-        error-event (tool-event-payload run-id conversation-id session-id "run_failed"
+        error-event (run-payload/tool-event-payload run-id conversation-id session-id "run_failed"
                                         {:status "failed"
                                          :error err-text})]
     (finalize-run-trace-blocks! run-id "error")
@@ -774,7 +775,7 @@
        (mapv #(materialize-part! runtime config auth-context max-bytes %) parts)))))
 (defn- emit-hydration-event!
   [run-id conversation-id session-id event-type hydration resource-patch]
-  (let [event (tool-event-payload run-id conversation-id session-id event-type
+  (let [event (run-payload/tool-event-payload run-id conversation-id session-id event-type
                                   {:status "ok"
                                    :hits (count (:results hydration))
                                    :elapsed_ms (:elapsedMs hydration)})]

@@ -10,14 +10,19 @@
 (defn- ^:async after! [previous operation]
   (when previous (try (await previous) (catch :default _ nil)))
   (await (operation)))
+(defn- ^:async release-tail! [key task]
+  (try
+    (await task)
+    (catch :default _ nil)
+    (finally
+      (when (identical? task (get @tails key)) (swap! tails dissoc key)))))
 (defn with-document-lock!
   "Hold sequencing across every await; failed operations cannot poison later repair."
   [key operation]
   (when-not (fn? operation) (throw (ex-info "Invalid source operation" {:status 500})))
   (let [task (after! (get @tails key) operation)]
     (swap! tails assoc key task)
-    (.then task (fn [_] (when (identical? task (get @tails key)) (swap! tails dissoc key)))
-           (fn [_] (when (identical? task (get @tails key)) (swap! tails dissoc key))))
+    (release-tail! key task)
     task))
 (defn- missing? [error] (= "ENOENT" (.-code error)))
 (defn ^:async read-text! "Read source bytes as UTF-8, distinguishing absence from failure." [file]

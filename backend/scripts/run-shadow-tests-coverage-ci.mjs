@@ -13,6 +13,12 @@ const TEST_BUNDLE = 'target/test/test-ci.cjs';
 //   knoxx.backend.app_shapes.js
 const CLJS_RUNTIME = '.shadow-cljs/builds/test-ci/dev/out/cljs-runtime';
 
+/**
+ * Stream and capture a child process with guarded defaults, overridden by opts.
+ * @returns {Promise<{code: number | null, signal: string | null, combined: string}>}
+ * Resolves on close even for nonzero exits; callers must inspect code and signal.
+ * Rejects on spawn errors.
+ */
 function spawnP(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -29,10 +35,22 @@ function spawnP(cmd, args, opts = {}) {
   });
 }
 
+/**
+ * Request process exit using the shared fail-closed summary/async-error check.
+ * Missing or failed evidence exits nonzero; the preload may defer the actual exit.
+ * @returns {void} No result is returned for callers to interpret as a test pass.
+ */
 function exitForTestCounters(output) {
   process.exit(testCountersExitCode(output));
 }
 
+/**
+ * Compile test-ci, then run its guarded bundle under c8 with explicit backend includes.
+ * Test-suffixed modules are excluded; supporting fixture modules may still be included.
+ * Writes coverage reports and requests exit from child status and test evidence;
+ * absent production output, signals, failures and incomplete summaries fail closed.
+ * @returns {Promise<void>} Rejects spawn/filesystem errors for the CLI catch handler.
+ */
 async function main() {
   // 1) Compile — :optimizations :none emits individual flat .js files.
   {

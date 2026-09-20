@@ -49,13 +49,16 @@
              :manifest {:namespace :wiki :resources (into [resource] publications)}))))
 
 (defn source-event
-  "Create a fully replayable source fact from server-observed resource data."
-  [scope actor id action previous document content content-revision timestamp]
-  (review/assert-valid!
-   :source-authoring/event law/Event
-   {:source/id id :source/scope scope :source/actor actor :source/action action
-    :source/previous-revision previous :source/revision content-revision
-    :source/content content :source/document document :source/recorded-at timestamp}))
+  "Create a replayable source fact; creation requires its manifest before validation."
+  ([scope actor id action previous document content content-revision timestamp]
+   (source-event scope actor id action previous document content content-revision timestamp nil))
+  ([scope actor id action previous document content content-revision timestamp manifest]
+   (review/assert-valid!
+    :source-authoring/event law/Event
+    (cond-> {:source/id id :source/scope scope :source/actor actor :source/action action
+             :source/previous-revision previous :source/revision content-revision
+             :source/content content :source/document document :source/recorded-at timestamp}
+      (some? manifest) (assoc :source/manifest manifest)))))
 
 (defn creation-manifest-compatible?
   "A create retry may observe later lawful publication states; identity and siblings stay exact."

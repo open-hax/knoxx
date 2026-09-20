@@ -92,21 +92,16 @@
 
   Garden REST is included because the deploy-owned Garden review surface has
   replaced every supported caller."
-  ["/api/openplanner/v1/gardens"
+  ["/api/openplanner/v1/cms/publish"
+   "/api/openplanner/v1/gardens"
    "/api/openplanner/v1/public/gardens/"
    "/api/openplanner/v1/translations/config"
    "/v1/translations/config"])
 
 (def legacy-paths-with-known-callers
-  "Legacy paths that still have shipped callers, mapped to the production files
-   that call them. The remaining CMS publish call is retired by the frontend
-   cutover, not by the Garden read-model migration.
-
-   Asserted positively rather than skipped: the guard checks that these are
-   *exactly* the callers, so a new one fails the build and a removed one shows up
-   as progress rather than as a silently weakened test."
-  {"/api/openplanner/v1/cms/publish"
-   ["frontend/src/pages/CmsPage.tsx"]})
+  "No remaining legacy publication-authority callers. The retired-path guard
+   now includes the CMS publish endpoint as well as Garden reads."
+  {})
 
 (def scanned-source-roots
   "Shipped source trees the retirement guard walks, relative to the repository

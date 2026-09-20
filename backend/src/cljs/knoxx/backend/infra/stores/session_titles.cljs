@@ -1,6 +1,5 @@
 (ns knoxx.backend.infra.stores.session-titles
-  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [knoxx.backend.extern.row-extra :as row-extra]
             [knoxx.backend.extern.proxx :as proxx]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -270,8 +269,7 @@
             :author "knoxx"
             :model title-model
             :tags ["knoxx" "session_title" "metadata"]}
-     :extra {:org_id (planner-scope/org-id! config)
-             :kind "knoxx.session_title"
+     :extra {:kind "knoxx.session_title"
              :title normalized-title
              :title_model title-model
              :session_id session-id}}))
@@ -300,7 +298,7 @@
     (try
       (let [body (await (openplanner-client/session! client
                                                      session-id
-                                                     (planner-scope/session-options config)))]
+                                                     {:project (:session-project-name config)}))]
         (when-let [entry (stored-session-title-entry session-id (:rows body))]
           (cache-session-title-entry! session-id
                                       (:title entry)
@@ -315,7 +313,7 @@
     (if-not (openplanner-client/enabled? client)
       @session-titles*
       (try
-        (let [body (await (openplanner-client/sessions! client (planner-scope/session-options config)))
+        (let [body (await (openplanner-client/sessions! client {:project (:session-project-name config)}))
               session-ids (->> (or (:rows body) [])
                                (map :session)
                                (map str)
@@ -518,7 +516,7 @@
     @session-title-backfill*
     (let [client (openplanner-client/client config)]
       (try
-        (let [body (await (openplanner-client/sessions! client (planner-scope/session-options config)))
+        (let [body (await (openplanner-client/sessions! client {:project (:session-project-name config)}))
               session-ids (vec (session-ids-from-response body limit))]
           (init-backfill-state! session-ids force)
           (if (empty? session-ids)

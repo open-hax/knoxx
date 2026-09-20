@@ -1,6 +1,7 @@
 (ns knoxx.backend.shape.source-review
   "Explicit JSON-shaped data conversion for human and agent review commands."
-  (:require [knoxx.backend.law.source-review :as law]))
+  (:require [knoxx.backend.law.publication-locale :as locale]
+            [knoxx.backend.law.source-review :as law]))
 
 (defn context->scope
   "Project a verified acting context and selected document onto the closed ledger key."
@@ -13,7 +14,7 @@
   [:map {:closed true}
    [:operation_id law/NonBlank]
    [:revision law/NonBlank]
-   [:source_locale law/NonBlank]
+   [:source_locale locale/LocaleTag]
    [:expected_head [:maybe law/NonBlank]]
    [:action [:enum "comment" "submit" "request_changes" "accept"]]
    [:notes {:optional true} :string]

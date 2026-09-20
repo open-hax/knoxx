@@ -8,6 +8,7 @@
   (:require [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.publication-resolver :as resolver]
             [knoxx.backend.domain.resources.loader :as resources]
+            [knoxx.backend.infra.cms-store :as cms-store]
             [knoxx.backend.law.publication :as law]))
 
 (def ^:private kind-id-key
@@ -78,7 +79,7 @@
    enumerated first — making the resolver's deterministic identity-conflict
    detection unreachable and the topology dependent on directory order."
   [config]
-  (await (resources/load-all-resource-records! config)))
+  (mapv cms-store/project-resource (await (resources/load-all-resource-records! config))))
 
 (defn ^:async resource-definitions
   [config]

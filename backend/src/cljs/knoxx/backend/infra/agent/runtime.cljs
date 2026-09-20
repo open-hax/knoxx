@@ -1,7 +1,8 @@
 (ns knoxx.backend.infra.agent.runtime
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.run-event-payload :as run-payload]
+            [clojure.string :as str]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.domain.action.run-state :refer [tool-event-payload append-run-event!]]
+            [knoxx.backend.domain.action.run-state :refer [append-run-event!]]
             [knoxx.backend.domain.extension-runtime :as ext-runtime]
             [knoxx.backend.infra.agent.session :refer [active-agent-session]]
             [knoxx.backend.shape.agent :refer [streaming? follow-up! steer!]]
@@ -98,7 +99,7 @@
                        #(steer! session message))]
           (try
             (await (invoke))
-            (let [event (tool-event-payload run-id conversation-id session-id event-type
+            (let [event (run-payload/tool-event-payload run-id conversation-id session-id event-type
                                             {:status "queued"
                                              :preview preview
                                              :metadata metadata})]
@@ -111,7 +112,7 @@
                :run_id run-id
                :kind kind})
             (catch :default err
-              (let [event (tool-event-payload run-id conversation-id session-id failure-type
+              (let [event (run-payload/tool-event-payload run-id conversation-id session-id failure-type
                                               {:status "failed"
                                                :error (str err)
                                                :preview preview

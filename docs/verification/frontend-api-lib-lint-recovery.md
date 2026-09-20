@@ -1,4 +1,6 @@
-# Frontend API and library lint recovery
+# Historical frontend API and library lint recovery
+
+This record describes the cumulative [PR #305 source checkpoint](https://github.com/open-hax/knoxx/tree/1d3b207ab2e5bfc6b2fa149836b855d458a9c997), not the isolated build/test layer in PR #327. The named library boundary and API/library implementation changes below belong to later slices. Their historical test and lint results do not qualify PR #327.
 
 The scoped scan of `frontend/src/cljs/knoxx/frontend/api` and `lib` initially
 reported 50 warnings across 11 files. The corrected source reports zero errors
@@ -25,7 +27,7 @@ disposal handling, channel routing, and conversation rebinding. Its existing
 behavior tests execute those paths. The shared request helper retains raw error
 text and its empty-body status fallback; a new async test exercises both.
 
-## Verification
+## Historical verification
 
 The first combined frontend run compiled successfully but reported one test
 error: the migration inventory rejects explicit `:include-macros` imports.
