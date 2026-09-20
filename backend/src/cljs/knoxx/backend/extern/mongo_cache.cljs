@@ -10,6 +10,23 @@
 (defn- collection [db bucket] (.collection db (first (get bucket-layout bucket))))
 (defn- query [bucket cache-key] (clj->js {(second (get bucket-layout bucket)) cache-key}))
 
+(defn- portable-timestamp [value format]
+  (if (instance? js/Date value)
+    (let [at (.getTime value)]
+      (when-not (js/Number.isFinite at)
+        (throw (ex-info "Invalid legacy cache timestamp" {:status 503 :code "cache_store_legacy_timestamp_invalid"})))
+      (if (= format :iso) (.toISOString value) at))
+    value))
+
+(defn- legacy-value [bucket row]
+  (case bucket
+    :titles (cond-> (select-keys row [:title :title_model :updated_at])
+              (contains? row :updated_at) (update :updated_at portable-timestamp :iso))
+    :memory-sessions (reduce (fn [value field]
+                               (if (contains? value field) (update value field portable-timestamp :milliseconds) value))
+                             (select-keys row [:value :cached-at :expires-at]) [:cached-at :expires-at])
+    :temp-memory (:value row)))
+
 (defn ^:async read!
   "Decode a live cache value, including the previous named-collection representation."
   [db bucket cache-key]
@@ -20,7 +37,7 @@
           value (js->clj row :keywordize-keys true)]
       (when (and (js/Number.isFinite expiry) (> expiry (.now js/Date)))
         (if (= "finite-v1" (:cacheFormat value)) (:value value)
-          (if (= bucket :temp-memory) (:value value) (dissoc value :_id)))))))
+          (legacy-value bucket value))))))
 
 (defn ^:async write!
   "Store one value with an explicit expiry in the named legacy collection."

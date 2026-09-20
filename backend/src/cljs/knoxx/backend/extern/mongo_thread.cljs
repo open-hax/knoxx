@@ -9,36 +9,44 @@
 
 (defn- decode-session [native]
   (when native
-    ;; BSON identities and driver-owned Date fields are transport metadata,
-    ;; not portable conversation state. Returning them breaks the next patch's
-    ;; EDN contract even when the caller only changes an ordinary status.
-    (dissoc (js->clj native :keywordize-keys true)
-            :_id :expiresAt :createdAt :updatedAt)))
+    (let [expires (aget native "expiresAt")
+          expiry (cond (instance? js/Date expires) (.getTime expires)
+                       (string? expires) (.parse js/Date expires)
+                       :else js/NaN)]
+      ;; A row may expire between the query and decoding. Retain its exact
+      ;; portable expiry so caching cannot grant it another full lifetime.
+      (when (and (js/Number.isFinite expiry) (> expiry (.now js/Date)))
+        (-> (js->clj native :keywordize-keys true)
+            (dissoc :_id :createdAt :updatedAt)
+            (assoc :expiresAt (.toISOString (js/Date. expiry))))))))
+
+(defn- live-query [fields]
+  (clj->js (assoc fields :expiresAt {:$gt (js/Date. (.now js/Date))})))
 
 (defn ^:async find-session [db session-id]
   (let [coll (.collection db COLLECTION_NAME)
-        result (await (.findOne coll #js {"session_id" session-id}))]
+        result (await (.findOne coll (live-query {:session_id session-id})))]
     (decode-session result)))
 
 (defn ^:async find-session-by-conversation [db conversation-id]
   (let [coll (.collection db COLLECTION_NAME)
-        result (await (.findOne coll #js {"conversation_id" conversation-id}))]
+        result (await (.findOne coll (live-query {:conversation_id conversation-id})))]
     (decode-session result)))
 
 (defn ^:async upsert-session! [db session]
   (let [coll (.collection db COLLECTION_NAME)
         ttl (session-ttl-seconds (:session_id session))
-        now (js/Date.)
+        now (js/Date. (.now js/Date))
         doc (-> session
-                (assoc :expiresAt (js/Date. (+ (.now js/Date) (* ttl 1000)))
+                (assoc :expiresAt (js/Date. (+ (.getTime now) (* ttl 1000)))
                        :updatedAt now)
                 (dissoc :createdAt))]
-    (await (.findOneAndUpdate
+    (decode-session (await (.findOneAndUpdate
              coll
              #js {"session_id" (:session_id session)}
              #js {"$set" (clj->js doc)
                   "$setOnInsert" (clj->js {:createdAt now})}
-             #js {"upsert" true "returnDocument" "after"}))))
+             #js {"upsert" true "returnDocument" "after"})))))
 
 (defn ^:async update-session-doc! [db session-id updates]
   (let [coll (.collection db COLLECTION_NAME)
@@ -46,11 +54,11 @@
         set-doc (merge updates
                        {:updatedAt (js/Date.)
                         :expiresAt (js/Date. (+ (.now js/Date) (* ttl 1000)))})]
-    (await (.findOneAndUpdate
+    (decode-session (await (.findOneAndUpdate
              coll
              #js {"session_id" session-id}
              #js {"$set" (clj->js set-doc)}
-             #js {"returnDocument" "after"}))))
+             #js {"returnDocument" "after"})))))
 
 (defn ^:async delete-session! [db session-id]
   (let [coll (.collection db COLLECTION_NAME)]
@@ -59,9 +67,9 @@
 
 (defn ^:async fetch-active-sessions [db]
   (let [coll (.collection db COLLECTION_NAME)
-        cursor (.find coll #js {"status" #js {"$in" (clj->js (vec ACTIVE_STATUS))}})
+        cursor (.find coll (live-query {:status {:$in (vec ACTIVE_STATUS)}}))
         results (await (.toArray cursor))]
-    (mapv decode-session (array-seq results))))
+    (into [] (keep decode-session) (array-seq results))))
 
 (defn ^:async setup-indexes!
   "Create required indexes on knoxx_threads collection."

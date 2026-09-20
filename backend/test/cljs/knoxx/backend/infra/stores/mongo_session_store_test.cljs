@@ -52,7 +52,8 @@
       (await (store/put-session! db session))
       (let [result (await (store/update-session! db "s3" {:status "completed"}))]
         (is (= "completed" (:status result)))
-        (is (not-any? #(contains? result %) [:_id :createdAt :updatedAt :expiresAt]))
+        (is (not-any? #(contains? result %) [:_id :createdAt :updatedAt]))
+        (is (string? (:expiresAt result)))
         (is (= result (await (store/get-session db "s3"))))))))
 
 (deftest ^:async put-session-stamps-system-instance-test

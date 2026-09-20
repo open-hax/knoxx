@@ -2,6 +2,7 @@
   "Explicit Mongo implementation of the finite conversation persistence port."
   (:require [knoxx.backend.domain.thread-store :as domain]
             [knoxx.backend.extern.mongo-thread :as native]
+            [knoxx.backend.extern.thread-store :as clock]
             [knoxx.backend.infra.system-instance :as instance]
             [knoxx.backend.law.thread-store :as law]
             [knoxx.backend.shape.thread-store :as protocol]))
@@ -9,19 +10,18 @@
 (defn- ^:async put! [db thread]
   (law/assert-valid! :thread/value law/Thread thread)
   (let [thread (assoc thread :system_instance_id (instance/current-id))]
-    (await (native/upsert-session! db thread))
-    thread))
+    (law/assert-valid! :thread/value law/Thread (await (native/upsert-session! db thread)))))
 
 (defn- ^:async patch! [db id patch]
   (let [current (await (native/find-session db id))]
-    (await (put! db (merge current patch {:session_id id})))))
+    (await (put! db (merge current patch {:session_id id :updated_at (clock/now-ms)})))))
 
 (defn- ^:async rewind! [db id turns]
   (when-let [current (await (native/find-session db id))]
     (let [messages (domain/rewind-messages (:messages current) turns)]
       (if (= messages (vec (or (:messages current) []))) current
         (await (put! db (assoc current :messages messages :status "waiting_input"
-                                :has_active_stream false :answer nil :error nil)))))))
+                                :has_active_stream false :answer nil :error nil :updated_at (clock/now-ms))))))))
 
 (defrecord MongoThreadStore [db]
   protocol/IThreadStore

@@ -14,6 +14,7 @@
 (defonce session-cache* (atom {}))
 (defonce ^:private cache-owners (atom {}))
 (defonce provider* (atom nil))
+(def ^:private max-session-cache-size 1000)
 
 (defn available?
   "Report only an installed provider or an already initialized Mongo handle; never probe a service."
@@ -36,16 +37,26 @@
                 {:provider (mongo/create-store handle) :owner handle}
                 (throw (ex-info "Thread persistence is not initialized" {:status 503 :code "thread_provider_unavailable"})))))
 
-(defn- remember! [owner id value]
-  (when (and value (identical? owner (or @provider* (mongo-client/get-db))))
-    (swap! cache-owners assoc id owner)
-    (swap! session-cache* assoc id (assoc value :cached-at (clock/now-ms))))
-  value)
-
 (defn- forget! [owner id]
   (when (identical? owner (get @cache-owners id))
     (swap! cache-owners dissoc id)
     (swap! session-cache* dissoc id)))
+
+(defn- prune-cache! [now]
+  (let [live (into {} (filter (fn [[id value]] (clock/cache-live? value now (law/ttl-ms id)))) @session-cache*)
+        excess (max 0 (- (count live) max-session-cache-size))
+        oldest (when (pos? excess) (take excess (sort-by (fn [[id value]] [(:cached-at value 0) id]) live)))
+        retained (apply dissoc live (map first oldest))]
+    (reset! session-cache* retained)
+    (swap! cache-owners select-keys (keys retained))))
+
+(defn- remember! [owner id value]
+  (when (and value (identical? owner (or @provider* (mongo-client/get-db))))
+    (let [now (clock/now-ms)]
+      (swap! cache-owners assoc id owner)
+      (swap! session-cache* assoc id (assoc value :cached-at now))
+      (prune-cache! now)))
+  value)
 
 (defn ^:async get-session
   "Read current provider state; stale heap state never overrides durable expiry or revocation."
@@ -60,8 +71,11 @@
   [id]
   (let [value (get @session-cache* id)
         owner (or @provider* (mongo-client/get-db))]
-    (when (and (identical? owner (get @cache-owners id)) value
-               (clock/cache-live? value (clock/now-ms) (law/ttl-ms id))) value)))
+    (when value
+      (if (and (identical? owner (get @cache-owners id))
+               (clock/cache-live? value (clock/now-ms) (law/ttl-ms id)))
+        value
+        (do (forget! (get @cache-owners id) id) nil)))))
 
 (defn ^:async get-conversation-active-session
   "Resolve a conversation through its selected durable provider."
