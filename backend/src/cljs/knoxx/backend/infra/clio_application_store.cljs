@@ -3,7 +3,8 @@
 
   No Mongo query language crosses this boundary. A provider supplies its actual
   protocol methods and memory reference state. Only state-changing, successful
-  operations enter the ledger. Every read rebuilds from authoritative facts."
+  operations enter the ledger; explicit-ID no-op receipts also bind retry answers.
+  Every read rebuilds from authoritative facts."
   (:require [clio.extern.js.fs :as fs]
             [clio.extern.js.runtime :as host]
             [clio.infra.event :as event]
@@ -87,7 +88,9 @@
                             {:cause :clio-application/history-conflict
                              :operation/id id})))
           (let [actual (await (invoke! writes store method args))]
-            (when (or (not= result actual) (= before (snapshot)))
+            (when (or (not= result actual)
+                      (not= (not= false (:operation/state-changed? operation))
+                            (not= before (snapshot))))
               (throw (ex-info "Clio operation disagrees with its reference semantics"
                               {:cause :clio-application/replay-conflict
                                :operation operation}))))
@@ -120,8 +123,9 @@
       ;; rewrites accepted arguments/results and never runs during replay.
       (when before-append (await (before-append operation)))
       (ledger/append-event! (:schema/revisions (runtime/refresh runtime)) file fact)
-      (notify-changed!)
-      (when after-append (paths/notify-subscriber! #(after-append operation)))
+      (when (not= false (:operation/state-changed? operation))
+        (notify-changed!)
+        (when after-append (paths/notify-subscriber! #(after-append operation))))
       (catch :default cause
         (if (= :clio.ledger/concurrent-stream-write (:clio/error (ex-data cause)))
           (throw (ex-info "Clio application state changed; retry against fresh history"
@@ -138,15 +142,8 @@
                      :status 409 :code "clio_application_operation_conflict"
                      :operation/id operation-id}))))
 
-(defn ^:async write!
-  "Validate then durably append a state-changing invocation before answering.
-
-  An optional caller-stable id supports lost-response retries. Reusing it with
-  changed method/arguments fails. Protocol-level retries still run their own
-  first-fact semantics and append nothing when reference state is unchanged."
-  ([store method args]
-   (await (write! store (host/random-uuid) method args)))
-  ([store operation-id method args]
+(defn- ^:async write-with-id!
+  [store operation-id method args persist-no-op?]
    (law/assert-invocation! (:writes store) method args)
    (law/assert-operation! {:operation/id operation-id :operation/method method
                           :operation/args args :operation/result nil})
@@ -157,10 +154,23 @@
      (if existing
        (existing-result existing operation-id method args)
        (let [before (snapshot)
-             result (await (invoke! (:writes store) provider method args))]
-         (when (not= before (snapshot))
+             result (await (invoke! (:writes store) provider method args))
+             changed? (not= before (snapshot))]
+         (when (or changed? persist-no-op?)
            (await (append-operation! store events
-                                     {:operation/id operation-id
-                                      :operation/method method :operation/args args
-                                      :operation/result result})))
-         result)))))
+                                     (cond-> {:operation/id operation-id
+                                              :operation/method method :operation/args args
+                                              :operation/result result}
+                                       (not changed?) (assoc :operation/state-changed? false)))))
+         result))))
+
+(defn ^:async write!
+  "Admit a successful invocation before answering.
+
+  An explicit stable id binds arguments and result even for a no-op; its receipt
+  replays as unchanged state and emits no state-change callbacks. Reusing that id
+  with changed arguments fails. Implicit random-ID no-ops remain unrecorded."
+  ([store method args]
+   (await (write-with-id! store (host/random-uuid) method args false)))
+  ([store operation-id method args]
+   (await (write-with-id! store operation-id method args true))))

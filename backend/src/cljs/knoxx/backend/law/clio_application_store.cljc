@@ -10,7 +10,9 @@
    [:operation/id [:string {:min 1}]]
    [:operation/method :qualified-keyword]
    [:operation/args [:vector :any]]
-   [:operation/result :any]])
+   [:operation/result :any]
+   ;; Absent on legacy facts, which always witnessed a state transition.
+   [:operation/state-changed? {:optional true} :boolean]])
 
 (def catalog
   "The complete envelope is versioned with the operation contract by Clio."

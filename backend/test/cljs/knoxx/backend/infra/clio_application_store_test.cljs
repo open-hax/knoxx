@@ -1,10 +1,12 @@
 (ns knoxx.backend.infra.clio-application-store-test
   "Real-filesystem replay, identity, corruption and concurrent-admission laws."
   (:require [clio.extern.js.fs :as fs]
+            [clio.law.schema :as clio-schema]
             [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.clio-store-fixture :as fixture]
             [knoxx.backend.extern.promise :as promise]
-            [knoxx.backend.infra.clio-application-store :as clio]))
+            [knoxx.backend.infra.clio-application-store :as clio]
+            [knoxx.backend.law.clio-application-store :as law]))
 
 (defn- projection
   "Small deterministic reference exposing observable state and command answers."
@@ -18,7 +20,8 @@
   (clio/open!
    {:directory directory :stream "test/application" :projection projection
     :reads {:test/get (fn [state key] (get @state key))}
-    :writes {:test/put (fn [state key value] (swap! state assoc key value) value)}}))
+    :writes {:test/put (fn [state key value] (swap! state assoc key value) value)
+             :test/observe (fn [state key] (get @state key))}}))
 
 (defn- ^:async attempt
   "Capture success or classified failure without concealing rejected writes."
@@ -26,7 +29,9 @@
   (try {:value (await (operation))}
        (catch :default cause {:error (ex-data cause)})))
 
-(defn- guarded-write! [directory]
+(defn- guarded-write!
+  ([directory] (guarded-write! directory :test/put [:key :accepted]))
+  ([directory method args]
   (let [gate (fixture/deferred)
         entered (fixture/deferred)
         calls (atom 0)
@@ -42,12 +47,73 @@
         ;; be asserted without an unrelated unhandled-rejection fatal exit.
         guard-result (attempt #(:promise gate))
         pending ((^:async fn []
-                   (let [result (await (attempt #(clio/write! store "guarded" :test/put [:key :accepted])))]
+                   (let [result (await (attempt #(clio/write! store "guarded" method args)))]
                      (reset! answer result)
                      result)))]
     {:store store :gate gate :entered (:promise entered) :calls calls
      :observed observed :answer answer :pending pending
-     :guard-result guard-result :unsubscribe unsubscribe}))
+     :guard-result guard-result :unsubscribe unsubscribe})))
+
+(deftest ^:async stable-noop-receipt-binds-answer-and-arguments-across-reopen
+  (let [directory (fixture/temp-directory!)]
+    (try
+      (let [store (open! directory)]
+        (await (clio/write! store :test/put [:key :initial]))
+        (is (= :initial (await (clio/write! store "observed" :test/observe [:key]))))
+        (is (false? (get-in (last (clio/history store)) [:event/data :operation/state-changed?])))
+        (await (clio/write! store :test/put [:key :later]))
+        (let [reopened (open! directory)]
+          (is (= :initial (await (clio/write! reopened "observed" :test/observe [:key]))))
+          (is (= :later (await (clio/read! reopened :test/get [:key]))))
+          (is (= "clio_application_operation_conflict"
+                 (get-in (await (attempt #(clio/write! reopened "observed" :test/observe [:other])))
+                         [:error :code])))
+          (is (= 3 (count (clio/history reopened))))))
+      (finally (fs/remove-tree! directory)))))
+
+(deftest ^:async noop-receipts-await-admission-and-never-notify-state-observers
+  (doseq [allowed? [true false]]
+    (let [directory (fixture/temp-directory!)
+          {:keys [store gate entered observed pending guard-result calls unsubscribe]}
+          (guarded-write! directory :test/observe [:missing])]
+      (try
+        (await (promise/race [entered pending]))
+        (await (fixture/drain!))
+        (is (empty? (clio/history store)))
+        (if allowed? ((:resolve! gate) :allowed)
+            ((:reject! gate) (ex-info "Refused" {:status 403})))
+        (await guard-result)
+        (is (= (if allowed? {:value nil} {:error {:status 403}}) (await pending)))
+        (when allowed?
+          (is (nil? (await (clio/write! store "guarded" :test/observe [:missing])))))
+        (await (fixture/drain!))
+        (is (= (if allowed? 1 0) (count (clio/history store))))
+        (is (= 1 @calls))
+        (is (empty? @observed))
+        (finally (unsubscribe) (fs/remove-tree! directory))))))
+
+(defn- legacy-open! [directory]
+  (let [legacy-operation [:map {:closed true}
+                          [:operation/id [:string {:min 1}]]
+                          [:operation/method :qualified-keyword]
+                          [:operation/args [:vector :any]] [:operation/result :any]]]
+    (with-redefs [law/catalog {:knoxx.application/operation-accepted
+                               (clio-schema/event-schema :knoxx.application/operation-accepted legacy-operation)}]
+      (open! directory))))
+
+(deftest ^:async legacy-state-changing-facts-keep-their-schema-and-replay-meaning
+  (let [directory (fixture/temp-directory!)]
+    (try
+      (let [legacy (legacy-open! directory)]
+        (await (clio/write! legacy "legacy-write" :test/put [:key :legacy]))
+        (let [facts (clio/history legacy)
+              reopened (open! directory)]
+          (is (not (contains? (:event/data (first facts)) :operation/state-changed?)))
+          (is (= facts (clio/history reopened)))
+          (is (= :legacy (await (clio/read! reopened :test/get [:key]))))
+          (is (= :legacy (await (clio/write! reopened "legacy-write" :test/put [:key :legacy]))))
+          (is (= facts (clio/history reopened)))))
+      (finally (fs/remove-tree! directory)))))
 
 (deftest ^:async pending-admission-stays-private-and-success-appends-once
   (let [directory (fixture/temp-directory!)
