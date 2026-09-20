@@ -1,7 +1,11 @@
 (ns knoxx.backend.extern.event-queue-retirement-test
   "An abandoned run must release its queue state without losing an unobserved failure."
   (:require [cljs.test :as test]
-            [knoxx.backend.extern.run-event-queue :as queue]))
+            [knoxx.backend.domain.action.run-state :as state]
+            [knoxx.backend.extern.run-event-queue :as queue]
+            [knoxx.backend.infra.agent.turn-finalization :as finalization]
+            [knoxx.backend.infra.run-events :as events]
+            [knoxx.backend.shape.session-persistence :as persistence]))
 
 (defn- deferred []
   (let [settle* (atom nil)
@@ -62,3 +66,34 @@
         (retire! "never-admitted")
         (test/is (true? (:value (await (outcome! #(flush! "never-admitted")))))
                  "releasing a run that admitted no event leaves the queue usable"))))))
+
+(defrecord RefusingEventStore []
+  persistence/ISessionStore
+  (put-run! [_ _run] (js/Promise.resolve true))
+  persistence/IRunEventStore
+  (append-event! [_ _event]
+    (js/Promise.reject (ex-info "Event collections unavailable"
+                                {:code "run_event_store_unavailable"})))
+  (events-since [_ _run-id _since] (js/Promise.resolve [])))
+
+(test/deftest ^:async an-evicted-run-still-observes-its-terminal-event-refusal
+  (await
+   ((^:async fn []
+      (try
+        ;; The heap run is absent, exactly as after MAX_RUNS eviction, so the
+        ;; callers' `(when completed-run ...)` memory-indexing flush is skipped
+        ;; and settlement is the only place left to observe this write.
+        (events/install! (->RefusingEventStore))
+        (state/append-run-event! "evicted-terminal"
+                                 {:run_id "evicted-terminal" :type "run_completed"})
+        (test/is (nil? (get @state/runs* "evicted-terminal"))
+                 "the run is absent from the bounded heap, as after eviction")
+        (let [{:keys [error]} (await (outcome!
+                                      #(finalization/settle!
+                                        {:run-id "evicted-terminal" :conversation-id "evicted-terminal"}
+                                        (fn [] (js/Promise.resolve true))
+                                        (fn [] (js/Promise.resolve true)))))]
+          (test/is (some? error) "a refused terminal write must not settle as success")
+          (test/is (= "run_event_store_unavailable" (:code (ex-data error)))
+                   "the original durable refusal reaches the owner"))
+        (finally (events/install! nil)))))))
