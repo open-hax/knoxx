@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.routes.auth
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.auth.axxium :as axxium]
             [knoxx.backend.infra.auth.password :as password]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as policy-db]))
@@ -62,7 +63,8 @@
   (.get app "/api/auth/config"
         (fn [_req ^js reply]
           (.send reply (clj->js {:githubEnabled github-enabled
-                                 :localPasswordEnabled (local-password-enabled?)
+                                 :localPasswordEnabled (or (axxium/enabled?) (local-password-enabled?))
+                                 :identityProvider (when (axxium/enabled?) "axxium")
                                  :publicBaseUrl public-base-url
                                  :loginUrl (when github-enabled "/api/auth/login")
                                  :localLoginUrl "/api/auth/local/login"})))))
@@ -76,6 +78,9 @@
           display-name (str/trim (str (or (map-value body :display-name :displayName :display_name)
                                           email)))]
       (cond
+        (axxium/enabled?)
+        (.send (.code reply 409) (clj->js {:error "Create your account with the configured Axxium identity provider"}))
+
         (str/blank? email)
         (.send (.code reply 400) (clj->js {:error "email is required"}))
 
@@ -109,7 +114,7 @@
                               :auth-provider (if (str/blank? password) "signup" "local")}))]
           (.send reply (clj->js result)))))
     (catch :default err
-      (.send (.code reply (or (.-statusCode err) (.-status err) 500))
+      (.send (.code reply (or (:status (ex-data err)) (.-statusCode err) (.-status err) 500))
              (clj->js {:error (or (.-message err) "Signup failed")})))))
 
 (defn- register-signup-route!
@@ -127,6 +132,16 @@
           email (str/lower-case (str/trim (str (or (:email body) (:username body) ""))))
           password (str (or (:password body) ""))]
       (cond
+        (axxium/enabled?)
+        (let [verified (await (axxium/authenticate! email password))
+              ctx (await (axxium/context! policy-context verified))
+              result (await (auth-session/create-session-from-context!
+                             reply public-base-url ctx
+                             {:email (get-in verified [:actor :email])
+                              :display-name (get-in verified [:actor :display_name])
+                              :auth-provider "axxium"}))]
+          (.send reply (clj->js result)))
+
         (not (local-password-enabled?))
         (.send (.code reply 503) (clj->js {:error "Local password auth is disabled"}))
 
@@ -148,7 +163,7 @@
                                   :auth-provider "local"}))]
               (.send reply (clj->js result)))))))
     (catch :default err
-      (.send (.code reply (or (.-statusCode err) (.-status err) 500))
+      (.send (.code reply (or (:status (ex-data err)) (.-statusCode err) (.-status err) 500))
              (clj->js {:error (or (.-message err) "Login failed")})))))
 
 (defn- register-local-login-route!

@@ -1,5 +1,6 @@
 (ns knoxx.backend.extern-fetch-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require ["node:http" :as http]
+            [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.fetch :as xfetch]))
 
 (defn- response
@@ -63,3 +64,33 @@
       (is (false? (:ok result)))
       (is (= 403 (:status result)))
       (is (= {:error "denied"} (:body result))))))
+
+(defn- ^:async listen! [server]
+  (await (js/Promise. (fn [resolve reject]
+                        (.once server "error" reject)
+                        (.listen server 0 "127.0.0.1" resolve))))
+  (str "http://127.0.0.1:" (.-port (.address server))))
+
+(defn- ^:async close! [server]
+  (await (js/Promise. (fn [resolve] (.close server resolve)))))
+
+(deftest ^:async credential-redirect-policy-reaches-native-fetch
+  (let [received (atom 0)
+        destination (http/createServer (fn [_ response]
+                                         (swap! received inc)
+                                         (.end response "{}")))
+        destination-url (await (listen! destination))
+        status (atom 307)
+        origin (http/createServer (fn [_ response]
+                                    (.writeHead response @status #js {"Location" destination-url})
+                                    (.end response)))
+        origin-url (await (listen! origin))]
+    (try
+      (doseq [code [302 303 307 308] nested? [false true]]
+        (reset! status code)
+        (let [request {:method "POST" :json {:password "test-only-password"} :redirect "error"}
+              request (if nested? {:opts request} request)]
+          (is (true? (try (await (xfetch/json! xfetch/default-client (assoc request :url origin-url)))
+                          false (catch :default _ true))))))
+      (is (zero? @received) "No redirected request or password reaches the second server")
+      (finally (await (close! origin)) (await (close! destination))))))
