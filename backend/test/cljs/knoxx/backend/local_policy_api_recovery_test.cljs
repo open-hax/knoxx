@@ -4,8 +4,12 @@
             [axxium.infra.identity :as axxium]
             [axxium.infra.identity-store :as axxium-store]
             [cljs.test :refer [deftest is]]
+            [knoxx.backend.domain.agent.agent-context :as agent-context]
             [knoxx.backend.extern.axxium :as transport]
             [knoxx.backend.extern.identity-fixture :as fixture]
+            [knoxx.backend.infra.actor.acting :as actor-acting]
+            [knoxx.backend.infra.actor.credentials :as actor-credentials]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.session :as session]
             [knoxx.backend.infra.db.policy :as policy]
             [knoxx.backend.infra.identity-bootstrap :as bootstrap]
@@ -37,6 +41,45 @@
                           (fn [_] {:operation :fixture-suspend
                                    :changes [(identity-domain/put :principals (:principal/id principal)
                                                                   (assoc principal :principal/status :suspended))]})))
+
+(defn- ^:async credential-fixture! [directory]
+  (let [{:keys [context acting]} (await (open! directory))
+        created (await (signup! context "credential-owner"))
+        verified (await (session/resolve-auth-context (fixture/request (:token created)) context))
+        scope {:org-id (get-in verified [:org :id])
+               :membership-id (get-in verified [:membership :id])}]
+    (await (policy/upsert-actor-credential-for-context!
+            acting (get-in verified [:user :id])
+            {:org-id (:org-id scope) :provider "test-service" :secret-json {:token "owner-secret"}}))
+    {:context context :scope scope :actor-id (get-in verified [:actor :id])}))
+
+(deftest ^:async unique-actor-credentials-require-complete-exact-membership-scope
+  (let [directory (fixture/directory!)]
+    (try
+      (let [{:keys [context scope actor-id]} (await (credential-fixture! directory))]
+        (doseq [invalid [nil {} (select-keys scope [:org-id]) (select-keys scope [:membership-id])
+                         (assoc scope :org-id "") (assoc scope :membership-id "   ")
+                         (assoc scope :org-id "foreign-org") (assoc scope :membership-id "foreign-member")]]
+          (is (nil? (:credential (await (policy/get-actor-credential! context actor-id "test-service" invalid))))))
+        (is (nil? (:credential (await (policy/get-actor-credential! context "foreign-actor" "test-service" scope)))))
+        (is (= "owner-secret" (get-in (await (policy/get-actor-credential! context actor-id "test-service" scope))
+                                       [:credential :secretJson :token]))))
+      (finally (fixture/remove! directory)))))
+
+(deftest ^:async agent-spec-alone-cannot-select-another-members-credentials
+  (let [directory (fixture/directory!)]
+    (try
+      (let [{:keys [context scope actor-id]} (await (credential-fixture! directory))]
+        (is (not (actor-acting/in-scope?)))
+        (with-redefs [agent-context/get-context (fn [] {:agent-spec {:actorId actor-id}})
+                      authz/policy-db (constantly context)]
+          (is (thrown? js/Error (await (actor-credentials/get-credential! {} "test-service"))))
+          (is (= "owner-secret"
+                 (:token (:secretJson
+                          (await (actor-acting/run-as!
+                                  (assoc scope :actor-id actor-id)
+                                  #(actor-credentials/get-credential! {} "test-service")))))))))
+      (finally (fixture/remove! directory)))))
 
 (deftest ^:async directory-facade-runs-without-mongo-and-replays-profile-state
   (let [directory (fixture/directory!)]
