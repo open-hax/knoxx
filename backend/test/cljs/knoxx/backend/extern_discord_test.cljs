@@ -1,5 +1,5 @@
 (ns knoxx.backend.extern-discord-test
-  (:require [cljs.test :refer [deftest is async]]
+  (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.extern.discord :as xdiscord]))
 
 (deftest normalize-tool-params-keywordizes-runtime-objects

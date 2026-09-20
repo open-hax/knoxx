@@ -1,927 +1,315 @@
 (ns knoxx.backend.domain.bluesky.bluesky
-  "Bluesky ATProto tool factories."
-  (:require [clojure.string :as str]
-            [knoxx.backend.domain.bluesky.client :as bsky-client]
-            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.infra.actor.credentials :as actor-credentials]
-            [knoxx.backend.domain.media :as media]
-            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]))
+  "Compatibility exports for the Bluesky tool API. Native behavior lives in named extern boundaries."
+  (:require [knoxx.backend.extern.bluesky-operations :as operations]
+            [knoxx.backend.extern.bluesky-tool-catalog :as catalog]
+            [knoxx.backend.extern.bluesky-tool-execution :as execution]
+            [knoxx.backend.law.bluesky-tools :as schemas]))
 
 (def publish-params
-  [:map
-   [:text {:description "Bluesky post text. Keep it concise and under platform limits."} :string]
-   [:images {:optional true :description "Optional image sources (workspace paths, URLs, or data URLs). Up to 4 images."} [:vector :string]]
-   [:imageAlts {:optional true :description "Optional alt text for each image."} [:vector :string]]
-   [:replyTo {:optional true :description "Optional AT-URI of a post to reply to."} :string]])
+  "Compatibility export for publish-params."
+  schemas/publish-params)
 
 (def profile-params
-  [:map
-   [:actor {:optional true :description "Optional Bluesky handle or DID. Defaults to the authenticated account."} :string]])
+  "Compatibility export for profile-params."
+  schemas/profile-params)
 
 (def search-params
-  [:map
-   [:query {:description "Search query for Bluesky posts or actors."} :string]
-   [:kind {:optional true :description "posts or actors. Defaults to posts."} :string]
-   [:limit {:optional true :description "Maximum results to return."} [:int {:min 1 :max 25}]]])
+  "Compatibility export for search-params."
+  schemas/search-params)
 
 (def feed-params
-  [:map
-   [:actor {:description "Bluesky handle or DID whose feed should be read."} :string]
-   [:limit {:optional true :description "Maximum posts to return."} [:int {:min 1 :max 25}]]])
+  "Compatibility export for feed-params."
+  schemas/feed-params)
 
 (def timeline-params
-  [:map
-   [:limit {:optional true :description "Maximum timeline posts to return."} [:int {:min 1 :max 25}]]
-   [:cursor {:optional true :description "Optional pagination cursor from a previous bluesky.timeline call."} :string]])
+  "Compatibility export for timeline-params."
+  schemas/timeline-params)
 
 (def post-uri-params
-  [:map
-   [:uri {:description "AT-URI of the Bluesky post (at://did/collection/rkey)."} :string]])
+  "Compatibility export for post-uri-params."
+  schemas/post-uri-params)
 
 (def actor-params
-  [:map
-   [:actor {:description "Bluesky handle or DID."} :string]])
+  "Compatibility export for actor-params."
+  schemas/actor-params)
 
 (def thread-params
-  [:map
-   [:uri {:description "AT-URI of the root post to read the thread for."} :string]
-   [:depth {:optional true :description "Depth of replies to fetch. Default 6."} [:int {:min 1 :max 10}]]])
+  "Compatibility export for thread-params."
+  schemas/thread-params)
 
 (def notifications-params
-  [:map
-   [:limit {:optional true :description "Maximum notifications to return."} [:int {:min 1 :max 50}]]
-   [:cursor {:optional true :description "Optional pagination cursor."} :string]])
+  "Compatibility export for notifications-params."
+  schemas/notifications-params)
 
 (def chat-send-params
-  [:map
-   [:convoId {:description "Conversation ID (from bluesky.chat.list)."} :string]
-   [:text {:description "Message text to send."} :string]
-   [:replyToMessageId {:optional true :description "Optional message ID to reply to within the conversation."} :string]])
+  "Compatibility export for chat-send-params."
+  schemas/chat-send-params)
 
 (def chat-list-params
-  [:map
-   [:limit {:optional true :description "Maximum conversations to return."} [:int {:min 1 :max 50}]]])
+  "Compatibility export for chat-list-params."
+  schemas/chat-list-params)
 
 (def chat-read-params
-  [:map
-   [:convoId {:description "Conversation ID (from bluesky.chat.list)."} :string]
-   [:limit {:optional true :description "Maximum messages to return."} [:int {:min 1 :max 100}]]])
+  "Compatibility export for chat-read-params."
+  schemas/chat-read-params)
 
 (def chat-react-params
-  [:map
-   [:convoId {:description "Conversation ID."} :string]
-   [:messageId {:description "Message ID to react to."} :string]
-   [:emoji {:description "Emoji reaction (e.g. ❤️, 🔥, 😂)."} :string]])
+  "Compatibility export for chat-react-params."
+  schemas/chat-react-params)
 
-(defn- bluesky-client []
-  (bsky-client/client))
+(def bluesky-auth-config!
+  "Compatibility export for bluesky-auth-config!."
+  operations/bluesky-auth-config!)
 
-(defn ^:async bluesky-auth-config! [runtime]
-  (let [credential (await (actor-credentials/get-credential! runtime "bluesky"))
-        identifier (or (actor-credentials/secret-value credential :identifier :handle :username)
-                       (:accountIdentifier credential))
-        password (actor-credentials/secret-value credential :appPassword :app-password :password)]
-    (when (or (str/blank? (str identifier))
-              (str/blank? (str password)))
-      (throw (js/Error. "Bluesky actor credential must include identifier and appPassword.")))
-    {:identifier identifier :password password}))
+(def bluesky-create-session!
+  "Compatibility export for bluesky-create-session!."
+  operations/bluesky-create-session!)
 
-(defn ^:async bluesky-create-session! [runtime]
-  (let [credentials (await (bluesky-auth-config! runtime))]
-    (await (bsky-client/create-session! (bluesky-client) credentials))))
+(def bluesky-search!
+  "Compatibility export for bluesky-search!."
+  operations/bluesky-search!)
 
-(defn- bluesky-upload-blob! [session buffer mime-type]
-  (bsky-client/upload-blob! (bluesky-client) session buffer mime-type))
+(def bluesky-profile!
+  "Compatibility export for bluesky-profile!."
+  operations/bluesky-profile!)
 
-(defn- bluesky-create-record! [session collection record]
-  (bsky-client/create-record! (bluesky-client) session collection record))
+(def bluesky-author-feed!
+  "Compatibility export for bluesky-author-feed!."
+  operations/bluesky-author-feed!)
 
-(defn- bluesky-delete-record! [session collection rkey]
-  (bsky-client/delete-record! (bluesky-client) session collection rkey))
+(def bluesky-timeline!
+  "Compatibility export for bluesky-timeline!."
+  operations/bluesky-timeline!)
 
-(defn- parse-at-uri [uri]
-  (let [parts (some-> uri str (str/split #"/"))
-        repo (nth parts 2 nil)
-        collection (nth parts 3 nil)
-        rkey (nth parts 4 nil)]
-    (when (and repo collection rkey)
-      {:repo repo :collection collection :rkey rkey})))
+(def load-and-upload-image!
+  "Compatibility export for load-and-upload-image!."
+  operations/load-and-upload-image!)
 
-(defn- bluesky-resolve-post! [uri]
-  (bsky-client/resolve-post! (bluesky-client) uri))
+(def load-and-upload-images!
+  "Compatibility export for load-and-upload-images!."
+  operations/load-and-upload-images!)
 
-(defn- bluesky-post-url [handle uri]
-  (let [post-id (some-> uri str (str/split #"/") last)]
-    (when (and (not (str/blank? (str handle)))
-               (not (str/blank? (str post-id))))
-      (str "https://bsky.app/profile/" handle "/post/" post-id))))
+(def resolve-reply-refs!
+  "Compatibility export for resolve-reply-refs!."
+  operations/resolve-reply-refs!)
 
-(defn- format-posts [prefix rows]
-  (let [lines (->> rows
-                   (map (fn [{:keys [displayName handle text url]}]
-                          (str "- " (or (not-empty displayName) handle "unknown")
-                               (when (not (str/blank? (str handle))) (str " (@" handle ")"))
-                               ": " (clip-text (or text "") 220)
-                               (when (not (str/blank? (str url))) (str "\n  " url)))))
-                   (str/join "\n"))]
-    (str prefix (when-not (str/blank? lines) (str "\n" lines)))))
+(def bluesky-publish!
+  "Compatibility export for bluesky-publish!."
+  operations/bluesky-publish!)
 
-(defn ^:async bluesky-search! [runtime query kind limit]
-  (let [kind (if (= kind "actors") "actors" "posts")
-        session (await (bluesky-create-session! runtime))
-        payload (if (= kind "actors")
-                  (await (bsky-client/search-actors! (bluesky-client) session query limit))
-                  (await (bsky-client/search-posts! (bluesky-client) session query limit)))]
-    (if (= kind "actors")
-      (let [results (->> (or (:actors payload) [])
-                         (mapv (fn [actor]
-                                 {:handle (or (:handle actor) "")
-                                  :displayName (or (:displayName actor) "")
-                                  :description (or (:description actor) "")
-                                  :did (or (:did actor) "")
-                                  :url (when-let [handle (some-> (:handle actor) str not-empty)]
-                                         (str "https://bsky.app/profile/" handle))})))]
-        {:kind kind :results results})
-      (let [results (->> (or (:posts payload) [])
-                         (mapv (fn [post]
-                                 (let [author (:author post)
-                                       record (:record post)
-                                       handle (or (:handle author) "")]
-                                   {:handle handle
-                                    :displayName (or (:displayName author) "")
-                                    :text (or (:text record) "")
-                                    :createdAt (or (:createdAt record) "")
-                                    :uri (or (:uri post) "")
-                                    :url (bluesky-post-url handle (:uri post))}))))]
-        {:kind kind :results results}))))
+(def publish-execute
+  "Compatibility export for publish-execute."
+  execution/publish-execute)
 
-(defn ^:async bluesky-profile! [runtime actor]
-  (let [actor (some-> actor str str/trim)
-        resolved-actor (if (str/blank? actor)
-                         (let [session (await (bluesky-create-session! runtime))]
-                           (or (:handle session) (:did session)))
-                         actor)
-        profile (await (bsky-client/profile! (bluesky-client) resolved-actor))]
-    {:did (or (:did profile) "")
-     :handle (or (:handle profile) "")
-     :displayName (or (:displayName profile) "")
-     :description (or (:description profile) "")
-     :followersCount (or (:followersCount profile) 0)
-     :followsCount (or (:followsCount profile) 0)
-     :postsCount (or (:postsCount profile) 0)
-     :url (when-let [handle (some-> (:handle profile) str not-empty)]
-            (str "https://bsky.app/profile/" handle))}))
+(def profile-execute
+  "Compatibility export for profile-execute."
+  execution/profile-execute)
 
-(defn ^:async bluesky-author-feed! [actor limit]
-  (let [payload (await (bsky-client/actor-feed! (bluesky-client) nil actor limit))
-        results (->> (or (:feed payload) [])
-                     (mapv (fn [entry]
-                             (let [post (:post entry)
-                                   author (:author post)
-                                   record (:record post)
-                                   handle (or (:handle author) "")]
-                               {:handle handle
-                                :displayName (or (:displayName author) "")
-                                :text (or (:text record) "")
-                                :createdAt (or (:createdAt record) "")
-                                :uri (or (:uri post) "")
-                                :url (bluesky-post-url handle (:uri post))}))))]
-    {:actor actor :results results}))
+(def search-execute
+  "Compatibility export for search-execute."
+  execution/search-execute)
 
-(defn ^:async bluesky-timeline! [runtime limit cursor]
-  (let [session (await (bluesky-create-session! runtime))
-        payload (await (bsky-client/timeline! (bluesky-client) session {:limit limit :cursor cursor}))
-        results (->> (or (:feed payload) [])
-                     (mapv (fn [entry]
-                             (let [post (:post entry)
-                                   author (:author post)
-                                   record (:record post)
-                                   handle (or (:handle author) "")]
-                               {:handle handle
-                                :displayName (or (:displayName author) "")
-                                :text (or (:text record) "")
-                                :createdAt (or (:createdAt record) "")
-                                :uri (or (:uri post) "")
-                                :url (bluesky-post-url handle (:uri post))}))))]
-    {:cursor (:cursor payload) :results results}))
+(def author-feed-execute
+  "Compatibility export for author-feed-execute."
+  execution/author-feed-execute)
 
-(defn- text->utf8-bytes [text]
-  (js/Uint8Array.from (js/Array.from (.encode (js/TextEncoder.) text))))
+(def timeline-execute
+  "Compatibility export for timeline-execute."
+  execution/timeline-execute)
 
-(defn- build-hashtag-facets [text]
-  (let [hashtag-re (js/RegExp. "#(\\w+)" "g")
-        matches (loop [m (.exec hashtag-re text)
-                       acc []]
-                  (if (nil? m)
-                    acc
-                    (let [full-match (aget m 0)
-                          tag (aget m 1)
-                          start-char (.-index m)
-                          prefix (.substring text 0 start-char)
-                          start-byte (.-length (text->utf8-bytes prefix))
-                          end-byte (+ start-byte (.-length (text->utf8-bytes full-match)))]
-                      (recur (.exec hashtag-re text)
-                             (conj acc {"$type" "app.bsky.richtext.facet"
-                                        :index {:byteStart start-byte :byteEnd end-byte}
-                                        :features [{"$type" "app.bsky.richtext.facet#tag"
-                                                    :tag tag}]})))))]
-    (when (seq matches) matches)))
+(def bluesky-repost!
+  "Compatibility export for bluesky-repost!."
+  operations/bluesky-repost!)
 
-(defn- build-url-facets [text]
-  (let [url-re (js/RegExp. "(https?://[^\\s]+)" "g")
-        matches (loop [m (.exec url-re text)
-                       acc []]
-                  (if (nil? m)
-                    acc
-                    (let [full-match (aget m 0)
-                          start-char (.-index m)
-                          prefix (.substring text 0 start-char)
-                          start-byte (.-length (text->utf8-bytes prefix))
-                          end-byte (+ start-byte (.-length (text->utf8-bytes full-match)))]
-                      (recur (.exec url-re text)
-                             (conj acc {"$type" "app.bsky.richtext.facet"
-                                        :index {:byteStart start-byte :byteEnd end-byte}
-                                        :features [{"$type" "app.bsky.richtext.facet#link"
-                                                    :uri full-match}]})))))]
-    (when (seq matches) matches)))
+(def bluesky-like!
+  "Compatibility export for bluesky-like!."
+  operations/bluesky-like!)
 
-(defn- build-facets [text]
-  (let [hashtags (build-hashtag-facets text)
-        urls (build-url-facets text)]
-    (when (or hashtags urls)
-      (vec (concat hashtags urls)))))
+(def bluesky-unlike!
+  "Compatibility export for bluesky-unlike!."
+  operations/bluesky-unlike!)
 
-(defn ^:async load-and-upload-image! [runtime config session alts idx img-src]
-  (let [source (await (media/load-media-source! runtime config img-src media/multimodal-upload-max-bytes))
-        blob-result (await (bluesky-upload-blob! session (:buffer source) (:mime-type source)))
-        blob (or (:blob blob-result) blob-result)
-        alt (or (nth alts idx nil) "")]
-    {:alt alt :image blob}))
+(def bluesky-follow!
+  "Compatibility export for bluesky-follow!."
+  operations/bluesky-follow!)
 
-(defn ^:async load-and-upload-images! [runtime config session images alts]
-  (when (seq images)
-    (let [uploaded (await (js/Promise.all
-                           (clj->js
-                            (map-indexed
-                             (partial load-and-upload-image! runtime config session alts)
-                             images))))]
-      {"$type" "app.bsky.embed.images" :images (vec (array-seq uploaded))})))
+(def bluesky-unfollow!
+  "Compatibility export for bluesky-unfollow!."
+  operations/bluesky-unfollow!)
 
-(defn ^:async resolve-reply-refs! [reply-to-uri]
-  (when-not (str/blank? reply-to-uri)
-    (let [parent (await (bluesky-resolve-post! reply-to-uri))]
-      {:parent {:uri (:uri parent) :cid (:cid parent)}
-       :root {:uri (:uri parent) :cid (:cid parent)}})))
+(def bluesky-delete-post!
+  "Compatibility export for bluesky-delete-post!."
+  operations/bluesky-delete-post!)
 
-(defn ^:async bluesky-publish! [runtime config text images image-alts reply-to]
-  (let [session (await (bluesky-create-session! runtime))
-        embed (await (load-and-upload-images! runtime config session images image-alts))
-        reply-refs (await (resolve-reply-refs! reply-to))
-        facets (build-facets text)
-        record (cond-> {"$type" "app.bsky.feed.post"
-                        :text text
-                        :createdAt (.toISOString (js/Date.))}
-                 facets (assoc :facets facets)
-                 embed (assoc :embed embed)
-                 reply-refs (assoc :reply reply-refs))
-        result (await (bluesky-create-record! session "app.bsky.feed.post" record))
-        uri (or (:uri result) "")]
-    {:uri uri
-     :cid (or (:cid result) "")
-     :url (or (bluesky-post-url (:handle session) uri) "")}))
+(def bluesky-thread!
+  "Compatibility export for bluesky-thread!."
+  operations/bluesky-thread!)
 
-(defn ^:async publish-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        text (or (aget params "text") "")
-        images (or (aget params "images") [])
-        image-alts (or (aget params "imageAlts") [])
-        reply-to (or (aget params "replyTo") "")]
-    (when (str/blank? (str/trim text))
-      (throw (js/Error. "text is required")))
-    (maybe-tool-update! on-update "Publishing to Bluesky…")
-    (let [result (await (bluesky-publish! runtime config text images image-alts reply-to))]
-      (tool-text-result (str "Published Bluesky post\n" (or (:url result) (:uri result) ""))
-                        result))))
+(def bluesky-notifications!
+  "Compatibility export for bluesky-notifications!."
+  operations/bluesky-notifications!)
 
-(defn ^:async profile-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        actor (or (aget params "actor") "")]
-    (maybe-tool-update! on-update "Reading Bluesky profile…")
-    (let [profile (await (bluesky-profile! runtime actor))]
-      (tool-text-result
-       (str "Bluesky profile: " (or (:displayName profile) (:handle profile) "unknown")
-            (when-not (str/blank? (str (:handle profile))) (str " (@" (:handle profile) ")"))
-            "\nFollowers: " (:followersCount profile)
-            " | Following: " (:followsCount profile)
-            " | Posts: " (:postsCount profile)
-            (when-not (str/blank? (str (:description profile)))
-              (str "\n\n" (:description profile)))
-            (when-not (str/blank? (str (:url profile)))
-              (str "\n\n" (:url profile))))
-       profile))))
+(def bluesky-followers!
+  "Compatibility export for bluesky-followers!."
+  operations/bluesky-followers!)
 
-(defn ^:async search-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        query (or (aget params "query") "")
-        kind (or (aget params "kind") "posts")
-        limit (max 1 (min 25 (or (aget params "limit") 5)))]
-    (when (str/blank? (str/trim query))
-      (throw (js/Error. "query is required")))
-    (maybe-tool-update! on-update "Searching Bluesky…")
-    (let [result (await (bluesky-search! runtime query kind limit))]
-      (tool-text-result (format-posts (str "Bluesky search (" (:kind result) ")") (:results result))
-                        result))))
+(def bluesky-follows!
+  "Compatibility export for bluesky-follows!."
+  operations/bluesky-follows!)
 
-(defn ^:async author-feed-execute [_runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        actor (or (aget params "actor") "")
-        limit (max 1 (min 25 (or (aget params "limit") 8)))]
-    (when (str/blank? (str/trim actor))
-      (throw (js/Error. "actor is required")))
-    (maybe-tool-update! on-update (str "Reading Bluesky feed for " actor "…"))
-    (let [result (await (bluesky-author-feed! actor limit))]
-      (tool-text-result (format-posts (str "Bluesky author feed: " actor) (:results result))
-                        result))))
+(def bluesky-chat-list!
+  "Compatibility export for bluesky-chat-list!."
+  operations/bluesky-chat-list!)
 
-(defn ^:async timeline-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        limit (max 1 (min 25 (or (aget params "limit") 8)))
-        cursor (or (aget params "cursor") "")]
-    (maybe-tool-update! on-update "Reading authenticated Bluesky timeline…")
-    (let [result (await (bluesky-timeline! runtime limit cursor))]
-      (tool-text-result (format-posts "Bluesky timeline" (:results result))
-                        result))))
+(def bluesky-chat-messages!
+  "Compatibility export for bluesky-chat-messages!."
+  operations/bluesky-chat-messages!)
 
-;; -------------------------------------------------------------------------
-;; Repost / Like / Follow / Delete
-;; -------------------------------------------------------------------------
+(def bluesky-chat-send!
+  "Compatibility export for bluesky-chat-send!."
+  operations/bluesky-chat-send!)
 
-(defn ^:async bluesky-repost! [runtime uri]
-  (let [session (await (bluesky-create-session! runtime))
-        post (await (bluesky-resolve-post! uri))]
-    (await (bluesky-create-record!
-            session "app.bsky.feed.repost"
-            {"$type" "app.bsky.feed.repost"
-             :subject {:uri (:uri post) :cid (:cid post)}
-             :createdAt (.toISOString (js/Date.))}))))
+(def bluesky-chat-react!
+  "Compatibility export for bluesky-chat-react!."
+  operations/bluesky-chat-react!)
 
-(defn ^:async bluesky-like! [runtime uri]
-  (let [session (await (bluesky-create-session! runtime))
-        post (await (bluesky-resolve-post! uri))]
-    (await (bluesky-create-record!
-            session "app.bsky.feed.like"
-            {"$type" "app.bsky.feed.like"
-             :subject {:uri (:uri post) :cid (:cid post)}
-             :createdAt (.toISOString (js/Date.))}))))
+(def repost-execute
+  "Compatibility export for repost-execute."
+  execution/repost-execute)
 
-(defn ^:async bluesky-unlike! [runtime uri]
-  (let [session (await (bluesky-create-session! runtime))
-        {:keys [repo collection rkey]} (parse-at-uri uri)]
-    (if (and repo collection rkey)
-      (await (bluesky-delete-record! session collection rkey))
-      (throw (js/Error. (str "Invalid AT-URI for unlike: " uri))))))
+(def like-execute
+  "Compatibility export for like-execute."
+  execution/like-execute)
 
-(defn ^:async bluesky-follow! [runtime actor]
-  (let [session (await (bluesky-create-session! runtime))
-        profile (await (bluesky-profile! runtime actor))]
-    (await (bluesky-create-record!
-            session "app.bsky.graph.follow"
-            {"$type" "app.bsky.graph.follow"
-             :subject (:did profile)
-             :createdAt (.toISOString (js/Date.))}))))
+(def unlike-execute
+  "Compatibility export for unlike-execute."
+  execution/unlike-execute)
 
-(defn ^:async bluesky-unfollow! [runtime uri]
-  (let [session (await (bluesky-create-session! runtime))
-        {:keys [repo collection rkey]} (parse-at-uri uri)]
-    (if (and repo collection rkey)
-      (await (bluesky-delete-record! session collection rkey))
-      (throw (js/Error. (str "Invalid AT-URI for unfollow: " uri))))))
+(def follow-execute
+  "Compatibility export for follow-execute."
+  execution/follow-execute)
 
-(defn ^:async bluesky-delete-post! [runtime uri]
-  (let [session (await (bluesky-create-session! runtime))
-        {:keys [repo collection rkey]} (parse-at-uri uri)]
-    (if (and repo collection rkey)
-      (await (bluesky-delete-record! session collection rkey))
-      (throw (js/Error. (str "Invalid AT-URI for delete: " uri))))))
+(def unfollow-execute
+  "Compatibility export for unfollow-execute."
+  execution/unfollow-execute)
 
-;; -------------------------------------------------------------------------
-;; Thread / Notifications / Social lists
-;; -------------------------------------------------------------------------
+(def delete-execute
+  "Compatibility export for delete-execute."
+  execution/delete-execute)
 
-(defn- format-thread-reply [reply depth]
-  (let [post (:post reply)
-        author (when post (:author post))
-        record (when post (:record post))
-        handle (or (when author (:handle author)) "")
-        display-name (or (when author (:displayName author)) "")
-        text (or (when record (:text record)) "")
-        uri (or (when post (:uri post)) "")
-        indent (str/join "" (repeat depth "  "))]
-    (str indent "- " (or (not-empty display-name) handle "unknown")
-         (when-not (str/blank? handle) (str " (@" handle ")"))
-         ": " (clip-text text 180)
-         (when-not (str/blank? uri) (str "\n" indent "  " uri)))))
+(def thread-execute
+  "Compatibility export for thread-execute."
+  execution/thread-execute)
 
-(defn- collect-thread-replies [thread-node depth max-depth acc]
-  (if (> depth max-depth)
-    acc
-    (reduce (fn [a reply]
-              (let [new-acc (conj a (format-thread-reply reply depth))]
-                (collect-thread-replies reply (inc depth) max-depth new-acc)))
-            acc
-            (or (:replies thread-node) []))))
+(def notifications-execute
+  "Compatibility export for notifications-execute."
+  execution/notifications-execute)
 
-(defn ^:async bluesky-thread! [uri depth]
-  (let [payload (await (bsky-client/thread! (bluesky-client) nil uri depth))
-        thread (:thread payload)
-        root-post (when thread (:post thread))
-        root-author (when root-post (:author root-post))
-        root-record (when root-post (:record root-post))
-        root-handle (or (when root-author (:handle root-author)) "")
-        root-display (or (when root-author (:displayName root-author)) "")
-        root-text (or (when root-record (:text root-record)) "")
-        root-uri (or (when root-post (:uri root-post)) "")
-        root-line (str "- " (or (not-empty root-display) root-handle "unknown")
-                       (when-not (str/blank? root-handle) (str " (@" root-handle ")"))
-                       ": " (clip-text root-text 200)
-                       (when-not (str/blank? root-uri) (str "\n  " root-uri)))
-        reply-lines (collect-thread-replies thread 1 depth [])]
-    {:root {:uri root-uri :text root-text :handle root-handle}
-     :lines (into [root-line] reply-lines)}))
+(def followers-execute
+  "Compatibility export for followers-execute."
+  execution/followers-execute)
 
-(defn ^:async bluesky-notifications! [runtime limit]
-  (let [session (await (bluesky-create-session! runtime))]
-    (await (bsky-client/notifications! (bluesky-client) session {:limit limit}))))
+(def follows-execute
+  "Compatibility export for follows-execute."
+  execution/follows-execute)
 
-(defn ^:async bluesky-followers! [actor limit]
-  (let [payload (await (bsky-client/followers! (bluesky-client) actor limit))]
-    {:actor actor
-     :results (mapv (fn [f]
-                      {:handle (or (:handle f) "")
-                       :displayName (or (:displayName f) "")
-                       :did (or (:did f) "")})
-                    (or (:followers payload) []))}))
+(def chat-list-execute
+  "Compatibility export for chat-list-execute."
+  execution/chat-list-execute)
 
-(defn ^:async bluesky-follows! [actor limit]
-  (let [payload (await (bsky-client/follows! (bluesky-client) actor limit))]
-    {:actor actor
-     :results (mapv (fn [f]
-                      {:handle (or (:handle f) "")
-                       :displayName (or (:displayName f) "")
-                       :did (or (:did f) "")})
-                    (or (:follows payload) []))}))
+(def chat-send-execute
+  "Compatibility export for chat-send-execute."
+  execution/chat-send-execute)
 
-;; -------------------------------------------------------------------------
-;; Chat / DM
-;; -------------------------------------------------------------------------
+(def chat-read-execute
+  "Compatibility export for chat-read-execute."
+  execution/chat-read-execute)
 
-(defn ^:async bluesky-chat-list! [runtime limit]
-  (let [session (await (bluesky-create-session! runtime))]
-    (await (bsky-client/chat-list! (bluesky-client) session {:limit limit}))))
-
-(defn ^:async bluesky-chat-messages! [runtime convo-id limit]
-  (let [session (await (bluesky-create-session! runtime))]
-    (await (bsky-client/chat-read! (bluesky-client) session convo-id {:limit limit}))))
-
-(defn ^:async bluesky-chat-send! [runtime convo-id text reply-to-msg-id]
-  (let [session (await (bluesky-create-session! runtime))
-        msg (cond-> {"$type" "chat.bsky.convo.defs#messageInput"
-                     :text text}
-              (not (str/blank? reply-to-msg-id))
-              (assoc :replyTo {"$type" "chat.bsky.convo.defs#messageRef"
-                               :messageId reply-to-msg-id}))]
-    (await (bsky-client/chat-send! (bluesky-client) session convo-id msg))))
-
-(defn ^:async bluesky-chat-react! [runtime convo-id message-id emoji]
-  (let [session (await (bluesky-create-session! runtime))]
-    (await (bsky-client/chat-react! (bluesky-client) session convo-id message-id emoji))))
-
-;; -------------------------------------------------------------------------
-;; Execute functions for new tools
-;; -------------------------------------------------------------------------
-
-(defn ^:async repost-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        uri (or (aget params "uri") "")]
-    (when (str/blank? uri)
-      (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Reposting on Bluesky…")
-    (let [result (await (bluesky-repost! runtime uri))]
-      (tool-text-result (str "Reposted Bluesky post\n" (or (:uri result) uri))
-                        result))))
-
-(defn ^:async like-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        uri (or (aget params "uri") "")]
-    (when (str/blank? uri)
-      (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Liking Bluesky post…")
-    (let [result (await (bluesky-like! runtime uri))]
-      (tool-text-result (str "Liked Bluesky post\n" (or (:uri result) uri))
-                        result))))
-
-(defn ^:async unlike-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        uri (or (aget params "uri") "")]
-    (when (str/blank? uri)
-      (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Removing Bluesky like…")
-    (await (bluesky-unlike! runtime uri))
-    (tool-text-result (str "Removed like from " uri) {})))
-
-(defn ^:async follow-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        actor (or (aget params "actor") "")]
-    (when (str/blank? actor)
-      (throw (js/Error. "actor is required")))
-    (maybe-tool-update! on-update (str "Following " actor " on Bluesky…"))
-    (let [result (await (bluesky-follow! runtime actor))]
-      (tool-text-result (str "Followed " actor "\n" (or (:uri result) ""))
-                        result))))
-
-(defn ^:async unfollow-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        uri (or (aget params "uri") "")]
-    (when (str/blank? uri)
-      (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Unfollowing on Bluesky…")
-    (await (bluesky-unfollow! runtime uri))
-    (tool-text-result (str "Unfollowed " uri) {})))
-
-(defn ^:async delete-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        uri (or (aget params "uri") "")]
-    (when (str/blank? uri)
-      (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Deleting Bluesky post…")
-    (await (bluesky-delete-post! runtime uri))
-    (tool-text-result (str "Deleted Bluesky post " uri) {})))
-
-(defn ^:async thread-execute [_runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        uri (or (aget params "uri") "")
-        depth (max 1 (min 10 (or (aget params "depth") 6)))]
-    (when (str/blank? uri)
-      (throw (js/Error. "uri is required")))
-    (maybe-tool-update! on-update "Reading Bluesky thread…")
-    (let [result (await (bluesky-thread! uri depth))]
-      (tool-text-result (str "Bluesky thread\n" (str/join "\n" (:lines result)))
-                        result))))
-
-(defn ^:async notifications-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        limit (max 1 (min 50 (or (aget params "limit") 20)))]
-    (maybe-tool-update! on-update "Reading Bluesky notifications…")
-    (let [payload (await (bluesky-notifications! runtime limit))
-          notifications (or (:notifications payload) [])
-          lines (mapv (fn [n]
-                        (let [author (:author n)
-                              reason (:reason n)
-                              post (:post n)
-                              text (or (get-in post [:record :text]) "")]
-                          (str "- [" reason "] "
-                               (or (:displayName author) "")
-                               " (@" (or (:handle author) "") "): "
-                               (clip-text text 120))))
-                      notifications)]
-      (tool-text-result (str "Bluesky notifications (" (count notifications) ")\n"
-                             (str/join "\n" lines))
-                        payload))))
-
-(defn ^:async followers-execute [_runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        actor (or (aget params "actor") "")
-        limit (max 1 (min 50 (or (aget params "limit") 25)))]
-    (when (str/blank? actor)
-      (throw (js/Error. "actor is required")))
-    (maybe-tool-update! on-update (str "Reading followers of " actor "…"))
-    (let [result (await (bluesky-followers! actor limit))]
-      (tool-text-result (format-posts (str "Followers of " actor) (:results result))
-                        result))))
-
-(defn ^:async follows-execute [_runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        actor (or (aget params "actor") "")
-        limit (max 1 (min 50 (or (aget params "limit") 25)))]
-    (when (str/blank? actor)
-      (throw (js/Error. "actor is required")))
-    (maybe-tool-update! on-update (str "Reading who " actor " follows…"))
-    (let [result (await (bluesky-follows! actor limit))]
-      (tool-text-result (format-posts (str "Follows of " actor) (:results result))
-                        result))))
-
-(defn ^:async chat-list-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        limit (max 1 (min 50 (or (aget params "limit") 20)))]
-    (maybe-tool-update! on-update "Listing Bluesky conversations…")
-    (let [payload (await (bluesky-chat-list! runtime limit))
-          convos (or (:convos payload) [])
-          lines (mapv (fn [convo]
-                        (let [members (or (:members convo) [])
-                              names (str/join ", " (map #(or (:displayName %) (:handle %) "") members))
-                              last-msg (:lastMessage convo)]
-                          (str "- " (:id convo) ": " names
-                               (when last-msg
-                                 (str " — " (clip-text (or (:text last-msg) "") 80))))))
-                      convos)]
-      (tool-text-result (str "Bluesky conversations (" (count convos) ")\n"
-                             (str/join "\n" lines))
-                        payload))))
-
-(defn ^:async chat-send-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        convo-id (or (aget params "convoId") "")
-        text (or (aget params "text") "")
-        reply-to (or (aget params "replyToMessageId") "")]
-    (when (str/blank? convo-id)
-      (throw (js/Error. "convoId is required")))
-    (when (str/blank? text)
-      (throw (js/Error. "text is required")))
-    (maybe-tool-update! on-update "Sending Bluesky DM…")
-    (let [result (await (bluesky-chat-send! runtime convo-id text reply-to))]
-      (tool-text-result (str "Sent DM in conversation " convo-id)
-                        result))))
-
-(defn ^:async chat-read-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        convo-id (or (aget params "convoId") "")
-        limit (max 1 (min 100 (or (aget params "limit") 25)))]
-    (when (str/blank? convo-id)
-      (throw (js/Error. "convoId is required")))
-    (maybe-tool-update! on-update (str "Reading Bluesky DMs in " convo-id "…"))
-    (let [payload (await (bluesky-chat-messages! runtime convo-id limit))
-          messages (or (:messages payload) [])
-          lines (mapv (fn [msg]
-                        (let [sender (:sender msg)
-                              text (or (:text msg) "")
-                              msg-id (or (:id msg) "")]
-                          (str "- [" msg-id "] "
-                               (or (:displayName sender) "")
-                               " (@" (or (:handle sender) "") "): "
-                               (clip-text text 200))))
-                      messages)]
-      (tool-text-result (str "Bluesky DMs (" (count messages) ")\n"
-                             (str/join "\n" lines))
-                        payload))))
-
-(defn ^:async chat-react-execute [runtime _config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        convo-id (or (aget params "convoId") "")
-        message-id (or (aget params "messageId") "")
-        emoji (or (aget params "emoji") "")]
-    (when (str/blank? convo-id)
-      (throw (js/Error. "convoId is required")))
-    (when (str/blank? message-id)
-      (throw (js/Error. "messageId is required")))
-    (when (str/blank? emoji)
-      (throw (js/Error. "emoji is required")))
-    (maybe-tool-update! on-update (str "Reacting to message " message-id "…"))
-    (let [result (await (bluesky-chat-react! runtime convo-id message-id emoji))]
-      (tool-text-result (str "Reacted " emoji " to message " message-id)
-                        result))))
+(def chat-react-execute
+  "Compatibility export for chat-react-execute."
+  execution/chat-react-execute)
 
 (def publish-tool
-  (partial create-tool-obj
-     "bluesky.publish" "Bluesky Publish"
-     "Publish a post to Bluesky using the configured account."
-     "Post a concise update to Bluesky when public social publishing is useful."
-     ["Use for original posts, replies (replyTo), and image posts (images param)."
-      "Always include relevant hashtags in the text body; they will be auto-faceted."
-      "URLs in the text body are auto-faceted as clickable links."
-      "For image posts, provide workspace paths, URLs, or data URLs in the images vector."
-      "When replying, pass the parent post AT-URI as replyTo."]
-     publish-params
-     publish-execute))
+  "Compatibility export for publish-tool."
+  catalog/publish-tool)
 
 (def profile-tool
-  (partial create-tool-obj
-     "bluesky.profile" "Bluesky Profile"
-     "Read a Bluesky profile by handle or DID, or default to the authenticated account."
-     "Read a Bluesky profile by handle or DID, or default to the authenticated account."
-     ["Use to inspect a user's bio, follower count, and posts before engaging."
-      "Leave actor empty to read the authenticated account's own profile."
-      "Accepts handles like @alice.bsky.social or raw DIDs."]
-     profile-params
-     profile-execute))
+  "Compatibility export for profile-tool."
+  catalog/profile-tool)
 
 (def search-tool
-  (partial create-tool-obj
-     "bluesky.search" "Bluesky Search"
-     "Search public Bluesky posts or actors."
-     "Search public Bluesky posts or actors."
-     ["Use to discover trending topics, find inspiration, or locate specific posts."
-      "Default kind is posts; set kind to actors to search for users."
-      "Hashtag searches work best with the # prefix: #generative, #music, etc."]
-     search-params
-     search-execute))
+  "Compatibility export for search-tool."
+  catalog/search-tool)
 
 (def author-feed-tool
-  (partial create-tool-obj
-     "bluesky.author.feed" "Bluesky Author Feed"
-     "Read recent posts from a specific Bluesky author."
-     "Read recent posts from a specific Bluesky author."
-     ["Use to browse a specific creator's recent posts before interacting."
-      "Pass the actor's handle or DID."
-      "Great for finding content to reply to, repost, or draw inspiration from."]
-     feed-params
-     author-feed-execute))
+  "Compatibility export for author-feed-tool."
+  catalog/author-feed-tool)
 
 (def timeline-tool
-  (partial create-tool-obj
-     "bluesky.timeline" "Bluesky Timeline"
-     "Read the authenticated account's Bluesky timeline."
-     "Read the authenticated account's Bluesky timeline."
-     ["Use CONSTANTLY to stay aware of the current vibe and trending content."
-      "This is your primary source of context before posting or engaging."
-      "Pass cursor from a previous call to paginate further back."]
-     timeline-params
-     timeline-execute))
+  "Compatibility export for timeline-tool."
+  catalog/timeline-tool)
 
 (def repost-tool
-  (partial create-tool-obj
-            "bluesky.repost" "Bluesky Repost"
-            "Repost (quote-retweet) a Bluesky post by AT-URI."
-            "Repost a Bluesky post to share it with followers."
-            ["Use when you want to amplify content you find valuable or entertaining."
-             "Pass the full AT-URI of the post to repost."
-             "Reposting builds social capital and signals taste to your followers."]
-            post-uri-params
-            repost-execute))
+  "Compatibility export for repost-tool."
+  catalog/repost-tool)
 
 (def like-tool
-  (partial create-tool-obj
-            "bluesky.like" "Bluesky Like"
-            "Like a Bluesky post by AT-URI."
-            "Like a Bluesky post to show appreciation."
-            ["Use generously to signal engagement and build goodwill."
-             "Pass the full AT-URI of the post to like."
-             "Liking is low-cost social capital; do it often for posts that resonate."]
-            post-uri-params
-            like-execute))
+  "Compatibility export for like-tool."
+  catalog/like-tool)
 
 (def unlike-tool
-  (partial create-tool-obj
-            "bluesky.unlike" "Bluesky Unlike"
-            "Remove a like from a Bluesky post by like record AT-URI."
-            "Remove a like from a Bluesky post."
-            ["Use to remove a previous like."
-             "Pass the AT-URI of the like record itself (not the post URI)."]
-            post-uri-params
-            unlike-execute))
+  "Compatibility export for unlike-tool."
+  catalog/unlike-tool)
 
 (def follow-tool
-  (partial create-tool-obj
-            "bluesky.follow" "Bluesky Follow"
-            "Follow a Bluesky actor by handle or DID."
-            "Follow a Bluesky user."
-            ["Use to follow creators whose content you want to see in your timeline."
-             "Pass the handle or DID of the actor."
-             "Aggressively curate your following list; unfollow if content quality drops."]
-            actor-params
-            follow-execute))
+  "Compatibility export for follow-tool."
+  catalog/follow-tool)
 
 (def unfollow-tool
-  (partial create-tool-obj
-            "bluesky.unfollow" "Bluesky Unfollow"
-            "Unfollow a Bluesky actor by follow record AT-URI."
-            "Unfollow a Bluesky user."
-            ["Use to unfollow an actor."
-             "Pass the AT-URI of the follow record (not the actor handle)."]
-            post-uri-params
-            unfollow-execute))
+  "Compatibility export for unfollow-tool."
+  catalog/unfollow-tool)
 
 (def delete-tool
-  (partial create-tool-obj
-            "bluesky.delete" "Bluesky Delete"
-            "Delete one of your own Bluesky posts by AT-URI."
-            "Delete a Bluesky post you authored."
-            ["Use to remove posts that flopped, aged poorly, or were mistakes."
-             "Pass the AT-URI of your own post."
-             "Curate your feed like a gallery; delete without remorse."]
-            post-uri-params
-            delete-execute))
+  "Compatibility export for delete-tool."
+  catalog/delete-tool)
 
 (def thread-tool
-  (partial create-tool-obj
-            "bluesky.thread" "Bluesky Thread"
-            "Read a Bluesky post thread including replies."
-            "Read a post and its reply thread."
-            ["Use to read full conversation threads before jumping in."
-             "Pass the AT-URI of the root post."
-             "Adjust depth for deeper reply trees; default is 6."]
-            thread-params
-            thread-execute))
+  "Compatibility export for thread-tool."
+  catalog/thread-tool)
 
 (def notifications-tool
-  (partial create-tool-obj
-            "bluesky.notifications" "Bluesky Notifications"
-            "Read notifications for the authenticated Bluesky account."
-            "Check notifications on Bluesky."
-            ["Use frequently to stay on top of replies, mentions, likes, and follows."
-             "Engagement compounds; respond to replies and mentions promptly."
-             "Notifications reveal who is interacting with you and why."]
-            notifications-params
-            notifications-execute))
+  "Compatibility export for notifications-tool."
+  catalog/notifications-tool)
 
 (def followers-tool
-  (partial create-tool-obj
-     "bluesky.followers" "Bluesky Followers"
-     "List followers of a Bluesky actor."
-     "Read the followers list of a Bluesky user."
-     ["Use to inspect who follows a given actor."
-      "Pass the actor's handle or DID."
-      "Useful for understanding audience overlap and community composition."]
-     feed-params
-     followers-execute))
+  "Compatibility export for followers-tool."
+  catalog/followers-tool)
 
 (def follows-tool
-  (partial create-tool-obj
-     "bluesky.follows" "Bluesky Follows"
-     "List accounts a Bluesky actor follows."
-     "Read the following list of a Bluesky user."
-     ["Use to discover who a creator follows for taste graph exploration."
-      "Pass the actor's handle or DID."
-      "Great for finding new creators to follow via transitive taste."]
-     feed-params
-     follows-execute))
+  "Compatibility export for follows-tool."
+  catalog/follows-tool)
 
 (def chat-list-tool
-  (partial create-tool-obj
-     "bluesky.chat.list" "Bluesky Chat List"
-     "List Bluesky DM conversations."
-     "List direct message conversations."
-     ["Use to see active DM conversations and their last messages."
-      "Start here before reading or sending DMs to get the conversation IDs."]
-     chat-list-params
-     chat-list-execute))
+  "Compatibility export for chat-list-tool."
+  catalog/chat-list-tool)
 
 (def chat-send-tool
-  (partial create-tool-obj
-     "bluesky.chat.send" "Bluesky Chat Send"
-     "Send a direct message in a Bluesky conversation."
-     "Send a DM in a Bluesky chat."
-     ["Use to reply in DM threads."
-      "Pass the convoId from chat.list and the message text."
-      "Use replyToMessageId to thread replies within a conversation."]
-     chat-send-params
-     chat-send-execute))
+  "Compatibility export for chat-send-tool."
+  catalog/chat-send-tool)
 
 (def chat-read-tool
-  (partial create-tool-obj
-     "bluesky.chat.read" "Bluesky Chat Read"
-     "Read messages from a Bluesky DM conversation."
-     "Read DMs in a Bluesky conversation."
-     ["Use to read the message history of a specific DM conversation."
-      "Pass the convoId from chat.list."
-      "Check DMs regularly; they may contain collaboration invites or feedback."]
-     chat-read-params
-     chat-read-execute))
+  "Compatibility export for chat-read-tool."
+  catalog/chat-read-tool)
 
 (def chat-react-tool
-  (partial create-tool-obj
-     "bluesky.chat.react" "Bluesky Chat React"
-     "Add an emoji reaction to a message in a Bluesky DM."
-     "React to a Bluesky DM message."
-     ["Use to react to DM messages with emoji."
-      "Pass convoId, messageId (from chat.read), and an emoji like ❤️ or 🔥."
-      "Reactions are lightweight engagement for DMs."]
-     chat-react-params
-     chat-react-execute))
+  "Compatibility export for chat-react-tool."
+  catalog/chat-react-tool)
 
 (def bluesky-tool-factories
-  [["bluesky.publish" publish-tool]
-   ["bluesky.profile" profile-tool]
-   ["bluesky.search" search-tool]
-   ["bluesky.author.feed" author-feed-tool]
-   ["bluesky.timeline" timeline-tool]
-   ["bluesky.repost" repost-tool]
-   ["bluesky.like" like-tool]
-   ["bluesky.unlike" unlike-tool]
-   ["bluesky.follow" follow-tool]
-   ["bluesky.unfollow" unfollow-tool]
-   ["bluesky.delete" delete-tool]
-   ["bluesky.thread" thread-tool]
-   ["bluesky.notifications" notifications-tool]
-   ["bluesky.followers" followers-tool]
-   ["bluesky.follows" follows-tool]
-   ["bluesky.chat.list" chat-list-tool]
-   ["bluesky.chat.read" chat-read-tool]
-   ["bluesky.chat.send" chat-send-tool]
-   ["bluesky.chat.react" chat-react-tool]])
+  "Compatibility export for bluesky-tool-factories."
+  catalog/bluesky-tool-factories)
 
-(defn- auth-context-allows-tool? [auth-context tool-id]
-  (or (nil? auth-context)
-      (ctx-tool-allowed? auth-context tool-id)))
+(def create-bluesky-custom-tools
+  "Compatibility export for create-bluesky-custom-tools."
+  catalog/create-bluesky-custom-tools)
 
-(defn- create-allowed-bluesky-tool [runtime config allowed? [tool-id tool-factory]]
-  (when (allowed? tool-id)
-    (tool-factory runtime config)))
-
-(defn create-bluesky-custom-tools
-  ([runtime config] (create-bluesky-custom-tools runtime config nil))
-  ([runtime config auth-context]
-   (let [allowed? (partial auth-context-allows-tool? auth-context)]
-     (clj->js
-      (vec (keep (partial create-allowed-bluesky-tool runtime config allowed?)
-                 bluesky-tool-factories))))))
