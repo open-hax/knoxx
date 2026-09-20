@@ -8,6 +8,11 @@ import test from 'node:test';
 
 const backend = fileURLToPath(new URL('../../', import.meta.url));
 
+/**
+ * Lint a temporary defroute body with the real backend hook and delete the fixture.
+ * @returns {Array<object>} Parsed findings, including expected lint errors.
+ * @throws {Error} On fixture/JSON errors, process launch failure or termination.
+ */
 function lint(body) {
   const directory = mkdtempSync(join(tmpdir(), 'knoxx-defroute-hook-'));
   const fixture = join(directory, 'knoxx', 'backend', 'hook_probe.cljs');
