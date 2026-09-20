@@ -1,0 +1,26 @@
+(skill-contract
+  (name "pr-review-to-merge")
+  (v "ημ.skill/pr-review-to-merge@0.1.0")
+  (intent "Own an explicitly authorized PR or ordered stack through verified merge and continuation.")
+  (activation
+    (priority 68)
+    (explicit ["skill:pr-review-to-merge"])
+    (triggers ["review to merge" "own the merge" "merge this PR" "merge this stack"])
+    (requires "Current or persistent user authorization to merge the named PR scope")
+    (excludes ["review only" "split or task out only" "draft preparation only" "user paused or cancelled"]))
+  (governance
+    (touch-layer :mutable)
+    (non-override [:mission :directives :safety :license :output-shape])
+    (requires-user-approval false)
+    (authorization "Do not infer merge permission from review or skill installation; reuse existing explicit authorization."))
+  (invariants
+    (one-active-pr true)
+    (reviewers-for-knoxx ["coderabbitai" "codex"])
+    (require-current-head-reviews true)
+    (require-passing-required-checks true)
+    (require-resolved-review-conversations true)
+    (require-head-sha-merge-guard true)
+    (allow-force-push false)
+    (allow-amend false)
+    (allow-protection-bypass false)
+    (completion "GitHub confirms every authorized in-scope PR merged")))

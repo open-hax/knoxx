@@ -124,7 +124,10 @@ Default HTTP port: `3003`.
 
 Prerequisites:
 
-- Node.js 22+ and pnpm.
+- Node.js 24+ for repository development and verification tooling, plus pnpm.
+  The backend alone supports Node.js 22.19+: its locked ATProto dependencies
+  require Node 22+, Discord voice requires 22.12+, and Undici requires 22.19+.
+  Root browser verification uses `agent-browser`, which requires Node 24+.
 - Java 21+ for shadow-cljs / Closure Compiler.
 - Clojure CLI for `ingestion/` and for every backend shadow-cljs command.
   `backend/shadow-cljs.edn` runs in `:deps` mode, so shadow-cljs resolves its

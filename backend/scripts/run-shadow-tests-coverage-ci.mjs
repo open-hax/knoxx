@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { testCountersExitCode } from './run-shadow-tests-ci.mjs';
+import { testEnvironment } from './shadow-test-environment.mjs';
 
 const SHADOW_CMD = process.platform === 'win32' ? 'shadow-cljs.cmd' : 'shadow-cljs';
 const TEST_BUILD  = 'test-ci';
@@ -11,11 +13,17 @@ const TEST_BUNDLE = 'target/test/test-ci.cjs';
 //   knoxx.backend.app_shapes.js
 const CLJS_RUNTIME = '.shadow-cljs/builds/test-ci/dev/out/cljs-runtime';
 
+/**
+ * Stream and capture a child process with guarded defaults, overridden by opts.
+ * @returns {Promise<{code: number | null, signal: string | null, combined: string}>}
+ * Resolves on close even for nonzero exits; callers must inspect code and signal.
+ * Rejects on spawn errors.
+ */
 function spawnP(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      env: testEnvironment(),
       ...opts,
     });
     let combined = '';
@@ -27,17 +35,22 @@ function spawnP(cmd, args, opts = {}) {
   });
 }
 
+/**
+ * Request process exit using the shared fail-closed summary/async-error check.
+ * Missing or failed evidence exits nonzero; the preload may defer the actual exit.
+ * @returns {void} No result is returned for callers to interpret as a test pass.
+ */
 function exitForTestCounters(output) {
-  const match = output.match(/\b(\d+) failures?,\s*(\d+) errors?\./);
-  if (match) {
-    const failures = Number(match[1] || 0);
-    const errors   = Number(match[2] || 0);
-    process.exit(failures > 0 || errors > 0 ? 1 : 0);
-  }
-  console.error('[knoxx] Could not determine CLJS test result counters from output.');
-  process.exit(1);
+  process.exit(testCountersExitCode(output));
 }
 
+/**
+ * Compile test-ci, then run its guarded bundle under c8 with explicit backend includes.
+ * Test-suffixed modules are excluded; supporting fixture modules may still be included.
+ * Writes coverage reports and requests exit from child status and test evidence;
+ * absent production output, signals, failures and incomplete summaries fail closed.
+ * @returns {Promise<void>} Rejects spawn/filesystem errors for the CLI catch handler.
+ */
 async function main() {
   // 1) Compile — :optimizations :none emits individual flat .js files.
   {

@@ -2,7 +2,7 @@
 ;; Real Node fs, no mocks. Fixtures in /tmp/knoxx-node-fs-test.
 
 (ns knoxx.backend.node.fs-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is]]
             [clojure.string :as str]
             [knoxx.backend.domain.node.fs :as sut]
             [knoxx.backend.domain.node.path :as p]))

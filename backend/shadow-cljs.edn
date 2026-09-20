@@ -110,7 +110,7 @@
       "libsodium-wrappers"}},
    :compiler-options
    {:output-feature-set :es-next,
-    :optimizations :none,
+    :optimizations :simple,
     :source-map true,
     :infer-externs false,
     :macros {:knoxx.backend.macros true},
@@ -118,7 +118,7 @@
   :test
   {:target :node-test,
    :output-to "target/test/test.cjs",
-   :ns-regex ["knoxx.backend.*-test$"],
+   :ns-regexp "knoxx\\.backend\\..*-test$",
    :autorun true,
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                      :file "test/js/eta_mu_cli_test_stub.cjs"}
@@ -156,6 +156,28 @@
     :infer-externs false,
     :macros {:knoxx.backend.macros true}}},
 
+  :identity-recovery-test
+  {:target :node-test
+   :output-to "target/identity-recovery/test.cjs"
+   :ns-regexp "knoxx\\.backend\\.((auth-session|authz|mcp-consent|extern-mcp-token|mcp-consent-rendering|mcp-params|mcp-schema)-test)$"
+   :autorun false
+   :compiler-options {:output-feature-set :es-next :infer-externs false}}
+
+  ;; Release this target to verify the real app route graph under :simple ESM.
+  ;; Its fixture export is absent from the production server graph.
+  :route-registration-proof
+  {:target :esm
+   :runtime :node
+   :output-dir "dist-route-registration-proof"
+   :modules {:proof {:exports {:createApp knoxx.backend.extern.route-registration-proof/create-app!}}}
+   :js-options {:js-provider :import
+                :keep-as-import #{"puppeteer-core" "@modelcontextprotocol/sdk"
+                                  "node:child_process" "node:fs/promises" "node:crypto"
+                                  "node:fs" "node:path" "node:url" "@open-hax/eta-mu-cli"
+                                  "discord.js" "@discordjs/voice" "libsodium-wrappers"}}
+   :compiler-options {:output-feature-set :es-next :optimizations :simple
+                      :source-map true :infer-externs false}}
+
   :cms-history-tour
   {:target :node-script,
    :output-to "target/cms-history-tour.cjs",
@@ -183,7 +205,7 @@
   :test-ci
   {:target :node-test,
    :output-to "target/test/test-ci.cjs",
-   :ns-regex ["knoxx.backend.*-test$"],
+   :ns-regexp "knoxx\\.backend\\..*-test$",
    :autorun false,
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                      :file "test/js/eta_mu_cli_test_stub.cjs"}

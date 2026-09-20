@@ -86,10 +86,10 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Node 22
+      - name: Set up Node 24
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Set up pnpm 9
         uses: pnpm/action-setup@v4
@@ -101,6 +101,7 @@ jobs:
         uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: ${{ env.CLOJURE_TOOLS_VERSION }}
+          clj-kondo: '2025.07.28'
 
       - name: Install root dependencies
         id: install_root
@@ -237,6 +238,37 @@ jobs:
           printf '%s  %s\n' "$BABASHKA_SHA256" "$download" | sha256sum --check --strict
           mv "$download" "$archive"
 
+      - name: Collect pinned clj-kondo archive and restore helper
+        id: collect_clj_kondo
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/sandbox-clj-kondo.mjs collect "$OUT"
+
+      - name: Verify clj-kondo restoration without a preinstalled binary
+        id: restore_clj_kondo
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          bootstrap="$(mktemp -d "$RUNNER_TEMP/kondo-bootstrap.XXXXXX")"
+          restored="$(mktemp -d "$RUNNER_TEMP/kondo-restored.XXXXXX")"
+          trap 'rm -rf "$bootstrap" "$restored"' EXIT
+          ln -s "$(command -v node)" "$bootstrap/node"
+          ln -s "$(command -v unzip)" "$bootstrap/unzip"
+          env PATH="$bootstrap" "$bootstrap/node" --input-type=module -e '
+            import {spawnSync} from "node:child_process";
+            if (spawnSync("clj-kondo", ["--version"]).error?.code !== "ENOENT")
+              throw new Error("clj-kondo unexpectedly available before restoration");'
+          bin="$(env PATH="$bootstrap" "$bootstrap/node" "$OUT/toolchain/sandbox-clj-kondo.mjs" restore "$OUT" "$restored")"
+          env PATH="$bin:$bootstrap" "$bootstrap/node" --test \
+            backend/test/js/defroute-lint-hook.test.mjs \
+            backend/test/js/kondo-file-size-hook.test.mjs \
+            2>&1 | tee "$OUT/logs/clj-kondo-restore.log"
+
       - name: Write bundle metadata and checksums
         id: finalize_bundle
         if: always()
@@ -253,6 +285,8 @@ jobs:
           RUNTIME_OUTCOME: ${{ steps.collect_runtime.outcome }}
           CLOJURE_ARCHIVE_OUTCOME: ${{ steps.collect_clojure.outcome }}
           BABASHKA_ARCHIVE_OUTCOME: ${{ steps.collect_babashka.outcome }}
+          CLJ_KONDO_ARCHIVE_OUTCOME: ${{ steps.collect_clj_kondo.outcome }}
+          CLJ_KONDO_RESTORE_OUTCOME: ${{ steps.restore_clj_kondo.outcome }}
         shell: bash
         run: |
           set -euo pipefail
@@ -262,8 +296,9 @@ jobs:
           {
             node --version
             pnpm --version
+            clj-kondo --version
             java -version
-            command -v clojure >/dev/null 2>&1 && clojure -Sdescribe || true
+            clojure -Sdescribe
           } > "$OUT/metadata/tool-versions.txt" 2>&1
 
           generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -284,6 +319,9 @@ jobs:
             --arg runtime "$RUNTIME_OUTCOME" \
             --arg clojure_archive "$CLOJURE_ARCHIVE_OUTCOME" \
             --arg babashka_archive "$BABASHKA_ARCHIVE_OUTCOME" \
+            --arg clj_kondo_archive "$CLJ_KONDO_ARCHIVE_OUTCOME" \
+            --arg clj_kondo_restore "$CLJ_KONDO_RESTORE_OUTCOME" \
+            --argjson clj_kondo "$(node scripts/sandbox-clj-kondo.mjs describe)" \
             '{
               sandbox_bundle_version: 1,
               repository: $repository,
@@ -302,9 +340,13 @@ jobs:
                 ingestion_tests: $ingestion_tests,
                 runtime_collection: $runtime,
                 clojure_archive: $clojure_archive,
-                babashka_archive: $babashka_archive
+                babashka_archive: $babashka_archive,
+                clj_kondo_archive: $clj_kondo_archive,
+                clj_kondo_restore: $clj_kondo_restore
               },
+              toolchain: {clj_kondo: $clj_kondo},
               setup_commands: [
+                "sandbox_kondo_bin=\"$(node \"${KNOXX_SANDBOX_BUNDLE:?}/toolchain/sandbox-clj-kondo.mjs\" restore \"$KNOXX_SANDBOX_BUNDLE\" \"$KNOXX_SANDBOX_BUNDLE/restored-toolchain\")\" && export PATH=\"$sandbox_kondo_bin:$PATH\"",
                 "pnpm install --frozen-lockfile",
                 "pnpm -C backend install --frozen-lockfile",
                 "pnpm -C frontend install --frozen-lockfile",
@@ -319,7 +361,10 @@ jobs:
               ],
               network_required_after_restore: true
             }' > "$OUT/manifest.json"
-          (cd "$OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          checksums="$(mktemp "$RUNNER_TEMP/sandbox-checksums.XXXXXX")"
+          trap 'rm -f "$checksums"' EXIT
+          (cd "$OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$checksums"
+          mv "$checksums" "$OUT/SHA256SUMS"
 
       - name: Package optional dependency cache
         if: github.event_name == 'workflow_dispatch' && inputs.include_dependency_cache
@@ -338,7 +383,10 @@ jobs:
           if [[ -d "$HOME/.gitlibs" ]]; then
             tar -czf "$DEPS_OUT/gitlibs.tar.gz" -C "$HOME" .gitlibs
           fi
-          (cd "$DEPS_OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          checksums="$(mktemp "$RUNNER_TEMP/sandbox-deps-checksums.XXXXXX")"
+          trap 'rm -f "$checksums"' EXIT
+          (cd "$DEPS_OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$checksums"
+          mv "$checksums" "$DEPS_OUT/SHA256SUMS"
 
       - name: Upload sandbox bundle
         if: always()
@@ -373,6 +421,8 @@ jobs:
            steps.collect_runtime.outcome == 'failure' ||
            steps.collect_clojure.outcome == 'failure' ||
            steps.collect_babashka.outcome == 'failure' ||
+           steps.collect_clj_kondo.outcome == 'failure' ||
+           steps.restore_clj_kondo.outcome == 'failure' ||
            steps.finalize_bundle.outcome == 'failure')
         shell: bash
         run: exit 1

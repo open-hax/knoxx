@@ -7,14 +7,14 @@ import {
   testCountersExitCode,
 } from '../../scripts/run-shadow-tests-ci.mjs';
 
-test('test counter parser uses the final cljs.test summary', () => {
+test('counter reporting returns the final summary but exit status retains earlier failures', () => {
   const output = [
     'Ran 1 tests containing 1 assertions. 1 failures, 0 errors.',
     'Ran 22 tests containing 98 assertions. 0 failures, 0 errors.',
   ].join('\n');
 
   assert.deepEqual(parseTestCounters(output), { failures: 0, errors: 0 });
-  assert.equal(testCountersExitCode(output), 0);
+  assert.equal(testCountersExitCode(output), 1);
 });
 
 test('test counter guard rejects failures and errors', () => {

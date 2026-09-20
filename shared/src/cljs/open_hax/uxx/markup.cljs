@@ -10,31 +10,45 @@
 
 (deftype TrustedHtml [value])
 
-(defn trusted-html [value]
+(defn trusted-html
+  "Mark caller-reviewed text as trusted raw markup; this does not sanitize it."
+  [value]
   (TrustedHtml. (str (or value ""))))
 
-(defn trusted-html? [value]
+(defn trusted-html?
+  "Check whether a value explicitly carries the trusted-markup wrapper."
+  [value]
   (instance? TrustedHtml value))
 
-(defn trusted-value [value]
+(defn trusted-value
+  "Read explicitly trusted text or refuse unwrapped raw markup."
+  [value]
   (if (trusted-html? value)
     (.-value value)
     (throw (ex-info "Raw markup requires an explicit trusted value"
                     {:type :uxx/unsafe-raw-markup}))))
 
-(defn raw-html [value]
+(defn raw-html
+  "Construct a raw node only from an explicitly trusted value."
+  [value]
   (when-not (trusted-html? value)
     (throw (ex-info "raw-html accepts only trusted values"
                     {:type :uxx/unsafe-raw-markup})))
   [:raw-html value])
 
-(defn element [tag attrs & children]
+(defn element
+  "Construct a portable element node with its attributes and children."
+  [tag attrs & children]
   (into [tag attrs] children))
 
-(defn fragment [& children]
+(defn fragment
+  "Group portable children without adding an element wrapper."
+  [& children]
   (into [:<>] children))
 
-(defn tag-name [tag]
+(defn tag-name
+  "Validate and normalize a tag, rejecting reserved portable node markers."
+  [tag]
   (let [value (cond
                 (keyword? tag) (name tag)
                 (string? tag) tag
@@ -46,7 +60,9 @@
                       {:tag tag :type :uxx/invalid-tag})))
     value))
 
-(defn attribute-name [attribute]
+(defn attribute-name
+  "Validate and normalize a portable attribute identifier."
+  [attribute]
   (let [value (cond
                 (keyword? attribute) (name attribute)
                 (string? attribute) attribute
@@ -56,13 +72,19 @@
                       {:attribute attribute :type :uxx/invalid-attribute})))
     value))
 
-(defn event-attribute? [attribute]
+(defn event-attribute?
+  "Identify case-insensitive event handler attribute names."
+  [attribute]
   (str/starts-with? (str/lower-case (attribute-name attribute)) "on"))
 
-(defn url-attribute? [attribute]
+(defn url-attribute?
+  "Identify attributes whose values must satisfy the URL safety contract."
+  [attribute]
   (contains? url-attributes (str/lower-case (attribute-name attribute))))
 
-(defn safe-url? [value]
+(defn safe-url?
+  "Accept relative URLs or approved schemes, rejecting protocol-relative URLs."
+  [value]
   (let [candidate (str/trim (str (or value "")))
         scheme-probe (-> candidate
                          (str/replace #"[\u0000-\u0020]+" "")
@@ -85,18 +107,22 @@
     :else (throw (ex-info "Unsupported class value"
                           {:value value :type :uxx/invalid-class}))))
 
-(defn normalize-class-value [value]
+(defn normalize-class-value
+  "Flatten supported class values into stable, deduplicated tokens."
+  [value]
   (str/join " " (distinct (class-tokens value))))
 
-(defn validate-attribute! [[attribute value]]
-  (let [name (attribute-name attribute)]
-    (when (event-attribute? name)
+(defn validate-attribute!
+  "Reject event handlers, functions and unsafe URL attribute values."
+  [[attribute value]]
+  (let [attr-name (attribute-name attribute)]
+    (when (event-attribute? attr-name)
       (throw (ex-info "Portable markup rejects event attributes"
                       {:attribute attribute :type :uxx/event-attribute})))
     (when (fn? value)
       (throw (ex-info "Portable markup rejects function attributes"
                       {:attribute attribute :type :uxx/function-attribute})))
-    (when (and (url-attribute? name)
+    (when (and (url-attribute? attr-name)
                (some? value)
                (not (false? value))
                (not (safe-url? value)))
@@ -122,7 +148,9 @@
   (doseq [child (nnext node)] (validate-node! child))
   node)
 
-(defn validate-node! [node]
+(defn validate-node!
+  "Validate a complete portable tree, returning the original valid node."
+  [node]
   (cond
     (or (nil? node) (false? node) (string? node) (number? node) (keyword? node)) node
     (and (node-vector? node) (= :<> (first node)))
@@ -139,15 +167,21 @@
     :else (throw (ex-info "Unsupported markup node"
                           {:node node :type :uxx/invalid-node}))))
 
-(defn valid-node? [node]
+(defn valid-node?
+  "Check portable node validity without exposing validation exceptions."
+  [node]
   (try
     (validate-node! node)
     true
     (catch :default _ false)))
 
-(defn element-node? [node]
+(defn element-node?
+  "Identify a tagged element rather than a fragment or raw node."
+  [node]
   (and (node-vector? node)
        (not (#{:<> :raw-html} (first node)))))
 
-(defn raw-html-node? [node]
+(defn raw-html-node?
+  "Identify a raw-markup node requiring an explicit trusted value."
+  [node]
   (and (node-vector? node) (= :raw-html (first node))))
