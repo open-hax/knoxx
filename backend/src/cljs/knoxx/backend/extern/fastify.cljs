@@ -4,7 +4,8 @@
    Owns raw Fastify request/reply object traversal and native RequestInit
    construction. Callers pass/receive CLJS maps where possible and may carry
    opaque handles such as raw request streams or Response buffers."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.law.http-failure :as http-failure]))
 
 (defn no-content?
   [x]
@@ -194,18 +195,32 @@
     (.assign js/Object base (stream-body-options request) (clj->js extra))))
 
 (defn error-status
-  [err default-status]
-  (or (aget err "statusCode")
-      (aget err "status")
-      default-status))
+  "Read a valid failure status from CLJS ex-data or a native transport error."
+  ([err] (error-status err 500))
+  ([err default-status]
+   (or (some #(when (and (integer? %) (<= 400 % 599)) %)
+             [(:status (ex-data err)) (when err (.-statusCode ^js err))
+              (when err (.-status ^js err))])
+       default-status)))
 
 (defn error-message
+  "Read the message from an opaque native or ClojureScript exception."
   [err]
-  (or (aget err "message") (str err)))
+  (or (when err (.-message ^js err)) (str err)))
+
+(defn http-error
+  "Encode validated failure data in both ex-data and Fastify's native fields."
+  [status code message]
+  (let [failure (http-failure/validate! {:status status :code code :message message})
+        error (ex-info message (select-keys failure [:status :code]))]
+    (set! (.-statusCode ^js error) status)
+    (set! (.-code ^js error) code)
+    error))
 
 (defn error-code
+  "Preserve classified CLJS service failures across the HTTP boundary."
   [err]
-  (aget err "code"))
+  (or (:code (ex-data err)) (when err (.-code ^js err))))
 
 (defn log-unclassified-failure!
   "Record a failure the boundary could not classify, without printing its values.

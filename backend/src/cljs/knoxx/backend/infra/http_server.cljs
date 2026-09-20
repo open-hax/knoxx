@@ -1,62 +1,28 @@
 (ns knoxx.backend.infra.http-server
-  "Fastify HTTP server construction and lifecycle helpers."
-  (:require ["fastify" :default Fastify]
-            ["@fastify/cors" :default fastifyCors]
-            ["@fastify/websocket" :default fastifyWebsocket]
-            ["@fastify/multipart" :default fastifyMultipart]
-            ["@fastify/cookie" :default fastifyCookie]
-            ["@fastify/formbody" :default fastifyFormbody]))
+  "Application HTTP lifecycle through the named Fastify server boundary."
+  (:require [knoxx.backend.extern.http-server :as server]))
 
 (defn create-app!
-  []
-  (Fastify #js {:logger true
-                :bodyLimit (* 50 1024 1024)
-                :requestTimeout 600000
-                :connectionTimeout 600000
-                ;; Dev hot reload must not hang forever on keep-alive/websocket
-                ;; clients when Fastify is closed from a shadow-cljs hook.
-                :forceCloseConnections true}))
+  "Construct an opaque server handle with optional request logging."
+  ([] (server/create-app!))
+  ([options] (server/create-app! options)))
 
 (defn ensure-json-empty-body-parser!
-  "Allow Content-Type: application/json with empty bodies.
-
-   Fastify's default parser throws FST_ERR_CTP_EMPTY_JSON_BODY, but some
-   endpoints are intentionally POST-without-body."
-  [^js app]
-  (.addContentTypeParser app
-                         "application/json"
-                         #js {:parseAs "string"}
-                         (fn [_req body done]
-                           (try
-                             (done nil (if (= body "") #js {} (js/JSON.parse body)))
-                             (catch :default err
-                               (done err))))))
+  "Install the explicit empty-JSON-body compatibility parser."
+  [app] (server/ensure-json-empty-body-parser! app))
 
 (defn add-hook!
-  [^js app hook-name handler]
-  (.addHook app hook-name handler))
+  "Register a server lifecycle callback without inspecting native handles."
+  [app hook handler] (server/add-hook! app hook handler))
 
-(defn ^:async register-default-plugins!
-  [^js app]
-  (await (.register app fastifyCors #js {:origin true}))
-  (await (.register app fastifyCookie))
-  (await (.register app fastifyFormbody))
-  (await (.register app fastifyMultipart
-                    #js {:limits #js {:fileSize (* 50 1024 1024)
-                                      :fieldSize (* 1 1024 1024)
-                                      :files 10}}))
-  (await (.register app fastifyWebsocket)))
+(defn register-default-plugins!
+  "Install the application's declared transport plugins."
+  [app] (server/register-default-plugins! app))
 
 (defn listen!
-  [^js app host port]
-  (.listen app #js {:host host :port port}))
+  "Bind the configured HTTP listener."
+  [app host port] (server/listen! app host port))
 
 (defn close!
-  [^js app]
-  (try
-    (let [result (.close app)]
-      (if (some? result)
-        result
-        (js/Promise.resolve true)))
-    (catch :default err
-      (js/Promise.reject err))))
+  "Close the owned listener and its connections."
+  [app] (server/close! app))
