@@ -33,8 +33,11 @@
    Documents are stamped with :system_instance_id like the run store."
   (:require
     [clojure.string :as str]
+    [knoxx.backend.extern.mongo :as mongo]
     [knoxx.backend.infra.mongo-client :as mongo-client]
-    [knoxx.backend.infra.system-instance :as system-instance]))
+    [knoxx.backend.infra.system-instance :as system-instance]
+    [knoxx.backend.law.membership-actor :as actor-law]
+    [knoxx.backend.law.policy-values :as values]))
 
 (def ORGS_COLLECTION "knoxx_orgs")
 (def USERS_COLLECTION "knoxx_users")
@@ -291,16 +294,33 @@
     (keywordize (await (.findOne (memberships-coll db)
                                  #js {"user_id" (str user-id) "org_id" (str org-id)}))))))
 
+(defn- ^:async require-membership! [db membership-id]
+  (or (await (get-membership! db membership-id))
+      (throw (ex-info "Membership was not found" {:status 404 :code "membership_not_found"}))))
+
+(defn- ^:async confirm-actor-assignment! [db membership-id resolved]
+  (let [current (await (require-membership! db membership-id))]
+    (when-not (= resolved (values/normalize-actor-id (:actor_id current)))
+      (throw (ex-info "Membership actor changed during initial assignment"
+                      {:status 409 :code "membership_actor_immutable"})))
+    resolved))
+
 (defn ^:async set-membership-actor-id!
-  "Set actor_id on a membership (q-memberships/set-actor-id). Defaults a blank
-   actor-id to \"workspace_user\" like infra.db.policy/set-membership-actor-id!.
-   Returns the resolved actor-id string."
+  "Assign an initially blank actor or retain its normalized value; rebinds refuse 409.
+   CAS preserves the observed actor while concurrent initial contenders race.
+   A blank requested actor retains the legacy workspace_user default."
   ([membership-id actor-id] (set-membership-actor-id! (mongo-client/get-db) membership-id actor-id))
   ([db membership-id actor-id]
-   (let [resolved (or (some-> actor-id str str/trim not-empty) "workspace_user")]
-     (await (.updateOne (memberships-coll db)
-                        #js {"membership_id" (str membership-id)}
-                        #js {"$set" #js {"actor_id" resolved "updated_at" (js/Date.)}}))
+   (let [current (await (require-membership! db membership-id))
+         resolved (actor-law/assert-assignment! (:actor_id current)
+                                               (or (values/normalize-actor-id actor-id) "workspace_user"))
+         result (await (mongo/update-one!
+                        (mongo/collection db MEMBERSHIPS_COLLECTION)
+                        {:membership_id (str membership-id) :actor_id (:actor_id current)}
+                        {:$set {:actor_id resolved :updated_at (mongo/current-epoch-ms)}}
+                        {:bson-date-fields #{:updated_at}}))]
+     (when-not (= 1 (:matched-count result))
+       (await (confirm-actor-assignment! db membership-id resolved)))
      resolved)))
 
 (defn- ^:async attach-org-columns

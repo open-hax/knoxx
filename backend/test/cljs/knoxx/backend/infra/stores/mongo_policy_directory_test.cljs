@@ -17,8 +17,9 @@
           query))
 
 (defn- apply-set! [docs q set-doc]
-  (swap! docs (fn [ds] (mapv #(if (matches-query? % q) (merge % set-doc) %) ds)))
-  (js/Promise.resolve #js {}))
+  (let [matched (count (filter #(matches-query? % q) @docs))]
+    (swap! docs (fn [ds] (mapv #(if (matches-query? % q) (merge % set-doc) %) ds)))
+    (js/Promise.resolve #js {:matchedCount matched})))
 
 (defn- mock-pipeline-update-many!
   "Support the one pipeline shape the store uses:
@@ -186,13 +187,17 @@
       (is (thrown? js/Error (await (dir/list-memberships! db {:org-id ""})))))))
 
 (deftest ^:async set-membership-actor-id-test
-  (testing "set-membership-actor-id! sets actor_id, defaulting blanks"
+  (testing "initial or same normalized actor succeeds; assigned actor cannot be cleared"
     (let [db (mock-db)
           m (await (dir/upsert-membership! db {:user-id "u1" :org-id "o1"}))]
       (is (= "system_admin" (await (dir/set-membership-actor-id! db (:id m) "system_admin"))))
       (is (= "system_admin" (:actor_id (await (dir/get-membership! db (:id m))))))
-      (is (= "workspace_user" (await (dir/set-membership-actor-id! db (:id m) "  "))) "blank defaults")
-      (is (= "workspace_user" (:actor_id (await (dir/get-membership! db (:id m)))))))))
+      (is (= "system_admin" (await (dir/set-membership-actor-id! db (:id m) " system_admin "))))
+      (is (= 409 (try (await (dir/set-membership-actor-id! db (:id m) "  ")) nil
+                      (catch :default error (:status (ex-data error))))))
+      (is (= "system_admin" (:actor_id (await (dir/get-membership! db (:id m))))))
+      (let [fresh (await (dir/upsert-membership! db {:user-id "u2" :org-id "o1"}))]
+        (is (= "workspace_user" (await (dir/set-membership-actor-id! db (:id fresh) "  "))) "blank initial assignment retains default")))))
 
 (deftest ^:async doc->row-id-parity-test
   (testing "every adapter presents :id and hides the stored {table}_id + _id"
