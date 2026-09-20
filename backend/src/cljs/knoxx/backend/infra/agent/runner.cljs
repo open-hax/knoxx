@@ -7,26 +7,24 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.time :as time]
-            [knoxx.backend.domain.voice.turn-control :as turn-control]
-            [knoxx.backend.infra.agent.policy :as agent-policy]
-            [knoxx.backend.infra.agent.session :refer [active-agent-session]]
-            [knoxx.backend.infra.agent.turn :as agent-turns]
-            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
-            [knoxx.backend.infra.system-instance :as system-instance]
             [knoxx.backend.extern.agent-runner :as xrunner]
             [knoxx.backend.extern.agent-turn-node :as xturn-node]
+            [knoxx.backend.extern.agent-turn-request :as turn-request]
+            [knoxx.backend.extern.event-turn-admission :as admission]
+            [knoxx.backend.infra.agent.policy :as agent-policy]
+            [knoxx.backend.infra.agent.queued-run :as queued-run]
+            [knoxx.backend.infra.agent.session-gate :as session-gate]
+            [knoxx.backend.infra.agent.turn :as agent-turns]
+            [knoxx.backend.infra.run-event-payload :as run-payload]
+            [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.shape.agent :refer [streaming?]]))
+            [knoxx.backend.shape.event-turn-queue :as queue-shape]))
 
 (def ^:private default-event-agent-concurrency 1)
 (def ^:private default-event-agent-queue-limit 256)
 
-(defn- initial-event-turn-queue-state
-  []
-  {:active []
-   :pending []
-   :concurrency default-event-agent-concurrency
-   :queue-limit default-event-agent-queue-limit})
+(defn- initial-event-turn-queue-state []
+  (queue-shape/initial-state default-event-agent-concurrency default-event-agent-queue-limit))
 
 (defonce ^:private event-turn-queue*
   (atom (initial-event-turn-queue-state)))
@@ -35,139 +33,13 @@
   (atom {}))
 
 (defn current-runtime
+  "Return the currently installed runtime handle."
   []
   @runtime-state/runtime*)
 
-(defn- normalize-tool-policy
-  [policy]
-  (let [policy (xrunner/to-cljs-map policy)
-        tool-id (some-> (or (:toolId policy)
-                            (:tool-id policy)
-                            (:tool_id policy))
-                        str
-                        not-empty)
-        effect (some-> (or (:effect policy) "allow") str not-empty)]
-    (when tool-id
-      {:toolId tool-id :effect effect})))
-
-(defn- spec-value
-  "Extract a normalized string value from a spec map given keyword alternatives."
-  [spec & keys]
-  (some-> (some (fn [k] (get spec k)) keys)
-          str
-          not-empty))
-
-(def ^:private agent-spec-string-aliases
-  {:contract-id [:contract_id :contract-id :contractId
-                 :agent_id :agent-id :agentId]
-   :actor-id [:actor_id :actor-id :actorId]
-   :role [:role :role_slug :role-slug :roleSlug]
-   :task-source [:task_source :task-source :taskSource]
-   :model [:model]
-   :thinking-level [:thinking_level :thinking-level :thinkingLevel
-                    :reasoning_effort :reasoning-effort :reasoningEffort]
-   :sub-agent-id [:sub_agent_id :sub-agent-id :subAgentId]
-   :parent-agent-id [:parent_agent_id :parent-agent-id :parentAgentId]
-   :parent-run-id [:parent_run_id :parent-run-id :parentRunId]
-   :spawn-kind [:spawn_kind :spawn-kind :spawnKind]
-   :trigger-id [:trigger_id :trigger-id :triggerId]
-   :event-type [:event_type :event-type :eventType
-                :trigger_event_type :trigger-event-type :triggerEventType]
-   :event-id [:event_id :event-id :eventId]
-   :event-scope-id [:event_scope_id :event-scope-id :eventScopeId]
-   :schedule-id [:schedule_id :schedule-id :scheduleId]})
-
-(defn- normalized-string-fields
-  [spec]
-  (reduce-kv
-   (fn [normalized field aliases]
-     (if-let [value (apply spec-value spec aliases)]
-       (assoc normalized field value)
-       normalized))
-   {}
-   agent-spec-string-aliases))
-
-(defn- normalized-prompt-fields
-  [spec]
-  (let [system-prompt (or (:system_prompt spec) (:system-prompt spec) (:systemPrompt spec))
-        task-prompt (or (:task_prompt spec) (:task-prompt spec) (:taskPrompt spec))
-        rendered (or (:rendered_task_prompt spec) (:rendered-task-prompt spec)
-                     (:renderedTaskPrompt spec))
-        deprecated? (boolean (or (:deprecated_agent_task_fallback spec)
-                                 (:deprecated-agent-task-fallback spec)
-                                 (:deprecatedAgentTaskFallback spec)))]
-    (cond-> {}
-      (some? system-prompt) (assoc :system-prompt system-prompt)
-      (some? task-prompt) (assoc :task-prompt task-prompt)
-      (some? rendered) (assoc :rendered-task-prompt rendered)
-      deprecated? (assoc :deprecated-agent-task-fallback true))))
-
-(defn- normalized-runtime-fields
-  [spec]
-  (let [tool-policies (->> (or (:tool_policies spec) (:tool-policies spec)
-                               (:toolPolicies spec) [])
-                           (keep normalize-tool-policy) vec)
-        tools-choice-value (or (:tools_choice spec) (:tools-choice spec)
-                               (:toolsChoice spec) (:tools/choice spec))
-        tools-choice (some-> (if (keyword? tools-choice-value)
-                               (name tools-choice-value)
-                               tools-choice-value)
-                             str
-                             str/trim
-                             not-empty)
-        resources (or (:resource_policies spec) (:resource-policies spec)
-                      (:resourcePolicies spec))
-        sources (or (:sources spec) (:runtime_sources spec)
-                    (:runtime-sources spec) (:runtimeSources spec))
-        memory (or (:memory_hydration spec) (:memory-hydration spec)
-                   (:memoryHydration spec))
-        context (or (:context_policy spec) (:context-policy spec)
-                    (:contextPolicy spec) (:context spec))]
-    (cond-> {}
-      (seq tool-policies) (assoc :tool-policies tool-policies)
-      tools-choice (assoc :tools-choice tools-choice)
-      resources (assoc :resource-policies resources)
-      (seq sources) (assoc :sources sources)
-      memory (assoc :memory-hydration memory)
-      context (assoc :context-policy context))))
-
-(defn- normalize-agent-spec
-  [value]
-  (let [spec (xrunner/to-cljs-map value)
-        string-fields (normalized-string-fields spec)
-        event-type (:event-type string-fields)
-        event-types (->> (or (:event_types spec) (:event-types spec) (:eventTypes spec)
-                             (when event-type [event-type]) [])
-                         (map str) (remove str/blank?) distinct vec)]
-    (cond-> (merge string-fields
-                   (normalized-prompt-fields spec)
-                   (normalized-runtime-fields spec))
-      (seq event-types) (assoc :event-types event-types))))
-
 (defn direct-start-payload->turn-params
-  [payload]
-  (let [payload (xrunner/to-cljs-map payload)
-        auth-context (or (:auth_context payload)
-                         (:auth-context payload))
-        template-context (or (:template_context payload)
-                             (:template-context payload)
-                             (:templateContext payload))]
-    (cond-> {:conversation-id (or (:conversation_id payload)
-                                  (:conversation-id payload))
-             :session-id (or (:session_id payload)
-                             (:session-id payload))
-             :run-id (or (:run_id payload)
-                         (:run-id payload))
-             :message (or (:message payload) "")
-             :content-parts (or (:content_parts payload)
-                                (:content-parts payload)
-                                [])
-             :model (:model payload)
-             :mode "direct"
-             :agent-spec (normalize-agent-spec (or (:agent_spec payload)
-                                                   (:agent-spec payload)))}
-      template-context (assoc :template-context template-context)
-      auth-context (assoc :auth-context auth-context))))
+  "Decode the supported direct-start field spellings at their owned request boundary."
+  [payload] (turn-request/direct-start-payload->turn-params payload))
 
 (defn- policy-model
   [config body]
@@ -176,17 +48,7 @@
       (:llmModel config)
       (:proxx-default-model config)))
 
-(defn- queue-snapshot-from-state
-  [{:keys [active pending concurrency queue-limit]}]
-  {:active (count active)
-   :queued (count pending)
-   :concurrency concurrency
-   :queue-limit queue-limit
-   :active-run-ids (mapv #(get-in % [:body :run-id]) active)
-   :queued-run-ids (mapv #(get-in % [:body :run-id]) pending)
-   ;; This limiter protects the local provider but is intentionally honest
-   ;; about its process boundary. Event replay remains the restart recovery.
-   :restart-aware false})
+(defn- queue-snapshot-from-state [state] (queue-shape/snapshot state))
 
 (defn event-turn-queue-snapshot
   "Return observable, serialization-safe state for the event-agent FIFO."
@@ -300,28 +162,8 @@
    :queue-limit (max 1 (or (:event-agent-queue-limit config)
                            default-event-agent-queue-limit))})
 
-(defn- event-turn-reservation
-  [state entry concurrency queue-limit]
-  (let [configured (assoc state
-                          :concurrency concurrency
-                          :queue-limit queue-limit)
-        start-now? (and (empty? (:pending configured))
-                        (< (count (:active configured)) concurrency))
-        queue-full? (and (not start-now?)
-                         (>= (count (:pending configured)) queue-limit))
-        after (cond
-                start-now? (update configured :active conj entry)
-                queue-full? configured
-                :else (update configured :pending conj entry))
-        status (cond
-                 start-now? :running
-                 queue-full? :full
-                 :else :queued)]
-    {:after after
-     :queue-full? queue-full?
-     :result {:status status
-              :position (if (= :queued status) (count (:pending after)) 0)
-              :snapshot (queue-snapshot-from-state after)}}))
+(defn- event-turn-reservation [state entry concurrency queue-limit]
+  (queue-shape/reservation state entry concurrency queue-limit))
 
 (defn- reserve-event-turn!
   [entry concurrency queue-limit]
@@ -334,36 +176,11 @@
         (compare-and-set! event-turn-queue* before after) result
         :else (recur)))))
 
-(defn- release-event-turn!
-  [queue-id]
+(defn- release-event-turn! [queue-id]
   (loop []
-    (let [before @event-turn-queue*
-          owned? (some #(= queue-id (:queue-id %)) (:active before))]
-      (when owned?
-        (let [remaining-active (->> (:active before)
-                                    (remove #(= queue-id (:queue-id %)))
-                                    vec)
-              next-entry (first (:pending before))
-              remaining-pending (if next-entry
-                                  (subvec (:pending before) 1)
-                                  [])
-              after (cond-> (assoc before
-                                   :active remaining-active
-                                   :pending remaining-pending)
-                      next-entry (update :active conj next-entry))]
-          (if (compare-and-set! event-turn-queue* before after)
-            next-entry
-            (recur)))))))
-
-(defn- response-queue-metadata
-  [{:keys [status position snapshot]}]
-  {:status (name status)
-   :position position
-   :active (:active snapshot)
-   :queued (:queued snapshot)
-   :concurrency (:concurrency snapshot)
-   :queue_limit (:queue-limit snapshot)
-   :restart_aware (:restart-aware snapshot)})
+    (let [before @event-turn-queue*]
+      (when-let [{:keys [after next-entry]} (queue-shape/release-entry before queue-id)]
+        (if (compare-and-set! event-turn-queue* before after) next-entry (recur))))))
 
 (defn- accepted-response
   ([body]
@@ -376,74 +193,7 @@
             :session_id (:session-id body)
             :model (or (:model body)
                        (get-in body [:agent-spec :model]))}
-     queue-result (assoc :event_queue (response-queue-metadata queue-result)))))
-
-(defn- queued-agent-spec-summary
-  [agent-spec]
-  (when agent-spec
-    (cond-> {}
-      (:contract-id agent-spec) (assoc :contractId (:contract-id agent-spec))
-      (:actor-id agent-spec) (assoc :actorId (:actor-id agent-spec))
-      (:model agent-spec) (assoc :model (:model agent-spec))
-      (:thinking-level agent-spec) (assoc :thinkingLevel (:thinking-level agent-spec))
-      (:tools-choice agent-spec) (assoc :toolsChoice (:tools-choice agent-spec))
-      (:trigger-id agent-spec) (assoc :triggerId (:trigger-id agent-spec))
-      (:event-type agent-spec) (assoc :eventType (:event-type agent-spec))
-      (seq (:event-types agent-spec)) (assoc :eventTypes (vec (:event-types agent-spec)))
-      (:event-id agent-spec) (assoc :eventId (:event-id agent-spec))
-      (:event-scope-id agent-spec) (assoc :eventScopeId (:event-scope-id agent-spec))
-      (:schedule-id agent-spec) (assoc :scheduleId (:schedule-id agent-spec)))))
-
-(defn- event-queue-run-context
-  [config body queue-result]
-  (let [agent-spec (:agent-spec body)]
-    {:settings (cond-> {:sessionId (:session-id body)
-                        :conversationId (:conversation-id body)
-                        :mode "direct"
-                        :workspaceRoot (:workspace-root config)
-                        :eventQueue (response-queue-metadata queue-result)}
-                 agent-spec (assoc :agentSpec (queued-agent-spec-summary agent-spec)))
-     :resources (cond-> {:provider "proxx"
-                         :collection (:collection-name config)}
-                  (:resource-policies agent-spec)
-                  (assoc :agentResourcePolicies (:resource-policies agent-spec)))}))
-
-(defn- event-queue-event
-  [body queue-result status event-type error]
-  (run-state/tool-event-payload
-   (:run-id body) (:conversation-id body) (:session-id body) event-type
-   (cond-> {:status status
-            :queue_position (:position queue-result)
-            :queue_concurrency (get-in queue-result [:snapshot :concurrency])
-            :queue_limit (get-in queue-result [:snapshot :queue-limit])
-            :restart_aware false}
-     error (assoc :error error))))
-
-(defn- event-queue-run
-  [config body queue-result status event-type error]
-  (let [created-at (time/now-iso)]
-    (merge {:run_id (:run-id body)
-            :session_id (:session-id body)
-            :conversation_id (:conversation-id body)
-            :created_at created-at
-            :updated_at created-at
-            :status status
-            :model (policy-model config body)
-            :error error
-            :answer nil
-            :content_parts []
-            :events [(event-queue-event body queue-result status event-type error)]
-            :trace_blocks []
-            :tool_receipts []
-            :request_messages [{:role "user" :content (:message body)}]}
-           (event-queue-run-context config body queue-result))))
-
-(defn- record-event-turn!
-  [config body queue-result status event-type error]
-  (when-let [run-id (:run-id body)]
-    (run-state/store-run!
-     run-id
-     (event-queue-run config body queue-result status event-type error))))
+     queue-result (assoc :event_queue (queue-shape/response-queue-metadata queue-result)))))
 
 (defn- mark-event-turn-started!
   [body]
@@ -460,18 +210,19 @@
            (assoc-in [:settings :eventQueue :position] 0))))
     (run-state/append-run-event!
      run-id
-     (run-state/tool-event-payload
+     (run-payload/tool-event-payload
       run-id conversation-id session-id "event_turn_started"
       {:status "running"
        :restart_aware false}))))
 
 (defn log-and-record-async-spawn-error!
+  "Record a failed admitted turn and its diagnostic event."
   [body err]
   (let [diagnostic (xrunner/error-diagnostic body err)
         run-id (:run-id body)
         conversation-id (:conversation-id body)
         session-id (:session-id body)
-        event (run-state/tool-event-payload run-id conversation-id session-id
+        event (run-payload/tool-event-payload run-id conversation-id session-id
                                             "async_spawn_failed"
                                             {:status "failed"
                                              :error (:message diagnostic)
@@ -553,47 +304,62 @@
       (await (deliver-event-turn-settlement!
               event-id settle! settlement)))))
 
+(defn- ^:async execute-admitted-turn! [body start-turn! deadline-ms]
+  (try
+    (mark-event-turn-started! body)
+    (await (run-events/flush! (:run-id body)))
+    (let [result (await (start-turn!))]
+      (await (notify-event-turn-settler! body (event-turn-settlement result deadline-ms))))
+    (catch :default err
+      (log-and-record-async-spawn-error! body err)
+      (await (run-events/persist-run! (get @run-state/runs* (:run-id body))))
+      (await (notify-event-turn-settler! body (event-turn-failure err deadline-ms))))))
+
 (defn- ^:async execute-event-turn!
-  [{:keys [queue-id body start-turn! event-turn-timeout-ms]}]
-  (let [deadline-ms (event-turn-deadline-ms event-turn-timeout-ms)]
+  [{:keys [queue-id body start-turn! admission event-turn-timeout-ms]}]
+  (try
+    (when-not (await admission)
+      (await (execute-admitted-turn! body start-turn! (event-turn-deadline-ms event-turn-timeout-ms))))
+    (catch :default error
+      (xrunner/log-async-spawn-error! body error))
+    (finally
+      (when-let [next-entry (release-event-turn! queue-id)]
+        (execute-event-turn! next-entry)))))
+
+(defn- ^:async admit-event-reservation! [config body queue-result entry gate]
+  (let [full? (= :full (:status queue-result))
+        message (when full? (str "event_agent_queue_full: pending queue limit "
+                                 (get-in queue-result [:snapshot :queue-limit]) " reached"))]
     (try
-      (mark-event-turn-started! body)
-      (let [result (await (start-turn!))]
-        (await (notify-event-turn-settler!
-                body (event-turn-settlement result deadline-ms))))
-      (catch :default err
-        (log-and-record-async-spawn-error! body err)
-        (await (notify-event-turn-settler!
-                body (event-turn-failure err deadline-ms))))
-      (finally
-        (when-let [next-entry (release-event-turn! queue-id)]
-          (execute-event-turn! next-entry))))))
+      (await (queued-run/record-event-turn! config body queue-result
+                                 (if full? "failed" "queued")
+                                 (if full? "event_turn_queue_rejected" "event_turn_queued") message))
+      ((:complete! gate) nil)
+      message
+      (catch :default error
+        ((:complete! gate) error)
+        (when-let [next-entry (release-event-turn! (:queue-id entry))]
+          (execute-event-turn! next-entry))
+        (throw error)))))
 
-(defn enqueue-event-turn!
-  "Admit an event-triggered turn to the bounded process-local FIFO.
-
-   `start-turn!` is a zero-arity function returning the full turn promise. The
-   limiter holds its slot until that promise settles. Queue state is observable
-   through the run store and the returned `:event_queue` metadata. Pending work
-   is intentionally not restart-aware; durable event replay is its recovery
-   mechanism."
+(defn ^:async enqueue-event-turn!
+  "Durably admit a run before acknowledging its reserved process-local FIFO position.
+  Await this result. The reservation precedes I/O; a promoted pending entry waits
+  for its own admission before starting. Durable event replay owns restart recovery."
   [config body start-turn!]
   (let [{:keys [concurrency queue-limit]} (event-queue-settings config)
-        entry {:queue-id (xturn-node/random-uuid!)
-               :body body
-               :event-turn-timeout-ms (:event-agent-turn-timeout-ms config)
-               :start-turn! start-turn!}
-        queue-result (reserve-event-turn! entry concurrency queue-limit)]
-    (if (= :full (:status queue-result))
-      (let [message (str "event_agent_queue_full: pending queue limit " queue-limit " reached")
-            err (js/Error. message)]
-        (record-event-turn! config body queue-result "failed" "event_turn_queue_rejected" message)
-        (log-and-record-async-spawn-error! body err)
-        (busy-error message))
+        gate (admission/gate)
+        entry {:queue-id (xturn-node/random-uuid!) :body body :admission (:promise gate)
+               :event-turn-timeout-ms (:event-agent-turn-timeout-ms config) :start-turn! start-turn!}
+        queue-result (reserve-event-turn! entry concurrency queue-limit)
+        rejection (await (admit-event-reservation! config body queue-result entry gate))]
+    (if rejection
       (do
-        (record-event-turn! config body queue-result "queued" "event_turn_queued" nil)
-        (when (= :running (:status queue-result))
-          (execute-event-turn! entry))
+        (log-and-record-async-spawn-error! body (js/Error. rejection))
+        (await (run-events/flush! (:run-id body)))
+        (await (busy-error rejection)))
+      (do
+        (when (= :running (:status queue-result)) (execute-event-turn! entry))
         (accepted-response body queue-result)))))
 
 (defn- ^:async queue-turn!
@@ -609,119 +375,21 @@
       (send-turn-and-record! runtime config body)
       (accepted-response body))))
 
-;; ── Orphaned-session reclaim ──────────────────────────────────────────
-;;
-;; A session document can claim status "running" while no live run exists:
-;; either the process that owned it restarted (different system instance),
-;; or a run in this instance died without flipping the status. Without
-;; reclaim, background trigger dispatches bounce off the corpse with
-;; agent_already_processing until the 10-minute stale reaper fires.
-
-(def DISPATCH_RECLAIM_COOLDOWN_MS 60000)
-
-(defn- runtime-owns-live-run?
-  "True when this process is actively executing work for the conversation."
-  [conversation-id]
-  (let [agent-session (active-agent-session conversation-id)]
-    (or (and agent-session (streaming? agent-session))
-        (some? (turn-control/active-turn conversation-id)))))
-
-(defn- session-updated-ms
-  "Best-effort epoch millis of the session document's last update."
-  [session]
-  (let [ts (or (:updated_at session) (:created_at session))]
-    (cond
-      (number? ts) ts
-      (string? ts) (let [ms (.getTime (js/Date. ts))]
-                     (if (js/isNaN ms) 0 ms))
-      :else 0)))
-
-(defn- session-cold?
-  "True when the document is old enough that a live-but-unregistered run
-   (e.g. one orphaned in-memory by a hot reload) cannot plausibly own it."
-  [session]
-  (>= (- (js/Date.now) (session-updated-ms session))
-      DISPATCH_RECLAIM_COOLDOWN_MS))
-
-(defn- ^:async reclaim-orphaned-session!
-  "Mark a running session document that no live run owns as failed so the
-   pending dispatch can proceed. Returns true on success; failures are
-   logged and the caller falls through to the normal busy error."
-  [body session reason]
-  (try
-    (js/console.warn "[agent-runner] reclaiming orphaned session"
-                     (str (:session-id body)) "-" reason)
-    (await (session-store/complete-session!
-            (str (:session-id body))
-            (str (or (:conversation-id body) ""))
-            {:status "failed"
-             :error (str "Session reclaimed by dispatch: " reason)
-             :messages (:messages session)}))
-    true
-    (catch :default err
-      (js/console.warn "[agent-runner] orphan reclaim failed:" err)
-      false)))
-
-(defn- ^:async reclaim-and-dispatch!
-  "Reclaim an orphaned running session, then dispatch the pending turn."
-  [runtime config body session reason]
-  (await (reclaim-orphaned-session! body session reason))
-  (await (queue-turn! runtime config body)))
-
-(defn- ^:async dispatch-with-session-gate!
-  "Resolve the session busy-gate for a direct spawn.
-
-   running + stamped by a previous system instance  → reclaim, dispatch
-   running + no live run here + document gone cold  → reclaim, dispatch
-   running + live run in this instance              → busy error
-   otherwise                                        → dispatch"
-  [runtime config body]
-  (let [session (await (session-store/get-session (:session-id body)))
-        can-send-result (session-store/session-can-send? session)
-        conversation-id (:conversation-id body)
-        agent-session (active-agent-session conversation-id)]
-    (cond
-      (:can-send can-send-result)
-      (if (and agent-session (streaming? agent-session))
-        (await (busy-error "agent_already_processing: active stream"))
-        (await (queue-turn! runtime config body)))
-
-      (not (system-instance/owned-by-current-instance? session))
-      (await (reclaim-and-dispatch! runtime config body session
-                                    "owned by previous system instance (restart)"))
-
-      (and (not (runtime-owns-live-run? conversation-id))
-           (session-cold? session))
-      (await (reclaim-and-dispatch! runtime config body session
-                                    "no live run in current system instance"))
-
-      :else
-      (await (busy-error (str "agent_already_processing: "
-                              (:reason can-send-result)))))))
-
-(defn- normalize-body
-  [_runtime payload]
-  (let [params (direct-start-payload->turn-params payload)
-        provided-session-id (:session-id params)
-        session-id (agent-turns/ensure-session-id provided-session-id)
-        conversation-id (or (:conversation-id params) (xturn-node/random-uuid!))
-        run-id (or (:run-id params) (xturn-node/random-uuid!))]
-    (assoc params
-           :session-id session-id
-           :conversation-id conversation-id
-           :run-id run-id
-           :mode "direct")))
+(def DISPATCH_RECLAIM_COOLDOWN_MS
+  "Minimum spacing between orphaned-session reclaim attempts."
+  session-gate/DISPATCH_RECLAIM_COOLDOWN_MS)
 
 (defn spawn-direct!
+  "Admit one direct turn after resolving the existing session busy gate."
   ([config payload]
    (spawn-direct! (current-runtime) config payload))
   ([runtime config payload]
    (if-not runtime
      (busy-error "Knoxx runtime unavailable for direct agent spawn")
      (let [payload (xrunner/to-cljs-map payload)
-           body (normalize-body runtime payload)
+           body (turn-request/normalize-body payload agent-turns/ensure-session-id xturn-node/random-uuid!)
            provided-session-id (or (:session_id payload)
                                    (:session-id payload))]
        (if-not provided-session-id
          (queue-turn! runtime config body)
-         (dispatch-with-session-gate! runtime config body))))))
+         (session-gate/dispatch-with-session-gate! runtime config body queue-turn!))))))

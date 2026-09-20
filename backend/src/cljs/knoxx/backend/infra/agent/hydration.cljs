@@ -2,7 +2,8 @@
   "Agent hydration orchestration: settings, passive RAG/memory hydration,
    message assembly, and tool-suite composition.  All implementation lives
    in vertical domain slices under knoxx.backend.tools.<domain>."
-  (:require [clojure.string :as str]
+  (:require [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [clojure.string :as str]
             [knoxx.backend.infra.core-memory :refer [filter-authorized-memory-hits!]]
             [knoxx.backend.domain.contracts.sources :as sources]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -16,6 +17,7 @@
             [knoxx.backend.domain.event.tools :as events]
             [knoxx.backend.domain.actor.tools :as actors]
             [knoxx.backend.infra.openplanner.tools :as openplanner]
+            [knoxx.backend.extern.wiki-tools :as wiki-tools]
             [knoxx.backend.infra.publication-draft-tool :as publication-draft]
             [knoxx.backend.domain.music :as music]
             [knoxx.backend.domain.voice.tools :as voice]
@@ -116,7 +118,7 @@
        (let [started-ms (.now js/Date)
              k (max 1 (min 12 (positive-int-or (or (:k opts) (:top-k opts) (:topK opts)) 6)))]
          (try
-           (let [result (await (openplanner-memory-search! config {:query message :k k}))
+           (let [result (await (openplanner-memory-search! (planner-scope/scoped-config config auth-context) {:query message :k k}))
                  hits (await (filter-authorized-memory-hits! config auth-context (:hits result)))]
              (assoc result :hits hits
                            :mode (or (passive-memory-hydration-mode opts) "triggered")
@@ -232,7 +234,8 @@
             (.concat (sandbox/create-sandbox-custom-tools runtime config auth-context))
             (.concat (mcp/create-mcp-custom-tools runtime config auth-context))
             (.concat (session-mycology/create-session-mycology-tools runtime config auth-context))
-            (.concat (nrepl/create-nrepl-custom-tools runtime config auth-context))))
+            (.concat (nrepl/create-nrepl-custom-tools runtime config auth-context))
+            (wiki-tools/append-wiki-tools runtime config auth-context)))
        (shared/filter-custom-tools-by-allow-set allowed-tool-ids))))
 
 (defn agent-custom-tool-suite

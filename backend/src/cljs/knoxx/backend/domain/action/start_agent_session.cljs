@@ -1,11 +1,12 @@
 (ns knoxx.backend.domain.action.start-agent-session
   "Agent session lifecycle actions."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.action.registry :refer [run-action!]]
+            [knoxx.backend.domain.action.registry :as actions]
             [knoxx.backend.domain.error-observatory :as errors]
-            [knoxx.backend.infra.agent.runner :as agents-runner]
             [knoxx.backend.infra.agent.event-policy-authority :as event-policy-authority]
-            [knoxx.backend.infra.tooling :as tooling]))
+            [knoxx.backend.infra.agent.runner :as agents-runner]
+            [knoxx.backend.infra.tooling :as tooling]
+            [knoxx.backend.law.event-scope :as event-scope]))
 
 (defn- nonblank
   [value]
@@ -37,8 +38,8 @@
 (defn- qualified-name
   [value]
   (cond
-    (keyword? value) (if-let [ns (namespace value)]
-                       (str ns "/" (name value))
+    (keyword? value) (if-let [owner (namespace value)]
+                       (str owner "/" (name value))
                        (name value))
     (nil? value) nil
     :else (some-> value str str/trim not-empty)))
@@ -141,11 +142,28 @@
    (or (get-in action [:action/with :execution-snapshot-from-event])
        (get-in action [:action/with :executionSnapshotFromEvent]))))
 
+(defn- scope-from-event? [action]
+  (boolean (or (get-in action [:action/with :scope-from-event])
+               (get-in action [:action/with :scopeFromEvent]))))
+
+(defn- action-scope [ctx action]
+  (when (scope-from-event? action)
+    (event-scope/assert-scope! (get-in ctx [:event :event/payload :scope]))))
+
+(defn- action-auth-context [scope resource-policies principal resolved]
+  (cond
+    scope (event-policy-authority/authorized-scoped-context
+           scope resource-policies principal (:role resolved) (:tool-policies resolved))
+    (some? resource-policies)
+    (event-policy-authority/authorized-context
+     resource-policies principal (:role resolved) (:tool-policies resolved))))
+
 (defn- event-overlay-requested?
   [action]
   (or (get-in action [:action/with :resource-policies-from-event])
       (get-in action [:action/with :resourcePoliciesFromEvent])
-      (execution-snapshot-from-event? action)))
+      (execution-snapshot-from-event? action)
+      (scope-from-event? action)))
 
 (defn- assert-trusted-event-overlay!
   "Refuse caller-carried agent authority outside a trusted runtime dispatch.
@@ -314,11 +332,13 @@
       (seq event-types) (assoc :event_types event-types)
       schedule-id (assoc :schedule_id schedule-id))))
 
-(defmethod run-action! :actions/start-agent-session
+(defmethod actions/run-action! :actions/start-agent-session
   [{:keys [config event trigger] :as ctx} action]
   (assert-trusted-event-overlay! ctx action)
-  (let [agent-id (action-agent-id ctx action)
-        resolved (tooling/resolve-agent-contract config agent-id (actor-id ctx nil))
+  (let [scope (action-scope ctx action)
+        run-config (if scope (event-scope/scoped-config config scope) config)
+        agent-id (action-agent-id ctx action)
+        resolved (tooling/resolve-agent-contract run-config agent-id (actor-id ctx nil))
         actor-id' (actor-id ctx resolved)
         ts (.now js/Date)
         source (agent-source-config resolved)
@@ -337,15 +357,12 @@
         :trigger-id (:trigger-id ids)
         :event-id (:event/id event)}))
     (agents-runner/spawn-direct!
-     config
+     run-config
      {:conversation_id (:conversation-id ids)
       :session_id (:session-id ids)
       :run_id (:run-id ids)
       :message rendered-message
-      :auth_context (when (some? resource-policies)
-                      (event-policy-authority/authorized-context
-                       resource-policies actor-id' (:role resolved)
-                       (:tool-policies resolved)))
+      :auth_context (action-auth-context scope resource-policies actor-id' resolved)
       :agent_spec (merge (cond-> {:contract_id agent-id
                                   :actor_id actor-id'
                                   :role (:role resolved)
@@ -367,6 +384,6 @@
                          (triggered-audit-metadata trigger event ids))
       :model (:model resolved)})))
 
-(defmethod run-action! :actions/start-agent
+(defmethod actions/run-action! :actions/start-agent
   [ctx action]
-  (run-action! ctx (assoc action :action/kind :actions/start-agent-session)))
+  (actions/run-action! ctx (assoc action :action/kind :actions/start-agent-session)))

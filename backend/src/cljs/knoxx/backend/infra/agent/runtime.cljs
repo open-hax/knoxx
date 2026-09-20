@@ -1,7 +1,8 @@
 (ns knoxx.backend.infra.agent.runtime
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.run-event-payload :refer [tool-event-payload]]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.domain.action.run-state :refer [tool-event-payload append-run-event!]]
+            [knoxx.backend.domain.action.run-state :refer [append-run-event!]]
             [knoxx.backend.domain.extension-runtime :as ext-runtime]
             [knoxx.backend.infra.agent.session :refer [active-agent-session]]
             [knoxx.backend.shape.agent :refer [streaming? follow-up! steer!]]

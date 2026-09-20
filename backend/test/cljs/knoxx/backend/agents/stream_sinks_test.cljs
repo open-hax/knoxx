@@ -1,5 +1,5 @@
 (ns knoxx.backend.agents.stream-sinks-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.realtime :as realtime]
             [knoxx.backend.infra.agent.stream.sinks :as sinks]

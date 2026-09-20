@@ -1,5 +1,5 @@
 (ns knoxx.backend.agent-hydration-test
-  (:require [cljs.test :refer [async deftest is testing]]
+  (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.eta-mu :as eta-mu-extern]
             [knoxx.backend.infra.agent.hydration :as agent-hydration]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -56,14 +56,17 @@
 
 (deftest ^:async passive-memory-hydration-failure-is-non-fatal
   (testing "OpenPlanner outage must not abort an agent turn before tools can run"
+    (let [attempted (atom nil)]
     (with-redefs [openplanner-client/enabled? (fn [_] true)
-                  openplanner-memory/openplanner-memory-search! (fn [_ _]
+                  openplanner-memory/openplanner-memory-search! (fn [config _]
+                                                                  (reset! attempted (:openplanner-org-id config))
                                                                   (js/Promise.reject (js/Error. "OpenPlanner 502")))]
       (let [result (await (agent-hydration/passive-memory-hydration!
                            {:openplanner-base-url "http://openplanner.local"
                             :openplanner-api-key "test"}
                            "conversation-a"
                            "remember prior context"
-                           nil
+                           {:org-id "hydration-org"}
                            {:memory-hydration {:enabled? true :mode :always :k 4}}))]
-        (is (nil? result))))))
+        (is (nil? result))
+        (is (= "hydration-org" @attempted)))))))

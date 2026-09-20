@@ -13,7 +13,10 @@
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
             [knoxx.backend.infra.stores.mongo-message-source :refer [->MongoMessageSource]]
             [knoxx.backend.domain.extension-runtime :as ext-runtime]
-            [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
+            [knoxx.backend.infra.actor-mailbox :as actor-mailbox]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.openplanner.scope :as planner-scope]
+            [knoxx.backend.extern.actor-tools :as actor-tools]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
             [knoxx.backend.shape.agent :refer [set-thinking-level!]]))
 
@@ -35,6 +38,7 @@
 
 (defn- wrap-tool-execute-with-agent-context!
   [tool context]
+  (actor-tools/bind-lineage! tool context)
   (when-let [execute (eta-mu-extern/tool-execute tool)]
     (eta-mu-extern/set-tool-execute!
      tool
@@ -62,19 +66,16 @@
   (history/prune-session-messages agent-spec messages))
 
 (defn- ^:async register-actor-live-route!
-  [runtime conversation-id session-id agent-spec]
-  (when-let [actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)]
-    (try
+  [runtime auth-context conversation-id session-id agent-spec]
+  (when auth-context
+    (when-let [actor-id (or (authz/ctx-actor-binding auth-context)
+                            (when (authz/ctx-permitted? auth-context "org.events.control")
+                              (some-> (:actor-id agent-spec) str str/trim not-empty)))]
       (await (actor-mailbox/register-live-session!
-              runtime
-              {:actor-id actor-id
-               :conversation-id conversation-id
-               :session-id session-id
+              (actor-mailbox/context runtime auth-context)
+              {:actor-id actor-id :conversation-id conversation-id :session-id session-id
                :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
-               :source {:registeredBy "agent-runtime"
-                        :contractId (:contract-id agent-spec)}}))
-      (catch :default err
-        (.warn js/console "[actor-mailbox] failed to register live actor route" (.-message err))))))
+               :source {:registeredBy "agent-runtime" :contractId (:contract-id agent-spec)}})))))
 
 ;; ─── Session registry ────────────────────────────────────────────────────────
 
@@ -121,7 +122,15 @@
 
 (defn- visible-session-signature
   [runtime config auth-context agent-spec]
-  (tool-catalog/visible-session-signature runtime config auth-context agent-spec))
+  (pr-str
+   {:catalog (tool-catalog/visible-session-signature runtime config auth-context agent-spec)
+    :authentication-id (:identity/authentication-id auth-context)
+    :principal-id (get-in auth-context [:axxium-principal :principal/id])
+    :org-id (authz/ctx-org-id auth-context) :user-id (authz/ctx-user-id auth-context)
+    :membership-id (authz/ctx-membership-id auth-context) :actor-id (authz/ctx-actor-binding auth-context)
+    :permissions (sort (authz/ctx-permissions auth-context))
+    :tool-policies (sort-by #(str (or (:tool-id %) (:toolId %)))
+                            (or (:tool-policies auth-context) (:toolPolicies auth-context)))}))
 
 (defn- session-provider-tools
   [runtime config tool-auth-context agent-spec allowed-tool-ids _model-id session-id conversation-id]
@@ -189,7 +198,8 @@
 
 (defn ^:async construct-session-and-ext-ctx!
   [runtime config conversation-id model-id auth-context thinking-level session-id agent-spec current-tool-signature life-cycle-event-name]
-  (let [next-session (await (create-session-manager! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec))
+  (let [config (if auth-context (planner-scope/scoped-config config auth-context) config)
+        next-session (await (create-session-manager! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec))
         ctx (ext-runtime/build-extension-ctx runtime config
                                              :conversation-id conversation-id
                                              :session-id session-id
@@ -199,6 +209,7 @@
                                 (extension-extern/event-payload {:conversationId conversation-id
                                                                  :sessionId session-id})
                                 ctx)
+    (await (register-actor-live-route! runtime auth-context conversation-id session-id agent-spec))
     (session-registry/put-active-session! active-session-registry
                                           conversation-id
                                           {:session next-session
@@ -206,10 +217,9 @@
                                            :tool-signature current-tool-signature
                                            :session-id session-id
                                            :actor-id (:actor-id agent-spec)})
-    (register-actor-live-route! runtime conversation-id session-id agent-spec)
     next-session))
 
-(defn ensure-agent-session!
+(defn ^:async ensure-agent-session!
   ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context] (ensure-agent-session! runtime config conversation-id model-id auth-context (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context thinking-level]
@@ -233,7 +243,7 @@
                   (= (str (or active-tool-signature "")) (str (or current-tool-signature ""))))
            (do
              (set-thinking-level! session thinking-level)
-             (register-actor-live-route! runtime conversation-id session-id agent-spec)
+             (await (register-actor-live-route! runtime auth-context conversation-id session-id agent-spec))
              (js/Promise.resolve session))
            (construct-this-session! "session_switch")))
        (construct-this-session! "session_start")))))
