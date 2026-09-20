@@ -260,7 +260,7 @@
        (fn [] (js/Promise.reject (js/Error. "provider unavailable")))))
       (await (queue-fixture/wait-idle!)))
     (test/is (= "failed" (get-in @run-state/runs* [run-id :status])))
-    (test/is (= "provider unavailable" (get-in @run-state/runs* [run-id :error])))
+    (test/is (= "Agent turn could not be started." (get-in @run-state/runs* [run-id :error])))
     (test/is (= "async_spawn_failed"
            (-> @run-state/runs* (get run-id) :events last :type)))
     (test/is (= 0 (:active (runner/event-turn-queue-snapshot))))

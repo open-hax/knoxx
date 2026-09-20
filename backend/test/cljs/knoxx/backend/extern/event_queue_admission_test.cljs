@@ -170,7 +170,7 @@
             (await (wait-until! #(zero? (:active (runner/event-turn-queue-snapshot))))))
           (let [persisted (await (runs/get-run provider id))]
             (test/is (= "failed" (:status persisted)))
-            (test/is (= "startup enforcement refused" (:error persisted)))
+            (test/is (= "Agent turn could not be started." (:error persisted)))
             (test/is (empty? (await (runs/list-active-runs provider (:session-id request)))))
             (test/is (= ["failed"] @observed*) "settlement observes the committed failed snapshot"))))))))
 

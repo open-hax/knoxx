@@ -20,6 +20,7 @@
             [knoxx.backend.infra.system-instance :as system-instance]
             [knoxx.backend.extern.agent-runner :as xrunner]
             [knoxx.backend.extern.agent-turn-node :as xturn-node]
+            [knoxx.backend.law.spawn-diagnostic :as spawn-diagnostic]
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.shape.agent :refer [streaming?]]))
 
@@ -348,24 +349,22 @@
        :restart_aware false}))))
 
 (defn log-and-record-async-spawn-error!
+  "Log private diagnostics; retain a public failure only for an admitted live run."
   [body err]
   (let [diagnostic (xrunner/error-diagnostic body err)
-        run-id (:run-id body)
-        conversation-id (:conversation-id body)
-        session-id (:session-id body)
-        event (run-payload/tool-event-payload run-id conversation-id session-id
-                                            "async_spawn_failed"
-                                            {:status "failed"
-                                             :error (:message diagnostic)
-                                             :diagnostic diagnostic})]
+        run-id (:run-id body)]
     (xrunner/log-async-spawn-error! body err)
-    (when run-id
-      (run-state/update-run! run-id
-                             (fn [run]
-                               (cond-> run
-                                 run (assoc :status "failed"
-                                            :error (:message diagnostic)))))
-      (run-state/append-run-event! run-id event))
+    ;; Both production store-run! callers await durable initial admission first.
+    ;; A failed pre-admission spawn (or an evicted diagnostic run) stays local;
+    ;; it must not create an orphan event queue or a nil run registry entry.
+    (when (get @run-state/runs* run-id)
+      (let [public (spawn-diagnostic/public-diagnostic diagnostic)
+            event (run-payload/tool-event-payload run-id (:conversation-id body) (:session-id body)
+                                                "async_spawn_failed"
+                                                {:status "failed" :error (:message public)
+                                                 :diagnostic public})]
+        (run-state/update-run! run-id #(assoc % :status "failed" :error (:message public)))
+        (run-state/append-run-event! run-id event)))
     diagnostic))
 
 (defn- ^:async send-turn-and-record!

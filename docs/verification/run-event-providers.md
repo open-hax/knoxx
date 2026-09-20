@@ -38,6 +38,14 @@ The default proof shows:
   already dispatched, and this boundary does not claim exactly-once control retry.
 - Completed runs and final events persist without OpenPlanner. Its optional
   archival projection remains best effort; durable run persistence fails visibly.
+- Spawn failures before admission stay in the private operator log. The proof
+  rejects 24 actual turns during hydration, verifies no missing-run events or nil
+  registry entries remain, then admits the same run ID successfully. Admitted
+  failures still produce an event, but replay and snapshots contain only fixed
+  public text, a validated HTTP error status and a stable failure code. Raw
+  upstream messages, stacks and nested diagnostic data remain private log data.
+  Diagnostic events for already evicted heap runs likewise remain log-only;
+  this does not discard or reset failures of events already admitted to the queue.
 - Mongo thread queries hide expiry before TTL cleanup, portable expiry survives
   decoding, legacy cache metadata stays outside application values, and the
   disposable session cache is bounded with provider ownership preserved.
