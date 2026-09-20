@@ -11,7 +11,7 @@
   ::reservation-token)
 
 (defn ^:async prepare!
-  "Capture this provider's exact preimage before the attempt writes anything."
+  "Prepare an exact provider preimage before live claims; may reserve an inert generation."
   [store id record]
   (law/validate! record)
   (when-not (satisfies? port/IStartupAdmission store)
