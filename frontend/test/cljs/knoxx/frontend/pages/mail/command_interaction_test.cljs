@@ -1,6 +1,7 @@
 (ns knoxx.frontend.pages.mail.command-interaction-test
   "Human commands and agent invalidations preserve canonical content and unfinished work."
   (:require ["@testing-library/react" :as rtl]
+            ["react-router-dom" :as router]
             [cljs.test :as t]
             [helix.core :as hx]
             [knoxx.frontend.pages.mail.api :as api]
@@ -99,3 +100,38 @@
       (await (rtl/act (fn ^:async settle-send [] (@release {:ok true :entry entry}) (await (js/Promise.resolve)))))
       (await (wait-for #(.queryByText rendered "Message delivered.")))
       (t/is (= [["inbox" "all"] ["outbox" "all"] ["outbox" "all"]] @calls)))))
+
+(hx/defnc routed-mailbox "Exercise mailbox actions through the real router." []
+  (let [navigate (router/useNavigate) location (router/useLocation)]
+    (if (= "/mail" (.-pathname location))
+      (hx/$ page/mail-page-body {:initial-actor-id "actor-1" :navigate navigate})
+      (hx/$ :p "Reference destination"))))
+
+(t/deftest ^:async mailbox-reference-navigation-can-be-cancelled-without-losing-the-draft
+  (let [original (.-confirm js/window) confirmations (atom 0)]
+    (set! api/list-mailbox
+          (fn [_ _] (js/Promise.resolve
+                     (assoc response :entries [(assoc entry :contentRef {:run-id "run-1"
+                                                                       :session-id "session-1"
+                                                                       :event-id "event-1"})]))))
+    (set! (.-confirm js/window) (fn [_] (swap! confirmations inc) false))
+    (try
+      (let [^js rendered (rtl/render
+                          (hx/$ router/MemoryRouter
+                            {:initialEntries #js ["/mail"]
+                             :future #js {:v7_startTransition true :v7_relativeSplatPath true}}
+                            (hx/$ routed-mailbox)))]
+        (await (wait-for #(.queryByText rendered "Short preview")))
+        (fill! rendered "Message" "A draft that must survive cancelled navigation")
+        (doseq [label ["Open run" "Open session" "Open event"]]
+          (click! rendered label)
+          (t/is (nil? (.queryByText rendered "Reference destination")))
+          (t/is (= "A draft that must survive cancelled navigation"
+                   (some-> (.queryByLabelText rendered "Message") .-value))))
+        (t/is (= 3 @confirmations))
+        (set! (.-confirm js/window) (constantly true))
+        (click! rendered "Open run")
+        (t/is (some? (.queryByText rendered "Reference destination")))
+        (t/is (nil? (.queryByLabelText rendered "Message")))
+        (t/is @closed "Confirmed navigation unmounts the mailbox and closes its subscription"))
+      (finally (set! (.-confirm js/window) original)))))
