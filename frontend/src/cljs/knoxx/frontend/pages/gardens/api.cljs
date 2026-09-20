@@ -4,12 +4,12 @@
   (:require [knoxx.frontend.lib.api :as api]
             [knoxx.frontend.pages.gardens.logic :as logic]))
 
-(def list-path "/api/publications/gardens")
+(def list-path "Authenticated deployment review endpoint." "/api/publications/gardens")
 
-(defn load-deployment!
+(defn ^:async load-deployment!
+  "Normalize the authenticated deployment review response."
   []
-  (-> (api/request list-path)
-      (.then logic/normalize-deployment)))
+  (logic/normalize-deployment (await (api/request list-path))))
 
 (defn reconcile-publication!
   "Demand reconciliation of one publication and answer with its receipt.

@@ -4,7 +4,9 @@
    restart-decision helpers in src/pages/DocumentsPage.tsx."
   (:require [clojure.string :as str]))
 
-(defn format-eta [seconds]
+(defn format-eta
+  "Format a finite duration, or indicate that no estimate is available."
+  [seconds]
   (if (or (not (number? seconds)) (zero? seconds) (not (js/Number.isFinite seconds)))
     "Estimating..."
     (let [mins (js/Math.floor (/ seconds 60))
@@ -28,13 +30,17 @@
           d-chunks (max 0 (- (:processed last-sample) (:processed first-sample)))]
       (/ d-chunks dt))))
 
-(defn remaining-chunks [progress]
+(defn remaining-chunks
+  "Return the nonnegative number of chunks still to process."
+  [progress]
   (if progress
     (max 0 (- (or (:totalChunks progress) 0)
               (or (:processedChunks progress) 0)))
     0))
 
-(defn eta-seconds [remaining rate]
+(defn eta-seconds
+  "Estimate seconds remaining from a positive ingestion rate."
+  [remaining rate]
   (if (pos? rate) (/ remaining rate) 0))
 
 (defn push-sample
@@ -45,26 +51,38 @@
        (take-last 120)
        vec))
 
-(defn toggle-doc [selected path]
+(defn toggle-doc
+  "Toggle one document path in the selected set."
+  [selected path]
   (if (contains? selected path)
     (disj selected path)
     (conj selected path)))
 
-(defn toggle-all [selected documents]
+(defn toggle-all
+  "Select all document paths, or clear a complete selection."
+  [selected documents]
   (if (= (count selected) (count documents))
     #{}
     (into #{} (map :relativePath) documents)))
 
-(defn should-force-fresh? [{:keys [stale canResumeForum]}]
+(defn should-force-fresh?
+  "Choose a fresh run for a stalled resumable forum ingestion."
+  [{:keys [stale canResumeForum]}]
   (boolean (and stale canResumeForum)))
 
-(defn no-active-run? [{:keys [active canResumeForum]}]
-  (boolean (and (not active) (not canResumeForum))))
+(defn no-active-run?
+  "Report whether neither active nor resumable ingestion exists."
+  [{:keys [active canResumeForum]}]
+  (and (not active) (not canResumeForum)))
 
-(defn restart-message [force-fresh?]
+(defn restart-message
+  "Describe whether restart resumed progress or began a fresh run."
+  [force-fresh?]
   (if force-fresh?
     "Ingestion was stalled; started fresh forum ingestion from scratch."
     "Ingestion restart requested. Resuming from saved progress..."))
 
-(defn no-active-restart-error? [message]
+(defn no-active-restart-error?
+  "Recognize the server refusal for a disappeared ingestion run."
+  [message]
   (str/includes? (or message "") "No active ingestion to restart"))
