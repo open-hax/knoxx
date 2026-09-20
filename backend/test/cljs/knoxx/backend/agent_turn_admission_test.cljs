@@ -5,10 +5,10 @@
             [knoxx.backend.extern.agent-turn-fixture :as fixture]
             [knoxx.backend.infra.agent.policy :as policy]
             [knoxx.backend.infra.agent.turn :as turns]
-            [knoxx.backend.infra.stores.mongo-session-store :as sessions]
             [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.infra.stores.session-titles :as titles]
-            [knoxx.backend.shape.session-persistence :as runs]))
+            [knoxx.backend.shape.session-persistence :as runs]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (deftest ^:async refused-initial-thread-prevents-published-run-and-model-call
   (await
@@ -16,13 +16,15 @@
     {:run_id "fixture-run" :session_id "fixture-session" :conversation_id "fixture-conversation"}
     (^:async fn []
       (let [failure (ex-info "Thread ledger refused admission" {:status 503 :code "fixture_thread_refused"})
-            model-calls (atom 0)
+            model-calls (atom 0) claim! startup/claim-startup! provider @registry/session-store*
             context {:org-id "admission-org" :user-id "admission-user" :membership-id "admission-member"
                      :permissions ["agent.chat.use"]}]
         (with-redefs [policy/enforce-chat-policy! (fn [_ _] true)
                       titles/maybe-prime-session-title! (fn [& _] nil)
                       turns/hydrate-and-materialize! (fn [& _] [nil nil [] nil])
-                      sessions/put-session! (fn ([_] (throw failure)) ([_ _] (throw failure)))
+                      startup/claim-startup! (^:async fn [store record view]
+                                                (if (identical? store provider)
+                                                  (await (claim! store record view)) (throw failure)))
                       turns/prompt-and-await! (fn [& _] (swap! model-calls inc))]
           (try
             (await (turns/send-agent-turn!

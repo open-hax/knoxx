@@ -11,11 +11,11 @@
             [knoxx.backend.infra.agent.tool-catalog :as catalog]
             [knoxx.backend.infra.agent.turn :as turns]
             [knoxx.backend.infra.run-events :as events]
-            [knoxx.backend.infra.stores.mongo-session-store :as threads]
             [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.infra.stores.session-titles :as titles]
             [knoxx.backend.shape.agent :as agent]
-            [knoxx.backend.shape.session-persistence :as runs]))
+            [knoxx.backend.shape.session-persistence :as runs]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (def ^:private seed {:run_id "startup-seed" :session_id "startup-seed" :conversation_id "startup-seed"})
 (defn- provider-session [] (reify agent/IAgentSession (set-thinking-level! [_ _] nil) (messages [_] [])))
@@ -28,12 +28,11 @@
   (try {:value (await (turns/send-agent-turn! {} {} request))} (catch :default error {:error error})))
 
 (defn- controlled-writes [phase entered* blocker failure]
-  (let [put! runs/put-run! append! runs/append-event! put-thread! threads/put-session!
+  (let [claim! startup/claim-startup! append! runs/append-event! provider @registry/session-store*
         refuse! (^:async fn [] (reset! entered* true) (await (:promise blocker)) (throw failure))]
-    {:run! (^:async fn [store run] (when (= phase :run) (await (refuse!))) (await (put! store run)))
-     :thread! (fn ([thread] ((^:async fn [] (when (= phase :thread) (await (refuse!)))
-                              (await (put-thread! nil thread)))))
-                  ([db thread] (put-thread! db thread)))
+    {:claim! (^:async fn [store record view]
+               (when (= phase (if (identical? store provider) :run :thread)) (await (refuse!)))
+               (await (claim! store record view)))
      :event! (^:async fn [store event]
                (when (= phase :event) (await (refuse!))) (await (append! store event)))}))
 
@@ -68,7 +67,7 @@
                     hydration/passive-memory-hydration! (fn ([_ _ _] nil) ([_ _ _ _] nil) ([_ _ _ _ _] nil))
                     titles/maybe-prime-session-title! (fn [& _] nil)
                     turns/prompt-and-await! (fn [& _] (swap! prompts* inc))
-                    runs/put-run! (:run! writes) threads/put-session! (:thread! writes)
+                    startup/claim-startup! (:claim! writes)
                     runs/append-event! (:event! writes)]
         (await (assert-owned-cleanup!
                 request overlap? {:entered* entered* :settled* settled* :session session :replacement replacement

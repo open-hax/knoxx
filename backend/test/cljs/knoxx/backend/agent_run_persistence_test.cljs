@@ -7,10 +7,10 @@
             [knoxx.backend.infra.agent.turn :as turns]
             [knoxx.backend.infra.openplanner.memory :as memory]
             [knoxx.backend.infra.run-event-payload :as payload]
-            [knoxx.backend.infra.run-events :as events]
             [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.infra.stores.session-titles :as titles]
-            [knoxx.backend.shape.session-persistence :as runs]))
+            [knoxx.backend.shape.session-persistence :as runs]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (def ^:private coordinates
   {:run_id "persistence-fixture" :session_id "persistence-session"
@@ -26,7 +26,7 @@
         (with-redefs [policy/enforce-chat-policy! (fn [_ _] true)
                       titles/maybe-prime-session-title! (fn [& _] nil)
                       turns/hydrate-and-materialize! (fn [& _] [nil nil [] nil])
-                      events/persist-run! (^:async fn [_run] (throw failure))
+                      startup/claim-startup! (^:async fn [_store _record _view] (throw failure))
                       turns/prompt-and-await! (fn [& _] (reset! called* true))]
           (try
             (await (turns/send-agent-turn! {} {}

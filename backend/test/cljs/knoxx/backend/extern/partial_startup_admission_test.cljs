@@ -3,8 +3,10 @@
   (:require [cljs.test :as test]
             [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.extern.agent-turn-fixture :as fixture]
+            [knoxx.backend.extern.provider-recovery-fixture :as disk]
             [knoxx.backend.infra.agent.initial-admission :as initial]
             [knoxx.backend.infra.run-events :as events]
+            [knoxx.backend.infra.stores.clio-thread-store :as clio-threads]
             [knoxx.backend.infra.stores.mongo-session-store :as threads]
             [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.shape.session-persistence :as runs]
@@ -47,7 +49,7 @@
                 (mapv :type (await (runs/events-since provider id nil))))
              "Accepted event facts survive compensation")
     (events/install! provider)
-    (await (start! (str id "-retry") session (fn [])))
+    (test/is (nil? (await (refusal! #(start! (str id "-retry") session (fn []))))))
     (test/is (= (str id "-retry") (:run_id (await (threads/get-session session)))))))
 
 (test/deftest ^:async each-partial-admission-and-lost-ack-settles-before-retry
@@ -86,3 +88,27 @@
                          "An unavailable provider is not reported as settled")
                 (test/is (= "failed" (:status (await (threads/get-session "unconfirmed-thread")))))
                 (test/is (:can-send (threads/session-can-send? (await (threads/get-session "unconfirmed-thread")))))))))))
+
+(test/deftest ^:async conditional-thread-writes-invalidate-only-their-provider-cache
+  (await (fixture/with-run!
+          seed
+          (^:async fn []
+            (let [record {:startup_token "cache-owner" :run_id "cache-run" :session_id "cache-thread"
+                          :conversation_id "cache-conversation" :status "running"}
+                  captured (threads/startup-provider)
+                  view (await (startup/startup-view captured "cache-thread"))
+                  original @threads/provider* directory (disk/temporary-directory)]
+              (try
+                (await (startup/claim-startup! captured record view))
+                (await (threads/get-session "cache-thread"))
+                (test/is (= "running" (:status (threads/get-session-sync "cache-thread"))))
+                (await (startup/settle-startup! captured record view))
+                (test/is (nil? (threads/get-session-sync "cache-thread")))
+                (test/is (not-any? #(= "cache-thread" (:session_id %)) (threads/active-session-snapshots)))
+                (test/is (= "failed" (:status (await (threads/get-session "cache-thread")))))
+                (threads/install! (clio-threads/open! {:directory directory}))
+                (await (threads/put-session! (assoc record :run_id "replacement" :startup_token "replacement")))
+                (await (startup/settle-startup! captured record view))
+                (test/is (= "replacement" (:run_id (threads/get-session-sync "cache-thread"))))
+                (test/is (= "running" (:status (threads/get-session-sync "cache-thread"))))
+                (finally (threads/install! original) (disk/remove! directory))))))))

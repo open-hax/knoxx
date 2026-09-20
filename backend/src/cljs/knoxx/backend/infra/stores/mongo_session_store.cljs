@@ -5,6 +5,7 @@
             [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.infra.stores.mongo-thread-store :as mongo]
             [knoxx.backend.law.thread-store :as law]
+            [knoxx.backend.shape.startup-admission :as startup]
             [knoxx.backend.shape.thread-store :as protocol]))
 
 (def SESSION_TTL_SECONDS 3600)
@@ -37,15 +38,28 @@
                 {:provider (mongo/create-store handle) :owner handle}
                 (throw (ex-info "Thread persistence is not initialized" {:status 503 :code "thread_provider_unavailable"})))))
 
-(defn startup-provider
-  "Return the currently selected conversation provider for conditional startup admission."
-  []
-  (:provider (selected nil)))
-
 (defn- forget! [owner id]
   (when (identical? owner (get @cache-owners id))
     (swap! cache-owners dissoc id)
     (swap! session-cache* dissoc id)))
+
+(defn startup-provider
+  "Capture the selected provider; conditional mutations invalidate only its disposable cache."
+  []
+  (let [{:keys [provider owner]} (selected nil)]
+    (when-not (satisfies? startup/IStartupAdmission provider)
+      (throw (ex-info "The thread provider cannot safely settle partial startup"
+                      {:status 503 :code "startup_admission_unsupported"})))
+    (reify startup/IStartupAdmission
+      (startup-view [_ id] (startup/startup-view provider id))
+      (claim-startup! [_ record view]
+        ((^:async fn []
+           (try (await (startup/claim-startup! provider record view))
+                (finally (forget! owner (:session_id record)))))))
+      (settle-startup! [_ record view]
+        ((^:async fn []
+           (try (await (startup/settle-startup! provider record view))
+                (finally (forget! owner (:session_id record))))))))))
 
 (defn- prune-cache! [now]
   (let [live (into {} (filter (fn [[id value]] (clock/cache-live? value now (law/ttl-ms id)))) @session-cache*)

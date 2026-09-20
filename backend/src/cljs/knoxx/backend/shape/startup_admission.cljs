@@ -3,7 +3,7 @@
 
 (defprotocol IStartupAdmission
   (startup-view [store id]
-    "Capture an opaque provider preimage; only this provider may interpret it.")
+    "Prepare an opaque provider preimage; may reserve an inert generation, never a live thread.")
   (claim-startup! [store record view]
     "Admit this attempt only from the exact preimage and permitted prior owner.")
   (settle-startup! [store record view]

@@ -28,7 +28,7 @@
 (test/deftest ^:async pre-admission-errors-stay-local-and-do-not-poison-same-id-retry
   (await
    (fixture/with-run!
-    coordinates
+    (assoc coordinates :status "completed")
     (^:async fn []
       (let [before @state/runs*
             logged* (atom [])

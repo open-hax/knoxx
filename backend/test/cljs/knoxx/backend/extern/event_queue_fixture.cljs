@@ -2,7 +2,8 @@
   "Real Clio persistence and finite completion waits for event FIFO regressions."
   (:require [knoxx.backend.extern.agent-turn-fixture :as fixture]
             [knoxx.backend.infra.agent.runner :as runner]
-            [knoxx.backend.infra.run-events :as events]))
+            [knoxx.backend.infra.run-events :as events]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (defn ^:async wait-until!
   "Wait for the asserted state, refusing an unbounded or silently unfinished test."
@@ -34,12 +35,15 @@
     {:run_id "queue-fixture-seed" :session_id "queue-fixture-seed"
      :conversation_id "queue-fixture-seed"}
     (^:async fn []
-      (let [persist! events/persist-run! ids* (atom #{})]
+      (let [persist! events/persist-run! claim! startup/claim-startup! ids* (atom #{})]
         (runner/reset-event-turn-queue!)
         (runner/reset-event-turn-settlers!)
         (with-redefs [events/persist-run! (^:async fn [run]
                                           (swap! ids* conj (:run_id run))
-                                          (await (persist! run)))]
+                                          (await (persist! run)))
+                      startup/claim-startup! (^:async fn [store record view]
+                                                (swap! ids* conj (:run_id record))
+                                                (await (claim! store record view)))]
           (try
             (await (verify!))
             (await (wait-idle!))

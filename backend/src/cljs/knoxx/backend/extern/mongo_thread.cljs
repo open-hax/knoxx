@@ -18,7 +18,7 @@
                        :else js/NaN)]
       ;; A row may expire between the query and decoding. Retain its exact
       ;; portable expiry so caching cannot grant it another full lifetime.
-      (when (and (js/Number.isFinite expiry) (> expiry (.now js/Date)))
+      (when (and (not (true? (aget native "startup_placeholder"))) (js/Number.isFinite expiry) (> expiry (.now js/Date)))
         (-> (js->clj native :keywordize-keys true)
             (dissoc :_id :createdAt :updatedAt :startup_cas_token)
             (assoc :expiresAt (.toISOString (js/Date. expiry))))))))
@@ -73,8 +73,8 @@
     (decode-session (await (.findOneAndUpdate
              coll
              (clj->js (identity-query session observed))
-             (clj->js (cond-> {:$set doc :$setOnInsert {:createdAt now}}
-                        (seq unbound) (assoc :$unset (zipmap unbound (repeat "")))))
+             (clj->js {:$set doc :$setOnInsert {:createdAt now}
+                        :$unset (assoc (zipmap unbound (repeat "")) :startup_placeholder "")})
              #js {"upsert" true "returnDocument" "after"})))))
 
 (defn ^:async update-session-doc! [db session-id updates]
@@ -126,11 +126,29 @@
     (await (.createIndex coll #js {"status" 1}))
     (await (.createIndex coll #js {"expiresAt" 1} #js {"expireAfterSeconds" 0}))))
 
+(defn- ^:async reserve-startup-view! [coll id]
+  (let [now (js/Date.)
+        placeholder #js {"session_id" id "startup_placeholder" true
+                         "startup_cas_token" (crypto/randomUUID)
+                         "createdAt" now "updatedAt" now
+                         "expiresAt" (js/Date. (+ (.getTime now) (* 1000 (session-ttl-seconds id))))}]
+    (try
+      (await (.insertOne coll placeholder #js {"writeConcern" #js {"w" "majority" "j" true}}))
+      placeholder
+      (catch :default error (if (duplicate-key? error) nil (throw error))))))
+
 (defn ^:async startup-view!
-  "Capture an opaque primary BSON preimage, including metadata and expired rows."
+  "Capture a primary BSON generation; absence reserves an invisible journaled placeholder.
+   Claims only replace this generation, so physical deletion cannot resurrect a late insert."
   [db id]
-  {:native (await (.findOne (.collection db COLLECTION_NAME) #js {"session_id" id}
-                            #js {"readPreference" "primary"}))})
+  (let [coll (.collection db COLLECTION_NAME)]
+    (loop [attempt 0]
+      (if-let [row (or (await (.findOne coll #js {"session_id" id} #js {"readPreference" "primary"}))
+                      (await (reserve-startup-view! coll id)))]
+        {:native row}
+        (if (< attempt 31) (recur (inc attempt))
+          (throw (ex-info "Thread changed repeatedly while preparing startup"
+                          {:status 503 :code "thread_store_contention"})))))))
 
 (defn startup-value
   "Expose only the live portable conversation from an opaque startup preimage."
@@ -156,26 +174,29 @@
     (when old (aset document "_id" (aget old "_id")))
     document))
 
+(defn- startup-query [old]
+  #js {"_id" (aget old "_id") "$expr" #js {"$eq" #js ["$$ROOT" #js {"$literal" old}]}})
+
+(defn- assert-startup-capacity! [query document]
+  ;; A successful claim must also fit its later full-preimage failure settlement.
+  ;; Reserve 4 KiB for driver command metadata and the fixed failure fields.
+  (let [document-size (.calculateObjectSize BSON document)
+        current-size (+ (.calculateObjectSize BSON query) document-size)
+        settlement-size (+ (.calculateObjectSize BSON (startup-query document)) document-size)]
+    (when (> (+ (max current-size settlement-size) 4096) (* 16 1024 1024))
+      (throw (ex-info "Thread startup and settlement exceed the bounded command size"
+                      {:status 413 :code "thread_startup_too_large"})))))
+
 (defn ^:async startup-cas!
-  "Journal a full-preimage startup claim/fence; a late old write cannot overwrite it."
+  "Journal an exact generation replacement; never insert or upsert a late startup write."
   [db view record]
   (let [coll (.collection db COLLECTION_NAME) old (:native view)
         document (startup-document view record)
-        options #js {"writeConcern" #js {"w" "majority" "j" true}}]
+        query (startup-query old)]
+    (assert-startup-capacity! query document)
     (try
-      (if old
-        (let [query #js {"_id" (aget old "_id")
-                        "$expr" #js {"$eq" #js ["$$ROOT" #js {"$literal" old}]}}
-              _ (when (> (+ (.calculateObjectSize BSON query) (.calculateObjectSize BSON document) 4096)
-                         (* 16 1024 1024))
-                  (throw (ex-info "Thread startup CAS exceeds its bounded command size"
-                                  {:status 413 :code "thread_startup_too_large"})))
-              result (await (.replaceOne coll query document options))]
-          (when (= 1 (.-matchedCount result)) (decode-session document)))
-        (do
-          (when (> (+ (.calculateObjectSize BSON document) 4096) (* 16 1024 1024))
-            (throw (ex-info "Thread startup record exceeds its bounded size"
-                            {:status 413 :code "thread_startup_too_large"})))
-          (await (.insertOne coll document options)) (decode-session document)))
+      (let [result (await (.replaceOne coll query document
+                         #js {"writeConcern" #js {"w" "majority" "j" true}}))]
+        (when (= 1 (.-matchedCount result)) (decode-session document)))
       (catch :default error
         (if (duplicate-key? error) nil (throw error))))))

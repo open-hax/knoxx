@@ -7,7 +7,8 @@
             [knoxx.backend.infra.agent.runner :as runner]
             [knoxx.backend.infra.run-events :as events]
             [knoxx.backend.infra.stores.session-store-registry :as registry]
-            [knoxx.backend.shape.session-persistence :as runs]))
+            [knoxx.backend.shape.session-persistence :as runs]
+            [knoxx.backend.shape.startup-admission :as startup]))
 
 (def ^:private config {:event-agent-concurrency 1 :event-agent-queue-limit 1})
 
@@ -66,11 +67,11 @@
    (with-queue!
     (^:async fn [_provider]
       (let [admission (deferred) first-turn (deferred) started* (atom [])
-            persist! events/persist-run!]
-        (with-redefs [events/persist-run!
-                      (^:async fn [run]
+            claim! startup/claim-startup!]
+        (with-redefs [startup/claim-startup!
+                      (^:async fn [store run view]
                         (when (= "waiting-second" (:run_id run)) (await (:promise admission)))
-                        (await (persist! run)))]
+                        (await (claim! store run view)))]
           (await (runner/enqueue-event-turn! config (body "waiting-first")
                    (fn [] (swap! started* conj "first") (:promise first-turn))))
           (let [second-result (runner/enqueue-event-turn! config (body "waiting-second")
@@ -105,12 +106,12 @@
   (await
    (with-queue!
     (^:async fn [_provider]
-      (let [persist! events/persist-run! started* (atom []) id "admission-refused"]
-        (with-redefs [events/persist-run!
-                      (^:async fn [run]
+      (let [claim! startup/claim-startup! started* (atom []) id "admission-refused"]
+        (with-redefs [startup/claim-startup!
+                      (^:async fn [store run view]
                         (if (= id (:run_id run))
                           (throw (ex-info "disk refused" {:code "queue_admission_refused"}))
-                          (await (persist! run))))]
+                          (await (claim! store run view))))]
           (let [result (await (outcome! #(runner/enqueue-event-turn! config (body id)
                                            (fn [] (swap! started* conj "refused")))))]
             (test/is (= "queue_admission_refused" (:code (ex-data (:error result)))))
@@ -125,14 +126,14 @@
   (await
    (with-queue!
     (^:async fn [_provider]
-      (let [persist! events/persist-run! first-turn (deferred) reject-pending (deferred)
+      (let [claim! startup/claim-startup! first-turn (deferred) reject-pending (deferred)
             started* (atom [])]
-        (with-redefs [events/persist-run!
-                      (^:async fn [run]
+        (with-redefs [startup/claim-startup!
+                      (^:async fn [store run view]
                         (when (= "pending-refused" (:run_id run))
                           (await (:promise reject-pending))
                           (throw (ex-info "pending write refused" {:code "pending_refused"})))
-                        (await (persist! run)))]
+                        (await (claim! store run view)))]
           (try
             (await (runner/enqueue-event-turn! config (body "pending-owner")
                      (fn [] (swap! started* conj "owner") (:promise first-turn))))
