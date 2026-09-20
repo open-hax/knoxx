@@ -3,6 +3,7 @@
             ["node:os" :as os]
             ["node:path" :as node-path]
             [cljs.test :as t]
+            [clojure.string :as str]
             [knoxx.frontend.infra.migration-build :as build]
             [knoxx.frontend.infra.migration-imports :as imports]))
 
@@ -391,3 +392,15 @@
     (t/is (thrown-with-msg?
             js/Error #"Unsupported Vite migration configuration"
             (inspect-config! "vite.config.ts" (vite-config properties))))))
+
+(t/deftest canonical-html-build-precedes-the-authoritative-shadow-output
+  (let [scripts {"build:bridge" "vite build --config vite.bridge.config.ts"
+                 "build:app-bridge" "vite build --config vite.app-bridge.config.ts"}
+        html-before (str/replace (production-build) "shadow-cljs release app"
+                                 "vite build --config vite.config.ts && shadow-cljs release app")
+        html-after (str/replace (production-build) "shadow-cljs release app"
+                                "shadow-cljs release app && vite build --config vite.config.ts")
+        configs #(assoc (bridge-configs (assoc scripts "build" %))
+                        "vite.config.ts" (vite-config "build:{copyPublicDir:false}"))]
+    (t/is (= {} (inspect-configs! (configs html-before))))
+    (t/is (thrown? js/Error (inspect-configs! (configs html-after))))))
