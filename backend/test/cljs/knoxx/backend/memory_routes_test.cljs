@@ -1,6 +1,6 @@
 (ns knoxx.backend.memory-routes-test
   (:require [cljs.test :refer [deftest is]]
-            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.openplanner-fixture :as planner-fixture]
             [knoxx.backend.infra.routes.memory :as memory-routes]
             [knoxx.backend.shape.memory-sessions :as memory-shape]))
 
@@ -77,6 +77,7 @@
                2 {:rows [{:session "s3"}] :has_more true}
                3 {:rows [{:session "s4"}] :has_more false}}
         openplanner-sessions! (fn [_client opts]
+                                (is (= "memory-org" (:org_id opts)))
                                 (let [offset (:offset opts)]
                                   (swap! page-offsets* conj offset)
                                   (js/Promise.resolve (get pages offset {:rows [] :has_more false}))))
@@ -87,10 +88,8 @@
                                           (js/Promise.resolve [{:extra "{}"}]))
         session-matches-page-actor-filter? (fn [_config _rows _actor-id _exclude-actor-ids] true)
         result (js->clj (await (memory-routes/fetch-authorized-session-pages!
-                                {:openplanner-client (reify openplanner-client/IOpenPlannerClient
-                                                       (sessions! [client opts]
-                                                         (openplanner-sessions! client opts)))}
-                                {} "chat_primary" [] nil
+                                {:openplanner-client (planner-fixture/client {:sessions! openplanner-sessions!})}
+                                {:org-id "memory-org"} "chat_primary" [] nil
                                 authorized-session-ids! fetch-openplanner-session-rows!
                                 session-matches-page-actor-filter? 1 0 [] 3))
                         :keywordize-keys true)]
@@ -101,7 +100,8 @@
 
 (deftest ^:async fetch-authorized-session-pages-honors-excluded-actors
   (let [pages {0 {:rows [{:session "s1"} {:session "s2"}] :has_more false}}
-        openplanner-sessions! (fn [_client _opts]
+        openplanner-sessions! (fn [_client opts]
+                                (is (= "memory-org" (:org_id opts)))
                                 (js/Promise.resolve (get pages 0)))
         authorized-session-ids! (fn [_config _ctx session-ids]
                                   (js/Promise.resolve (set (map str session-ids))))
@@ -109,14 +109,12 @@
                                           (js/Promise.resolve [{:extra (if (= session-id "s1")
                                                                          "{\"actor_id\":\"pi\"}"
                                                                          "{\"actor_id\":\"chat_primary\"}")}]))
-        session-matches-page-actor-filter? (fn [_config rows _actor-id exclude-actor-ids]
+        session-matches-page-actor-filter? (fn [_config rows _actor-id _exclude-actor-ids]
                                              (not= "pi"
                                                    (some-> rows first :extra js/JSON.parse (aget "actor_id"))))
         result (js->clj (await (memory-routes/fetch-authorized-session-pages!
-                                {:openplanner-client (reify openplanner-client/IOpenPlannerClient
-                                                       (sessions! [client opts]
-                                                         (openplanner-sessions! client opts)))}
-                                {} nil ["pi"] nil
+                                {:openplanner-client (planner-fixture/client {:sessions! openplanner-sessions!})}
+                                {:org-id "memory-org"} nil ["pi"] nil
                                 authorized-session-ids! fetch-openplanner-session-rows!
                                 session-matches-page-actor-filter? 10 0 [] 10))
                         :keywordize-keys true)]
@@ -124,7 +122,8 @@
 
 (deftest ^:async fetch-authorized-session-pages-honors-contract-id
   (let [pages {0 {:rows [{:session "s1"} {:session "s2"}] :has_more false}}
-        openplanner-sessions! (fn [_client _opts]
+        openplanner-sessions! (fn [_client opts]
+                                (is (= "memory-org" (:org_id opts)))
                                 (js/Promise.resolve (get pages 0)))
         authorized-session-ids! (fn [_config _ctx session-ids]
                                   (js/Promise.resolve (set (map str session-ids))))
@@ -134,10 +133,8 @@
                                                                          "{\"contract_id\":\"other_agent\"}")}]))
         session-matches-page-actor-filter? (fn [_config _rows _actor-id _exclude-actor-ids] true)
         result (js->clj (await (memory-routes/fetch-authorized-session-pages!
-                                {:openplanner-client (reify openplanner-client/IOpenPlannerClient
-                                                       (sessions! [client opts]
-                                                         (openplanner-sessions! client opts)))}
-                                {} nil [] "fork_tales_creative_director"
+                                {:openplanner-client (planner-fixture/client {:sessions! openplanner-sessions!})}
+                                {:org-id "memory-org"} nil [] "fork_tales_creative_director"
                                 authorized-session-ids! fetch-openplanner-session-rows!
                                 session-matches-page-actor-filter? 10 0 [] 10))
                         :keywordize-keys true)]
