@@ -1,6 +1,7 @@
 (ns knoxx.backend.domain.local-openplanner-translations
   "Tenant-scoped translation projections with immutable candidate generations."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.local-openplanner-events :as events]
             [knoxx.backend.domain.node.crypto :as crypto]
             [knoxx.backend.law.local-openplanner :as law]
             [knoxx.backend.law.openplanner-translation :as contract]
@@ -107,7 +108,10 @@
 
 (defn- document-meta [state id scope segments]
   (let [source (last (filter #(and (= id (or (get-in % [:extra :document_id]) (:id %)))
-                                    (= (:org_id scope) (get-in % [:extra :org_id]))
+                                    (exact-scope? (merge {:project nil :garden_id nil} scope)
+                                                  {:org_id (events/event-org %)
+                                                   :project (events/event-project %)
+                                                   :garden_id (get-in % [:extra :garden_id])})
                                     (not= "translation.segment" (:kind %)))
                              (map #(get-in state [:events %]) (:event-order state))))
         extra (:extra source)]
@@ -123,7 +127,9 @@
   (checked contract/TenantScopeRequest scope)
   (let [exact (merge {:project nil :garden_id nil} scope)
         segments (filterv #(exact-scope? exact %) (current-segments state (assoc scope :document_id id :target_lang language)))]
-    {:document (document-meta state id scope segments) :segments segments :summary (summary segments)}))
+    (when (empty? segments)
+      (throw (ex-info "Translation document not found" {:status 404})))
+    {:document (document-meta state id exact segments) :segments segments :summary (summary segments)}))
 
 (defn documents
   "Group current translation relations within the authorized tenant."
@@ -133,7 +139,7 @@
                         (current-segments state opts))
         rows (mapv (fn [[key segments]]
                      (let [counts (summary segments)
-                           metadata (document-meta state (:document_id key) opts segments)]
+                           metadata (document-meta state (:document_id key) (merge opts key) segments)]
                        (merge key counts {:title (:title metadata) :document_status (:visibility metadata)}))) groups)]
     {:documents (vec (sort-by (juxt :document_id :target_lang :garden_id) rows)) :total (count rows)}))
 
