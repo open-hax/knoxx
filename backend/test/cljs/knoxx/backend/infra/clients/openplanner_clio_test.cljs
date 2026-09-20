@@ -104,6 +104,47 @@
   {:org_id "org-a" :project "wiki" :garden_id "garden/a" :adequacy "good" :fluency "good"
    :terminology "correct" :risk "safe" :overall "approve" :labeler_id "reviewer"})
 
+(deftest ^:async document-metadata-updates-and-exact-scopes-survive-restart
+  (await (fixture!
+    (^:async fn [root]
+      (let [provider (local/open! (options root))
+            scope-a (assoc scope :garden_id "garden/a")
+            scope-b (assoc scope-a :project "other-project")
+            scope-c (assoc scope-a :garden_id "garden/c")
+            source {:id "docs/a" :org_id "org-a" :project "wiki" :garden_id "garden/a"
+                    :content "Same content" :title "Original" :visibility "internal" :source_path "old.md"}]
+        (doseq [scoped [scope-a scope-b scope-c]]
+          (await (client/create-translation-segment! provider (merge segment-input scoped))))
+        (await (client/upsert-document! provider source))
+        (let [updated (assoc source :title "Updated" :visibility "public" :source_path "new.md")]
+          (await (client/upsert-document! provider updated))
+          (await (client/upsert-document! provider source))
+          (is (= "Original" (get-in (await (client/translation-document! provider "docs/a" "es" scope-a))
+                                     [:document :title]))
+              "Restoring historical metadata creates a new current revision")
+          (await (client/upsert-document! provider updated))
+          (let [history-count (count (engine/history (:ledger provider)))]
+            (await (client/upsert-document! provider (into (sorted-map) updated)))
+            (is (= history-count (count (engine/history (:ledger provider))))
+                "Equal metadata remains idempotent regardless of map key order")))
+        (await (client/upsert-document! provider (merge source scope-b {:title "Other project"})))
+        (await (client/upsert-document! provider (merge source scope-c {:title "Other garden"})))
+        (let [restarted (local/open! (options root))
+              document (await (client/translation-document! restarted "docs/a" "es" scope-a))
+              listing (await (client/translation-documents! restarted {:org_id "org-a"}))]
+          (is (= {:title "Updated" :content "Same content" :visibility "public" :source_path "new.md"}
+                 (select-keys (:document document) [:title :content :visibility :source_path])))
+          (is (= "Other project" (get-in (await (client/translation-document! restarted "docs/a" "es" scope-b)) [:document :title])))
+          (is (= "Other garden" (get-in (await (client/translation-document! restarted "docs/a" "es" scope-c)) [:document :title])))
+          (is (= #{["wiki" "garden/a" "Updated"] ["other-project" "garden/a" "Other project"]
+                   ["wiki" "garden/c" "Other garden"]}
+                 (set (map (juxt :project :garden_id :title) (:documents listing)))))
+          (doseq [[id language scoped] [["missing" "es" scope-a] ["docs/a" "fr" scope-a]
+                                        ["docs/a" "es" (assoc scope-a :org_id "org-b")]
+                                        ["docs/a" "es" (assoc scope-a :project "missing")]
+                                        ["docs/a" "es" scope]]]
+            (is (= 404 (:status (await (refused #(client/translation-document! restarted id language scoped)))))))))))))
+
 (deftest ^:async new-candidate-generation-invalidates-old-reviews-without-erasing-history
   (await (fixture!
     (^:async fn [root]

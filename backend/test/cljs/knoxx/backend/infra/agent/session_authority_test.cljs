@@ -40,3 +40,38 @@
               (is (= 4 @created))))))
       (catch :default error (is false (str "Unexpected session cache failure: " error)))
       (finally (reset! session/sessions* previous)))))
+
+(deftest ^:async resource-policy-closure-changes-rebuild-the-provider-session
+  (let [created (atom 0) conversation "resource-policy-authority-test"
+        previous @session/sessions*
+        policies {:document_id "document-a" :target_lang "fr"
+                  :constraints {:scope "pinned" :actions ["read" "write"]}}]
+    (try
+      (with-redefs [session/create-session-manager!
+                    (fn ([_runtime _config _conversation _model] {:fixture-handle (swap! created inc)})
+                      ([_runtime _config _conversation _model auth-context _thinking _session _spec]
+                       {:fixture-handle (swap! created inc)
+                        :captured-resource-policies (:resourcePolicies auth-context)}))
+                    catalog/visible-session-signature (fn [_runtime _config _context _spec] "same-visible-tools")
+                    extensions/build-extension-ctx (fn [_runtime _config & _args] {})
+                    extensions/dispatch-event (fn [_name _event _context] nil)
+                    agent/set-thinking-level! (fn [_session _level] nil)]
+        (let [ensure! #(session/ensure-agent-session! {} {} conversation "model"
+                         (assoc context :resourcePolicies %))
+              original (await (ensure! policies))
+              reordered {:constraints {:actions ["read" "write"] :scope "pinned"}
+                         :target_lang "fr" :document_id "document-a"}]
+          (is (= original (await (ensure! reordered))) "map insertion order carries no authority")
+          (is (= 1 @created))
+          (doseq [next-policies [(assoc policies :document_id "document-b")
+                                (assoc policies :target_lang "de")
+                                (assoc-in policies [:constraints :actions] ["read"])
+                                nil]]
+            (let [before @created
+                  next-session (await (ensure! next-policies))]
+              (is (= (inc before) @created) "changed resource authority must create new tool closures")
+              (is (= next-policies (:captured-resource-policies next-session)))
+              (is (= next-session (await (ensure! next-policies))))
+              (is (= (inc before) @created))))))
+      (catch :default error (is false (str "Unexpected resource policy cache failure: " error)))
+      (finally (reset! session/sessions* previous)))))

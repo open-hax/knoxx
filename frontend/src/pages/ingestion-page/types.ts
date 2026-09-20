@@ -80,3 +80,21 @@ export interface CreateSourceForm {
   include_patterns?: string[];
   exclude_patterns?: string[];
 }
+
+// The proxy audit omits the richer direct ingestion status fields.
+export interface IngestionProxySourceAudit {
+  source_id: string;
+  tenant_id: string;
+  driver_type: string;
+  root_path: string | null;
+  collections: string[];
+  file_types: string[];
+  matching_files: number;
+  new_files: number;
+  changed_files: number;
+  unchanged_files: number;
+  state_ingested_files: number;
+  state_failed_files: number;
+  openplanner_documents: number;
+  coverage_delta: number;
+}
