@@ -1,6 +1,7 @@
 (ns knoxx.backend.shape.source-authoring
   "Closed wire conversion for source authoring shared by human and agent ports."
-  (:require [knoxx.backend.law.source-authoring :as law]
+  (:require [knoxx.backend.law.publication-locale :as locale]
+            [knoxx.backend.law.source-authoring :as law]
             [knoxx.backend.law.source-review :as review]
             [knoxx.backend.shape.source-review :as review-shape]))
 
@@ -12,8 +13,8 @@
 (def WireCreate
   "Explicit resource placement and retry identity for a new wiki document."
   [:map {:closed true} [:operation_id review/NonBlank] [:title review/NonBlank]
-   [:content review/NonBlank] [:source_locale review/NonBlank]
-   [:garden review/NonBlank] [:target_locales [:vector {:min 1} review/NonBlank]]])
+   [:content review/NonBlank] [:source_locale locale/LocaleTag]
+   [:garden review/NonBlank] [:target_locales [:vector {:min 1} locale/LocaleTag]]])
 
 (defn decode-save
   "Reject unknown keys before renaming wire fields."

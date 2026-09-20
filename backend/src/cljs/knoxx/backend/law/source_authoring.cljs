@@ -4,18 +4,21 @@
             [knoxx.backend.law.source-review :as review]))
 
 (def Event
-  "Full immutable source bytes make a failed projection repairable."
-  [:map {:closed true}
-   [:source/id review/NonBlank]
-   [:source/scope review/Scope]
-   [:source/actor review/Actor]
-   [:source/action [:enum :observe :create :save]]
-   [:source/previous-revision [:maybe review/NonBlank]]
-   [:source/revision review/NonBlank]
-   [:source/content review/NonBlank]
-   [:source/document publication/Document]
-   [:source/manifest {:optional true} :map]
-   [:source/recorded-at review/NonBlank]])
+  "Full immutable source bytes and each creation manifest make projection repairable."
+  [:and
+   [:map {:closed true}
+    [:source/id review/NonBlank]
+    [:source/scope review/Scope]
+    [:source/actor review/Actor]
+    [:source/action [:enum :observe :create :save]]
+    [:source/previous-revision [:maybe review/NonBlank]]
+    [:source/revision review/NonBlank]
+    [:source/content review/NonBlank]
+    [:source/document publication/Document]
+    [:source/manifest {:optional true} :map]
+    [:source/recorded-at review/NonBlank]]
+   [:fn {:error/message "a create fact requires its complete creation manifest"}
+    #(or (not= :create (:source/action %)) (contains? % :source/manifest))]])
 
 (def SaveCommand
   "Only source text changes; resource identity and metadata cannot be replaced."

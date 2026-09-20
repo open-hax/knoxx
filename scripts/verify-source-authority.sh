@@ -26,4 +26,5 @@ printf '%s\n' \
   'PASS scoped source and review history survives ledger reopening and disposable projection repair.' \
   'PASS stale identities, corrupt history, conflicting retries and refused admission fail visibly.' \
   'PASS explicit-ID no-ops retain their original result; failed document writes preserve successor sequencing.' \
+  'PASS source reads and saves use matching provenance; malformed wire locales and incomplete create facts are refused.' \
   'WARN Wiki HTTP, agent tools, provider composition, password login and browser workflows arrive in later layers.'

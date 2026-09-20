@@ -24,9 +24,11 @@
         document (get-in index [:documents (:document scope)])]
     (when-not (and document (admission/document-visible-to-org? scope document))
       (refuse! 404 "source_document_not_found" "Source document was not found"))
-    (let [record (some #(when (and (:ok? %) (= :document (:resource/kind %))
-                                   (= (:document scope) (:document/id (resolver/canonicalize-document
-                                                                     (publications/single-kind-definition %))))) %) records)
+    ;; Equal declarations share metadata; the last record supplies provenance,
+    ;; matching the publication/translation root index rather than the first root.
+    (let [record (last (filter #(and (:ok? %) (= :document (:resource/kind %))
+                                     (= (:document scope) (:document/id (resolver/canonicalize-document
+                                                                       (publications/single-kind-definition %))))) records))
           root (revisions/resource-source-root config (:resource/file-path record))
           file (await (revisions/canonical-document-path! root document))
           content (when file (await (files/read-text! file)))]

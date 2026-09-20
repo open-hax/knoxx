@@ -2,12 +2,22 @@
   "Portable locale contracts for publication resources and artifacts."
   (:require [malli.core :as m]))
 
+(defn locale-tag?
+  "True for an unqualified language tag string, optionally with a variant."
+  [value]
+  (and (string? value)
+       (boolean (re-matches #"[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*" value))))
+
+(def LocaleTag
+  "The explicit language tag string accepted at a wire boundary."
+  [:and :string [:fn locale-tag?]])
+
 (defn locale-keyword?
   "True for an unqualified language tag keyword, optionally with a variant."
   [value]
   (and (keyword? value)
        (nil? (namespace value))
-       (boolean (re-matches #"[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*" (name value)))))
+       (locale-tag? (name value))))
 
 (def Locale
   "A single unqualified language tag keyword."

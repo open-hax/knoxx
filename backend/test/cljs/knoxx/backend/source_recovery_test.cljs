@@ -1,12 +1,17 @@
 (ns knoxx.backend.source-recovery-test
   (:require [clio.extern.js.fs :as fs]
             [cljs.test :as test]
+            [knoxx.backend.domain.source-authoring :as authoring-domain]
             [knoxx.backend.domain.source-review :as domain]
             [knoxx.backend.extern.clio-store-fixture :as disk]
             [knoxx.backend.extern.source-authoring :as files]
+            [knoxx.backend.infra.clio-application-store :as clio]
             [knoxx.backend.infra.clio-source-authoring-store :as sources]
             [knoxx.backend.infra.clio-source-review-store :as reviews]
+            [knoxx.backend.infra.publication-source-revision :as revisions]
+            [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.infra.source-authoring :as authoring]
+            [knoxx.backend.infra.source-authoring-store :as source-store]
             [knoxx.backend.infra.source-review :as review]
             [knoxx.backend.infra.source-review-store :as review-store]))
 
@@ -157,3 +162,71 @@
         (test/is (= expected (get-in accepted [:review :lessons])))
         (test/is (= expected (:lessons recovered)))
         (test/is (= (:review accepted) recovered)))))))
+
+(test/deftest ^:async equal-document-records-use-last-provenance-for-read-and-save
+  (let [root (disk/temp-directory!)
+        roots [(str root "/first") (str root "/second")]
+        document {:document/id :docs/provenance :document/title "Same metadata"
+                  :document/source-locale :en :document/org-id (:org-id scope)
+                  :document/visibility :private :document/source {:path "source.md"}}
+        document-scope (assoc scope :document (:document/id document))
+        config {:contracts-dir (str (first roots) "/contracts")
+                :generated-contracts-dir (str (second roots) "/contracts")}
+        records (mapv (fn [source-root]
+                        {:ok? true :resource/kind :document :resource/definition document
+                         :resource/file-path (str source-root "/contracts/namespaces/document.edn")}) roots)]
+    (try
+      (doseq [source-root roots] (fs/ensure-dir! (str source-root "/contracts")))
+      (doseq [ordered-records [records (vec (reverse records))]]
+        (doseq [[source-root content] (map vector roots ["First root bytes." "Second root bytes."])]
+          (await (files/write-text! source-root "source.md" content)))
+        (let [winner (peek ordered-records)
+              winning-root (revisions/resource-source-root config (:resource/file-path winner))
+              losing-root (first (remove #{winning-root} roots))
+              expected-content (await (files/read-text! (str winning-root "/source.md")))
+              untouched-content (await (files/read-text! (str losing-root "/source.md")))
+              dependencies {:source-provider (source-store/memory-store)
+                            :provider (review-store/memory-store)
+                            :now! (constantly "2026-09-12T12:00:00Z")}]
+          (with-redefs [publications/resource-records! (fn [_] ordered-records)]
+            (let [observed (await (review/observed-source! config document-scope))
+                  current (await (review/read! config document-scope dependencies))]
+              (test/is (= document (:document observed)) "Equal resource payloads remain lawful duplicates")
+              (test/is (= winner (:record observed)))
+              (test/is (= winning-root (:root observed)))
+              (test/is (= expected-content (:content current)))
+              (test/is (= (revisions/content-revision expected-content) (:revision current)))
+              (let [saved (await (authoring/save! config document-scope actor
+                                  {:operation-id "save-provenance" :expected-revision (:revision current)
+                                   :content "Saved into the winning checkout."} dependencies))]
+                (test/is (= "Saved into the winning checkout." (get-in saved [:review :content])))
+                (test/is (= "Saved into the winning checkout."
+                            (await (files/read-text! (str winning-root "/source.md")))))
+                (test/is (= untouched-content (await (files/read-text! (str losing-root "/source.md"))))))))))
+      (finally (fs/remove-tree! root)))))
+
+(test/deftest ^:async creation-manifest-survives-projection-failure-and-missing-manifest-is-never-durable
+  (await (fixture!
+    (^:async fn [config dependencies options]
+      (let [document-scope (assoc scope :document (:document (authoring-domain/creation-identity scope creation)))]
+        (with-redefs [files/write-text! (fn [_ _ _] (throw (ex-info "disk full" {:status 503 :code "test_disk_full"})))]
+          (test/is (= "test_disk_full"
+                      (:code (await (refused #(authoring/create! config scope actor creation dependencies)))))))
+        (let [events (await (source-store/source-events! (:source-provider dependencies) document-scope))
+              event (first events)
+              manifest (:source/manifest event)
+              restarted (assoc dependencies :source-provider (sources/open! (:source options))
+                                            :provider (reviews/open! (:review options)))
+              repaired (await (authoring/create! config scope actor creation restarted))
+              empty-options {:directory (str (get-in options [:source :directory]) "-refused")}
+              empty-provider (sources/open! empty-options)]
+          (test/is (= 1 (count events)))
+          (test/is (= 3 (count (:resources manifest))) "The document and both publication intents are durable")
+          (test/is (= (:source/document event) (first (:resources manifest))))
+          (test/is (true? (:existing? repaired)))
+          (test/is (= event (:event repaired)))
+          (test/is (= "Original source." (get-in repaired [:review :content])))
+          (test/is (= 400 (:status (await (refused #(source-store/admit-source! empty-provider document-scope nil
+                                                                 (dissoc event :source/manifest)))))))
+          (test/is (empty? (clio/history (:ledger empty-provider))))
+          (test/is (empty? (await (source-store/source-events! (sources/open! empty-options) document-scope))))))))))

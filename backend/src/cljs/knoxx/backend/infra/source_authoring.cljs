@@ -88,10 +88,10 @@
                     (do (assert-create-retry! existing actor command resources) {:existing? true :event existing})
                     (do
                       (when (seq events) (refuse! 409 "source_authoring_identity_conflict" "This document already has source history"))
-                      (let [event (assoc (domain/source-event scope actor (:operation-id command) :create nil
-                                                              (:resource resources) (:content command)
-                                                              (revisions/content-revision (:content command)) ((:now! dependencies)))
-                                         :source/manifest (:manifest resources))]
+                      (let [event (domain/source-event scope actor (:operation-id command) :create nil
+                                                       (:resource resources) (:content command)
+                                                       (revisions/content-revision (:content command))
+                                                       ((:now! dependencies)) (:manifest resources))]
                         (await (store/admit-source! provider scope nil event)))))]
     (await (project-creation! config resources (await (store/source-events! provider scope))))
     (await (result! config scope dependencies admission))))

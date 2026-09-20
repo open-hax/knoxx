@@ -182,3 +182,11 @@
     (test/is (= "en" (:source_locale wire)))
     (test/is (= "human" (get-in wire [:history 0 :actor :kind])))
     (test/is (not (contains? (first (:history wire)) :scope)))))
+
+(test/deftest review-wire-rejects-qualified-or-malformed-locales
+  (let [wire {:operation_id "submit" :revision "sha256-original" :source_locale "en"
+              :expected_head nil :action "submit"}]
+    (doseq [invalid ["en/us" "fr/us" "not a locale" " en" "en " "" "e" "en_US"]]
+      (test/is (= "source_review_invalid" (error-code #(shape/decode-command (assoc wire :source_locale invalid))))))
+    (doseq [valid ["en" "eng" "en-US" "zh-Hant-TW" "not-a-locale"]]
+      (test/is (= (keyword valid) (:source-locale (shape/decode-command (assoc wire :source_locale valid))))))))

@@ -6,7 +6,7 @@ Run the isolated filesystem proof after installing the frozen backend dependenci
 bash scripts/verify-source-authority.sh
 ```
 
-The command compiles only the source-review laws, source recovery workflow and
+The command compiles source/review contracts, filesystem recovery workflows and
 Clio application ledger tests into a distinct Shadow build. It runs the generated
 artifact with the asynchronous failure guard and requires nonempty passing test
 counters. The tests allocate and remove their own temporary ledgers and resource
@@ -20,6 +20,15 @@ replay, concurrent writers, awaited admission guards, and repair after a failed
 filesystem projection. Successful no-op writes with explicit operation IDs have
 durable receipts without false state-change notifications. Implicit random-ID
 no-ops retain their existing behavior of appending no fact.
+
+The regressions also load equal document declarations from two real checkout
+roots in both orders, read the last declaration's bytes, and prove that saving
+changes only that checkout. Wire locale strings must satisfy the existing
+publication language-tag grammar before conversion to keywords; catalog admission
+remains a separate garden obligation. A creation fact requires its manifest at
+construction and admission. Interrupted creation retains the document and its
+publication intents through ledger reopening, while a missing-manifest attempt
+leaves the durable ledger empty.
 
 Document sequencing retains each operation's result or rejection. Cleanup of a
 completed predecessor cannot remove a pending successor, and a rejected write
