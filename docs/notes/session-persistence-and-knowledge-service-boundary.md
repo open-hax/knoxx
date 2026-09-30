@@ -31,6 +31,14 @@ That reduced network indirection and exposed the data plane directly, but it did
 not resolve ownership. It made Knoxx more tightly aware of OpenPlanner's storage
 and SDK shape.
 
+> 2026-09-30: the Redis live-session store is gone. `backend/src/cljs/knoxx/backend/infra/stores/`
+> now holds Mongo-backed stores (for example `mongo_run_store.cljs`, `mongo_session_store.cljs`)
+> and Clio-backed run/thread stores (`clio_run_store.cljs`, `clio_thread_store.cljs`). Run
+> startup still builds the Mongo run store (`infra/stores/run_provider_startup.cljs:11`).
+> `extern/openplanner_sdk.cljs` and `infra/clients/openplanner_mongo.cljs` remain. Knoxx declares
+> no Sol package dependency (`backend/package.json`), so the Sol session authority below is
+> still a target, not the current implementation.
+
 ## Current synthesis
 
 The cleaner boundary is:

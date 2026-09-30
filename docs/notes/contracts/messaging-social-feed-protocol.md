@@ -6,6 +6,8 @@ original: 2026.04.27.13.20.53.md
 status: note
 ---
 
+> **Status (2026-09-30):** Unimplemented proposal. No `cap_messaging`/`cap_feed` capabilities, `msg.*`/`feed.*` tools, or `platform-dispatch` namespace exist. `contracts/capabilities/cap_discord.edn` and `cap_bluesky.edn` still list platform-native tool ids (e.g. `:bluesky.publish`).
+
 Good — I have the full picture of the existing capability surface . Now I can design these protocols cleanly against what already exists.
 
 ***

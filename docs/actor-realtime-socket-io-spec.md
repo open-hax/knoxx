@@ -1,6 +1,11 @@
 # Actor Realtime Bus: Socket.IO Pub/Sub Spec
 
 Status: draft spec 2026-05-15
+
+> *2026-09-30:* not implemented. Neither `backend/package.json` nor
+> `frontend/package.json` depends on Socket.IO, and none of the proposed
+> `knoxx.backend.realtime.*` namespaces exist; realtime still runs over the
+> Fastify WebSocket `/ws/stream` in `backend/src/cljs/knoxx/backend/domain/realtime.cljs`.
 Scope: `frontend/`, Knoxx backend realtime surfaces, actor mailbox, trigger/action runtime
 
 ## 1. Recovered intent

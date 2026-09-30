@@ -6,6 +6,8 @@ original: 2026.04.23.12.49.43.md
 status: note
 ---
 
+> **Status (2026-09-30): historical — partially realized.** Shoedelussy MCP tools now include `mcp.shoedelussy.render_loop` and `mcp.shoedelussy.render_wav` (browser-side export, not a headless server renderer; `backend/src/cljs/knoxx/backend/infra/registry/tools.cljs:127-128`), and `backend/scripts/shoedelussy-capture-wav.mjs` captures WAV with Playwright Chromium.
+
 EXCELLENT!!!! Now I want to have a tool in the MCP server that can render the audio from this.
 I THINK we got started on this using a headless playwright browser button
 the frontend needs a render audio button. That should simplify making the headless browser work.

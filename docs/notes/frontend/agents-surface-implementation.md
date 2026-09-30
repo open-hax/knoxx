@@ -6,6 +6,8 @@ original: 2026.04.24.14.21.23.md
 status: note
 ---
 
+> **Status (2026-09-30): historical.** This records the April 2026 TSX implementation (commit `7addf2f0`). Since then `frontend/src/App.tsx` is gone and routing lives in `frontend/src/cljs/knoxx/frontend/app.cljs` (lines 158-162); `/agents` renders the shadow-cljs `pages/agents.cljs`, whose tabs are `contracts` and `audit` (`pages/agents.cljs:49-53`); legacy `/event-agents` now redirects to `/events`, not `/agents` (`app.cljs:161-162`, `lib/app-routes.ts:9`); and `contracts/actors/event_agents_page.edn` is replaced by `contracts/actors/events_page.edn` (label "Events and Agents"). `/ops/agents` still redirects to `/agents?tab=audit` (`pages/OpsRoot.tsx:75`).
+
  Signal
 
  (己, p=0.9) Implemented the unified Agents surface at /agents by merging the old /event-agents control plane with the old /ops/agents observability view as an “Agent Audit Logs” sub-tab.

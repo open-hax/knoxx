@@ -6,6 +6,8 @@ category: "tools"
 created: "2026-05-08"
 ---
 
+> **Status (2026-09-30): historical — implemented differently.** The renderer exists as `backend/src/cljs/knoxx/backend/infra/svg_render.cljs` (not `knoxx.backend.svg-render`), uses `puppeteer-core` (kept as an ESM import in `backend/shadow-cljs.edn:62-64`) and `^:async`/`await` rather than `shadow.cljs.modern/js-await`, per the Knoxx async house rule. `agent_hydration.cljs` / `turn.cljs` named below were not where resvg lived.
+
 Looking at what we know: your stack is ClojureScript/shadow-cljs, Node.js backend, resvg-js currently doing the rendering, and you want to swap in Puppeteer via nREPL-driven implementation.
 
 ***

@@ -6,6 +6,8 @@ category: "ops"
 created: "2026-05-08"
 ---
 
+> **Status (2026-09-30): historical.** Copy of a May 2026 chat receipt from the pre-extraction `openplanner/packages/agents/knoxx` checkout; that receipt (`dod event-agent-explicit-error-diagnostics-and-tool-merge`) is not in this repository's `receipts.edn`. The named files moved or were removed: `event_agents.cljs` and `triggers/control_config.cljs` no longer exist as cited (`infra/control_config.cljs` and `infra/agent/runner.cljs` do), `lastErrorDetail` no longer occurs in `backend/src/cljs`, and the additive role + capability + explicit tool merge now lives in `backend/src/cljs/knoxx/backend/domain/contracts/resolve.cljs:366`.
+
  receipt_river
  Appended receipt at /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/receipts.edn
  {:pi "0.63.1", :tests "Patched event-agent error diagnostics and contract tool merge semantics. Validation: cd backend

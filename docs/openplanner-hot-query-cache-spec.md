@@ -1,5 +1,15 @@
 # OpenPlanner Hot Query Cache and Session Projection Spec
 
+> **Historical / superseded storage (banner added 2026-09-30).** Redis is no
+> longer part of the backend (E14 Mongo migration). The cache/projection layer
+> that exists today is `infra/stores/cache_registry.cljs` with
+> `mongo_cache_store.cljs` and `clio_cache_store.cljs`, plus
+> `mongo_memory_sessions.cljs` (the Mongo twin of the former
+> `knoxx:memory:sessions:v1:` Redis keys). File paths in §2 such as
+> `routes/memory.cljs`, `session_store.cljs`, and `src/lib/*.ts` predate the
+> `infra/` reorganization. The intent (hot projections, watermark invalidation)
+> still applies.
+
 Status: draft spec 2026-05-15
 Scope: Knoxx reads of OpenPlanner sessions/searches, Redis cache/projection layer, short-lived semantic query-result cache
 

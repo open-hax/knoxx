@@ -30,7 +30,8 @@ created: "2026-05-07"
  - AgentSource is title, url, optional section
  - GroundedContextRow is the older grounded-answer/context-row shape with source_path, snippet, text, etc.
 
- Backend-side, backend/src/cljs/knoxx/backend/agent_hydration.cljs turns passive semantic hydration results into sources:
+ Backend-side, backend/src/cljs/knoxx/backend/agent_hydration.cljs turns passive semantic hydration results into sources
+ (2026-09-30: now `hydration-sources` in backend/src/cljs/knoxx/backend/infra/agent/hydration.cljs:202-210):
 
  ```clojure
    {:title (:name result)
@@ -38,10 +39,14 @@ created: "2026-05-07"
     :section (:snippet result)}
  ```
 
- Then backend/src/cljs/knoxx/backend/agents/turn.cljs attaches those as :sources on completed runs.
+ Then backend/src/cljs/knoxx/backend/agents/turn.cljs attaches those as :sources on completed runs
+ (2026-09-30: now backend/src/cljs/knoxx/backend/infra/agent/turn.cljs:165).
 
  The catch: historical/frontend-normalized chat messages from memoryRowsToMessages currently only reconstruct
  role/content/model/runId/traceBlocks. They do not graft sources or contextRows back onto the assistant message.
+ (2026-09-30: `memoryRowsToMessages` now lives in frontend/src/components/workspace-context/utils.ts:252 and still does
+ not graft sources; `latestRunHydrationSources` (utils.ts:526) surfaces hydration sources for the latest run only,
+ via components/chat-page/chat-page-derived.ts:101.)
 
  Frames
 

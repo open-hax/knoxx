@@ -6,6 +6,14 @@ category: "architecture"
 created: "2026-05-05"
 ---
 
+> **Historical note (2026-09-30).** This plan dates from 2026-05-05 and was
+> superseded by the four-category layout (`domain/`, `infra/`, `shape/`, `law/`,
+> `extern/`) under `backend/src/cljs/knoxx/backend/`. None of the flat `agent_*.cljs`
+> files or the proposed `agents/` directory exist now. Their successors are
+> `infra/agent/*` (runtime, session, session_registry, recovery, resume, turn,
+> stream, tools, hydration), `domain/agent/*` (agent_context, agent_templates,
+> content), and `extern/eta_mu.cljs`.
+
 This is excellent. The picture is clear. Here's the full analysis and migration plan.
 
 ***

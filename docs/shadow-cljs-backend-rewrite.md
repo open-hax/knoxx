@@ -1,5 +1,13 @@
 # Knoxx shadow-cljs backend rewrite
 
+> **Historical migration plan (banner added 2026-09-30).** The Python/FastAPI
+> backend is gone and the rewrite is complete: the backend is all-CLJS with no
+> `src/server.mjs` bootstrap (entry `knoxx.backend.entrypoint/init`). The agent
+> runtime dependency is now `@open-hax/eta-mu-cli`, not
+> `@mariozechner/pi-coding-agent`, and new async code uses `^:async`/`await`
+> rather than `js-await` (see `AGENTS.md`). Current commands and build targets
+> are in `backend/README.md`.
+
 ## Goal
 
 Replace the Python/FastAPI backend in `orgs/open-hax/knoxx/backend/` with a shadow-cljs + Fastify service, and move conversation/agent behavior onto the pi SDK so Knoxx can hold multi-turn context instead of re-answering statelessly per request.

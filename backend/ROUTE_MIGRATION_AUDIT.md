@@ -1,5 +1,11 @@
 # Route File Migration Audit
 
+> **Historical (banner added 2026-09-30).** The migration landed under a
+> different target: route namespaces live in `knoxx.backend.infra.routes.*`
+> (`backend/src/cljs/knoxx/backend/infra/routes/`), not `knoxx.backend.routes.*`,
+> and `route!`/`defroute` helpers are in `knoxx.backend.shape.app-shapes` and
+> `backend/src/cljs/knoxx/backend/macros.cljc`.
+
 **Date**: 2026-01-26
 **Scope**: Move all route files into `knoxx.backend.routes.*` namespace
 

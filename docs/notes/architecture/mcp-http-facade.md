@@ -18,6 +18,9 @@ Knoxx exposes an **MCP (Model Context Protocol) server over HTTP**.
 | `GET` | `/mcp` | SSE / session transport |
 | `DELETE` | `/mcp` | Session close |
 | `GET` | `/.well-known/oauth-authorization-server` | Discovery |
+| `GET` | `/.well-known/oauth-protected-resource` (also `/.well-known/oauth-protected-resource/mcp` and `/mcp/.well-known/oauth-protected-resource`) | Protected-resource metadata |
+| `GET` | `/api/mcp/oauth/authorize` | Consent screen (browser session) |
+| `GET` | `/api/mcp/oauth/authorize/confirm` | Consent confirmation, issues code (browser session) |
 | `POST` | `/api/mcp/oauth/register` | Dynamic client registration |
 | `POST` | `/api/mcp/oauth/token` | PKCE code exchange |
 | `GET` | `/api/mcp/tokens` | List user tokens (browser session) |
@@ -34,5 +37,9 @@ Knoxx exposes an **MCP (Model Context Protocol) server over HTTP**.
 ## Notes
 
 - Tokens stored in Redis (same `REDIS_URL` as Knoxx sessions)
+  - *2026-09-30:* Redis is retired here. OAuth clients, codes, and tokens now
+    live in Mongo collections `knoxx_mcp_clients`, `knoxx_mcp_codes`, and
+    `knoxx_mcp_tokens` (`backend/src/cljs/knoxx/backend/infra/stores/mongo_mcp_oauth.cljs:9-11`).
+    Routes are defined in `backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs:268-655`.
 - Delegated tools are intersected with the user's current Knoxx policy context;
   tokens cannot grant capabilities above the user's membership tier

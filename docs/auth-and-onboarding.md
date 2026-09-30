@@ -2,13 +2,13 @@
 
 ## Overview
 
-Knoxx supports **GitHub OAuth** login with **cookie-backed sessions** stored in Redis. The system includes:
+Knoxx supports **GitHub OAuth** login with **cookie-backed sessions** stored in MongoDB (the policy DB; Redis was removed in the E14 Mongo migration — see `backend/src/cljs/knoxx/backend/infra/auth/session.cljs`). The system includes:
 
 - **Admin seed**: The `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL` user is automatically created as a system admin on every boot
 - **Repeatable local admin login**: `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD` idempotently provisions that admin's local password credential
 - **Invite system**: Admins can create invite codes that auto-provision users with org memberships
 - **GitHub OAuth**: "Continue with GitHub" button on the login page
-- **Cookie sessions**: Secure, HttpOnly, SameSite cookies with Redis-backed session storage
+- **Cookie sessions**: Secure, HttpOnly, SameSite cookies with MongoDB-backed session storage
 
 ## Architecture
 
@@ -23,7 +23,7 @@ knoxx-backend
   └── /api/* routes (CLJS, uses x-knoxx-* headers)
 ```
 
-The key design: the CLJS backend uses `x-knoxx-user-email` and `x-knoxx-org-slug` headers for auth. The `onRequest` hook reads the session cookie from Redis and injects these headers before the CLJS routes execute. This means all existing CLJS auth logic works unchanged.
+The key design: the CLJS backend uses `x-knoxx-user-email` and `x-knoxx-org-slug` headers for auth. The `onRequest` hook resolves the session cookie against the Mongo policy DB and injects these headers before the CLJS routes execute. This means all existing CLJS auth logic works unchanged.
 
 Production host placement, pinned SSH trust, Caddy routing, image builds, and
 live verification are owned by `open-hax/services`. Local development runs the
@@ -43,8 +43,8 @@ or creating a production tunnel.
 | `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME` | No | `Knoxx System Admin` | Display name for the bootstrap admin |
 | `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PASSWORD` | For local admin login | - | Password for the bootstrap admin; keep it in the uncommitted host environment |
 | `KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PREVIOUS_EMAILS` | On the first restart after changing a custom bootstrap email | - | Comma-separated prior bootstrap-admin emails whose legacy local credentials must be revoked |
-| `KNOXX_POLICY_DATABASE_URL` | Yes | - | PostgreSQL connection string |
-| `REDIS_URL` | Yes | `redis://127.0.0.1:6379` | Redis for session storage |
+| `MONGODB_URI` | Yes | `mongodb://localhost:27017` | MongoDB connection string for the policy DB and sessions (`infra/mongo_client.cljs`; `OPENPLANNER_MONGODB_URI` is the fallback) |
+| `MONGODB_DB` | No | `openplanner` | MongoDB database name |
 | `GMAIL_APP_EMAIL` | For invite emails | - | Gmail address for sending invite emails |
 | `GMAIL_APP_PASSWORD` | For invite emails | - | Gmail app password for SMTP |
 

@@ -6,6 +6,8 @@ category: "ops"
 created: "2026-05-12"
 ---
 
+> **Status (2026-09-30): historical — resolved.** `disable-cron-jobs` no longer exists anywhere in `backend/src/cljs`; `reset-runtime!` is now `(reload! config)` in `backend/src/cljs/knoxx/backend/infra/event_runtime.cljs:90-94`. The route `register-events-runtime-reset-route!` survives at `backend/src/cljs/knoxx/backend/infra/routes/tools.cljs:448` and the frontend still posts to `/api/admin/config/events/runtime/reset` (`frontend/src/lib/api/admin.ts:559`). The file paths below (`event_agents.cljs`, `routes/tools.cljs`, `events/runtime.cljs`) predate the `infra/` restructure.
+
 
 Every time I reset the contract runtime... several contracts just get
 disabled, despite their contract files saying they are enabled... WHere is

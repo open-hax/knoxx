@@ -6,6 +6,8 @@ category: "architecture"
 created: "2026-05-19"
 ---
 
+> 2026-09-30: this plan shipped as the `knoxx.backend.extern.*` adapter layer
+> (see `AGENTS.md`, "Extern Boundary Layer"), not as per-type domain namespaces.
 
 We need to deal with these warnings, and establish a policy around writing code that prevents these from piling up.
 

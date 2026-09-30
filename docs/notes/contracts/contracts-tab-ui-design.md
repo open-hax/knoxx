@@ -6,6 +6,8 @@ original: 2026.04.17.09.40.41.md
 status: note
 ---
 
+> **Status (2026-09-30):** Historical design lineage for the Contracts page (`frontend/src/pages/ContractsPage.tsx`, route `/contracts` in `frontend/src/cljs/knoxx/frontend/app_routes.cljs:19`). The contract shape shown here (`:trigger-kind`, `:source-kind`, `:cadence-min`, `:hooks`, `:contract/uses` mixins, `:tool-call` kind) and the SQL projection tables (`agent_contracts` etc.) were not implemented. No such tables exist in `backend/src`. Contracts are EDN files under `contracts/`.
+
 ## Signal
 
 Put a new peer tab in the admin rail named `contracts`, alongside agents, graph, translations, and lakes, and make that tab the single place where an agent contract is edited, cloned, validated, previewed, and compiled. Your prior notes already point toward a portable `CONTRACT.edn` shape, with the loader staying stable while harness-specific renderings vary underneath it.

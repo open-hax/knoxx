@@ -37,6 +37,10 @@ different working copy, so verifying against it verifies the wrong code.
 pm2 describe knoxx-backend | grep cwd    # confirm which checkout is live
 ```
 
+> Note (2026-09-30): the PM2 path above is the historical host layout at the time
+> of the epic; it is machine-specific. The check that matters is the `cwd`
+> comparison, which step 0 performs regardless of path.
+
 Start the backend from here however you normally do, then:
 
 ```bash
@@ -55,7 +59,8 @@ immediately if the running backend cannot see it.
 scripts/verify-publication-epic.sh
 ```
 
-Nine sections, 35 checks. Each prints what it proved, not just a green tick.
+Sections 0–9, plus 8b (translation producer) and 8c (translation-path links).
+Each check prints what it proved, not just a green tick.
 
 | § | What it walks | Why it is in here |
 |---|---|---|
@@ -125,6 +130,13 @@ That coupling is real and worth knowing about while reviewing #239: the
 publication *intent* was cut over to resources, but the surrounding CMS document
 flow was not.
 
+> Note (2026-09-30): no longer true on current `main`. `handlePublishToggle`
+> (`frontend/src/pages/CmsPage.tsx:771`) now saves through the CMS store, re-reads
+> the publication topology, and writes each locale's intent with
+> `setPublicationState`; it no longer calls `/api/openplanner/v1/cms/publish`, which
+> is listed in `retired-authority-paths`. The tour still does not click the toggle,
+> and `scripts/verify-publication-tour.sh`'s header still gives the old reason.
+
 ---
 
 ### Two auth gates, and they take different credentials
@@ -168,6 +180,11 @@ it cannot silently sit in that mode.
 KNOXX_DISABLE_EVENT_RUNTIMES=true PORT=8000 node backend/dist/server.js
 ```
 
+> Note (2026-09-30): #243 has landed. `KNOXX_DISABLE_EVENT_RUNTIMES` is honoured
+> on current `main` (banner and periodic warning in
+> `backend/src/cljs/knoxx/backend/infra/core.cljs`), and
+> `scripts/lib/local-runtime-env.sh` defaults it to `true` for local runs.
+
 That flag is a stopgap either way. The real decoupling is carded as
 `knoxx-event-runtime-boot-coupling`.
 
@@ -176,6 +193,9 @@ Two other things that will bite on a fresh checkout:
 - `pnpm -C backend build` (`shadow-cljs release server`) **fails** — the
   `:server` build sets `:optimizations :none`. Use
   `pnpm -C backend exec shadow-cljs compile server`.
+  *(2026-09-30: no longer true. `:server` now uses `:optimizations :simple`
+  (`backend/shadow-cljs.edn`) and CI's "Backend production release" step runs
+  `pnpm -C backend run build`.)*
 - `@open-hax/openplanner-sdk` is a `link:` to a sibling checkout. If that
   checkout has never been built, the server will not boot. Build it with
   `pnpm --filter "@open-hax/openplanner-sdk..." run build` from
@@ -322,6 +342,14 @@ the receipt would then attest that the whole revision was translated.
 
 ## Known gap, surfaced deliberately
 
+> Note (2026-09-30): closed on current `main`. `retired-authority-paths`
+> (`backend/src/cljs/knoxx/backend/law/publication_surface.cljs:88`) now includes
+> `/api/openplanner/v1/gardens` and states the guard scans the shipped source
+> trees; `publication_surface_verify_test.cljs` walks production sources instead
+> of an explicit file list; and the Gardens page reads `/api/publications/gardens`
+> (`frontend/src/cljs/knoxx/frontend/pages/gardens/api.cljs:7`). §9 is expected to
+> print `PASS` rather than `WARN`. The text below is kept as the record.
+
 `law/publication_surface.cljs:74` declares `retired-authority-paths` as paths
 that "must have NO shipped caller". `/api/openplanner/v1/gardens` still has
 four callers:
@@ -353,6 +381,12 @@ conditional CMS skip in `digitalocean/services/knoxx/verify.sh:123`. That flag
 lets a deploy skip the CMS check when no OpenPlanner answers — precisely the
 condition the new surfaces are built to work under. Retiring it is a follow-up
 PR against that repo, not this one.
+
+> Note (2026-09-30): retired. In the Foresight `services` checkout the flag is no
+> longer read anywhere; `digitalocean/services/knoxx/verify.sh:92-100` now runs the
+> publication surface check unconditionally and mentions the flag only in a
+> comment explaining its removal. This section describes the Services repository
+> and is a candidate to move out of Knoxx.
 
 ---
 

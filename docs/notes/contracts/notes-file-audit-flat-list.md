@@ -6,6 +6,8 @@ original: 2026.04.17.10.11.17.md
 status: note
 ---
 
+> **Status (2026-09-30):** Historical, and misnamed: this is a 2026-04 proposal for backend namespace layout, not an audit of docs/notes. The proposed `routes/ contract/ runtime/ tools/ triggers/ integrations/ session/ util/` tree was superseded by the four-category `domain.* / infra.* / law.* / shape.*` layout (plus `extern.*`) under `backend/src/cljs/knoxx/backend/` (see `AGENTS.md`, Architecture Split). The `util/` proposal contradicts the current no-`utils` house rule.
+
 Now I have the full picture. 36 files, all flat. Here's the analysis and the proposal:
 
 ## What the flat list actually contains

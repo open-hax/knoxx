@@ -6,6 +6,8 @@ category: "tools"
 created: "2026-05-07"
 ---
 
+> **Status (2026-09-30): historical.** `@resvg/resvg-js` is no longer used by the backend; SVG rendering now goes through Puppeteer (`backend/src/cljs/knoxx/backend/infra/svg_render.cljs`, `puppeteer-core`). `backend/src/cljs/knoxx/backend/tools/discord.cljs` is gone; `sanitize-svg-content` lives in `backend/src/cljs/knoxx/backend/domain/text.cljs:7` and is required by `domain/discord/tools.cljs:10`. The `Graphics/` directory cited as evidence is not in this repository.
+
  Signal
 
  This does not look like the SVG renderer creating the <<svgsvg corruption.

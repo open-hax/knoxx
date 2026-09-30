@@ -6,6 +6,22 @@ category: "architecture"
 created: "2026-05-20"
 ---
 
+> **Status note (2026-09-30).** Most of this plan has landed on
+> `docs/align-docs-with-code`. The protocols exist: `IAgentService`
+> (`infra/agent/service.cljs:12`), `IAgentProviderAdapter` (`infra/agent/provider/eta_mu.cljs:7`),
+> `IActiveSessionRegistry` (`infra/agent/session_registry.cljs:4`), `IMessageHistory`/`ITranscriptCodec`
+> (`infra/agent/history.cljs:8,12`), `IToolCatalog`/`IToolPolicyResolver` (`infra/agent/tool_catalog.cljs:8,11`),
+> `IContentCodec`/`IMediaMaterializer` (`infra/agent/content_codec.cljs:6,10`), `IRunEventSink`
+> (`infra/agent/stream/sinks.cljs:14`), `IPolicyEngine` (`infra/agent/policy.cljs:102`),
+> `IHydrationSource` (`infra/agent/hydration_sources.cljs:5`), and `IRecoveryCoordinator`
+> (`infra/agent/recovery_coordinator.cljs:6`). The pure pieces are
+> `domain/agent/{text_delta,reasoning,tool_lifecycle,turn_guards}.cljs` and
+> `infra/agent/stream/{provider_events,reducer}.cljs`. `IStreamEventNormalizer` and
+> `IStreamReducer` were implemented as plain functions, not protocols. The proposed
+> `shape/agent_runtime.cljs` landed as `shape/agent/runtime.cljs`. Context-policy
+> pruning is in `infra/agent/history.cljs`, not a separate `domain.agent.context-policy`.
+> All paths are relative to `backend/src/cljs/knoxx/backend/`.
+
 Signal
 
  (己, p=0.9) The main cleanup move is: do not make one giant “agent session

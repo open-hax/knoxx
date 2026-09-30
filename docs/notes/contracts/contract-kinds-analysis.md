@@ -6,6 +6,8 @@ original: 2026.04.22.09.19.42.md
 status: note
 ---
 
+> **Status (2026-09-30):** Historical snapshot, and the title does not match the body, which is about multimodal model input rather than contract kinds. Paths have moved. Contracts live in `contracts/`, not `backend/contracts/`. `agent_hydration.cljs` is now `backend/src/cljs/knoxx/backend/infra/agent/hydration.cljs` (`build-agent-multimodal-message` :168). `openplanner_memory.cljs` is now `infra/openplanner/memory.cljs`. `stored-session-message->agent-message` is now in `infra/agent/message.cljs:6`. The facts have moved too. Several models now declare `[:text :image]` or `[:text :image :audio]` (e.g. `contracts/models/gemma4_31b.edn:12`, `contracts/models/gpt_5.edn:11`, `contracts/model_families/gemma4.edn:10`). `planner-row->agent-message` now restores image `content_parts` (`infra/openplanner/memory.cljs:136-160`).
+
  Signal
 
  (世, p=0.98) Short answer: not in the way the contracts

@@ -12,6 +12,28 @@ related: [async/async-refactor-plan.md]
 All Knoxx HTTP routes are classified into five tiers based on their auth model
 and the async shape of their handler.
 
+> **Status note (2026-09-30).** The tier model still describes the code, but the
+> per-route "DoD Gap" column is the 2026-04-27 snapshot. Checked against
+> `docs/align-docs-with-code`:
+> - `defroute` exists with the signature
+>   `(defroute fn-name [extra-dep-syms] method path [& guard-fns] & body)`
+>   (`backend/src/cljs/knoxx/backend/macros.cljc:3-35`), not the
+>   `(defroute app method path deps handler)` form sketched below. Guards such
+>   as `browser-auth-guard` and `bearer-token-guard` are Fastify preHandlers
+>   (`backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs:313,481,507`).
+> - `defn-async`, `<!`, and `require-redis!` are not used anywhere in the backend;
+>   handlers use `^:async`/`await` (the `defroute` macro wraps bodies that contain
+>   `await`). Redis is retired; MCP OAuth state is in Mongo
+>   (`infra/stores/mongo_mcp_oauth.cljs:9-11`).
+> - The Tier 4 `/api/admin/pi-sessions*` routes are now
+>   `/api/admin/eta-mu-sessions`, `/status`, `/ingest` and the matching
+>   `/api/admin/opencode-sessions*` routes (`infra/routes/tools/proxy.cljs:184,247,301-306`).
+> - The multimodal file route is `/api/multimodal/files/:fileId` (GET and DELETE)
+>   (`infra/routes/multimodal.cljs:205,226`).
+> - The `/api/ingestion/*` and `/api/openplanner/*` catch-alls are still there
+>   (`infra/routes/tools/proxy.cljs:253,294`), and `/api/ingestion-proxy/*` has been
+>   added (`infra/routes/app.cljs:1107-1128`).
+
 ## Tier 0 — Public / Discovery
 
 | Method | Path | Async Shape | DoD Gap |

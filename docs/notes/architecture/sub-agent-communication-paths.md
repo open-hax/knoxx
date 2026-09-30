@@ -6,6 +6,12 @@ category: "architecture"
 created: "2026-05-06"
 ---
 
+> **Historical note (2026-09-30).** This gap was closed. `actors.send-message` exists
+> (`backend/src/cljs/knoxx/backend/domain/actor/tools.cljs`, registered at
+> `infra/registry/tools.cljs:32`), and a delivery mailbox projection exists at
+> `backend/src/cljs/knoxx/backend/domain/actor/mailbox.cljs`. See
+> `actors-send-message-tool.md`.
+
  Signal
 
  Not yet as a clean first-class actor mailbox.

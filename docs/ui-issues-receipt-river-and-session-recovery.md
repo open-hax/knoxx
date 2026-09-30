@@ -110,7 +110,7 @@ When the browser is refreshed while an agent request is running:
 
 ## Files Modified
 
-- `orgs/open-hax/knoxx/frontend/src/pages/ChatPage.tsx`
+- `frontend/src/pages/ChatPage.tsx`
   - Added `ToolReceiptGroup` import
   - Added `isRecovering` state
   - Added `liveToolReceipts` and `liveToolEvents` memos
@@ -118,7 +118,7 @@ When the browser is refreshed while an agent request is running:
   - Added inline tool receipt rendering in message map
   - Added "recovering" badge in Agent Runtime card
 
-- `orgs/open-hax/knoxx/frontend/src/components/ToolReceiptBlock.tsx` (NEW)
+- `frontend/src/components/ToolReceiptBlock.tsx` (NEW)
   - `ToolReceiptBlock` component for individual tool display
   - `ToolReceiptGroup` component for grouping receipts
 

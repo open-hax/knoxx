@@ -12,7 +12,9 @@ credentials.
   the running `openplanner-openplanner-1` container. The launcher rewrites only
   its network address to `127.0.0.1:27017` and enables direct replica-set access.
 - `PROXX_BASE_URL` defaults to `http://127.0.0.1:8789`. The bearer token is read
-  from `PROXX_ENV_FILE`, which defaults to the sibling `proxx/.env` checkout.
+  (as `PROXY_AUTH_TOKEN`) from `PROXX_ENV_FILE` unless `PROXX_AUTH_TOKEN` is set;
+  the file defaults to `proxx/.env` beside the workspace root (i.e. a sibling of
+  the Foresight checkout, not of `knoxx/`).
 - `OLLAMA_BASE_URL` defaults to `http://127.0.0.1:11434`, with
   `gemma4:e2b` pinned for both `publication_translator` and
   `publication_post_drafter`. Thinking is disabled for both tool-calling

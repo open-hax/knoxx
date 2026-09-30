@@ -19,6 +19,13 @@ Prefer the checked-in PM2 ecosystem from the Knoxx root:
 pm2 start ecosystem.config.cjs --only knoxx-shadow,knoxx-backend
 ```
 
+*2026-09-30:* the root `ecosystem.config.cjs` is now a deprecated shim that
+throws unless `KNOXX_HOST_ECOSYSTEM_CONFIG` points at a host ecosystem file
+(see the root `README.md`). The current `knoxx-backend` process runs
+`nbb scripts/start-server-dev.cljs` (`pnpm -C backend run start:dev`), which
+waits for the watch artifact and then imports `dist-dev/server.js`.
+`backend/scripts/dev-watch.sh` is a single-terminal helper that starts both.
+
 Manual foreground runs from `backend/` are only for temporary debugging. The canonical local dev supervisor is PM2; do not use wrapper scripts that background shadow and Node together.
 
 For verification only:

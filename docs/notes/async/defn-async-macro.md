@@ -7,6 +7,11 @@ tags: [macro, cljs, shadow-cljs, async, defn-async, defroute]
 related: [async/async-refactor-plan.md]
 ---
 
+> **Historical note (2026-09-30).** `defn-async` was never built. `defroute` exists,
+> but with a different shape: `(defroute fn-name [extra-deps] method path [& guards] & body)`
+> (`backend/src/cljs/knoxx/backend/macros.cljc:3-35`). It auto-wraps bodies that
+> contain `await` as `^:async`, and it does not use promesa or `u/decode`.
+
 # `defn-async` / `defroute` Macro Design
 
 Proposed macro substrate to standardize async route handlers in knoxx.

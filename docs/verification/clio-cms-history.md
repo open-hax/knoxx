@@ -1,7 +1,8 @@
 # CMS history backed by Clio
 
-Knoxx persists CMS revisions through `@eta-mu/document-history` at eta-mu commit
-`a2f428afd7623dcd188d535512525ee521a5ba61`. That package calls Clio directly for
+Knoxx persists CMS revisions through the eta-mu `packages/document-history` git
+dependency (`io.github.open-hax/document-history` in `backend/deps.edn`) at eta-mu
+commit `a2f428afd7623dcd188d535512525ee521a5ba61`. That package calls Clio directly for
 creation, locked append, validation, schema history, canonical replay and hashes.
 Knoxx retains organization authorization and publication policy.
 

@@ -16,7 +16,7 @@ Turn Knoxx from a single-operator workbench into a product-grade multi-tenant sy
 
 The first backend control-plane slice is now present in the CLJS Knoxx backend:
 
-- Postgres-backed control-plane bootstrap and seeding
+- Postgres-backed control-plane bootstrap and seeding *(2026-09-30: now MongoDB-backed — PostgreSQL was removed in the E14 Mongo migration; see `backend/src/cljs/knoxx/backend/infra/db/policy.cljs` and `infra/stores/mongo_policy_*.cljs`. The "Relational schema proposal" below is retained as the original design, not the current storage.)*
 - seeded primary org
 - seeded bootstrap system admin user
 - seeded built-in roles:

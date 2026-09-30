@@ -20,6 +20,11 @@ Source anchors that shaped this frame:
 - `/home/err/docs/notes/poetry/prelude-to-epiphany.md`
 - `docs/reports/ui-pattern-extraction-analysis.md`
 
+*2026-09-30:* none of these four anchors exists in this repository any more
+(`docs/sing.v3.md` and `docs/reports/ui-pattern-extraction-analysis.md` are
+gone; the two `/home/err/docs/notes/...` paths are host-local). They are kept
+as provenance only.
+
 ## Runtime contract
 
 A full Knoxx turn should expose all of these layers:
@@ -111,7 +116,7 @@ without reading server logs.
 - expose turn-level tool results more cleanly than raw preview blobs
 - allow opening a run receipt directly into the scratchpad
 - show when a response was passive-hydration-only vs explicit-tool-grounded
-- add cancel / abort controls alongside steer and follow-up
+- add cancel / abort controls alongside steer and follow-up *(2026-09-30: backend `POST /api/knoxx/abort` exists in `backend/src/cljs/knoxx/backend/infra/routes/app.cljs`)*
 
 ### Medium-term
 - add `steer` / `follow_up` controls for live intervention during a running turn

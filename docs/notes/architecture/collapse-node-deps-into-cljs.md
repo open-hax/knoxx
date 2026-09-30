@@ -6,6 +6,14 @@ original: 2026.04.23.12.51.40.md
 status: note
 ---
 
+> **Historical note (2026-09-30).** This was done. There is no
+> `backend/src/server.mjs` now. The `:server` and `:server-dev` builds start through
+> `knoxx.backend.entrypoint/init` (`backend/shadow-cljs.edn`,
+> `backend/src/cljs/knoxx/backend/entrypoint.cljs:9`), and namespaces own their Node
+> imports directly. The namespace names in the snippets below (`knoxx.backend.core`,
+> `agent-turns`, `policy-db`, `pi-session-ingester`) predate the
+> `domain/infra/shape/law/extern` restructure.
+
 ## Step 1: Collapse Node deps into CLJS
 
 Inside `knoxx.backend.bootstrap`, replace the `deps` injection with direct `(:require ...)` imports.

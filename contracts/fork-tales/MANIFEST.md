@@ -122,6 +122,10 @@ The master role that knows how to compose layers together. Grants `:cap/voice-sy
 - `contracts/fork-tales/instruments/` — 5 contracts (upright-piano, granular-choir, chip-lead, sub-bass, granular-strings)
 - `contracts/roles/fork-tales-composer.edn` — Master composer role
 
+*2026-09-30:* `contracts/fork-tales/agents/` has since been added with three agent
+resources (`fork_tales_deep_composer`, `fork_tales_instrumentalist`,
+`fork_tales_translator`); they are not part of the 27-file count above.
+
 ---
 
 ## Next Steps

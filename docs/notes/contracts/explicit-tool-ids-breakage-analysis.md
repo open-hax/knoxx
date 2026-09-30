@@ -6,6 +6,8 @@ category: "contracts"
 created: "2026-05-08"
 ---
 
+> **Status (2026-09-30):** Historical. `:data :tools` is now additive. See `backend/src/cljs/knoxx/backend/domain/contracts/resolve.cljs:249` (`legacy-explicit-tool-ids`) and `:358-366` (the concat with role and capability tools, then `:tool-deny`/`:tools/allowed` filtering). The `prompts.task should be a string` error still matches the live schema, because `AgentContract` `:prompts :task` is `string?` in `backend/src/cljs/open_hax/contracts/schema.cljs:96-113`.
+
 
  Evidence
 
