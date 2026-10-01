@@ -6,6 +6,17 @@ category: "architecture"
 created: "2026-05-06"
 ---
 
+> **Historical note (2026-09-30).** Implementation receipt from 2026-05-06; the
+> file list reflects the pre-restructure layout and is kept as history. On
+> `docs/align-docs-with-code` the tool lives in
+> `backend/src/cljs/knoxx/backend/domain/actor/tools.cljs` and is registered in
+> `backend/src/cljs/knoxx/backend/infra/registry/tools.cljs:32`; it is granted by
+> `contracts/capabilities/agent-dispatch.edn`, `cap_event_runtime.edn` and
+> `cap_github_event_observer.edn` (`cap_event_agents.edn` no longer exists). The
+> "Next" item was built: the mailbox projection is
+> `backend/src/cljs/knoxx/backend/domain/actor/mailbox.cljs`, with the statuses and
+> delivery modes proposed below (`mailbox.cljs:13-17`).
+
 
  Signal
 

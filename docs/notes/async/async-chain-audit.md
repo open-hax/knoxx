@@ -6,6 +6,12 @@ original: 2026.04.27.13.48.58.md
 status: note
 ---
 
+> **Historical note (2026-09-30).** This snapshot is superseded. The file names
+> predate the restructure (`policy_db.cljs`, `app_routes.cljs`, `redis_client.cljs`,
+> and `event_agents.cljs` no longer exist). The promesa recommendation was replaced
+> by the native `^:async`/`await` rule in `AGENTS.md` ("Modern Asynchrony"). The
+> backend now has roughly 1,350 `^:async` sites and a single `(.then` call.
+
 This is a comprehensive picture. Here's the full audit.
 
 ## Signal — Scope of the Problem

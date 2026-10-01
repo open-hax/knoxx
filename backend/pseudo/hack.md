@@ -1,4 +1,10 @@
 
+> **Historical scratch note (banner added 2026-09-30).** Pasted design-chat
+> excerpt about flattening MCP route async. Superseded: the backend now uses
+> native `^:async`/`await` (see `AGENTS.md`) and a `defroute` macro, and the
+> `require-redis!` guards in the route taxonomy below no longer exist — Redis was
+> removed in the E14 Mongo migration.
+
 Facts: `js-await` or a `defn-async` macro can flatten this even further, but the biggest gain already came from moving each async stage into a named Promise-returning function.  Interpretation: async syntax helps readability locally, while higher-order decomposition helps readability globally; you needed the second more than the first.[^6_3][^6_2][^6_1]
 
 Frame: $(refactor, p=0.93)$ լա the route is now orchestration; the workflow lives in named stages.[^6_2]

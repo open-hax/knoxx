@@ -592,6 +592,11 @@ Relevant files:
 - `frontend/src/pages/VisualCmsEditorPage.test.tsx`
 - `frontend/src/pages/BroadcastStudioPage.test.tsx`
 
+*2026-09-30:* `AuthContext.test.tsx`, `AgentAuditSessionList.test.tsx`,
+`TranslationModelSection.test.tsx`, `MailPage.test.tsx`, and
+`GardensPage.test.tsx` were deleted in `3f5af7d1` as those surfaces moved to
+CLJS; the rest of the list still exists.
+
 ## Recommended execution plan
 
 1. Keep `uiBackendSurfaceMatrix` as the canonical checklist and make every new UI/backend route add or update one matrix entry.

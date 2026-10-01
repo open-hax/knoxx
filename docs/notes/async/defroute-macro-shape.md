@@ -6,6 +6,11 @@ original: 2026.04.21.16.13.05.md
 status: note
 ---
 
+> **Historical note (2026-09-30).** The target form below was not adopted. The real
+> `defroute` takes a function name, extra dependency symbols, method, path, and an
+> optional vector of Fastify preHandler guards (`backend/src/cljs/knoxx/backend/macros.cljc:3-35`).
+> Redis guards no longer exist.
+
 ## The `defroute` Macro (What All of the Above Collapses Into)
 
 ```clojure

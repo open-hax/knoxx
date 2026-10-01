@@ -6,6 +6,9 @@ category: "architecture"
 created: "2026-05-19"
 ---
 
+> 2026-09-30: answered by the four-category namespace split in `AGENTS.md`
+> ("Architecture Split"). This outline is kept as history.
+
 How do they all fit together?
 
 ## Domain

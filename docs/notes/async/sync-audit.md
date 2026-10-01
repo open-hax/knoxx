@@ -7,6 +7,12 @@ tags: [sync, blocking, fs, execSync, event-loop]
 related: [async/async-refactor-plan.md]
 ---
 
+> **Historical note (2026-09-30).** This 2026-04-27 snapshot uses file names that
+> predate the restructure. Re-checked: `execSync` is gone from the backend, and
+> `domain/session_mycology.cljs` has no sync FS calls. A policy `writeFileSync` survives at
+> `backend/src/cljs/knoxx/backend/domain/policy/edn_adapter.cljs:130`, and new sync
+> writes exist in `extern/cms_store.cljs:46,68`. This note condenses `sync-code-audit.md`.
+
 # Synchronous Code Audit
 
 Audit of blocking/synchronous patterns in the knoxx backend, classified by

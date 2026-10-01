@@ -6,6 +6,11 @@ category: "architecture"
 created: "2026-05-20"
 ---
 
+> **Historical note (2026-09-30).** Postgres/HoneySQL is retired from the policy
+> path. `backend/src/cljs/knoxx/backend/infra/db/policy.cljs` is now Mongo-backed
+> (see its ns docstring, lines 2-13), `find-request-membership-row` (line 414)
+> ignores its pool argument, and no backend namespace requires `honey.sql`.
+
 large share of the module still builds SQL as raw strings passed to `query!` and `query-one!`. So the useful move is not “introduce HoneySQL,” but “replace the remaining string SQL with data-shaped query builders at the boundary.” 
 ## Facts
 

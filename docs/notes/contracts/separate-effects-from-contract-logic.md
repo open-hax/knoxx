@@ -28,7 +28,7 @@ https://github.com/open-hax/eta-mu/blob/main/spec/contract-runtime-v2-spec.md
 https://github.com/open-hax/eta-mu/blob/main/spec/contracts-v1.edn
 
 https://github.com/open-hax/knoxx/blob/main/docs/epistemic-kernel.md
-https://github.com/open-hax/knoxx/blob/main/docs/epistemic-examples.edn
+https://github.com/open-hax/foresight/blob/main/docs/architecture/epistemic-examples.edn
 
 https://github.com/octave-commons/fork_tales/blob/main/specs/contract.edn
 https://github.com/octave-commons/fork_tales/blob/main/specs/signal.edn

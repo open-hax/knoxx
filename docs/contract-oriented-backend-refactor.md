@@ -1,5 +1,17 @@
 # Contract-Oriented Backend Refactor
 
+> **Historical proposal (banner added 2026-09-30).** The file paths under "Why
+> this refactor exists" (`runtime/contract_loader.cljs`, `contracts_routes.cljs`,
+> `tooling.cljs`, `policy_db.cljs`, `agent_turns.cljs`, `event_agents.cljs`) no
+> longer exist, and the proposed `knoxx.backend.contracts.*` namespace map was
+> not adopted as written. The backend instead follows the four-category split in
+> `AGENTS.md`: contract loading/resolution lives in
+> `knoxx.backend.domain.contracts.*` (`loader`, `resolve`, `roles`, `sources`,
+> `tools`, `client`), contract routes in `infra/routes/contracts.cljs` and
+> `infra/routes/resources.cljs`, and the contract runtime itself is consumed
+> from katamorph (`backend/deps.edn`). The "PostgreSQL to MongoDB" direction
+> landed: the policy DB is Mongo-backed (`infra/db/policy.cljs`).
+
 ## Goal
 
 Make the Knoxx backend contract-oriented by moving contract meaning, validation, resolution, and materialization into a dedicated `knoxx.backend.contracts.*` domain.

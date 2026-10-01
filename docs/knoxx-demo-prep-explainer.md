@@ -155,6 +155,12 @@ The main Knoxx interface showing:
 - Redis: Session state and real-time coordination
 - ChromaDB: Vector embeddings for semantic search
 
+*2026-09-30 correction:* the backend now keeps user accounts, organizations,
+roles, policies, and sessions in MongoDB; PostgreSQL and Redis were removed
+from the backend (E14 Mongo migration). PostgreSQL remains only in the
+ingestion worker. Vector search goes through the OpenPlanner SDK's Mongo
+vectors (`@open-hax/openplanner-sdk/mongo-vectors`), not ChromaDB.
+
 **Deployment:**
 - Docker Compose for local and self-hosted deployments
 - Designed for Kubernetes on major cloud providers

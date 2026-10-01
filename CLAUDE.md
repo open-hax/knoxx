@@ -5,7 +5,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Also read **AGENTS.md** — it contains mandatory coding style rules, namespace conventions, verification requirements, modern CLJS patterns, and licensing doctrine that apply to all work in this repo.
+> Also read **AGENTS.md** — it contains mandatory coding style rules, namespace conventions, verification requirements, modern CLJS patterns, runtime-operation rules, and PR review/merge ownership that apply to all work in this repo.
 
 ## Project Overview
 
@@ -14,7 +14,7 @@ Knoxx is a local-first knowledge vault (named after Fort Knox) with a distribute
 - **Backend** — ClojureScript / Node.js (Fastify HTTP + WebSocket, MCP server, Discord gateway)
 - **Frontend** — React / TypeScript + ClojureScript (Vite + Shadow-cljs, TailwindCSS)
 - **Ingestion** — Clojure / JVM (Ring/Jetty, file watching, pluggable driver pipeline)
-- **Discord Bot** — TypeScript / Discord.js (optional)
+- **Discord** — handled in-process by the backend Discord gateway (`domain/discord/`, `extern/discord`). The standalone TypeScript `discord-bot/` package was removed on 2026-05-21 (`b3348eb1`).
 
 ## Commands
 
@@ -31,7 +31,7 @@ pnpm lint             # clj-kondo
 pnpm typecheck        # shadow-cljs compile server (type check)
 ```
 
-Run a single backend test file by compiling the test build and filtering by namespace:
+Compile and run the backend `:test` build (the whole cljs.test suite; there is no namespace filter on this command):
 ```bash
 pnpm -C backend exec shadow-cljs compile test
 ```
@@ -54,7 +54,7 @@ pnpm typecheck        # TypeScript type check
 
 ```bash
 # From ingestion/
-clj -M:dev            # Start nREPL + dev server (port 3002)
+clj -M:dev            # Start nREPL with CIDER middleware (no HTTP server; port chosen by nREPL)
 clj -M:test           # Unit tests (excludes translation pipeline)
 clj -M:integration    # Integration tests (requires live OpenPlanner + DB)
 clj -M:run            # Run server as main
@@ -80,7 +80,7 @@ scripts/verify-publication-tour.sh   # Browser tour + screenshots
 Every epic ships a pair like this. See **AGENTS.md → Human Verification
 Artifact** for what is required, and `docs/verification/` for the walkthroughs.
 
-Pre-push checks run: repo-wide size lint → backend clj-kondo → backend shadow-cljs compile → ingestion clj-kondo → frontend typecheck + size lint → discord-bot typecheck + size lint.
+Pre-push checks run: repo-wide size lint → backend clj-kondo → backend shadow-cljs compile → ingestion clj-kondo → frontend size lint + typecheck → frontend changed-surface CLJS lint → frontend migration manifest check → discord-bot size lint + typecheck. (As of 2026-09-30 `scripts/pre-push-checks.sh` still runs the two discord-bot checks even though `discord-bot/` no longer exists, so they fail.)
 
 ## Architecture
 
@@ -90,21 +90,18 @@ The backend is organized into **vertical domain-driven slices** (see AGENTS.md f
 
 ```
 backend/src/cljs/knoxx/backend/
-├── domain/          # Domain event handlers (music, media, models, etc.)
-├── infra/agent/     # Agent orchestration (runner, runtime, session, message)
-├── infra/           # HTTP, config, Redis, sessions
+├── domain/          # Domain logic; per-domain agent tools live in domain/<name>/tools.cljs
+│                    #   (discord, voice, actor, openutau, policy, event, contracts, ...)
+├── extern/          # The only home of raw JS interop (fastify, fetch, mongo, discord, ...)
+├── infra/agent/     # Agent orchestration (runner, runtime, session, message, hydration)
+├── infra/           # HTTP routes, config, Mongo stores, clients, lifecycle
 ├── law/             # Policy & contract evaluation
-├── shape/           # Type/shape definitions (TypeBox schemas)
-└── tools/           # Tool implementations organized by domain
-    ├── discord/
-    ├── music/
-    ├── openplanner/
-    ├── contracts/
-    ├── shared/      # Cross-domain helpers
-    └── media/       # Media loading utilities
+├── shape/           # Structure-only data shapes (plain CLJS/CLJC)
+├── runtime/         # Process-local runtime state
+└── tools/           # mcp.cljs — MCP bridge tool factory
 ```
 
-The orchestration layer (`infra/agent/`) composes domain tool vectors. Domain namespaces should never import each other — shared helpers live in `tools.shared` or `tools.media`.
+The orchestration layer (`infra/agent/`, e.g. `hydration.cljs`) composes domain tool vectors. Domain namespaces should never import each other.
 
 ### Frontend Multi-Build System
 
@@ -113,11 +110,11 @@ Three concurrent builds run in dev:
 2. Vite bridges → `dist/bridge/*.es.js` (TypeScript APIs exposed to ClojureScript)
 3. Shadow-cljs → `dist/cljs/*.js`
 
-The Vite dev server proxies `/api` and `/ws` to the backend.
+The shadow-cljs dev HTTP server on `:5173` (`frontend/shadow-cljs.edn` `:dev-http`) serves `dist/` and proxies `/api`, `/ws`, and `/health` to `http://127.0.0.1:8000`.
 
 ### Ingestion Driver Pipeline
 
-Pluggable drivers handle data sources (local filesystem, audio, images, scrapers, session logs). Each driver implements a common protocol (`browse`, `index`, `preview`). A passive file system watcher (Java WatchService) triggers scans automatically; sync intervals are configurable per source.
+Pluggable drivers handle data sources (local filesystem, audio, images, scrapers, GitHub, PromptDB, eta-mu and OpenCode session logs). Each driver implements the `kms-ingestion.drivers.protocol/Driver` protocol (`discover`, `extract`, `extract-batch`, `get-state`, `set-state`, `close`). A passive file system watcher (Java WatchService) triggers scans automatically; sync intervals are configurable per source.
 
 ### Contracts & Authorization
 
@@ -131,11 +128,13 @@ KNOXX_API_KEY=<key>
 KNOXX_API_KEY_USER_EMAIL=pi@open-hax.local   # optional override
 
 # Ingestion
-OPENPLANNER_URL=http://localhost:7777
+OPENPLANNER_BASE_URL=http://localhost:7777
 OPENPLANNER_API_KEY=<key>
 WORKSPACE_PATH=/home/err/devel
-MODELS_DIR=/path/to/gguf/models
+DATABASE_URL=postgresql://user:pass@host:5432/knoxx   # ingestion still uses PostgreSQL
 ```
+
+The backend itself persists to MongoDB (`MONGODB_URI`, `MONGODB_DB`; see `backend/src/cljs/knoxx/backend/infra/mongo_client.cljs`).
 
 ## Hot Reload
 

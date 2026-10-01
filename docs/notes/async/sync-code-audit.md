@@ -6,6 +6,10 @@ original: 2026.04.27.13.54.09.md
 status: note
 ---
 
+> **Historical note (2026-09-30).** This is a 2026-04-27 snapshot and the file names
+> predate the restructure. See the status note in `sync-audit.md` for the current
+> state of each runtime finding.
+
 
 Here is the full classification. Every hit was examined against what the code does and when it runs. 
 

@@ -21,36 +21,41 @@ for Knoxx work items — they are edited in place, not regenerated.
 
 ## Managing the board
 
-Use the `eta-mu-beta kanban` CLI (the kanban-capable binary), pointing `--tasks-dir`
-at the repo root so it resolves `kanban/openhax.kanban.json`:
+Board state (status, frontmatter, comments, transitions) is owned by **Rheos**,
+driven through the `eta-mu kanban` CLI. Point `--tasks-dir` at this `kanban/`
+directory, not at the repository root: at the root the scan also picks up
+`docs/` and reports several hundred non-card files.
 
 ```bash
-eta-mu-beta kanban list   --tasks-dir <knoxx-repo-root>
-eta-mu-beta kanban count  --tasks-dir <knoxx-repo-root>
-eta-mu-beta kanban update-status <uuid> <status> --tasks-dir <knoxx-repo-root>
-eta-mu-beta kanban comment <uuid> "note" --tasks-dir <knoxx-repo-root>
+eta-mu kanban list   --tasks-dir kanban
+eta-mu kanban count  --tasks-dir kanban
+eta-mu kanban update-status <uuid> <status> --tasks-dir kanban
+eta-mu kanban comment <uuid> "note" --tasks-dir kanban
 ```
 
-Valid statuses: `icebox`, `incoming`, `accepted`, `breakdown`, `ready`, `todo`,
-`in_progress`, `review`, `document`, `done`, `rejected`.
+`eta-mu-beta` is an older alias of the same CLI; prefer `eta-mu`.
+
+The board uses the `promethean` FSM (`openhax.kanban.json`). Valid statuses:
+`icebox`, `incoming`, `accepted`, `breakdown`, `blocked`, `ready`, `todo`,
+`in_progress`, `testing`, `review`, `document`, `done`, `rejected`.
+
+Rheos records transitions and comments in `.events/ledger.edn`, an append-only,
+tracked, one-EDN-event-per-line ledger. Never rewrite or reorder it.
 
 ## Run the board UI
 
-The kanban service is managed by PM2:
+The board server and browser UI ship with Rheos. In the Foresight workspace this
+is `eta-mu/packages/rheos`, which carries its own PM2 `ecosystem.config.cjs`
+(and the standalone `open-hax/rheos` repository). Serve this board by pointing
+Rheos at this directory with `--tasks-dir`.
 
-```bash
-cd services/eta-mu/kanban
-pm2 start ecosystem.config.cjs
-# http://127.0.0.1:8787
-```
+## Cards that belong elsewhere
 
-Or run directly:
-
-```bash
-cd orgs/open-hax/eta-mu/packages/kanban
-pnpm build
-node dist/cli.js serve --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
-```
+Some cards here describe work owned by other repositories (osmos, chat-ui, uxx,
+services, OpenPlanner, and the retired predecessor product line). They are
+listed, with the recommended Rheos action for each, in Foresight's
+[`docs/lineage/knoxx-documentation-extraction.md`](https://github.com/open-hax/foresight/blob/main/docs/lineage/knoxx-documentation-extraction.md).
+None were moved; carry out the moves or closures through Rheos.
 
 ---
 Triage 2026-05-29: The "readme" uuid resolves to the kanban board's own README.md, which is a meta/layout document describing board structure, CLI usage, and PM2 setup — not an actionable work item. Verdict: rejected (P4). --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban

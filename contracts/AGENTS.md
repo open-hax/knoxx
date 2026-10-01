@@ -94,6 +94,16 @@ contracts/
   ensemble/       Grouped agent resources for multi-agent sessions
 ```
 
+> *2026-09-30 tree check:* this is the class vocabulary, not a listing. The
+> tracked directories are `actors/`, `agents/`, `authentication/`,
+> `capabilities/`, `devel/`, `fork-tales/`, `knoxx-session/`, `mcp_servers/`,
+> `model_families/`, `models/`, `namespaces/`, `policies/`, `roles/`,
+> `runtime_features/`, `source_modes/`, `sub_agents/`, and `.disabled/`.
+> There are no `generators/`, `schedules/`, `actions/`, `triggers/`, `sources/`,
+> or `ensemble/` directories here: sources, triggers, and actions are declared in
+> `namespaces/*.edn` manifests, and `ensemble/` and `schedules/` survive only
+> under the top-level `disabled-contracts/`.
+
 ---
 
 ## ID and Namespace Conventions
@@ -215,7 +225,8 @@ Context source resources are distinct from `:ingest_source` resources, which con
 
 Resolution order is deterministic: actor baseline sources, then role sources, then agent sources, then run/action-local overrides. Duplicate refs merge by canonical `:source/id`; later refs override earlier scalar settings while nested maps deep-merge.
 
-The first context source is `:source/openplanner-memory` (`contracts/sources/openplanner_memory.edn`). It hydrates prior Knoxx session/action memory through the same OpenPlanner memory search path used by `memory_search`.
+The first context source is `:source/openplanner-memory` (declared in `contracts/namespaces/core_sources.edn`; the former
+`contracts/sources/openplanner_memory.edn` file no longer exists). It hydrates prior Knoxx session/action memory through the same OpenPlanner memory search path used by `memory_search`.
 
 ## Event/Trigger/Action/Schedule/Generator Resources
 

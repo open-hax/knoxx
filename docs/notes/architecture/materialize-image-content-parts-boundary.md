@@ -6,6 +6,12 @@ category: "architecture"
 created: "2026-05-05"
 ---
 
+> **Historical note (2026-09-30).** This was implemented. The inline blob is gone.
+> Materialization is behind `IContentCodec`/`IMediaMaterializer` in
+> `backend/src/cljs/knoxx/backend/infra/agent/content_codec.cljs:6-65`. The
+> `setAfterToolCall` interop is confined to `backend/src/cljs/knoxx/backend/extern/eta_mu.cljs:222-223`.
+> The proposed `knoxx.backend.codecs.model-images` namespace was never created.
+
 Yeah, that whole block is exactly the kind of “JS blob inline in domain logic” we want to excise. The good news is it’s tightly scoped: it’s just about materializing image content parts into a `SessionManager` after tool calls. 
 
 Let me name what it’s doing and then how to hoist it behind a clean boundary.

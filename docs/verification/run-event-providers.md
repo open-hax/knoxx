@@ -7,6 +7,9 @@ node scripts/verify-run-event-providers.mjs
 node scripts/verify-run-event-providers.mjs --mongod /absolute/path/to/mongod
 ```
 
+`KNOXX_TEST_MONGOD=/absolute/path/to/mongod` is equivalent to `--mongod`. Without
+either, the native Mongo proof is skipped with a `WARN` line.
+
 The verifier prints the checkout SHA, compiles these exact sources against the
 published dependency pins, rejects compiler warnings, and requires positive
 assertion counts with zero failures/errors. Its native async guard rejects

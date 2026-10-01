@@ -4,10 +4,9 @@
 > table, and the sequencing rule. This file is only knoxx's slice.
 > Board: `kanban/{epics,tasks}/`. Last surveyed: 2026-08-29.
 >
-> That link 404s until [eta-mu#167](https://github.com/open-hax/eta-mu/pull/167)
-> merges — the hub is written and on that branch, not yet on `main`. The path is
-> the one it will land at, so it is left as-is rather than pointed at a branch
-> that would rot; delete this note when the PR merges.
+> *2026-09-30:* [eta-mu#167](https://github.com/open-hax/eta-mu/pull/167) has
+> merged; `ROADMAP.md` is on eta-mu `origin/main` (added in `ead07cb4`), so the
+> hub link above resolves. The earlier "link 404s" note is retired.
 
 ## What knoxx is, on this roadmap
 
@@ -20,6 +19,9 @@ own the upstream seams while they are still moving.
 > work independently; **code should not be migrated into or out of Knoxx to prove
 > this architecture.**
 > — `muse/docs/design/contract-ownership-and-host-translation.md`
+> *(2026-09-30: that path is not present in the current muse checkout on any
+> branch; the quotation is carried verbatim by the eta-mu hub's "sequencing
+> rule" section.)*
 
 Knoxx cuts over **last** — `eta-mu:knoxx-katamorph-cutover`, iceboxed by design.
 Two extractions out of knoxx have already succeeded (`eta-mu:sol-extraction`,
@@ -66,7 +68,8 @@ its own receipts without absorbing transduction, evaluation, repository, or layo
 ## Knoxx's position in the drift ledger
 
 - **Consumes katamorph as a pinned Git dependency.** `backend/deps.edn` pins
-  `io.github.open-hax/katamorph` at `v0.2.0`, and `backend/shadow-cljs.edn`
+  `io.github.open-hax/katamorph` by Git sha `b00316a6` (past `v0.2.0`, which
+  has no newer tag), and `backend/shadow-cljs.edn`
   takes its classpath from that alias. The `open-hax.contract-runtime.*`
   requires are now `katamorph.*`; the injected config key is still
   `:contract-runtime/deps`, which katamorph reads under that name.
@@ -93,3 +96,11 @@ Verified clean: **zero** postgres references in `backend/package.json` or
 `backend/src/cljs`. The compose comment claiming pg/redis remain a dependency of
 `knoxx-ingestion` appears stale — no pg dep found there. Deleting that comment
 is a two-minute win.
+
+*2026-09-30 correction:* the backend is clean (only comments in
+`infra/routes/app.cljs` recording the E14 removal), and `docker-compose.yml` no
+longer carries a pg/redis comment. But the ingestion worker **does** still
+depend on PostgreSQL: `ingestion/deps.edn` pulls `next.jdbc` and
+`org.postgresql/postgresql`, and `ingestion/src/kms_ingestion/db.clj` opens a
+Hikari JDBC pool from `DATABASE_URL`. `REDIS_URL` and `jedis` remain configured
+in ingestion but nothing outside `config.clj` reads them.

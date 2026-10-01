@@ -6,6 +6,8 @@ original: 2026.04.22.10.48.07.md
 status: note
 ---
 
+> **Status (2026-09-30):** Historical proposal, not adopted as written. The live registry is `backend/src/cljs/open_hax/contracts/schema.cljs:464` (kinds such as `:agent :sub-agent :actor :role :capability :policy :policy-gate :fulfillment :strategy :action :trigger :schedule :source :model :model-family`). There is no `:intent` or `:tool-call` kind, capabilities use `:cap/id` rather than `:capability/id`, and the epistemic `Obs/Inference/Attestation/Judgment` shapes are not in Knoxx's schema.
+
 Here’s the μ cut: a proposed Malli freeze for the **next** policy-contract layer, not a claim that Knoxx already enforces all of this at runtime.  It follows the direction we had reached: `contractkind` + `contractuses` stay as the composition spine, `policy` narrows behavior rather than granting it, `tool` access is really capability-shaped, and actor binding is the missing bridge between principal identity and contract execution.
 ## μ
 

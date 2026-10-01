@@ -6,6 +6,8 @@ original: 2026.04.23.14.24.59.md
 status: note
 ---
 
+> **Status (2026-09-30):** Historical. The proposed split landed under different names. Contract semantics now live in `backend/src/cljs/knoxx/backend/domain/contracts/` (`loader`, `resolve`, `roles`, `tools`, `sources`, `client`), with schemas in `backend/src/cljs/open_hax/contracts/schema.cljs`. `runtime/` holds only `roles.cljs` and `state.cljs`. `policy_db.cljs`, `agent_turns.cljs`, `event_agents.cljs` and `contracts_routes.cljs` are gone; see `infra/db/policy.cljs`, `infra/agent/turn.cljs` and `infra/routes/resources.cljs`. The Mongo/driver discussion was not carried out as written.
+
 
 Signal
 

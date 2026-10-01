@@ -6,6 +6,12 @@ original: 2026.04.27.13.24.25.md
 status: note
 ---
 
+> **Historical note (2026-09-30).** This was superseded by a Mongo cutover, not
+> by the `db/pg.cljs` split below. `backend/src/cljs/knoxx/backend/infra/db/policy.cljs`
+> is a thin facade over the `infra/stores/mongo_policy_*.cljs` twins
+> (directory, roles, tools, studio, invites, data_lakes, audit_events,
+> actor_credentials, store). None of the proposed `db/*.cljs` namespaces exist.
+
 ## The Problem, Named Precisely
 
 `policy_db.cljs` conflates:

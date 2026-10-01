@@ -6,6 +6,13 @@
 
 ## Summary
 
+> *2026-09-30:* the extracted `@open-hax/contract-runtime` package
+> (`packages/contract-runtime/`) has since been superseded by **katamorph**:
+> `backend/deps.edn` pins `io.github.open-hax/katamorph` by Git sha and the
+> namespaces are `katamorph.*`. The injection bridge is still
+> `knoxx.backend.contract-runtime-deps` (`backend/src/cljs/knoxx/backend/contract_runtime_deps.cljs`).
+> `contracts/namespaces/` now holds 12 manifests, not 8.
+
 Knoxx is now a deployment of the contract runtime. Four phases completed:
 
 1. **Runtime decomposition** — 17 core namespaces extracted to `@open-hax/contract-runtime` package

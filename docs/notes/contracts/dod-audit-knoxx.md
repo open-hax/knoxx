@@ -6,6 +6,8 @@ original: 2026.04.19.15.18.39.md
 status: note
 ---
 
+> **Status (2026-09-30):** Historical design audit. Its core decision landed: `contracts/actors/`, `contracts/roles/` and `contracts/capabilities/` are folders of EDN on disk. The files it critiques (`contracts_routes.cljs`, `runtime_config.cljs`, `run_state.cljs`, `agent_runtime.cljs`) no longer exist under those names. `queue-agent-control!` now lives in `backend/src/cljs/knoxx/backend/infra/agent/runtime.cljs:105`. A compatibility `role-tools` def remains in `backend/src/cljs/knoxx/backend/runtime/roles.cljs:12`. `PRINCIPLE.edn` does not exist in this repository.
+
 ## DoD Audit of Knoxx
 
 ### ToR — Tables of Records

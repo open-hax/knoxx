@@ -30,8 +30,8 @@ scripts/verify-translation-dispatch.sh
 
 The script seeds its own fixture and removes it on exit — including on failure
 and on Ctrl-C. It writes only inside `contracts/_verify_translation_dispatch/`
-plus one probe source file, and it deletes the probe file only if this run
-created it.
+(`$KNOXX_CONTRACTS_DIR/_verify_translation_dispatch/`), the probe source file
+included, and removes that one directory on exit only if this run created it.
 
 **Its identity is unique per run.** The document, publication ids, source file
 and pinned revision all carry a run id. With a fixed identity, every run after
@@ -124,7 +124,7 @@ former would sweep nothing while reporting success.
 The response reports `considered` separately from `dispatched`, because an empty
 dispatch list is ambiguous on its own — "nothing needed translating" and
 "nothing was even looked at" read identically. You should see two considered,
-one dispatched, and the dispatched one is `probe-es`.
+one dispatched, and the dispatched one is `probe<run-id>-es`.
 
 Then the outcome. Two values, and neither means quite what its name suggests:
 

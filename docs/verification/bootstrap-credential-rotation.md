@@ -13,10 +13,11 @@ teardown work together.
 - Use a clean checkout at the revision being reviewed. The verifier refuses
   tracked or untracked source changes.
 - Keep an OpenPlanner clone available (the sibling `../openplanner` path is the
-  default) and choose the exact OpenPlanner commit whose SDK should participate
+  default; override it with `KNOXX_BOOTSTRAP_VERIFY_OPENPLANNER_ROOT`) and choose the exact OpenPlanner commit whose SDK should participate
   in the proof. The script archives that commit rather than reading its working
   tree.
-- Provide `git`, `pnpm`, `mongosh`, `node`, `curl`, and `jq`.
+- Provide `git`, `pnpm`, `mongosh`, `node`, `curl`, `jq`, `tar`, `find`, and
+  `readlink`.
 - Provide a Mongo replica set or sharded cluster that the verifier may create
   and drop uniquely named databases on. A standalone `mongod` is deliberately
   refused because it cannot uphold atomic credential replacement.

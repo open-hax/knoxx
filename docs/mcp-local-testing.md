@@ -227,7 +227,12 @@ deliberately refuses to guess an annotation from a tool's name.
 
 ## The deploy gate
 
-`services/knoxx/verify.sh` in the DigitalOcean deployment repo gains an MCP
+> *2026-09-30:* in the current `open-hax/services` checkout (`7e5ad2c`),
+> `digitalocean/services/knoxx/verify.sh` has no MCP section and no file named
+> `probe-mcp.js` or referencing `KNOXX_MCP_*` exists. What follows describes the
+> intended gate; treat it as unverified until that change is found or landed.
+
+`digitalocean/services/knoxx/verify.sh` in the `open-hax/services` deployment repo gains an MCP
 section. A healthy backend with a broken tool surface is a real and previously
 undetectable failure — a schema conversion producing nothing callable, a tool
 vanishing from the catalog, an actor credential that no longer resolves — and

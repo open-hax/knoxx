@@ -8,6 +8,22 @@ created: "2026-05-20"
 
 # JS ↔ CLJS Data Boundary Report
 
+> **Status note (2026-09-30).** The counts and checklists below are the
+> 2026-05-20 snapshot and are kept as history. Re-measured on
+> `docs/align-docs-with-code` with `grep -rF` under
+> `backend/src/cljs/knoxx/backend/`: `#js` 565 total / 171 in `extern/`;
+> `(aget ` 1289 / 153; `(aset ` 104 / 23; `clj->js` 362 / 111; `js->clj` 129 / 28.
+> `extern/fastify.cljs` and `extern/discord.cljs` now exist; `extern/bluesky.cljs`
+> and `extern/policy_db.cljs` were never created. `infra/routes/` is down to four
+> `#js {}` fallbacks (`auth.cljs:11`, `admin.cljs:7`, `users/admin.cljs:7`,
+> `mcp/transport.cljs:64`); `infra/routes/app.cljs`, `tools/proxy.cljs`,
+> `mcp.cljs`, `infra/db/policy.cljs` and `domain/bluesky/bluesky.cljs` have zero.
+> Remaining hotspots: `infra/eta_mu_session_ingester.cljs` (58),
+> `domain/discord/gateway.cljs` (37), `domain/discord/voice_tools.cljs` (11).
+> One `js/Promise.all #js` survives at
+> `infra/stores/composite_message_source.cljs:8`, so Track B's "zero remaining"
+> no longer holds.
+
 ## Audit summary (2026-05-20)
 
 The earlier extern-boundary cleanup (`2026.05.20.extern-boundary.md`) addressed *module imports* — who requires `@open-hax/eta-mu-cli`, `node:fs`, `node:path`. That work is complete. This report covers the larger remaining problem: **data boundary crossing** — business logic that creates, reads, and mutates raw JS objects inline rather than going through typed CLJS maps.

@@ -6,6 +6,8 @@ original: 2026.04.23.11.44.42.md
 status: note
 ---
 
+> **Status (2026-09-30): historical — implemented.** The requested isolated module exists as `knoxx.backend.infra.agent.resume` (`backend/src/cljs/knoxx/backend/infra/agent/resume.cljs`): stale threshold 10 minutes (`resume.cljs:26`), stale sessions aborted (`abort-stale-session!`, `resume.cljs:120`), non-blocking resume after listen (`infra/core.cljs:248-252`), and shutdown waits for turns and flushes (`infra/graceful_shutdown.cljs:65`). Persistence is Mongo (`infra/stores/mongo_session_store`), not Redis as written below.
+
 knoxx's backend session resume after restarts is not working.
 
 The system knows they were active, but they are never actually resumed, resulting in the interface

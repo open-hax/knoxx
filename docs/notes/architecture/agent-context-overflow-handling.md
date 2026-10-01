@@ -6,6 +6,16 @@ category: "architecture"
 created: "2026-05-06"
 ---
 
+> **Historical note (2026-09-30).** Implementation receipt from 2026-05-06; the
+> behaviour is current but the file list is not. `prune-session-messages` now
+> lives in `backend/src/cljs/knoxx/backend/infra/agent/history.cljs:40`
+> (`infra/agent/session.cljs:60` delegates to it, and `infra/agent/turn_finalization.cljs:14`
+> calls it). `ContextPolicy` schemas are at `backend/src/cljs/knoxx/backend/shape/agent/runtime.cljs:70`
+> and `backend/src/cljs/open_hax/contracts/schema.cljs:71`. `contracts/agents.md`
+> no longer exists, and `discord_voice_companion.edn` has moved to
+> `disabled-contracts/discord/`, where its policy is now `:max-messages 1000`
+> (line 23), not 80.
+
  Signal
 
  Implemented contract-level context overflow handling for Knoxx agent sessions.

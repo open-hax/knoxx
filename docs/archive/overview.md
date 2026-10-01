@@ -8,6 +8,12 @@ tags: [cljs, shadow-cljs, node, esm, docker]
 
 # Knoxx Backend — Architecture Overview
 
+> **Historical (banner added 2026-09-30).** This describes the retired JS-bootstrap
+> backend (`src/server.mjs`, `src/policy-db.mjs`, `dist/app.js`), none of which
+> exists now. The current runtime is all-CLJS: `:server`/`:server-dev` builds with
+> `knoxx.backend.entrypoint/init` -> `knoxx.backend.bootstrap/bootstrap!`. See
+> `backend/README.md`. The `status: stable` frontmatter is left as authored.
+
 CLJS-based backend service for the Knoxx agent runtime, compiled by shadow-cljs
 to an ESM bundle and served by a Node.js bootstrap.
 

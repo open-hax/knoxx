@@ -4,8 +4,10 @@ Knoxx backend is the Node 22 + shadow-cljs + Fastify control plane for the
 Knoxx agent workbench. It owns HTTP/WebSocket transport, auth/RBAC, contract
 loading and policy materialization, agent runtime orchestration, MCP exposure,
 OpenAI-compatible model proxying, and integrations with Proxx, OpenPlanner,
-Redis, PostgreSQL, ingestion, voice, Discord, media, studio/audio, and workspace
-tools.
+MongoDB, ingestion, voice, Discord, media, studio/audio, and workspace tools.
+(Redis and PostgreSQL were removed from the backend in the E14 Mongo migration,
+kanban 14-05; see `src/cljs/knoxx/backend/infra/mongo_client.cljs` and
+`src/cljs/knoxx/backend/infra/db/policy.cljs`.)
 
 ## Current architecture
 
@@ -16,18 +18,19 @@ backend/
 ├── scripts/
 │   ├── run-shadow-tests-ci.mjs
 │   ├── run-shadow-tests-coverage-ci.mjs
+│   ├── dev-watch.sh
 │   └── start-server-dev.cljs
 ├── src/cljs/knoxx/backend/
 │   ├── entrypoint.cljs      # shadow-cljs :server/:server-dev init-fn
 │   ├── bootstrap.cljs       # startup, Fastify registration, lifecycle hooks
 │   ├── domain/              # business domains: agent, contracts, MCP, Discord, media, voice, etc.
-│   ├── infra/               # config, HTTP, DB, Redis, stores, route registration
+│   ├── infra/               # config, HTTP, Mongo client/stores, route registration
 │   ├── shape/               # route/tool/session data-shape helpers
 │   ├── runtime/             # process-local runtime state
 │   ├── law/                 # contract/law helpers
 │   ├── extern/              # JS/eta-mu/Proxx interop adapters
-│   └── tools/               # tool adapters and MCP helpers
-├── test/cljs/               # cljs.test suites
+│   └── tools/               # mcp.cljs — MCP bridge tool factory
+├── test/                    # cljs/ (cljs.test), js/ (node --test), clj/, e2e/
 ├── dist-dev/                # server-dev watch output, not committed as source
 └── dist/                    # production/verification output, not committed as source
 ```
@@ -47,6 +50,9 @@ Defined in `shadow-cljs.edn`:
 | `:server` | Production/verification runtime | `dist/server.js` |
 | `:test` | Interactive/autorun node test build | `target/test/test.cjs` |
 | `:test-ci` | CI test build used by `scripts/run-shadow-tests-ci.mjs` | `target/test/test-ci.cjs` |
+| `:e2e` | Backend end-to-end node test build | `target/e2e/e2e.cjs` |
+| `:identity-recovery-test`, `:cms-history`, `:cms-history-tour` | Focused proof/test builds | `target/...` |
+| `:route-registration-proof` | Release-mode route registration proof (`pnpm run test:routes:release`) | `dist-route-registration-proof/` |
 | `:app` | Legacy/export compatibility build; not the normal server runtime | `dist/app.js` |
 
 Normal backend startup path:
@@ -91,14 +97,15 @@ launcher, use:
 pnpm -C backend run start:dev:direct
 ```
 
-For the full local Knoxx stack, prefer the repo-root PM2 ecosystem:
+For the full local Knoxx stack, the repo-root PM2 ecosystem is now a deprecated
+shim (2026-09-30): `ecosystem.config.cjs` throws unless
+`KNOXX_HOST_ECOSYSTEM_CONFIG` names an absolute path to a host ecosystem file,
+which it then delegates to. See the root `README.md` "PM2 host stack" section.
 
 ```bash
 # From the Knoxx root
-pm2 start ecosystem.config.cjs
-
-# Or from backend/
-pm2 start ../ecosystem.config.cjs
+KNOXX_HOST_ECOSYSTEM_CONFIG=/absolute/path/to/ecosystem.host.config.cjs \
+  pm2 start ecosystem.config.cjs
 ```
 
 Do not use PM2 file watching for backend source or `dist*` output. shadow-cljs
@@ -133,16 +140,15 @@ KNOXX_EXTRA_WORKSPACE_ROOTS=/path/one:/path/two
 KNOXX_MUSIC_LIBRARY_ROOT=/path/to/music
 CONTRACTS_DIR=/path/to/knoxx/contracts
 
-KNOXX_POLICY_DATABASE_URL=postgresql://user:pass@host:5432/knoxx
-DATABASE_URL=postgresql://user:pass@host:5432/knoxx
-REDIS_URL=redis://127.0.0.1:6379
+MONGODB_URI=mongodb://127.0.0.1:27017/?replicaSet=rs0   # default mongodb://localhost:27017
+MONGODB_DB=openplanner
 
 PROXX_BASE_URL=http://127.0.0.1:8789
 PROXX_AUTH_TOKEN=...
 PROXX_DEFAULT_MODEL=glm-5
 PROXX_EMBED_MODEL=qwen3-embedding:8b
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_DEFAULT_MODEL=gemma4:e4b
+OLLAMA_BASE_URL=http://127.0.0.1:11434   # optional; empty by default
+OLLAMA_DEFAULT_MODEL=gemma4:e4b          # optional; unset by default
 
 OPENPLANNER_BASE_URL=http://127.0.0.1:7777
 OPENPLANNER_API_KEY=...
@@ -163,8 +169,8 @@ VOICE_GATEWAY_API_KEY=dev-token
 KNOXX_STT_BASE_URL=http://127.0.0.1:8010
 ```
 
-Do not print or commit real env files. The root PM2 ecosystem loads host secrets
-from `~/.knoxx/.env` by default.
+Do not print or commit real env files. Host secrets belong to the host PM2
+ecosystem outside this checkout.
 
 ## Route registration map
 
@@ -209,8 +215,9 @@ Contracts are runtime inputs, not static documentation. Backend contract logic i
 centered under `src/cljs/knoxx/backend/domain/contracts/` and route/admin glue
 under `src/cljs/knoxx/backend/infra/routes/contracts.cljs`.
 
-Policy data is materialized through PostgreSQL via
-`src/cljs/knoxx/backend/infra/db/policy.cljs`. The backend synchronizes
+Policy data is materialized through MongoDB via
+`src/cljs/knoxx/backend/infra/db/policy.cljs`, which routes each slice to its
+`infra/stores/mongo_policy_*.cljs` store. The backend synchronizes
 contract-backed actors/users/memberships during startup. In development, an
 `X-API-Key` matching `KNOXX_API_KEY` can resolve to
 `KNOXX_API_KEY_USER_EMAIL` or `pi@open-hax.local` and then reapply that actor's
@@ -240,7 +247,8 @@ Discovery and management:
 - `GET /api/mcp/tokens`
 - `DELETE /api/mcp/tokens/:tokenId`
 
-MCP access tokens are stored in Redis and intersected with the user's current
+MCP access tokens are stored in MongoDB (`knoxx_mcp_tokens`,
+`infra/stores/mongo_mcp_oauth.cljs`) and intersected with the user's current
 policy context; a token cannot grant capabilities above the user's membership.
 
 ## Verification

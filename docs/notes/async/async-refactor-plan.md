@@ -10,6 +10,11 @@ related:
 priority: high
 ---
 
+> **Historical note (2026-09-30).** Superseded. Knoxx adopted native `^:async`/`await`
+> (see `AGENTS.md` "Modern Asynchrony") instead of a promesa migration. `funcool/promesa`
+> is still a dependency (`backend/deps.edn:47`) and is required by 21 namespaces,
+> mostly `infra/clients/*` and `domain/*/client.cljs`. Redis and the listed files are gone.
+
 # Async Refactor Plan — Promesa Migration
 
 The knoxx backend has zero promesa usage despite heavy `.then`/`.catch` chain

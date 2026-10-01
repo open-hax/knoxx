@@ -6,6 +6,8 @@ category: "contracts"
 created: "2026-05-08"
 ---
 
+> **Status (2026-09-30):** Historical implementation note. `backend/src/cljs/knoxx/backend/event_agents.cljs` and `backend/src/cljs/knoxx/backend/triggers/control_config.cljs` no longer exist. The demo contract now lives at `disabled-contracts/template_synthesis_demo.edn`, not `contracts/agents/`. The mode survives as `:source/mode :template-synthesize` in `contracts/source_modes/discord_synthesis.edn:5` (see `contracts/AGENTS.md:176`) and is recognised in `backend/src/cljs/knoxx/backend/infra/routes/resources.cljs:240`.
+
  Signal
 
  (己, p=0.94) Implemented the demo mode as :source-mode :template-synthesize.

@@ -6,6 +6,22 @@ original: 2026.04.24.10.04.56.md
 status: note
 ---
 
+> **Update 2026-09-30:** The PM2 host wiring no longer lives in this repository.
+> Root `ecosystem.config.cjs:1-30` is a deprecated shim that throws unless
+> `KNOXX_HOST_ECOSYSTEM_CONFIG` points at the host config (documented as
+> `services/openplanner/ecosystem.host.config.cjs`, not present in this checkout,
+> so the live PM2 process names are unverified here). The in-repo template
+> `backend/ecosystem.dev.example.cjs:19-35` names the processes
+> `knoxx-shadow-watch` (`pnpm exec shadow-cljs --source-maps watch server-dev`) and
+> `knoxx-backend-dev`, and starts the backend through
+> `nbb scripts/start-server-dev.cljs`, which waits for and imports
+> `dist-dev/server.js` (`backend/scripts/start-server-dev.cljs:15`);
+> `node dist-dev/server.js` remains available as `pnpm start:dev:direct`
+> (`backend/package.json:14`). nREPL port `4500` is confirmed at
+> `backend/shadow-cljs.edn:6`; `9630` is shadow-cljs's default server port (no
+> override in `shadow-cljs.edn`). `knoxx-shadow` / `knoxx-backend` below are the
+> names used at the time of writing.
+
 ## Signal
 
 `shadow-cljs watch` is the compiler/control plane; it is not sufficient by itself to prove the Knoxx backend runtime is hot-reload-connected.

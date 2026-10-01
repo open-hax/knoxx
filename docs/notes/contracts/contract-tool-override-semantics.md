@@ -6,6 +6,8 @@ category: "contracts"
 created: "2026-05-08"
 ---
 
+> **Status (2026-09-30):** Historical. The override behaviour described here no longer holds. `explicit-tool-ids` is gone from `backend/src/cljs/knoxx/backend/infra/control_config.cljs` (the `triggers/` path no longer exists). Legacy `:data :tools` is now read by `legacy-explicit-tool-ids` in `backend/src/cljs/knoxx/backend/domain/contracts/resolve.cljs:249` and **concatenated** with role and capability tools (`resolve.cljs:358-366`), so it adds tools instead of replacing them. Narrowing now goes through `:tool-deny` and `:tools/allowed` (same file, `denied-tool-ids` / `allowed-tool-ids`).
+
  Signal
 
  (己, p=0.99) Short answer: I was not following a contract/documented design when I changed discord_visualist. I inferred

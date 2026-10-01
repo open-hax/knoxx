@@ -33,10 +33,12 @@ motif comes from digital-garden publishing and curated knowledge spaces.
        │             │             │              │
        ▼             ▼             ▼              ▼
 ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────────┐
-│ Proxx    │   │ Ingestion│   │ Redis/PG │   │ OpenPlanner  │
+│ Proxx    │   │ Ingestion│   │ MongoDB  │   │ OpenPlanner  │
 │ models   │   │ Clojure  │   │ sessions │   │ memory/graph │
 │ :8789    │   │ :3003    │   │ policy   │   │ :7777        │
-└──────────┘   └──────────┘   └──────────┘   └──────────────┘
+└──────────┘   └────┬─────┘   └──────────┘   └──────────────┘
+                    ▼
+               PostgreSQL (ingestion job/source state)
 ```
 
 ## Repository layout
@@ -46,10 +48,13 @@ knoxx/
 ├── backend/        # Node + shadow-cljs + Fastify backend
 │   ├── src/cljs/knoxx/backend/
 │   │   ├── domain/ # Agent, contracts, Discord, MCP, media, voice domains
-│   │   ├── infra/  # HTTP routes, config, DB, Redis, stores, lifecycle
+│   │   ├── extern/ # The only home of raw JS interop (Fastify, fetch, Mongo, ...)
+│   │   ├── infra/  # HTTP routes, config, Mongo stores, clients, lifecycle
+│   │   ├── law/    # Contracts, validators, policy evaluation
 │   │   ├── shape/  # Route/tool/session shape helpers
+│   │   ├── tools/  # MCP tool exposure; per-domain tools are domain/*/tools.cljs
 │   │   └── runtime/# Process-local runtime state
-│   └── test/cljs/  # cljs.test backend tests
+│   └── test/       # cljs/ (cljs.test), js/ (node --test), clj/, e2e/
 ├── frontend/       # shadow-cljs browser app + React/TS bridge components
 │   ├── src/cljs/knoxx/frontend/ # CLJS routing and migrated pages
 │   └── src/                  # React pages, components, API clients, tests
@@ -58,11 +63,16 @@ knoxx/
 ├── kanban/         # Agent task board (markdown cards) — source of truth for work items
 ├── docs/           # Current design docs, audits, reports, and notes
 ├── cms/            # Folder-backed CMS drafts/content
-├── discord-bot/    # Optional standalone Discord bot package
-├── Audio/, Voice/, Graphics/, Symmetry/ # local creative/media workspaces
-├── ecosystem.config.cjs # PM2 host-dev stack
-└── scripts/        # repo checks and helper scripts
+├── shared/         # CLJS shared across backend and frontend (e.g. markup rendering)
+├── Audio/, uploads/ # local creative/media assets
+├── ecosystem.config.cjs # deprecated PM2 shim; host stack moved out (see below)
+└── scripts/        # repo checks, local launchers, and verification scripts
 ```
+
+The standalone `discord-bot/` package and the `Voice/`, `Graphics/`, and
+`Symmetry/` workspaces were removed from the tree on 2026-05-21 (commit
+`b3348eb1`). Discord integration now lives in the backend Discord gateway
+(`knoxx.backend.extern.discord`, `backend/src/cljs/knoxx/backend/domain/discord/`).
 
 ## Runtime surfaces
 
@@ -72,9 +82,11 @@ The backend is the primary control plane. It provides:
 
 - Fastify HTTP and WebSocket transport.
 - GitHub OAuth/cookie auth plus API-key dev actor fallback.
-- PostgreSQL-backed policy DB for users, orgs, memberships, credentials, and
-  contract-backed actor sync.
-- Redis-backed session persistence and background runtime coordination.
+- MongoDB-backed policy store for users, orgs, memberships, credentials, and
+  contract-backed actor sync (`infra/stores/mongo_policy_*.cljs`).
+- MongoDB-backed session, run, and thread persistence
+  (`infra/mongo_client.cljs`; Redis and PostgreSQL were removed from the backend
+  in the E14 Mongo migration).
 - Agent chat/direct routes powered by the Knoxx/eta-mu agent runtime.
 - Contract catalog, validation, indexing, file watching, and admin editing.
 - Proxx/OpenAI-compatible model proxy routes.
@@ -132,7 +144,10 @@ Prerequisites:
 - Clojure CLI for `ingestion/` and for every backend shadow-cljs command.
   `backend/shadow-cljs.edn` runs in `:deps` mode, so shadow-cljs resolves its
   classpath through tools.deps and launches via `clojure`.
-- Redis and PostgreSQL for sessions/policy/ingestion state.
+- MongoDB (replica set) for backend sessions/runs/policy; `MONGODB_URI`
+  defaults to `mongodb://localhost:27017`, database `openplanner`.
+  `compose.environment.yaml` provides one.
+- PostgreSQL for the ingestion worker's source/job state (`DATABASE_URL`).
 - Proxx for model access, usually on `http://127.0.0.1:8789`.
 - OpenPlanner for durable memory/events/graph, usually on
   `http://127.0.0.1:7777`.
@@ -183,15 +198,22 @@ Open the frontend at:
 http://127.0.0.1:5173
 ```
 
-The shadow dev HTTP proxy defaults to `http://127.0.0.1:8000`, matching the
-host PM2 backend. Override it with `KNOXX_BACKEND_URL` when running the frontend
-somewhere else, for example `KNOXX_BACKEND_URL=http://knoxx-backend:8000` inside
-a Docker network. `VITE_KNOXX_BACKEND_URL` is still honored for ad-hoc Vite dev
-or preview, but shadow-cljs dev HTTP reads `KNOXX_BACKEND_URL`.
+The shadow dev HTTP proxy target is `http://127.0.0.1:8000`, hard-coded as
+`:proxy-url` in `frontend/shadow-cljs.edn`; there is no environment override
+for it, so edit that file when the backend runs elsewhere.
+`VITE_KNOXX_BACKEND_URL` (default `http://knoxx-backend:8000`) only affects
+ad-hoc `vite` dev/preview via `frontend/vite.config.ts`.
 
 ## Quick start: PM2 host stack
 
-`ecosystem.config.cjs` encodes the current multi-process host development stack:
+> **Status (2026-09-30):** the root `ecosystem.config.cjs` is now a deprecated
+> shim. It throws unless `KNOXX_HOST_ECOSYSTEM_CONFIG` names an absolute path to
+> a host ecosystem file, and then simply `require`s that file. Its header points
+> at `services/openplanner/ecosystem.host.config.cjs`, which is not present in
+> the current `open-hax/services` checkout. `backend/ecosystem.config.cjs` is a
+> separate single-app file (`knoxx`: `npx shadow-cljs watch app`).
+
+The host stack is expected to run the same processes as before:
 
 - `knoxx-shadow` — `shadow-cljs watch server-dev` for backend CLJS.
 - `knoxx-backend` — `nbb scripts/start-server-dev.cljs`, waiting for the watch
@@ -199,16 +221,13 @@ or preview, but shadow-cljs dev HTTP reads `KNOXX_BACKEND_URL`.
 - `knoxx-frontend` — `pnpm dev` in `frontend/`, with Vite bridge watch builds
   plus shadow dev HTTP on `5173`.
 - `knoxx-ingestion` — `clojure -M:run` on `3003`.
-- Optional local sidecars for STT and Shoedelussy MCP/UI when configured.
 
-The PM2 file loads non-committed host secrets from `~/.knoxx/.env` by default.
-Do not commit real credentials.
+Keep host secrets out of this repository. Do not commit real credentials.
 
 ```bash
-pm2 start ecosystem.config.cjs
+KNOXX_HOST_ECOSYSTEM_CONFIG=/absolute/path/to/ecosystem.host.config.cjs \
+  pm2 start ecosystem.config.cjs
 pm2 logs knoxx-backend
-pm2 logs knoxx-frontend
-pm2 logs knoxx-ingestion
 ```
 
 ## Production-style build commands
@@ -221,8 +240,8 @@ pnpm -C backend run start
 # Frontend
 pnpm -C frontend run build
 
-# Discord bot, if used
-pnpm -C discord-bot run build
+# Both, from the Knoxx root
+pnpm run build
 ```
 
 ## Key environment variables
@@ -236,9 +255,8 @@ WORKSPACE_ROOT=/path/to/workspace
 KNOXX_EXTRA_WORKSPACE_ROOTS=/path/one:/path/two
 CONTRACTS_DIR=/path/to/knoxx/contracts
 
-KNOXX_POLICY_DATABASE_URL=postgresql://user:pass@host:5432/knoxx
-DATABASE_URL=postgresql://user:pass@host:5432/knoxx
-REDIS_URL=redis://127.0.0.1:6379
+MONGODB_URI=mongodb://127.0.0.1:27017/?replicaSet=rs0   # infra/mongo_client.cljs
+MONGODB_DB=openplanner
 
 PROXX_BASE_URL=http://127.0.0.1:8789
 PROXX_AUTH_TOKEN=...
@@ -248,6 +266,8 @@ OLLAMA_DEFAULT_MODEL=gemma4:e2b
 KNOXX_AGENT_MODEL_OVERRIDES=publication_translator=gemma4:e2b,publication_post_drafter=gemma4:e2b
 KNOXX_AGENT_THINKING_OVERRIDES=publication_translator=off,publication_post_drafter=off
 KNOXX_TRANSLATION_RUNNER=agent
+PROXX_EMBED_MODEL=qwen3-embedding:8b
+# read by the in-process OpenPlanner SDK (extern/openplanner_sdk.cljs)
 EMBED_PROVIDER_BASE_URL=http://127.0.0.1:11434
 EMBED_PROVIDER_MODEL=qwen3-embedding:8b
 EMBED_PROVIDER_DIMENSIONS=1024
@@ -283,7 +303,7 @@ PASSIVE_WATCH_ENABLED=true
 INGEST_SINK_TYPE=openplanner
 ```
 
-Frontend:
+Frontend (ad-hoc Vite only; shadow dev HTTP ignores it):
 
 ```bash
 VITE_KNOXX_BACKEND_URL=http://127.0.0.1:8000
@@ -329,9 +349,12 @@ Representative ingestion routes:
 ## Contracts and policy
 
 Contracts live under `contracts/` and are loaded by the backend as runtime data.
-Current contract classes include actors, agents, roles, capabilities, policies,
-model families, models, pipelines, runtime features, source modes, sources,
-sub-agents, triggers, and workflow/actions.
+Current contract directories include `actors/`, `agents/`, `roles/`,
+`capabilities/`, `policies/`, `model_families/`, `models/`, `runtime_features/`,
+`source_modes/`, `sub_agents/`, `namespaces/`, `mcp_servers/`, `authentication/`,
+`knoxx-session/`, and `fork-tales/`, plus `_defaults.edn` and the CMS
+block/template registries. Retired or parked contracts live under
+`contracts/.disabled/` and the top-level `disabled-contracts/`.
 
 The Pi development actor is defined at:
 
@@ -354,13 +377,14 @@ curl http://localhost:8000/api/auth/context \
 
 Start here when changing behavior:
 
-- `docs/shadow-cljs-backend-rewrite.md` — CLJS backend migration and route parity.
+- `docs/shadow-cljs-backend-rewrite.md` — CLJS backend migration and route parity (historical; migration complete).
+- `backend/README.md` — current backend build targets, startup path, and route map.
 - `docs/agent-runtime-workbench.md` — chat/workbench runtime doctrine and landed shape.
-- `docs/contract-oriented-backend-refactor.md` — contract-domain architecture.
+- `docs/contract-oriented-backend-refactor.md` — contract-domain architecture (historical proposal; see `docs/design/resource-architecture.md` for the implemented model).
 - `docs/ingestion-contract-surfaces.md` — ingestion contract model and defaults.
 - `docs/auth-and-onboarding.md` — auth and onboarding flow.
 - `docs/admin-multitenancy-rbac.md` — org/user/role admin model.
-- `docs/actor-realtime-socket-io-spec.md` — realtime/actor bus target shape.
+- `docs/actor-realtime-socket-io-spec.md` — realtime/actor bus target shape (draft; not implemented).
 - `kanban/` — agent task board (markdown cards); the source of truth for work items. (The former `specs/` tree was retired 2026-05-28; its history lives in git and the fork-tax tags.)
 
 ## Testing and verification
@@ -390,13 +414,6 @@ clj-kondo --lint src test
 clojure -M:test
 ```
 
-Discord bot:
-
-```bash
-pnpm -C discord-bot run lint:size
-pnpm -C discord-bot run typecheck
-```
-
 Repo-wide checks:
 
 ```bash
@@ -424,7 +441,6 @@ Or run package-local checks:
 ```bash
 pnpm -C backend run lint:size
 pnpm -C frontend run lint:size
-pnpm -C discord-bot run lint:size
 ```
 
 ## Git hooks
@@ -437,7 +453,10 @@ push:
 - backend `shadow-cljs compile server`
 - ingestion `clj-kondo`
 - frontend size lint + TypeScript typecheck
-- discord-bot size lint + TypeScript typecheck
+- frontend changed-surface CLJS lint + migration manifest check
+- discord-bot size lint + TypeScript typecheck — still listed in
+  `scripts/pre-push-checks.sh`, but `discord-bot/` no longer exists, so these two
+  checks currently fail (2026-09-30)
 
 Install the tracked hook path once per clone:
 

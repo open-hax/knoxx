@@ -19,6 +19,11 @@ node --require ./scripts/shadow-test-error-guard.cjs ./target/publication-run-pr
 pnpm typecheck
 ```
 
+> Note (2026-09-30): on current `main`, `knoxx.backend.publication-guard-recovery-test`
+> does not exist; it lands with the unmerged PR #305 slice 09
+> (`origin/codex/pr305-09-translation-publication`). The command above matches only
+> the other three namespaces until that slice merges.
+
 The focused compilation and direct guarded execution pass 34 tests containing 173 assertions, with zero failures and errors. The test compiler reports zero warnings, and integrated `pnpm typecheck` passes with 602 files and zero warnings. Existing adapter redaction tests intentionally log their classified test errors. Those messages are expected evidence that a 500 response omits internal paths; they are not compiler warnings.
 
 The first recovery run exposed an incorrect test double: `source-dependencies` has zero- and one-argument entry points, and replacing it with a generic constant function broke the compiler's static arity dispatch. Preserving both actual arities fixed the fixture. The seven failed assertions from that attempt remain recorded; they are not counted as a passing run.

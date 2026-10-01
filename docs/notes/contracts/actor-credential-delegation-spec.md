@@ -6,6 +6,8 @@ category: "contracts"
 created: "2026-05-05"
 ---
 
+> **Status (2026-09-30):** Unimplemented proposal, and the source text is truncated at the end. No `connection`/`delegation` contract kinds, `contracts/connections/` or `contracts/delegations/` exist. The validator named below is actually `backend/src/cljs/open_hax/contracts/schema.cljs` (`infer-contract-class` :504, `schema-for` :530), not `contracts/validator.cljs`. Identity binding has since moved toward Axxium (`backend/src/cljs/knoxx/backend/law/axxium_identity.cljs`).
+
 
  Signal
 

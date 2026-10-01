@@ -8,6 +8,13 @@ created: "2026-05-20"
 
 # Extern boundary cleanup — session / stores layer
 
+> **Historical plan (banner added 2026-09-30).** Track 1 landed with
+> `infra/stores/message_source.cljs`, `composite_message_source.cljs`,
+> `openplanner_message_source.cljs`, and `mongo_message_source.cljs`; the
+> proposed `RedisMessageSource` was superseded when Redis was removed (E14 Mongo
+> migration). The eta-mu wrapper is `backend/src/cljs/knoxx/backend/extern/eta_mu.cljs`.
+> The counts below are the 2026-05-20 snapshot, not current measurements.
+
 ## What we found
 
 **788 `#js` reader usages** across backend source.  
