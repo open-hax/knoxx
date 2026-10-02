@@ -24,6 +24,7 @@ if ! browser_launches; then
 fi
 mkdir -p "$shots"
 agent-browser --session "$session" open 'http://127.0.0.1:5176/' >/dev/null
+agent-browser --session "$session" wait 'text=Axxium password' >/dev/null
 agent-browser --session "$session" screenshot "$shots/01-login.png" >/dev/null
 snapshot="$(agent-browser --session "$session" snapshot)"
 printf '%s\n' "$snapshot"
