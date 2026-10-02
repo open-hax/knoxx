@@ -60,7 +60,7 @@
   (try
     (await (api/logout))
     (set-auth! nil)
-    (set-error! "Logged out")
+    (set-error! nil)
     (catch :default ^js err
       ;; Keep the actor visible until the server confirms the session ended.
       (set-error! (str "Sign out failed: " (or (.-message err) "Request failed"))))))

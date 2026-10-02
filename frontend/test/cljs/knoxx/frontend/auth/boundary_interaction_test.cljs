@@ -153,3 +153,12 @@
     (.click rtl/fireEvent (.getByRole r "button" #js {:name "Sign out"}))
     (await (wait-until "logout error" #(some? (.queryByText r #"Sign out failed"))))
     (t/is (some? (.queryByText r "signed in as pi@open-hax.local admin=true")))))
+
+(t/deftest ^:async successful-logout-returns-to-login
+  (reset! context-status 200)
+  (let [r (rtl/render (hx/$ boundary/auth-boundary {:children (hx/$ auth-consumer)}))]
+    (await (wait-until "actor" #(some? (.queryByText r "signed in as pi@open-hax.local admin=true"))))
+    (.click rtl/fireEvent (.getByRole r "button" #js {:name "Sign out"}))
+    (await (wait-until "login page" #(some? (.queryByText r "Knowledge operations platform"))))
+    (t/is (nil? (.queryByText r #"Could not check your session")))
+    (t/is (nil? (.queryByText r "signed in as pi@open-hax.local admin=true")))))
