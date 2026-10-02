@@ -156,3 +156,12 @@
   spore: none
   receipt-refs: pr-review-to-merge
   note: A review queue needs a merged-state completion gate and a continuation objective that still owns fixes, reviewers and merge. Direct user-requested skill authored; no additional spore or automatic distribution. Separate worktrees preserve concurrent global skill edits.
+- ts: 2026-10-02T22:08:32.536413673Z
+  session: /home/err/spaces/review-repair/knoxx
+  task: Restore shared evidence reviewer caller
+  p-efficiency: 0.8
+  p-friction: 0.2
+  p-skill-candidate: 0.1
+  spore: none
+  receipt-refs: none
+  note: Reusable workflow callers require explicit immutable PR head and reviewed pin.
