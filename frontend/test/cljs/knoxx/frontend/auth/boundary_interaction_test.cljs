@@ -73,6 +73,8 @@
       (-> (wait-until "login page" #(some? (.queryByText r "Knowledge operations platform")))
           (.then (fn []
                    (is (some? (.queryByText r "GitHub OAuth is not configured. Contact your administrator.")))
+                   (is (nil? (.queryByText r "401"))
+                       "an ordinary signed-out visit has no error banner")
                    (is (nil? (.queryByText r "Protected Knoxx workspace")))
                    (let [context-call (first (filter #(re-find #"/api/auth/context" (:path %)) @fetch-calls))]
                      (is (some? context-call))

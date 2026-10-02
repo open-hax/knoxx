@@ -24,8 +24,13 @@
      (-> (js/fetch path init)
          (.then #(json-or-throw % "Request failed"))))))
 
-(defn fetch-auth-context []
-  (request-js "/api/auth/context"))
+(defn ^:async fetch-auth-context
+  "An unsigned visitor has no context; other failures still reach the caller."
+  []
+  (let [^js res (await (js/fetch "/api/auth/context"
+                                #js {:credentials "include"}))]
+    (when-not (= 401 (.-status res))
+      (await (json-or-throw res "Could not load authentication")))))
 
 (defn fetch-auth-config []
   (-> (js/fetch "/api/auth/config")

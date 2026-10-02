@@ -30,7 +30,7 @@
              :placeholder placeholder
              :class-name (str input-class (when mono " font-mono"))})))
 
-(defnc local-login-form [{:keys [on-success]}]
+(defnc local-login-form [{:keys [on-success identity-provider]}]
   (let [[email set-email!] (hooks/use-state "")
         [password set-password!] (hooks/use-state "")
         [status set-status!] (hooks/use-state :idle)
@@ -50,7 +50,9 @@
            (labeled-input {:id "login-local-email" :label "Email" :type "email"
                            :value email :on-change #(set-email! (.. % -target -value))
                            :placeholder "you@example.com"})
-           (labeled-input {:id "login-local-password" :label "Password" :type "password"
+           (labeled-input {:id "login-local-password"
+                           :label (if (= "axxium" identity-provider) "Axxium password" "Password")
+                           :type "password"
                            :value password :on-change #(set-password! (.. % -target -value))
                            :on-key-down #(when (= "Enter" (.-key %)) (submit!))
                            :placeholder "Local development password"})
@@ -61,7 +63,9 @@
                                     (str/blank? email)
                                     (empty? password))
                       :class-name submit-class}
-                     (if (= :submitting status) "Signing in…" "Sign in with password")))))
+                     (if (= :submitting status) "Signing in…"
+                         (if (= "axxium" identity-provider)
+                           "Sign in with Axxium" "Sign in with password"))))))
 
 (defnc invite-form [{:keys [initial-code initial-email initial-error on-success]}]
   (let [[code set-code!] (hooks/use-state (or initial-code ""))
@@ -128,11 +132,13 @@
                   (when (and (seq (or error "")) (not= error "Logged out"))
                     (error-box error))
                   (when (some-> ^js config .-localPasswordEnabled)
-                    ($ local-login-form {:on-success on-login-success}))
+                    ($ local-login-form {:on-success on-login-success
+                                         :identity-provider (some-> ^js config .-identityProvider)}))
                   (if (some-> ^js config .-githubEnabled)
                     (github-button (some-> ^js config .-loginUrl))
-                    (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
-                           "GitHub OAuth is not configured. Contact your administrator."))
+                    (when-not (= "axxium" (some-> ^js config .-identityProvider))
+                      (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
+                             "GitHub OAuth is not configured. Contact your administrator.")))
                   (divider "or redeem an invite")
                   ($ invite-form {:initial-code invite-code
                                   :initial-email invite-email
@@ -141,6 +147,7 @@
                                   :on-success on-login-success})
                   (d/p {:class-name "text-center text-xs text-slate-600"}
                        "By signing in, you agree to the Knoxx terms of service.")
-                  (d/p {:class-name "text-center text-xs text-slate-500"}
-                       "Need a basic chat account for testing? "
-                       (d/a {:href "/signup" :class-name "text-blue-400 hover:text-blue-300"} "Sign up"))))))
+                  (when-not (= "axxium" (some-> ^js config .-identityProvider))
+                    (d/p {:class-name "text-center text-xs text-slate-500"}
+                         "Need a basic chat account for testing? "
+                         (d/a {:href "/signup" :class-name "text-blue-400 hover:text-blue-300"} "Sign up")))))))
