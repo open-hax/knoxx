@@ -2,6 +2,7 @@
 // and logs out the session it creates. No repository fixtures are needed.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,7 +17,13 @@ if (fs.realpathSync(app('knoxx-axxium-local')?.pm2_env.pm_cwd || '/') !== worksp
 }
 console.log('PASS PM2 serves this Axxium and Knoxx checkout');
 
-process.loadEnvFile('/home/err/.secrets/axxium/admin.env');
+const adminEnvFile = process.env.AXXIUM_ADMIN_ENV_FILE;
+if (adminEnvFile) {
+  process.loadEnvFile(adminEnvFile);
+} else if (!process.env.AXXIUM_ADMIN_EMAIL || !process.env.AXXIUM_ADMIN_PASSWORD) {
+  const defaultEnvFile = path.join(os.homedir(), '.secrets', 'axxium', 'admin.env');
+  if (fs.existsSync(defaultEnvFile)) process.loadEnvFile(defaultEnvFile);
+}
 const email = process.env.AXXIUM_ADMIN_EMAIL;
 const password = process.env.AXXIUM_ADMIN_PASSWORD;
 if (!email || !password) throw new Error('Local administrator credentials are unavailable');
@@ -67,7 +74,8 @@ try {
   console.log('WARN Automated verification does not complete Google account consent');
 } finally {
   if (cookie) {
-    await fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { cookie } });
+    const logout = await fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { cookie } });
+    if (!logout.ok) throw new Error(`Verification session logout failed: HTTP ${logout.status}`);
     console.log('Cleaned verification session');
   }
 }

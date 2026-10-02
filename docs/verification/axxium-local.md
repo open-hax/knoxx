@@ -9,6 +9,10 @@ checks the delegated user context and frontend proxy, and logs out its session.
 It exits nonzero on any failed check. The script does not print passwords or
 tokens.
 
+Supply `AXXIUM_ADMIN_EMAIL` and `AXXIUM_ADMIN_PASSWORD` in the environment, or
+set `AXXIUM_ADMIN_ENV_FILE` to a private env file. If neither is set, the
+verifier looks for `~/.secrets/axxium/admin.env`.
+
 The browser tour is `scripts/verify-axxium-local-tour.sh`. It captures the
 unauthenticated login view and its Axxium label to ignored
 `docs/verification/screenshots/`. The tour does not type a private password
