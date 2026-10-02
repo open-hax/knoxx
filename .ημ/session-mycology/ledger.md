@@ -163,7 +163,7 @@
   p-friction: 0.2
   p-skill-candidate: 0.1
   spore: none
-  receipt-refs: none
+  receipt-refs: evidence-review-rollout
   note: Reusable workflow callers require explicit immutable PR head and reviewed pin.
 - ts: 2026-10-02T22:10:41.158779765Z
   session: /home/err/spaces/review-repair/knoxx
@@ -172,5 +172,14 @@
   p-friction: 0.3
   p-skill-candidate: 0.1
   spore: none
-  receipt-refs: none
+  receipt-refs: kimi-review-restoration
   note: Manual trigger with PR-only condition silently skipped review.
+- ts: 2026-10-02T22:21:55.786094285Z
+  session: /home/err/spaces/review-repair/knoxx
+  task: Qualify scoped review restoration and repair proposed provenance
+  p-efficiency: 0.75
+  p-friction: 0.4
+  p-skill-candidate: 0.2
+  spore: none
+  receipt-refs: knoxx-382-provenance-links
+  note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
