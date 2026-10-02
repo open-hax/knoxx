@@ -1,13 +1,18 @@
 # Local Axxium authority in Knoxx
 
-Run `node scripts/verify-axxium-local.mjs` from this Knoxx checkout. The script
-first checks that PM2 is serving this checkout and the sibling Axxium checkout.
-It uses the private local administrator created by Axxium's bootstrap, so no
+Run `node scripts/verify-axxium-local.mjs` from this Knoxx checkout with Docker
+and the `mongo:7` image available. The script first checks the actual Knoxx PM2
+backend child and sibling Axxium checkout. It launches this checkout's backend
+against a disposable MongoDB replica set and copied role contracts, so a first
+delegated login can create an identity without touching the live Knoxx store.
+It uses the private local administrator created by Axxium's bootstrap; no
 reviewer has to handcraft fixtures. It rejects anonymous access and bad
-credentials, confirms Knoxx disables local signup, signs in through Axxium,
-checks the delegated user context and frontend proxy, and logs out its session.
-It exits nonzero on any failed check. The script does not print passwords or
-tokens.
+credentials, confirms Knoxx disables local signup, checks the delegated user
+context and frontend proxy, logs out, confirms the cookie returns 401, then
+stops the backend and removes its MongoDB container and temporary contracts.
+Knoxx revokes the transient Axxium verification session before it issues its
+own session, so the password check does not leave a provider session behind.
+It exits nonzero on any failed check and does not print passwords or tokens.
 
 Supply `AXXIUM_ADMIN_EMAIL` and `AXXIUM_ADMIN_PASSWORD` in the environment, or
 set `AXXIUM_ADMIN_ENV_FILE` to a private env file. If neither is set, the

@@ -1,6 +1,8 @@
 (ns knoxx.backend.axxium-identity-test
-  (:require [cljs.test :refer [deftest is]]
+  (:require [clojure.string :as str]
+            [cljs.test :refer [deftest is]]
             [knoxx.backend.domain.auth.axxium :as identity]
+            [knoxx.backend.infra.auth.axxium :as axxium-auth]
             [knoxx.backend.law.axxium-identity :as law]))
 (def actor {:id "actor_123" :email "person@example.test" :display_name "Person" :status "active"})
 (deftest remote-identity-never-imports-privileges-or-passwords
@@ -26,3 +28,19 @@
     (is (= "person@example.test" (:email row)))
     (is (= (:email row) (:email (identity/normalize-actor mixed))))
     (is (= "issuer#actor_123" (:external_subject row)))))
+
+(deftest ^:async password-verification-revokes-the-provider-session
+  (let [requests (atom [])
+        request! (fn [request]
+                   (swap! requests conj request)
+                   (js/Promise.resolve
+                    (if (str/ends-with? (:url request) "/api/auth/login")
+                      {:status 200 :body {:actor actor :token "transient-token"}}
+                      {:status 200 :body {:ok true}})))]
+    (is (= actor (:actor (await (axxium-auth/authenticate-with!
+                            "https://axxium.example.test" request!
+                            "person@example.test" "password")))))
+    (is (= ["https://axxium.example.test/api/auth/login"
+            "https://axxium.example.test/api/auth/logout"]
+           (mapv :url @requests)))
+    (is (= "Bearer transient-token" (get-in (second @requests) [:headers "Authorization"])))))
