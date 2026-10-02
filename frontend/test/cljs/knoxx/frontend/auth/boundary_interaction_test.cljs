@@ -15,6 +15,7 @@
 (def fetch-calls "Requests made by the mocked auth API." (atom []))
 (def context-status "Status returned by the mocked context endpoint." (atom 401))
 (def logout-mode "Controls successful and failed sign out." (atom :success))
+(def local-login-enabled "Expose the local password form in a test." (atom false))
 
 (defn- json-response [status body]
   #js {:ok (< status 400)
@@ -35,7 +36,13 @@
       (json-response 401 {:error "unauthorized"}))
 
     (re-find #"/api/auth/config" path)
-    (json-response 200 {:githubEnabled false :localPasswordEnabled false})
+    (json-response 200 (cond-> {:githubEnabled false
+                                :localPasswordEnabled @local-login-enabled}
+                         @local-login-enabled (assoc :identityProvider "axxium")))
+
+    (re-find #"/api/auth/local/login" path)
+    (json-response 200 {:ok true :user {:email "pi@open-hax.local"}
+                        :actor {:id "actor-1"} :org nil :membership nil})
 
     (re-find #"/api/auth/invite/redeem" path)
     (do (reset! context-status 200)
@@ -53,6 +60,7 @@
              (reset! fetch-calls [])
              (reset! context-status 401)
              (reset! logout-mode :success)
+             (reset! local-login-enabled false)
              (set! (.-fetch js/globalThis)
                    (fn [path init]
                      (swap! fetch-calls conj {:path (str path) :init init})
@@ -134,6 +142,23 @@
     (.click rtl/fireEvent (.getByRole r "button" #js {:name "Try again"}))
     (await (wait-until "retry restored auth"
                        #(some? (.queryByText r "Protected Knoxx workspace"))))))
+
+(t/deftest ^:async login-waits-for-authoritative-context
+  (reset! local-login-enabled true)
+  (let [r (render-boundary)]
+    (await (wait-until "password form" #(some? (.queryByText r "Axxium password"))))
+    (reset! context-status 503)
+    (.change rtl/fireEvent (.querySelector (.-container r) "#login-local-email")
+             #js {:target #js {:value "pi@open-hax.local"}})
+    (.change rtl/fireEvent (.getByLabelText r "Axxium password")
+             #js {:target #js {:value "password"}})
+    (.click rtl/fireEvent (.getByRole r "button" #js {:name "Sign in with Axxium"}))
+    (await (wait-until "context retry" #(some? (.queryByText r #"Could not check your session"))
+                       {:timeout 1500}))
+    (t/is (nil? (.queryByText r "Protected Knoxx workspace")))
+    (reset! context-status 200)
+    (.click rtl/fireEvent (.getByRole r "button" #js {:name "Try again"}))
+    (await (wait-until "complete context" #(some? (.queryByText r "Protected Knoxx workspace"))))))
 
 (t/deftest ^:async failed-refresh-preserves-verified-actor
   (reset! context-status 200)
