@@ -41,6 +41,7 @@ async function expect(label, url, options, status) {
   return response;
 }
 
+let verificationError;
 try {
   const config = await (await expect('Knoxx advertises its configured auth API',
     `${base}/api/auth/config`, {}, 200)).json();
@@ -72,10 +73,23 @@ try {
   if (axxiumConfig.googleEnabled !== true) throw new Error('Google sign-in is not enabled in Axxium');
   console.log('PASS Axxium advertises its registered Google sign-in');
   console.log('WARN Automated verification does not complete Google account consent');
-} finally {
-  if (cookie) {
+} catch (error) {
+  verificationError = error;
+}
+
+let logoutError;
+if (cookie) {
+  try {
     const logout = await fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { cookie } });
     if (!logout.ok) throw new Error(`Verification session logout failed: HTTP ${logout.status}`);
     console.log('Cleaned verification session');
+  } catch (error) {
+    logoutError = error;
   }
 }
+if (verificationError && logoutError) {
+  throw new AggregateError([verificationError, logoutError],
+    `Verification and session cleanup both failed: ${verificationError.message}; ${logoutError.message}`);
+}
+if (verificationError) throw verificationError;
+if (logoutError) throw logoutError;

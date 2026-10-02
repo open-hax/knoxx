@@ -8,13 +8,13 @@
             [helix.core :as hx]
             [helix.dom :as d]
             [knoxx.frontend.auth.boundary :as boundary]
-            [knoxx.frontend.auth.context :as auth]
-            ))
+            [knoxx.frontend.auth.context :as auth]))
 
 ;; jsdom globals come from the :test build's :prepend-js.
 
 (def fetch-calls "Requests made by the mocked auth API." (atom []))
 (def context-status "Status returned by the mocked context endpoint." (atom 401))
+(def logout-mode "Controls successful and failed sign out." (atom :success))
 
 (defn- json-response [status body]
   #js {:ok (< status 400)
@@ -25,12 +25,13 @@
 (defn- route-response [path]
   (cond
     (re-find #"/api/auth/context" path)
-    (if (= 200 @context-status)
-      (json-response 200 {:user {:id "u1" :email "pi@open-hax.local" :displayName "Pi" :status "active"}
-                          :actor {:id "actor-1"}
-                          :org nil :membership nil
-                          :roleSlugs ["system-admin"] :permissions []
-                          :isSystemAdmin true :authProvider "local"})
+    (case @context-status
+      200 (json-response 200 {:user {:id "u1" :email "pi@open-hax.local" :displayName "Pi" :status "active"}
+                              :actor {:id "actor-1"}
+                              :org nil :membership nil
+                              :roleSlugs ["system-admin"] :permissions []
+                              :isSystemAdmin true :authProvider "local"})
+      503 (json-response 503 {:error "identity backend unavailable"})
       (json-response 401 {:error "unauthorized"}))
 
     (re-find #"/api/auth/config" path)
@@ -40,6 +41,9 @@
     (do (reset! context-status 200)
         (json-response 200 {:ok true}))
 
+    (re-find #"/api/auth/logout" path)
+    (json-response 200 {:ok true})
+
     :else (json-response 404 {:error (str "unexpected " path)})))
 
 (def ^:private real-fetch js/fetch)
@@ -48,10 +52,14 @@
   {:before (fn []
              (reset! fetch-calls [])
              (reset! context-status 401)
+             (reset! logout-mode :success)
              (set! (.-fetch js/globalThis)
                    (fn [path init]
                      (swap! fetch-calls conj {:path (str path) :init init})
-                     (js/Promise.resolve (route-response (str path))))))
+                     (if (and (re-find #"/api/auth/logout" (str path))
+                              (= :network @logout-mode))
+                       (js/Promise.reject (js/Error. "network unavailable"))
+                       (js/Promise.resolve (route-response (str path)))))))
    :after (fn []
             (rtl/cleanup)
             (set! (.-fetch js/globalThis) real-fetch))})
@@ -74,7 +82,7 @@
   (let [r (render-boundary)]
     (await (wait-until "login page" #(some? (.queryByText r "Knowledge operations platform"))))
     (t/is (some? (.queryByText r "GitHub OAuth is not configured. Contact your administrator.")))
-    (t/is (nil? (.queryByText r "401"))
+    (t/is (nil? (.queryByText r "unauthorized"))
           "an ordinary signed-out visit has no error banner")
     (t/is (nil? (.queryByText r "Protected Knoxx workspace")))
     (let [context-call (first (filter #(re-find #"/api/auth/context" (:path %)) @fetch-calls))]
@@ -105,11 +113,43 @@
   "Display the identity supplied to protected content."
   []
   (let [^js a (auth/use-auth)]
-    (d/div (str "signed in as " (.. a -user -email)
-                " admin=" (.-isSystemAdmin a)))))
+    (d/div
+     (d/p (str "signed in as " (.. a -user -email)
+               " admin=" (.-isSystemAdmin a)))
+     (d/button {:on-click #(.refresh a)} "Refresh identity")
+     (d/button {:on-click #(.logout a)} "Sign out"))))
 
 (t/deftest ^:async authenticated-children-can-use-auth
   (reset! context-status 200)
   (let [r (rtl/render (hx/$ boundary/auth-boundary {:children (hx/$ auth-consumer)}))]
     (await (wait-until "consumer sees auth"
                        #(some? (.queryByText r "signed in as pi@open-hax.local admin=true"))))))
+
+(t/deftest ^:async unavailable-context-is-not-a-signed-out-state
+  (reset! context-status 503)
+  (let [r (render-boundary)]
+    (await (wait-until "service failure" #(some? (.queryByText r #"Could not check your session"))))
+    (t/is (nil? (.queryByText r "Knowledge operations platform")))
+    (reset! context-status 200)
+    (.click rtl/fireEvent (.getByRole r "button" #js {:name "Try again"}))
+    (await (wait-until "retry restored auth"
+                       #(some? (.queryByText r "Protected Knoxx workspace"))))))
+
+(t/deftest ^:async failed-refresh-preserves-verified-actor
+  (reset! context-status 200)
+  (let [r (rtl/render (hx/$ boundary/auth-boundary {:children (hx/$ auth-consumer)}))]
+    (await (wait-until "actor" #(some? (.queryByText r "signed in as pi@open-hax.local admin=true"))))
+    (reset! context-status 503)
+    (.click rtl/fireEvent (.getByRole r "button" #js {:name "Refresh identity"}))
+    (await (wait-until "visible error" #(some? (.queryByRole r "alert"))))
+    (t/is (some? (.queryByText r "signed in as pi@open-hax.local admin=true")))
+    (t/is (nil? (.queryByText r "Knowledge operations platform")))))
+
+(t/deftest ^:async failed-logout-preserves-verified-actor
+  (reset! context-status 200)
+  (let [r (rtl/render (hx/$ boundary/auth-boundary {:children (hx/$ auth-consumer)}))]
+    (await (wait-until "actor" #(some? (.queryByText r "signed in as pi@open-hax.local admin=true"))))
+    (reset! logout-mode :network)
+    (.click rtl/fireEvent (.getByRole r "button" #js {:name "Sign out"}))
+    (await (wait-until "logout error" #(some? (.queryByText r #"Sign out failed"))))
+    (t/is (some? (.queryByText r "signed in as pi@open-hax.local admin=true")))))

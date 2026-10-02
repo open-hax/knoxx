@@ -10,9 +10,11 @@
     (let [^js body (try
                      (await (.json res))
                      (catch :default _
-                       #js {:error (or (.-statusText res) fallback)}))]
-      (throw (js/Error. (or (.-error body) (.-code body)
-                            (str (.-status res))))))))
+                       #js {:error (or (.-statusText res) fallback)}))
+          error (js/Error. (or (.-error body) (.-code body)
+                               (str (.-status res))))]
+      (set! (.-status error) (.-status res))
+      (throw error))))
 
 (defn- ^:async request-js
   ([path] (request-js path nil))
@@ -57,8 +59,6 @@
                                   :password password}))
 
 (defn ^:async logout
-  "Clear the current session, tolerating an already expired one."
+  "Clear the current session; report transport and server failures."
   []
-  (try
-    (await (request-js "/api/auth/logout" {}))
-    (catch :default _ nil)))
+  (await (request-js "/api/auth/logout" {})))
