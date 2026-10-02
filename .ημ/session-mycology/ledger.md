@@ -165,3 +165,12 @@
   spore: none
   receipt-refs: none
   note: Reusable workflow callers require explicit immutable PR head and reviewed pin.
+- ts: 2026-10-02T22:10:41.158779765Z
+  session: /home/err/spaces/review-repair/knoxx
+  task: Restore Kimi review provider and trigger
+  p-efficiency: 0.8
+  p-friction: 0.3
+  p-skill-candidate: 0.1
+  spore: none
+  receipt-refs: none
+  note: Manual trigger with PR-only condition silently skipped review.
