@@ -156,3 +156,30 @@
   spore: none
   receipt-refs: pr-review-to-merge
   note: A review queue needs a merged-state completion gate and a continuation objective that still owns fixes, reviewers and merge. Direct user-requested skill authored; no additional spore or automatic distribution. Separate worktrees preserve concurrent global skill edits.
+- ts: 2026-10-02T22:08:32.536413673Z
+  session: /home/err/spaces/review-repair/knoxx
+  task: Restore shared evidence reviewer caller
+  p-efficiency: 0.8
+  p-friction: 0.2
+  p-skill-candidate: 0.1
+  spore: none
+  receipt-refs: evidence-review-rollout
+  note: Reusable workflow callers require explicit immutable PR head and reviewed pin.
+- ts: 2026-10-02T22:10:41.158779765Z
+  session: /home/err/spaces/review-repair/knoxx
+  task: Restore Kimi review provider and trigger
+  p-efficiency: 0.8
+  p-friction: 0.3
+  p-skill-candidate: 0.1
+  spore: none
+  receipt-refs: kimi-review-restoration
+  note: Manual trigger with PR-only condition silently skipped review.
+- ts: 2026-10-02T22:21:55.786094285Z
+  session: /home/err/spaces/review-repair/knoxx
+  task: Qualify scoped review restoration and repair proposed provenance
+  p-efficiency: 0.75
+  p-friction: 0.4
+  p-skill-candidate: 0.2
+  spore: none
+  receipt-refs: knoxx-382-provenance-links
+  note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.

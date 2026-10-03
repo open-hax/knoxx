@@ -13,10 +13,10 @@ permissions:
 jobs:
   review:
     name: Evidence-first review (eta-mu)
-    # Reviewed recovery merge from eta-mu PR #304. It preserves model stdout and
+    # Recovery workflow from eta-mu PR #339 (qualification pending). It preserves model stdout and
     # stderr, records invocation metadata, and permits only one omission-only
     # corrective attempt before failing closed.
-    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@e8eea02d31030215984375980b765803fc72d80d
+    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@b5b28237c45323cdc1914317260192163d957735
     with:
       pr_head_sha: ${{ github.event.pull_request.head.sha }}
       setup_eta_mu_toolchain: false
