@@ -3,6 +3,10 @@ on:
   pull_request_target:
     types: [labeled, synchronize, reopened, closed]
     branches: [main]
+    # Controller-pin/provenance maintenance does not change deployable application artifacts.
+    paths-ignore:
+      - '.github/workflows/environment-promotion.yml'
+      - '.ημ/**'
 permissions:
   contents: read
   pull-requests: read
