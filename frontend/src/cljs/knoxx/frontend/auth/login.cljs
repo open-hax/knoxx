@@ -2,9 +2,9 @@
   "Login page. Helix port of src/pages/LoginPage.tsx (local password,
    GitHub OAuth redirect, invite redemption)."
   (:require [clojure.string :as str]
-            [helix.core :as hx :refer [$ defnc]]
-            [helix.hooks :as hooks]
+            [helix.core :as hx]
             [helix.dom :as d]
+            [helix.hooks :as hooks]
             [knoxx.frontend.auth.api :as api]))
 
 (def ^:private input-class
@@ -19,38 +19,45 @@
 (defn- success-box [text]
   (d/div {:class-name "rounded-lg bg-green-900/30 border border-green-800 p-3 text-sm text-green-300"} text))
 
-(defn- labeled-input [{:keys [id label type value on-change on-key-down placeholder mono]}]
+(defn- labeled-input [{:keys [id label value on-change on-key-down placeholder mono] :as props}]
   (d/div
    (d/label {:html-for id :class-name "block text-sm font-medium text-slate-300 mb-1"} label)
    (d/input {:id id
-             :type (or type "text")
+             :type (or (:type props) "text")
              :value value
              :on-change on-change
              :on-key-down on-key-down
              :placeholder placeholder
              :class-name (str input-class (when mono " font-mono"))})))
 
-(defnc local-login-form [{:keys [on-success]}]
+(defn- ^:async submit-login!
+  [email password set-status! set-error! on-success]
+  (when (and (seq (str/trim email)) (seq password))
+    (set-status! :submitting)
+    (set-error! "")
+    (try
+      (await (api/local-login email password))
+      (set-status! :success)
+      (js/setTimeout on-success 300)
+      (catch :default error
+        (set-status! :error)
+        (set-error! (or (.-message error) "Login failed"))))))
+
+(hx/defnc local-login-form
+  "Password sign-in form for the selected local identity authority."
+  [{:keys [on-success identity-provider]}]
   (let [[email set-email!] (hooks/use-state "")
         [password set-password!] (hooks/use-state "")
         [status set-status!] (hooks/use-state :idle)
         [error set-error!] (hooks/use-state "")
-        submit! (fn []
-                  (when (and (seq (str/trim email)) (seq password))
-                    (set-status! :submitting)
-                    (set-error! "")
-                    (-> (api/local-login email password)
-                        (.then (fn [_]
-                                 (set-status! :success)
-                                 (js/setTimeout on-success 300)))
-                        (.catch (fn [^js err]
-                                  (set-status! :error)
-                                  (set-error! (or (.-message err) "Login failed")))))))]
+        submit! #(submit-login! email password set-status! set-error! on-success)]
     (d/div {:class-name "space-y-4"}
            (labeled-input {:id "login-local-email" :label "Email" :type "email"
                            :value email :on-change #(set-email! (.. % -target -value))
                            :placeholder "you@example.com"})
-           (labeled-input {:id "login-local-password" :label "Password" :type "password"
+           (labeled-input {:id "login-local-password"
+                           :label (if (= "axxium" identity-provider) "Axxium password" "Password")
+                           :type "password"
                            :value password :on-change #(set-password! (.. % -target -value))
                            :on-key-down #(when (= "Enter" (.-key %)) (submit!))
                            :placeholder "Local development password"})
@@ -61,24 +68,31 @@
                                     (str/blank? email)
                                     (empty? password))
                       :class-name submit-class}
-                     (if (= :submitting status) "Signing in…" "Sign in with password")))))
+                     (if (= :submitting status) "Signing in…"
+                         (if (= "axxium" identity-provider)
+                           "Sign in with Axxium" "Sign in with password"))))))
 
-(defnc invite-form [{:keys [initial-code initial-email initial-error on-success]}]
+(defn- ^:async submit-invite!
+  [code email set-status! set-error! on-success]
+  (when (seq (str/trim code))
+    (set-status! :submitting)
+    (set-error! "")
+    (try
+      (await (api/redeem-invite code email))
+      (set-status! :success)
+      (js/setTimeout on-success 500)
+      (catch :default error
+        (set-status! :error)
+        (set-error! (or (.-message error) "Redemption failed"))))))
+
+(hx/defnc invite-form
+  "Redeem an invitation and refresh the signed-in context."
+  [{:keys [initial-code initial-email initial-error on-success]}]
   (let [[code set-code!] (hooks/use-state (or initial-code ""))
         [email set-email!] (hooks/use-state (or initial-email ""))
         [status set-status!] (hooks/use-state :idle)
         [error set-error!] (hooks/use-state (or initial-error ""))
-        submit! (fn []
-                  (when (seq (str/trim code))
-                    (set-status! :submitting)
-                    (set-error! "")
-                    (-> (api/redeem-invite code email)
-                        (.then (fn [_]
-                                 (set-status! :success)
-                                 (js/setTimeout on-success 500)))
-                        (.catch (fn [^js err]
-                                  (set-status! :error)
-                                  (set-error! (or (.-message err) "Redemption failed")))))))]
+        submit! #(submit-invite! code email set-status! set-error! on-success)]
     (d/div {:class-name "space-y-4"}
            (labeled-input {:id "login-invite-email" :label "Email" :type "email"
                            :value email :on-change #(set-email! (.. % -target -value))
@@ -109,16 +123,39 @@
 (defn- url-param [k]
   (.get (js/URLSearchParams. js/window.location.search) k))
 
-(defnc login-page [{:keys [error on-login-success]}]
+(defn- ^:async load-auth-config! [set-config!]
+  (try
+    (set-config! (await (api/fetch-auth-config)))
+    (catch :default _ nil)))
+
+(defn- provider-choice [config]
+  (if (some-> ^js config .-githubEnabled)
+    (github-button (some-> ^js config .-loginUrl))
+    (when-not (= "axxium" (some-> ^js config .-identityProvider))
+      (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
+             "GitHub OAuth is not configured. Contact your administrator."))))
+
+(defn- local-login-choice [config on-login-success]
+  (when (some-> ^js config .-localPasswordEnabled)
+    (hx/$ local-login-form {:on-success on-login-success
+                            :identity-provider (some-> ^js config .-identityProvider)})))
+
+(defn- signup-link [config]
+  (when-not (= "axxium" (some-> ^js config .-identityProvider))
+    (d/p {:class-name "text-center text-xs text-slate-500"}
+         "Need a basic chat account for testing? "
+         (d/a {:href "/signup" :class-name "text-blue-400 hover:text-blue-300"} "Sign up"))))
+
+(hx/defnc login-page
+  "Display available sign-in methods and invitation redemption."
+  [{:keys [error on-login-success]}]
   (let [[config set-config!] (hooks/use-state nil)
         invite-code (url-param "invite")
         invite-email (url-param "email")
         not-whitelisted? (= "not_whitelisted" (url-param "error"))]
     (hooks/use-effect
      []
-     (-> (api/fetch-auth-config)
-         (.then set-config!)
-         (.catch (fn [_] nil)))
+     (load-auth-config! set-config!)
      nil)
     (d/div {:class-name "flex min-h-screen items-center justify-center bg-slate-950"}
            (d/div {:class-name "w-full max-w-md space-y-8 rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-xl"}
@@ -127,20 +164,14 @@
                          (d/p {:class-name "mt-2 text-sm text-slate-400"} "Knowledge operations platform"))
                   (when (and (seq (or error "")) (not= error "Logged out"))
                     (error-box error))
-                  (when (some-> ^js config .-localPasswordEnabled)
-                    ($ local-login-form {:on-success on-login-success}))
-                  (if (some-> ^js config .-githubEnabled)
-                    (github-button (some-> ^js config .-loginUrl))
-                    (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
-                           "GitHub OAuth is not configured. Contact your administrator."))
+                  (local-login-choice config on-login-success)
+                  (provider-choice config)
                   (divider "or redeem an invite")
-                  ($ invite-form {:initial-code invite-code
-                                  :initial-email invite-email
-                                  :initial-error (when not-whitelisted?
-                                                   "Your GitHub account is not on the allowlist. Enter an invite code below to gain access.")
-                                  :on-success on-login-success})
+                  (hx/$ invite-form {:initial-code invite-code
+                                     :initial-email invite-email
+                                     :initial-error (when not-whitelisted?
+                                                      "Your GitHub account is not on the allowlist. Enter an invite code below to gain access.")
+                                     :on-success on-login-success})
                   (d/p {:class-name "text-center text-xs text-slate-600"}
                        "By signing in, you agree to the Knoxx terms of service.")
-                  (d/p {:class-name "text-center text-xs text-slate-500"}
-                       "Need a basic chat account for testing? "
-                       (d/a {:href "/signup" :class-name "text-blue-400 hover:text-blue-300"} "Sign up"))))))
+                  (signup-link config)))))
