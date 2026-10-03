@@ -3,6 +3,10 @@ on:
   pull_request_target:
     types: [labeled, synchronize, reopened, closed]
     branches: [main]
+    # Controller-pin/provenance maintenance does not change deployable application artifacts.
+    paths-ignore:
+      - '.github/workflows/environment-promotion.yml'
+      - '.ημ/**'
 permissions:
   contents: read
   pull-requests: read
@@ -11,17 +15,17 @@ jobs:
     if: >-
       github.event.action != 'closed' &&
       contains(github.event.pull_request.labels.*.name, 'testing')
-    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@f9bfe1724a662930fc10fcb9ba0f46eac78fbc52
+    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@bbbf0c2ab25d2a2cbadfbb69f7d18c984b3a285b
     with:
-      controller_sha: f9bfe1724a662930fc10fcb9ba0f46eac78fbc52
+      controller_sha: bbbf0c2ab25d2a2cbadfbb69f7d18c984b3a285b
       service: knoxx
       environment: testing
       pull_request: ${{ format('{0}', github.event.pull_request.number) }}
   staging:
     if: github.event.action == 'closed' && github.event.pull_request.merged == true
-    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@f9bfe1724a662930fc10fcb9ba0f46eac78fbc52
+    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@bbbf0c2ab25d2a2cbadfbb69f7d18c984b3a285b
     with:
-      controller_sha: f9bfe1724a662930fc10fcb9ba0f46eac78fbc52
+      controller_sha: bbbf0c2ab25d2a2cbadfbb69f7d18c984b3a285b
       service: knoxx
       environment: staging
       pull_request: ${{ format('{0}', github.event.pull_request.number) }}
