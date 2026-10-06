@@ -6,13 +6,7 @@
             [knoxx.backend.domain.media :as media :refer [normalize-tool-path-arg]]
             [knoxx.backend.domain.music.audd-client :as audd-client]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
-            ["node:child_process" :refer [execFile]]
-            ["node:crypto" :as crypto]
-            ["node:fs/promises" :as fs]
-            ["node:path" :as path]
-            ["node:util" :refer [promisify]]))
-
-(def ^:private exec-file-async (promisify execFile))
+            [knoxx.backend.extern.native-music :as native-music]))
 
 (defn- ^:async music-audd-lookup!
   "Identify a song from an audio file using AudD API."
@@ -64,17 +58,10 @@
 (defn- ^:async music-generate!
   "Generate a WAV file from a JSON music spec using the native Node.js synthesis engine."
   [runtime config spec-json output-path]
-  (let [script-path (media/path-resolve path (or (.cwd js/process) "/") "scripts" "synthesize-music.mjs")
-        spec-path (await (media/temp-file-path! runtime "music-specs" ".json"))]
-    (await (media/fs-write-file! fs spec-path spec-json))
-    (let [out-path (or output-path
-                       (str "Music/generated/" (.randomUUID crypto) ".wav"))
-          {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config out-path)]
-      (await (media/fs-mkdir! fs (media/path-resolve path absolute "..") #js {:recursive true}))
-      (let [stdout (await (exec-file-async "node" #js [script-path spec-path absolute]
-                                           #js {:timeout 120000 :maxBuffer 1048576}))
-            result (js->clj (.parse js/JSON stdout) :keywordize-keys true)]
-        (assoc result :workspace-path relative :absolute-path absolute)))))
+  (let [out-path (or output-path (native-music/default-output-path))
+        {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config out-path)
+        result (await (native-music/generate! {:spec-json spec-json :output-path absolute}))]
+    (assoc result :workspace-path relative :absolute-path absolute)))
 
 (defn- json-object-type?
   [value]

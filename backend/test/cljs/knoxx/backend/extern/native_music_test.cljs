@@ -1,6 +1,7 @@
 (ns knoxx.backend.extern.native-music-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.music :as music]
+            [knoxx.backend.extern.native-music :as native-music]
             ["node:child_process" :refer [execFile]]
             ["node:fs/promises" :as fs]
             ["node:os" :as os]
@@ -13,6 +14,16 @@
     (is (= "stdout" (.-stdout result)))
     (is (= "stderr" (.-stderr result)))
     (is (not (string? result)))))
+
+(deftest native-music-decodes-stdout-and-rejects-invalid-engine-metadata
+  (let [metadata {:ok true :outputPath "/tmp/proof.wav" :durationSec 0.5
+                  :sampleRate 44100 :channels 2 :samples 22050}]
+    (is (= metadata (native-music/decode-result!
+                     #js {:stdout (.stringify js/JSON (clj->js metadata))
+                          :stderr "diagnostic text is not JSON"})))
+    (doseq [stdout ["not JSON" "[]" "{}" "{\"ok\":false}"]]
+      (is (thrown-with-msg? cljs.core/ExceptionInfo #"stdout violates"
+                           (native-music/decode-result! #js {:stdout stdout :stderr ""}))))))
 
 (deftest ^:async native-music-generation-returns-metadata-for-the-rendered-wav
   (let [workspace (await (.mkdtemp fs (.join path (.tmpdir os) "knoxx-native-music-test-")))

@@ -183,3 +183,12 @@
   spore: none
   receipt-refs: knoxx-382-provenance-links
   note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
+- ts: 2026-10-06T19:09:48.828883+00:00
+  session: /home/err/spaces/cephalon-music-fix/knoxx
+  task: Restore native music process-result decoding and Docker engine packaging
+  p-efficiency: 0.8
+  p-friction: 0.3
+  p-skill-candidate: 0.3
+  spore: none
+  receipt-refs: native-music-result-hotfix
+  note: Real process output plus WAV-byte checks expose this boundary bug; use guarded counters because Shadow may exit zero on failed tests. Preserve pre-existing lint blockers with a base comparison.

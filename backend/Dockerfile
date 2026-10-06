@@ -27,6 +27,7 @@ RUN apt-get update \
 # Compiled by `shadow-cljs release server` before `docker build`.
 COPY dist ./dist
 COPY docker ./docker
+COPY scripts/synthesize-music.mjs ./scripts/synthesize-music.mjs
 
 # Compose/deployment MUST mount the real contracts tree at /app/contracts. It
 # cannot be COPYed here: the build context is ./backend, so the repository-level
