@@ -59,6 +59,7 @@ NPM_CONFIG_USERCONFIG=/dev/null volta run --node 24.14.1 pnpm
 | `node backend/scripts/check-error-boundaries.mjs --check` | **BLOCKED**: 35 existing silent catch sites, exit 1. All sites belong to 23 files byte-identical to the base revision. |
 | `git diff --check`, `node --check scripts/verify-native-music.mjs`, `bash -n scripts/verify-native-music.sh` | **PASS**. |
 | Verification script given an unsupported argument | **PASS negative check**: prints `FAIL Usage: ...` and exits 1. |
+| Actual verifier workspace helper evaluated with filesystem/process boundary doubles | **PASS**: environment precedence, `/state/workspace`, default/alias roots, relative-path and non-directory rejection, durable mount/write checks, workspace-relative tool output and derived cleanup path. No deployed runtime/provider call. |
 | Docker COPY/context assertion | **PASS static check**: the exact COPY names an existing nonempty synthesis engine inside the backend build context. No Docker image build or deployment is claimed. |
 
 Full test invocation:
@@ -92,3 +93,11 @@ evidence; **the repository is not fully gate-green**. No remote PR, merge,
 deployment, restart, publication, or agent launch was performed. Live validation
 of this committed parser/packaging change remains for an operator using the
 [native music verification script](native-music.md).
+
+Parent review corrected the verifier's initial `/app/workspace` assumption.
+It now derives the effective root inside the already-validated container using
+the backend's environment precedence and validates an absolute writable
+directory on a durable bind mount/volume. Fixture creation, WAV reading and
+cleanup share that root; the native tool input stays workspace-relative.
+The deployment's `/state/workspace` path is supported. Syntax checks and the
+native source proof were repeated; no provider or deployed tool call was needed.

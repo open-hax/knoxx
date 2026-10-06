@@ -77,10 +77,35 @@ function liveIdentity(container, url) {
   assert.deepEqual(deployed.map(({ path, sha256 }) => ({ path, sha256 })), local.map(({ path, sha256 }) => ({ path, sha256 })), 'deployed code/engine hashes must match local build');
   assert.ok(deployed.every(file => file.modified <= Date.parse(info.started)), 'runtime code must predate server startup');
   pass(`server revision=${revision}; published port, compiled JS and native engine hashes match`);
+  return info.mounts;
+}
+
+const workspaceScript = `
+  const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
+  const configured = ['WORKSPACE_ROOT','WORKSPACE_PATH','KNOXX_WORKSPACE_ROOT']
+    .map(key => process.env[key]).find(value => value && value.trim()) || '/app/workspace';
+  assert.ok(path.isAbsolute(configured), 'workspace root must be absolute');
+  const root = fs.realpathSync(configured);
+  assert.ok(root !== '/' && !/[\\x00-\\x1f]/.test(root), 'workspace root must be a dedicated directory');
+  assert.ok(fs.statSync(root).isDirectory(), 'workspace root must be an existing directory');
+  fs.accessSync(root, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+  console.log(JSON.stringify(root));
+`;
+
+function workspaceRoot(container, mounts) {
+  // Read only the nonsecret workspace variables, after server identity validation.
+  const root = JSON.parse(command('docker', ['exec', container, 'node', '-e', workspaceScript]));
+  assert.ok(path.posix.isAbsolute(root) && root !== '/', 'workspace root must be absolute');
+  assert.ok(mounts.some(mount => ['bind', 'volume'].includes(mount.Type) && mount.RW === true
+    && (root === mount.Destination || root.startsWith(`${mount.Destination.replace(/\/$/, '')}/`))),
+  'workspace root must be inside a writable durable bind mount or volume');
+  pass(`workspace-root=${root} (existing writable directory on durable storage)`);
+  return root;
 }
 
 async function liveProof(container, url) {
-  liveIdentity(container, url);
+  const mounts = liveIdentity(container, url);
+  const workspace = workspaceRoot(container, mounts);
   assert.ok(process.env.KNOXX_MCP_TOKEN, 'supply KNOXX_MCP_TOKEN through the existing approved credential mechanism');
   const endpoint = new URL('/mcp', url);
   const unauthenticated = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }), signal: AbortSignal.timeout(15000) });
@@ -89,8 +114,9 @@ async function liveProof(container, url) {
   const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
   const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
   const client = new Client({ name: 'knoxx-native-music-proof', version: '1' });
-  const directory = `/app/workspace/Music/generated/.verify-native-music-${randomUUID()}`;
-  const outputPath = `${directory.slice('/app/workspace/'.length)}/proof.wav`;
+  const relativeDirectory = `Music/generated/.verify-native-music-${randomUUID()}`;
+  const directory = path.posix.join(workspace, relativeDirectory);
+  const outputPath = `${relativeDirectory}/proof.wav`;
   const cleanup = () => command('docker', ['exec', container, 'node', '-e', 'require("node:fs").rmSync(process.argv[1],{recursive:true,force:true})', directory]);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { try { cleanup(); } finally { process.exit(130); } });
   try {
