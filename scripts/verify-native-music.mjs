@@ -12,7 +12,20 @@ const backend = path.join(root, 'backend');
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
 assert.ok(nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 19), 'backend requires Node >=22.19.0');
 const require = createRequire(path.join(backend, 'package.json'));
+/**
+ * Print the evidence for a completed verification check.
+ * @param {string} message Observed result to report.
+ * @returns {void}
+ */
 const pass = (message) => console.log(`PASS ${message}`);
+/**
+ * Run a command synchronously from the backend checkout, using UTF-8 by default.
+ * @param {string} program Executable to start.
+ * @param {string[]} args Command arguments.
+ * @param {import('node:child_process').SpawnSyncOptions} [options={}] Spawn overrides.
+ * @returns {string | Buffer | null} Captured stdout in the requested encoding.
+ * @throws {Error} If the process cannot start or exits unsuccessfully.
+ */
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, { cwd: backend, encoding: 'utf8', timeout: 600000, ...options });
   if (result.error || result.status !== 0) throw new Error(`${program} failed (${result.status ?? result.error?.code})`);
@@ -20,6 +33,13 @@ function command(program, args, options = {}) {
 }
 const revision = command('git', ['rev-parse', 'HEAD']).trim();
 
+/**
+ * Compile and run the native music regression namespace using the actual engine.
+ * Require a nonempty passing test summary and report checkout identity; the tests
+ * remove their WAV fixtures. This proves source behavior, not a deployed server.
+ * @returns {void}
+ * @throws {Error} If compilation, test execution or test counters fail validation.
+ */
 function sourceProof() {
   const dirty = Boolean(command('git', ['status', '--porcelain']).trim());
   console.log(`SOURCE revision=${revision} dirty=${dirty} checkout=${root}`);
@@ -44,6 +64,11 @@ function sourceProof() {
 const manifestScript = `
   const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
   const root = process.cwd(), files = [];
+  /**
+   * Collect regular JavaScript file paths beneath a directory for hashing.
+   * @param {string} dir Directory to scan recursively.
+   * @returns {void}
+   */
   function scan(dir) { for (const entry of fs.readdirSync(dir, {withFileTypes:true})) {
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) scan(file); else if (entry.isFile() && file.endsWith('.js')) files.push(file);
@@ -54,6 +79,15 @@ const manifestScript = `
     modified:fs.statSync(file).mtimeMs}))));
 `;
 
+/**
+ * Verify the running Docker server's revision, loopback port and runtime hashes.
+ * Require committed source and image-owned code predating server startup before
+ * returning mount metadata for the durable workspace check.
+ * @param {string} container Docker container name or ID.
+ * @param {URL} url Plain loopback URL selecting this container's published port.
+ * @returns {Array<{Type: string, Destination: string, RW: boolean}>} Container mounts.
+ * @throws {Error} If inspection or any server identity check fails.
+ */
 function liveIdentity(container, url) {
   assert.equal(command('git', ['status', '--porcelain', '--untracked-files=no']).trim(), '', 'commit changes before live proof');
   const format = '{"running":{{json .State.Running}},"started":{{json .State.StartedAt}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"cwd":{{json .Config.WorkingDir}},"cmd":{{json .Config.Cmd}},"ports":{{json .NetworkSettings.Ports}},"mounts":{{json .Mounts}}}';
@@ -92,6 +126,15 @@ const workspaceScript = `
   console.log(JSON.stringify(root));
 `;
 
+/**
+ * Resolve the effective workspace inside an already identity-validated container.
+ * Require an existing writable directory within a writable bind mount or volume;
+ * print only its nonsecret path after checking the configured workspace aliases.
+ * @param {string} container Validated Docker container name or ID.
+ * @param {Array<{Type: string, Destination: string, RW: boolean}>} mounts Validated mounts.
+ * @returns {string} Absolute, canonical workspace path inside the container.
+ * @throws {Error} If the workspace path, permissions or durable mount is invalid.
+ */
 function workspaceRoot(container, mounts) {
   // Read only the nonsecret workspace variables, after server identity validation.
   const root = JSON.parse(command('docker', ['exec', container, 'node', '-e', workspaceScript]));
@@ -103,6 +146,15 @@ function workspaceRoot(container, mounts) {
   return root;
 }
 
+/**
+ * Verify unauthenticated refusal and authenticated native music generation over MCP.
+ * Validate server identity first, inspect the generated WAV bytes and metadata,
+ * then close the client and remove the dedicated fixture directory in finally.
+ * @param {string} container Docker container name or ID.
+ * @param {URL} url Plain loopback URL selecting this container's published port.
+ * @returns {Promise<void>}
+ * @throws {Error} If identity, authentication, generation, WAV checks or cleanup fail.
+ */
 async function liveProof(container, url) {
   const mounts = liveIdentity(container, url);
   const workspace = workspaceRoot(container, mounts);
@@ -117,6 +169,11 @@ async function liveProof(container, url) {
   const relativeDirectory = `Music/generated/.verify-native-music-${randomUUID()}`;
   const directory = path.posix.join(workspace, relativeDirectory);
   const outputPath = `${relativeDirectory}/proof.wav`;
+  /**
+   * Remove only this run's dedicated fixture directory inside the container.
+   * @returns {string} Cleanup command stdout.
+   * @throws {Error} If the Docker cleanup command fails.
+   */
   const cleanup = () => command('docker', ['exec', container, 'node', '-e', 'require("node:fs").rmSync(process.argv[1],{recursive:true,force:true})', directory]);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { try { cleanup(); } finally { process.exit(130); } });
   try {
