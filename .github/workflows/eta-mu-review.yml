@@ -13,18 +13,17 @@ permissions:
 jobs:
   review:
     name: Evidence-first review (eta-mu)
-    # Recovery workflow from eta-mu PR #339 (qualification pending). It preserves model stdout and
-    # stderr, records invocation metadata, and permits only one omission-only
-    # corrective attempt before failing closed.
-    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@b5b28237c45323cdc1914317260192163d957735
+    # Consume the reviewed full-input/native-publication integration.
+    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@d98ab446d56ddfd24542df49b102b851f2a767fa
     with:
       pr_head_sha: ${{ github.event.pull_request.head.sha }}
+      opencode_version: '1.18.31'
       setup_eta_mu_toolchain: false
       evidence_gates_script: |
-        run_gate diff_stat git diff --stat "${PR_BASE_SHA}...HEAD"
+        run_gate qualifier_repository python3 scripts/test-production-checkout.py
+        run_gate human_verifier_syntax bash -n scripts/verify-cms-source-locale-review.sh
         run_gate diff_check git diff --check "${PR_BASE_SHA}...HEAD"
     # Least privilege: forward only the secrets the review job consumes.
     secrets:
       ETA_MU_APP_ID: ${{ secrets.ETA_MU_APP_ID }}
       ETA_MU_APP_PRIVATE_KEY: ${{ secrets.ETA_MU_APP_PRIVATE_KEY }}
-      DISCORD_REVIEW_WEBHOOK_URL: ${{ secrets.DISCORD_REVIEW_WEBHOOK_URL }}

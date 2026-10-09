@@ -6,6 +6,9 @@
             [cljs.test :refer [deftest is]]
             [knoxx.backend.domain.cms-document :as domain]
             [knoxx.backend.domain.node.fs :as node-fs]
+            [knoxx.backend.domain.publication-gate :as gate]
+            [knoxx.backend.domain.publication-resolver :as resolver]
+            [knoxx.backend.domain.translation-evidence :as evidence]
             [knoxx.backend.extern.cms-store :as files]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.fastify.cms-documents :as transport]
@@ -14,7 +17,8 @@
             [knoxx.backend.infra.http-server :as http]
             [knoxx.backend.infra.publication-source-revision :as source]
             [knoxx.backend.infra.routes.cms-documents :as documents]
-            [knoxx.backend.infra.routes.cms-publication :as publication]))
+            [knoxx.backend.infra.routes.cms-publication :as publication]
+            [knoxx.backend.law.publication :as publication-law]))
 
 (defn- temporary-root [] (.mkdtempSync fs (.join path (or (aget js/process.env "KNOXX_CMS_VERIFY_ROOT") (.tmpdir os)) "knoxx-cms-history-")))
 (defn- roots [root] {:content (.join path root "content") :resources (.join path root "resources")})
@@ -92,6 +96,37 @@
               revision (:revision initial)]
           (is (= 200 (:status created)))
           (is (= "base" (text (:source_path initial))))
+          (let [paths (files/paths "org-one" id)
+                manifest (reader/read-string (text (:manifest paths)))
+                garden (reader/read-string (text (:garden paths)))
+                index (resolver/publication-index (into (:resources garden) (:resources manifest)))
+                document (first (:resources manifest))
+                intents (into {} (map (fn [intent]
+                                       [(:publication/locale intent)
+                                        (publication-law/hydrate-publication-intent index intent)]))
+                              (:publications index))
+                revisions (with-redefs [source/source-root (constantly (:content (roots root)))]
+                            (await (source/source-revisions! {} [document])))
+                facts (merge (source/revision-facts revisions)
+                             (evidence/gate-facts (evidence/evidence {:receipts [] :approvals []})))
+                english (:en intents)
+                published-english (gate/gate (assoc english :publication/state :published) facts)
+                published-spanish (gate/gate (assoc (:es intents) :publication/state :published) facts)]
+            (is (= {:en :none :es :required}
+                   (into {} (map (fn [[locale intent]] [locale (:translation/review intent)])) intents))
+                "HTTP creation persists the source and translated locale review policies")
+            (is (= (:source_path initial) (get-in document [:document/source :path]))
+                "The generated resource names the actual saved immutable source")
+            (is (= (source/content-revision "base") (:concrete-revision published-english))
+                "Admission reads the saved source bytes through the production source resolver")
+            (is (false? (:admissible? (gate/gate english facts)))
+                "Creating a document leaves its English intent withheld")
+            (is (true? (:admissible? published-english))
+                "Explicitly published English needs no self-translation receipt or approval")
+            (is (nil? (:translation-work published-english)))
+            (is (false? (:admissible? published-spanish)))
+            (is (= [:translation-missing :translation-review-required] (:blockers published-spanish))
+                "The same saved source cannot publish Spanish without translation and review"))
           (doseq [[method url payload] [["GET" url nil] ["GET" (str url "/history") nil]
                                         ["PATCH" url (body "Forbidden" "x" [revision])]]]
             (is (= 403 (:status (await (request! app method url "anonymous" payload)))))

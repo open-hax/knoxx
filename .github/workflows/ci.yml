@@ -37,6 +37,7 @@ jobs:
         run: |
           node scripts/check-deployment-boundary.mjs --self-test
           node scripts/check-deployment-boundary.mjs
+          python3 scripts/test-production-checkout.py
 
   knoxx:
     name: knoxx (backend + frontend)

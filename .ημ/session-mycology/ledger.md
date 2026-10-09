@@ -183,3 +183,12 @@
   spore: none
   receipt-refs: knoxx-382-provenance-links
   note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
+- ts: 2026-10-09T22:25:05.147065127Z
+  session: /tmp/openhax-knoxx
+  task: Repair CMS source locale publication policy
+  p-efficiency: 0.85
+  p-friction: 0.22
+  p-skill-candidate: 0.0
+  spore: none
+  receipt-refs: cms-source-locale-review
+  note: Compared deployed and current source before fixing the owning constructor. Keep source review-free and exact translated approval mandatory; distinguish deterministic admission proof from runtime publication and image identity. No spore warranted.
