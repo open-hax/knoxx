@@ -21,7 +21,9 @@ jobs:
       setup_eta_mu_toolchain: false
       evidence_gates_script: |
         run_gate qualifier_repository python3 scripts/test-production-checkout.py
+        run_gate human_verifier_preconditions python3 scripts/test-cms-verifier-preconditions.py
         run_gate human_verifier_syntax bash -n scripts/verify-cms-source-locale-review.sh
+        run_gate cms_history_verifier_syntax bash -n scripts/verify-cms-history.sh
         run_gate diff_check git diff --check "${PR_BASE_SHA}...HEAD"
     # Least privilege: forward only the secrets the review job consumes.
     secrets:

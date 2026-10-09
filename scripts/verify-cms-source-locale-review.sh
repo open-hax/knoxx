@@ -15,7 +15,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 printf 'Verifying checkout %s at %s\n' "$verify_repo" "$(git -C "$verify_repo" rev-parse HEAD)"
 cd "$verify_repo/backend"
-export NODE_OPTIONS="$(node --input-type=module -e 'import { testEnvironment } from "./scripts/shadow-test-environment.mjs"; process.stdout.write(testEnvironment().NODE_OPTIONS);')"
+NODE_OPTIONS="$(node --input-type=module -e 'import { testEnvironment } from "./scripts/shadow-test-environment.mjs"; process.stdout.write(testEnvironment().NODE_OPTIONS);')"
+export NODE_OPTIONS
 verify_log="$verify_fixture/results.log"
 verify_config="{:ns-regexp \"^knoxx\\\\.backend\\\\.cms-source-locale-review-test$\" :output-to \"$verify_fixture/test.cjs\"}"
 if ! timeout 240s pnpm exec shadow-cljs compile test --config-merge "$verify_config" >"$verify_log" 2>&1; then

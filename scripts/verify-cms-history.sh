@@ -13,7 +13,8 @@ fixture_root="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_root"' EXIT INT TERM
 export KNOXX_CMS_VERIFY_ROOT="$fixture_root"
 export CONTRACTS_DIR="$repo_root/backend/test/fixtures/empty-contracts"
-export NODE_OPTIONS="$(node --input-type=module -e 'import { testEnvironment } from "./backend/scripts/shadow-test-environment.mjs"; process.stdout.write(testEnvironment().NODE_OPTIONS);')"
+NODE_OPTIONS="$(node --input-type=module -e 'import { testEnvironment } from "./backend/scripts/shadow-test-environment.mjs"; process.stdout.write(testEnvironment().NODE_OPTIONS);')"
+export NODE_OPTIONS
 log="$fixture_root/results.log"
 printf 'Verifying checkout %s at %s\n' "$repo_root" "$(git rev-parse HEAD)"
 pnpm -C backend exec shadow-cljs compile cms-history >"$log" 2>&1 || { cat "$log"; exit 1; }
