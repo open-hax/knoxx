@@ -33,11 +33,15 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+      - name: Prepare checkout verifier Python
+        run: |
+          python3 -m venv "$RUNNER_TEMP/knoxx-qualification-python"
+          "$RUNNER_TEMP/knoxx-qualification-python/bin/python" -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.2'
       - name: Reject retired deployment authority
         run: |
           node scripts/check-deployment-boundary.mjs --self-test
           node scripts/check-deployment-boundary.mjs
-          python3 scripts/test-production-checkout.py
+          "$RUNNER_TEMP/knoxx-qualification-python/bin/python" scripts/test-production-checkout.py
           python3 scripts/test-cms-verifier-preconditions.py
 
   knoxx:

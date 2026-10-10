@@ -20,7 +20,9 @@ jobs:
       opencode_version: '1.18.31'
       setup_eta_mu_toolchain: false
       evidence_gates_script: |
-        run_gate qualifier_repository python3 scripts/test-production-checkout.py
+        run_gate qualifier_python_env python3 -m venv "$RUNNER_TEMP/knoxx-qualification-python"
+        run_gate qualifier_python_dependencies "$RUNNER_TEMP/knoxx-qualification-python/bin/python" -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.2'
+        run_gate qualifier_repository "$RUNNER_TEMP/knoxx-qualification-python/bin/python" scripts/test-production-checkout.py
         run_gate human_verifier_preconditions python3 scripts/test-cms-verifier-preconditions.py
         run_gate human_verifier_syntax bash -n scripts/verify-cms-source-locale-review.sh
         run_gate cms_history_verifier_syntax bash -n scripts/verify-cms-history.sh

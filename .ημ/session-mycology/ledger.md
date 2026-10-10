@@ -232,3 +232,12 @@
   spore: none
   receipt-refs: 2026-10-10T17:01:50.474480+00:00
   note: An observation before a write is not a concurrency guard. Compare under the existing lock, preserve already-current peer metadata, and falsify stale replay with actual filesystem interleavings. Independently inspect the package-manager child runtime; shell node can differ from Volta pnpm. Preserve prior evidence and append corrected qualification rather than relabeling old runs. No new spore or promotion.
+- ts: 2026-10-10T17:49:12.163356655Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Declare CI verifier dependencies at every actual caller
+  p-efficiency: 0.90
+  p-friction: 0.39
+  p-skill-candidate: 0.42
+  spore: none
+  receipt-refs: cms-checkout-verifier-python-dependency; qualification:c0a848b4; independent:6ec1c720
+  note: Use clean environments to expose incidental tooling. Pin prerequisites in both standalone CI and reusable caller without changing verifier semantics; preserve failure aggregation and distinguish local controls from hosted qualification. No additional spore created or promoted.
