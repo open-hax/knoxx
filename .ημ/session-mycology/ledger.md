@@ -255,3 +255,12 @@
   spore: none
   receipt-refs: 68e5f9c9-99c3-4cf6-bf72-151ab759174e; evidence-set:openhax-cms-20261010/review-state/knoxx-approved-media-independent-assessment-20261010T220434Z.json#sha256=bb44351be454246e8f28bc77156b656111b521aad95da0017f32127d5efa4362
   note: Renderer input must remain the digest-bound approved document, not unsigned editor metadata. Keep portable media reference law separate from runtime publication custody. Actual staged inventory tests establish shape/existence locally; only live CMS save, publication and reader observations establish the user-visible path. Preserve original source/runtime/tests and distinguish cached image, provider and native browser evidence. Audit nested command wrappers before all-version claims. No extra spore or promotion.
+- ts: 2026-10-10T22:20:22.144625019Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-media-publication
+  task: Persist native CMS art/music verification artifact, documentation and browser tour on a separate source commit
+  p-efficiency: 0.86
+  p-friction: 0.42
+  p-skill-candidate: 0.48
+  spore: none
+  receipt-refs: 4bab3a46-5976-4fa8-ba9a-102080beeae9, f6220c1a372b6d326a0959a8e934565fbd5db58d5922c9213c13bcae30bc87db, a6a32521524c2b19c226dd853c3632e0ad889d590466e15216b65a8bf15ba4f7, ef73c712ab7821a20f24d0514974f0b388a03140fd45c23032f5a196ae4637bd
+  note: A green CMS route fixture proves source-locale rendering and failure contracts; it does not prove provider translation, browser traversal, Website adoption or real production publication. Bind source paths before and after compile, preserve nested proof path keys, and audit nested pnpm processes with actual Node executables. Preserve the original mixed Node audit alongside the corrected all-Node24 suite. Keep immutable renderer image source 29cb distinct from the verifier commit. Five paths frozen, 29 native PASS statements and 15 preconditions inspected independently; browser has not run. No spore or promotion in this session.
