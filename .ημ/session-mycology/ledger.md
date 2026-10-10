@@ -241,3 +241,5 @@
   spore: none
   receipt-refs: cms-checkout-verifier-python-dependency; qualification:c0a848b4; independent:6ec1c720
   note: Use clean environments to expose incidental tooling. Pin prerequisites in both standalone CI and reusable caller without changing verifier semantics; preserve failure aggregation and distinguish local controls from hosted qualification. No additional spore created or promoted.
+
+- 2026-10-10T18:29:11.966990+00:00 — codex/root; efficiency=0.9, friction=0.48, skill-candidate=0.44. Separate a false reviewer premise from a genuine broader fixture gap; use actual server observations to add regressions for every protected array value and both write orders. Preserve earlier evidence when independent review narrows a patch boundary. Receipt: .ημ/receipts.edn (mongo-native-alias-multikey-fixture-repair, 2026-10-10T18:29:11.966990+00:00). No additional spore created or promoted.

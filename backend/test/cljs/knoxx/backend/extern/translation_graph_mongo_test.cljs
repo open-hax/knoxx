@@ -152,3 +152,67 @@
       (is (false? (:success result)))
       (is (= prior-edges (fixture/rows edges)))
       (is (= prior-nodes (fixture/rows (:nodes graph)))))))
+
+(deftest ^:async every-array-alias-conflict-preserves-the-incumbent-and-rolls-back
+  (doseq [aliases [["unrelated-alias" (:id fixture/native-edge)]
+                   [(:id fixture/native-edge) "unrelated-alias"]
+                   ["unrelated-alias" (:id fixture/native-edge) (:id fixture/native-edge)]]]
+    (let [incumbent (assoc fixture/native-edge :_id (ObjectId.) :id aliases)
+          edges (fixture/collection [incumbent]
+                                    [fixture/primary-index fixture/sdk-index fixture/native-index])
+          graph (fixture/graph edges)
+          result (await (approve! graph fixture/segment))]
+      (is (false? (:success result)))
+      (is (re-find #"E11000" (or (:error result) "")))
+      (is (= [incumbent] (fixture/rows edges)))
+      (is (empty? (fixture/rows (:nodes graph))))
+      (let [selectors (mapv second (fixture/operations edges))]
+        (is (= 2 (count selectors)))
+        (is (= (first selectors) (second selectors)))))))
+
+(defn- ^:async alias-upsert-error [collection row]
+  (try
+    (await (.findOneAndUpdate (:native collection)
+                             #js {"_id" (:_id row)}
+                             #js {"$set" (clj->js (dissoc row :_id))
+                                  "$setOnInsert" #js {"_id" (:_id row)}}
+                             #js {"upsert" true}))
+    nil
+    (catch :default error (.-message error))))
+
+(deftest ^:async native-alias-multikey-upserts-refuse-collisions-in-either-direction
+  (doseq [[incumbent candidate]
+          [[{:_id "array-owner" :id ["other" "shared"]} {:_id "scalar-owner" :id "shared"}]
+           [{:_id "scalar-owner" :id "shared"} {:_id "array-owner" :id ["other" "shared"]}]
+           [{:_id "array-owner" :id ["first" "shared"]}
+            {:_id "other-array-owner" :id ["second" "shared"]}]]]
+    (let [edges (fixture/collection [incumbent] [fixture/primary-index fixture/native-index])]
+      (is (re-find #"E11000" (or (await (alias-upsert-error edges candidate)) "")))
+      (is (= [incumbent] (fixture/rows edges))))))
+
+(deftest ^:async native-alias-multikey-index-build-refuses-every-overlapping-key
+  (doseq [rows [[{:_id "array-owner" :id ["other" "shared"]} {:_id "scalar-owner" :id "shared"}]
+                [{:_id "scalar-owner" :id "shared"} {:_id "array-owner" :id ["other" "shared"]}]
+                [{:_id "array-owner" :id ["first" "shared"]}
+                 {:_id "other-array-owner" :id ["second" "shared"]}]]]
+    (let [edges (fixture/collection rows [fixture/primary-index])]
+      (is (re-find #"E11000" (or (await (index-error edges)) "")))
+      (is (= rows (fixture/rows edges)))
+      (is (= [fixture/primary-index] @(:indexes* edges))))))
+
+(deftest ^:async native-alias-multikey-keeps-intra-document-repeats-and-excluded-rows
+  (let [rows [{:_id "array-owner" :id ["first" "second" "second"]}
+              {:_id "scalar-owner" :id "independent"}
+              {:_id "numeric-array-one" :id [1 2]}
+              {:_id "numeric-array-two" :id [1 2]}
+              {:_id "numeric-one" :id 1}
+              {:_id "numeric-two" :id 1}
+              {:_id "missing-one"}
+              {:_id "missing-two"}]
+        edges (fixture/collection rows [fixture/primary-index])]
+    (is (nil? (await (index-error edges))))
+    (is (some #(= fixture/native-index %) @(:indexes* edges)))
+    (is (nil? (await (alias-upsert-error edges {:_id "array-owner" :id ["second" "first" "second"]}))))
+    (is (= (assoc (first rows) :id ["second" "first" "second"])
+           (last (fixture/rows edges))))
+    (is (= (rest rows) (butlast (fixture/rows edges))))))

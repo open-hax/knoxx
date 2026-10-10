@@ -64,11 +64,19 @@
   (mapv #(let [value (get row %)]
            (identity-value (if (vector? value) (first value) value))) (keys (:key index))))
 
+(defn- indexed-keys [index row]
+  ;; The single-field alias index is multikey: every element protects its key
+  ;; against another document, while repeats inside one document remain valid.
+  ;; The SDK compound tuple keeps this fixture's existing scalar tuple model.
+  (if (and (= {:id 1} (:key index)) (vector? (:id row)) (seq (:id row)))
+    (set (map #(vector (identity-value %)) (:id row)))
+    #{(indexed-key index row)}))
+
 (defn- assert-unique! [indexes rows candidate]
   (doseq [index indexes]
     (when (and (unique-member? index candidate)
                (some #(and (unique-member? index %)
-                           (= (indexed-key index candidate) (indexed-key index %))) rows))
+                           (some (indexed-keys index candidate) (indexed-keys index %))) rows))
       (throw (mongo-error 11000 "DuplicateKey" (str "E11000 " (:name index)))))))
 
 (defn- assert-index-build! [index rows]
