@@ -94,6 +94,30 @@ association across delayed GETs and retries. After a same-run completed or faile
 read hydrates the final message, an overlapping nonterminal read cannot clear its
 content parts or sources, change its model, or regress the latest run status.
 
+When an authoritative partial or terminal snapshot corrects a streamed draft,
+the backend updates its retained trace and sends a token packet with
+`operation: "replace"`. Its `token` contains the full corrected text for that
+channel across this turn; `offset` counts the UTF-16 code units of earlier
+provider messages. The chat immediately replaces the answer or reasoning and
+only the matching trace suffix, retaining earlier text, tools and the other
+channel. Buffered tokens before the correction are applied first, and later
+deltas append to the corrected text. Ordinary token packets remain literal
+append deltas. Malformed replacement metadata is refused before rendering.
+An explicitly supplied empty reasoning string clears the current provider
+message's reasoning, including the matching trace suffix; omitted, null or
+nontext reasoning preserves the observed stream. Typed reasoning content blocks
+follow the same distinction in partial and terminal snapshots.
+This native regression is covered by the compiled backend stream tests and the
+actual WebSocket decoder/chat-hook tests; the live provider walkthrough still
+requires the deployed candidate identified below.
+
+If a reconnecting client's local trace lacks earlier text, the replacement
+projection restores a missing or stale prefix from the full authoritative
+snapshot, while retaining every observed tool and other channel block in order.
+An exact observed prefix stays in its original blocks.
+The native sink and the actual chat hook cover empty, partial and stale retained
+trace fixtures, without changing how reconnects fetch run events.
+
 For a live demonstration, first confirm that the deployed image contains this
 constructor repair and that the signed-in organization has publication
 read/manage and translation read/manage/review authority. The backend must have

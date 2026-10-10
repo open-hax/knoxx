@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
-import { connectStream, type StreamConnection } from '../../lib/ws';
+import { connectStream, type StreamConnection, type StreamTokenMetadata } from '../../lib/ws';
 import { getRunEvents } from '../../lib/api';
 import type { ChatMessage, RunDetail, RunEvent } from '../../lib/types';
 import type { SemanticSearchMatch } from './types';
@@ -8,6 +8,7 @@ import {
   applyToolTraceEvent,
   controlTimelineMessageFromEvent,
   finalizeTraceBlocks,
+  replaceTraceText,
   truncateText,
 } from './utils';
 
@@ -69,7 +70,7 @@ export function useChatRuntimeEffects({
   const streamRef = useRef<StreamConnection | null>(null);
   const lastEventTimestampRef = useRef<string | null>(null);
   const conversationIdRef = useRef(conversationId);
-  const tokenBufferRef = useRef<Array<{ token: string; meta?: { runId?: string; kind?: string } }>>([]);
+  const tokenBufferRef = useRef<Array<{ token: string; meta?: StreamTokenMetadata }>>([]);
   const tokenFlushPendingRef = useRef(false);
   const lastConsoleUpdateRef = useRef(0);
   const callbacksRef = useRef({
@@ -108,34 +109,21 @@ export function useChatRuntimeEffects({
       if (!pendingId || buffer.length === 0) return;
       const runId = buffer[buffer.length - 1].meta?.runId;
       if (runId) activeRunIdRef.current = runId;
-      let combinedTokens = '';
-      let combinedReasoning = '';
-      for (const { token, meta } of buffer) {
-        if (meta?.kind === 'reasoning') {
-          combinedReasoning += token;
-        } else {
-          combinedTokens += token;
+      callbacksRef.current.updateMessageById(pendingId, (message) => {
+        let content = message.content;
+        let traceBlocks = [...(message.traceBlocks ?? [])];
+        for (const { token, meta } of buffer) {
+          const kind = meta?.kind === 'reasoning' ? 'reasoning' : 'agent_message';
+          if (meta?.operation === 'replace') {
+            traceBlocks = replaceTraceText(traceBlocks, kind, token, meta.offset);
+            if (kind === 'agent_message') content = token;
+          } else {
+            traceBlocks = appendTraceTextDelta(traceBlocks, kind, token);
+            if (kind === 'agent_message') content += token;
+          }
         }
-      }
-      // The token channel carries literal deltas, so repeated bytes are meaningful.
-      if (combinedTokens) {
-        callbacksRef.current.updateTraceBlocksByMessageId(
-          pendingId,
-          (blocks) => appendTraceTextDelta(blocks, 'agent_message', combinedTokens),
-        );
-        callbacksRef.current.updateMessageById(pendingId, (message) => ({
-          ...message,
-          runId: runId ?? message.runId ?? null,
-          status: 'streaming',
-          content: `${message.content}${combinedTokens}`,
-        }));
-      }
-      if (combinedReasoning) {
-        callbacksRef.current.updateTraceBlocksByMessageId(
-          pendingId,
-          (blocks) => appendTraceTextDelta(blocks, 'reasoning', combinedReasoning),
-        );
-      }
+        return { ...message, content, traceBlocks, runId: runId ?? message.runId ?? null, status: 'streaming' };
+      });
     };
     const connectTimer = window.setTimeout(() => {
       if (cancelled) {
@@ -174,6 +162,12 @@ export function useChatRuntimeEffects({
             const pendingId = pendingAssistantIdRef.current;
             if (!pendingId) return;
             tokenBufferRef.current.push({ token, meta });
+            if (meta?.operation === 'replace') {
+              // Apply queued deltas before the correction; the outstanding RAF
+              // can then drain any later deltas without replaying this snapshot.
+              flushBufferedTokens(pendingId);
+              return;
+            }
             if (!tokenFlushPendingRef.current) {
               tokenFlushPendingRef.current = true;
               requestAnimationFrame(() => {
@@ -204,6 +198,7 @@ export function useChatRuntimeEffects({
             }
             const pendingId = pendingAssistantIdRef.current;
             if (pendingId && ['tool_start', 'tool_update', 'tool_end'].includes(String(runtimeEvent.type ?? ''))) {
+              flushBufferedTokens(pendingId);
               callbacksRef.current.updateTraceBlocksByMessageId(pendingId, (blocks) => applyToolTraceEvent(blocks, runtimeEvent));
             }
             if (typeof runtimeEvent.run_id === 'string') {

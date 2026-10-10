@@ -88,6 +88,26 @@
     (doseq [field ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"]]
       (is (= "fallback" (provider-events/assistant-reasoning-snapshot (clj->js {field "fallback"})))))))
 
+(deftest reasoning-snapshot-distinguishes-explicit-empty-from-omission
+  (doseq [field ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"]]
+    (is (= "" (provider-events/assistant-reasoning-snapshot (clj->js {field ""}))))
+    (is (nil? (provider-events/assistant-reasoning-snapshot (clj->js {field nil})))))
+  (doseq [message [#js {:content #js []} #js {:content #js [#js {:type "text" :text "Answer"}]}
+                   #js {:content #js [nil #js {:type "reasoning"}]} #js {:reasoning 4}
+                   #js {:content #js [#js {:type "thinking" :thinking 4}]}]]
+    (is (nil? (provider-events/assistant-reasoning-snapshot message))))
+  (doseq [message [#js {:reasoning ""} #js {:content #js [#js {:type "thinking" :thinking ""}]}
+                   #js {:content #js [#js {:type "thinking" :thinking 4 :text ""}]}
+                   #js {:content #js [#js {:type "thinking" :thinking "" :text 4}]}
+                   #js {:content #js [#js {:type "reasoning" :text ""}]}]]
+    (let [normalized (provider-events/normalize
+                      #js {:type "message_update" :assistantMessageEvent #js {:type "reasoning_delta"
+                                                                            :delta "ignored" :partial message}})
+          result (reducer/reduce-event (assoc (reducer/initial-state) :reasoning-text "Draft") normalized)]
+      (is (= "" (:reasoning-snapshot normalized)))
+      (is (= "" (get-in result [:state :reasoning-text])))
+      (is (= [{:effect :replace-text :kind :reasoning :text ""}] (:effects result))))))
+
 (deftest reducer-produces-pure-effects
   (testing "text deltas produce token effects without sinks"
     (let [result (reducer/reduce-event (reducer/initial-state)

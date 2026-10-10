@@ -211,3 +211,12 @@
   spore: none
   receipt-refs: cms-deployment-independent-review-repairs
   note: A cumulative message snapshot has distinct content blocks, not replayed incremental fragments. Test literal block boundaries as well as token boundaries, and resolve overlapping same-run reads in both terminal and delayed nonterminal order. Preserve compiler/runtime proof separation and abnormal native exits even when assertions passed. No additional spore created.
+- ts: 2026-10-10T15:06:46.539166976Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Explicit stream correction protocol, presence and retained trace convergence
+  p-efficiency: 0.89
+  p-friction: 0.45
+  p-skill-candidate: 0.39
+  spore: none
+  receipt-refs: Knoxx PR387 explicit stream correction final qualification
+  note: Reproduce correction through actual sink and live consumer, then test full snapshots against exact, missing and stale prefixes. Deletion requires collision-safe retained block IDs. Preserve omitted reasoning while recognizing explicit empty strings, and choose valid string fields before deriving presence. Final combined qualification supersedes intermediate green runs; no new spore or promotion.

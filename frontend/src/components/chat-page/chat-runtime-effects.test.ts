@@ -18,8 +18,8 @@ import { connectStream } from '../../lib/ws';
 import { createChatRuntimeActions } from './chat-runtime-actions';
 import { useChatRuntimeEffects } from './chat-runtime-effects';
 
-function createHarness() {
-  let messages: ChatMessage[] = [{ id: 'assistant-1', role: 'assistant', content: '', status: 'streaming' }];
+function createHarness(initialMessage?: ChatMessage) {
+  let messages: ChatMessage[] = initialMessage ? [initialMessage] : [{ id: 'assistant-1', role: 'assistant', content: '', status: 'streaming' }];
   const pendingAssistantIdRef = { current: 'assistant-1' as string | null };
   const activeRunIdRef = { current: 'run-1' as string | null };
   const setIsSending = vi.fn();
@@ -135,6 +135,101 @@ describe('useChatRuntimeEffects streaming and final hydration', () => {
       { kind: 'agent_message', content: text.join('') },
       { kind: 'reasoning', content: reasoning.join('') },
     ]);
+  });
+
+  it('installs a correction immediately in order with pending RAF deltas and later literal tokens before GET resolves', async () => {
+    const harness = createHarness();
+    let resolveRun!: (run: RunDetail) => void;
+    vi.mocked(getRun).mockReturnValue(new Promise((resolve) => { resolveRun = resolve; }));
+    act(() => {
+      harness.handlers.onToken?.('Knox draft', { runId: 'run-1', kind: 'assistant_message' });
+      harness.handlers.onToken?.('Thinking', { runId: 'run-1', kind: 'reasoning' });
+      harness.handlers.onToken?.('Knoxx\n\nCorrected', { runId: 'run-1', kind: 'assistant_message', operation: 'replace', offset: 0 });
+    });
+    expect(harness.getMessage().content).toBe('Knoxx\n\nCorrected');
+    act(() => {
+      harness.handlers.onToken?.('\n\nha', { runId: 'run-1', kind: 'assistant_message' });
+      harness.handlers.onToken?.('ha', { runId: 'run-1', kind: 'assistant_message' });
+      harness.handlers.onToken?.('Safe thought', { runId: 'run-1', kind: 'reasoning', operation: 'replace', offset: 0 });
+      harness.handlers.onToken?.('\n\n', { runId: 'run-1', kind: 'reasoning' });
+      harness.handlers.onEvent?.({ type: 'run_completed', run_id: 'run-1' });
+    });
+    expect(harness.getMessage().content).toBe('Knoxx\n\nCorrected\n\nhaha');
+    expect(harness.getMessage().traceBlocks?.map(({ kind, content }) => ({ kind, content }))).toEqual([
+      { kind: 'agent_message', content: 'Knoxx\n\nCorrected' },
+      { kind: 'reasoning', content: 'Safe thought' },
+      { kind: 'agent_message', content: '\n\nhaha' },
+      { kind: 'reasoning', content: '\n\n' },
+    ]);
+    flushFrames();
+    expect(harness.getMessage().content).toBe('Knoxx\n\nCorrected\n\nhaha');
+    expect(harness.pendingAssistantIdRef.current).toBe('assistant-1');
+    await act(async () => resolveRun({
+      run_id: 'run-1', status: 'completed', answer: 'Knoxx\n\nCorrected\n\nhaha',
+      created_at: 'now', updated_at: 'now', request_messages: [], settings: {}, resources: {},
+    }));
+    expect(harness.pendingAssistantIdRef.current).toBeNull();
+  });
+
+  it('preserves prior Unicode text, tool blocks, and reasoning through repeated and empty corrections', () => {
+    const prefix = '🌱 prior. ';
+    const original: ChatMessage = { id: 'assistant-1', role: 'assistant', content: prefix + 'Draft stale', status: 'streaming', traceBlocks: [
+      { id: 'prior', kind: 'agent_message', content: prefix, status: 'done' },
+      { id: 'reason', kind: 'reasoning', content: 'Other thought', status: 'streaming' },
+      { id: 'tool', kind: 'tool_call', status: 'done', toolCallId: 'tool-1' },
+      { id: 'current', kind: 'agent_message', content: 'Draft', status: 'streaming' },
+      { id: 'later-tool', kind: 'tool_call', status: 'done', toolCallId: 'tool-2' },
+      { id: 'stale', kind: 'agent_message', content: ' stale', status: 'streaming' },
+    ] };
+    const harness = createHarness(original);
+    const correction = { runId: 'run-1', kind: 'assistant_message', operation: 'replace' as const, offset: prefix.length };
+    act(() => harness.handlers.onToken?.(prefix + 'Final', correction));
+    const once = harness.getMessage();
+    expect(once.content).toBe(prefix + 'Final');
+    expect(once.traceBlocks?.map((block) => block.id)).toEqual(['prior', 'reason', 'tool', 'current', 'later-tool']);
+    expect(once.traceBlocks?.find((block) => block.id === 'current')?.content).toBe('Final');
+    act(() => harness.handlers.onToken?.(prefix + 'Final', correction));
+    expect(harness.getMessage()).toEqual(once);
+    act(() => harness.handlers.onToken?.(prefix, correction));
+    expect(harness.getMessage().content).toBe(prefix);
+    expect(harness.getMessage().traceBlocks).toEqual(original.traceBlocks?.filter((block) => !['current', 'stale'].includes(block.id)));
+    act(() => harness.handlers.onToken?.('', { runId: 'run-1', kind: 'reasoning', operation: 'replace', offset: 0 }));
+    expect(harness.getMessage().traceBlocks?.map((block) => block.id)).toEqual(['prior', 'tool', 'later-tool']);
+  });
+
+  it('flushes preceding literal tokens before a tool event so a later correction retains the tool position', () => {
+    const harness = createHarness();
+    act(() => {
+      harness.handlers.onToken?.('Earlier.', { runId: 'run-1', kind: 'assistant_message' });
+      harness.handlers.onEvent?.({ type: 'tool_start', run_id: 'run-1', tool_name: 'fixture-tool', tool_call_id: 'tool-1' });
+      harness.handlers.onToken?.('Draft', { runId: 'run-1', kind: 'assistant_message' });
+      harness.handlers.onToken?.('Earlier.Final', { runId: 'run-1', kind: 'assistant_message', operation: 'replace', offset: 'Earlier.'.length });
+    });
+    expect(harness.getMessage().content).toBe('Earlier.Final');
+    expect(harness.getMessage().traceBlocks?.map(({ kind, content }) => ({ kind, content }))).toEqual([
+      { kind: 'agent_message', content: 'Earlier.' },
+      { kind: 'tool_call', content: undefined },
+      { kind: 'agent_message', content: 'Final' },
+    ]);
+  });
+
+  it.each(['', '🌱 pri', 'Stale prior. '])('recovers a full correction immediately with missing or stale trace prefix %j', (retained) => {
+    const prefix = '🌱 prior. ';
+    const snapshot = prefix + 'Corrected';
+    const tool = { id: 'retained-tool', kind: 'tool_call' as const, status: 'done' as const, toolCallId: 't' };
+    const reason = { id: 'retained-reason', kind: 'reasoning' as const, status: 'done' as const, content: 'Separate thought' };
+    const harness = createHarness({
+      id: 'assistant-1', role: 'assistant', content: retained, status: 'streaming',
+      traceBlocks: retained ? [{ id: 'partial', kind: 'agent_message', content: retained, status: 'streaming' }, tool, reason] : [tool, reason],
+    });
+    act(() => harness.handlers.onToken?.(snapshot, {
+      runId: 'run-1', kind: 'assistant_message', operation: 'replace', offset: prefix.length,
+    }));
+    const message = harness.getMessage();
+    expect(message.content).toBe(snapshot);
+    expect(message.traceBlocks?.filter((block) => block.kind === 'agent_message').map((block) => block.content ?? '').join('')).toBe(message.content);
+    expect(message.traceBlocks?.filter((block) => block.kind !== 'agent_message')).toEqual([tool, reason]);
+    expect(getRun).not.toHaveBeenCalled();
   });
 
   it.each(['completed', 'failed'] as const)('keeps the assistant association until the %s run is hydrated after its terminal event', async (status) => {

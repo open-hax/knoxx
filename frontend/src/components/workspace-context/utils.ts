@@ -426,6 +426,51 @@ export function appendTraceTextDelta(
   return next;
 }
 
+/** Project an authoritative channel snapshot, retaining an intact prefix and all tool/other-channel blocks. */
+export function replaceTraceText(
+  blocks: ChatTraceBlock[],
+  kind: "agent_message" | "reasoning",
+  text: string,
+  offset: number,
+): ChatTraceBlock[] {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > text.length) return blocks;
+  const retainedText = blocks.filter((block) => block.kind === kind).map((block) => block.content ?? "").join("");
+  const prefixRetained = retainedText.length >= offset && retainedText.slice(0, offset) === text.slice(0, offset);
+  // Missing or stale earlier packets cannot define the prefix of a full snapshot.
+  // In that case recover the channel at its first retained text block.
+  let remaining = prefixRetained ? offset : 0;
+  const replacement = text.slice(remaining);
+  const next: ChatTraceBlock[] = [];
+  let replaced = false;
+  for (const block of blocks) {
+    if (block.kind !== kind) {
+      next.push(block);
+      continue;
+    }
+    if (replaced) continue;
+    const content = block.content ?? "";
+    if (remaining >= content.length) {
+      next.push(block);
+      remaining -= content.length;
+      continue;
+    }
+    const prefix = content.slice(0, remaining);
+    if (prefix.length > 0 || replacement.length > 0) {
+      next.push({
+        ...block,
+        content: prefix + replacement,
+        ...(replacement.length > 0 ? { status: "streaming" as const } : {}),
+      });
+    }
+    remaining = 0;
+    replaced = true;
+  }
+  if (!replaced && replacement.length > 0) {
+    next.push({ id: crypto.randomUUID(), kind, status: "streaming", content: replacement });
+  }
+  return next;
+}
+
 export function applyToolTraceEvent(
   blocks: ChatTraceBlock[],
   event: RunEvent & { type?: string; tool_name?: string; tool_call_id?: string; preview?: string; is_error?: boolean },

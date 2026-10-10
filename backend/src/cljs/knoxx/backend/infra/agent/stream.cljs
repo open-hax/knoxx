@@ -68,12 +68,11 @@
                 (:last-reasoning-text* state))
         {:keys [delta corrected?]} (reducer/reconcile-text @last* full-text)]
     (if corrected?
-      ;; A terminal correction replaces only this provider message's portion of
-      ;; the turn. Broadcasting it as a token would append the whole answer twice.
-      ;; The completed run detail supplies the authoritative transcript to the UI.
       (let [chunks* (if (= kind :agent_message) (:chunks state) (:reasoning-chunks state))
-            start (get @(:message-chunk-start* state) kind 0)]
-        (swap! chunks* #(conj (subvec % 0 start) full-text)))
+            start (get @(:message-chunk-start* state) kind 0)
+            prefix (apply str (subvec @chunks* 0 start))]
+        (swap! chunks* #(conj (subvec % 0 start) full-text))
+        (sinks/replace-stream-text! state kind (count prefix) (str prefix full-text)))
       (when (seq delta)
         (emit-streaming-delta! state kind delta :incremental)))
     (reset! last* full-text)))
@@ -157,7 +156,8 @@
           think-split (reasoning/split-think-tags text)
           full-text (if (:hadThinkTags think-split) (:answer think-split) text)
           full-reasoning (let [reasoning-text (provider-events/assistant-reasoning-snapshot assistant-message)]
-                           (if (seq reasoning-text) reasoning-text (:reasoning think-split)))
+                           (if (some? reasoning-text) reasoning-text
+                               (when (:hadThinkTags think-split) (:reasoning think-split))))
           tool-previews (assistant-tool-call-previews assistant-message)]
       (doseq [{:keys [tool_call_id tool_name input_preview]} tool-previews]
         (sinks/backfill-tool-input-preview! (sinks/sink-or-default state) (:run-id state)
@@ -167,7 +167,7 @@
       (emit-progress-text! state :agent_message full-text)
       ;; Providers can omit reasoning from their terminal/partial message even
       ;; after streaming it. Absence is not an authoritative empty correction.
-      (when (seq full-reasoning)
+      (when (some? full-reasoning)
         (emit-progress-text! state :reasoning full-reasoning)))))
 
 (defn request-abort!

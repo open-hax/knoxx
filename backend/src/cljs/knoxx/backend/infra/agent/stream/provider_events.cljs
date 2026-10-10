@@ -4,7 +4,7 @@
    provider objects directly."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.content :refer [preview-text-nonblank tool-result-content-parts]]
-            [knoxx.backend.domain.text :refer [content-part-text reasoning-part-text]]
+            [knoxx.backend.domain.text :refer [content-part-text]]
             [knoxx.backend.infra.agent.tools :refer [tool-call-input-preview]]))
 
 (defn- js-present?
@@ -39,7 +39,7 @@
 
 (defn- first-string-field
   [message fields]
-  (or (some #(let [value (aget message %)] (when (string? value) value)) fields) ""))
+  (some #(let [value (aget message %)] (when (string? value) value)) fields))
 
 (defn- literal-block-text
   [content part->text]
@@ -54,14 +54,27 @@
     (cond
       (string? content) content
       (seq blocks) blocks
-      :else (first-string-field message ["text" "errorMessage"]))))
+      :else (or (first-string-field message ["text" "errorMessage"]) ""))))
+
+(defn- reasoning-part-snapshot
+  [part]
+  (when part
+    (first-string-field part (case (aget part "type")
+                               ("reasoning" "reasoning_text") ["text"]
+                               "thinking" ["thinking" "text"]
+                               []))))
+
+(defn- reasoning-block-snapshot
+  [content]
+  (when (array? content)
+    (let [parts (keep reasoning-part-snapshot (array-seq content))]
+      (when (seq parts) (apply str parts)))))
 
 (defn assistant-reasoning-snapshot
-  "Read authoritative reasoning without overlap guesses or whitespace removal."
+  "Read literal authoritative reasoning; nil means omitted, an empty string is explicit."
   [message]
-  (let [blocks (literal-block-text (aget message "content") reasoning-part-text)]
-    (if (seq blocks) blocks
-        (first-string-field message ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"]))))
+  (or (reasoning-block-snapshot (aget message "content"))
+      (first-string-field message ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"])))
 
 (defn- normalize-message-update
   [event]
@@ -87,7 +100,7 @@
       ;; delta without that context must never be classified by text overlap.
       (and (seq text-snapshot) (not (str/includes? text-snapshot "<think>")))
       (assoc :text-snapshot text-snapshot)
-      (seq reasoning-snapshot) (assoc :reasoning-snapshot reasoning-snapshot))))
+      (some? reasoning-snapshot) (assoc :reasoning-snapshot reasoning-snapshot))))
 
 (defn- normalize-message-end
   [event]

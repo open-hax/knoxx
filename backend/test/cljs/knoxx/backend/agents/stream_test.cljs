@@ -305,7 +305,9 @@
       (is (= (str first-text corrected) (apply str @(:chunks state))))
       (is (= corrected @(:last-assistant-text* state)))
       (is (= [first-text "Knox draft"]
-             (->> @events* (filter #(= :token-event (:op %))) (mapv #(get-in % [:event :token])))))
+             (->> @events* (filter #(and (= :token-event (:op %))
+                                        (nil? (get-in % [:event :operation]))))
+                  (mapv #(get-in % [:event :token])))))
       (handle! #js {:type "message_start" :message #js {:role "tool"}})
       (is (= corrected @(:last-assistant-text* state)) "tool messages must not reset assistant boundaries"))))
 
@@ -339,3 +341,45 @@
       (is (= "Knoxx\n\nReasoning" @(:last-reasoning-text* state)))
       (is (= "Knoxx\n\nReasoning" (apply str @(:reasoning-chunks state))))
       (is (= "Answer" (apply str @(:chunks state)))))))
+
+(deftest terminal-corrections-update-native-traces-and-explicit-token-snapshots
+  (testing "live sink updates the current message, retaining earlier text, tools and the other channel"
+    (doseq [kind [:agent_message :reasoning]]
+      (let [previous-runs @run-state/runs*
+            packets* (atom [])
+            state (stream/make-stream-state "correction-run" "conv" "sess" "now" 0 (fn [] "uuid"))
+            handle! (stream/build-subscribe-handler state nil)
+            prefixes {:agent_message "Prior 😀 answer.\n\n" :reasoning "Prior 🔬 thinking.\n\n"}
+            other-kind (if (= kind :agent_message) :reasoning :agent_message)
+            other-text "Other channel stays literal.\n\n"
+            corrected "Knoxx\n\nReviewed."
+            expected (str (get prefixes kind) corrected)]
+        (try
+          (swap! run-state/runs* assoc "correction-run" {:run_id "correction-run" :trace_blocks []})
+          (with-redefs [realtime/broadcast-ws-session! (fn [_ topic packet] (swap! packets* conj [topic packet]))
+                        run-state/append-run-event! (fn [& _] nil)
+                        session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
+            (handle! #js {:type "message_start" :message (assistant-message {})})
+            (doseq [channel [:agent_message :reasoning]]
+              (stream/emit-streaming-delta! state channel (get prefixes channel)))
+            (handle! #js {:type "tool_execution_start" :toolName "lookup" :toolCallId "correction-tool"})
+            (handle! #js {:type "message_start" :message (assistant-message {})})
+            (stream/emit-streaming-delta! state kind "Knox draft")
+            (stream/emit-streaming-delta! state other-kind other-text)
+            (stream/emit-streaming-delta! state kind " stale suffix")
+            (let [snapshot (assistant-message {:content (if (= kind :agent_message) corrected other-text)
+                                               :reasoning (if (= kind :reasoning) corrected other-text)})]
+              (stream/sync-assistant-message! state snapshot)
+              (stream/sync-assistant-message! state snapshot))
+            (let [blocks (:trace_blocks (get @run-state/runs* "correction-run"))
+                  replacements (keep (fn [[topic packet]]
+                                       (when (and (= topic "tokens") (= "replace" (:operation packet))) packet)) @packets*)]
+              (is (= expected (apply str (map :content (filter #(= kind (:kind %)) blocks)))))
+              (is (= (str (get prefixes other-kind) other-text)
+                     (apply str (map :content (filter #(= other-kind (:kind %)) blocks)))))
+              (is (= ["correction-tool"] (mapv :toolCallId (filter #(= :tool_call (:kind %)) blocks))))
+              (is (= [{:kind (if (= kind :agent_message) "assistant_message" "reasoning")
+                       :token expected :operation "replace" :offset (count (get prefixes kind))}]
+                     (mapv #(select-keys % [:kind :token :operation :offset]) replacements)))
+              (is (= expected (apply str @(if (= kind :agent_message) (:chunks state) (:reasoning-chunks state)))))))
+          (finally (reset! run-state/runs* previous-runs)))))))
