@@ -284,3 +284,13 @@
   spore: none
   receipt-refs: 5ea538ff-0cbb-4330-af6e-5740a9b4f5f8, ea2ea1c1eef132d23408dc94de5166e659d8dae367884e4f02d73392df895614, 0942dbf59387a51b078c7677288e0dd838c8d2abb30dad409527a2459a1fdfe6, d17c2623848c034207e09fc7f5efe12c875f1702d6087ba6e42af7d848d65fce
   note: A printed green summary does not prove completed test execution. Qualify the existing fatal guard, normal exit and owned descendant cleanup together before spending campaign time. Preserve compiler/test raw evidence and source identity; keep active portable branches without rewriting reader conditionals into runtime forms. Focused RED/GREEN source controls do not earn production baseline or mutation credit. Equivalent exclusions need actual external review and exact committed provenance; none adopted. Fresh production-config dependency preparation is separate from execution, and the four batches of 250 completed assertion kills remain required. One failed alias discovery and conditional-promotion control drove narrow canonical repairs; all predecessor failures retained. No extra spore or promotion.
+
+- ts: 2026-10-10T23:20:00.254571+00:00
+  session: knoxx-qualification-repair
+  task: exact-production-config-baseline-and-observed-survivor-pilot
+  p-efficiency: 0.88
+  p-friction: 0.28
+  p-skill-candidate: 0.42
+  spore: none
+  receipt-refs: c5f71c0c-263c-428f-b273-9ec5f6a313b5, 9b345550d08831e6520780e7faf233ac608c7267d01f2d79989310bb996f2768, b4816a450fb9671378b518f0153ad8ffd74ea6ef98a3a756993a63a272033f5d
+  note: Measure the actual canonical guarded baseline before campaign spending. Exact source78843174 passed1914tests9844assertions; three measured mutations yielded two assertion kills and one real survivor, no invalid executions. Preserve wholepilot exit1 and restored source. A private terminal return ignored after unchanged notification effects has no discovered supported boolean contract; a direct literal assertion would manufacture one. Green tests alone do not adjudicate equivalence: present exact source rationale for independent external review and keep zero exclusions until then. Targeted one-file ordinal lookup places this observed survivor first in batch1; no selection reorder hides it. Local median75.41seconds is a throughput measurement, not a hosted qualification guarantee. Preserve initial selector and metadata-capture adapter failures; those changed no canonical source and earned no credit. The nonbundled entrypoint hash is distinct from full compiled payload identity. Metadata successor records tested788 honestly and supplies no successor baseline or four-batch credit. No extra spore or promotion.
