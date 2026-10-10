@@ -264,3 +264,13 @@
   spore: none
   receipt-refs: 4bab3a46-5976-4fa8-ba9a-102080beeae9, f6220c1a372b6d326a0959a8e934565fbd5db58d5922c9213c13bcae30bc87db, a6a32521524c2b19c226dd853c3632e0ad889d590466e15216b65a8bf15ba4f7, ef73c712ab7821a20f24d0514974f0b388a03140fd45c23032f5a196ae4637bd
   note: A green CMS route fixture proves source-locale rendering and failure contracts; it does not prove provider translation, browser traversal, Website adoption or real production publication. Bind source paths before and after compile, preserve nested proof path keys, and audit nested pnpm processes with actual Node executables. Preserve the original mixed Node audit alongside the corrected all-Node24 suite. Keep immutable renderer image source 29cb distinct from the verifier commit. Five paths frozen, 29 native PASS statements and 15 preconditions inspected independently; browser has not run. No spore or promotion in this session.
+
+- ts: 2026-10-10T23:04:53.225473+00:00
+  session: knoxx
+  task: approved-media-verifier-early-cleanup-review-fix
+  p-efficiency: 0.94
+  p-friction: 0.15
+  p-skill-candidate: 0.12
+  spore: none
+  receipt-refs: ff9ecc33-3c20-4963-a27f-89f5b2878889
+  note: Define cleanup before allocating a disposable directory and arm its traps before the first operation that can fail. Injected owned mkdir exit73 proves prior leak and corrected cleanup while preserving exit status. Keep full native fixture and production qualification historical; no provider or shared-state mutations. Preserve every historical byte. No extra spore or promotion.

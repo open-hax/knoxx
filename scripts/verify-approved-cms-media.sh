@@ -26,12 +26,8 @@ if actual != sys.argv[2]:
     raise SystemExit('FAIL supplied artwork differs from the selected real asset digest')
 PY
 printf 'Verifying physical checkout %s at %s; runtime node %s\n' "$media_repo" "$media_head" "$(node --version)"
-media_run="$(mktemp -d "${TMPDIR:-/tmp}/knoxx-approved-media.XXXXXXXX")"
-media_fixture="$media_run/fixture"
-mkdir "$media_fixture"
 media_pid=""
 media_browser_started=0
-media_session="approved-cms-media-${media_run##*.}"
 ab() { NO_PROXY='*' no_proxy='*' HTTP_PROXY='' HTTPS_PROXY='' ALL_PROXY='' agent-browser --session "$media_session" "$@"; }
 cleanup() {
   local media_code=$? media_cleanup_failed=0
@@ -51,9 +47,13 @@ cleanup() {
   else printf 'FAIL disposable runtime cleanup did not complete\n' >&2; [[ "$media_code" != 0 ]] || media_code=1; fi
   exit "$media_code"
 }
+media_run="$(mktemp -d "${TMPDIR:-/tmp}/knoxx-approved-media.XXXXXXXX")"
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+media_fixture="$media_run/fixture"
+media_session="approved-cms-media-${media_run##*.}"
+mkdir "$media_fixture"
 python3 "$media_repo/scripts/verify-approved-cms-media.py" --source-proof >"$media_run/source-before.json"
 media_config="{:main knoxx.backend.extern.approved-media-verifier/main :output-to \"$media_run/fixture.cjs\"}"
 if ! (cd "$media_repo/backend" && timeout 240s pnpm exec shadow-cljs --force-spawn compile cms-history-tour --config-merge "$media_config") >"$media_run/build.log" 2>&1; then
