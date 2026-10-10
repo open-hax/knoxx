@@ -8,7 +8,6 @@ import {
   applyToolTraceEvent,
   controlTimelineMessageFromEvent,
   finalizeTraceBlocks,
-  novelAppendedText,
   truncateText,
 } from './utils';
 
@@ -103,6 +102,41 @@ export function useChatRuntimeEffects({
     console.log('[chat-runtime-effects] WS effect — sessionId:', sessionId);
     let cancelled = false;
     let stream: StreamConnection | null = null;
+    const flushBufferedTokens = (pendingId: string | null) => {
+      const buffer = tokenBufferRef.current;
+      tokenBufferRef.current = [];
+      if (!pendingId || buffer.length === 0) return;
+      const runId = buffer[buffer.length - 1].meta?.runId;
+      if (runId) activeRunIdRef.current = runId;
+      let combinedTokens = '';
+      let combinedReasoning = '';
+      for (const { token, meta } of buffer) {
+        if (meta?.kind === 'reasoning') {
+          combinedReasoning += token;
+        } else {
+          combinedTokens += token;
+        }
+      }
+      // The token channel carries literal deltas, so repeated bytes are meaningful.
+      if (combinedTokens) {
+        callbacksRef.current.updateTraceBlocksByMessageId(
+          pendingId,
+          (blocks) => appendTraceTextDelta(blocks, 'agent_message', combinedTokens),
+        );
+        callbacksRef.current.updateMessageById(pendingId, (message) => ({
+          ...message,
+          runId: runId ?? message.runId ?? null,
+          status: 'streaming',
+          content: `${message.content}${combinedTokens}`,
+        }));
+      }
+      if (combinedReasoning) {
+        callbacksRef.current.updateTraceBlocksByMessageId(
+          pendingId,
+          (blocks) => appendTraceTextDelta(blocks, 'reasoning', combinedReasoning),
+        );
+      }
+    };
     const connectTimer = window.setTimeout(() => {
       if (cancelled) {
         return;
@@ -143,39 +177,8 @@ export function useChatRuntimeEffects({
             if (!tokenFlushPendingRef.current) {
               tokenFlushPendingRef.current = true;
               requestAnimationFrame(() => {
-                const pendingId2 = pendingAssistantIdRef.current;
-                if (!pendingId2) {
-                  tokenFlushPendingRef.current = false;
-                  return;
-                }
-                const buffer = tokenBufferRef.current;
-                tokenBufferRef.current = [];
                 tokenFlushPendingRef.current = false;
-                if (buffer.length === 0) return;
-                const lastMeta = buffer[buffer.length - 1].meta;
-                const runId = lastMeta?.runId;
-                if (runId) activeRunIdRef.current = runId;
-                let combinedTokens = '';
-                let combinedReasoning = '';
-                for (const { token: tok, meta: m } of buffer) {
-                  if (m?.kind === 'reasoning') {
-                    combinedReasoning += tok;
-                  } else {
-                    combinedTokens += tok;
-                  }
-                }
-                if (combinedTokens) {
-                  callbacksRef.current.updateTraceBlocksByMessageId(pendingId2, (blocks) => appendTraceTextDelta(blocks, 'agent_message', combinedTokens));
-                  callbacksRef.current.updateMessageById(pendingId2, (message) => ({
-                    ...message,
-                    runId: runId ?? message.runId ?? null,
-                    status: 'streaming',
-                    content: `${message.content}${novelAppendedText(message.content, combinedTokens)}`,
-                  }));
-                }
-                if (combinedReasoning) {
-                  callbacksRef.current.updateTraceBlocksByMessageId(pendingId2, (blocks) => appendTraceTextDelta(blocks, 'reasoning', combinedReasoning));
-                }
+                flushBufferedTokens(pendingAssistantIdRef.current);
               });
             }
           },
@@ -210,36 +213,7 @@ export function useChatRuntimeEffects({
               }
               if (runtimeEvent.type === 'run_completed' || runtimeEvent.type === 'run_failed') {
                 if (pendingId) {
-                  if (tokenBufferRef.current.length > 0) {
-                    const buffer = tokenBufferRef.current;
-                    tokenBufferRef.current = [];
-                    let combinedTokens = '';
-                    let combinedReasoning = '';
-                    for (const { token: tok, meta: m } of buffer) {
-                      if (m?.kind === 'reasoning') {
-                        combinedReasoning += tok;
-                      } else {
-                        combinedTokens += tok;
-                      }
-                    }
-                    if (combinedTokens) {
-                      callbacksRef.current.updateTraceBlocksByMessageId(
-                        pendingId,
-                        (blocks) => appendTraceTextDelta(blocks, 'agent_message', combinedTokens),
-                      );
-                      callbacksRef.current.updateMessageById(pendingId, (message) => ({
-                        ...message,
-                        status: 'streaming',
-                        content: `${message.content}${novelAppendedText(message.content, combinedTokens)}`,
-                      }));
-                    }
-                    if (combinedReasoning) {
-                      callbacksRef.current.updateTraceBlocksByMessageId(
-                        pendingId,
-                        (blocks) => appendTraceTextDelta(blocks, 'reasoning', combinedReasoning),
-                      );
-                    }
-                  }
+                  flushBufferedTokens(pendingId);
                   callbacksRef.current.updateTraceBlocksByMessageId(
                     pendingId,
                     (blocks) => finalizeTraceBlocks(blocks, runtimeEvent.type === 'run_failed' ? 'error' : 'done'),
@@ -249,7 +223,7 @@ export function useChatRuntimeEffects({
                     runId: runtimeEvent.run_id ?? message.runId ?? null,
                     status: runtimeEvent.type === 'run_failed' ? 'error' : 'done',
                   }));
-                  pendingAssistantIdRef.current = null;
+                  // loadRunDetail clears this association after installing the final answer.
                 }
                 setIsSending(false);
                 void callbacksRef.current.loadRunDetail(runtimeEvent.run_id);

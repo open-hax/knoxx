@@ -6,7 +6,6 @@
   adapter validates what it is handed, and an adapter never produces what it
   transports."
   (:require [cljs.test :refer [deftest is testing]]
-            [clojure.string :as str]
             [knoxx.backend.infra.publication-effects :as effects]
             [knoxx.backend.infra.publication-target-memory :as memory]
             ["node:fs" :as node-fs]
@@ -121,6 +120,7 @@
     (doseq [relative-path ["src/cljs/knoxx/backend/infra/publication_effects.cljs"
                            "src/cljs/knoxx/backend/infra/publication_target_memory.cljs"]]
       (testing relative-path
-        (is (not (str/includes? (read-source relative-path) ":artifact/content"))
+        (is (not (re-find #":artifact/content(?:[\s,}\]]|$)"
+                          (read-source relative-path)))
             "an adapter that writes this key is rendering, which is the one thing
              the ownership decision forbids it from doing")))))

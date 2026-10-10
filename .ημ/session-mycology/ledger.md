@@ -192,3 +192,22 @@
   spore: none
   receipt-refs: cms-source-locale-review
   note: Compared deployed and current source before fixing the owning constructor. Keep source review-free and exact translated approval mandatory; distinguish deterministic admission proof from runtime publication and image identity. No spore warranted.
+- ts: 2026-10-10T14:11:49.949277Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Recover lost CMS deployment source and qualify native boundaries
+  p-efficiency: 0.68
+  p-friction: 0.81
+  p-skill-candidate: 0.7
+  spore: none
+  receipt-refs: CMS deployment recovery after lost temporary checkout
+  note: Recover original native patch hunks and heredoc bodies with their history provenance, then rerun actual qualification. Keep owned checkouts and logs outside temporary storage. Historical counters cannot qualify recovered source. Error metadata from an effect target cannot bind an active reservation; preserve only opaque boundary provenance. No additional spore created in this session.
+
+- ts: 2026-10-10T14:25:53.754058Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Repair authoritative stream arrays and terminal GET hydration races
+  p-efficiency: 0.8
+  p-friction: 0.45
+  p-skill-candidate: 0.35
+  spore: none
+  receipt-refs: cms-deployment-independent-review-repairs
+  note: A cumulative message snapshot has distinct content blocks, not replayed incremental fragments. Test literal block boundaries as well as token boundaries, and resolve overlapping same-run reads in both terminal and delayed nonterminal order. Preserve compiler/runtime proof separation and abnormal native exits even when assertions passed. No additional spore created.

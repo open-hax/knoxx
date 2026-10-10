@@ -46,6 +46,15 @@ if ! timeout 240s bash "$verify_repo/scripts/verify-cms-history.sh" >"$verify_ht
 fi
 cat "$verify_http_log"
 validate_log "$verify_http_log"
+verify_publication_log="$verify_fixture/publication-results.log"
+verify_publication_config="{:ns-regexp \"^knoxx\\\\.backend\\\\.infra\\\\.publication-target-static-site-test$\" :output-to \"$verify_fixture/publication-test.cjs\"}"
+if ! timeout 240s pnpm exec shadow-cljs compile test --config-merge "$verify_publication_config" >"$verify_publication_log" 2>&1; then
+  cat "$verify_publication_log"
+  printf '%s\n' 'FAIL native filesystem publication verification exited nonzero or exceeded four minutes.' >&2
+  exit 1
+fi
+cat "$verify_publication_log"
+validate_log "$verify_publication_log"
 printf '%s\n' \
   'PASS native Fastify CMS HTTP creation persists English :none and Spanish :required review policies.' \
   'PASS the generated document source path resolves to actual saved bytes for publication admission.' \
@@ -53,6 +62,10 @@ printf '%s\n' \
   'PASS withheld English and every locale without a resolved source remain inadmissible.' \
   'PASS Spanish remains blocked without a content-bound candidate and exact source/output approval.' \
   'PASS another source, output, content digest, or later English edit cannot reuse the Spanish approval.' \
+  'PASS corrected target bytes at the same source revision remain blocked until their renewed approval.' \
+  'PASS approved output B replaces output A in the native filesystem manifest/artifact with a distinct publish key.' \
+  'PASS historical source-only keys remain readable and previous completion records survive.' \
+  'PASS repeated approved-output restorations reserve deterministic generations, while identical current output converges without rewriting.' \
   'WARN HTTP principals are seeded at the auth-context seam; deployed checkout/image and password login remain unverified.' \
-  'WARN provider output, split review, browser UI and materialization need separate live evidence.' \
+  'WARN provider output, persisted split-review mutations, browser UI and deployed materialization need separate live evidence.' \
   'WARN use the deployed CMS/translation walkthrough in docs/verification/cms-source-locale-review.md for live proof.'

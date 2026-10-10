@@ -409,7 +409,8 @@
     [:artifact/media-type MediaType]
     [:artifact/encoding CharacterEncoding]
     [:artifact/locale Locale]
-    [:artifact/revision ConcreteRevision]]
+    [:artifact/revision ConcreteRevision]
+    [:artifact/content-revision {:optional true} ConcreteRevision]]
    [:fn {:error/message "a publication artifact must carry no revision selector"}
     free-of-revision-selectors?]])
 

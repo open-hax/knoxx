@@ -152,8 +152,8 @@
                     run-state/backfill-run-tool-input-preview! (fn [& _] nil)
                     realtime/broadcast-ws-session! (fn [& args] (swap! events* conj args))
                     session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
-        (stream/emit-streaming-delta! state :reasoning "The")
-        (stream/emit-streaming-delta! state :reasoning "TheThe model should reason once.")
+        (stream/emit-streaming-delta! state :reasoning "The" :replay)
+        (stream/emit-streaming-delta! state :reasoning "TheThe model should reason once." :replay)
         (is (= "The model should reason once." @(:last-reasoning-text* state)))
         (is (= [{:kind :reasoning :delta "The"}
                 {:kind :reasoning :delta " model should reason once."}]
@@ -172,7 +172,7 @@
                     realtime/broadcast-ws-session! (fn [& args] (swap! events* conj args))
                     session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
         (doseq [delta ["Ready." " How" "Ready" "." " How" " can" " I" " help" "?"]]
-          (stream/emit-streaming-delta! state :agent_message delta))
+          (stream/emit-streaming-delta! state :agent_message delta :replay))
         (is (= "Ready. How can I help?" @(:last-assistant-text* state)))
         (is (= [{:kind :agent_message :delta "Ready."}
                 {:kind :agent_message :delta " How"}
@@ -201,3 +201,141 @@
         (is (= [{:kind :reasoning :delta "The"}
                 {:kind :reasoning :delta " reply has been sent."}]
                @tokens*))))))
+
+(deftest native-text-deltas-preserve-every-byte-through-terminal-sync
+  (testing "literal tokens retain repeated characters, paragraph breaks, and repeated words"
+    (let [deltas ["# CMS Demo" "\n" "\n" "Knox" "x" " generates a draft." "\n\n" "ha" "ha"]
+          expected (apply str deltas)]
+      (doseq [fragments [deltas [expected] ["# CMS Demo\n\nKnox" "x generates a draft.\n\nhaha"]]]
+        (let [events* (atom [])
+              state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                           :run-event-sink (RecordingSink. events*))
+              handle! (stream/build-subscribe-handler state nil)]
+          (handle! #js {:type "message_start" :message (assistant-message {})})
+          (doseq [delta fragments]
+            (handle! #js {:type "message_update"
+                         :assistantMessageEvent #js {:type "text_delta" :delta delta}}))
+          (is (= expected @(:last-assistant-text* state)))
+          (handle! #js {:type "message_end" :message (assistant-message {:content expected})})
+          (handle! #js {:type "message_end" :message (assistant-message {:content expected})})
+          (is (= expected (apply str @(:chunks state))))
+          (is (= expected (->> @events* (filter #(= :token-event (:op %)))
+                               (map #(get-in % [:event :token])) (apply str))))
+          (is (= expected (->> @events* (filter #(= :trace-text (:op %)))
+                               (map :delta) (apply str)))))))))
+
+(deftest native-partial-snapshots-are-cumulative-without-token-overlap-guesses
+  (testing "the partial message supplies explicit cumulative context even when delta replays a prefix"
+    (let [events* (atom [])
+          state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                       :run-event-sink (RecordingSink. events*))
+          handle! (stream/build-subscribe-handler state nil)
+          expected "Knoxx\n\nhaha"]
+      (doseq [[delta snapshot] [["Knox" "Knox"] ["x" "Knoxx"]
+                                ["Knoxx\n\n" "Knoxx\n\n"]
+                                ["ha" "Knoxx\n\nha"] ["ha" expected]
+                                [expected expected]]]
+        (handle! #js {:type "message_update"
+                     :assistantMessageEvent #js {:type "text_delta" :delta delta
+                                                 :partial (assistant-message {:content snapshot})}}))
+      (stream/sync-assistant-message! state (assistant-message {:content expected}))
+      (is (= expected (apply str @(:chunks state))))
+      (is (= ["Knox" "x" "\n\n" "ha" "ha"]
+             (->> @events* (filter #(= :token-event (:op %))) (mapv #(get-in % [:event :token]))))))))
+
+(deftest native-array-snapshots-preserve-distinct-text-blocks
+  (testing "partial and terminal content blocks preserve overlap, repeats, and blank lines"
+    (doseq [fragments [["Knox" "x"] ["ha" "ha"] ["Title" "\n\n" "Body"]]]
+      (let [events* (atom [])
+            state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                         :run-event-sink (RecordingSink. events*))
+            handle! (stream/build-subscribe-handler state nil)
+            expected (apply str fragments)
+            snapshot (assistant-message {:content (clj->js (mapv #(hash-map :type "text" :text %) fragments))})]
+        (doseq [delta fragments]
+          (handle! #js {:type "message_update" :assistantMessageEvent #js {:type "text_delta" :delta delta}}))
+        (handle! #js {:type "message_update"
+                     :assistantMessageEvent #js {:type "text_delta" :delta expected :partial snapshot}})
+        (is (= expected @(:last-assistant-text* state)) "a partial array must not truncate streamed bytes")
+        (is (= expected (apply str @(:chunks state))))
+        (handle! #js {:type "message_end" :message snapshot})
+        (is (= expected @(:last-assistant-text* state)) "a terminal array must preserve those same bytes")
+        (is (= expected (apply str @(:chunks state))))
+        (is (= expected (->> @events* (filter #(= :token-event (:op %)))
+                             (map #(get-in % [:event :token])) (apply str))))))))
+
+(deftest native-array-snapshots-preserve-distinct-reasoning-blocks
+  (testing "reasoning partials and terminal snapshots retain literal thinking and reasoning blocks"
+    (doseq [[part-type field fragments] [["thinking" :thinking ["ha" "ha"]]
+                                       ["reasoning" :text ["Check" "\n\n" "Done"]]
+                                       ["reasoning_text" :text ["Knox" "x"]]]]
+      (let [events* (atom [])
+            state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                         :run-event-sink (RecordingSink. events*))
+            handle! (stream/build-subscribe-handler state nil)
+            expected (apply str fragments)
+            snapshot (assistant-message {:content (clj->js (conj (mapv #(hash-map :type part-type field %) fragments)
+                                                                  {:type "text" :text "Answer"}))})]
+        (doseq [delta fragments]
+          (handle! #js {:type "message_update" :assistantMessageEvent #js {:type "reasoning_delta" :delta delta}}))
+        (handle! #js {:type "message_update"
+                     :assistantMessageEvent #js {:type "reasoning_delta" :delta expected :partial snapshot}})
+        (is (= expected @(:last-reasoning-text* state)))
+        (is (= expected (apply str @(:reasoning-chunks state))))
+        (handle! #js {:type "message_end" :message snapshot})
+        (is (= expected @(:last-reasoning-text* state)))
+        (is (= expected (apply str @(:reasoning-chunks state))))
+        (is (= "Answer" (apply str @(:chunks state))))))))
+
+(deftest terminal-corrections-replace-only-the-current-provider-message
+  (testing "an incompatible terminal snapshot never appends the full response as another token"
+    (let [events* (atom [])
+          state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                       :run-event-sink (RecordingSink. events*))
+          handle! (stream/build-subscribe-handler state nil)
+          first-text "Checking a tool.\n\n"
+          corrected "Knoxx\n\nReview it."]
+      (handle! #js {:type "message_start" :message (assistant-message {})})
+      (stream/emit-streaming-delta! state :agent_message first-text)
+      (stream/sync-assistant-message! state (assistant-message {:content first-text}))
+      (handle! #js {:type "message_start" :message (assistant-message {})})
+      (stream/emit-streaming-delta! state :agent_message "Knox draft")
+      (stream/sync-assistant-message! state (assistant-message {:content corrected}))
+      (stream/sync-assistant-message! state (assistant-message {:content corrected}))
+      (is (= (str first-text corrected) (apply str @(:chunks state))))
+      (is (= corrected @(:last-assistant-text* state)))
+      (is (= [first-text "Knox draft"]
+             (->> @events* (filter #(= :token-event (:op %))) (mapv #(get-in % [:event :token])))))
+      (handle! #js {:type "message_start" :message #js {:role "tool"}})
+      (is (= corrected @(:last-assistant-text* state)) "tool messages must not reset assistant boundaries"))))
+
+(deftest reasoning-deltas-preserve-whitespace-and-repeated-characters
+  (testing "both separate reasoning fields and think-tag routing preserve literal bytes"
+    (doseq [think-tags? [false true]]
+      (let [events* (atom [])
+            state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                         :run-event-sink (RecordingSink. events*))
+            handle! (stream/build-subscribe-handler state nil)]
+        (when think-tags?
+          (handle! #js {:type "message_update" :assistantMessageEvent #js {:type "text_delta" :delta "<think>"}}))
+        (doseq [delta ["Knox" "x" "\n" "\n" "ha" "ha"]]
+          (handle! #js {:type "message_update"
+                       :assistantMessageEvent #js {:type (if think-tags? "text_delta" "reasoning_delta")
+                                                   :delta delta}}))
+        (when think-tags?
+          (handle! #js {:type "message_update" :assistantMessageEvent #js {:type "text_delta" :delta "</think>Answer"}}))
+        (stream/sync-assistant-message! state (assistant-message {:content (if think-tags? "Answer" "")
+                                                               :reasoning "Knoxx\n\nhaha"}))
+        (is (= "Knoxx\n\nhaha" (apply str @(:reasoning-chunks state))))
+        (is (= (if think-tags? "Answer" "") (apply str @(:chunks state))))))))
+
+(deftest omitted-terminal-reasoning-keeps-the-observed-stream
+  (testing "an answer-only terminal snapshot does not erase streamed reasoning"
+    (let [events* (atom [])
+          state (assoc (stream/make-stream-state "run" "conv" "sess" "now" 0 (fn [] "uuid"))
+                       :run-event-sink (RecordingSink. events*))]
+      (stream/emit-streaming-delta! state :reasoning "Knoxx\n\nReasoning")
+      (stream/sync-assistant-message! state (assistant-message {:content "Answer"}))
+      (is (= "Knoxx\n\nReasoning" @(:last-reasoning-text* state)))
+      (is (= "Knoxx\n\nReasoning" (apply str @(:reasoning-chunks state))))
+      (is (= "Answer" (apply str @(:chunks state)))))))

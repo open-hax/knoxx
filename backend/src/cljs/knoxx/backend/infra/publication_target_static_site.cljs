@@ -189,7 +189,9 @@
              :materialized/revision revision
              :materialized/path path}
       (:route/title route)
-      (assoc :materialized/title (:route/title route)))))
+      (assoc :materialized/title (:route/title route))
+      (some? (:route/content-revision route))
+      (assoc :materialized/content-revision (:route/content-revision route)))))
 
 ;; ── Protocol methods ───────────────────────────────────────────────────────
 
@@ -222,7 +224,12 @@
   [root adapter-id op]
   (let [intent (:intent op)
         artifact (law/assert-artifact! (:artifact op) intent (:concrete-revision op))
-        route (manifest-law/route-for-artifact intent artifact)]
+        content-file-id (when (:artifact/content-revision artifact)
+                          (crypto/sha256-hex
+                           (pr-str [(:publication/id intent)
+                                    (:artifact/revision artifact)
+                                    (:artifact/content-revision artifact)])))
+        route (manifest-law/route-for-artifact intent artifact content-file-id)]
     (await (with-manifest-lock! root
                                 (^:async fn []
                                   (await (commit-route! root route artifact)))))
@@ -276,7 +283,9 @@
           ;; none, which is exactly the drift that must be reported so the
           ;; planner republishes it.
           (some? (:route/title route))
-          (assoc :materialized/title (:route/title route)))))))
+          (assoc :materialized/title (:route/title route))
+          (some? (:route/content-revision route))
+          (assoc :materialized/content-revision (:route/content-revision route)))))))
 
 ;; ── Construction ───────────────────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.publication-runtime-test
   (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.domain.translation-evidence :as evidence]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.publication-contract-content :as contract-content]
             [knoxx.backend.infra.publication-runtime :as runtime]
@@ -94,3 +95,15 @@
         (is (nil? (await (translated-blocks nil nil legacy-calls
                                             undelimited-receipt segments))))
         (is (= 2 @legacy-calls))))))
+
+(deftest ^:async rendered-translation-retains-separate-source-and-output-revisions
+  (with-redefs [agent-content/content-for-receipt! (fn [_ _] (js/Promise.resolve translated))]
+    (let [render! (runtime/artifact-source ::client {:org-id "org-1" :project "review-stage"}
+                                           {:documents {:knoxx.docs/probe document}}
+                                           {:knoxx.docs/probe "/contracts"}
+                                           (evidence/evidence {:receipts [receipt]}) "/published")
+          artifact (await (render! intent "sha256-source"))]
+      (is (= "sha256-source" (:artifact/revision artifact)))
+      (is (= "candidate-1" (:artifact/content-revision artifact)))
+      (is (= "<article class=\"published-document\"><p>Primer bloque.</p><p>Segundo bloque.</p></article>"
+             (:artifact/content artifact))))))

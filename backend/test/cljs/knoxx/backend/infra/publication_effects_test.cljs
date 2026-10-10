@@ -78,7 +78,7 @@
 (defn- fake-target
   "An in-memory publication target. `routes` maps path -> materialization, so
    two public routes for one publication is observable rather than assumed away."
-  [{:keys [id fail? swallow-response?] :or {id :fake/target}}]
+  [{:keys [id fail? failure-data swallow-response?] :or {id :fake/target}}]
   (let [routes (atom {})
         calls (atom [])]
     {:routes routes
@@ -88,7 +88,8 @@
        (target-id [_] id)
        (publish! [_ _ctx op]
          (swap! calls conj [:publish! (:idempotency/key op)])
-         (when fail? (throw (ex-info "adapter exploded" {})))
+         (when (if (fn? fail?) (fail?) fail?)
+           (throw (ex-info "adapter exploded" (or failure-data {}))))
          (materialize! routes op swallow-response?))
        (remove! [_ _ctx intent observed]
          (swap! calls conj [:remove! (:materialized/path observed)])
@@ -228,6 +229,66 @@
     (is (= "Probe" (get-in @routes ["/probe" :materialized/title])))
     (is (= 2 (count (filter #(= :publish! (first %)) @calls)))
         "a prior titleless success must not suppress title backfill")))
+
+(deftest ^:async completed-publication-is-restored-after-withdrawal
+  (let [{:keys [store state]} (fake-store)
+        {:keys [target routes calls]} (fake-target {})
+        original (await (effects/execute-plan! store target {} publish-plan artifact))
+        original-key (:idempotency/key original)
+        _ (await (effects/execute-plan!
+                  store target {}
+                  {:op :remove :intent intent :observed original} nil))
+        restored (await (effects/execute-plan! store target {} publish-plan artifact))
+        repeated (await (effects/execute-plan! store target {} publish-plan artifact))]
+    (is (= :publication/materialized (:receipt/type restored)))
+    (is (= (receipts/canonical-materialization original) (get @routes "/probe")))
+    (is (= (str original-key "|:rematerialize") (:idempotency/key restored)))
+    (is (= original (get-in @state [original-key :receipt]))
+        "restoration never removes the historical completed effect")
+    (is (= original repeated) "current matching target permits historical replay")
+    (is (= 2 (count (filter #(= :publish! (first %)) @calls)))
+        "withdrawal needs one new materialization; its repeat needs none")))
+
+(deftest ^:async failed-restoration-identifies-its-active-reservation
+  (let [{:keys [store state]} (fake-store)
+        fail? (atom false)
+        {:keys [target]} (fake-target {:fail? #(deref fail?)
+                                    :failure-data {:idempotency/key "unrelated-completed-effect"}})
+        original (await (effects/execute-plan! store target {} publish-plan artifact))
+        original-key (:idempotency/key original)
+        _ (await (effects/execute-plan!
+                  store target {} {:op :remove :intent intent :observed original} nil))
+        _ (reset! fail? true)
+        failure (await (effects/execute-plan! store target {} publish-plan artifact))
+        restoration-key (str original-key "|:rematerialize")]
+    (is (= :publication/failed (:receipt/type failure)))
+    (is (= restoration-key (:idempotency/key failure)))
+    (is (= {:claimed? true} (get @state restoration-key)))
+    (is (= original (get-in @state [original-key :receipt])))))
+
+(deftest ^:async failed-restoration-observation-retains-its-generation-identity
+  (let [{:keys [store state]} (fake-store)
+        {:keys [target]} (fake-target {})
+        original (await (effects/execute-plan! store target {} publish-plan artifact))
+        _ (await (effects/execute-plan! store target {}
+                                       {:op :remove :intent intent :observed original} nil))
+        restored (await (effects/execute-plan! store target {} publish-plan artifact))
+        _ (await (effects/execute-plan! store target {}
+                                       {:op :remove :intent intent :observed restored} nil))
+        observations (atom 0)
+        failing-observer (reify effects/IPublicationTarget
+                           (target-id [_] (effects/target-id target))
+                           (publish! [_ ctx op] (effects/publish! target ctx op))
+                           (remove! [_ ctx wanted observed]
+                             (effects/remove! target ctx wanted observed))
+                           (observe! [_ ctx wanted]
+                             (when (= 2 (swap! observations inc))
+                               (throw (ex-info "observation unavailable" {})))
+                             (effects/observe! target ctx wanted)))
+        failure (await (effects/execute-plan! store failing-observer {} publish-plan artifact))]
+    (is (= :publication/failed (:receipt/type failure)))
+    (is (= (:idempotency/key restored) (:idempotency/key failure)))
+    (is (= restored (get-in @state [(:idempotency/key restored) :receipt])))))
 
 (deftest ^:async ambiguous-response-replay-is-safe
   (testing "the first attempt records the artifact but the caller never learns —
@@ -512,3 +573,16 @@
         (testing label
           (is (= :publication/materialized (:receipt/type receipt)))
           (is (= 1 (count @routes))))))))
+
+(deftest ^:async a-different-output-revision-is-refused-before-reservation
+  (let [{:keys [store state]} (fake-store)
+        {:keys [target calls]} (fake-target {})
+        plan (assoc-in publish-plan [:desired :materialized/content-revision] "approved-output")
+        receipt (await (effects/execute-plan! store target {} plan
+                                             (assoc artifact :artifact/content-revision "other-output")))]
+    (is (= :publication/failed (:receipt/type receipt)))
+    (is (str/includes? (:failure/reason receipt) "content revision conflicts"))
+    (is (empty? @state))
+    (is (empty? @calls))
+    (is (= (effects/publish-idempotency-key :fake/target intent "probe-revision" "approved-output")
+           (:idempotency/key receipt)))))

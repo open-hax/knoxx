@@ -51,7 +51,7 @@
             :locale (:publication/locale intent)
             :revision revision
             :path path}
-           (plan/desired-materialization intent revision))))
+           (or (:desired op) (plan/desired-materialization intent revision)))))
 
 (defn- route-for
   "Observation keyed by publication IDENTITY, not by the desired path. Keying on

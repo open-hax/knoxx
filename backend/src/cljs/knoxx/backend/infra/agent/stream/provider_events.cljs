@@ -2,7 +2,9 @@
   "Provider JS stream event normalization. Downstream stream semantics should
    consume the canonical CLJS map returned by `normalize` rather than aget-ing
    provider objects directly."
-  (:require [knoxx.backend.domain.agent.content :refer [preview-text-nonblank tool-result-content-parts]]
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.agent.content :refer [preview-text-nonblank tool-result-content-parts]]
+            [knoxx.backend.domain.text :refer [content-part-text reasoning-part-text]]
             [knoxx.backend.infra.agent.tools :refer [tool-call-input-preview]]))
 
 (defn- js-present?
@@ -35,6 +37,32 @@
       (tool-call-input-preview tool-name raw-args)
       (some-> (js->data raw-args) pr-str)))
 
+(defn- first-string-field
+  [message fields]
+  (or (some #(let [value (aget message %)] (when (string? value) value)) fields) ""))
+
+(defn- literal-block-text
+  [content part->text]
+  (when (array? content)
+    (apply str (map part->text (remove nil? (array-seq content))))))
+
+(defn assistant-text-snapshot
+  "Read authoritative text; distinct content blocks concatenate literally."
+  [message]
+  (let [content (aget message "content")
+        blocks (literal-block-text content content-part-text)]
+    (cond
+      (string? content) content
+      (seq blocks) blocks
+      :else (first-string-field message ["text" "errorMessage"]))))
+
+(defn assistant-reasoning-snapshot
+  "Read authoritative reasoning without overlap guesses or whitespace removal."
+  [message]
+  (let [blocks (literal-block-text (aget message "content") reasoning-part-text)]
+    (if (seq blocks) blocks
+        (first-string-field message ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"]))))
+
 (defn- normalize-message-update
   [event]
   (let [assistant-event (aget event "assistantMessageEvent")
@@ -43,15 +71,23 @@
                   (aget assistant-event "text")
                   (aget assistant-event "reasoning")
                   (aget assistant-event "thinking")
-                  "")]
-    {:type "message_update"
+                  "")
+        partial (aget assistant-event "partial")
+        text-snapshot (when partial (assistant-text-snapshot partial))
+        reasoning-snapshot (when partial (assistant-reasoning-snapshot partial))]
+    (cond-> {:type "message_update"
      :raw event
      :assistant-message-event assistant-event
      :assistant-event-type assistant-event-type
      :delta (str (or delta ""))
-     :partial-message (aget assistant-event "partial")
+     :partial-message partial
      :tool-call (aget assistant-event "toolCall")
-     :message (aget event "message")}))
+     :message (aget event "message")}
+      ;; Native partial messages are authoritative cumulative values. A literal
+      ;; delta without that context must never be classified by text overlap.
+      (and (seq text-snapshot) (not (str/includes? text-snapshot "<think>")))
+      (assoc :text-snapshot text-snapshot)
+      (seq reasoning-snapshot) (assoc :reasoning-snapshot reasoning-snapshot))))
 
 (defn- normalize-message-end
   [event]
@@ -121,6 +157,9 @@
 (defn normalize
   [event]
   (case (some-> (aget event "type") str)
+    "message_start" {:type "message_start" :raw event
+                     :message-role (aget (aget event "message") "role")
+                     :message (aget event "message")}
     "message_update" (normalize-message-update event)
     "message_end" (normalize-message-end event)
     "tool_execution_start" (normalize-tool-start event)

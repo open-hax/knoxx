@@ -373,6 +373,7 @@ function traceToolBlockId(event: RunEvent & { tool_call_id?: string; tool_name?:
   return `tool:${toolName}:${event.at ?? ""}`;
 }
 
+// For cumulative snapshots or explicit replay reconciliation, never literal token deltas.
 export function novelAppendedText(previous: string, incoming: string): string {
   if (incoming.length === 0) return "";
   if (previous.length === 0) return incoming;
@@ -407,11 +408,9 @@ export function appendTraceTextDelta(
   const last = next[next.length - 1];
 
   if (last && last.kind === kind && last.status === "streaming") {
-    const novelDelta = novelAppendedText(last.content ?? "", delta);
-    if (novelDelta.length === 0) return next;
     next[next.length - 1] = {
       ...last,
-      content: `${last.content ?? ""}${novelDelta}`,
+      content: `${last.content ?? ""}${delta}`,
       at: at ?? last.at,
     };
     return next;

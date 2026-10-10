@@ -12,6 +12,7 @@
             [knoxx.backend.extern.cms-store :as files]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.fastify.cms-documents :as transport]
+            [knoxx.backend.extern.fastify.cms-publication :as publication-transport]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.cms-store :as store]
             [knoxx.backend.infra.http-server :as http]
@@ -25,6 +26,43 @@
 (defn- clean! [root] (.rmSync fs root #js {:recursive true :force true}))
 (defn- body [title content parents] {:title title :content content :visibility "review" :parents parents})
 (defn- text [p] (.readFileSync fs p "utf8"))
+(declare request!)
+
+(deftest ^:async generated-publication-identities-reach-the-authenticated-http-route
+  (let [app (http/create-app!)
+        org "a34a9e37-511b-4da4-a31b-4a113156bd2e"
+        logical-id (str "logical-" (apply str (repeat 64 "a")))
+        manifest (domain/manifest org logical-id "/fixture/document.md" "HTTP identity")
+        ids (keep :publication/id (:resources manifest))
+        principal {:org-id org :permissions ["org.publications.manage"]}
+        calls (atom [])]
+    (try
+      (publication-transport/register-cms-publication-routes!
+       app nil {}
+       {:route! (fn [app method url handler] (fastify/route! app {:method method :url url :handler handler}))
+        :json-response! fastify/send-json!
+        :with-request-context! (fn [_ request _ operation]
+                                 (operation (when (= "writer" (aget (.-headers request) "x-test-principal")) principal)))
+        :ensure-permission! authz/ensure-permission!})
+      (await (.listen app #js {:host "127.0.0.1" :port 0}))
+      (with-redefs [publication/set-publication-state!
+                    (fn [_config scope id patch]
+                      (swap! calls conj {:scope scope :id id :patch patch})
+                      (js/Promise.resolve {:id id :state :published}))]
+        (doseq [id ids]
+          (let [url (str "/api/cms/publications/intents/" (js/encodeURIComponent (subs (str id) 1)))
+                response (await (request! app "PATCH" url "writer" {:state "published"}))]
+            (is (= 200 (:status response)) "The actual CMS identity exceeds Fastify's default 100-character route limit")
+            (is (= (subs (str id) 1) (get-in response [:body :id])))
+            (is (= id (:id (last @calls))))
+            (is (= {:org-id org} (:scope (last @calls))))
+            (is (= 403 (:status (await (request! app "PATCH" url "anonymous" {:state "published"})))))))
+        (is (= 2 (count @calls)) "Anonymous attempts never call the publication writer")
+        (is (= 404 (:status (await (request! app "PATCH"
+                                           (str "/api/cms/publications/intents/" (apply str (repeat 513 "a")))
+                                           "writer" {:state "published"}))))
+            "Route components retain a finite limit"))
+      (finally (await (.close app))))))
 
 (defn- ^:async request! [app method url principal payload]
   (let [port (.-port (.address (.-server app)))

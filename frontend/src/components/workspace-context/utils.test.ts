@@ -142,11 +142,11 @@ describe("workspace-context shared utilities", () => {
     expect(memoryRowsToMessages(rows).map((m) => m.id)).toEqual(["r:assistant"]);
   });
 
-  it("collapses overlapping streaming trace deltas", () => {
-    const blocks: ChatTraceBlock[] = [{ id: "reasoning-1", kind: "reasoning", status: "streaming", content: "The answer" }];
+  it("preserves repeated characters and whitespace in literal streaming trace deltas", () => {
+    const blocks: ChatTraceBlock[] = [{ id: "reasoning-1", kind: "reasoning", status: "streaming", content: "Knox" }];
 
-    expect(appendTraceTextDelta(blocks, "reasoning", "answer is stable.")).toEqual([
-      { id: "reasoning-1", kind: "reasoning", status: "streaming", content: "The answer is stable.", at: undefined },
+    expect(appendTraceTextDelta(appendTraceTextDelta(blocks, "reasoning", "x\n"), "reasoning", "\n")).toEqual([
+      { id: "reasoning-1", kind: "reasoning", status: "streaming", content: "Knoxx\n\n", at: undefined },
     ]);
   });
 });

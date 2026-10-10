@@ -4,6 +4,7 @@
    boundary production uses."
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
+            [knoxx.backend.domain.publication-plan :as plan]
             [knoxx.backend.infra.publication-effects :as effects]
             [knoxx.backend.infra.publication-target-registry :as registry]
             [knoxx.backend.infra.publication-target-static-site :as static-site]
@@ -172,6 +173,215 @@
                (:route/title (first (:manifest/routes (read-manifest root))))))
         (is (= receipt replay)
             "the persisted idempotency receipt retains the committed title"))))))
+
+(deftest ^:async corrected-translated-content-republishes-under-the-same-source-revision
+  (await
+   (with-root!
+    (^:async fn [root]
+      (let [store (static-site/static-site-store root)
+            target (target-in root)
+            localized-intent (assoc intent :document/title "Stable title")
+            index {:gardens {(:publication/garden intent)
+                             {:garden/status :active :garden/locales [:en :es]}}}
+            source-revision "probe-revision"
+            current (atom {:revision "translated-output-A"
+                           :approved? true
+                           :html "<article><p>Primer bloque.Segundo bloque.</p></article>"})
+            facts-for (fn [observed]
+                        {:current-source-revision (constantly source-revision)
+                         :translated-revision? (constantly true)
+                         :approved? (fn [_document _garden _locale _revision]
+                                      (:approved? @current))
+                         :source-revision-superseded? (constantly false)
+                         :publication-content-revision
+                         (fn [document garden locale revision]
+                           (when (= [(:publication/document intent)
+                                     (:publication/garden intent) :es source-revision]
+                                    [document garden locale revision])
+                             (:revision @current)))
+                         :materialized-publication (constantly observed)})
+            artifact-for (fn []
+                           (assoc artifact
+                                  :artifact/content (:html @current)
+                                  :artifact/content-revision (:revision @current)))
+            read-route-bytes (fn [route]
+                               (.readFileSync node-fs
+                                              (.join path root (:route/artifact route)) "utf8"))
+            legacy-plan (-> publish-plan
+                            (assoc :intent localized-intent)
+                            (assoc-in [:desired :materialized/title] "Stable title"))
+            legacy-receipt (await (effects/execute-plan! store target {} legacy-plan artifact))
+            legacy-replay (await (effects/execute-plan! store target {} legacy-plan artifact))
+            legacy-key (:idempotency/key legacy-receipt)
+            legacy-observed (await (effects/observe! target {} localized-intent))
+            first-plan (plan/reconcile-plan index localized-intent (facts-for legacy-observed))
+            first-receipt (await (effects/execute-plan! store target {} first-plan (artifact-for)))
+            first-route (first (:manifest/routes (read-manifest root)))
+            first-key (:idempotency/key first-receipt)
+            cache-before-correction (set (.readdirSync node-fs (.join path root ".idempotency")))]
+        (testing "source-only historical materializations and keys stay readable"
+          (is (= legacy-receipt legacy-replay))
+          (is (= source-revision (:materialized/revision legacy-observed)))
+          (is (nil? (:materialized/content-revision legacy-observed)))
+          (is (= legacy-key (effects/publish-idempotency-key
+                            :knoxx.publication/static-site localized-intent source-revision)))
+          (is (= legacy-receipt (:receipt (effects/reserve! store legacy-key)))))
+        (testing "the admitted output A replaces an older source-only route without changing the source identity"
+          (is (= :publish (:op first-plan)))
+          (is (= source-revision (:concrete-revision first-plan)))
+          (is (= "translated-output-A" (get-in first-plan [:desired :materialized/content-revision])))
+          (is (= :publication/materialized (:receipt/type first-receipt)))
+          (is (= source-revision (:materialized/revision first-receipt)))
+          (is (= "translated-output-A" (:materialized/content-revision first-receipt)))
+          (is (= source-revision (:route/revision first-route)))
+          (is (= "translated-output-A" (:route/content-revision first-route)))
+          (is (= (:html @current) (read-route-bytes first-route)))
+          (is (not= legacy-key first-key)))
+        (swap! current assoc
+               :revision "translated-output-B"
+               :approved? false
+               :html "<article><p>Primer bloque.</p><p>Segundo bloque.</p></article>")
+        (let [observed (await (effects/observe! target {} localized-intent))
+              blocked-plan (plan/reconcile-plan index localized-intent (facts-for observed))
+              blocked-receipt (await (effects/execute-plan! store target {} blocked-plan nil))]
+          (testing "a correction invalidates approval and cannot touch the writer"
+            (is (= :blocked (:op blocked-plan)))
+            (is (= [:translation-review-required] (:blockers blocked-plan)))
+            (is (= :publication/blocked (:receipt/type blocked-receipt)))
+            (is (= first-route (first (:manifest/routes (read-manifest root)))))
+            (is (= "<article><p>Primer bloque.Segundo bloque.</p></article>"
+                   (read-route-bytes first-route)))
+            (is (= cache-before-correction
+                   (set (.readdirSync node-fs (.join path root ".idempotency")))))))
+        (swap! current assoc :approved? true)
+        (let [observed (await (effects/observe! target {} localized-intent))
+              corrected-plan (plan/reconcile-plan index localized-intent (facts-for observed))
+              corrected-receipt (await (effects/execute-plan! store target {} corrected-plan (artifact-for)))
+              corrected-route (first (:manifest/routes (read-manifest root)))
+              corrected-observed (await (effects/observe! target {} localized-intent))
+              corrected-path (.join path root (:route/artifact corrected-route))
+              corrected-mtime (.-mtimeMs (.statSync node-fs corrected-path))
+              replay-plan (plan/reconcile-plan index localized-intent (facts-for corrected-observed))
+              replay (await (effects/execute-plan! store target {} replay-plan nil))]
+          (testing "renewed approval materializes B while source, public path, and title stay fixed"
+            (is (= :publish (:op corrected-plan)))
+            (is (= source-revision (:concrete-revision corrected-plan)))
+            (is (= :publication/materialized (:receipt/type corrected-receipt)))
+            (is (= source-revision (:materialized/revision corrected-receipt)))
+            (is (= "translated-output-B" (:materialized/content-revision corrected-receipt)))
+            (is (= source-revision (:route/revision corrected-route)))
+            (is (= "translated-output-B" (:route/content-revision corrected-route)))
+            (is (= "/probe" (:route/path corrected-route)))
+            (is (= "Stable title" (:route/title corrected-route)))
+            (is (= (:html @current) (read-route-bytes corrected-route)))
+            (is (not= (:route/artifact first-route) (:route/artifact corrected-route))))
+          (testing "idempotency retains prior receipts and gives corrected bytes a distinct key"
+            (is (not= first-key (:idempotency/key corrected-receipt)))
+            (is (= legacy-receipt (:receipt (effects/reserve! store legacy-key))))
+            (is (= first-receipt (:receipt (effects/reserve! store first-key)))))
+          (testing "the observed content binding makes the next reconciliation a noop"
+            (is (= source-revision (:materialized/revision corrected-observed)))
+            (is (= "translated-output-B" (:materialized/content-revision corrected-observed)))
+            (is (= :noop (:op replay-plan)))
+            (is (= :publication/noop (:receipt/type replay)))
+            (is (= corrected-mtime (.-mtimeMs (.statSync node-fs corrected-path)))))
+          (testing "displaced completed outputs restore through reserved generations without discarding history"
+            (let [first-restoration-key (str first-key "|:rematerialize")
+                  restorations (atom [])]
+              (is (= :reserved (:reservation/status (effects/reserve! store first-restoration-key)))
+                  "a crashed restoration leaves an in-flight claim while B is still served")
+              (doseq [[revision restoration-key]
+                      [["translated-output-A" first-restoration-key]
+                       ["translated-output-B" (str (:idempotency/key corrected-receipt) "|:rematerialize")]
+                       ["translated-output-A" (str first-restoration-key "|:rematerialize")]]]
+                (swap! current assoc
+                       :revision revision
+                       :html (if (= revision "translated-output-A")
+                               "<article><p>Primer bloque.Segundo bloque.</p></article>"
+                               "<article><p>Primer bloque.</p><p>Segundo bloque.</p></article>"))
+                (let [before (await (effects/observe! target {} localized-intent))
+                      restoration-plan (plan/reconcile-plan index localized-intent (facts-for before))
+                      restored-artifact (artifact-for)
+                      receipts (if (empty? @restorations)
+                                 (vec (await
+                                       (js/Promise.all
+                                        #js [(effects/execute-plan! store target {} restoration-plan restored-artifact)
+                                             (effects/execute-plan! (static-site/static-site-store root)
+                                                                    (target-in root) {} restoration-plan restored-artifact)])))
+                                 [(await (effects/execute-plan! store target {} restoration-plan restored-artifact))])
+                      route (first (:manifest/routes (read-manifest root)))
+                      observed-restoration (await (effects/observe! target {} localized-intent))
+                      stored-restoration (effects/reserve! store restoration-key)
+                      restored-path (.join path root (:route/artifact route))
+                      restored-mtime (.-mtimeMs (.statSync node-fs restored-path))
+                      next-plan (plan/reconcile-plan index localized-intent (facts-for observed-restoration))
+                      next-receipt (await (effects/execute-plan! store target {} next-plan nil))]
+                  (is (= :publish (:op restoration-plan)))
+                  (is (= source-revision (:concrete-revision restoration-plan)))
+                  (doseq [receipt receipts]
+                    (is (= :publication/materialized (:receipt/type receipt)))
+                    (is (= source-revision (:materialized/revision receipt)))
+                    (is (= revision (:materialized/content-revision receipt))))
+                  (is (= (:html @current) (read-route-bytes route)))
+                  (is (= source-revision (:route/revision route)))
+                  (is (= revision (:route/content-revision route)))
+                  (is (= :done (:reservation/status stored-restoration)))
+                  (is (= revision (get-in stored-restoration [:receipt :materialized/content-revision])))
+                  (swap! restorations conj (:receipt stored-restoration))
+                  (is (= :noop (:op next-plan)))
+                  (is (= :publication/noop (:receipt/type next-receipt)))
+                  (is (= restored-mtime (.-mtimeMs (.statSync node-fs restored-path))))))
+              (is (= 3 (count (set (map :idempotency/key @restorations)))))
+              (doseq [receipt (into [legacy-receipt first-receipt corrected-receipt] @restorations)]
+                (is (= receipt (:receipt (effects/reserve! store (:idempotency/key receipt))))
+                    "each historical completion remains inspectable after later publication cycles"))))))))))
+
+(deftest ^:async translated-file-identities-do-not-alias-or-exceed-filesystem-limits
+  (await
+   (with-root!
+    (^:async fn [root]
+      (let [store (static-site/static-site-store root)
+            target (target-in root)
+            entries [{:id :knoxx.docs/alias-a :garden :knoxx.docs/promethean
+                      :path "/alias/a" :revision "S+es@run/a" :html "<p>Alias A</p>"}
+                     {:id :knoxx.docs/alias-b :garden :knoxx.docs/second
+                      :path "/alias/b" :revision "S+es@run:a" :html "<p>Alias B</p>"}
+                     {:id :knoxx.docs/long-output :garden :knoxx.docs/third
+                      :path "/alias/long" :revision (str "S+es@run/" (apply str (repeat 1024 "x")))
+                      :html "<p>Long output identity</p>"}]
+            committed (atom [])]
+        (doseq [{:keys [id garden revision html] :as entry} entries]
+          (let [public-path (:path entry)
+                current-intent (assoc intent
+                                      :publication/id id
+                                      :publication/garden garden
+                                      :publication/path public-path)
+                current-plan {:op :publish
+                              :intent current-intent
+                              :desired {:materialized/revision "S"
+                                        :materialized/content-revision revision
+                                        :materialized/path public-path}
+                              :concrete-revision "S"}
+                current-artifact (assoc artifact
+                                        :artifact/revision "S"
+                                        :artifact/content-revision revision
+                                        :artifact/content html)
+                receipt (await (effects/execute-plan! store target {} current-plan current-artifact))
+                route (manifest-law/find-route (read-manifest root) id)]
+            (is (= :publication/materialized (:receipt/type receipt)))
+            (is (= "S" (:materialized/revision receipt)))
+            (is (= revision (:materialized/content-revision receipt)))
+            (is (= "S" (:route/revision route)))
+            (is (= revision (:route/content-revision route)))
+            (is (re-matches #"[0-9a-f]{64}\.html"
+                            (.basename path (:route/artifact route)))
+                "arbitrary and long output revisions become bounded digest filenames")
+            (swap! committed conj {:route route :html html})
+            (doseq [{:keys [route html]} @committed]
+              (is (= html (.readFileSync node-fs (.join path root (:route/artifact route)) "utf8"))
+                  "a later output cannot overwrite another publication's artifact bytes"))))
+        (is (= 3 (count (:manifest/routes (read-manifest root)))))
+        (is (= 3 (count (set (map #(get-in % [:route :route/artifact]) @committed))))))))))
 
 (deftest ^:async byte-artifacts-are-written-verbatim
   (await
