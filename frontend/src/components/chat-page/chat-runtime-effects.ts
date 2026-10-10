@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
-import { connectStream, type StreamConnection } from '../../lib/ws';
+import { connectStream, type StreamConnection, type StreamTokenMetadata } from '../../lib/ws';
 import { getRunEvents } from '../../lib/api';
 import type { ChatMessage, RunDetail, RunEvent } from '../../lib/types';
 import type { SemanticSearchMatch } from './types';
@@ -8,7 +8,7 @@ import {
   applyToolTraceEvent,
   controlTimelineMessageFromEvent,
   finalizeTraceBlocks,
-  novelAppendedText,
+  replaceTraceText,
   truncateText,
 } from './utils';
 
@@ -33,7 +33,7 @@ type UseChatRuntimeEffectsParams = {
   updateMessageById: (messageId: string, updater: (message: ChatMessage) => ChatMessage) => void;
   updateTraceBlocksByMessageId: (messageId: string, updater: (blocks: import('../../lib/types').ChatTraceBlock[]) => import('../../lib/types').ChatTraceBlock[]) => void;
   appendMessageIfMissing: (message: ChatMessage) => void;
-  loadRunDetail: (runId: string) => void | Promise<void>;
+  loadRunDetail: (runId: string, terminalEvent?: boolean) => void | Promise<void>;
   loadDirectory: (path?: string) => void | Promise<void>;
   refreshWorkspaceStatus: () => void | Promise<void>;
   refreshRecentSessions: () => void | Promise<void>;
@@ -70,7 +70,7 @@ export function useChatRuntimeEffects({
   const streamRef = useRef<StreamConnection | null>(null);
   const lastEventTimestampRef = useRef<string | null>(null);
   const conversationIdRef = useRef(conversationId);
-  const tokenBufferRef = useRef<Array<{ token: string; meta?: { runId?: string; kind?: string } }>>([]);
+  const tokenBufferRef = useRef<Array<{ token: string; meta?: StreamTokenMetadata }>>([]);
   const tokenFlushPendingRef = useRef(false);
   const lastConsoleUpdateRef = useRef(0);
   const callbacksRef = useRef({
@@ -103,6 +103,28 @@ export function useChatRuntimeEffects({
     console.log('[chat-runtime-effects] WS effect — sessionId:', sessionId);
     let cancelled = false;
     let stream: StreamConnection | null = null;
+    const flushBufferedTokens = (pendingId: string | null) => {
+      const buffer = tokenBufferRef.current;
+      tokenBufferRef.current = [];
+      if (!pendingId || buffer.length === 0) return;
+      const runId = buffer[buffer.length - 1].meta?.runId;
+      if (runId) activeRunIdRef.current = runId;
+      callbacksRef.current.updateMessageById(pendingId, (message) => {
+        let content = message.content;
+        let traceBlocks = [...(message.traceBlocks ?? [])];
+        for (const { token, meta } of buffer) {
+          const kind = meta?.kind === 'reasoning' ? 'reasoning' : 'agent_message';
+          if (meta?.operation === 'replace') {
+            traceBlocks = replaceTraceText(traceBlocks, kind, token, meta.offset);
+            if (kind === 'agent_message') content = token;
+          } else {
+            traceBlocks = appendTraceTextDelta(traceBlocks, kind, token);
+            if (kind === 'agent_message') content += token;
+          }
+        }
+        return { ...message, content, traceBlocks, runId: runId ?? message.runId ?? null, status: 'streaming' };
+      });
+    };
     const connectTimer = window.setTimeout(() => {
       if (cancelled) {
         return;
@@ -140,42 +162,17 @@ export function useChatRuntimeEffects({
             const pendingId = pendingAssistantIdRef.current;
             if (!pendingId) return;
             tokenBufferRef.current.push({ token, meta });
+            if (meta?.operation === 'replace') {
+              // Apply queued deltas before the correction; the outstanding RAF
+              // can then drain any later deltas without replaying this snapshot.
+              flushBufferedTokens(pendingId);
+              return;
+            }
             if (!tokenFlushPendingRef.current) {
               tokenFlushPendingRef.current = true;
               requestAnimationFrame(() => {
-                const pendingId2 = pendingAssistantIdRef.current;
-                if (!pendingId2) {
-                  tokenFlushPendingRef.current = false;
-                  return;
-                }
-                const buffer = tokenBufferRef.current;
-                tokenBufferRef.current = [];
                 tokenFlushPendingRef.current = false;
-                if (buffer.length === 0) return;
-                const lastMeta = buffer[buffer.length - 1].meta;
-                const runId = lastMeta?.runId;
-                if (runId) activeRunIdRef.current = runId;
-                let combinedTokens = '';
-                let combinedReasoning = '';
-                for (const { token: tok, meta: m } of buffer) {
-                  if (m?.kind === 'reasoning') {
-                    combinedReasoning += tok;
-                  } else {
-                    combinedTokens += tok;
-                  }
-                }
-                if (combinedTokens) {
-                  callbacksRef.current.updateTraceBlocksByMessageId(pendingId2, (blocks) => appendTraceTextDelta(blocks, 'agent_message', combinedTokens));
-                  callbacksRef.current.updateMessageById(pendingId2, (message) => ({
-                    ...message,
-                    runId: runId ?? message.runId ?? null,
-                    status: 'streaming',
-                    content: `${message.content}${novelAppendedText(message.content, combinedTokens)}`,
-                  }));
-                }
-                if (combinedReasoning) {
-                  callbacksRef.current.updateTraceBlocksByMessageId(pendingId2, (blocks) => appendTraceTextDelta(blocks, 'reasoning', combinedReasoning));
-                }
+                flushBufferedTokens(pendingAssistantIdRef.current);
               });
             }
           },
@@ -201,6 +198,7 @@ export function useChatRuntimeEffects({
             }
             const pendingId = pendingAssistantIdRef.current;
             if (pendingId && ['tool_start', 'tool_update', 'tool_end'].includes(String(runtimeEvent.type ?? ''))) {
+              flushBufferedTokens(pendingId);
               callbacksRef.current.updateTraceBlocksByMessageId(pendingId, (blocks) => applyToolTraceEvent(blocks, runtimeEvent));
             }
             if (typeof runtimeEvent.run_id === 'string') {
@@ -210,36 +208,7 @@ export function useChatRuntimeEffects({
               }
               if (runtimeEvent.type === 'run_completed' || runtimeEvent.type === 'run_failed') {
                 if (pendingId) {
-                  if (tokenBufferRef.current.length > 0) {
-                    const buffer = tokenBufferRef.current;
-                    tokenBufferRef.current = [];
-                    let combinedTokens = '';
-                    let combinedReasoning = '';
-                    for (const { token: tok, meta: m } of buffer) {
-                      if (m?.kind === 'reasoning') {
-                        combinedReasoning += tok;
-                      } else {
-                        combinedTokens += tok;
-                      }
-                    }
-                    if (combinedTokens) {
-                      callbacksRef.current.updateTraceBlocksByMessageId(
-                        pendingId,
-                        (blocks) => appendTraceTextDelta(blocks, 'agent_message', combinedTokens),
-                      );
-                      callbacksRef.current.updateMessageById(pendingId, (message) => ({
-                        ...message,
-                        status: 'streaming',
-                        content: `${message.content}${novelAppendedText(message.content, combinedTokens)}`,
-                      }));
-                    }
-                    if (combinedReasoning) {
-                      callbacksRef.current.updateTraceBlocksByMessageId(
-                        pendingId,
-                        (blocks) => appendTraceTextDelta(blocks, 'reasoning', combinedReasoning),
-                      );
-                    }
-                  }
+                  flushBufferedTokens(pendingId);
                   callbacksRef.current.updateTraceBlocksByMessageId(
                     pendingId,
                     (blocks) => finalizeTraceBlocks(blocks, runtimeEvent.type === 'run_failed' ? 'error' : 'done'),
@@ -249,10 +218,10 @@ export function useChatRuntimeEffects({
                     runId: runtimeEvent.run_id ?? message.runId ?? null,
                     status: runtimeEvent.type === 'run_failed' ? 'error' : 'done',
                   }));
-                  pendingAssistantIdRef.current = null;
+                  // Terminal hydration keeps this association until success or bounded failure.
                 }
                 setIsSending(false);
-                void callbacksRef.current.loadRunDetail(runtimeEvent.run_id);
+                void callbacksRef.current.loadRunDetail(runtimeEvent.run_id, true);
               }
             }
             const label = runtimeEvent.type ?? 'event';

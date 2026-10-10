@@ -183,3 +183,94 @@
   spore: none
   receipt-refs: knoxx-382-provenance-links
   note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
+- ts: 2026-10-09T22:25:05.147065127Z
+  session: /tmp/openhax-knoxx
+  task: Repair CMS source locale publication policy
+  p-efficiency: 0.85
+  p-friction: 0.22
+  p-skill-candidate: 0.0
+  spore: none
+  receipt-refs: cms-source-locale-review
+  note: Compared deployed and current source before fixing the owning constructor. Keep source review-free and exact translated approval mandatory; distinguish deterministic admission proof from runtime publication and image identity. No spore warranted.
+- ts: 2026-10-10T14:11:49.949277Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Recover lost CMS deployment source and qualify native boundaries
+  p-efficiency: 0.68
+  p-friction: 0.81
+  p-skill-candidate: 0.7
+  spore: none
+  receipt-refs: CMS deployment recovery after lost temporary checkout
+  note: Recover original native patch hunks and heredoc bodies with their history provenance, then rerun actual qualification. Keep owned checkouts and logs outside temporary storage. Historical counters cannot qualify recovered source. Error metadata from an effect target cannot bind an active reservation; preserve only opaque boundary provenance. No additional spore created in this session.
+
+- ts: 2026-10-10T14:25:53.754058Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Repair authoritative stream arrays and terminal GET hydration races
+  p-efficiency: 0.8
+  p-friction: 0.45
+  p-skill-candidate: 0.35
+  spore: none
+  receipt-refs: cms-deployment-independent-review-repairs
+  note: A cumulative message snapshot has distinct content blocks, not replayed incremental fragments. Test literal block boundaries as well as token boundaries, and resolve overlapping same-run reads in both terminal and delayed nonterminal order. Preserve compiler/runtime proof separation and abnormal native exits even when assertions passed. No additional spore created.
+- ts: 2026-10-10T15:06:46.539166976Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Explicit stream correction protocol, presence and retained trace convergence
+  p-efficiency: 0.89
+  p-friction: 0.45
+  p-skill-candidate: 0.39
+  spore: none
+  receipt-refs: Knoxx PR387 explicit stream correction final qualification
+  note: Reproduce correction through actual sink and live consumer, then test full snapshots against exact, missing and stale prefixes. Deletion requires collision-safe retained block IDs. Preserve omitted reasoning while recognizing explicit empty strings, and choose valid string fields before deriving presence. Final combined qualification supersedes intermediate green runs; no new spore or promotion.
+
+- 2026-10-10T16:18:50.347690+00:00 — codex/root; efficiency=0.88, friction=0.58, skill-candidate=0.47. Reproduce native findings against real adapters, retain failed traces, and bind independent source review separately from earlier image/provider evidence. Preserve migration ratchets by rehoming tests into existing suites; preserve append-only provenance when native feedback asks to erase history. Receipt: .ημ/receipts.edn (cms-native-review-repair-final-source, 2026-10-10T16:18:50.347690+00:00). No additional spore created or promoted.
+
+- ts: 2026-10-10T17:01:50.474480+00:00
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Make completed publication restoration conditional at the write boundary
+  p-efficiency: 0.82
+  p-friction: 0.48
+  p-skill-candidate: 0.64
+  spore: none
+  receipt-refs: 2026-10-10T17:01:50.474480+00:00
+  note: An observation before a write is not a concurrency guard. Compare under the existing lock, preserve already-current peer metadata, and falsify stale replay with actual filesystem interleavings. Independently inspect the package-manager child runtime; shell node can differ from Volta pnpm. Preserve prior evidence and append corrected qualification rather than relabeling old runs. No new spore or promotion.
+- ts: 2026-10-10T17:49:12.163356655Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Declare CI verifier dependencies at every actual caller
+  p-efficiency: 0.90
+  p-friction: 0.39
+  p-skill-candidate: 0.42
+  spore: none
+  receipt-refs: cms-checkout-verifier-python-dependency; qualification:c0a848b4; independent:6ec1c720
+  note: Use clean environments to expose incidental tooling. Pin prerequisites in both standalone CI and reusable caller without changing verifier semantics; preserve failure aggregation and distinguish local controls from hosted qualification. No additional spore created or promoted.
+
+- 2026-10-10T18:29:11.966990+00:00 — codex/root; efficiency=0.9, friction=0.48, skill-candidate=0.44. Separate a false reviewer premise from a genuine broader fixture gap; use actual server observations to add regressions for every protected array value and both write orders. Preserve earlier evidence when independent review narrows a patch boundary. Receipt: .ημ/receipts.edn (mongo-native-alias-multikey-fixture-repair, 2026-10-10T18:29:11.966990+00:00). No additional spore created or promoted.
+
+- 2026-10-10T18:53:30.170773+00:00 — codex/root; efficiency=0.91, friction=0.43, skill-candidate=0.42. A valid commit is insufficient source custody when Git can discover an enclosing repository. Bind canonical physical roots and preserve a linked-worktree path; prove pre-effect refusal with actual isolated Git fixtures. Treat command arity as evidence scope: bash -n parses one script, so qualify another separately and append correction rather than relabel the original execution. Receipt: .ημ/receipts.edn (cms-verifier-checkout-identity-and-ci-credentials, 2026-10-10T18:53:30.170773+00:00). No additional spore created or promoted.
+
+- ts: 2026-10-10T22:06:10.784798+00:00
+  session: open-hax/knoxx
+  task: Render real art and music from approved CMS document text
+  p-efficiency: 0.91
+  p-friction: 0.27
+  p-skill-candidate: 0.44
+  spore: none
+  receipt-refs: 68e5f9c9-99c3-4cf6-bf72-151ab759174e; evidence-set:openhax-cms-20261010/review-state/knoxx-approved-media-independent-assessment-20261010T220434Z.json#sha256=bb44351be454246e8f28bc77156b656111b521aad95da0017f32127d5efa4362
+  note: Renderer input must remain the digest-bound approved document, not unsigned editor metadata. Keep portable media reference law separate from runtime publication custody. Actual staged inventory tests establish shape/existence locally; only live CMS save, publication and reader observations establish the user-visible path. Preserve original source/runtime/tests and distinguish cached image, provider and native browser evidence. Audit nested command wrappers before all-version claims. No extra spore or promotion.
+- ts: 2026-10-10T22:20:22.144625019Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-media-publication
+  task: Persist native CMS art/music verification artifact, documentation and browser tour on a separate source commit
+  p-efficiency: 0.86
+  p-friction: 0.42
+  p-skill-candidate: 0.48
+  spore: none
+  receipt-refs: 4bab3a46-5976-4fa8-ba9a-102080beeae9, f6220c1a372b6d326a0959a8e934565fbd5db58d5922c9213c13bcae30bc87db, a6a32521524c2b19c226dd853c3632e0ad889d590466e15216b65a8bf15ba4f7, ef73c712ab7821a20f24d0514974f0b388a03140fd45c23032f5a196ae4637bd
+  note: A green CMS route fixture proves source-locale rendering and failure contracts; it does not prove provider translation, browser traversal, Website adoption or real production publication. Bind source paths before and after compile, preserve nested proof path keys, and audit nested pnpm processes with actual Node executables. Preserve the original mixed Node audit alongside the corrected all-Node24 suite. Keep immutable renderer image source 29cb distinct from the verifier commit. Five paths frozen, 29 native PASS statements and 15 preconditions inspected independently; browser has not run. No spore or promotion in this session.
+
+- ts: 2026-10-10T23:04:53.225473+00:00
+  session: knoxx
+  task: approved-media-verifier-early-cleanup-review-fix
+  p-efficiency: 0.94
+  p-friction: 0.15
+  p-skill-candidate: 0.12
+  spore: none
+  receipt-refs: ff9ecc33-3c20-4963-a27f-89f5b2878889
+  note: Define cleanup before allocating a disposable directory and arm its traps before the first operation that can fail. Injected owned mkdir exit73 proves prior leak and corrected cleanup while preserving exit status. Keep full native fixture and production qualification historical; no provider or shared-state mutations. Preserve every historical byte. No extra spore or promotion.

@@ -2,6 +2,7 @@
   "Shared MongoDB interop and invariants for Knoxx translation storage."
   (:require [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.law.openplanner-translation :as contract]
+            [knoxx.backend.extern.openplanner-translation-mongo.graph-edge-identity :as edge-identity]
             [openplanner.translations.core :as translation]
             ["mongodb" :refer [ObjectId]]))
 
@@ -159,6 +160,13 @@
                                           :whenNotMatched "discard"}}])))))
 
 (def graph-id-index-name "graph_id_unique_idx")
+(def graph-edge-id-index-name edge-identity/index-name)
+
+(defn ^:async ensure-graph-edge-id-index!
+  "Keep native string ids unique alongside SDK _id and tuple identities."
+  [collection]
+  (await (edge-identity/ensure-id-index!
+          collection (js->clj (await (collection-indexes collection)) :keywordize-keys true))))
 
 (defn- ^:async ensure-graph-id-index!
   "Ensure a unique index on `id` for a graph collection.
@@ -184,7 +192,7 @@
   (let [{:keys [segments labels batches graph-nodes graph-edges]} (collections db)]
     (await (ensure-segment-org-index! segments))
     (await (ensure-graph-id-index! graph-nodes "graph_nodes"))
-    (await (ensure-graph-id-index! graph-edges "graph_edges"))
+    (await (ensure-graph-edge-id-index! graph-edges))
     (await (.createIndex labels #js {"segment_id" 1 "created_at" -1}))
     (await (.createIndex labels #js {"org_id" 1 "project" 1}))
     (await (backfill-label-scope! labels))

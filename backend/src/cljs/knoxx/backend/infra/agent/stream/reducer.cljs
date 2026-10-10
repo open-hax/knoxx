@@ -18,6 +18,27 @@
    :aborting? false
    :seen-lifecycle-events #{}})
 
+(defn reconcile-text
+  "Reconcile an explicit cumulative snapshot without guessing overlap in tokens.
+   A changed prefix is a correction, not an incremental append."
+  [previous snapshot]
+  (let [previous (str (or previous ""))
+        snapshot (str (or snapshot ""))
+        appended? (str/starts-with? snapshot previous)]
+    {:text snapshot
+     :delta (if appended? (subs snapshot (count previous)) "")
+     :corrected? (not appended?)}))
+
+(defn route-incremental-text
+  "Route literal token bytes, including whitespace-only reasoning/answer deltas.
+   The pinned compatibility router otherwise discards blank fragments."
+  [{:keys [mode delta] :as input}]
+  (if (and (seq delta) (str/blank? delta))
+    {:mode (or mode :off)
+     :emissions [{:kind (if (= mode :thinking) :reasoning :agent_message)
+                  :delta delta}]}
+    (reasoning/route-think-delta input)))
+
 (defn- suppress-replay
   [state kind delta]
   (let [previous (if (= kind :agent_message)
@@ -32,19 +53,37 @@
 
 (defn- append-text
   [state kind delta]
+  (let [key (if (= kind :agent_message) :assistant-text :reasoning-text)]
+    (if (seq delta)
+      {:state (update state key str delta)
+       :effects [{:effect :token :kind kind :delta delta}]}
+      {:state state :effects []})))
+
+(defn- append-replayed-text
+  [state kind delta]
   (let [{state :state delta :delta} (suppress-replay state kind delta)
         key (if (= kind :agent_message) :assistant-text :reasoning-text)
         safe-delta (text-delta/diff-appended-text (get state key "") delta)]
-    (if (str/blank? safe-delta)
+    (if-not (seq safe-delta)
       {:state state :effects []}
       {:state (update state key str safe-delta)
        :effects [{:effect :token
                   :kind kind
                   :delta safe-delta}]})))
 
+(defn- append-snapshot
+  [state kind snapshot]
+  (let [key (if (= kind :agent_message) :assistant-text :reasoning-text)
+        {:keys [text delta corrected?]} (reconcile-text (get state key) snapshot)]
+    {:state (assoc state key text)
+     :effects (cond
+                corrected? [{:effect :replace-text :kind kind :text text}]
+                (seq delta) [{:effect :token :kind kind :delta delta}]
+                :else [])}))
+
 (defn- append-routed-text
   [state delta]
-  (let [{:keys [mode emissions]} (reasoning/route-think-delta {:mode (:think-tag-mode state)
+  (let [{:keys [mode emissions]} (route-incremental-text {:mode (:think-tag-mode state)
                                                                :last-assistant-text (:assistant-text state)
                                                                :delta delta})]
     (reduce (fn [{:keys [state effects]} emission]
@@ -61,19 +100,19 @@
     (cond
       (= assistant-event-type "text_delta")
       (let [delta (str (or (:delta event) ""))]
-        (if (and (not (str/blank? (:assistant-text state)))
-                 (str/starts-with? delta (:assistant-text state)))
-          (append-text state :agent_message delta)
-          (append-routed-text state delta)))
+        (cond
+          (some? (:text-snapshot event)) (append-snapshot state :agent_message (:text-snapshot event))
+          (= :replay (:text-semantics event)) (append-replayed-text state :agent_message delta)
+          :else (append-routed-text state delta)))
 
       (contains? #{"reasoning_delta" "reasoning" "reasoning_content_delta"
                    "thinking_delta" "thinking"}
                  assistant-event-type)
       (let [delta (str (or (:delta event) ""))]
-        (if (and (not (str/blank? (:reasoning-text state)))
-                 (str/starts-with? delta (:reasoning-text state)))
-          (append-text state :reasoning delta)
-          (append-text state :reasoning delta)))
+        (cond
+          (some? (:reasoning-snapshot event)) (append-snapshot state :reasoning (:reasoning-snapshot event))
+          (= :replay (:text-semantics event)) (append-replayed-text state :reasoning delta)
+          :else (append-text state :reasoning delta)))
 
       (contains? #{"toolcall_delta" "tool_call_delta" "toolcall_end" "tool_call_end"}
                  assistant-event-type)
@@ -146,6 +185,11 @@
   [state event]
   (let [state (merge (initial-state) state)]
     (case (:type event)
+      "message_start" {:state (if (= "assistant" (:message-role event))
+                                 (assoc state :assistant-text "" :reasoning-text ""
+                                              :replay-offsets {} :think-tag-mode :off)
+                                 state)
+                       :effects []}
       "message_update" (handle-message-update state event)
       "message_end" {:state state :effects [{:effect :sync-message :message (:message event)}]}
       "tool_execution_start" (handle-tool-start state event)

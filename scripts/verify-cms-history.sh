@@ -3,22 +3,48 @@
 # Auth principals are seeded at the existing auth-context seam; this does not
 # verify password authentication, the deployment image, or the browser UI.
 set -euo pipefail
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_root"
 command -v pnpm >/dev/null
 command -v clojure >/dev/null
+command -v node >/dev/null
 [[ -f backend/src/cljs/knoxx/backend/infra/cms_store.cljs ]]
+if ! verify_revision="$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}')"; then
+  printf '%s\n' 'FAIL cannot resolve this checkout to a Git commit.' >&2
+  exit 1
+fi
+if [[ ! "$verify_revision" =~ ^[0-9a-f]{40}$ ]]; then
+  printf '%s\n' 'FAIL Git did not return a full commit identity for this checkout.' >&2
+  exit 1
+fi
+if ! verify_git_root="$(git -C "$repo_root" rev-parse --show-toplevel)" ||
+   [[ -z "$verify_git_root" ]] ||
+   ! verify_git_root="$(cd -P -- "$verify_git_root" && pwd -P)" ||
+   [[ "$verify_git_root" != "$repo_root" ]]; then
+  printf '%s\n' 'FAIL Git root does not match this verifier source root.' >&2
+  exit 1
+fi
+printf 'Verifying checkout %s at %s\n' "$repo_root" "$verify_revision"
 fixture_root="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_root"' EXIT INT TERM
 export KNOXX_CMS_VERIFY_ROOT="$fixture_root"
 export CONTRACTS_DIR="$repo_root/backend/test/fixtures/empty-contracts"
+NODE_OPTIONS="$(node --input-type=module -e 'import { testEnvironment } from "./backend/scripts/shadow-test-environment.mjs"; process.stdout.write(testEnvironment().NODE_OPTIONS);')"
+export NODE_OPTIONS
 log="$fixture_root/results.log"
-printf 'Verifying checkout %s at %s\n' "$repo_root" "$(git rev-parse HEAD)"
 pnpm -C backend exec shadow-cljs compile cms-history >"$log" 2>&1 || { cat "$log"; exit 1; }
 cat "$log"
-# Shadow can exit zero when an autorun test failed; counters are mandatory.
-rg -q '^0 failures, 0 errors\.' "$log"
-if rg -q '^FAIL|^ERROR|[1-9][0-9]* warnings' "$log"; then exit 1; fi
+# Shadow can print green counters after an unhandled rejection; use its guard.
+node --input-type=module - "$log" <<'JS'
+import { readFileSync } from 'node:fs';
+import { testCountersExitCode } from './backend/scripts/run-shadow-tests-ci.mjs';
+
+const output = readFileSync(process.argv[2], 'utf8');
+if (testCountersExitCode(output) !== 0 || /\b[1-9][0-9]* warnings?\b/.test(output)) {
+  console.error('FAIL native CMS HTTP tests did not complete with guarded green counters and zero warnings.');
+  process.exit(1);
+}
+JS
 printf '%s\n' \
   'PASS authenticated CMS routes reject anonymous callers, read-only writes and cross-organization access.' \
   'PASS stale saves preserve both bodies and authenticated actors; explicit resolution retains their history.' \

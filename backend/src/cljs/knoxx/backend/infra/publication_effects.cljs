@@ -27,7 +27,10 @@
     "Stable adapter identity. Part of the idempotency key, so two adapters
      publishing the same intent never share a key.")
   (publish! [target ctx op]
-    "Materialize `op`. Returns a Promise of a materialized receipt.")
+    "Materialize `op`. Returns a Promise of a materialized receipt.
+     When `:publication/expected-materialization` is present, verify it against
+     the current target atomically with replacement, including an expected nil.
+     An already-current requested materialization may return without writing.")
   (remove! [target ctx intent observed]
     "Remove a prior materialization. Returns a Promise of a removed receipt.")
   (observe! [target ctx intent]
@@ -66,7 +69,9 @@
    A deterministic string rather than a hash: it is reproducible across
    processes and versions, and it is inspectable when a replay has to be
    explained to a human."
-  [adapter-id intent concrete-revision]
+  ([adapter-id intent concrete-revision]
+   (publish-idempotency-key adapter-id intent concrete-revision nil))
+  ([adapter-id intent concrete-revision content-revision]
   (when-not (m/validate law/ConcreteRevision concrete-revision)
     ;; Refusing `:source/current` here is the whole basis of replay safety, and
     ;; a nil check alone did not do it: the selector is a keyword, so it passed
@@ -74,13 +79,23 @@
     (throw (ex-info "publish idempotency key requires a concrete revision"
                     {:publication/id (:publication/id intent)
                      :concrete-revision concrete-revision})))
+  (when (and (some? content-revision) (not (m/validate law/ConcreteRevision content-revision)))
+    (throw (ex-info "publish idempotency key requires a concrete content revision"
+                    {:content-revision content-revision})))
   (let [canonical-title (receipts/canonical-title (:document/title intent))]
     (->> (cond-> (mapv #(pr-str (get intent %)) key-dimensions)
            canonical-title (conj (pr-str canonical-title))
-           true (conj (pr-str adapter-id) (pr-str concrete-revision)))
-         (str/join "|"))))
+           true (conj (pr-str adapter-id) (pr-str concrete-revision))
+           (some? content-revision) (conj (pr-str [:content-revision content-revision])))
+         (str/join "|")))))
 
 ;; ── Replay-safe publish ────────────────────────────────────────────────────
+
+(declare publish-once!)
+
+(def ^:private reservation-error-token
+  ;; Identity, not equal data, authenticates errors already bound by this layer.
+  [::reservation-error])
 
 (defn- requested-materialization
   "Canonical materialization the current operation is authorized to create."
@@ -90,6 +105,27 @@
        {:materialized/revision (:concrete-revision op)
         :materialized/path (get-in op [:intent :publication/path])
         :materialized/title (get-in op [:intent :document/title])})))
+
+(defn assert-restoration-current!
+  "Validate a restoration precondition at the adapter's atomic write boundary.
+
+   Observation above this boundary is not a lock: a peer can publish before the
+   replacement starts. Explicit nil means the target must still be absent.
+   The requested materialization already being current is an idempotent success;
+   adapters must leave it unchanged rather than replacing a peer's identical work.
+   Returns true for that already-current restoration, nil without a precondition."
+  [op observed]
+  (when (contains? op :publication/expected-materialization)
+    (let [expected (:publication/expected-materialization op)
+          actual (some-> observed receipts/canonical-materialization)
+          requested-current? (= (requested-materialization op) actual)]
+      (when-not (m/validate [:maybe receipts/Observation] expected)
+        (throw (ex-info "publication restoration requires a valid expected materialization"
+                        {:expected/materialization expected})))
+      (when-not (or (= expected actual) requested-current?)
+        (throw (ex-info "publication restoration conflicts with the target at replacement"
+                        {:expected/materialization expected :actual/materialization actual})))
+      requested-current?)))
 
 (defn- ^:async reconcile-in-flight!
   "A claimed-but-never-completed key means the previous attempt's outcome is
@@ -128,35 +164,57 @@
                       {:expected expected :actual actual})))
     receipt))
 
-(defn ^:async publish-once!
-  "Publish under an atomic key reservation. Replaying an identical key can never
-   create a second public artifact."
+(defn- ^:async replay-completed! [store target ctx op receipt]
+  (let [checked (assert-receipt-matches-op! op (law/assert-receipt! receipt))
+        observed (some-> (await (observe! target ctx (:intent op)))
+                         receipts/canonical-materialization)]
+    (cond
+      (= observed (requested-materialization op)) checked
+      ;; Restore a withdrawn target, or the exact prior target observed by the
+      ;; admitted plan. A historical completed key is not fresh admission to
+      ;; overwrite a different materialization that appeared after planning.
+      (or (nil? observed)
+          (= observed (some-> (:previous op) receipts/canonical-materialization)))
+      (await (publish-once! store target ctx
+                           (-> op
+                               (assoc :publication/expected-materialization observed)
+                               (update :idempotency/key str "|:rematerialize"))))
+      :else
+      (throw (ex-info "completed publication replay conflicts with the target observed since plan admission"
+                      {:expected/previous (some-> (:previous op) receipts/canonical-materialization)
+                       :actual/observed observed})))))
+
+(defn- ^:async materialize-reserved!
+  "Complete a reservation only after the target returns matching evidence."
   [store target ctx op]
-  (let [idempotency-key (:idempotency/key op)
-        reservation (reserve! store idempotency-key)]
-    (case (:reservation/status reservation)
-      :done (assert-receipt-matches-op! op (law/assert-receipt! (:receipt reservation)))
+  (let [receipt (assert-receipt-matches-op!
+                 op (law/assert-receipt! (await (publish! target ctx op))))]
+    (complete! store (:idempotency/key op) receipt)
+    receipt))
 
-      :in-flight
-      (or (await (reconcile-in-flight! store target ctx op))
-          (await (publish-once! store target ctx op)))
-
-      :reserved
-      (try
-        (let [receipt (assert-receipt-matches-op!
-                       op
-                       (law/assert-receipt! (await (publish! target ctx op))))]
-          (complete! store idempotency-key receipt)
-          receipt)
-        (catch :default err
-          ;; The claim is deliberately NOT released. A failed publish is an
-          ;; *ambiguous* outcome: the artifact may already exist and only the
-          ;; response was lost. Releasing here reported the retry as a fresh
-          ;; reservation, which skipped observation and published again — safe
-          ;; only for a target that independently deduplicates. Leaving the claim
-          ;; in flight routes the retry through `reconcile-in-flight!`, which
-          ;; observes first and republishes only if nothing is there.
-          (throw err))))))
+(defn ^:async publish-once!
+  "Replay while the target matches; restore missing or freshly admitted prior
+   content under a deterministic generation. Refuse drift since plan admission."
+  [store target ctx op]
+  (let [idempotency-key (:idempotency/key op)]
+    (try
+      (let [reservation (reserve! store idempotency-key)]
+        (case (:reservation/status reservation)
+          :done (await (replay-completed! store target ctx op (:receipt reservation)))
+          :in-flight (or (await (reconcile-in-flight! store target ctx op))
+                         (await (publish-once! store target ctx op)))
+          :reserved (await (materialize-reserved! store target ctx op))))
+      (catch :default err
+        ;; Retain ambiguous claims so retries observe before writing. Preserve
+        ;; the innermost boundary-bound key; ignore a target's own key metadata.
+        (throw (ex-info (ex-message err)
+                        (assoc (ex-data err) :idempotency/key
+                               (if (identical? reservation-error-token
+                                               (::reservation-error (ex-data err)))
+                                 (:idempotency/key (ex-data err))
+                                 idempotency-key)
+                               ::reservation-error reservation-error-token)
+                        err))))))
 
 ;; ── Plan execution ─────────────────────────────────────────────────────────
 
@@ -171,9 +229,14 @@
   (let [intent (:intent plan)
         concrete-revision (:concrete-revision plan)
         checked (law/assert-artifact! artifact intent concrete-revision)
+        content-revision (get-in plan [:desired :materialized/content-revision])
+        _ (when (not= content-revision (:artifact/content-revision checked))
+            (throw (ex-info "Publication artifact content revision conflicts with admitted output"
+                            {:artifact/content-revision (:artifact/content-revision checked)
+                             :materialized/content-revision content-revision})))
         idempotency-key (publish-idempotency-key (target-id target)
                                                  intent
-                                                 concrete-revision)]
+                                                 concrete-revision content-revision)]
     (await (publish-once! store target ctx
                           {:intent intent
                            :desired (:desired plan)
@@ -210,17 +273,19 @@
    than left inside the message string — `:failure/reason` alone cannot be read
    by anything but a human."
   [target plan err]
-  (let [evidence (ex-data err)]
+  (let [evidence (dissoc (ex-data err) ::reservation-error)]
     (law/assert-receipt!
      (cond-> {:receipt/type :publication/failed
               :failure/reason (or (not-empty (str (ex-message err))) "unknown failure")
               :failure/drift? true}
        (= :publish (:op plan))
        (assoc :idempotency/key
-              (try (publish-idempotency-key (target-id target)
+              (or (:idempotency/key evidence)
+                  (try (publish-idempotency-key (target-id target)
                                             (:intent plan)
-                                            (:concrete-revision plan))
-                   (catch :default _ nil)))
+                                            (:concrete-revision plan)
+                                            (get-in plan [:desired :materialized/content-revision]))
+                       (catch :default _ nil))))
 
         (or (law/artifact-revision-conflict? evidence)
             (law/artifact-locale-conflict? evidence))

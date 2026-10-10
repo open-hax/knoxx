@@ -40,7 +40,20 @@ sibling checkout therefore cannot masquerade as evidence for either reviewed
 revision, and the verification build cannot overwrite or leave artifacts in a
 checkout. The script chooses fresh loopback ports and starts the process with
 production local-password policy, event runtimes disabled, and an isolated
-database name.
+database name. It enables the production session hook: anonymous `/health` and
+local-password login must finish through Fastify's real hook lifecycle. Each
+successful login stores its signed cookie in the private evidence directory and
+then uses it on `/api/auth/context`, checking the expected email and membership.
+The session key is generated as 32 random bytes in hexadecimal, as required by
+the native AES cookie format.
+
+The focused regression `knoxx.backend.extern.session-hook-http-test`, included
+in the normal backend CLJS test build, opens a real loopback Fastify listener.
+It covers anonymous health/auth requests and a genuine signed cookie whose
+controlled persistence lookup is held pending. The route must remain pending
+until that lookup finishes, then receive the email, organization and membership
+headers. Its policy-DB port is a test fixture; the live verifier above is the
+separate proof for real bootstrap, cookies and Mongo persistence.
 
 ## Evidence paths
 

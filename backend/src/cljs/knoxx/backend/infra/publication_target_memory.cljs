@@ -51,7 +51,7 @@
             :locale (:publication/locale intent)
             :revision revision
             :path path}
-           (plan/desired-materialization intent revision))))
+           (or (:desired op) (plan/desired-materialization intent revision)))))
 
 (defn- route-for
   "Observation keyed by publication IDENTITY, not by the desired path. Keying on
@@ -59,7 +59,7 @@
    replacing, `:previous` comes back nil, and both routes stay public — which is
    exactly the outcome this boundary exists to prevent."
   [routes intent]
-  (->> (vals @routes)
+  (->> (vals routes)
        (filter #(= (:publication/id %) (:publication/id intent)))
        first))
 
@@ -78,6 +78,17 @@
    contradiction could live."
   [op]
   (law/assert-artifact! (:artifact op) (:intent op) (:concrete-revision op)))
+
+(defn- replace-route
+  "Check a restoration and replace its route in the same atomic state update."
+  [current receipt op]
+  (let [observed (route-for current (:intent op))]
+    (if (effects/assert-restoration-current! op observed)
+      current
+      (-> current
+          (dissoc (get-in op [:previous :materialized/path]))
+          (assoc (:materialized/path receipt)
+                 (assoc receipt :route/artifact (:artifact op)))))))
 
 (defn- record-route!
   "Materialize `op`, replacing the prior route rather than leaving it public
@@ -100,13 +111,13 @@
    occurred, which is the exact claim this adapter exists to make checkable."
   [routes publish-count adapter-id op]
   (assert-publishable! op)
-  (let [receipt (materialization adapter-id op)]
-    (swap! routes (fn [current]
-                    (-> current
-                        (dissoc (get-in op [:previous :materialized/path]))
-                        (assoc (:materialized/path receipt)
-                               (assoc receipt :route/artifact (:artifact op))))))
-    (swap! publish-count inc)
+  (let [receipt (materialization adapter-id op)
+        guarded? (contains? op :publication/expected-materialization)
+        [before after]
+        (swap-vals! routes
+                    #(replace-route % receipt op))]
+    (when-not (and guarded? (= before after))
+      (swap! publish-count inc))
     receipt))
 
 (defn memory-target
@@ -138,7 +149,7 @@
                                :publication/id (:publication/id intent)
                                :removed/path (:materialized/path observed)}))
         (observe! [_ _ctx intent]
-          (js/Promise.resolve (route-for routes intent))))})))
+          (js/Promise.resolve (route-for @routes intent))))})))
 
 (defn public-routes
   [target-bundle]

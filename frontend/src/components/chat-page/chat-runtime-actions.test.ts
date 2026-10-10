@@ -38,8 +38,8 @@ function createRuntimeActionHarness(options: {
   const [getRuntimeEvents, setRuntimeEvents] = createStateHarness<RunEvent[]>([]);
   const [getIsSending, setIsSending] = createStateHarness(false);
   const [getConsoleLines, setConsoleLines] = createStateHarness<string[]>([]);
-  const [getQueueingControl, setQueueingControl] = createStateHarness<"steer" | "follow_up" | null>(null);
-  const [getAbortingTurn, setAbortingTurn] = createStateHarness(false);
+  const [, setQueueingControl] = createStateHarness<"steer" | "follow_up" | null>(null);
+  const [, setAbortingTurn] = createStateHarness(false);
   const [getConversationId, setConversationId] = createStateHarness<string | null>(options.conversationId ?? "conversation-1");
   const [getSessionId, setSessionId] = createStateHarness(options.sessionId ?? "session-1");
 
@@ -81,23 +81,32 @@ function createRuntimeActionHarness(options: {
     actions,
     activeRunIdRef,
     pendingAssistantIdRef,
-    getAbortingTurn,
     getConsoleLines,
     getConversationId,
     getIsSending,
     getLatestRun,
     getMessages,
-    getQueueingControl,
     getRuntimeEvents,
     getSessionId,
   };
 }
 
-describe("createChatRuntimeActions.handleSend", () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-  });
+const completedRun: RunDetail = {
+  run_id: "run-1",
+  created_at: "2026-10-09T18:00:00Z",
+  updated_at: "2026-10-09T18:00:01Z",
+  status: "completed",
+  answer: "Final answer for the original turn.",
+  request_messages: [],
+  settings: {},
+  resources: {},
+};
 
+beforeEach(() => {
+  vi.resetAllMocks();
+});
+
+describe("createChatRuntimeActions.handleSend", () => {
   it("sends the clean user message and forwards the steering prompt through agentSpec.system_prompt", async () => {
     vi.mocked(knoxxChatStart).mockResolvedValue({
       ok: true,
@@ -107,60 +116,10 @@ describe("createChatRuntimeActions.handleSend", () => {
       session_id: "session-1",
       model: "gemma4:31b",
     });
-    vi.mocked(getRun).mockResolvedValue({
-      run_id: "run-1",
-      conversation_id: "conversation-1",
-      session_id: "session-1",
-      status: "running",
-      answer: null,
-      error: null,
-    } as unknown as RunDetail);
+    vi.mocked(getRun).mockResolvedValue({ ...completedRun, status: "running", answer: null });
 
-    const [getMessages, setMessages] = createStateHarness<ChatMessage[]>([]);
-    const [, setLatestRun] = createStateHarness<RunDetail | null>(null);
-    const [, setRuntimeEvents] = createStateHarness<RunEvent[]>([]);
-    const [, setIsSending] = createStateHarness(false);
-    const [, setConsoleLines] = createStateHarness<string[]>([]);
-    const [, setQueueingControl] = createStateHarness<"steer" | "follow_up" | null>(null);
-    const [, setAbortingTurn] = createStateHarness(false);
-    const [, setConversationId] = createStateHarness<string | null>("conversation-1");
-    const [, setSessionId] = createStateHarness("session-1");
-
-    const pendingAssistantIdRef = { current: null as string | null };
-    const activeRunIdRef = { current: null as string | null };
-
-    const actions = createChatRuntimeActions({
-      makeId: (() => {
-        let counter = 0;
-        return () => `msg-${++counter}`;
-      })(),
-      systemPrompt: "Stay grounded and explicit about uncertainty.",
-      activeRole: "knowledge_worker",
-      activeActorId: "chat_primary",
-      activeAgentId: "knoxx_default",
-      sessionId: "session-1",
-      setSessionId,
-      conversationId: "conversation-1",
-      setConversationId,
-      selectedModel: "gemma4:31b",
-      selectedThinkingLevel: "medium",
-      liveControlEnabled: false,
-      liveControlText: "",
-      setLiveControlText: vi.fn(),
-      setMessages,
-      setLatestRun,
-      setRuntimeEvents,
-      setIsSending,
-      setConsoleLines,
-      setQueueingControl,
-      setAbortingTurn,
-      pendingAssistantIdRef,
-      activeRunIdRef,
-      sessionIdKey: "session-key",
-      sessionStateKey: "state-key",
-    });
-
-    await actions.handleSend("testing?");
+    const harness = createRuntimeActionHarness();
+    await harness.actions.handleSend("testing?");
 
     expect(knoxxChatStart).toHaveBeenCalledWith({
       message: "testing?",
@@ -178,7 +137,7 @@ describe("createChatRuntimeActions.handleSend", () => {
       },
     });
 
-    expect(getMessages().map((message) => ({ role: message.role, content: message.content }))).toEqual([
+    expect(harness.getMessages().map((message) => ({ role: message.role, content: message.content }))).toEqual([
       { role: "user", content: "testing?" },
       { role: "assistant", content: "" },
     ]);
@@ -194,16 +153,9 @@ describe("createChatRuntimeActions.handleSend", () => {
       model: "gemma4:31b",
     });
     vi.mocked(getRun).mockResolvedValue({
-      run_id: "run-1",
-      conversation_id: "conversation-2",
-      session_id: "session-1",
-      status: "completed",
-      answer: "Final hydrated answer.",
-      error: null,
-      model: "gemma4:31b",
-      sources: [],
-      contentParts: [],
-    } as unknown as RunDetail);
+      ...completedRun, conversation_id: "conversation-2", session_id: "session-1",
+      answer: "Final hydrated answer.", model: "gemma4:31b", sources: [], contentParts: [],
+    });
 
     const harness = createRuntimeActionHarness({ sessionId: "session-1", conversationId: "conversation-1" });
 
@@ -234,11 +186,140 @@ describe("createChatRuntimeActions.handleSend", () => {
   });
 });
 
-describe("createChatRuntimeActions.handleNewChat", () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
+describe("createChatRuntimeActions.loadRunDetail", () => {
+  it('keeps an active turn associated when an ordinary running-detail request fails', async () => {
+    vi.mocked(getRun).mockRejectedValue(new Error('502 run detail unavailable'));
+    const harness = createRuntimeActionHarness({
+      initialMessages: [{ id: 'assistant-1', role: 'assistant', content: 'Streaming', status: 'streaming' }],
+      pendingAssistantId: 'assistant-1', activeRunId: 'run-1',
+    });
+    await harness.actions.loadRunDetail('run-1');
+    expect(harness.pendingAssistantIdRef.current).toBe('assistant-1');
+    expect(harness.getMessages()[0]).toMatchObject({ content: 'Streaming', status: 'streaming' });
+    await harness.actions.handleUndoLastTurn();
+    expect(harness.getConsoleLines()).toContain('[undo] wait for the active turn to finish or abort it first');
   });
 
+  it.each([
+    { activeRun: 'run-2', pendingAssistant: 'assistant-old' },
+    { activeRun: 'run-1', pendingAssistant: 'assistant-new' },
+  ])('preserves a newer association when terminal hydration rejects with $activeRun/$pendingAssistant', async ({ activeRun, pendingAssistant }) => {
+    let rejectRun!: (error: Error) => void;
+    vi.mocked(getRun).mockReturnValue(new Promise((_, reject) => { rejectRun = reject; }));
+    const harness = createRuntimeActionHarness({
+      initialMessages: [{ id: 'assistant-old', role: 'assistant', content: 'Retained answer', status: 'done' }],
+      pendingAssistantId: 'assistant-old', activeRunId: 'run-1',
+    });
+    const terminalRead = harness.actions.loadRunDetail('run-1', true);
+    harness.activeRunIdRef.current = activeRun;
+    harness.pendingAssistantIdRef.current = pendingAssistant;
+    rejectRun(new Error('502 run detail unavailable'));
+    await terminalRead;
+    expect(harness.pendingAssistantIdRef.current).toBe(pendingAssistant);
+    expect(harness.getMessages()[0]).toMatchObject({ content: 'Retained answer', status: 'done' });
+  });
+
+  it.each(["run-2", "run-1"])("does not hydrate a newer assistant when a deferred GET resolves with active run %s", async (activeRunId) => {
+    let resolveRun!: (run: RunDetail) => void;
+    let resolveStart!: (response: Awaited<ReturnType<typeof knoxxChatStart>>) => void;
+    vi.mocked(getRun).mockReturnValueOnce(new Promise((resolve) => { resolveRun = resolve; }));
+    vi.mocked(knoxxChatStart).mockReturnValue(new Promise((resolve) => { resolveStart = resolve; }));
+    const harness = createRuntimeActionHarness({
+      initialMessages: [{ id: "assistant-old", role: "assistant", content: "Original stream", status: "streaming" }],
+      pendingAssistantId: "assistant-old",
+      activeRunId: "run-1",
+    });
+    const loadingOriginalRun = harness.actions.loadRunDetail("run-1");
+    const startingNewRun = harness.actions.handleSend("A new question");
+    const newAssistantId = harness.pendingAssistantIdRef.current;
+    expect(newAssistantId).not.toBe("assistant-old");
+    // A new queued run or a late WS event can rebind this ref before the old GET resolves.
+    harness.activeRunIdRef.current = activeRunId;
+    resolveRun(completedRun);
+    await loadingOriginalRun;
+
+    expect(harness.getMessages().find((message) => message.id === newAssistantId)).toMatchObject({
+      role: "assistant", content: "", status: "streaming",
+    });
+    expect(harness.pendingAssistantIdRef.current).toBe(newAssistantId);
+    expect(harness.getMessages()[0].content).toBe(activeRunId === "run-1" ? completedRun.answer : "Original stream");
+
+    vi.mocked(getRun).mockResolvedValue({ ...completedRun, run_id: "run-2", status: "running", answer: null });
+    resolveStart({ ok: true, queued: true, run_id: "run-2", conversation_id: "conversation-1", session_id: "session-1" });
+    await startingNewRun;
+  });
+
+  it("retains the original assistant association through a 404 retry", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(getRun).mockRejectedValueOnce(new Error("404 run not yet persisted")).mockResolvedValue(completedRun);
+      const harness = createRuntimeActionHarness({
+        initialMessages: [
+          { id: "assistant-old", role: "assistant", content: "Original stream", status: "streaming" },
+          { id: "assistant-new", role: "assistant", content: "New stream", status: "streaming" },
+        ],
+        pendingAssistantId: "assistant-old",
+        activeRunId: "run-1",
+      });
+      await harness.actions.loadRunDetail("run-1");
+      harness.pendingAssistantIdRef.current = "assistant-new";
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(getRun).toHaveBeenCalledTimes(2);
+      expect(harness.getMessages()[0].content).toBe(completedRun.answer);
+      expect(harness.getMessages()[1]).toMatchObject({ content: "New stream", status: "streaming" });
+      expect(harness.pendingAssistantIdRef.current).toBe("assistant-new");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["completed", "failed"] as const)("keeps %s hydration when a stale running GET resolves later", async (terminalStatus) => {
+    let resolveRunning!: (run: RunDetail) => void;
+    let resolveTerminal!: (run: RunDetail) => void;
+    vi.mocked(getRun)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveRunning = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveTerminal = resolve; }));
+    const harness = createRuntimeActionHarness({
+      initialMessages: [{ id: "assistant-1", role: "assistant", content: "Streaming", status: "streaming" }],
+      pendingAssistantId: "assistant-1",
+      activeRunId: "run-1",
+    });
+    const runningRead = harness.actions.loadRunDetail("run-1");
+    const terminalRead = harness.actions.loadRunDetail("run-1");
+    const terminalRun: RunDetail = {
+      ...completedRun, status: terminalStatus, answer: terminalStatus === "failed" ? null : completedRun.answer,
+      error: terminalStatus === "failed" ? "Provider failed" : undefined,
+      contentParts: [{ type: "text", text: "Final structured answer" }],
+      sources: [{ url: "https://example.test/source-1", title: "Retained source" }], model: "terminal-model",
+    };
+    resolveTerminal(terminalRun);
+    await terminalRead;
+    const finalMessage = harness.getMessages()[0];
+    expect(finalMessage.status).toBe(terminalStatus === "completed" ? "done" : "error");
+    expect(harness.pendingAssistantIdRef.current).toBeNull();
+    resolveRunning({ ...completedRun, status: "running", answer: null, contentParts: [], sources: [], model: "stale-model" });
+    await runningRead;
+    expect(harness.getLatestRun()).toEqual(terminalRun);
+    expect(harness.getMessages()[0]).toEqual(finalMessage);
+    expect(harness.pendingAssistantIdRef.current).toBeNull();
+  });
+
+  it("keeps terminal status when a later running read starts after hydration cleared the assistant ref", async () => {
+    vi.mocked(getRun).mockResolvedValueOnce(completedRun)
+      .mockResolvedValueOnce({ ...completedRun, status: "running", answer: null, contentParts: [], sources: [] });
+    const harness = createRuntimeActionHarness({
+      initialMessages: [{ id: "assistant-1", role: "assistant", content: "Streaming", status: "streaming" }],
+      pendingAssistantId: "assistant-1", activeRunId: "run-1",
+    });
+    await harness.actions.loadRunDetail("run-1");
+    await harness.actions.loadRunDetail("run-1");
+    expect(harness.getLatestRun()).toEqual(completedRun);
+    expect(harness.getMessages()[0]).toMatchObject({ content: completedRun.answer, status: "done" });
+  });
+});
+
+describe("createChatRuntimeActions.handleNewChat", () => {
   it("resets transient runtime state and advances to a fresh session/conversation pair", () => {
     const ids = ["session-new", "conversation-new"];
     const harness = createRuntimeActionHarness({

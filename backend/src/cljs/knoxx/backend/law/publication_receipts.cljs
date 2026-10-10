@@ -76,6 +76,7 @@
    [:receipt/type [:= :publication/materialized]]
    [:materialized/revision publication/ConcreteRevision]
    [:materialized/path publication/PublicationPath]
+   [:materialized/content-revision {:optional true} publication/ConcreteRevision]
    ;; Optional and maybe-nil: a receipt predating titles has none, and a
    ;; document may legitimately carry a blank one. Required here would make
    ;; every historical receipt unreadable.

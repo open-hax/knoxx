@@ -6,7 +6,6 @@
   adapter validates what it is handed, and an adapter never produces what it
   transports."
   (:require [cljs.test :refer [deftest is testing]]
-            [clojure.string :as str]
             [knoxx.backend.infra.publication-effects :as effects]
             [knoxx.backend.infra.publication-target-memory :as memory]
             ["node:fs" :as node-fs]
@@ -85,6 +84,64 @@
               difference here would be the adapter having opinions about content"
       (is (identical? artifact (memory/served-artifact bundle "/probe"))))))
 
+(deftest ^:async completed-restoration-refuses-a-peer-publish-after-observation
+  (doseq [prior-state [:absent :admitted-previous]]
+    (testing (name prior-state)
+      (let [{:keys [store state]} (memory/memory-store)
+            bundle (memory/memory-target)
+            target (:target bundle)
+            plan-b (-> publish-plan
+                       (assoc :concrete-revision "B")
+                       (assoc-in [:desired :materialized/revision] "B"))
+            artifact-b (assoc artifact :artifact/revision "B")
+            original (await (effects/execute-plan! store target {} publish-plan artifact))
+            prior (when (= prior-state :admitted-previous)
+                    (await (effects/execute-plan! store target {} plan-b artifact-b)))
+            _ (when (= prior-state :absent)
+                (await (effects/remove! target {} intent original)))
+            peer-plan (-> plan-b
+                          (assoc :concrete-revision "C")
+                          (assoc-in [:desired :materialized/revision] "C"))
+            peer (atom nil)
+            interleaved-target
+            (reify effects/IPublicationTarget
+              (target-id [_] (effects/target-id target))
+              (publish! [_ ctx op] (effects/publish! target ctx op))
+              (remove! [_ ctx candidate observed] (effects/remove! target ctx candidate observed))
+              (observe! [_ ctx candidate]
+                ((^:async fn []
+                   (let [observed (await (effects/observe! target ctx candidate))]
+                     (await (effects/execute-plan! store target {} peer-plan
+                                                   (assoc artifact :artifact/revision "C")))
+                     (reset! peer {:routes (memory/public-routes bundle)
+                                   :count (memory/materialization-count bundle)
+                                   :cache @state})
+                     observed)))))
+            failure (await (effects/execute-plan! store interleaved-target {}
+                                                  (assoc publish-plan :previous prior) artifact))]
+        (is (= :publication/failed (:receipt/type failure)))
+        (is (:failure/drift? failure))
+        (is (= (str (:idempotency/key original) "|:rematerialize") (:idempotency/key failure)))
+        (is (= (:routes @peer) (memory/public-routes bundle)))
+        (is (= (:count @peer) (memory/materialization-count bundle)))
+        (doseq [[key entry] (:cache @peer)]
+          (is (= entry (get @state key))))))))
+
+(deftest ^:async a-peer-already-serving-the-requested-restoration-is-unchanged
+  (let [bundle (memory/memory-target)
+        target (:target bundle)
+        _ (await (effects/publish! target {} (op-with artifact)))
+        before (memory/public-routes bundle)]
+    (doseq [expected [nil {:materialized/revision "displaced" :materialized/path "/old"}]]
+      (let [receipt (await (effects/publish! target {}
+                                            (assoc (op-with artifact)
+                                                   :publication/expected-materialization expected
+                                                   :idempotency/key "guarded-peer-replay")))]
+        (is (= :publication/materialized (:receipt/type receipt)))
+        (is (= "guarded-peer-replay" (:idempotency/key receipt)))
+        (is (= before (memory/public-routes bundle)))
+        (is (= 1 (memory/materialization-count bundle)))))))
+
 ;; ── the artifact is produced ABOVE the effect boundary ────────────────────
 
 (defn- read-source
@@ -121,6 +178,7 @@
     (doseq [relative-path ["src/cljs/knoxx/backend/infra/publication_effects.cljs"
                            "src/cljs/knoxx/backend/infra/publication_target_memory.cljs"]]
       (testing relative-path
-        (is (not (str/includes? (read-source relative-path) ":artifact/content"))
+        (is (not (re-find #":artifact/content(?:[\s,}\]]|$)"
+                          (read-source relative-path)))
             "an adapter that writes this key is rendering, which is the one thing
              the ownership decision forbids it from doing")))))

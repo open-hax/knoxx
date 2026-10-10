@@ -136,7 +136,7 @@
                                         (-> last-block
                                             (update :content #(str (or % "") delta))
                                             (assoc :at (or at (:at last-block)))))
-                                 (conj items {:id (str (name kind) ":" (count items))
+                                 (conj items {:id (trace/next-text-id items kind)
                                               :kind kind
                                               :status "streaming"
                                               :content (str delta)

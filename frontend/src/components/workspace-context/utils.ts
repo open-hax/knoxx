@@ -373,6 +373,7 @@ function traceToolBlockId(event: RunEvent & { tool_call_id?: string; tool_name?:
   return `tool:${toolName}:${event.at ?? ""}`;
 }
 
+// For cumulative snapshots or explicit replay reconciliation, never literal token deltas.
 export function novelAppendedText(previous: string, incoming: string): string {
   if (incoming.length === 0) return "";
   if (previous.length === 0) return incoming;
@@ -407,11 +408,9 @@ export function appendTraceTextDelta(
   const last = next[next.length - 1];
 
   if (last && last.kind === kind && last.status === "streaming") {
-    const novelDelta = novelAppendedText(last.content ?? "", delta);
-    if (novelDelta.length === 0) return next;
     next[next.length - 1] = {
       ...last,
-      content: `${last.content ?? ""}${novelDelta}`,
+      content: `${last.content ?? ""}${delta}`,
       at: at ?? last.at,
     };
     return next;
@@ -424,6 +423,51 @@ export function appendTraceTextDelta(
     content: delta,
     at,
   });
+  return next;
+}
+
+/** Project an authoritative channel snapshot, retaining an intact prefix and all tool/other-channel blocks. */
+export function replaceTraceText(
+  blocks: ChatTraceBlock[],
+  kind: "agent_message" | "reasoning",
+  text: string,
+  offset: number,
+): ChatTraceBlock[] {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > text.length) return blocks;
+  const retainedText = blocks.filter((block) => block.kind === kind).map((block) => block.content ?? "").join("");
+  const prefixRetained = retainedText.length >= offset && retainedText.slice(0, offset) === text.slice(0, offset);
+  // Missing or stale earlier packets cannot define the prefix of a full snapshot.
+  // In that case recover the channel at its first retained text block.
+  let remaining = prefixRetained ? offset : 0;
+  const replacement = text.slice(remaining);
+  const next: ChatTraceBlock[] = [];
+  let replaced = false;
+  for (const block of blocks) {
+    if (block.kind !== kind) {
+      next.push(block);
+      continue;
+    }
+    if (replaced) continue;
+    const content = block.content ?? "";
+    if (remaining >= content.length) {
+      next.push(block);
+      remaining -= content.length;
+      continue;
+    }
+    const prefix = content.slice(0, remaining);
+    if (prefix.length > 0 || replacement.length > 0) {
+      next.push({
+        ...block,
+        content: prefix + replacement,
+        ...(replacement.length > 0 ? { status: "streaming" as const } : {}),
+      });
+    }
+    remaining = 0;
+    replaced = true;
+  }
+  if (!replaced && replacement.length > 0) {
+    next.push({ id: crypto.randomUUID(), kind, status: "streaming", content: replacement });
+  }
   return next;
 }
 

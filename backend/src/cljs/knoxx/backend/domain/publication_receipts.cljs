@@ -32,6 +32,7 @@
    [:revision ConcreteRevision]
    [:path publication/PublicationPath]
    [:materialized/revision ConcreteRevision]
+   [:materialized/content-revision {:optional true} publication/ConcreteRevision]
    [:materialized/path publication/PublicationPath]])
 
 (def drift-keys
@@ -47,7 +48,7 @@
    answered `:noop` on every attempt and the site listed the document as
    untitled with no way to fix it short of deleting the route. The same hole
    would swallow any later rename."
-  [:materialized/revision :materialized/path :materialized/title])
+  [:materialized/revision :materialized/path :materialized/title :materialized/content-revision])
 
 (defn canonical-title
   "Canonical materialized title, or nil when the value carries no title."
@@ -73,6 +74,7 @@
   [:map {:closed true}
    [:materialized/revision ConcreteRevision]
    [:materialized/path publication/PublicationPath]
+   [:materialized/content-revision {:optional true} publication/ConcreteRevision]
    ;; Optional, because a route materialized before titles existed genuinely
    ;; has none and its receipt must stay readable. Present in `drift-keys`
    ;; regardless: absent-versus-present is exactly the drift that makes such a
