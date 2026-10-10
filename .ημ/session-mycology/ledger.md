@@ -222,3 +222,13 @@
   note: Reproduce correction through actual sink and live consumer, then test full snapshots against exact, missing and stale prefixes. Deletion requires collision-safe retained block IDs. Preserve omitted reasoning while recognizing explicit empty strings, and choose valid string fields before deriving presence. Final combined qualification supersedes intermediate green runs; no new spore or promotion.
 
 - 2026-10-10T16:18:50.347690+00:00 — codex/root; efficiency=0.88, friction=0.58, skill-candidate=0.47. Reproduce native findings against real adapters, retain failed traces, and bind independent source review separately from earlier image/provider evidence. Preserve migration ratchets by rehoming tests into existing suites; preserve append-only provenance when native feedback asks to erase history. Receipt: .ημ/receipts.edn (cms-native-review-repair-final-source, 2026-10-10T16:18:50.347690+00:00). No additional spore created or promoted.
+
+- ts: 2026-10-10T17:01:50.474480+00:00
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx
+  task: Make completed publication restoration conditional at the write boundary
+  p-efficiency: 0.82
+  p-friction: 0.48
+  p-skill-candidate: 0.64
+  spore: none
+  receipt-refs: 2026-10-10T17:01:50.474480+00:00
+  note: An observation before a write is not a concurrency guard. Compare under the existing lock, preserve already-current peer metadata, and falsify stale replay with actual filesystem interleavings. Independently inspect the package-manager child runtime; shell node can differ from Volta pnpm. Preserve prior evidence and append corrected qualification rather than relabeling old runs. No new spore or promotion.

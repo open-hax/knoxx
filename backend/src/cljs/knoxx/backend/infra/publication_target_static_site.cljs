@@ -195,28 +195,47 @@
 
 ;; ── Protocol methods ───────────────────────────────────────────────────────
 
+(defn- route-observation
+  "The manifest route's materialization, only when its artifact exists."
+  [root route]
+  (when (and route (fs/exists? (fs/join root (:route/artifact route))))
+    (cond-> {:materialized/revision (:route/revision route)
+             :materialized/path (:route/path route)
+             :publication/id (:publication/id route)
+             :locale (:route/locale route)
+             :route/artifact (:route/artifact route)}
+      (some? (:route/title route))
+      (assoc :materialized/title (:route/title route))
+      (some? (:route/content-revision route))
+      (assoc :materialized/content-revision (:route/content-revision route)))))
+
 (defn- ^:async commit-route!
   "The critical section of a publish, run holding the manifest lock: write
    the artifact bytes, commit the manifest route, then reclaim the displaced
    route's bytes. Replay — manifest route identical AND artifact file
    present — rewrites nothing: the bytes on disk are already exactly what
-   this op was asked to serve."
-  [root route artifact]
+   this op was asked to serve. A restoration's expected observation is checked
+   inside this same lock, before bytes, the manifest, or reclamation change.
+   Return the route actually served, including a peer's already-current route."
+  [root route artifact op]
   (let [manifest (or (await (read-manifest! root))
                      (manifest-law/empty-manifest))
         existing (manifest-law/find-route manifest (:publication/id route))
         artifact-path (:route/artifact route)
-        unchanged? (and (= existing route)
-                        (fs/exists? (fs/join root artifact-path)))]
-    (when-not unchanged?
-      (await (write-artifact-atomic! root artifact-path artifact))
-      (await (write-manifest-atomic! root
-                                     (-> manifest
-                                         (manifest-law/upsert-route route)
-                                         (manifest-law/touch))))
-      (let [previous-path (:route/artifact existing)]
-        (when (and previous-path (not= previous-path artifact-path))
-          (await (reclaim-artifact! root previous-path)))))))
+        observed (route-observation root existing)
+        restoration-current? (effects/assert-restoration-current! op observed)]
+    (if (and observed (or (= existing route) restoration-current?))
+      existing
+      (do
+        (await (write-artifact-atomic! root artifact-path artifact))
+        (await (write-manifest-atomic! root
+                                       (-> manifest
+                                           (manifest-law/upsert-route route)
+                                           (manifest-law/touch))))
+        (let [previous-path (:route/artifact existing)]
+          (when (and previous-path (not= previous-path artifact-path))
+            (await (reclaim-artifact! root previous-path))))
+        route))))
 
 (defn- ^:async publish-artifact!
   "Materialize `op`: validate the artifact, write its bytes, then commit the
@@ -229,11 +248,11 @@
                            (pr-str [(:publication/id intent)
                                     (:artifact/revision artifact)
                                     (:artifact/content-revision artifact)])))
-        route (manifest-law/route-for-artifact intent artifact content-file-id)]
-    (await (with-manifest-lock! root
-                                (^:async fn []
-                                  (await (commit-route! root route artifact)))))
-    (materialized-receipt adapter-id op route)))
+        route (manifest-law/route-for-artifact intent artifact content-file-id)
+        committed (await (with-manifest-lock! root
+                                             (^:async fn []
+                                               (await (commit-route! root route artifact op)))))]
+    (materialized-receipt adapter-id op committed)))
 
 (defn- ^:async remove-publication!
   "Take the publication's route out of the manifest (the commit), then
@@ -271,21 +290,7 @@
    planner republishes."
   [root intent]
   (when-let [manifest (await (read-manifest! root))]
-    (when-let [route (manifest-law/find-route manifest (:publication/id intent))]
-      (when (fs/exists? (fs/join root (:route/artifact route)))
-        (cond-> {:materialized/revision (:route/revision route)
-                 :materialized/path (:route/path route)
-                 :publication/id (:publication/id route)
-                 :locale (:route/locale route)
-                 :route/artifact (:route/artifact route)}
-          ;; The manifest is the published fact, so the title it carries is
-          ;; what is actually public. A route written before titles existed has
-          ;; none, which is exactly the drift that must be reported so the
-          ;; planner republishes it.
-          (some? (:route/title route))
-          (assoc :materialized/title (:route/title route))
-          (some? (:route/content-revision route))
-          (assoc :materialized/content-revision (:route/content-revision route)))))))
+    (route-observation root (manifest-law/find-route manifest (:publication/id intent)))))
 
 ;; ── Construction ───────────────────────────────────────────────────────────
 

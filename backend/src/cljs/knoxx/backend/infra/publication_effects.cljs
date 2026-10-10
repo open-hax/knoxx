@@ -27,7 +27,10 @@
     "Stable adapter identity. Part of the idempotency key, so two adapters
      publishing the same intent never share a key.")
   (publish! [target ctx op]
-    "Materialize `op`. Returns a Promise of a materialized receipt.")
+    "Materialize `op`. Returns a Promise of a materialized receipt.
+     When `:publication/expected-materialization` is present, verify it against
+     the current target atomically with replacement, including an expected nil.
+     An already-current requested materialization may return without writing.")
   (remove! [target ctx intent observed]
     "Remove a prior materialization. Returns a Promise of a removed receipt.")
   (observe! [target ctx intent]
@@ -103,6 +106,27 @@
         :materialized/path (get-in op [:intent :publication/path])
         :materialized/title (get-in op [:intent :document/title])})))
 
+(defn assert-restoration-current!
+  "Validate a restoration precondition at the adapter's atomic write boundary.
+
+   Observation above this boundary is not a lock: a peer can publish before the
+   replacement starts. Explicit nil means the target must still be absent.
+   The requested materialization already being current is an idempotent success;
+   adapters must leave it unchanged rather than replacing a peer's identical work.
+   Returns true for that already-current restoration, nil without a precondition."
+  [op observed]
+  (when (contains? op :publication/expected-materialization)
+    (let [expected (:publication/expected-materialization op)
+          actual (some-> observed receipts/canonical-materialization)
+          requested-current? (= (requested-materialization op) actual)]
+      (when-not (m/validate [:maybe receipts/Observation] expected)
+        (throw (ex-info "publication restoration requires a valid expected materialization"
+                        {:expected/materialization expected})))
+      (when-not (or (= expected actual) requested-current?)
+        (throw (ex-info "publication restoration conflicts with the target at replacement"
+                        {:expected/materialization expected :actual/materialization actual})))
+      requested-current?)))
+
 (defn- ^:async reconcile-in-flight!
   "A claimed-but-never-completed key means the previous attempt's outcome is
    unknown — the classic ambiguous external response. Observe the target rather
@@ -152,7 +176,9 @@
       (or (nil? observed)
           (= observed (some-> (:previous op) receipts/canonical-materialization)))
       (await (publish-once! store target ctx
-                           (update op :idempotency/key str "|:rematerialize")))
+                           (-> op
+                               (assoc :publication/expected-materialization observed)
+                               (update :idempotency/key str "|:rematerialize"))))
       :else
       (throw (ex-info "completed publication replay conflicts with the target observed since plan admission"
                       {:expected/previous (some-> (:previous op) receipts/canonical-materialization)

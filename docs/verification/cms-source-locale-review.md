@@ -217,3 +217,49 @@ their image, browser, and provider evidence does not qualify these later patches
 Fresh exact-head hosted CI, native review, and deployment evidence remain
 separate obligations. The raw failed MiMo submission is discovery evidence only
 and supplies no native approval.
+
+
+## Atomic completed-restoration qualification, 2026-10-10
+
+The successor to `8ab11f1ef9b6b1b5ec8e852b185c92a772b2492e` closes the
+observation-to-replacement race reported in native finding
+[4238323672](https://github.com/open-hax/knoxx/pull/387#discussion_r4238323672).
+Completed replay carries an explicit expected materialization into restoration;
+`nil` requires target absence. The static adapter compares it under the same
+manifest lock used for artifact replacement, before any byte write, manifest
+touch, or displaced-artifact reclamation. The memory adapter compares and
+replaces in one atomic state update. A differing peer publication refuses the
+stale restoration while retaining its in-flight generation and prior receipts.
+
+An already-current canonical requested revision remains unchanged, including
+valid differing media, encoding, or artifact metadata. The static adapter returns
+the actual served route rather than manufacturing a replacement receipt. Native
+filesystem regressions force observation, peer publication, then stale replay
+for both absent and prior routes, and compare manifest, artifact, timestamps and
+all old cache bytes. The separate same-canonical metadata regression failed
+before the bounded correction and passes afterward. Fresh A/B correction cycles,
+withdrawal, ambiguous outcomes and receipt retention remain covered.
+
+Final source qualification uses the explicit Node 24.14.1 binary and the real
+pnpm JavaScript entry point. Fourteen observed processes include pnpm, compiler
+launchers, and actual compiled unit/HTTP test bundles, all on that binary. The
+focused suite passes 56 tests / 507 assertions; the complete backend suite passes
+1,904 / 9,756; native HTTP passes 23 / 118. Canonical server compilation covers
+538 files with zero warnings. The five changed paths have zero lint diagnostics;
+full lint retains the exact ordered baseline of eight errors and 282 warnings.
+
+| Evidence in `openhax-cms-20261010` | SHA-256 |
+| --- | --- |
+| `review-state/knoxx-atomic-completed-restoration-node24-qualification.json` | `11769cd87a3d9766f38536d481cc6564cce6dd2fc8d7f00574ae56f95a4d981d` |
+| `review-state/knoxx-atomic-restoration-independent-assessment-20261010T1659.json` | `f84a085163ae1edebac377f33c8cbffd6fb9bacd6b48dd0c33b60bc64b2e9715` |
+
+The earlier Volta launcher phase is preserved. Its shell Node version did not
+identify pnpm's actual child runtime; its intended Node 24 attribution is
+superseded by the directly observed qualification above. Earlier RED controls
+remain historical observations. Source tests use the established SDK fixture
+`a09894c48760748b7fca7bf9e94f36471f599a47`; they do not qualify operational SDK
+`07085d6557b75834ce6f50e6c54b8ca47e1c7c08`. Existing 8ab packaged images precede
+this repair. Atomic conditional replacement applies to completed replay
+restorations; first publication, removal, existing lock takeover assumptions,
+and external filesystem edits retain their prior scope. New image/provider
+evidence, hosted CI and native review remain distinct obligations.
