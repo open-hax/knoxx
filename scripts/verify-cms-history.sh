@@ -3,7 +3,7 @@
 # Auth principals are seeded at the existing auth-context seam; this does not
 # verify password authentication, the deployment image, or the browser UI.
 set -euo pipefail
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_root"
 command -v pnpm >/dev/null
 command -v clojure >/dev/null
@@ -15,6 +15,13 @@ if ! verify_revision="$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}')"
 fi
 if [[ ! "$verify_revision" =~ ^[0-9a-f]{40}$ ]]; then
   printf '%s\n' 'FAIL Git did not return a full commit identity for this checkout.' >&2
+  exit 1
+fi
+if ! verify_git_root="$(git -C "$repo_root" rev-parse --show-toplevel)" ||
+   [[ -z "$verify_git_root" ]] ||
+   ! verify_git_root="$(cd -P -- "$verify_git_root" && pwd -P)" ||
+   [[ "$verify_git_root" != "$repo_root" ]]; then
+  printf '%s\n' 'FAIL Git root does not match this verifier source root.' >&2
   exit 1
 fi
 printf 'Verifying checkout %s at %s\n' "$repo_root" "$verify_revision"

@@ -2,7 +2,7 @@
 # CMS resource policy plus native Fastify HTTP creation from this checkout.
 # Isolated fixtures only; no credentials, providers or deployed content change.
 set -euo pipefail
-verify_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+verify_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 command -v pnpm >/dev/null
 command -v clojure >/dev/null
 command -v node >/dev/null
@@ -15,6 +15,13 @@ if ! verify_revision="$(git -C "$verify_repo" rev-parse --verify 'HEAD^{commit}'
 fi
 if [[ ! "$verify_revision" =~ ^[0-9a-f]{40}$ ]]; then
   printf '%s\n' 'FAIL Git did not return a full commit identity for this checkout.' >&2
+  exit 1
+fi
+if ! verify_git_root="$(git -C "$verify_repo" rev-parse --show-toplevel)" ||
+   [[ -z "$verify_git_root" ]] ||
+   ! verify_git_root="$(cd -P -- "$verify_git_root" && pwd -P)" ||
+   [[ "$verify_git_root" != "$verify_repo" ]]; then
+  printf '%s\n' 'FAIL Git root does not match this verifier source root.' >&2
   exit 1
 fi
 printf 'Verifying checkout %s at %s\n' "$verify_repo" "$verify_revision"
