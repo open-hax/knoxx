@@ -88,6 +88,32 @@
     (doseq [field ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"]]
       (is (= "fallback" (provider-events/assistant-reasoning-snapshot (clj->js {field "fallback"})))))))
 
+(deftest text-snapshot-distinguishes-explicit-empty-from-omission
+  (doseq [message [#js {} #js {:content nil} #js {:content 4} #js {:content #js []}
+                   #js {:text 4 :errorMessage nil}
+                   #js {:content #js [nil #js {:type "text"} #js {:type "output_text" :text 4}]}
+                   #js {:content #js [#js {:type "toolCall" :id "call" :name "search"}]}
+                   #js {:content #js [#js {:type "reasoning" :text "Keep reasoning"}]}]]
+    (is (nil? (provider-events/assistant-text-snapshot message)))
+    (let [normalized (provider-events/normalize
+                      #js {:type "message_update" :assistantMessageEvent #js {:type "text_delta"
+                                                                            :delta "ha" :partial message}})
+          result (reducer/reduce-event (assoc (reducer/initial-state) :assistant-text "ha") normalized)]
+      (is (not (contains? normalized :text-snapshot)))
+      (is (= "haha" (get-in result [:state :assistant-text])))))
+  (doseq [message [#js {:content ""} #js {:text ""} #js {:errorMessage ""}
+                   #js {:content #js [""]}
+                   #js {:content #js [#js {:type "text" :text ""}] :text "fallback"}
+                   #js {:content #js [#js {:type "output_text" :text ""}]}]]
+    (is (= "" (provider-events/assistant-text-snapshot message)))
+    (let [normalized (provider-events/normalize
+                      #js {:type "message_update" :assistantMessageEvent #js {:type "text_delta"
+                                                                            :delta "ignored" :partial message}})
+          result (reducer/reduce-event (assoc (reducer/initial-state) :assistant-text "Draft") normalized)]
+      (is (= "" (:text-snapshot normalized)))
+      (is (= "" (get-in result [:state :assistant-text])))
+      (is (= [{:effect :replace-text :kind :agent_message :text ""}] (:effects result))))))
+
 (deftest reasoning-snapshot-distinguishes-explicit-empty-from-omission
   (doseq [field ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"]]
     (is (= "" (provider-events/assistant-reasoning-snapshot (clj->js {field ""}))))

@@ -9,6 +9,15 @@ command -v pnpm >/dev/null
 command -v clojure >/dev/null
 command -v node >/dev/null
 [[ -f backend/src/cljs/knoxx/backend/infra/cms_store.cljs ]]
+if ! verify_revision="$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}')"; then
+  printf '%s\n' 'FAIL cannot resolve this checkout to a Git commit.' >&2
+  exit 1
+fi
+if [[ ! "$verify_revision" =~ ^[0-9a-f]{40}$ ]]; then
+  printf '%s\n' 'FAIL Git did not return a full commit identity for this checkout.' >&2
+  exit 1
+fi
+printf 'Verifying checkout %s at %s\n' "$repo_root" "$verify_revision"
 fixture_root="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_root"' EXIT INT TERM
 export KNOXX_CMS_VERIFY_ROOT="$fixture_root"
@@ -16,7 +25,6 @@ export CONTRACTS_DIR="$repo_root/backend/test/fixtures/empty-contracts"
 NODE_OPTIONS="$(node --input-type=module -e 'import { testEnvironment } from "./backend/scripts/shadow-test-environment.mjs"; process.stdout.write(testEnvironment().NODE_OPTIONS);')"
 export NODE_OPTIONS
 log="$fixture_root/results.log"
-printf 'Verifying checkout %s at %s\n' "$repo_root" "$(git rev-parse HEAD)"
 pnpm -C backend exec shadow-cljs compile cms-history >"$log" 2>&1 || { cat "$log"; exit 1; }
 cat "$log"
 # Shadow can print green counters after an unhandled rejection; use its guard.

@@ -85,6 +85,7 @@ export function createChatRuntimeActions({
 
   const loadRunDetail = async (
     runId: string,
+    terminalEvent = false,
     attempt = 0,
     assistantMessageId = pendingAssistantIdRef.current,
   ): Promise<void> => {
@@ -126,9 +127,14 @@ export function createChatRuntimeActions({
       const runIsStillActive = activeRunIdRef.current === runId;
       if (runIsStillActive && message.includes('404') && attempt < 6) {
         window.setTimeout(() => {
-          void loadRunDetail(runId, attempt + 1, assistantMessageId);
+          void loadRunDetail(runId, terminalEvent, attempt + 1, assistantMessageId);
         }, 250 * (attempt + 1));
         return;
+      }
+      if (terminalEvent && runIsStillActive && assistantMessageId
+        && pendingAssistantIdRef.current === assistantMessageId) {
+        // The turn ended even when its final persisted detail is unavailable.
+        pendingAssistantIdRef.current = null;
       }
       appendConsoleLine(`[runs] failed to load ${runId}: ${message}`);
     }

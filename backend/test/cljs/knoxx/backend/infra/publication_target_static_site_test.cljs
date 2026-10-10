@@ -215,7 +215,8 @@
             legacy-key (:idempotency/key legacy-receipt)
             legacy-observed (await (effects/observe! target {} localized-intent))
             first-plan (plan/reconcile-plan index localized-intent (facts-for legacy-observed))
-            first-receipt (await (effects/execute-plan! store target {} first-plan (artifact-for)))
+            first-artifact (artifact-for)
+            first-receipt (await (effects/execute-plan! store target {} first-plan first-artifact))
             first-route (first (:manifest/routes (read-manifest root)))
             first-key (:idempotency/key first-receipt)
             cache-before-correction (set (.readdirSync node-fs (.join path root ".idempotency")))]
@@ -285,7 +286,17 @@
             (is (= :noop (:op replay-plan)))
             (is (= :publication/noop (:receipt/type replay)))
             (is (= corrected-mtime (.-mtimeMs (.statSync node-fs corrected-path)))))
-          (testing "displaced completed outputs restore through reserved generations without discarding history"
+          (testing "replaying the older admitted A plan cannot overwrite B or reserve a restoration"
+            (let [cache-before (set (.readdirSync node-fs (.join path root ".idempotency")))
+                  stale (await (effects/execute-plan! store target {} first-plan first-artifact))]
+              (is (= :publication/failed (:receipt/type stale)))
+              (is (:failure/drift? stale))
+              (is (= first-key (:idempotency/key stale)))
+              (is (= corrected-route (first (:manifest/routes (read-manifest root)))))
+              (is (= (:html @current) (read-route-bytes corrected-route)))
+              (is (= corrected-mtime (.-mtimeMs (.statSync node-fs corrected-path))))
+              (is (= cache-before (set (.readdirSync node-fs (.join path root ".idempotency")))))))
+          (testing "freshly admitted displaced outputs restore through reserved generations without discarding history"
             (let [first-restoration-key (str first-key "|:rematerialize")
                   restorations (atom [])]
               (is (= :reserved (:reservation/status (effects/reserve! store first-restoration-key)))

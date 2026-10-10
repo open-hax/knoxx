@@ -230,6 +230,31 @@
     (is (= 2 (count (filter #(= :publish! (first %)) @calls)))
         "a prior titleless success must not suppress title backfill")))
 
+(deftest ^:async stale-completed-plan-cannot-displace-a-newer-materialization
+  (let [{:keys [store state]} (fake-store)
+        {:keys [target routes calls]} (fake-target {})
+        original (await (effects/execute-plan! store target {} publish-plan artifact))
+        newer-plan (-> publish-plan
+                       (assoc :concrete-revision "newer-revision" :previous original)
+                       (assoc-in [:desired :materialized/revision] "newer-revision"))
+        newer-artifact (assoc artifact :artifact/revision "newer-revision")
+        newer (await (effects/execute-plan! store target {} newer-plan newer-artifact))
+        completed-before @state
+        stale (await (effects/execute-plan! store target {} publish-plan artifact))]
+    (is (= :publication/failed (:receipt/type stale)))
+    (is (:failure/drift? stale))
+    (is (= (:idempotency/key original) (:idempotency/key stale)))
+    (is (= (receipts/canonical-materialization newer) (get @routes "/probe")))
+    (is (= completed-before @state) "stale replay neither claims a generation nor rewrites receipts")
+    (is (= 2 (count (filter #(= :publish! (first %)) @calls))))
+    (let [admitted-plan (assoc publish-plan :previous newer)
+          restored (await (effects/execute-plan! store target {} admitted-plan artifact))]
+      (is (= :publication/materialized (:receipt/type restored)))
+      (is (= (str (:idempotency/key original) "|:rematerialize") (:idempotency/key restored)))
+      (is (= (receipts/canonical-materialization original) (get @routes "/probe")))
+      (is (= original (get-in @state [(:idempotency/key original) :receipt])))
+      (is (= newer (get-in @state [(:idempotency/key newer) :receipt]))))))
+
 (deftest ^:async completed-publication-is-restored-after-withdrawal
   (let [{:keys [store state]} (fake-store)
         {:keys [target routes calls]} (fake-target {})

@@ -220,3 +220,5 @@
   spore: none
   receipt-refs: Knoxx PR387 explicit stream correction final qualification
   note: Reproduce correction through actual sink and live consumer, then test full snapshots against exact, missing and stale prefixes. Deletion requires collision-safe retained block IDs. Preserve omitted reasoning while recognizing explicit empty strings, and choose valid string fields before deriving presence. Final combined qualification supersedes intermediate green runs; no new spore or promotion.
+
+- 2026-10-10T16:18:50.347690+00:00 — codex/root; efficiency=0.88, friction=0.58, skill-candidate=0.47. Reproduce native findings against real adapters, retain failed traces, and bind independent source review separately from earlier image/provider evidence. Preserve migration ratchets by rehoming tests into existing suites; preserve append-only provenance when native feedback asks to erase history. Receipt: .ημ/receipts.edn (cms-native-review-repair-final-source, 2026-10-10T16:18:50.347690+00:00). No additional spore created or promoted.

@@ -49,6 +49,35 @@
                (mapv #(select-keys % [:token :operation :offset])
                      (filter :operation @packets*))))))))
 
+(deftest omitted-tool-partial-text-preserves-answer-while-explicit-empty-clears-current-message
+  (doseq [event-type ["toolcall_delta" "toolcall_end" "message_end"]
+          explicit? [false true]]
+    (with-live-stream
+      (fn [state packets* run]
+        (let [handle! (stream/build-subscribe-handler state nil)
+              prefix "Earlier 😀.\n\n"
+              tool #js {:type "toolCall" :id "call" :name "search" :arguments #js {:query "knoxx"}}
+              snapshot #js {:role "assistant" :content (if explicit?
+                                                         #js [tool #js {:type "text" :text ""}]
+                                                         #js [tool])}]
+          (stream/emit-streaming-delta! state :agent_message prefix)
+          (handle! #js {:type "message_start" :message #js {:role "assistant"}})
+          (stream/emit-streaming-delta! state :agent_message "Keep current answer")
+          (stream/emit-streaming-delta! state :reasoning "Keep reasoning")
+          (handle! (if (= event-type "message_end")
+                     #js {:type "message_end" :message snapshot}
+                     #js {:type "message_update" :assistantMessageEvent #js {:type event-type :partial snapshot
+                                                                           :toolCall tool}}))
+          (let [expected (str prefix (when-not explicit? "Keep current answer"))
+                blocks (:trace_blocks (run))
+                replacements (filter :operation @packets*)]
+            (is (= expected (apply str @(:chunks state))))
+            (is (= expected (apply str (map :content (filter #(= :agent_message (:kind %)) blocks)))))
+            (is (= "Keep reasoning" (apply str @(:reasoning-chunks state))))
+            (is (= "Keep reasoning" (apply str (map :content (filter #(= :reasoning (:kind %)) blocks)))))
+            (is (= (if explicit? [{:token prefix :operation "replace" :offset (count prefix)}] [])
+                   (mapv #(select-keys % [:token :operation :offset]) replacements)))))))))
+
 (deftest native-delta-after-other-channel-deletion-has-a-unique-trace-id
   (with-live-stream
     (fn [state _packets* run]

@@ -163,8 +163,10 @@
         (sinks/backfill-tool-input-preview! (sinks/sink-or-default state) (:run-id state)
                                             (active-tool-call-id state tool_name tool_call_id)
                                             tool_name input_preview))
-      ;; The terminal snapshot reconciles text already emitted as literal deltas.
-      (emit-progress-text! state :agent_message full-text)
+      ;; An omitted text channel in a tool-only partial is not a correction.
+      ;; Explicit empty snapshots still clear the current provider message.
+      (when (some? full-text)
+        (emit-progress-text! state :agent_message full-text))
       ;; Providers can omit reasoning from their terminal/partial message even
       ;; after streaming it. Absence is not an authoritative empty correction.
       (when (some? full-reasoning)

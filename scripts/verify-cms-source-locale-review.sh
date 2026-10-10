@@ -9,11 +9,19 @@ command -v node >/dev/null
 command -v timeout >/dev/null
 test -f "$verify_repo/backend/test/cljs/knoxx/backend/cms_source_locale_review_test.cljs"
 test -d "$verify_repo/backend/node_modules"
+if ! verify_revision="$(git -C "$verify_repo" rev-parse --verify 'HEAD^{commit}')"; then
+  printf '%s\n' 'FAIL cannot resolve this checkout to a Git commit.' >&2
+  exit 1
+fi
+if [[ ! "$verify_revision" =~ ^[0-9a-f]{40}$ ]]; then
+  printf '%s\n' 'FAIL Git did not return a full commit identity for this checkout.' >&2
+  exit 1
+fi
+printf 'Verifying checkout %s at %s\n' "$verify_repo" "$verify_revision"
 verify_fixture="$(mktemp -d "${TMPDIR:-/tmp}/knoxx-source-locale-review.XXXXXX")"
 trap 'rm -rf -- "$verify_fixture"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-printf 'Verifying checkout %s at %s\n' "$verify_repo" "$(git -C "$verify_repo" rev-parse HEAD)"
 cd "$verify_repo/backend"
 NODE_OPTIONS="$(node --input-type=module -e 'import { testEnvironment } from "./scripts/shadow-test-environment.mjs"; process.stdout.write(testEnvironment().NODE_OPTIONS);')"
 export NODE_OPTIONS

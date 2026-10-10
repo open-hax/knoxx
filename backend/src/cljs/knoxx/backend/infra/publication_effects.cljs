@@ -144,15 +144,19 @@
   (let [checked (assert-receipt-matches-op! op (law/assert-receipt! receipt))
         observed (some-> (await (observe! target ctx (:intent op)))
                          receipts/canonical-materialization)]
-    (if (= observed (requested-materialization op))
-      checked
-      ;; A completed receipt describes a historical effect. Another approved
-      ;; revision may since have displaced it at this mutable publication path.
-      ;; Keep that receipt and reserve the next deterministic restoration key.
-      ;; Repeated cycles walk completed generations until finding a fresh one;
-      ;; concurrent requests derive the same key rather than random identities.
+    (cond
+      (= observed (requested-materialization op)) checked
+      ;; Restore a withdrawn target, or the exact prior target observed by the
+      ;; admitted plan. A historical completed key is not fresh admission to
+      ;; overwrite a different materialization that appeared after planning.
+      (or (nil? observed)
+          (= observed (some-> (:previous op) receipts/canonical-materialization)))
       (await (publish-once! store target ctx
-                            (update op :idempotency/key str "|:rematerialize"))))))
+                           (update op :idempotency/key str "|:rematerialize")))
+      :else
+      (throw (ex-info "completed publication replay conflicts with the target observed since plan admission"
+                      {:expected/previous (some-> (:previous op) receipts/canonical-materialization)
+                       :actual/observed observed})))))
 
 (defn- ^:async materialize-reserved!
   "Complete a reservation only after the target returns matching evidence."
@@ -163,8 +167,8 @@
     receipt))
 
 (defn ^:async publish-once!
-  "Replay a completed effect only while the target matches. Restoring displaced
-   content preserves history and claims a deterministic generation reservation."
+  "Replay while the target matches; restore missing or freshly admitted prior
+   content under a deterministic generation. Refuse drift since plan admission."
   [store target ctx op]
   (let [idempotency-key (:idempotency/key op)]
     (try

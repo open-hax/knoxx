@@ -33,7 +33,7 @@ type UseChatRuntimeEffectsParams = {
   updateMessageById: (messageId: string, updater: (message: ChatMessage) => ChatMessage) => void;
   updateTraceBlocksByMessageId: (messageId: string, updater: (blocks: import('../../lib/types').ChatTraceBlock[]) => import('../../lib/types').ChatTraceBlock[]) => void;
   appendMessageIfMissing: (message: ChatMessage) => void;
-  loadRunDetail: (runId: string) => void | Promise<void>;
+  loadRunDetail: (runId: string, terminalEvent?: boolean) => void | Promise<void>;
   loadDirectory: (path?: string) => void | Promise<void>;
   refreshWorkspaceStatus: () => void | Promise<void>;
   refreshRecentSessions: () => void | Promise<void>;
@@ -218,10 +218,10 @@ export function useChatRuntimeEffects({
                     runId: runtimeEvent.run_id ?? message.runId ?? null,
                     status: runtimeEvent.type === 'run_failed' ? 'error' : 'done',
                   }));
-                  // loadRunDetail clears this association after installing the final answer.
+                  // Terminal hydration keeps this association until success or bounded failure.
                 }
                 setIsSending(false);
-                void callbacksRef.current.loadRunDetail(runtimeEvent.run_id);
+                void callbacksRef.current.loadRunDetail(runtimeEvent.run_id, true);
               }
             }
             const label = runtimeEvent.type ?? 'event';

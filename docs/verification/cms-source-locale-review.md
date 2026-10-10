@@ -162,3 +162,58 @@ The live steps above still require real browser evidence through Cua in this
 session, screenshots, deployed source/image verification and website artifact
 inspection. A saved document, changed desired state or approved candidate alone
 does not demonstrate materialized content.
+
+## Native review repair qualification, 2026-10-10
+
+The source phase following `0cffeaad02f3818036186dcb764e06bbc5bd6cd5`
+repairs three confirmed native findings and a separately reproduced terminal
+hydration failure. A completed publication replay now observes the target before
+returning its old receipt: the same output is a noop, an absent target or the
+plan's exact previous output permits deterministic restoration, and a different
+nonempty output is refused before reserving another generation. Tests retain
+freshly admitted A/B correction cycles and verify that stale completed plans do
+not remove another output's artifact, manifest, cache, or receipt. This is an
+observation guard; it is not atomic compare-and-swap across live peers.
+
+Missing, null, nonstring, and tool-only assistant snapshots preserve streamed
+text. Explicit empty text clears the current provider message's suffix while
+preserving prior assistant text and reasoning. Both CMS verifier scripts resolve
+`HEAD^{commit}` separately, require a full commit SHA, and stop before compiler,
+helper, or fixture execution when Git fails.
+
+Terminal detail hydration releases a matching run/assistant association after a
+permanent failure, including exhausted bounded 404 retries. It preserves the
+streamed answer and permits Undo again. Ordinary running-detail failures and
+newer run/assistant associations retain their state. Existing streaming hook
+tests moved into `useChatWorkspaceController.test.ts`; existing WebSocket decoder
+tests moved into `hooks.test.ts`. All 25 previous test declarations remain, with
+23 bodies byte-identical and the remaining two fixture refactors preserving all
+11 assertions. The 283-record migration manifest is byte-identical to the
+previous committed manifest; no migration or size policy was waived.
+
+The frozen backend source passed 1,899 tests / 9,689 assertions, native HTTP
+integration 23 / 118, the CMS verifier's three phases (3 / 26, 8 / 107, 19 / 206),
+and shell Git-failure controls. Server compilation produced zero warnings. The
+changed CLJS paths have zero lint errors or warnings; full lint retains its
+inherited eight errors and 282 warnings. Frontend qualification passed 282 tests
+in 44 suites with 41 existing TODOs, type checking, production compilation with
+zero CLJS warnings, and the actual migration and size ratchets against base
+`3409977bca4ba35e09967f9a99d50867a679a73c`. Independent bounded source reviews
+found no actionable issue in either repair set.
+
+The local evidence set `openhax-cms-20261010` retains these immutable records:
+
+| Record | SHA-256 |
+| --- | --- |
+| `review-state/knoxx-native-review-repair-qualification.json` | `8e4f51a40d7a80c1c2f245f0f1bf19c103e336331d843f78b321cd58bbc1b468` |
+| `review-state/knoxx-frontend-terminal-repair-final-source.json` | `a9607231479d6c8a1b4a704aac14bb2f8c1eb46a22ed1a4dfb7ec4c00cc6884b` |
+| `review-state/knoxx-native-repair-independent-source-review-20261010T160958Z.json` | `4213c6f415c42b917b0beb9d8da58edc7517557f739199dd601ab0ff13210425` |
+| `review-state/knoxx-frontend-terminal-hydration-independent-assessment-20261010T161250Z.json` | `6392785bbd527a5536e441f43c7082fefa56d5e21018e50044a55fd7dd735ea6` |
+
+These source tests use the established SDK/auth fixture boundaries and linked
+SDK `a09894c48760748b7fca7bf9e94f36471f599a47`. The earlier real provider and
+packaged CMS demonstrations used source `0cffeaad` and operational SDK `07085d`;
+their image, browser, and provider evidence does not qualify these later patches.
+Fresh exact-head hosted CI, native review, and deployment evidence remain
+separate obligations. The raw failed MiMo submission is discovery evidence only
+and supplies no native approval.

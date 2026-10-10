@@ -4,7 +4,6 @@
    provider objects directly."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.content :refer [preview-text-nonblank tool-result-content-parts]]
-            [knoxx.backend.domain.text :refer [content-part-text]]
             [knoxx.backend.infra.agent.tools :refer [tool-call-input-preview]]))
 
 (defn- js-present?
@@ -41,20 +40,28 @@
   [message fields]
   (some #(let [value (aget message %)] (when (string? value) value)) fields))
 
-(defn- literal-block-text
-  [content part->text]
+(defn- text-part-snapshot
+  [part]
+  (cond
+    (string? part) part
+    (and part (contains? #{"text" "output_text"} (aget part "type")))
+    (first-string-field part ["text"])))
+
+(defn- text-block-snapshot
+  [content]
   (when (array? content)
-    (apply str (map part->text (remove nil? (array-seq content))))))
+    (let [parts (keep text-part-snapshot (array-seq content))]
+      (when (seq parts) (apply str parts)))))
 
 (defn assistant-text-snapshot
-  "Read authoritative text; distinct content blocks concatenate literally."
+  "Read literal authoritative text; nil means omitted, an empty string is explicit."
   [message]
   (let [content (aget message "content")
-        blocks (literal-block-text content content-part-text)]
+        blocks (text-block-snapshot content)]
     (cond
       (string? content) content
-      (seq blocks) blocks
-      :else (or (first-string-field message ["text" "errorMessage"]) ""))))
+      (some? blocks) blocks
+      :else (first-string-field message ["text" "errorMessage"]))))
 
 (defn- reasoning-part-snapshot
   [part]
@@ -98,7 +105,7 @@
      :message (aget event "message")}
       ;; Native partial messages are authoritative cumulative values. A literal
       ;; delta without that context must never be classified by text overlap.
-      (and (seq text-snapshot) (not (str/includes? text-snapshot "<think>")))
+      (and (some? text-snapshot) (not (str/includes? text-snapshot "<think>")))
       (assoc :text-snapshot text-snapshot)
       (some? reasoning-snapshot) (assoc :reasoning-snapshot reasoning-snapshot))))
 
