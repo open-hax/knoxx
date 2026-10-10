@@ -274,3 +274,13 @@
   spore: none
   receipt-refs: ff9ecc33-3c20-4963-a27f-89f5b2878889
   note: Define cleanup before allocating a disposable directory and arm its traps before the first operation that can fail. Injected owned mkdir exit73 proves prior leak and corrected cleanup while preserving exit status. Keep full native fixture and production qualification historical; no provider or shared-state mutations. Preserve every historical byte. No extra spore or promotion.
+
+- ts: 2026-10-10T23:07:22.927005+00:00
+  session: knoxx-qualification-repair
+  task: canonical-production-mutation-runner-repair
+  p-efficiency: 0.78
+  p-friction: 0.62
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 5ea538ff-0cbb-4330-af6e-5740a9b4f5f8, ea2ea1c1eef132d23408dc94de5166e659d8dae367884e4f02d73392df895614, 0942dbf59387a51b078c7677288e0dd838c8d2abb30dad409527a2459a1fdfe6, d17c2623848c034207e09fc7f5efe12c875f1702d6087ba6e42af7d848d65fce
+  note: A printed green summary does not prove completed test execution. Qualify the existing fatal guard, normal exit and owned descendant cleanup together before spending campaign time. Preserve compiler/test raw evidence and source identity; keep active portable branches without rewriting reader conditionals into runtime forms. Focused RED/GREEN source controls do not earn production baseline or mutation credit. Equivalent exclusions need actual external review and exact committed provenance; none adopted. Fresh production-config dependency preparation is separate from execution, and the four batches of 250 completed assertion kills remain required. One failed alias discovery and conditional-promotion control drove narrow canonical repairs; all predecessor failures retained. No extra spore or promotion.
