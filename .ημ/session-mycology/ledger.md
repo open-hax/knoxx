@@ -245,3 +245,13 @@
 - 2026-10-10T18:29:11.966990+00:00 — codex/root; efficiency=0.9, friction=0.48, skill-candidate=0.44. Separate a false reviewer premise from a genuine broader fixture gap; use actual server observations to add regressions for every protected array value and both write orders. Preserve earlier evidence when independent review narrows a patch boundary. Receipt: .ημ/receipts.edn (mongo-native-alias-multikey-fixture-repair, 2026-10-10T18:29:11.966990+00:00). No additional spore created or promoted.
 
 - 2026-10-10T18:53:30.170773+00:00 — codex/root; efficiency=0.91, friction=0.43, skill-candidate=0.42. A valid commit is insufficient source custody when Git can discover an enclosing repository. Bind canonical physical roots and preserve a linked-worktree path; prove pre-effect refusal with actual isolated Git fixtures. Treat command arity as evidence scope: bash -n parses one script, so qualify another separately and append correction rather than relabel the original execution. Receipt: .ημ/receipts.edn (cms-verifier-checkout-identity-and-ci-credentials, 2026-10-10T18:53:30.170773+00:00). No additional spore created or promoted.
+
+- ts: 2026-10-10T22:06:10.784798+00:00
+  session: open-hax/knoxx
+  task: Render real art and music from approved CMS document text
+  p-efficiency: 0.91
+  p-friction: 0.27
+  p-skill-candidate: 0.44
+  spore: none
+  receipt-refs: 68e5f9c9-99c3-4cf6-bf72-151ab759174e; evidence-set:openhax-cms-20261010/review-state/knoxx-approved-media-independent-assessment-20261010T220434Z.json#sha256=bb44351be454246e8f28bc77156b656111b521aad95da0017f32127d5efa4362
+  note: Renderer input must remain the digest-bound approved document, not unsigned editor metadata. Keep portable media reference law separate from runtime publication custody. Actual staged inventory tests establish shape/existence locally; only live CMS save, publication and reader observations establish the user-visible path. Preserve original source/runtime/tests and distinguish cached image, provider and native browser evidence. Audit nested command wrappers before all-version claims. No extra spore or promotion.

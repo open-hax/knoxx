@@ -8,6 +8,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.node.fs :as fs]
+            [knoxx.backend.domain.publication-content :as publication-content]
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
             [knoxx.backend.domain.translation-review-inventory :as review-inventory]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -28,19 +29,11 @@
 
 (def target-id :open-hax.publication/static-site)
 
-(defn- escape-html [value]
-  (str/escape (str value)
-              {\& "&amp;" \< "&lt;" \> "&gt;" \" "&quot;" \' "&#39;"}))
-
 (defn render-fragment
-  "Render semantic text blocks. Styling remains the website/view contract's
-   concern; this artifact carries no theme or placement decision."
+  "Render approved semantic text and media references through the pure contract.
+   Styling remains the website/view contract's concern."
   [blocks]
-  (str "<article class=\"published-document\">"
-       (str/join "" (map #(str "<p>" (-> % escape-html
-                                          (str/replace "\n" "<br>")) "</p>")
-                         (remove str/blank? blocks)))
-       "</article>"))
+  (publication-content/render-fragment blocks))
 
 (defn- document-root [roots document]
   (get roots (:document/id document)))
