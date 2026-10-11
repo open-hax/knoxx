@@ -1,8 +1,301 @@
 (ns knoxx.mutation-test-test
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [knoxx.mutation-test :as mutation]))
+
+(defn payload-fixture!
+  "Make a private committed source and two generated runtime files."
+  []
+  (let [root (.toFile (java.nio.file.Files/createTempDirectory "mutation-payload" (make-array java.nio.file.attribute.FileAttribute 0)))
+        backend (io/file root "backend")
+        loader "target/test/test-ci.cjs"
+        runtime ".shadow-cljs/builds/test-ci/dev/out/cljs-runtime"
+        texts {loader (str "var SHADOW_IMPORT_PATH = __dirname + '/../../" runtime "';\nSHADOW_IMPORT(\"demo.js\");\n")
+               (str runtime "/demo.js") "global.demo = true;\n"
+               (str runtime "/goog.base.js") "global.goog = {};\n"
+               (str runtime "/demo.js.map") "{}\n"}]
+    (.mkdirs backend)
+    (spit (io/file root ".gitignore") "backend/target/\nbackend/.shadow-cljs/\n")
+    (.mkdirs (io/file backend "src/cljs"))
+    (spit (io/file backend "src/cljs/demo.cljs") "(def value true)\n")
+    (doseq [cmd [["git" "init" "--quiet"] ["git" "add" "."]
+                 ["git" "-c" "user.name=Fixture" "-c" "user.email=fixture@example.invalid" "commit" "--quiet" "-m" "fixture"]]]
+      (let [result (apply shell/sh (concat cmd [:dir (.getPath root)]))]
+        (when-not (zero? (:exit result)) (throw (ex-info "Fixture Git command failed" result)))))
+    (doseq [[path content] texts]
+      (.mkdirs (.getParentFile (io/file backend path)))
+      (spit (io/file backend path) content))
+    (let [files (mapv (fn [[path content]]
+                        {:path path :kind (cond (= loader path) "loader" (str/ends-with? path ".map") "source-map" :else "runtime-js")
+                         :bytes (alength (.getBytes ^String content "UTF-8")) :sha256 (mutation/sha256 content)}) (sort-by key texts))
+          digest #(mutation/sha256 (apply str (map (fn [{:keys [path kind bytes sha256]}] (str path "\t" kind "\t" bytes "\t" sha256 "\n")) %)))
+          source-sha (str/trim (:out (shell/sh "git" "rev-parse" "HEAD" :dir (.getPath root))))]
+      {:root root :backend-dir (.getPath backend) :source-sha source-sha
+       :payload {:schema-version 1 :source-sha source-sha :source-binding {:kind "baseline"}
+                 :loader-path loader :runtime-root runtime :imports ["demo.js"] :files files
+                 :sha256 (digest files) :code-sha256 (digest (remove #(= "source-map" (:kind %)) files))}})))
+
+(defn delete-fixture!
+  "Remove only the test's private directory."
+  [root]
+  (doseq [file (reverse (file-seq root))] (.delete ^java.io.File file)))
+
+(deftest completed-child-evidence-survives-custody-io-failures
+  (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
+        source-dir (io/file backend-dir "src/cljs")
+        source-file (io/file source-dir "demo.cljs")
+        original-source (slurp source-file)
+        mutant (first (mutation/discover-mutants {:src-dir (.getPath source-dir)}))
+        opts (assoc fixture :src-dir (.getPath source-dir))
+        complete {:timed-out? false :termination "exited" :cleanup-complete? true :capture-truncated? false}
+        compile-result (assoc complete :exit-code 0 :output "[:test-ci] Build completed. (2 files, 1 compiled, 0 warnings, 0.1s)")
+        test-result (assoc complete :exit-code 1 :output "Ran 1 tests containing 1 assertions.\n1 failures, 0 errors.")
+        test-runs (atom 0)
+        original-payload-guard mutation/assert-payload-custody!]
+    (try
+      (doseq [phase [:compile :test]]
+        (let [io-error (java.io.IOException. (str "injected completed-" (name phase) " custody I/O failure"))
+              result-key (if (= :compile phase) :compile-result :test-result)
+              child-result (if (= :compile phase) compile-result test-result)]
+          (with-redefs [mutation/run-process! (fn [{:keys [cmd]}]
+                                               (if (= "pnpm" (first cmd)) compile-result
+                                                   (do (swap! test-runs inc) test-result)))
+                        mutation/preserve-payload! (fn [_ snapshot]
+                                                     (if (= :compile phase) (throw io-error) snapshot))
+                        mutation/assert-payload-custody! (fn [guard-opts]
+                                                          (if (and (= :test phase) (pos? @test-runs))
+                                                            (throw io-error)
+                                                            (original-payload-guard guard-opts)))]
+            (reset! test-runs 0)
+            (let [error (try
+                          (if (= :compile phase) (mutation/compile-mutant! opts)
+                              (mutation/run-mutant-tests! (assoc opts :payload payload)))
+                          (catch Exception failure failure))]
+              (is (instance? clojure.lang.ExceptionInfo error))
+              (is (identical? io-error (.getCause ^Exception error)))
+              (is (= child-result (get (ex-data error) result-key)))
+              (is (= {:class "java.io.IOException" :message (.getMessage io-error)}
+                     (:custody-io-error (ex-data error)))))
+            (reset! test-runs 0)
+            (let [baseline (try (mutation/baseline! opts) (catch Exception error error))]
+              (is (= :failed (:status baseline)))
+              (is (= "custody-rejected" (get-in baseline [:compile :termination])))
+              (is (= child-result (get-in baseline [:compile :custody-error result-key])))
+              (is (= "java.io.IOException" (get-in baseline [:compile :custody-error :custody-io-error :class]))))
+            (reset! test-runs 0)
+            (let [evaluated (try (mutation/evaluate-mutant! opts mutant) (catch Exception error error))
+                  report-file (io/file backend-dir "target" (str "io-" (name phase) ".edn"))
+                  report (when (map? evaluated)
+                           (mutation/write-report! {:run? true :baseline :passed :source-sha (:source-sha fixture)
+                                                    :report-file (.getPath report-file)} [evaluated]))
+                  native (when report (json/read-str (slurp (str report-file ".json")) :key-fn keyword))]
+              (is (= :invalid (:status evaluated)))
+              (is (= :custody (:phase evaluated)))
+              (is (= child-result (get-in evaluated [:result :custody-error result-key])))
+              (is (= (.getMessage io-error) (get-in evaluated [:result :custody-error :custody-io-error :message])))
+              (is (= 3 (:schema_version native)))
+              (is (= "failed" (:status native)))
+              (is (= 1 (get-in native [:summary :invalid])))
+              (is (= child-result (get-in native [:mutants 0 :result :custody-error result-key])))
+              (is (= original-source (slurp source-file)))))))
+      ;; Fatal JVM errors are outside the expected I/O custody boundary.
+      (doseq [phase [:compile :test]]
+        (let [fatal (AssertionError. "fatal fixture")
+              calls (atom 0)]
+          (with-redefs [mutation/assert-source-custody! (constantly true)
+                        mutation/run-process! (fn [_] (swap! calls inc) (if (= :compile phase) compile-result test-result))
+                        mutation/preserve-payload! (fn [_ _] (throw fatal))
+                        mutation/payload-snapshot! (constantly payload)
+                        mutation/assert-payload-custody! (fn [_] (when (pos? @calls) (throw fatal)) true)]
+            (is (identical? fatal (try
+                                   (if (= :compile phase) (mutation/compile-mutant! opts)
+                                       (mutation/run-mutant-tests! (assoc opts :payload payload)))
+                                   (catch AssertionError error error)))))))
+      (finally (delete-fixture! root)))))
+
+(deftest pretest-custody-io-failure-retains-compile-without-running-tests
+  (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
+        source-dir (io/file backend-dir "src/cljs")
+        source-file (io/file source-dir "demo.cljs")
+        original-source (slurp source-file)
+        mutant (first (mutation/discover-mutants {:src-dir (.getPath source-dir)}))
+        opts (assoc fixture :src-dir (.getPath source-dir))
+        complete {:exit-code 0 :timed-out? false :termination "exited" :cleanup-complete? true
+                  :capture-truncated? false :source-verified-before? true :source-verified-after? true
+                  :artifact-path mutation/payload-loader
+                  :artifact-sha256 (:sha256 (some #(when (= "loader" (:kind %)) %) (:files payload)))
+                  :output "[:test-ci] Build completed. (2 files, 1 compiled, 0 warnings, 0.1s)"}
+        original-source-guard mutation/assert-source-custody!
+        original-payload-guard mutation/assert-payload-custody!
+        original-custody-failure mutation/custody-failure]
+    (try
+      (doseq [guard [:source :payload]
+              caller [:baseline :mutant]]
+        (let [io-error (java.io.IOException. (str "injected pretest " (name guard) " read failure"))
+              compiled (atom nil)
+              caught (atom nil)
+              test-runs (atom 0)]
+          (with-redefs [mutation/compile-mutant! (fn [compile-opts]
+                                                 (let [result (assoc complete :payload
+                                                                     (assoc payload :source-binding (:source-binding compile-opts)))]
+                                                   (reset! compiled result)
+                                                   result))
+                        mutation/assert-source-custody! (fn [guard-opts]
+                                                          (if (= :source guard) (throw io-error)
+                                                              (original-source-guard guard-opts)))
+                        mutation/assert-payload-custody! (fn [guard-opts]
+                                                           (if (= :payload guard) (throw io-error)
+                                                               (original-payload-guard guard-opts)))
+                        mutation/run-process! (fn [_] (swap! test-runs inc) (throw (AssertionError. "test child must remain uninvoked")))
+                        mutation/custody-failure (fn [error] (reset! caught error) (original-custody-failure error))]
+            (let [result (try (if (= :baseline caller) (mutation/baseline! opts)
+                                 (mutation/evaluate-mutant! opts mutant))
+                              (catch Exception error error))
+                  failure (if (= :baseline caller) (:compile result) (:result result))
+                  report-file (io/file backend-dir "target" (str "pretest-" (name caller) "-" (name guard) ".edn"))
+                  report (when (map? result)
+                           (mutation/write-report! {:run? true :source-sha (:source-sha fixture)
+                                                    :baseline (if (= :baseline caller) (:status result) :passed)
+                                                    :baseline-evidence (when (= :baseline caller) result)
+                                                    :report-file (.getPath report-file)}
+                                                   (if (= :baseline caller) [] [result])))
+                  native (when report (json/read-str (slurp (str report-file ".json")) :key-fn keyword))
+                  native-failure (if (= :baseline caller) (get-in native [:baseline_evidence :compile])
+                                     (get-in native [:mutants 0 :result]))]
+              (is (zero? @test-runs))
+              (is (mutation/compiled? @compiled))
+              (is (= (if (= :baseline caller) :failed :invalid) (:status result)))
+              (is (= "custody-rejected" (:termination failure)))
+              (is (nil? (:exit-code failure)))
+              (is (= @compiled (get-in failure [:custody-error :compile-result])))
+              (is (= {:class "java.io.IOException" :message (.getMessage io-error)}
+                     (get-in failure [:custody-error :custody-io-error])))
+              (is (identical? io-error (some-> @caught .getCause)))
+              (is (not (contains? (:custody-error failure) :test-result)))
+              (is (not-any? #(contains? failure %) [:tests :assertions :failures :errors]))
+              (is (= 3 (:schema_version native)))
+              (is (= "failed" (:status native)))
+              (is (= 0 (get-in native [:summary :killed])))
+              (is (= 0 (get-in native [:summary :evaluated])))
+              (is (= @compiled (get-in native-failure [:custody-error :compile-result])))
+              (is (nil? (get-in native [:baseline_evidence :test])))
+              (is (= original-source (slurp source-file)))))))
+      (doseq [caller [:baseline :mutant]]
+        (let [fatal (AssertionError. "fatal pretest fixture")]
+          (with-redefs [mutation/compile-mutant! (constantly (assoc complete :payload payload))
+                        mutation/assert-source-custody! (fn [_] (throw fatal))]
+            (is (identical? fatal (try
+                                   (if (= :baseline caller) (mutation/baseline! opts)
+                                       (mutation/evaluate-mutant! opts mutant))
+                                   (catch AssertionError error error))))
+            (is (= original-source (slurp source-file))))))
+      (finally (delete-fixture! root)))))
+
+(deftest unchanged-loader-cannot-hide-changed-runtime-test-input
+  (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
+        runtime-file (io/file backend-dir (:runtime-root payload) "demo.js")
+        original (slurp runtime-file)
+        green {:exit-code 0 :timed-out? false :termination "exited" :cleanup-complete? true
+               :capture-truncated? false :output "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors."}]
+    (try
+      (with-redefs [mutation/run-process! (constantly green)]
+        (spit runtime-file "global.demo = false;\n")
+        (is (thrown? clojure.lang.ExceptionInfo (mutation/run-mutant-tests! fixture)))
+        (spit runtime-file original)
+        (.delete runtime-file)
+        (is (thrown? clojure.lang.ExceptionInfo (mutation/run-mutant-tests! fixture)))
+        (spit runtime-file original)
+        (let [result (mutation/run-mutant-tests! fixture)]
+          (is (= (:sha256 payload) (:input-payload-sha256 result)))
+          (is (true? (:payload-verified-before? result)))
+          (is (true? (:payload-verified-after? result)))))
+      (with-redefs [mutation/run-process! (fn [_] (spit runtime-file "global.demo = false;\n") green)]
+        (is (thrown? clojure.lang.ExceptionInfo (mutation/run-mutant-tests! fixture))))
+      (finally (delete-fixture! root)))))
+
+(deftest payload-inventory-and-source-identity-have-independent-guards
+  (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
+        imported (io/file backend-dir (:runtime-root payload) "demo.js")
+        extra (io/file backend-dir (:runtime-root payload) "extra.js")
+        source (io/file backend-dir "src/cljs/demo.cljs")
+        original-source (slurp source)]
+    (try
+      (is (= payload (mutation/payload-snapshot! fixture)))
+      (is (thrown? clojure.lang.ExceptionInfo (mutation/preserve-payload! (assoc fixture :output-dir "../outside") payload)))
+      (is (not (.exists (io/file root "outside"))))
+      (is (thrown? clojure.lang.ExceptionInfo (mutation/assert-source-custody! (assoc fixture :source-sha (apply str (repeat 40 "0"))))))
+      (spit extra "global.extra = 1;\n")
+      (is (thrown? clojure.lang.ExceptionInfo (mutation/payload-snapshot! fixture)))
+      (.delete extra)
+      (.delete imported)
+      (java.nio.file.Files/createSymbolicLink (.toPath imported) (.toPath source) (make-array java.nio.file.attribute.FileAttribute 0))
+      (is (thrown? clojure.lang.ExceptionInfo (mutation/payload-snapshot! fixture)))
+      (.delete imported)
+      (spit imported "global.demo = true;\n")
+      (with-redefs [mutation/run-process! (fn [_] (spit source "(def value false)\n") {:output "source changed"})]
+        (is (thrown? clojure.lang.ExceptionInfo (mutation/run-mutant-tests! fixture))))
+      (spit source original-source)
+      (is (true? (mutation/assert-source-custody! fixture)))
+      (let [before (mutation/payload-snapshot! fixture)]
+        (spit (io/file backend-dir (:runtime-root payload) "demo.js.map") "{\"changed\":true}\n")
+        (let [after-map (mutation/payload-snapshot! fixture)]
+          (is (not= (:sha256 before) (:sha256 after-map)))
+          (is (= (:code-sha256 before) (:code-sha256 after-map))))
+        (spit imported "global.demo = false;\n")
+        (let [after-js (mutation/payload-snapshot! fixture)]
+          (is (= (first (filter #(= "loader" (:kind %)) (:files before)))
+                 (first (filter #(= "loader" (:kind %)) (:files after-js)))))
+          (is (not= (:code-sha256 before) (:code-sha256 after-js)))))
+      (finally (delete-fixture! root)))))
+
+(deftest actual-shadow-map-layout-has-optional-debug-companions
+  (let [{:keys [root backend-dir] :as fixture} (payload-fixture!)
+        runtime (io/file backend-dir mutation/payload-runtime)]
+    (try
+      (spit (io/file backend-dir mutation/payload-loader) "SHADOW_IMPORT(\"shadow.module.main.append.js\");\n" :append true)
+      (spit (io/file runtime "shadow.module.main.append.js") "global.shadow_append = true;\n")
+      (spit (io/file runtime "goog.base.js.map") "{}\n")
+      (let [snapshot (try (mutation/payload-snapshot! fixture) (catch clojure.lang.ExceptionInfo _ ::refused))]
+        (is (not= ::refused snapshot))
+        (is (= 2 (count (filter #(= "source-map" (:kind %)) (:files snapshot))))))
+      (spit (io/file runtime "unknown.js.map") "{}\n")
+      (is (thrown? clojure.lang.ExceptionInfo (mutation/payload-snapshot! fixture)))
+      (finally (delete-fixture! root)))))
+
+(deftest unchanged-code-is-invalid-and-actual-test-input-is-source-bound
+  (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
+        src (io/file backend-dir "src/cljs")
+        source (io/file src "demo.cljs")
+        original (slurp source)
+        mutant (first (mutation/discover-mutants {:src-dir (.getPath src)}))
+        opts (assoc fixture :src-dir (.getPath src) :baseline-code-sha256 (:code-sha256 payload))
+        tests (atom 0)
+        completed {:timed-out? false :termination "exited" :cleanup-complete? true :capture-truncated? false}
+        compile-result (assoc completed :exit-code 0 :output "[:test-ci] Build completed. (2 files, 1 compiled, 0 warnings, 0.1s)")]
+    (try
+      (with-redefs [mutation/run-process! (fn [{:keys [cmd]}]
+                                           (if (= "pnpm" (first cmd)) compile-result
+                                               (do (swap! tests inc) (assoc completed :exit-code 1 :output "Ran 1 tests containing 1 assertions.\n1 failures, 0 errors."))))]
+        (let [result (mutation/evaluate-mutant! opts mutant)]
+          (is (= :invalid (:status result)))
+          (is (= :custody (:phase result)))
+          (is (zero? @tests))
+          (is (= original (slurp source)))))
+      (with-redefs [mutation/run-process! (fn [{:keys [cmd]}]
+                                           (if (= "pnpm" (first cmd))
+                                             (do (spit (io/file backend-dir (:runtime-root payload) "demo.js") "global.demo = false;\n") compile-result)
+                                             (do (swap! tests inc) (assoc completed :exit-code 1 :output "Ran 1 tests containing 1 assertions.\n1 failures, 0 errors."))))]
+        (let [result (mutation/evaluate-mutant! opts mutant)]
+          (is (= :killed (:status result)))
+          (is (= 1 @tests))
+          (is (= original (slurp source)))
+          (is (= (:source-binding result) (get-in result [:compile :payload :source-binding]) (get-in result [:result :source-binding])))
+          (is (= (get-in result [:compile :payload :sha256]) (get-in result [:result :input-payload-sha256])))
+          (is (true? (get-in result [:result :source-verified-after?])))))
+      (finally (delete-fixture! root)))))
 
 (deftest fatal-and-incomplete-test-output-is-not-qualification
   (let [green "Ran 10 tests containing 40 assertions.\n0 failures, 0 errors."
@@ -76,13 +369,20 @@
                  (mutation/load-equivalents! {:equivalents-file "../AGENTS.md"} [candidate])))))
 
 (deftest compiler-completion-and-artifact-custody-are-required
-  (let [complete {:exit-code 0 :timed-out? false :termination "exited" :cleanup-complete? true
-                  :capture-truncated? false :artifact-sha256 (apply str (repeat 64 "a"))
+  (let [{:keys [root payload]} (payload-fixture!)
+        complete {:exit-code 0 :timed-out? false :termination "exited" :cleanup-complete? true
+                  :capture-truncated? false :payload payload :source-verified-before? true :source-verified-after? true
+                  :artifact-path "target/test/test-ci.cjs"
+                  :artifact-sha256 (:sha256 (some #(when (= "loader" (:kind %)) %) (:files payload)))
                   :output "[:test-ci] Build completed. (10 files, 1 compiled, 0 warnings, 0.1s)"}]
+    (try
     (is (mutation/compiled? complete))
     (is (not (mutation/compiled? (assoc complete :output ""))))
     (is (not (mutation/compiled? (dissoc complete :artifact-sha256))))
-    (is (not (mutation/compiled? (assoc complete :output "[:server] Build completed. (10 files, 1 compiled, 0 warnings, 0.1s)"))))))
+    (is (not (mutation/compiled? (assoc complete :output "[:server] Build completed. (10 files, 1 compiled, 0 warnings, 0.1s)"))))
+    (is (not (mutation/compiled? (dissoc complete :payload))))
+    (is (not (mutation/compiled? (assoc complete :source-verified-after? false))))
+    (finally (delete-fixture! root)))))
 
 (deftest timed-out-descendants-do-not-delay-original-source-restoration
   (let [directory (.toFile (java.nio.file.Files/createTempDirectory "mutation-restore" (make-array java.nio.file.attribute.FileAttribute 0)))

@@ -101,7 +101,9 @@ jobs:
         if: always()
         with:
           name: production-mutation-${{ matrix.batch }}
-          path: backend/target/mutation/*.json
+          path: |
+            backend/target/mutation/*.json
+            backend/target/mutation/payload-store/*
           if-no-files-found: error
   qualified:
     needs: [source, integration-e2e, mutation]

@@ -15,8 +15,11 @@ The runner temporarily edits a real source file in a clean committed checkout,
 compiles the non-autorun `test-ci` target, runs its output in a separate guarded
 Node child, and restores the original source. Source inventory includes `.cljs`
 and `.cljc`; inactive reader-conditional branches and discarded reader forms
-receive no candidate identity. Compile completion and the test entrypoint hash
-are recorded alongside captured compile/test output. The test environment uses
+receive no candidate identity. The immutable source HEAD is captured before the
+run. Before and after compilation and testing, the runner requires that HEAD,
+an unchanged index and no untracked inputs; tracked inputs must be unchanged
+except for the exact source file and rewrite bound to the current mutant.
+The test environment uses
 the existing error preload and default empty-contracts fixture.
 
 Only a normally exited child with complete untruncated output and complete owned
@@ -24,9 +27,43 @@ process cleanup can supply evidence. The green baseline requires exit zero,
 positive tests/assertions, matching summaries, zero failures/errors and no fatal
 marker. A kill requires normal exit one and completed red assertions under the
 same conditions. A crash, signal, fatal async error, missing/mismatched summary,
-compiler warning, timeout or capture/cleanup failure remains invalid. Schema 2
+compiler warning, timeout or capture/cleanup failure remains invalid. Schema 3
 reports retain the evidence; the verifier rechecks output hashes and counters
 instead of trusting a `killed` label.
+
+The nonbundled `test-ci.cjs` loader is not the complete executed artifact.
+Compilation records that loader plus every flat emitted runtime JavaScript and
+source-map file under `.shadow-cljs/builds/test-ci/dev/out/cljs-runtime`, with
+sorted path, kind, byte length and SHA-256 entries. The supported pinned Shadow
+layout has one runtime JS file for each ordered `SHADOW_IMPORT` entry, plus
+`goog.base.js`. Source maps are optional companions of those JavaScript files;
+every physically emitted map is included. The observed output has a map for
+`goog.base.js` and none for `shadow.module.main.append.js`. Missing or extra
+runtime JS, unknown map companions, nested or symlinked output refuses custody.
+The loader must use that exact relative runtime root. A toolchain layout change
+requires a reviewed contract update rather than silently dropping output.
+
+Exact bytes are stored once by digest in `target/mutation/payload-store` and
+uploaded with the report. Start with a fresh output directory; the runner refuses
+an existing payload store and never removes prior evidence. After merging the
+four artifacts, the verifier requires exactly the union of referenced digest
+files in the store. `--output-dir` must be backend-relative with no parent or
+absolute path traversal. A portable inventory hash covers all files; a second
+code hash excludes maps. The actual complete inventory and source binding must
+still match immediately before and after the test child. The independent
+verifier reads the copied bytes, checks their lengths and hashes, checks the
+loader/import inventory and matches the test's recorded input to its compile.
+It also requires each killed mutant's code identity to differ from the green
+baseline. An unchanged loader with changed runtime code is allowed. Unchanged
+code or a maps-only change is invalid and receives no equivalent exclusion or
+kill credit. These observations do not claim continuous filesystem monitoring
+or custody of code outside the emitted payload; package locks and the configured
+toolchain remain separate inputs.
+
+Earlier schema 2 reports, including the three-candidate pilot, remain historical
+evidence with entrypoint-only custody. They do not satisfy schema 3 admission.
+The old pilot remains failed with two killed mutants and one survivor; this
+repair does not reinterpret its result or supply a new campaign.
 
 The subprocess adapter requires Linux `/proc`, pidfds and process-local subreaper
 support. It supervises only its fresh child process group and adopted descendants,

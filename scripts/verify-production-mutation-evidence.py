@@ -4,7 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import stat
 import sys
+
+LOADER = "target/test/test-ci.cjs"
+RUNTIME = ".shadow-cljs/builds/test-ci/dev/out/cljs-runtime"
+JS_NAME = r"[A-Za-z0-9_$][A-Za-z0-9_.$-]*\.js"
 
 
 def require(condition, message):
@@ -29,16 +34,130 @@ def completed_evidence(result, exit_code):
     return output
 
 
-def compile_evidence(result):
+def digest_shape(value, length):
+    return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{" + str(length) + "}", value))
+
+
+def physical_path(path, directory=False):
+    """CAS custody must not follow a file or ancestor symlink."""
+    absolute = path.absolute()
+    for ancestor in [*reversed(absolute.parents), absolute]:
+        require(not ancestor.is_symlink(), "Payload custody contains a symlink")
+    require(absolute.exists(), "Missing payload custody path")
+    mode = absolute.stat().st_mode
+    require(stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode), "Invalid payload custody file type")
+    return absolute
+
+
+def source_binding(binding, fingerprint=None):
+    require(isinstance(binding, dict), "Missing immutable source binding")
+    if fingerprint is None:
+        require(binding == {"kind": "baseline"}, "Invalid baseline source binding")
+        return
+    require(digest_shape(fingerprint, 64)
+            and set(binding) == {"kind", "fingerprint", "path", "original-sha256", "mutated-sha256"}
+            and binding["kind"] == "mutant" and binding["fingerprint"] == fingerprint,
+            "Invalid mutant source binding")
+    path = binding.get("path")
+    require(isinstance(path, str) and path.startswith("src/cljs/")
+            and path.endswith((".cljs", ".cljc"))
+            and all(part not in ("", ".", "..") for part in path.split("/"))
+            and "\\" not in path and "\x00" not in path, "Unsafe bound source path")
+    require(digest_shape(binding.get("original-sha256"), 64)
+            and digest_shape(binding.get("mutated-sha256"), 64)
+            and binding["original-sha256"] != binding["mutated-sha256"], "Invalid bound source hashes")
+
+
+def manifest_digest(files):
+    rows = "".join(f'{entry["path"]}\t{entry["kind"]}\t{entry["bytes"]}\t{entry["sha256"]}\n'
+                   for entry in files)
+    return hashlib.sha256(rows.encode("utf-8")).hexdigest()
+
+
+def payload_evidence(payload, sha, binding, store, referenced):
+    """Recompute the fixed Shadow test-ci payload identity from preserved bytes."""
+    require(isinstance(payload, dict) and type(payload.get("schema-version")) is int
+            and payload["schema-version"] == 1
+            and payload.get("source-sha") == sha and payload.get("source-binding") == binding,
+            "Missing or stale compiled payload source binding")
+    require(payload.get("loader-path") == LOADER and payload.get("runtime-root") == RUNTIME,
+            "Unsupported compiled payload layout")
+    imports = payload.get("imports")
+    require(isinstance(imports, list) and imports and all(isinstance(name, str)
+            and re.fullmatch(JS_NAME, name) for name in imports)
+            and len(imports) == len(set(imports)) and "goog.base.js" not in imports,
+            "Invalid compiled import inventory")
+    expected = {LOADER: "loader", RUNTIME + "/goog.base.js": "runtime-js"}
+    expected.update({RUNTIME + "/" + name: "runtime-js" for name in imports})
+    files = payload.get("files")
+    require(isinstance(files, list) and all(isinstance(entry, dict) for entry in files),
+            "Missing compiled file inventory")
+    paths = [entry.get("path") for entry in files]
+    require(all(isinstance(path, str) for path in paths) and set(expected).issubset(paths),
+            "Missing required compiled files")
+    for path in paths:
+        if path not in expected:
+            require(path.startswith(RUNTIME + "/") and path.endswith(".js.map")
+                    and expected.get(path[:-4]) == "runtime-js", "Unexpected compiled debug map")
+            expected[path] = "source-map"
+    require([entry.get("path") for entry in files] == sorted(expected),
+            "Missing, additional, duplicate or unordered compiled files")
+    loader = None
+    loader_hash = None
+    for entry in files:
+        require(set(entry) == {"path", "kind", "bytes", "sha256"}
+                and entry["kind"] == expected[entry["path"]]
+                and type(entry["bytes"]) is int and entry["bytes"] > 0
+                and digest_shape(entry["sha256"], 64), "Malformed compiled file identity")
+        blob = physical_path(store / entry["sha256"]).read_bytes()
+        require(len(blob) == entry["bytes"] and hashlib.sha256(blob).hexdigest() == entry["sha256"],
+                "Compiled payload bytes mismatch")
+        referenced.add(entry["sha256"])
+        if entry["kind"] == "loader":
+            try:
+                loader = blob.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise ValueError("Invalid compiled loader encoding") from error
+            loader_hash = entry["sha256"]
+    root_line = "var SHADOW_IMPORT_PATH = __dirname + '/../../" + RUNTIME + "';"
+    lines = loader.splitlines()
+    require([line for line in lines if line.startswith("var SHADOW_IMPORT_PATH")] == [root_line],
+            "Invalid compiled loader relative runtime root")
+    import_lines = [line for line in lines if line.lstrip().startswith("SHADOW_IMPORT(")]
+    matches = [re.fullmatch(r'SHADOW_IMPORT\("(' + JS_NAME + r')"\);', line) for line in import_lines]
+    require(all(matches) and [match.group(1) for match in matches] == imports,
+            "Compiled loader imports differ from preserved inventory")
+    require(manifest_digest(files) == payload.get("sha256")
+            and manifest_digest([entry for entry in files if entry["kind"] != "source-map"])
+            == payload.get("code-sha256"), "Compiled payload aggregate identity mismatch")
+    return loader_hash
+
+
+def compile_evidence(result, sha, binding, store, referenced):
+    require(digest_shape(sha, 40), "Immutable compile source required")
+    source_binding(binding, binding.get("fingerprint") if isinstance(binding, dict)
+                   and binding.get("kind") == "mutant" else None)
     output = completed_evidence(result, 0)
     require(bool(re.search(r"\[:test-ci\] Build completed\. \([0-9]+ files, [0-9]+ compiled, 0 warnings,", output))
             and not re.search(r"\b[1-9][0-9]* warnings", output), "Missing clean test-ci compilation")
-    require(bool(re.fullmatch(r"[0-9a-f]{64}", result.get("artifact-sha256", ""))),
-            "Missing compiled test entrypoint identity")
+    require(result.get("source-verified-before?") is True and result.get("source-verified-after?") is True,
+            "Compile source custody was not preserved")
+    payload = result.get("payload")
+    loader_hash = payload_evidence(payload, sha, binding, store, referenced)
+    require(result.get("artifact-path") == LOADER and result.get("artifact-sha256") == loader_hash,
+            "Compiled entrypoint identity mismatch")
+    return payload
 
 
-def test_evidence(result, killed):
+def test_evidence(result, killed, payload):
     output = completed_evidence(result, 1 if killed else 0)
+    require(result.get("source-sha") == payload["source-sha"]
+            and result.get("source-binding") == payload["source-binding"]
+            and result.get("input-payload-sha256") == payload["sha256"],
+            "Test input differs from compiled source or payload")
+    require(all(result.get(key) is True for key in ["payload-verified-before?", "payload-verified-after?",
+                                                   "source-verified-before?", "source-verified-after?"]),
+            "Test source or payload changed during execution")
     totals = re.findall(r"Ran (\d+) tests? containing (\d+) assertions?\.", output)
     outcomes = re.findall(r"\b(\d+) failures?,\s*(\d+) errors?\.", output)
     require(bool(totals) and len(totals) == len(outcomes), "Missing or unmatched completed summaries")
@@ -57,16 +176,19 @@ def verify(sha, directory):
     require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "Immutable commit required")
     files = list(Path(directory).glob("*.json"))
     require(len(files) == 4, "Exactly four completed batches required")
+    store = physical_path(Path(directory) / "payload-store", directory=True)
+    referenced = set()
     seen, indexes, excluded = set(), set(), set()
     for path in files:
         batch = json.loads(path.read_text())
-        require(batch.get("schema_version") == 2 and batch.get("source_sha") == sha
+        require(batch.get("schema_version") == 3 and batch.get("source_sha") == sha
                 and batch.get("status") == "passed" and batch.get("baseline") == "passed",
                 "Invalid, legacy or stale batch")
         baseline = batch.get("baseline_evidence")
         require(isinstance(baseline, dict) and baseline.get("status") == "passed", "Missing green baseline evidence")
-        compile_evidence(baseline.get("compile"))
-        test_evidence(baseline.get("test"), killed=False)
+        baseline_binding = {"kind": "baseline"}
+        baseline_payload = compile_evidence(baseline.get("compile"), sha, baseline_binding, store, referenced)
+        test_evidence(baseline.get("test"), killed=False, payload=baseline_payload)
         index = batch["batch_index"]
         require(type(index) is int and index in range(4) and index not in indexes, "Invalid batch index")
         indexes.add(index)
@@ -91,10 +213,17 @@ def verify(sha, directory):
             require(isinstance(key, str) and bool(re.fullmatch(r"[0-9a-f]{64}", key)) and key not in seen,
                     "Duplicate or invalid mutation")
             require(mutant["status"] == "killed" and mutant["phase"] == "test", "Mutation was not test-killed")
-            compile_evidence(mutant.get("compile"))
-            test_evidence(mutant.get("result"), killed=True)
+            binding = mutant.get("source-binding")
+            source_binding(binding, key)
+            payload = compile_evidence(mutant.get("compile"), sha, binding, store, referenced)
+            require(payload["code-sha256"] != baseline_payload["code-sha256"],
+                    "Unchanged executed code cannot qualify as a kill")
+            test_evidence(mutant.get("result"), killed=True, payload=payload)
             seen.add(key)
     require(not (seen & excluded), "Equivalent exclusion cannot receive kill credit")
+    stored = list(store.iterdir())
+    require(all(digest_shape(path.name, 64) and physical_path(path) for path in stored)
+            and {path.name for path in stored} == referenced, "Payload store has unexpected or missing blobs")
     return len(seen)
 
 

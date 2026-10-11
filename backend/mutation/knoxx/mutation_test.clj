@@ -14,7 +14,8 @@
             [clojure.tools.reader :as reader]
             [clojure.tools.reader.reader-types :as reader-types]
             [rewrite-clj.zip :as z])
-  (:import [java.io File]
+  (:import [java.io File IOException]
+           [java.nio.file Files]
            [java.security MessageDigest]
            [java.util.concurrent TimeUnit]))
 
@@ -346,6 +347,139 @@
                            "with `git checkout`.")
                       {:src-dir src-dir :dirty-paths dirty})))))
 
+(def payload-loader "target/test/test-ci.cjs")
+(def payload-runtime ".shadow-cljs/builds/test-ci/dev/out/cljs-runtime")
+
+(defn sha256-bytes
+  "Digest copied artifacts without decoding or normalizing their bytes."
+  [bytes]
+  (apply str (map #(format "%02x" (bit-and 0xff %))
+                  (.digest (MessageDigest/getInstance "SHA-256") ^bytes bytes))))
+
+(defn git-result!
+  "Read immutable source identity and checkout custody at the backend boundary."
+  [opts & args]
+  (let [result (apply shell/sh (concat ["git"] args [:dir (or (:backend-dir opts) ".")]))]
+    (when-not (zero? (:exit result)) (throw (ex-info "Source custody Git read failed" result)))
+    (:out result)))
+
+(defn source-binding!
+  "Bind a mutation to its original committed bytes and exact expected rewrite."
+  [opts mutant]
+  (if-not mutant
+    {:kind "baseline"}
+    (let [path (str "src/cljs/" (:relative-path mutant))
+          original (git-result! opts "show" (str (:source-sha opts) ":backend/" path))]
+      {:kind "mutant" :fingerprint (:fingerprint mutant) :path path
+       :original-sha256 (sha256 original)
+       :mutated-sha256 (sha256 (apply-mutant-to-source original mutant))})))
+
+(defn assert-source-custody!
+  "Permit only the exact current source mutation; refuse HEAD, index or input drift."
+  [{:keys [source-sha source-binding backend-dir] :as opts}]
+  (let [binding (or source-binding {:kind "baseline"})
+        mutant? (= "mutant" (:kind binding))
+        dirty (remove str/blank? (str/split (git-result! opts "diff" "--name-only" "-z" "HEAD") #"\u0000"))
+        expected-path (str "backend/" (:path binding))]
+    (when-not (and (re-matches #"[0-9a-f]{40}" (or source-sha ""))
+                   (= source-sha (str/trim (git-result! opts "rev-parse" "HEAD")))
+                   (str/blank? (git-result! opts "diff" "--cached" "--name-only" "-z"))
+                   (str/blank? (git-result! opts "ls-files" "--others" "--exclude-standard" "-z"))
+                   (if mutant? (= [expected-path] (vec dirty)) (empty? dirty))
+                   (if mutant?
+                     (and (= (:original-sha256 binding)
+                             (sha256 (git-result! opts "show" (str source-sha ":" expected-path))))
+                          (not= (:original-sha256 binding) (:mutated-sha256 binding))
+                          (= (:mutated-sha256 binding) (sha256 (slurp (io/file (or backend-dir ".") (:path binding))))))
+                     (= {:kind "baseline"} binding)))
+      (throw (ex-info "Immutable source custody changed" {:source-sha source-sha :source-binding binding :dirty-paths (vec dirty)})))
+    true))
+
+(defn payload-path!
+  "Refuse symlink traversal or lexical escape before reading or copying artifacts."
+  [root relative]
+  (when (or (.isAbsolute (io/file relative))
+            (some #{"" "." ".."} (str/split relative #"/" -1)))
+    (throw (ex-info "Payload path is not backend-relative" {:path relative})))
+  (let [root (.toFile (.normalize (.toPath (.getAbsoluteFile (io/file root)))))
+        file (.toFile (.normalize (.toPath (.getAbsoluteFile (io/file root relative)))))]
+    (when-not (.startsWith (.toPath file) (.toPath root))
+      (throw (ex-info "Payload path escaped backend root" {:path relative})))
+    (loop [part file]
+      (when (Files/isSymbolicLink (.toPath part))
+        (throw (ex-info "Payload path is a symlink" {:path relative})))
+      (when-not (= root part)
+        (if-let [parent (.getParentFile part)]
+          (recur parent)
+          (throw (ex-info "Payload path escaped backend root" {:path relative})))))
+    file))
+
+(defn regular-payload-file!
+  "Reject missing and nonregular files after path custody has been established."
+  [root relative]
+  (let [file (payload-path! root relative)]
+    (when-not (.isFile file) (throw (ex-info "Payload file missing or nonregular" {:path relative})))
+    file))
+
+(defn payload-digest
+  "Hash the portable sorted file inventory; maps have a separate code identity."
+  [files]
+  (sha256 (apply str (map (fn [{:keys [path kind bytes sha256]}]
+                           (str path "\t" kind "\t" bytes "\t" sha256 "\n")) files))))
+
+(defn payload-snapshot!
+  "Read the complete nonbundled Shadow test loader and flat runtime JS/map output."
+  [{:keys [backend-dir source-sha source-binding] :or {backend-dir "."}}]
+  (let [loader (regular-payload-file! backend-dir payload-loader)
+        runtime (io/file backend-dir payload-runtime)
+        children (.listFiles runtime)
+        lines (str/split-lines (slurp loader))
+        import-lines (filter #(str/starts-with? (str/triml %) "SHADOW_IMPORT(") lines)
+        imports (mapv second (re-seq #"(?m)^SHADOW_IMPORT\(\"([^\"\r\n]+)\"\);$" (slurp loader)))
+        paths (sort (cons payload-loader (map #(str payload-runtime "/" (.getName ^File %)) children)))]
+    (when-not (and (seq children) (seq imports) (= (count imports) (count (distinct imports)) (count import-lines))
+                   (= [(str "var SHADOW_IMPORT_PATH = __dirname + '/../../" payload-runtime "';")]
+                      (vec (filter #(str/starts-with? % "var SHADOW_IMPORT_PATH") lines)))
+                   (not (some #{"goog.base.js"} imports))
+                   (every? #(re-matches #"[A-Za-z0-9_$][A-Za-z0-9_.$-]*\.js" %) imports)
+                   (every? #(re-matches #"[A-Za-z0-9_$][A-Za-z0-9_.$-]*\.js(?:\.map)?" (.getName ^File %)) children)
+                   (= (set (map #(.getName ^File %) (filter #(str/ends-with? (.getName ^File %) ".js") children)))
+                      (set (conj imports "goog.base.js")))
+                   (every? #(let [name (.getName ^File %)]
+                              (or (not (str/ends-with? name ".map"))
+                                  (contains? (set (conj imports "goog.base.js")) (subs name 0 (- (count name) 4))))) children))
+      (throw (ex-info "Unsupported or incomplete Shadow runtime payload" {})))
+    (let [files (mapv (fn [path]
+                        (let [bytes (Files/readAllBytes (.toPath (regular-payload-file! backend-dir path)))]
+                          (when (zero? (alength bytes)) (throw (ex-info "Payload file is empty" {:path path})))
+                          {:path path :kind (cond (= payload-loader path) "loader" (str/ends-with? path ".map") "source-map" :else "runtime-js")
+                           :bytes (alength bytes) :sha256 (sha256-bytes bytes)})) paths)]
+      {:schema-version 1 :source-sha source-sha :source-binding (or source-binding {:kind "baseline"})
+       :loader-path payload-loader :runtime-root payload-runtime :imports imports :files files
+       :sha256 (payload-digest files) :code-sha256 (payload-digest (remove #(= "source-map" (:kind %)) files))})))
+
+(defn preserve-payload!
+  "Store exact artifact bytes once by content hash for independent verification."
+  [{:keys [backend-dir output-dir] :or {backend-dir "." output-dir default-output-dir}} payload]
+  (let [store (payload-path! backend-dir (str output-dir "/payload-store"))]
+    (.mkdirs store)
+    (doseq [{:keys [path sha256 bytes]} (:files payload)]
+      (let [blob (payload-path! backend-dir (str output-dir "/payload-store/" sha256))
+            source (regular-payload-file! backend-dir path)]
+        (when-not (.exists blob) (io/copy source blob))
+        (regular-payload-file! (.getAbsolutePath store) sha256)
+        (when-not (and (= bytes (.length blob))
+                       (= sha256 (sha256-bytes (Files/readAllBytes (.toPath blob)))))
+          (throw (ex-info "Copied payload blob changed" {:path path :sha256 sha256})))))
+    payload))
+
+(defn assert-payload-custody!
+  "Compare actual complete runtime bytes with the compilation snapshot."
+  [opts]
+  (when-not (= (:payload opts) (payload-snapshot! opts))
+    (throw (ex-info "Compiled runtime payload changed before or during tests" {})))
+  true)
+
 (defn with-mutated-source!
   "backend/shadow-cljs.edn runs shadow-cljs in :deps mode, which hands the
   entire classpath to tools.deps and ignores :source-paths outright (even via
@@ -376,11 +510,11 @@
    :output output})
 
 (defn run-process!
-  [{:keys [cmd timeout-ms]
+  [{:keys [cmd timeout-ms dir]
     :or {timeout-ms default-timeout-ms}}]
   (let [supervised (into ["python3" "scripts/run-mutation-process.py" "--timeout-ms" (str timeout-ms) "--"] cmd)
         builder (doto (ProcessBuilder. ^java.util.List supervised)
-                  (.directory (io/file "."))
+                  (.directory (io/file (or dir ".")))
                   (.redirectErrorStream true))
         process (.start builder)
         output-future (future (slurp (.getInputStream process)))]
@@ -431,27 +565,82 @@
     (boolean (and (completed-execution? result) (= 0 exit-code) (pos? (or assertions 0))
                   (zero? failures) (zero? errors)))))
 
-(defn compiled? [{:keys [exit-code output artifact-sha256] :as result}]
+(defn clean-compilation? [{:keys [exit-code output] :as result}]
   (and (= 0 exit-code) (completed-execution? result)
        (re-find #"\[:test-ci\] Build completed\. \([0-9]+ files, [0-9]+ compiled, 0 warnings," output)
-       (re-matches #"[0-9a-f]{64}" (or artifact-sha256 ""))
        (not (re-find #"\b[1-9][0-9]* warnings" output))))
 
+(defn compiled?
+  "Clean compile output alone cannot establish the emitted runtime identity."
+  [{:keys [artifact-path artifact-sha256 payload source-verified-before? source-verified-after?] :as result}]
+  (and (clean-compilation? result) (true? source-verified-before?) (true? source-verified-after?)
+       (= 1 (:schema-version payload)) (seq (:files payload))
+       (= payload-loader artifact-path) (re-matches #"[0-9a-f]{64}" (or artifact-sha256 ""))
+       (re-matches #"[0-9a-f]{40}" (or (:source-sha payload) ""))
+       (= (:sha256 payload) (payload-digest (:files payload)))
+       (= (:code-sha256 payload) (payload-digest (remove #(= "source-map" (:kind %)) (:files payload))))
+       (= artifact-sha256 (:sha256 (some #(when (= payload-loader (:path %)) %) (:files payload))))))
+
 (defn compile-mutant!
-  [{:keys [shadow-build timeout-ms] :or {shadow-build default-shadow-build timeout-ms default-timeout-ms}}]
+  [{:keys [shadow-build timeout-ms backend-dir] :or {shadow-build default-shadow-build timeout-ms default-timeout-ms} :as opts}]
   (when-not (= default-shadow-build shadow-build)
     (throw (ex-info "Mutation execution requires its exact non-autorun test-ci target" {:shadow-build shadow-build})))
+  (assert-source-custody! opts)
   (let [result (run-process! {:cmd ["pnpm" "exec" "shadow-cljs" "--force-spawn" "compile" shadow-build]
-                              :timeout-ms timeout-ms})
-        artifact (io/file "target/test/test-ci.cjs")]
-    (cond-> result
-      (.isFile artifact) (assoc :artifact-path "target/test/test-ci.cjs"
-                                :artifact-sha256 (sha256 (slurp artifact))))))
+                             :dir backend-dir :timeout-ms timeout-ms})]
+    (try
+      (assert-source-custody! opts)
+      (if-not (clean-compilation? result)
+        result
+        (let [payload (preserve-payload! opts (payload-snapshot! opts))]
+          (assert-payload-custody! (assoc opts :payload payload))
+          (assoc result :artifact-path payload-loader
+                        :artifact-sha256 (:sha256 (some #(when (= payload-loader (:path %)) %) (:files payload)))
+                        :payload payload :source-verified-before? true :source-verified-after? true)))
+      (catch clojure.lang.ExceptionInfo error
+        (throw (ex-info (.getMessage error) (assoc (ex-data error) :compile-result result) error)))
+      (catch IOException error
+        (throw (ex-info (or (.getMessage error) "Custody I/O failed")
+                        {:compile-result result
+                         :custody-io-error {:class (.getName (class error)) :message (.getMessage error)}}
+                        error))))))
 
 (defn run-mutant-tests!
-  [{:keys [timeout-ms] :or {timeout-ms default-timeout-ms}}]
-  (run-process! {:cmd ["node" "scripts/run-mutation-tests.mjs"]
-                 :timeout-ms timeout-ms}))
+  [{:keys [timeout-ms backend-dir payload source-sha source-binding] :or {timeout-ms default-timeout-ms} :as opts}]
+  (assert-source-custody! opts)
+  (assert-payload-custody! opts)
+  (let [result (run-process! {:cmd ["node" "scripts/run-mutation-tests.mjs"] :dir backend-dir :timeout-ms timeout-ms})]
+    (try
+      (assert-payload-custody! opts)
+      (assert-source-custody! opts)
+      (assoc result :input-payload-sha256 (:sha256 payload) :source-sha source-sha
+                    :source-binding (or source-binding {:kind "baseline"})
+                    :payload-verified-before? true :payload-verified-after? true
+                    :source-verified-before? true :source-verified-after? true)
+      (catch clojure.lang.ExceptionInfo error
+        (throw (ex-info (.getMessage error) (assoc (ex-data error) :test-result result) error)))
+      (catch IOException error
+        (throw (ex-info (or (.getMessage error) "Custody I/O failed")
+                        {:test-result result
+                         :custody-io-error {:class (.getName (class error)) :message (.getMessage error)}}
+                        error))))))
+
+(defn run-compiled-tests!
+  "Keep completed compile evidence when test preflight I/O yields no test result."
+  [opts compile-result]
+  (try
+    (run-mutant-tests! (assoc opts :payload (:payload compile-result)))
+    (catch IOException error
+      (throw (ex-info (or (.getMessage error) "Custody I/O failed")
+                      {:compile-result compile-result
+                       :custody-io-error {:class (.getName (class error)) :message (.getMessage error)}}
+                      error)))))
+
+(defn custody-failure
+  "Retain a failed guard as invalid evidence, without inventing a child exit."
+  [error]
+  {:exit-code nil :timed-out? false :termination "custody-rejected" :cleanup-complete? true
+   :capture-truncated? false :output (.getMessage ^Exception error) :custody-error (ex-data error)})
 
 (defn execution-evidence
   "Retain captured output alongside its hash and admission fields for verification."
@@ -461,23 +650,33 @@
 
 (defn evaluate-mutant!
   [opts mutant]
-  (with-mutated-source! opts mutant
-    (fn []
-      (let [compile-result (compile-mutant! opts)]
-        (if-not (compiled? compile-result)
-          (assoc mutant
-                 :status :invalid
-                 :phase :compile
-                 :result (execution-evidence compile-result))
-          (let [test-result (run-mutant-tests! opts)]
-            (assoc mutant
-                   :status (cond (killed? test-result) :killed
-                                 (passed-tests? test-result) :survived
-                                 :else :invalid)
-                   :phase :test
-                   :compile (execution-evidence compile-result)
-                   :result (merge (execution-evidence test-result)
-                                  (or (test-counters (:output test-result)) {})))))))))
+  (let [binding (source-binding! opts mutant)
+        opts (assoc opts :source-binding binding)]
+    (with-mutated-source! opts mutant
+      (fn []
+        (try
+          (let [compile-result (compile-mutant! opts)]
+            (cond
+              (not (compiled? compile-result))
+              (assoc mutant :source-binding binding :status :invalid :phase :compile
+                            :result (execution-evidence compile-result))
+
+              (= (:baseline-code-sha256 opts) (get-in compile-result [:payload :code-sha256]))
+              (assoc mutant :source-binding binding :status :invalid :phase :custody
+                            :compile (execution-evidence compile-result)
+                            :result (execution-evidence (custody-failure (ex-info "Mutation emitted unchanged runtime code" {}))))
+
+              :else
+              (let [test-result (run-compiled-tests! opts compile-result)]
+                (assoc mutant :source-binding binding
+                       :status (cond (killed? test-result) :killed
+                                     (passed-tests? test-result) :survived
+                                     :else :invalid)
+                       :phase :test :compile (execution-evidence compile-result)
+                       :result (merge (execution-evidence test-result) (or (test-counters (:output test-result)) {}))))))
+          (catch clojure.lang.ExceptionInfo error
+            (assoc mutant :source-binding binding :status :invalid :phase :custody
+                          :result (execution-evidence (custody-failure error)))))))))
 
 (defn report-summary
   [results]
@@ -501,13 +700,13 @@
   (let [path (io/file (or report-file (str output-dir "/report.edn")))
         passed? (and run? (= :passed baseline) (>= (count results) min-evaluated)
                      (every? #(and (= :killed (:status %)) (= :test (:phase %))) results))
-        report {:schema_version 2 :summary (assoc (report-summary results) :excluded (count excluded)) :mutants results
+        report {:schema_version 3 :summary (assoc (report-summary results) :excluded (count excluded)) :mutants results
                 :excluded (vec excluded) :baseline_evidence baseline-evidence
                 :source_sha source-sha :batch_index batch-index :baseline baseline
                 :status (if passed? :passed (if run? :failed :planned))}]
     (when-let [parent (.getParentFile path)] (.mkdirs parent))
     (spit path (with-out-str (pprint/pprint report)))
-    (spit (str path ".json") (json/write-str (update report :mutants #(mapv (fn [mutant] (select-keys mutant [:id :fingerprint :status :phase :compile :result])) %))))
+    (spit (str path ".json") (json/write-str (update report :mutants #(mapv (fn [mutant] (select-keys mutant [:id :fingerprint :source-binding :status :phase :compile :result])) %))))
     report))
 
 (defn parse-long-option
@@ -582,15 +781,22 @@
 (defn baseline!
   "An already-failing suite cannot be mutation evidence."
   [opts]
-  (let [compile-result (compile-mutant! opts)
-        test-result (when (compiled? compile-result) (run-mutant-tests! opts))]
-    {:status (if (and test-result (passed-tests? test-result)) :passed :failed)
-     :compile (execution-evidence compile-result)
-     :test (when test-result (merge (execution-evidence test-result) (test-counters (:output test-result))))}))
+  (try
+    (let [opts (assoc opts :source-binding {:kind "baseline"})
+          compile-result (compile-mutant! opts)
+          test-result (when (compiled? compile-result) (run-compiled-tests! opts compile-result))]
+      {:status (if (and test-result (passed-tests? test-result)) :passed :failed)
+       :compile (execution-evidence compile-result)
+       :test (when test-result (merge (execution-evidence test-result) (test-counters (:output test-result))))})
+    (catch clojure.lang.ExceptionInfo error
+      {:status :failed :compile (execution-evidence (custody-failure error)) :test nil})))
 
 (defn run-suite! [opts]
   (when (:run? opts) (assert-clean-tree! opts))
-  (let [candidates (discover-candidates opts)
+  (when (and (:run? opts) (.exists (io/file (or (:output-dir opts) default-output-dir) "payload-store")))
+    (throw (ex-info "Mutation payload evidence directory must be fresh; preserve prior runs" {})))
+  (let [opts (assoc opts :source-sha (str/trim (git-result! opts "rev-parse" "HEAD")))
+        candidates (discover-candidates opts)
         equivalents (load-equivalents! opts candidates)
         excluded-keys (set (map :fingerprint equivalents))
         excluded (filterv (fn [entry] (let [candidate (some #(when (= (:fingerprint entry) (:fingerprint %)) %) candidates)]
@@ -599,9 +805,9 @@
         baseline (if (:run? opts) (:status baseline-evidence) :not-run)
         mutants (partition-mutants candidates (assoc opts :equivalent-fingerprints excluded-keys))
         results (cond (not (:run? opts)) (dry-run-results mutants)
-                      (= :passed baseline) (mapv #(evaluate-mutant! opts %) mutants)
+                      (= :passed baseline) (mapv #(evaluate-mutant! (assoc opts :baseline-code-sha256 (get-in baseline-evidence [:compile :payload :code-sha256])) %) mutants)
                       :else [])
-        source-sha (str/trim (:out (shell/sh "git" "rev-parse" "HEAD")))
+        source-sha (:source-sha opts)
         report (write-report! (assoc opts :baseline baseline :baseline-evidence baseline-evidence
                                     :excluded excluded :source-sha source-sha) results)]
     (print-summary! report)
