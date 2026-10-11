@@ -307,12 +307,19 @@ def supervise(command, timeout_ms, max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
                 if not capture:
                     process.stdout.close()
                 while time.monotonic() < cleanup_deadline:
+                    if owned:
+                        owned.discover()
                     children = direct_children(os.getpid()) - {process.pid}
-                    if termination == "exited" and children:
+                    if termination == "exited" and (
+                            children or (owned and owned.live_descendants())):
                         termination = "cleanup-error"
                         diagnostic = "Leader exited with late owned descendants"
                     if termination != "exited":
-                        if process.returncode is None:
+                        # Stable pidfds also reach descendants that escaped the
+                        # private group but have not yet been adopted.
+                        if owned:
+                            owned.kill_owned()
+                        elif process.returncode is None:
                             try:
                                 os.killpg(process.pid, signal.SIGKILL)
                             except ProcessLookupError:

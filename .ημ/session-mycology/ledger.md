@@ -294,3 +294,12 @@
   spore: none
   receipt-refs: c5f71c0c-263c-428f-b273-9ec5f6a313b5, 9b345550d08831e6520780e7faf233ac608c7267d01f2d79989310bb996f2768, b4816a450fb9671378b518f0153ad8ffd74ea6ef98a3a756993a63a272033f5d
   note: Measure the actual canonical guarded baseline before campaign spending. Exact source78843174 passed1914tests9844assertions; three measured mutations yielded two assertion kills and one real survivor, no invalid executions. Preserve wholepilot exit1 and restored source. A private terminal return ignored after unchanged notification effects has no discovered supported boolean contract; a direct literal assertion would manufacture one. Green tests alone do not adjudicate equivalence: present exact source rationale for independent external review and keep zero exclusions until then. Targeted one-file ordinal lookup places this observed survivor first in batch1; no selection reorder hides it. Local median75.41seconds is a throughput measurement, not a hosted qualification guarantee. Preserve initial selector and metadata-capture adapter failures; those changed no canonical source and earned no credit. The nonbundled entrypoint hash is distinct from full compiled payload identity. Metadata successor records tested788 honestly and supplies no successor baseline or four-batch credit. No extra spore or promotion.
+- ts: 2026-10-11T23:52:33.808449403Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Fix owned child signalling and isolate default versus caller contracts fixtures
+  p-efficiency: 0.76
+  p-friction: 0.58
+  p-skill-candidate: 0.64
+  spore: none
+  receipt-refs: N/prod-goal-knoxx388-five-path-source-receipt-v1.stdout
+  note: Native review led to explicit stable pidfd cleanup and actual missed-group control RED1 to supervisor14GREEN. Preserve ordinary escape predecessor local1/1 pass discrepancy. Native bundle failure reproducedNode24 with explicitcallercontracts RED1; testonlydefaults controlled separately; new callerpreservation check and wholeJS79 pass. Supervisorcontrols now reached by CI/reviewgate. Actual fiveinputbeforeafter stable, checkout1 and independent source assessment no findings. No currentbaseline/four250campaign, no sourceequivalence adjudication, no spore or promotion.

@@ -24,6 +24,7 @@ jobs:
         run_gate qualifier_python_dependencies "$RUNNER_TEMP/knoxx-qualification-python/bin/python" -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.2'
         run_gate qualifier_repository "$RUNNER_TEMP/knoxx-qualification-python/bin/python" scripts/test-production-checkout.py
         run_gate human_verifier_preconditions python3 scripts/test-cms-verifier-preconditions.py
+        run_gate mutation_process_supervisor python3 backend/test/python/test_mutation_process.py
         run_gate human_verifier_syntax bash -n scripts/verify-cms-source-locale-review.sh
         run_gate cms_history_verifier_syntax bash -n scripts/verify-cms-history.sh
         run_gate diff_check git diff --check "${PR_BASE_SHA}...HEAD"

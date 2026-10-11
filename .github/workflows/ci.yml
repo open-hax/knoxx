@@ -45,6 +45,7 @@ jobs:
           node scripts/check-deployment-boundary.mjs
           "$RUNNER_TEMP/knoxx-qualification-python/bin/python" scripts/test-production-checkout.py
           python3 scripts/test-cms-verifier-preconditions.py
+          python3 backend/test/python/test_mutation_process.py
 
   knoxx:
     name: knoxx (backend + frontend)

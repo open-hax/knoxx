@@ -8,12 +8,12 @@ import test from 'node:test';
 
 const launcher = fileURLToPath(new URL('../../scripts/run-mutation-tests.mjs', import.meta.url));
 
-function fixture(source) {
+function fixture(source, environment = process.env) {
   const directory = mkdtempSync(join(tmpdir(), 'knoxx-mutation-launcher-'));
   try {
     mkdirSync(join(directory, 'target/test'), { recursive: true });
     writeFileSync(join(directory, 'target/test/test-ci.cjs'), source);
-    return spawnSync(process.execPath, [launcher], { cwd: directory, encoding: 'utf8', timeout: 5000 });
+    return spawnSync(process.execPath, [launcher], { cwd: directory, env: environment, encoding: 'utf8', timeout: 5000 });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -34,6 +34,16 @@ test('ordinary green and completed red preserve their normal exit contracts', ()
 });
 
 test('child receives the existing default contracts fixture environment', () => {
-  const result = fixture("if (process.env.CONTRACTS_DIR !== 'test/fixtures/empty-contracts') process.exit(2); process.exit(0);");
+  const environment = { ...process.env };
+  delete environment.CONTRACTS_DIR;
+  const result = fixture("if (process.env.CONTRACTS_DIR !== 'test/fixtures/empty-contracts') process.exit(2); process.exit(0);", environment);
+  assert.equal(result.status, 0);
+});
+
+test('child preserves an explicit caller contracts fixture environment', () => {
+  const result = fixture("if (process.env.CONTRACTS_DIR !== 'test/fixtures/caller-contracts') process.exit(2); process.exit(0);", {
+    ...process.env,
+    CONTRACTS_DIR: 'test/fixtures/caller-contracts',
+  });
   assert.equal(result.status, 0);
 });

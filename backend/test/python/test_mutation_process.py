@@ -181,6 +181,25 @@ class MutationProcessTests(unittest.TestCase):
         self.assertEqual(result["termination"], "cleanup-error")
         self.assertFalse(result["timed-out?"])
 
+    def test_tracked_pidfds_clean_without_group_signal_delivery(self):
+        # Force group delivery to miss the owned tree. Stable pidfds must still
+        # terminate descendants before the retained leader can be reaped.
+        wrapper = """
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('mutation_process', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.os.killpg = lambda _group, _signal: None
+module.main(sys.argv[2:])
+"""
+        result = self.run_command(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            adapter_setup=wrapper,
+        )
+        self.assertEqual(result["termination"], "timeout")
+        self.assertTrue(result["timed-out?"])
+        self.assertEqual(result["exit-code"], -signal.SIGKILL)
+
     def test_cancellation_cleans_owned_tree(self):
         result = self.pipe_holder("timeout", cancellation=signal.SIGTERM)
         self.assertEqual(result["termination"], "cancelled")
