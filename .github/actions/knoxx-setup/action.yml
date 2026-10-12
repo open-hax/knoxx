@@ -17,18 +17,33 @@ runs:
     - uses: actions/setup-node@v5
       with:
         node-version: '24'
-    - uses: actions/checkout@v5
-      with:
-        repository: open-hax/openplanner
-        ref: 07085d6557b75834ce6f50e6c54b8ca47e1c7c08
-        path: _deps/openplanner
-        persist-credentials: false
     - shell: bash
       run: |
         set -euo pipefail
-        ln -sfn "$GITHUB_WORKSPACE/_deps/openplanner" "$GITHUB_WORKSPACE/../openplanner"
-        pnpm -C _deps/openplanner --filter @open-hax/openplanner-sdk... install --frozen-lockfile
-        pnpm -C _deps/openplanner --filter @open-hax/openplanner-sdk... run build
+        [[ "$(realpath -e -- "$GITHUB_WORKSPACE")" == "$GITHUB_WORKSPACE" ]]
+        sdk_root="$(dirname -- "$GITHUB_WORKSPACE")/openplanner"
+        sdk_ref=07085d6557b75834ce6f50e6c54b8ca47e1c7c08
+        # Refuse any existing sibling, including dangling symlinks; never replace it.
+        [[ ! -e "$sdk_root" && ! -L "$sdk_root" ]]
+        mkdir -- "$sdk_root"
+        [[ "$(realpath -e -- "$sdk_root")" == "$sdk_root" ]]
+        # Public HTTPS only, without inherited Git auth/config, templates or hooks.
+        sdk_git() {
+          env -i PATH="$PATH" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+            GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
+            git -C "$sdk_root" -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+              -c gc.auto=0 -c maintenance.auto=false -c credential.helper= \
+              -c http.extraHeader= -c http.followRedirects=false \
+              -c protocol.allow=never -c protocol.https.allow=always "$@"
+        }
+        sdk_git init --template= --initial-branch=sdk-setup
+        sdk_git fetch --depth=1 --no-tags --no-write-fetch-head --no-recurse-submodules \
+          https://github.com/open-hax/openplanner.git "$sdk_ref"
+        [[ "$(sdk_git rev-parse --verify "$sdk_ref^{commit}")" == "$sdk_ref" ]]
+        sdk_git checkout --detach "$sdk_ref"
+        [[ "$(sdk_git rev-parse HEAD)" == "$sdk_ref" ]]
+        pnpm -C "$sdk_root" --filter @open-hax/openplanner-sdk... install --frozen-lockfile
+        pnpm -C "$sdk_root" --filter @open-hax/openplanner-sdk... run build
         pnpm install --frozen-lockfile
         pnpm -C backend install --frozen-lockfile
         pnpm -C frontend install --frozen-lockfile

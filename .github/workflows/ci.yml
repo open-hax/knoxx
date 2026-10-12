@@ -45,6 +45,7 @@ jobs:
           node scripts/check-deployment-boundary.mjs
           "$RUNNER_TEMP/knoxx-qualification-python/bin/python" scripts/test-production-checkout.py
           python3 scripts/test-cms-verifier-preconditions.py
+          python3 backend/test/python/test_mutation_process.py
 
   knoxx:
     name: knoxx (backend + frontend)
@@ -91,6 +92,12 @@ jobs:
           # tools.deps and needs the clojure CLI on PATH.
           cli: '1.12.5.1654'
           clj-kondo: "2025.07.28"
+
+      - name: Production mutation evidence verifier contracts
+        run: |
+          python3 -m venv "$RUNNER_TEMP/knoxx-production-evidence-python"
+          "$RUNNER_TEMP/knoxx-production-evidence-python/bin/python" -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.2'
+          "$RUNNER_TEMP/knoxx-production-evidence-python/bin/python" scripts/test-production-mutation-evidence.py
 
       - uses: pnpm/action-setup@v4
         with:

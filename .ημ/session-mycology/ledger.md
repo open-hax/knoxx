@@ -274,3 +274,104 @@
   spore: none
   receipt-refs: ff9ecc33-3c20-4963-a27f-89f5b2878889
   note: Define cleanup before allocating a disposable directory and arm its traps before the first operation that can fail. Injected owned mkdir exit73 proves prior leak and corrected cleanup while preserving exit status. Keep full native fixture and production qualification historical; no provider or shared-state mutations. Preserve every historical byte. No extra spore or promotion.
+
+- ts: 2026-10-10T23:07:22.927005+00:00
+  session: knoxx-qualification-repair
+  task: canonical-production-mutation-runner-repair
+  p-efficiency: 0.78
+  p-friction: 0.62
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 5ea538ff-0cbb-4330-af6e-5740a9b4f5f8, ea2ea1c1eef132d23408dc94de5166e659d8dae367884e4f02d73392df895614, 0942dbf59387a51b078c7677288e0dd838c8d2abb30dad409527a2459a1fdfe6, d17c2623848c034207e09fc7f5efe12c875f1702d6087ba6e42af7d848d65fce
+  note: A printed green summary does not prove completed test execution. Qualify the existing fatal guard, normal exit and owned descendant cleanup together before spending campaign time. Preserve compiler/test raw evidence and source identity; keep active portable branches without rewriting reader conditionals into runtime forms. Focused RED/GREEN source controls do not earn production baseline or mutation credit. Equivalent exclusions need actual external review and exact committed provenance; none adopted. Fresh production-config dependency preparation is separate from execution, and the four batches of 250 completed assertion kills remain required. One failed alias discovery and conditional-promotion control drove narrow canonical repairs; all predecessor failures retained. No extra spore or promotion.
+
+- ts: 2026-10-10T23:20:00.254571+00:00
+  session: knoxx-qualification-repair
+  task: exact-production-config-baseline-and-observed-survivor-pilot
+  p-efficiency: 0.88
+  p-friction: 0.28
+  p-skill-candidate: 0.42
+  spore: none
+  receipt-refs: c5f71c0c-263c-428f-b273-9ec5f6a313b5, 9b345550d08831e6520780e7faf233ac608c7267d01f2d79989310bb996f2768, b4816a450fb9671378b518f0153ad8ffd74ea6ef98a3a756993a63a272033f5d
+  note: Measure the actual canonical guarded baseline before campaign spending. Exact source78843174 passed1914tests9844assertions; three measured mutations yielded two assertion kills and one real survivor, no invalid executions. Preserve wholepilot exit1 and restored source. A private terminal return ignored after unchanged notification effects has no discovered supported boolean contract; a direct literal assertion would manufacture one. Green tests alone do not adjudicate equivalence: present exact source rationale for independent external review and keep zero exclusions until then. Targeted one-file ordinal lookup places this observed survivor first in batch1; no selection reorder hides it. Local median75.41seconds is a throughput measurement, not a hosted qualification guarantee. Preserve initial selector and metadata-capture adapter failures; those changed no canonical source and earned no credit. The nonbundled entrypoint hash is distinct from full compiled payload identity. Metadata successor records tested788 honestly and supplies no successor baseline or four-batch credit. No extra spore or promotion.
+- ts: 2026-10-11T23:52:33.808449403Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Fix owned child signalling and isolate default versus caller contracts fixtures
+  p-efficiency: 0.76
+  p-friction: 0.58
+  p-skill-candidate: 0.64
+  spore: none
+  receipt-refs: N/prod-goal-knoxx388-five-path-source-receipt-v1.stdout
+  note: Native review led to explicit stable pidfd cleanup and actual missed-group control RED1 to supervisor14GREEN. Preserve ordinary escape predecessor local1/1 pass discrepancy. Native bundle failure reproducedNode24 with explicitcallercontracts RED1; testonlydefaults controlled separately; new callerpreservation check and wholeJS79 pass. Supervisorcontrols now reached by CI/reviewgate. Actual fiveinputbeforeafter stable, checkout1 and independent source assessment no findings. No currentbaseline/four250campaign, no sourceequivalence adjudication, no spore or promotion.
+- ts: 2026-10-12T01:09:03.084817225Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Preserve late mutation custody and qualify native SDK setup without borrowing campaign credit
+  p-efficiency: 0.78
+  p-friction: 0.69
+  p-skill-candidate: 0.35
+  spore: none
+  receipt-refs: fb530e92423dbf73e2db2ea53661888668ff27f047d933670cea32a183baf0f3,632944a45d671d08fc9a3e4cff4d0185326fcadc92c7affbb4378b3b7eb8ee53
+  note: Preserve completed child evidence when cleanup or preflight fails, and distinguish a missing invocation from a failed child. Strengthened adverse controls must reach their intended guard with consistent hashes. Actual YAML fixtures establish Git isolation and physical sibling refusal while packages remain inert. Raw-index metadata refused the b01 outer pilot despite inner green tests: keep INVALID, do not rewrite it as successful qualification. Source-specific focused green does not replace the unchanged four disjoint250 campaign. No new spore or promotion.
+- ts: 2026-10-12T02:38:09.436980184Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Bind production mutation admission to canonical source inventory
+  p-efficiency: 0.72
+  p-friction: 0.62
+  p-skill-candidate: 0.45
+  spore: none
+  receipt-refs: 42aaad33be065200cfdbd37101d3f653bbdc09f1466dfdc40a553d4b22f194b9
+  note: Use the existing canonical JVM discovery/fingerprint/rewrite and validate exact source-S membership at both ends. Real source fixture transport tests are not production campaigns. Keep old cleanup/artifact disputes separate; green unchanged supervisor controls do not manufacture a fix or rejection. No new spore, promotion, deployment or native approval.
+- ts: 2026-10-12T04:35:28.818100644Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Authenticate production mutation executor and enforce canonical partition prefix
+  p-efficiency: 0.88
+  p-friction: 0.35
+  p-skill-candidate: 0.50
+  spore: none
+  receipt-refs: d8ce9e4c49a2d85d1d515d7dbacda995a0e428cedc7a27a0b81441d3671bb154
+  note: Official authenticated executor admission replaces unsigned production credit; canonical prefix and exclusion custody use the existing JVM inventory. Actual source qualification44PASS and old unsigned acceptance versus new refusal are bounded local proof. Public official crypto controls and reader oracle are separate from real Knoxx campaigns/native review/hosted CMS readiness. Four exact source files applied with outside source/index/inodes preserved. No new spore.
+- ts: 2026-10-12T05:09:15.524328887Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Restore reusable qualifier checkout topology assertion
+  p-efficiency: 0.94
+  p-friction: 0.18
+  p-skill-candidate: 0.35
+  spore: none
+  receipt-refs: 55faac34-6a14-44cc-9e31-d445c6f71a89,d223c7075f230c2dc247ceb9d2725ce0f41d1a690386e83be36068ee986c30b6
+  note: When intentional workflow topology adds signer/controller checkout steps, preserve all original per-checkout repository and persistence checks and update the exact expected multiset. Actual predecessor assertion failure and unchanged existing-test pass bound the repair. Keep production campaign and native review separate. No new spore or promotion.
+- ts: 2026-10-12T07:22:36.361407909Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Qualify portable macro source inventory and terminal JVM CLI finalization
+  p-efficiency: 0.82
+  p-friction: 0.52
+  p-skill-candidate: 0.45
+  spore: none
+  receipt-refs: 788b226f-e283-470c-9d74-8442ba0289a8,18e29fea41dc3f4ae4c7dab93554007050915245e6d95daf1a6ace654a879eef
+  note: Current4c0 predecessor genuine Python four-method failure and JVM four-test ten-failure controls turned green with exactly four source edits. Actual completed-future CLI timeout45.071s became normal2.781s. Full48Python and32JVM335 assertions plus lint passed. Include portable .cljc macro sources and preserve flush plus shutdown in terminal finally. Public pinned JVM dependencies were fetched; no offline claim. Existing cleanup disputes and real production campaigns remain separate. No new spore or promotion.
+- ts: 2026-10-12T09:13:17.671474429Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Keep configured macro executor scope and relative report custody exact
+  p-efficiency: 0.68
+  p-friction: 0.75
+  p-skill-candidate: 0.70
+  spore: none
+  receipt-refs: 3d774a732c052aaa2844d980eb4e543b7cad2b1e3209c56f595a6a0958bca04c
+  note: Preserve real RED and forecast/refusal evidence; exact owned source application qualified locally; native review and production qualification remain separate.
+- ts: 2026-10-12T12:02:07.499635203Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Stabilize anonymous mutation identities and reviewed partition selection
+  p-efficiency: 0.74
+  p-friction: 0.73
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: af7b301a-e4a0-4faa-aa72-fbf57a6fa6af,96cfd109d232f0268adb118211004c9ef537616e3a2fa4a8750dcbdf23c49861
+  note: Bind compound mutation identity to exact anonymous syntax rather than process-local expanded gensyms. Preserve complete map/fingerprint comparisons and stable c533 identity. Separate actual regression failures from setup/prediction errors. All qualified selection exclusions remain planned/evaluated0/killed0; native review and real production campaigns remain separate. No spore or promotion.
+- ts: 2026-10-12T13:37:38.206580245Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Qualified and applied two confirmed Knoxx deployment gaps
+  p-efficiency: 0.75
+  p-friction: 0.6
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 7472788750ba529aeb896782e80953bdffc07e4576d49dede32ec4bcb7091186
+  note: Bind required Clojure/JDK tools before verifier fixtures; retain setup failures and separate supervisor19 from verifier50. Apply only exact privately qualified source bytes, with no synthetic campaign credit.

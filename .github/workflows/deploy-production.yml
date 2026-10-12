@@ -21,8 +21,12 @@ permissions:
 jobs:
   source:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       sha: ${{ steps.source.outputs.sha }}
+      controller_sha: ${{ steps.source.outputs.controller_sha }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -33,13 +37,14 @@ jobs:
       - id: source
         env:
           REQUESTED_SHA: ${{ inputs.source_ref }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
-          git cat-file -e "$REQUESTED_SHA^{commit}"
-          git merge-base --is-ancestor "$REQUESTED_SHA" origin/main
-          echo "sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+          binding=$(python3 scripts/verify-production-mutation-evidence.py --prepare-source "$REQUESTED_SHA")
+          echo "sha=$(jq -er .source_sha <<< "$binding")" >> "$GITHUB_OUTPUT"
+          echo "controller_sha=$(jq -er .controller_sha <<< "$binding")" >> "$GITHUB_OUTPUT"
   integration-e2e:
+    name: Knoxx integration-e2e
     needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -75,6 +80,7 @@ jobs:
           pnpm -C backend build
           pnpm -C frontend build
   mutation:
+    name: Knoxx mutation batch ${{ matrix.batch }}
     needs: [source, integration-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -87,6 +93,7 @@ jobs:
         with:
           repository: open-hax/knoxx
           ref: ${{ needs.source.outputs.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/knoxx-setup
       - name: Qualify 250 distinct source mutations with a green baseline
@@ -96,33 +103,115 @@ jobs:
         run: |
           clojure -M:mutation --run --batch-count 4 --batch-index "$BATCH_INDEX" \
             --limit 250 --min-evaluated 250 --timeout-ms 240000 \
+            --equivalents mutation/reviewed-equivalents.edn \
             --report "target/mutation/batch-${BATCH_INDEX}.edn"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: production-mutation-${{ matrix.batch }}
-          path: backend/target/mutation/*.json
+          name: production-mutation-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.source.outputs.sha }}-${{ matrix.batch }}
+          path: |
+            backend/target/mutation/*.json
+            backend/target/mutation/payload-store/*
           if-no-files-found: error
-  qualified:
+  # Signing is isolated from application execution and has no always/failure path.
+  # The official certificate binds C/G/run-attempt; signed report bytes bind S.
+  attest-evidence:
     needs: [source, integration-e2e, mutation]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: open-hax/knoxx
+          ref: ${{ needs.source.outputs.controller_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: artifacts
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_DIR: ${{ runner.temp }}/production-mutation-signing
+        run: |
+          set -euo pipefail
+          [[ ! -e "$EVIDENCE_DIR" && ! -L "$EVIDENCE_DIR" ]]
+          echo "ids=$(python3 scripts/verify-production-mutation-evidence.py --producer-artifact-ids "$SOURCE_SHA")" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.ids }}
+          path: ${{ runner.temp }}/production-mutation-signing
+          merge-multiple: true
+      - id: subjects
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_DIR: ${{ runner.temp }}/production-mutation-signing
+        run: |
+          set -euo pipefail
+          subjects=$(python3 scripts/verify-production-mutation-evidence.py --attest-subjects "$SOURCE_SHA" "$EVIDENCE_DIR")
+          {
+            echo 'paths<<REPORT_SUBJECTS'
+            printf '%s\n' "$subjects"
+            echo REPORT_SUBJECTS
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.subjects.outputs.paths }}
+          push-to-registry: false
+          create-storage-record: false
+  qualified:
+    needs: [source, integration-e2e, mutation, attest-evidence]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
     outputs:
       source_sha: ${{ steps.accept.outputs.sha }}
     steps:
       - uses: actions/checkout@v5
         with:
           repository: open-hax/knoxx
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ needs.source.outputs.controller_sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: open-hax/knoxx
+          ref: ${{ needs.source.outputs.sha }}
+          path: application
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13
+        with:
+          cli: '1.12.5.1654'
+      - name: Require a fresh external evidence directory
+        id: artifacts
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/production-mutation-evidence
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ ! -e "$EVIDENCE_DIR" && ! -L "$EVIDENCE_DIR" ]]
+          echo "ids=$(python3 scripts/verify-production-mutation-evidence.py --producer-artifact-ids "$SOURCE_SHA")" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
-          pattern: production-mutation-*
-          path: evidence
+          artifact-ids: ${{ steps.artifacts.outputs.ids }}
+          path: ${{ runner.temp }}/production-mutation-evidence
           merge-multiple: true
       - id: accept
         env:
           SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/production-mutation-evidence
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 scripts/verify-production-mutation-evidence.py "$SOURCE_SHA" evidence
+          python3 scripts/verify-production-mutation-evidence.py "$SOURCE_SHA" "$EVIDENCE_DIR"
           echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
