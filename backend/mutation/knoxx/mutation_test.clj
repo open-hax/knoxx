@@ -169,20 +169,45 @@
              (tree-seq #(boolean (z/down %))
                        #(take-while identity (iterate z/right (z/down %))) loc))))
 
+(defn anonymous-function-containing-location?
+  "Find actual #() syntax nodes without interpreting or normalizing symbols."
+  [loc]
+  (boolean
+   (some #(= :fn (z/tag %))
+         (tree-seq #(boolean (z/down %))
+                   #(take-while identity (iterate z/right (z/down %))) loc))))
+
+(defn rewrite-anonymous-compound
+  "Change only the selected operator/test; retain nested #() syntax verbatim."
+  [loc operator]
+  (case operator
+    :if-test-negation
+    (let [test-loc (z/right (z/down loc))
+          negated (z/node (z/of-string (str "(not " (z/string test-loc) ")")))]
+      (z/up (z/replace test-loc negated)))
+    :comparison-flip
+    (let [head (z/down loc)]
+      (z/up (z/replace head (comparison-replacements (safe-sexpr head)))))
+    :arithmetic-operator-flip
+    (let [head (z/down loc)]
+      (z/up (z/replace head (arithmetic-replacements (safe-sexpr head)))))
+    (throw (ex-info "Unsupported anonymous compound mutation" {:operator operator}))))
+
 (defn loc-mutations
   [relative-path loc]
   (let [form (safe-sexpr loc)]
     (when (and (not= ::unreadable form) (reader-conditional-free-location? loc))
-      (let [{:keys [line column]} (safe-position loc)]
+      (let [{:keys [line column]} (safe-position loc)
+            syntax? (anonymous-function-containing-location? loc)]
         (mapv (fn [{:keys [operator replacement]}]
-                {:relative-path relative-path
-                 :line line
-                 :column column
-                 :operator operator
-                 :original-form form
-                 :replacement-form replacement
-                 :original (pr-str form)
-                 :replacement (pr-str replacement)})
+                (merge {:relative-path relative-path
+                        :line line :column column :operator operator}
+                       (if syntax?
+                         {:syntax-preserving? true
+                          :original (z/string loc)
+                          :replacement (z/string (rewrite-anonymous-compound loc operator))}
+                         {:original-form form :replacement-form replacement
+                          :original (pr-str form) :replacement (pr-str replacement)})))
               (form-mutations form))))))
 
 (defn mutants-in-source
@@ -316,10 +341,18 @@
                       {:mutant (select-keys mutant [:id :relative-path :line :column :operator])}))
 
       (same-position? mutant loc)
-      (if-let [mutation (some #(when (matching-mutation? mutant %) %)
-                              (form-mutations (safe-sexpr loc)))]
-        (z/root-string (z/replace loc (:replacement mutation)))
-        (recur (z/next loc)))
+      (if (:syntax-preserving? mutant)
+        (let [descriptor-keys [:operator :syntax-preserving? :original :replacement]
+              actual (some #(when (= (select-keys mutant descriptor-keys)
+                                    (select-keys % descriptor-keys)) %)
+                           (loc-mutations (:relative-path mutant) loc))]
+          (if actual
+            (z/root-string (rewrite-anonymous-compound loc (:operator actual)))
+            (recur (z/next loc))))
+        (if-let [mutation (some #(when (matching-mutation? mutant %) %)
+                                (form-mutations (safe-sexpr loc)))]
+          (z/root-string (z/replace loc (:replacement mutation)))
+          (recur (z/next loc))))
 
       :else
       (recur (z/next loc)))))
@@ -838,13 +871,13 @@
         candidates (discover-candidates opts)
         equivalents (load-equivalents! opts candidates)
         excluded-keys (set (map :fingerprint equivalents))
+        mutants (partition-mutants candidates (assoc opts :equivalent-fingerprints excluded-keys))
         by-fingerprint (into {} (map (juxt :fingerprint identity) candidates))
         excluded (filterv (fn [entry]
                             (when-let [candidate (get by-fingerprint (:fingerprint entry))]
                               (= (:batch-index opts) (mod (:ordinal candidate) (:batch-count opts))))) equivalents)
         baseline-evidence (when (:run? opts) (baseline! opts))
         baseline (if (:run? opts) (:status baseline-evidence) :not-run)
-        mutants (partition-mutants candidates (assoc opts :equivalent-fingerprints excluded-keys))
         results (cond (not (:run? opts)) (dry-run-results mutants)
                       (= :passed baseline) (mapv #(evaluate-mutant! (assoc opts :baseline-code-sha256 (get-in baseline-evidence [:compile :payload :code-sha256])) %) mutants)
                       :else [])

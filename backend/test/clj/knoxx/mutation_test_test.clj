@@ -107,6 +107,81 @@
           (is (= 0 (get-in result [:summary :killed])))))
       (finally (delete-fixture! root)))))
 
+;; These controls call the real canonical partition and exclusion arithmetic.
+;; The nonempty equivalent list is an inert ordering seam, not adjudication.
+(deftest invalid-batch-count-precedes-equivalent-modulo
+  (doseq [run? [false true]]
+    (let [{:keys [root backend-dir] :as fixture} (payload-fixture!)
+          source-dir (.getPath (io/file backend-dir "src/cljs"))
+          source-file (io/file source-dir "demo.cljs")
+          source-before (slurp source-file)
+          output-dir (io/file backend-dir "target/invalid-count")
+          payload-store (io/file output-dir "payload-store")
+          candidate (first (mutation/discover-candidates {:src-dir source-dir}))
+          baseline-calls (atom 0)
+          evaluation-calls (atom 0)
+          report-calls (atom 0)]
+      (try
+        ;; The private fixture is not the product compiled cwd; replace only
+        ;; its outer clean-tree preflight to reach the real ordering boundary.
+        (with-redefs [mutation/assert-clean-tree! (fn [_] nil)
+                      mutation/load-equivalents! (fn [_ _] [{:fingerprint (:fingerprint candidate)}])
+                      mutation/baseline! (fn [_]
+                                           (swap! baseline-calls inc)
+                                           (.mkdirs payload-store)
+                                           {:status :passed})
+                      mutation/evaluate-mutant! (fn [_ _] (swap! evaluation-calls inc) {})
+                      mutation/write-report! (fn [_ _] (swap! report-calls inc) {})]
+          (let [caught (try (mutation/run-suite! (assoc fixture :src-dir source-dir
+                                                      :output-dir (.getPath output-dir)
+                                                      :batch-index 0 :batch-count 0 :run? run?))
+                            (catch Exception error error))]
+            (is (instance? clojure.lang.ExceptionInfo caught))
+            (is (= "Invalid mutation batch index/count"
+                   (when (instance? Exception caught) (.getMessage ^Exception caught))))
+            (is (zero? @baseline-calls))
+            (is (zero? @evaluation-calls))
+            (is (zero? @report-calls))
+            (is (not (.exists payload-store)))
+            (is (= source-before (slurp source-file)))))
+        (finally (delete-fixture! root))))))
+
+(deftest invalid-batch-index-precedes-baseline-and-report
+  (doseq [run? [false true]
+          batch-index [-1 4]]
+    (let [{:keys [root backend-dir] :as fixture} (payload-fixture!)
+          source-dir (.getPath (io/file backend-dir "src/cljs"))
+          source-file (io/file source-dir "demo.cljs")
+          source-before (slurp source-file)
+          output-dir (io/file backend-dir "target/invalid-index")
+          payload-store (io/file output-dir "payload-store")
+          baseline-calls (atom 0)
+          evaluation-calls (atom 0)
+          report-calls (atom 0)]
+      (try
+        ;; Same private-fixture preflight seam; partition and baseline order
+        ;; remain the actual run-suite! implementation under test.
+        (with-redefs [mutation/assert-clean-tree! (fn [_] nil)
+                      mutation/baseline! (fn [_]
+                                         (swap! baseline-calls inc)
+                                         (.mkdirs payload-store)
+                                         {:status :passed})
+                      mutation/evaluate-mutant! (fn [_ _] (swap! evaluation-calls inc) {})
+                      mutation/write-report! (fn [_ _] (swap! report-calls inc) {})]
+          (let [caught (try (mutation/run-suite! (assoc fixture :src-dir source-dir
+                                                      :output-dir (.getPath output-dir)
+                                                      :batch-index batch-index :batch-count 4 :run? run?))
+                            (catch Exception error error))]
+            (is (instance? clojure.lang.ExceptionInfo caught))
+            (is (= "Invalid mutation batch index/count"
+                   (when (instance? Exception caught) (.getMessage ^Exception caught))))
+            (is (zero? @baseline-calls))
+            (is (zero? @evaluation-calls))
+            (is (zero? @report-calls))
+            (is (not (.exists payload-store)))
+            (is (= source-before (slurp source-file)))))
+        (finally (delete-fixture! root))))))
+
 (deftest completed-child-evidence-survives-custody-io-failures
   (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
         source-dir (io/file backend-dir "src/cljs")
@@ -760,3 +835,75 @@
                   clojure.core/shutdown-agents (fn [] (swap! events conj :shutdown))]
       (is (identical? failure (try (mutation/-main "--dry-run") (catch java.io.IOException error error))))
       (is (= [:flush :shutdown] @events)))))
+
+
+;; Actual repeated-discovery regression: rewrite-clj FnNode sexpr expands fresh
+;; argument gensyms. Source syntax, not a regex over user symbols, supplies identity.
+(deftest anonymous-compound-discovery-and-source-rewrites-are-stable
+  (doseq [[source operator expected]
+          [["(if ready #(+ % 1) p1__5438#)" :if-test-negation
+            "(if (not ready) #(+ % 1) p1__5438#)"]
+           ["(if (some #(= (:root %) (:root entry)) acc) acc (conj acc entry))" :if-test-negation
+            "(if (not (some #(= (:root %) (:root entry)) acc)) acc (conj acc entry))"]
+           ["(if ok [#(+ %1 1) #(vector %1 %2 %&)] \"p1__5438#\")" :if-test-negation
+            "(if (not ok) [#(+ %1 1) #(vector %1 %2 %&)] \"p1__5438#\")"]
+           ["(< (count (filter #(true? %) xs)) 1)" :comparison-flip
+            "(<= (count (filter #(true? %) xs)) 1)"]
+           ["(+ (count (filter #(true? %) xs)) 1)" :arithmetic-operator-flip
+            "(- (count (filter #(true? %) xs)) 1)"]
+           ["(if ready\n ; keep this comment\n #(+ % 1) p1__5438#)" :if-test-negation
+            "(if (not ready)\n ; keep this comment\n #(+ % 1) p1__5438#)"]]]
+    (let [discover #(mutation/assign-mutant-ids (mutation/mutants-in-source "anonymous.cljs" source))
+          first-read (discover)
+          second-read (discover)
+          mutant (first (filter #(= operator (:operator %)) first-read))
+          second-mutant (first (filter #(= operator (:operator %)) second-read))
+          attempt (fn [f] (try (f) (catch Exception error error)))
+          rewritten (attempt #(mutation/apply-mutant-to-source source mutant))
+          first-binding (attempt #(mutation/bind-mutant-source source mutant))
+          second-binding (attempt #(mutation/bind-mutant-source source second-mutant))]
+      (is (= first-read second-read))
+      (is (= (:fingerprint mutant) (:fingerprint second-mutant)))
+      (is (= expected rewritten))
+      (is (map? first-binding))
+      (is (= first-binding second-binding))
+      (is (= (mutation/sha256 expected) (:mutated-sha256 first-binding)))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (mutation/apply-mutant-to-source source (assoc mutant :replacement "false")))))))
+
+(deftest anonymous-compound-immutable-manifest-reconstruction-is-stable
+  (let [{:keys [root backend-dir] :as fixture} (payload-fixture!)
+        file (io/file backend-dir "src/cljs/demo.cljs")
+        source "(defn f [ready] (if ready #(+ % 1) false))\n"]
+    (try
+      (spit file source)
+      (doseq [args [["git" "add" "backend/src/cljs/demo.cljs"]
+                    ["git" "-c" "user.name=Fixture" "-c" "user.email=fixture@example.invalid"
+                     "commit" "--quiet" "-m" "inert anonymous source fixture"]]]
+        (let [result (apply shell/sh (concat args [:dir (.getPath root)]))]
+          (when-not (zero? (:exit result)) (throw (ex-info "Fixture commit failed" result)))))
+      (let [source-sha (str/trim (:out (shell/sh "git" "rev-parse" "HEAD" :dir (.getPath root))))
+            opts (assoc fixture :source-sha source-sha)
+            attempt (fn [f] (try (f) (catch Exception error error)))]
+        (with-redefs [mutation/run-process! (fn [_] (throw (AssertionError. "Identity reconstruction cannot compile or test")))]
+          (let [first-manifest (attempt #(mutation/source-bindings-manifest! opts))
+                second-manifest (attempt #(mutation/source-bindings-manifest! opts))]
+            (is (map? first-manifest))
+            (is (= first-manifest second-manifest))
+            (is (seq (:candidates first-manifest)))
+            (is (= source (slurp file)))
+            (is (true? (mutation/assert-source-custody! opts))))))
+      (finally (delete-fixture! root)))))
+
+(deftest actual-boolean-c533-syntax-identity-remains-unchanged
+  (let [source (str (apply str (repeat 70 "\n")) "        true\n")
+        first-read (mutation/assign-mutant-ids (mutation/mutants-in-source "knoxx/backend/bootstrap.cljs" source))
+        second-read (mutation/assign-mutant-ids (mutation/mutants-in-source "knoxx/backend/bootstrap.cljs" source))
+        candidate (first first-read)]
+    (is (= first-read second-read))
+    (is (= 71 (:line candidate)))
+    (is (= 9 (:column candidate)))
+    (is (= "c5331e130ef389a0c7c8f22f68ef799fcea6c121f355c70c564643050a068081" (:fingerprint candidate)))
+    (is (= true (:original-form candidate)))
+    (is (= false (:replacement-form candidate)))
+    (is (not (contains? candidate :syntax-preserving?)))))

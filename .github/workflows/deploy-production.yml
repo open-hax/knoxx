@@ -102,6 +102,7 @@ jobs:
         run: |
           clojure -M:mutation --run --batch-count 4 --batch-index "$BATCH_INDEX" \
             --limit 250 --min-evaluated 250 --timeout-ms 240000 \
+            --equivalents mutation/reviewed-equivalents.edn \
             --report "target/mutation/batch-${BATCH_INDEX}.edn"
       - uses: actions/upload-artifact@v4
         if: always()

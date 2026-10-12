@@ -357,3 +357,12 @@
   spore: none
   receipt-refs: 3d774a732c052aaa2844d980eb4e543b7cad2b1e3209c56f595a6a0958bca04c
   note: Preserve real RED and forecast/refusal evidence; exact owned source application qualified locally; native review and production qualification remain separate.
+- ts: 2026-10-12T12:02:07.499635203Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Stabilize anonymous mutation identities and reviewed partition selection
+  p-efficiency: 0.74
+  p-friction: 0.73
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: af7b301a-e4a0-4faa-aa72-fbf57a6fa6af,96cfd109d232f0268adb118211004c9ef537616e3a2fa4a8750dcbdf23c49861
+  note: Bind compound mutation identity to exact anonymous syntax rather than process-local expanded gensyms. Preserve complete map/fingerprint comparisons and stable c533 identity. Separate actual regression failures from setup/prediction errors. All qualified selection exclusions remain planned/evaluated0/killed0; native review and real production campaigns remain separate. No spore or promotion.
