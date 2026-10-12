@@ -348,3 +348,12 @@
   spore: none
   receipt-refs: 788b226f-e283-470c-9d74-8442ba0289a8,18e29fea41dc3f4ae4c7dab93554007050915245e6d95daf1a6ace654a879eef
   note: Current4c0 predecessor genuine Python four-method failure and JVM four-test ten-failure controls turned green with exactly four source edits. Actual completed-future CLI timeout45.071s became normal2.781s. Full48Python and32JVM335 assertions plus lint passed. Include portable .cljc macro sources and preserve flush plus shutdown in terminal finally. Public pinned JVM dependencies were fetched; no offline claim. Existing cleanup disputes and real production campaigns remain separate. No new spore or promotion.
+- ts: 2026-10-12T09:13:17.671474429Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Keep configured macro executor scope and relative report custody exact
+  p-efficiency: 0.68
+  p-friction: 0.75
+  p-skill-candidate: 0.70
+  spore: none
+  receipt-refs: 3d774a732c052aaa2844d980eb4e543b7cad2b1e3209c56f595a6a0958bca04c
+  note: Preserve real RED and forecast/refusal evidence; exact owned source application qualified locally; native review and production qualification remain separate.

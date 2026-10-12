@@ -213,7 +213,7 @@ def test_evidence(result, killed, payload):
 def validate_structural_evidence(sha, directory, *, _backend=None, _reports=None):
     """Validate data/custody only; this API grants no production qualification."""
     require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "Immutable commit required")
-    files = list(Path(directory).glob("*.json"))
+    files = list(Path(directory).absolute().glob("*.json"))
     require(len(files) == 4, "Exactly four completed batches required")
     canonical = canonical_source_bindings(sha, _backend)
     store = physical_path(Path(directory) / "payload-store", directory=True)
@@ -299,6 +299,11 @@ HELPER_PREFIXES = ("backend/mutation/", "backend/scripts/", "backend/test/",
                    ".github/actions/knoxx-setup/")
 HELPER_FILES = {"scripts/verify-production-mutation-evidence.py", "backend/deps.edn",
                 "backend/shadow-cljs.edn"}
+# Explicit portable compiler input for the reviewed Shadow :macros contract.
+# Unknown compiler configuration refuses until its input set/hash is reviewed.
+# Ordinary .cljc application sources remain selectable S inputs.
+MACRO_FILES = {"backend/src/cljs/knoxx/backend/macros.cljc"}
+MACRO_CONFIG_SHA256 = "b182a2993c1e818a36dc9e39c011a8dd830cb097e0b624d95986ea3563165dcd"
 CONFIG_NAMES = {"package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc",
                 ".pnpmfile.cjs", "pnpmfile.cjs", ".gitignore", ".gitattributes"}
 REPORT_NAMES = [f"batch-{index}.edn.json" for index in range(4)]
@@ -426,8 +431,8 @@ def git_bytes(root, *args):
 def executor_entries(root, commit):
     """Exact committed transitive executor/config inventory, not mutation identity law.
 
-    Portable .cljc can supply JVM compiler macros just like .clj. Conservatively
-    bind both families across backend/shared, tightening C/S executor equality.
+    Bind the explicit configured portable macro input and inherited JVM/helper
+    inputs. Ordinary .cljc application code may differ between selected S and C.
     """
     entries = {}
     for raw in git_bytes(root, "ls-tree", "-r", "-z", commit).split(b"\0"):
@@ -437,13 +442,16 @@ def executor_entries(root, commit):
         path = path_raw.decode("utf-8")
         if (path in HELPER_FILES or path.startswith(HELPER_PREFIXES)
                 or Path(path).name in CONFIG_NAMES
-                or (path.startswith(("backend/", "shared/")) and path.endswith((".clj", ".cljc")))):
+                or path in MACRO_FILES
+                or (path.startswith(("backend/", "shared/")) and path.endswith(".clj"))):
             mode, kind, blob = metadata.decode("ascii").split()
             require(mode in ("100644", "100755") and kind == "blob", "Unsafe executor input mode")
             entries[path] = (mode, blob)
-    require(HELPER_FILES.issubset(entries)
+    require((HELPER_FILES | MACRO_FILES).issubset(entries)
             and all(any(path.startswith(prefix) for path in entries) for prefix in HELPER_PREFIXES),
             "Incomplete committed executor inventory")
+    require(hashlib.sha256(git_bytes(root, "show", f"{commit}:backend/shadow-cljs.edn")).hexdigest()
+            == MACRO_CONFIG_SHA256, "Unsupported portable macro configuration")
     return entries
 
 

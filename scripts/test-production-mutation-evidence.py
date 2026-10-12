@@ -216,6 +216,53 @@ class QualificationEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Mandatory authenticated"):
                 self.verify(fixture_batches(), production=True)
 
+    def test_relative_evidence_directory_uses_authenticated_absolute_report_keys(self):
+        """Real structural parsing uses the frozen reports; authentication is inert."""
+        with tempfile.TemporaryDirectory(prefix="knoxx-relative-evidence-") as directory:
+            root = Path(directory)
+            evidence_root = root / "evidence"
+            store = evidence_root / "payload-store"
+            store.mkdir(parents=True)
+            for raw in [*FIXTURE_BYTES.values(), b"var answer = true;\n", b"var answer = false;\n"]:
+                (store / hashlib.sha256(raw).hexdigest()).write_bytes(raw)
+            for index, batch in enumerate(fixture_batches()):
+                (evidence_root / f"batch-{index}.edn.json").write_text(json.dumps(batch))
+            context = {"controller_sha": "c" * 40}  # Explicit mocked authentication only.
+            authenticated = []
+            def authenticate(path, raw, observed_context):
+                self.assertTrue(path.is_absolute())
+                self.assertEqual(context, observed_context)
+                self.assertEqual(path.read_bytes(), raw)
+                authenticated.append(path.name)
+            def manifest(args, **kwargs):
+                self.assertEqual(["clojure", "-Srepro", "-M:mutation", "--source-bindings", SHA], args)
+                self.assertEqual(root / "application/backend", kwargs["cwd"])
+                return subprocess.CompletedProcess(args, 0, self.manifest_stdout, "")
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.dict(os.environ, {"GITHUB_WORKSPACE": str(root)}, clear=True), \
+                        patch.object(verifier, "trusted_execution_context", return_value=context), \
+                        patch.object(verifier, "guard_source_executor") as guards, \
+                        patch.object(verifier, "producer_artifacts", return_value=[{"id": 1}]), \
+                        patch.object(verifier, "authenticated_report", side_effect=authenticate), \
+                        patch.object(subprocess, "run", side_effect=manifest) as canonical:
+                    self.assertEqual(1000, verifier.verify(SHA, evidence_root))
+                    try:
+                        self.assertEqual(1000, verifier.verify(SHA, "evidence"))
+                    except KeyError as error:
+                        self.fail(f"Relative evidence path missed its authenticated report key: {error}")
+                    self.assertEqual(4, guards.call_count)
+                    self.assertEqual(4, canonical.call_count)
+                    self.assertEqual(verifier.REPORT_NAMES * 2, authenticated)
+                    (root / "evidence-link").symlink_to(evidence_root, target_is_directory=True)
+                    with self.assertRaisesRegex(ValueError, "symlink"):
+                        verifier.verify(SHA, "evidence-link")
+                    self.assertEqual(4, canonical.call_count)
+                    self.assertEqual(verifier.REPORT_NAMES * 2, authenticated)
+            finally:
+                os.chdir(previous_cwd)
+
     def test_fabricated_but_self_consistent_source_bindings_are_denied(self):
         for field, value in [("path", "src/cljs/nonexistent.cljs"), ("original-sha256", "c" * 64),
                              ("mutated-sha256", "d" * 64), ("fingerprint", "f" * 64)]:
@@ -830,6 +877,8 @@ class ProductionAuthenticationTests(unittest.TestCase):
         """Committed byte fixtures exercise the real selector; no Git/native reads."""
         contents = {path: b"trusted executor input\n" for path in verifier.HELPER_FILES}
         contents.update({prefix + "fixture.txt": b"tracked helper\n" for prefix in verifier.HELPER_PREFIXES})
+        contents["backend/shadow-cljs.edn"] = (Path(__file__).resolve().parent.parent
+                                              / "backend/shadow-cljs.edn").read_bytes()
         contents.update({"backend/src/cljs/knoxx/backend/macros.cljc":
                          b"(ns knoxx.backend.macros)\n(defmacro fixture [] true)\n",
                          "shared/src/cljs/fixture/macros.cljc":
@@ -850,12 +899,15 @@ class ProductionAuthenticationTests(unittest.TestCase):
 
     def test_executor_inventory_includes_portable_jvm_compiler_sources(self):
         contents = self.executor_fixture()
-        with patch.object(verifier, "git_bytes", return_value=self.executor_tree(contents)) as transport:
+        with patch.object(verifier, "git_bytes", side_effect=lambda root, *args:
+                          contents["backend/shadow-cljs.edn"] if args[0] == "show"
+                          else self.executor_tree(contents)) as transport:
             entries = verifier.executor_entries(Path("/inert-controller"), "c" * 40)
-        self.assertEqual((Path("/inert-controller"), "ls-tree", "-r", "-z", "c" * 40),
-                         transport.call_args.args)
+        self.assertEqual([(Path("/inert-controller"), "ls-tree", "-r", "-z", "c" * 40),
+                          (Path("/inert-controller"), "show", "c" * 40 + ":backend/shadow-cljs.edn")],
+                         [observed.args for observed in transport.call_args_list])
         self.assertIn("backend/src/cljs/knoxx/backend/macros.cljc", entries)
-        self.assertIn("shared/src/cljs/fixture/macros.cljc", entries)
+        self.assertNotIn("shared/src/cljs/fixture/macros.cljc", entries)
         self.assertIn("backend/src/clj/fixture.clj", entries)
         self.assertNotIn("backend/src/cljs/ordinary.cljs", entries)
         self.assertNotIn("frontend/ordinary.cljc", entries)
@@ -865,7 +917,7 @@ class ProductionAuthenticationTests(unittest.TestCase):
         """C/S equality must see actual changed macro blobs, using the real inventory."""
         contents = self.executor_fixture()
         controller, selected = "c" * 40, "b" * 40
-        for macro in ("backend/src/cljs/knoxx/backend/macros.cljc", "shared/src/cljs/fixture/macros.cljc"):
+        for macro in ("backend/src/cljs/knoxx/backend/macros.cljc",):
             with self.subTest(macro=macro), tempfile.TemporaryDirectory(prefix="knoxx-macro-source-") as directory:
                 root = Path(directory)
                 for path, raw in contents.items():
@@ -885,6 +937,69 @@ class ProductionAuthenticationTests(unittest.TestCase):
                         patch.object(verifier, "git_bytes", side_effect=committed):
                     with self.assertRaisesRegex(ValueError, "Selected source executor differs"):
                         verifier.guard_source_executor(selected, {"controller_sha": controller})
+
+    def test_selected_application_cljc_differences_preserve_executor_contract(self):
+        """Real C/S inventory allows app changes and still rejects macro/config drift."""
+        contents = self.executor_fixture()
+        contents.update({"backend/src/cljs/knoxx/backend/domain/fixture.cljc": b"(def app true)\n",
+                         "shared/src/cljs/fixture/domain.cljc": b"(def shared true)\n"})
+        controller, selected = "c" * 40, "b" * 40
+        for changed_path in ("backend/src/cljs/knoxx/backend/domain/fixture.cljc",
+                             "shared/src/cljs/fixture/domain.cljc",
+                             "backend/src/cljs/knoxx/backend/macros.cljc",
+                             "backend/shadow-cljs.edn", "backend/deps.edn"):
+            with self.subTest(path=changed_path), tempfile.TemporaryDirectory(prefix="knoxx-app-source-") as directory:
+                root = Path(directory)
+                application = root / "application"
+                changed = {**contents, changed_path: contents[changed_path] + b"; selected difference\n"}
+                for checkout, files in ((root, contents), (application, changed)):
+                    for path, raw in files.items():
+                        target = checkout / path
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(raw)
+                def committed(checkout, *args):
+                    self.assertIn(checkout, (root, application))
+                    if args == ("rev-parse", "HEAD"):
+                        return (selected if checkout == application else controller).encode() + b"\n"
+                    if args == ("merge-base", "--is-ancestor", selected, controller): return b""
+                    if args[:3] == ("ls-tree", "-r", "-z"):
+                        self.assertIn(args[3], (controller, selected))
+                        return self.executor_tree(contents if args[3] == controller else changed)
+                    if args[0] == "show":
+                        commit, relative = args[1].split(":", 1)
+                        self.assertIn(commit, (controller, selected))
+                        return (contents if commit == controller else changed)[relative]
+                    self.fail(f"Unexpected controlled Git read: {args}")
+                with patch.dict(os.environ, {"GITHUB_WORKSPACE": str(root)}, clear=True), \
+                        patch.object(verifier, "__file__", str(root / "scripts/verify-production-mutation-evidence.py")), \
+                        patch.object(verifier, "git_bytes", side_effect=committed):
+                    if changed_path.endswith("domain/fixture.cljc") or changed_path.endswith("fixture/domain.cljc"):
+                        try:
+                            self.assertEqual(root, verifier.guard_source_executor(selected, {"controller_sha": controller}, application))
+                        except ValueError as error:
+                            self.fail(f"Ordinary selected application CLJC was classified as executor: {error}")
+                    else:
+                        with self.assertRaisesRegex(ValueError,
+                                "Selected source executor differs|Unsupported portable macro configuration"):
+                            verifier.guard_source_executor(selected, {"controller_sha": controller}, application)
+        missing = {path: raw for path, raw in contents.items()
+                   if path != "backend/src/cljs/knoxx/backend/macros.cljc"}
+        with patch.object(verifier, "git_bytes", return_value=self.executor_tree(missing)):
+            with self.assertRaisesRegex(ValueError, "Incomplete committed executor inventory"):
+                verifier.executor_entries(Path("/inert-controller"), controller)
+        unknown = {**contents, "backend/src/cljs/fixture/macros.cljc": b"(defmacro new-macro [] true)\n"}
+        unknown["backend/shadow-cljs.edn"] = contents["backend/shadow-cljs.edn"].replace(
+            b":macros {:knoxx.backend.macros true}",
+            b":macros {:knoxx.backend.macros true :fixture.macros true}")
+        self.assertNotEqual(contents["backend/shadow-cljs.edn"], unknown["backend/shadow-cljs.edn"])
+        # Equal unknown C/S configuration must not silently omit a new macro input.
+        with patch.object(verifier, "git_bytes", side_effect=lambda root, *args:
+                          unknown["backend/shadow-cljs.edn"] if args[0] == "show"
+                          else self.executor_tree(unknown)):
+            for commit in (controller, selected):
+                with self.subTest(unknown_config=commit), self.assertRaisesRegex(ValueError,
+                        "Unsupported portable macro configuration"):
+                    verifier.executor_entries(Path("/inert-controller"), commit)
 
     def test_local_cljc_macro_bytes_are_checked_in_both_checkouts(self):
         """Matching committed blobs cannot hide changed controller/application bytes."""
