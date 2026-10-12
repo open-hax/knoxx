@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -15,6 +16,7 @@ spec = importlib.util.spec_from_file_location(
 verifier = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verifier)
 SHA = "a" * 40
+SOURCE_MANIFEST = None
 LOADER = "target/test/test-ci.cjs"
 RUNTIME = ".shadow-cljs/builds/test-ci/dev/out/cljs-runtime"
 LOADER_BYTES = ("var SHADOW_IMPORT_PATH = __dirname + '/../../" + RUNTIME + "';\n"
@@ -115,10 +117,8 @@ def fixture_batches():
     for batch in range(4):
         mutants = []
         for item in range(250):
-            fingerprint = f"{batch * 250 + item:064x}"
-            binding = {"kind": "mutant", "fingerprint": fingerprint,
-                       "path": "src/cljs/sample.cljs", "original-sha256": "c" * 64,
-                       "mutated-sha256": "d" * 64}
+            binding = copy.deepcopy(SOURCE_MANIFEST["candidates"][item * 4 + batch]["source-binding"])
+            fingerprint = binding["fingerprint"]
             compiled = compile_fixture(binding, b"var answer = false;\n")
             mutants.append({"id": f"m{batch * 250 + item:04d}", "fingerprint": fingerprint,
                             "source-binding": binding, "status": "killed", "phase": "test",
@@ -133,7 +133,49 @@ def fixture_batches():
 
 
 class QualificationEvidenceTests(unittest.TestCase):
-    def verify(self, batches, alter_store=None):
+    @classmethod
+    def setUpClass(cls):
+        """Generate fixture identities with the actual canonical runner, once.
+
+        Only the later transport reads are mocked. Synthetic child outputs and
+        payloads never establish campaign credit, even with real source bindings.
+        """
+        global SHA, SOURCE_MANIFEST
+        cls.source_fixture = tempfile.TemporaryDirectory(prefix="knoxx-source-bindings-")
+        cls.addClassCleanup(cls.source_fixture.cleanup)
+        root = Path(cls.source_fixture.name)
+        backend = root / "backend"
+        (backend / "mutation/knoxx").mkdir(parents=True)
+        (backend / "src/cljs").mkdir(parents=True)
+        repository = Path(__file__).resolve().parent.parent
+        for relative in ["deps.edn", "mutation/knoxx/mutation_test.clj"]:
+            (backend / relative).write_bytes((repository / "backend" / relative).read_bytes())
+        (root / ".gitignore").write_text("backend/.cpcache/\n")
+        cls.source_bytes = ("(ns sample)\n" + "".join(f"(def v{index} true)\n" for index in range(1004))).encode()
+        (backend / "src/cljs/sample.cljs").write_bytes(cls.source_bytes)
+        # All Git operations are local to this fresh disposable fixture.
+        git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        git_env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        for args in [["init", "--quiet", "--template="], ["add", "."],
+                     ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                      "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "source fixture"]]:
+            subprocess.run(["git", *args], cwd=root, env=git_env, check=True, capture_output=True)
+        SHA = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, env=git_env,
+                             check=True, capture_output=True, text=True).stdout.strip()
+        actual = subprocess.run(["clojure", "-Srepro", "-M:mutation", "--source-bindings", SHA],
+                                cwd=backend, check=True, capture_output=True, text=True, timeout=600)
+        cls.manifest_stdout = actual.stdout
+        SOURCE_MANIFEST = json.loads(actual.stdout)
+        if (SOURCE_MANIFEST["source-sha"] != SHA or len(SOURCE_MANIFEST["candidates"]) != 1004
+                or (backend / "src/cljs/sample.cljs").read_bytes() != cls.source_bytes):
+            raise AssertionError("Actual canonical fixture generation did not preserve source")
+        print(json.dumps({"kind": "actual canonical source fixture; synthetic results supply no campaign credit",
+                          "source_sha": SHA, "source_bytes_sha256": hashlib.sha256(cls.source_bytes).hexdigest(),
+                          "manifest_stdout_sha256": hashlib.sha256(actual.stdout.encode()).hexdigest(),
+                          "count": 1004, "first": SOURCE_MANIFEST["candidates"][0],
+                          "last": SOURCE_MANIFEST["candidates"][-1]}, sort_keys=True))
+
+    def verify(self, batches, alter_store=None, manifest=None, transport=None):
         with tempfile.TemporaryDirectory(prefix="knoxx-verifier-") as directory:
             store = Path(directory, "payload-store")
             store.mkdir()
@@ -143,10 +185,77 @@ class QualificationEvidenceTests(unittest.TestCase):
                 alter_store(store)
             for index, batch in enumerate(batches):
                 Path(directory, f"batch-{index}.json").write_text(json.dumps(batch))
-            return verifier.verify(SHA, directory)
+            def captured_manifest(args, **kwargs):
+                self.assertEqual(["clojure", "-Srepro", "-M:mutation", "--source-bindings", SHA], args)
+                self.assertEqual(Path(verifier.__file__).resolve().parent.parent / "backend", kwargs["cwd"])
+                self.assertEqual({"cwd", "check", "capture_output", "text", "timeout"}, set(kwargs))
+                self.assertTrue(kwargs["check"] and kwargs["capture_output"] and kwargs["text"])
+                self.assertEqual(600, kwargs["timeout"])
+                if transport:
+                    return transport(args, kwargs)
+                return subprocess.CompletedProcess(args, 0, self.manifest_stdout if manifest is None
+                                                   else json.dumps(manifest), "")
+            with patch.object(subprocess, "run", side_effect=captured_manifest):
+                return verifier.verify(SHA, directory)
 
     def test_synthetic_complete_disjoint_evidence(self):
         self.assertEqual(1000, self.verify(fixture_batches()))
+
+    def test_fabricated_but_self_consistent_source_bindings_are_denied(self):
+        for field, value in [("path", "src/cljs/nonexistent.cljs"), ("original-sha256", "c" * 64),
+                             ("mutated-sha256", "d" * 64), ("fingerprint", "f" * 64)]:
+            with self.subTest(field=field):
+                batches = fixture_batches()
+                mutant = batches[0]["mutants"][0]
+                for binding in [mutant["source-binding"], mutant["compile"]["payload"]["source-binding"],
+                                mutant["result"]["source-binding"]]:
+                    binding[field] = value
+                if field == "fingerprint":
+                    mutant["fingerprint"] = value
+                with self.assertRaisesRegex(ValueError, "canonical checked-out source"):
+                    self.verify(batches)
+
+    def test_reusing_one_binding_under_new_identity_is_denied(self):
+        batches = fixture_batches()
+        first, second = batches[0]["mutants"][:2]
+        for binding in [second["source-binding"], second["compile"]["payload"]["source-binding"],
+                        second["result"]["source-binding"]]:
+            binding["mutated-sha256"] = first["source-binding"]["mutated-sha256"]
+        with self.assertRaisesRegex(ValueError, "canonical checked-out source"):
+            self.verify(batches)
+
+    def test_actual_candidate_in_wrong_batch_is_denied(self):
+        batches = fixture_batches()
+        batches[0]["mutants"][0], batches[1]["mutants"][0] = batches[1]["mutants"][0], batches[0]["mutants"][0]
+        with self.assertRaisesRegex(ValueError, "different canonical batch"):
+            self.verify(batches)
+
+    def test_canonical_command_failure_and_source_drift_are_denied(self):
+        for error in [OSError("missing canonical runtime"), subprocess.CalledProcessError(1, "clojure"),
+                      subprocess.TimeoutExpired("clojure", 600)]:
+            with self.subTest(error=type(error).__name__):
+                with self.assertRaisesRegex(ValueError, "regeneration failed"):
+                    self.verify(fixture_batches(), transport=lambda _args, _kwargs: (_ for _ in ()).throw(error))
+        calls = 0
+        def changed_source(args, _kwargs):
+            nonlocal calls
+            calls += 1
+            manifest = copy.deepcopy(SOURCE_MANIFEST)
+            if calls == 2:
+                manifest["candidates"][0]["source-binding"]["mutated-sha256"] = "f" * 64
+            return subprocess.CompletedProcess(args, 0, json.dumps(manifest), "")
+        with self.assertRaisesRegex(ValueError, "changed during evidence verification"):
+            self.verify(fixture_batches(), transport=changed_source)
+        self.assertEqual(2, calls)
+
+    def test_canonical_manifest_coordinates_are_not_report_authority(self):
+        for alter in [lambda manifest: manifest.update({"source-sha": "f" * 40}),
+                      lambda manifest: manifest["candidates"][0].update({"ordinal": 1}),
+                      lambda manifest: manifest["candidates"].append(copy.deepcopy(manifest["candidates"][0]))]:
+            manifest = copy.deepcopy(SOURCE_MANIFEST)
+            alter(manifest)
+            with self.assertRaises(ValueError):
+                self.verify(fixture_batches(), manifest=manifest)
 
     def test_optional_debug_maps_match_actual_shadow_layout(self):
         batches = fixture_batches()
@@ -324,11 +433,12 @@ class QualificationEvidenceTests(unittest.TestCase):
         batches = fixture_batches()
         removed = batches[0]["mutants"].pop(0)
         replacement = copy.deepcopy(removed)
-        fingerprint = "e" * 64
+        actual_binding = copy.deepcopy(SOURCE_MANIFEST["candidates"][1000]["source-binding"])
+        fingerprint = actual_binding["fingerprint"]
         replacement.update(id="replacement", fingerprint=fingerprint)
         for binding in [replacement["source-binding"], replacement["compile"]["payload"]["source-binding"],
                         replacement["result"]["source-binding"]]:
-            binding["fingerprint"] = fingerprint
+            binding.update(actual_binding)
         batches[0]["mutants"].append(replacement)
         batches[0]["excluded"] = [{"fingerprint": removed["fingerprint"], "relative-path": "a.cljc", "source-sha256": "c" * 64,
                                    "basis-source-sha": "d" * 40, "manifest-sha256": "e" * 64,

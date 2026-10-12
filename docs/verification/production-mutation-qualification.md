@@ -12,25 +12,26 @@ python3 scripts/test-production-mutation-evidence.py
 ```
 
 To verify actual campaign evidence, select one completed production workflow
-run and its exact40hex source S. Download all four artifacts from that same run:
+run and its exact 40-hex source SHA S. Download all four artifacts from that same run:
 `production-mutation-0`, `production-mutation-1`, `production-mutation-2`, and
 `production-mutation-3`. Each supplies `batch-N.edn.json` and `payload-store/`.
-Use a fresh evidence directory containing exactly those four batch JSON reports
+Use a fresh evidence directory outside the checkout containing exactly those four batch JSON reports
 and one merged `payload-store/` directory with the union of their digest-named
 blobs. If the same digest occurs in several artifacts, its bytes must be
 identical; refuse a differing duplicate rather than overwriting it. Preserve the
 original downloads and failed verifier output. This is the layout produced by
 the workflow's `actions/download-artifact` step with `merge-multiple: true`.
 
-From the checkout at the same reviewed source S, run the committed verifier:
+From a clean checkout at the same reviewed source S, with Java 21 and Clojure CLI
+1.12.5.1654 available, run the committed verifier:
 
 ```sh
 SOURCE_SHA='<exact40hex-source-S>'
-EVIDENCE_DIR='<fresh-directory-with-four-batch-json-reports-and-payload-store>'
+EVIDENCE_DIR='<fresh-external-directory-with-four-batch-json-reports-and-payload-store>'
 python3 scripts/verify-production-mutation-evidence.py "$SOURCE_SHA" "$EVIDENCE_DIR"
 ```
 
-A successful verifier reports the exact source and at least1000 distinct
+A successful verifier reports the exact source and at least 1000 distinct
 completed assertion kills across four batches. It rechecks full retained
 compilation/test/source evidence, loader layout and physical CAS bytes. It
 verifies each shared nonloader blob on first use and rehashes every unique blob
@@ -39,6 +40,26 @@ payload's import parsing. Its cache belongs to one verifier invocation. This
 rejects changed bytes even when size, inode and modification time are preserved.
 These focused synthetic and cross-runtime contract controls supply no campaign,
 integration/e2e, native SDK or production readiness credit.
+
+The verifier invokes `clojure -Srepro -M:mutation --source-bindings S` in that
+checkout's backend before admission and again after its byte checks. This
+read-only canonical command uses the existing source discovery, fingerprint and
+source-preserving rewrite functions to regenerate every candidate's original
+and mutated source hashes. It checks clean HEAD/index/input custody before and
+after regeneration, rejects symlinked source paths, and compares each source
+file with its immutable committed bytes. Python matches each claimed binding
+and its deterministic batch ordinal to that inventory; it implements no second
+mutation identity or rewrite law. A fabricated path, fingerprint, hash or reused
+binding cannot earn a distinct kill. The final inventory must still match.
+Only the runner's base JVM dependencies are needed for this command; it does not
+select the CLJS/SDK classpath, compile artifacts or run tests. Uploaded manifests
+and reports cannot replace regeneration from the actual checkout. The workflow
+keeps downloaded evidence under runner temp so it does not dirty that checkout.
+
+The verifier controls generate bindings once from the canonical command in a
+private committed source fixture. Repeated transport reads are then mocked for
+synthetic report/output controls. Those source bindings establish the test's
+membership contract, not real compile/test execution or campaign qualification.
 
 The runner temporarily edits a real source file in a clean committed checkout,
 compiles the non-autorun `test-ci` target, runs its output in a separate guarded

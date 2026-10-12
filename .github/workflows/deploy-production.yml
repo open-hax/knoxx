@@ -116,15 +116,29 @@ jobs:
           repository: open-hax/knoxx
           ref: ${{ needs.source.outputs.sha }}
           persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13
+        with:
+          cli: '1.12.5.1654'
+      - name: Require a fresh external evidence directory
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/production-mutation-evidence
+        run: |
+          set -euo pipefail
+          [[ ! -e "$EVIDENCE_DIR" && ! -L "$EVIDENCE_DIR" ]]
       - uses: actions/download-artifact@v4
         with:
           pattern: production-mutation-*
-          path: evidence
+          path: ${{ runner.temp }}/production-mutation-evidence
           merge-multiple: true
       - id: accept
         env:
           SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/production-mutation-evidence
         run: |
           set -euo pipefail
-          python3 scripts/verify-production-mutation-evidence.py "$SOURCE_SHA" evidence
+          python3 scripts/verify-production-mutation-evidence.py "$SOURCE_SHA" "$EVIDENCE_DIR"
           echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"

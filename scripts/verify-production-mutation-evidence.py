@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 
 LOADER = "target/test/test-ci.cjs"
@@ -66,6 +67,37 @@ def source_binding(binding, fingerprint=None):
     require(digest_shape(binding.get("original-sha256"), 64)
             and digest_shape(binding.get("mutated-sha256"), 64)
             and binding["original-sha256"] != binding["mutated-sha256"], "Invalid bound source hashes")
+
+
+def canonical_source_bindings(sha):
+    """Ask the committed canonical runner to reconstruct identities from source S.
+
+    Python transports and matches this inventory; mutation discovery, fingerprint
+    semantics and source rewriting remain in knoxx.mutation-test.
+    """
+    backend = Path(__file__).resolve().parent.parent / "backend"
+    try:
+        result = subprocess.run(["clojure", "-Srepro", "-M:mutation", "--source-bindings", sha],
+                                cwd=backend, check=True, capture_output=True, text=True, timeout=600)
+        manifest = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        raise ValueError("Canonical immutable source binding regeneration failed") from error
+    require(isinstance(manifest, dict) and set(manifest) == {"schema-version", "source-sha", "candidates"}
+            and type(manifest["schema-version"]) is int and manifest["schema-version"] == 1
+            and manifest["source-sha"] == sha and isinstance(manifest["candidates"], list),
+            "Invalid canonical source binding manifest")
+    bindings = {}
+    for ordinal, candidate in enumerate(manifest["candidates"]):
+        require(isinstance(candidate, dict) and set(candidate) == {"ordinal", "source-binding"}
+                and type(candidate["ordinal"]) is int and candidate["ordinal"] == ordinal,
+                "Invalid canonical source candidate ordinal")
+        binding = candidate["source-binding"]
+        fingerprint = binding.get("fingerprint") if isinstance(binding, dict) else None
+        source_binding(binding, fingerprint)
+        require(fingerprint is not None and fingerprint not in bindings,
+                "Duplicate canonical source mutation identity")
+        bindings[fingerprint] = candidate
+    return bindings
 
 
 def manifest_digest(files):
@@ -181,6 +213,7 @@ def verify(sha, directory):
     require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "Immutable commit required")
     files = list(Path(directory).glob("*.json"))
     require(len(files) == 4, "Exactly four completed batches required")
+    canonical = canonical_source_bindings(sha)
     store = physical_path(Path(directory) / "payload-store", directory=True)
     referenced = set()
     verified = {}  # Explicit invocation-local cache, never reused across stores or runs.
@@ -221,6 +254,10 @@ def verify(sha, directory):
             require(mutant["status"] == "killed" and mutant["phase"] == "test", "Mutation was not test-killed")
             binding = mutant.get("source-binding")
             source_binding(binding, key)
+            candidate = canonical.get(key)
+            require(candidate is not None and candidate["source-binding"] == binding,
+                    "Mutation binding does not match canonical checked-out source")
+            require(candidate["ordinal"] % 4 == index, "Mutation belongs to a different canonical batch")
             payload = compile_evidence(mutant.get("compile"), sha, binding, store, referenced, verified)
             require(payload["code-sha256"] != baseline_payload["code-sha256"],
                     "Unchanged executed code cannot qualify as a kill")
@@ -236,6 +273,8 @@ def verify(sha, directory):
         blob = physical_path(path).read_bytes()
         require(len(blob) == verified[path.name] and hashlib.sha256(blob).hexdigest() == path.name,
                 "Verified payload blob changed before final custody check")
+    require(canonical_source_bindings(sha) == canonical,
+            "Canonical source bindings changed during evidence verification")
     return len(seen)
 
 

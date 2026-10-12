@@ -312,3 +312,12 @@
   spore: none
   receipt-refs: fb530e92423dbf73e2db2ea53661888668ff27f047d933670cea32a183baf0f3,632944a45d671d08fc9a3e4cff4d0185326fcadc92c7affbb4378b3b7eb8ee53
   note: Preserve completed child evidence when cleanup or preflight fails, and distinguish a missing invocation from a failed child. Strengthened adverse controls must reach their intended guard with consistent hashes. Actual YAML fixtures establish Git isolation and physical sibling refusal while packages remain inert. Raw-index metadata refused the b01 outer pilot despite inner green tests: keep INVALID, do not rewrite it as successful qualification. Source-specific focused green does not replace the unchanged four disjoint250 campaign. No new spore or promotion.
+- ts: 2026-10-12T02:38:09.436980184Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Bind production mutation admission to canonical source inventory
+  p-efficiency: 0.72
+  p-friction: 0.62
+  p-skill-candidate: 0.45
+  spore: none
+  receipt-refs: 42aaad33be065200cfdbd37101d3f653bbdc09f1466dfdc40a553d4b22f194b9
+  note: Use the existing canonical JVM discovery/fingerprint/rewrite and validate exact source-S membership at both ends. Real source fixture transport tests are not production campaigns. Keep old cleanup/artifact disputes separate; green unchanged supervisor controls do not manufacture a fix or rejection. No new spore, promotion, deployment or native approval.

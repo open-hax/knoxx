@@ -43,6 +43,70 @@
   [root]
   (doseq [file (reverse (file-seq root))] (.delete ^java.io.File file)))
 
+(deftest canonical-source-binding-refuses-fabricated-fingerprint
+  (let [{:keys [root backend-dir] :as fixture} (payload-fixture!)
+        candidate (first (mutation/discover-candidates {:src-dir (.getPath (io/file backend-dir "src/cljs"))}))]
+    (try
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"fingerprint differs"
+                           (mutation/source-binding! fixture (assoc candidate :fingerprint (apply str (repeat 64 "f"))))))
+      (finally (delete-fixture! root)))))
+
+(deftest canonical-source-manifest-is-reconstructed-from-immutable-checkout
+  (let [{:keys [root backend-dir source-sha] :as fixture} (payload-fixture!)
+        file (io/file backend-dir "src/cljs/demo.cljs")
+        original (slurp file)
+        candidate (first (mutation/discover-candidates {:src-dir (.getPath (io/file backend-dir "src/cljs"))}))]
+    (try
+      (with-redefs [mutation/run-process! (fn [_] (throw (AssertionError. "Binding regeneration must not execute a child")))]
+        (let [manifest (mutation/source-bindings-manifest! fixture)
+              binding (get-in manifest [:candidates 0 :source-binding])]
+          (is (= {:schema-version 1 :source-sha source-sha} (dissoc manifest :candidates)))
+          (is (= 1 (count (:candidates manifest))))
+          (is (= 0 (get-in manifest [:candidates 0 :ordinal])))
+          (is (= (mutation/source-binding! fixture candidate) binding))
+          (is (= "src/cljs/demo.cljs" (:path binding)))
+          (is (= (mutation/sha256 "(def value true)\n") (:original-sha256 binding)))
+          (is (= (mutation/sha256 "(def value false)\n") (:mutated-sha256 binding)))
+          (is (= original (slurp file))))
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (mutation/source-bindings-manifest! (assoc fixture :source-sha (apply str (repeat 40 "f"))))))
+        (spit file "(def value false)\n")
+        (is (thrown? clojure.lang.ExceptionInfo (mutation/source-bindings-manifest! fixture)))
+        (spit file original)
+        (let [calls (atom 0)
+              original-discover mutation/discover-candidates]
+          (with-redefs [mutation/discover-candidates (fn [opts]
+                                                     (swap! calls inc)
+                                                     (let [result (original-discover opts)]
+                                                       (spit file "(def value false)\n")
+                                                       result))]
+            (is (thrown? clojure.lang.ExceptionInfo (mutation/source-bindings-manifest! fixture)))
+            (is (= 1 @calls))))
+        (spit file original)
+        (is (true? (mutation/assert-source-custody! fixture))))
+      (finally (delete-fixture! root)))))
+
+(deftest canonical-fingerprint-matches-observed-pilot-descriptor
+  ;; Actual historical pilot c533; no equivalent adjudication or kill credit.
+  (is (= "c5331e130ef389a0c7c8f22f68ef799fcea6c121f355c70c564643050a068081"
+         (mutation/fingerprint {:relative-path "knoxx/backend/bootstrap.cljs" :line 71 :column 9
+                                :operator :boolean-literal-flip :original "true" :replacement "false"}))))
+
+(deftest exclusion-partition-lookup-does-not-promote-a-missing-candidate
+  (let [{:keys [root backend-dir] :as fixture} (payload-fixture!)
+        report (io/file backend-dir "target/mutation/exclusion-lookup.edn")]
+    (try
+      ;; This inert dependency fault tests the defensive lookup only;
+      ;; real load-equivalents! still rejects missing candidates first.
+      (with-redefs [mutation/load-equivalents! (fn [_ _] [{:fingerprint (apply str (repeat 64 "f"))}])]
+        (let [result (mutation/run-suite! (assoc fixture :src-dir (.getPath (io/file backend-dir "src/cljs"))
+                                               :report-file (.getPath report) :batch-index 0 :batch-count 4 :run? false))]
+          (is (empty? (:excluded result)))
+          (is (= :planned (:status result)))
+          (is (= 0 (get-in result [:summary :evaluated])))
+          (is (= 0 (get-in result [:summary :killed])))))
+      (finally (delete-fixture! root)))))
+
 (deftest completed-child-evidence-survives-custody-io-failures
   (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
         source-dir (io/file backend-dir "src/cljs")

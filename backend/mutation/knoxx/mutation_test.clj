@@ -363,6 +363,16 @@
     (when-not (zero? (:exit result)) (throw (ex-info "Source custody Git read failed" result)))
     (:out result)))
 
+(defn bind-mutant-source
+  "Use the canonical descriptor and rewrite to bind exact source bytes."
+  [original mutant]
+  (when-not (= (:fingerprint mutant) (fingerprint mutant))
+    (throw (ex-info "Mutation fingerprint differs from canonical descriptor" {})))
+  {:kind "mutant" :fingerprint (:fingerprint mutant)
+   :path (str "src/cljs/" (:relative-path mutant))
+   :original-sha256 (sha256 original)
+   :mutated-sha256 (sha256 (apply-mutant-to-source original mutant))})
+
 (defn source-binding!
   "Bind a mutation to its original committed bytes and exact expected rewrite."
   [opts mutant]
@@ -370,9 +380,7 @@
     {:kind "baseline"}
     (let [path (str "src/cljs/" (:relative-path mutant))
           original (git-result! opts "show" (str (:source-sha opts) ":backend/" path))]
-      {:kind "mutant" :fingerprint (:fingerprint mutant) :path path
-       :original-sha256 (sha256 original)
-       :mutated-sha256 (sha256 (apply-mutant-to-source original mutant))})))
+      (bind-mutant-source original mutant))))
 
 (defn assert-source-custody!
   "Permit only the exact current source mutation; refuse HEAD, index or input drift."
@@ -420,6 +428,30 @@
   (let [file (payload-path! root relative)]
     (when-not (.isFile file) (throw (ex-info "Payload file missing or nonregular" {:path relative})))
     file))
+
+(defn source-bindings-manifest!
+  "Regenerate source identities for the verifier, without compiling or mutating.
+  The checkout at S, not an uploaded report or manifest, supplies every descriptor."
+  [{:keys [source-sha backend-dir] :or {backend-dir "."} :as opts}]
+  (let [opts (assoc opts :source-binding {:kind "baseline"})
+        src-dir (io/file backend-dir default-src-dir)]
+    (assert-source-custody! opts)
+    (let [originals (into {} (map (fn [file]
+                                  (let [relative (relative-path src-dir file)
+                                        path (str default-src-dir "/" relative)
+                                        physical (regular-payload-file! backend-dir path)
+                                        original (git-result! opts "show" (str source-sha ":backend/" path))]
+                                    (when-not (= original (slurp physical))
+                                      (throw (ex-info "Source bytes differ from immutable checkout" {:path path})))
+                                    [relative original])) (source-files src-dir)))
+          candidates (discover-candidates {:src-dir (.getPath src-dir)})
+          bindings (mapv (fn [candidate]
+                           {:ordinal (:ordinal candidate)
+                            :source-binding (bind-mutant-source (get originals (:relative-path candidate)) candidate)}) candidates)]
+      (when-not (= (count bindings) (count (set (map #(get-in % [:source-binding :fingerprint]) bindings))))
+        (throw (ex-info "Canonical source inventory contains duplicate identities" {})))
+      (assert-source-custody! opts)
+      {:schema-version 1 :source-sha source-sha :candidates bindings})))
 
 (defn payload-digest
   "Hash the portable sorted file inventory; maps have a separate code identity."
@@ -758,6 +790,7 @@
        "  --src-dir DIR           Source directory, default src/cljs\n"
        "  --include-regex REGEX   Restrict mutants by source-relative file path\n"
        "  --equivalents FILE      Explicit committed source-bound review adjudications; zero kill credit\n"
+       "  --source-bindings SHA   Read-only canonical bindings from a clean checkout at SHA; no other options\n"
        "  --limit N               Mutant limit, 0 means no limit; default 100\n"
        "  --batch-index N         Zero-based deterministic partition index\n"
        "  --batch-count N         Number of disjoint partitions\n"
@@ -805,8 +838,10 @@
         candidates (discover-candidates opts)
         equivalents (load-equivalents! opts candidates)
         excluded-keys (set (map :fingerprint equivalents))
-        excluded (filterv (fn [entry] (let [candidate (some #(when (= (:fingerprint entry) (:fingerprint %)) %) candidates)]
-                                       (= (:batch-index opts) (mod (:ordinal candidate) (:batch-count opts))))) equivalents)
+        by-fingerprint (into {} (map (juxt :fingerprint identity) candidates))
+        excluded (filterv (fn [entry]
+                            (when-let [candidate (get by-fingerprint (:fingerprint entry))]
+                              (= (:batch-index opts) (mod (:ordinal candidate) (:batch-count opts))))) equivalents)
         baseline-evidence (when (:run? opts) (baseline! opts))
         baseline (if (:run? opts) (:status baseline-evidence) :not-run)
         mutants (partition-mutants candidates (assoc opts :equivalent-fingerprints excluded-keys))
@@ -823,7 +858,12 @@
 
 (defn -main
   [& args]
-  (let [opts (parse-args args)]
-    (if (:help? opts)
-      (println usage)
-      (run-suite! opts))))
+  (if (= "--source-bindings" (first args))
+    (do
+      (when-not (= 2 (count args))
+        (throw (ex-info "Source binding command requires only one immutable SHA" {})))
+      (println (json/write-str (source-bindings-manifest! {:source-sha (second args)}))))
+    (let [opts (parse-args args)]
+      (if (:help? opts)
+        (println usage)
+        (run-suite! opts)))))
