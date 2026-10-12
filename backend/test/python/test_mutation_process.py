@@ -439,6 +439,37 @@ module.main(sys.argv[2:])
             with self.assertRaises((IndexError, ValueError)):
                 module.process_identity(os.getpid())
 
+    def test_missing_proc_children_interface_refuses_before_spawn(self):
+        spec = importlib.util.spec_from_file_location("mutation_process", SUPERVISOR)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original_read = module.Path.read_text
+        for failure in (FileNotFoundError("fixture children interface absent"),
+                        PermissionError("fixture children interface denied")):
+            inspected = []
+            def unavailable_children(path, *args, **kwargs):
+                if path.name == "children":
+                    inspected.append(str(path))
+                    raise failure
+                return original_read(path, *args, **kwargs)
+            with self.subTest(failure=type(failure).__name__), \
+                    patch.object(module.Path, "read_text", unavailable_children), \
+                    patch.object(module.subprocess, "Popen",
+                                 side_effect=AssertionError("fixture must not spawn")) as spawn:
+                result = module.supervise(["must-not-spawn"], 100)
+                self.assertTrue(inspected, "actual children interface was not inspected")
+                spawn.assert_not_called()
+                self.assertEqual(result["termination"], "setup-error")
+                self.assertIsNone(result["exit-code"])
+                self.assertEqual(result["captured-output-bytes"], 0)
+                self.assertEqual(result["output"], "")
+                self.assertEqual(result["output-sha256"], hashlib.sha256(b"").hexdigest())
+                self.assertFalse(result["timed-out?"])
+                self.assertFalse(result["capture-truncated?"])
+                self.assertTrue(result["cleanup-complete?"])
+                self.assertIn(type(failure).__name__, result["diagnostic"])
+                self.assertIn(str(failure), result["diagnostic"])
+
     def test_platform_and_prctl_setup_fail_closed_without_spawn(self):
         spec = importlib.util.spec_from_file_location("mutation_process", SUPERVISOR)
         module = importlib.util.module_from_spec(spec)

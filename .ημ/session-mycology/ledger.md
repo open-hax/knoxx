@@ -366,3 +366,12 @@
   spore: none
   receipt-refs: af7b301a-e4a0-4faa-aa72-fbf57a6fa6af,96cfd109d232f0268adb118211004c9ef537616e3a2fa4a8750dcbdf23c49861
   note: Bind compound mutation identity to exact anonymous syntax rather than process-local expanded gensyms. Preserve complete map/fingerprint comparisons and stable c533 identity. Separate actual regression failures from setup/prediction errors. All qualified selection exclusions remain planned/evaluated0/killed0; native review and real production campaigns remain separate. No spore or promotion.
+- ts: 2026-10-12T13:37:38.206580245Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Qualified and applied two confirmed Knoxx deployment gaps
+  p-efficiency: 0.75
+  p-friction: 0.6
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 7472788750ba529aeb896782e80953bdffc07e4576d49dede32ec4bcb7091186
+  note: Bind required Clojure/JDK tools before verifier fixtures; retain setup failures and separate supervisor19 from verifier50. Apply only exact privately qualified source bytes, with no synthetic campaign credit.

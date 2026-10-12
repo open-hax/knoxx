@@ -61,7 +61,10 @@ def enable_subreaper():
         raise RuntimeError("Linux subreaper, pidfd, and waitid support required")
     if not process_identity(os.getpid()) or not Path("/proc/self/task").is_dir():
         raise RuntimeError("Readable Linux /proc child custody required")
-    if direct_children(os.getpid()):
+    # This live main task cannot disappear before spawn. Read its children
+    # interface strictly so unsupported procfs is not mistaken for no children.
+    children = Path(f"/proc/self/task/{os.getpid()}/children").read_text().split()
+    if children or direct_children(os.getpid()):
         raise RuntimeError("Supervisor must start without pre-existing children")
     probe = os.pidfd_open(os.getpid())
     os.close(probe)

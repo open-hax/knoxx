@@ -93,6 +93,7 @@ jobs:
         with:
           repository: open-hax/knoxx
           ref: ${{ needs.source.outputs.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/knoxx-setup
       - name: Qualify 250 distinct source mutations with a green baseline
