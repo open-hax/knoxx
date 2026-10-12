@@ -183,3 +183,12 @@
   spore: none
   receipt-refs: knoxx-382-provenance-links
   note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
+- ts: 2026-10-12T14:52:09.289107323Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-native-assessment-route-main-v1
+  task: Restore the installed native App comment route
+  p-efficiency: 0.85
+  p-friction: 0.25
+  p-skill-candidate: 0.2
+  spore: none
+  receipt-refs: root-comment-route-event-v1.edn
+  note: Verify installation and repository event workflow independently. Keep scoped assessment separate from full review and settlement. No spore.

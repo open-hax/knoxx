@@ -1,0 +1,63 @@
+name: OpenCode Native Assessment
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opencode-native-assessment-${{ github.repository }}-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  assess:
+    name: Assess the requested PR conversation with OpenCode
+    if: >-
+      github.event.issue.pull_request &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      (github.event.comment.body == '/opencode' ||
+       startsWith(github.event.comment.body, '/opencode ') ||
+       github.event.comment.body == '/oc' ||
+       startsWith(github.event.comment.body, '/oc '))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Checkout the workflow source without persisted credentials
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Request a native App assessment
+        uses: anomalyco/opencode/github@385cb694419f98103af0e8fc6187ddcbcbb6eecb
+        env:
+          KIMI_API_KEY: ${{ secrets.KIMI_FOR_CODING_API_KEY }}
+          # The pinned chat path omits AGENT and uses default_agent instead.
+          # These are configured restrictions, not dynamically verified behavior.
+          OPENCODE_CONFIG_CONTENT: >-
+            {"default_agent":"plan","agent":{"plan":{"mode":"primary","permission":{"edit":"deny","bash":"deny","task":"deny"}}}}
+        with:
+          model: kimi-code-plan-global/kimi-for-coding
+          agent: plan
+          share: false
+          use_github_token: false
+          prompt: |
+            Provide the independent technical assessment requested in this PR comment.
+            Use the native PR context supplied by the integration and inspect the
+            cited primary source and evidence. Read and analyze only; do not modify
+            code, run commands, create commits or PRs, submit an approval, or resolve
+            a conversation. Do not assume a requested conclusion is correct.
+            If the selected inline conversation, current source, or necessary
+            evidence cannot be read completely, report that specific limitation.
+            Reply with your assessment through the App's normal comment response.
+
+            Triggering comment: ${{ github.event.comment.html_url }}
+            Request:
+            ${{ github.event.comment.body }}
