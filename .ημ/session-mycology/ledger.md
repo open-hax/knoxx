@@ -330,3 +330,12 @@
   spore: none
   receipt-refs: d8ce9e4c49a2d85d1d515d7dbacda995a0e428cedc7a27a0b81441d3671bb154
   note: Official authenticated executor admission replaces unsigned production credit; canonical prefix and exclusion custody use the existing JVM inventory. Actual source qualification44PASS and old unsigned acceptance versus new refusal are bounded local proof. Public official crypto controls and reader oracle are separate from real Knoxx campaigns/native review/hosted CMS readiness. Four exact source files applied with outside source/index/inodes preserved. No new spore.
+- ts: 2026-10-12T05:09:15.524328887Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Restore reusable qualifier checkout topology assertion
+  p-efficiency: 0.94
+  p-friction: 0.18
+  p-skill-candidate: 0.35
+  spore: none
+  receipt-refs: 55faac34-6a14-44cc-9e31-d445c6f71a89,d223c7075f230c2dc247ceb9d2725ce0f41d1a690386e83be36068ee986c30b6
+  note: When intentional workflow topology adds signer/controller checkout steps, preserve all original per-checkout repository and persistence checks and update the exact expected multiset. Actual predecessor assertion failure and unchanged existing-test pass bound the repair. Keep production campaign and native review separate. No new spore or promotion.

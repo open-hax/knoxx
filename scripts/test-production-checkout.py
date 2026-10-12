@@ -16,7 +16,9 @@ class ProductionCheckoutTest(unittest.TestCase):
                     self.assertEqual('open-hax/knoxx', step['with'].get('repository'), name)
                     self.assertEqual('false', step['with'].get('persist-credentials'), name)
                     observed.append(name)
-        self.assertCountEqual(['source', 'integration-e2e', 'mutation', 'qualified'], observed)
+        # Signing checks out the controller; qualified checks out controller and application.
+        self.assertCountEqual(['source', 'integration-e2e', 'mutation',
+                               'attest-evidence', 'qualified', 'qualified'], observed)
 
 if __name__ == '__main__':
     unittest.main()
