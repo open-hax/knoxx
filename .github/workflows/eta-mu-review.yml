@@ -11,7 +11,34 @@ permissions:
   pull-requests: read
 
 jobs:
+  production-evidence:
+    name: Production mutation evidence verifier contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact pull-request source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Java for the canonical mutation runner
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Setup canonical Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13
+        with:
+          cli: '1.12.5.1654'
+      - name: Production mutation evidence verifier contracts
+        run: |
+          python3 -m venv "$RUNNER_TEMP/knoxx-production-evidence-python"
+          "$RUNNER_TEMP/knoxx-production-evidence-python/bin/python" -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.2'
+          "$RUNNER_TEMP/knoxx-production-evidence-python/bin/python" scripts/test-production-mutation-evidence.py
+
   review:
+    needs: production-evidence
     name: Evidence-first review (eta-mu)
     # Consume the reviewed full-input/native-publication integration.
     uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@d98ab446d56ddfd24542df49b102b851f2a767fa

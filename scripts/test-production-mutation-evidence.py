@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+import yaml
 
 spec = importlib.util.spec_from_file_location(
     "mutation_verifier", Path(__file__).with_name("verify-production-mutation-evidence.py"))
@@ -1040,6 +1041,77 @@ class ProductionAuthenticationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Unsafe executor input mode"):
                     verifier.executor_entries(Path("/inert-controller"), "c" * 40)
 
+    def test_shared_local_library_manifest_is_required_executor_input(self):
+        """The local-root deps manifest belongs to the actual executor inventory."""
+        contents = self.executor_fixture()
+        contents["shared/deps.edn"] = b'{:paths ["src/cljs"]}\n'
+        with patch.object(verifier, "git_bytes", side_effect=lambda root, *args:
+                          contents["backend/shadow-cljs.edn"] if args[0] == "show"
+                          else self.executor_tree(contents)):
+            entries = verifier.executor_entries(Path("/inert-controller"), "c" * 40)
+        self.assertIn("shared/deps.edn", entries)
+        self.assertEqual("100644", entries["shared/deps.edn"][0])
+        missing = {path: raw for path, raw in contents.items() if path != "shared/deps.edn"}
+        with patch.object(verifier, "git_bytes", return_value=self.executor_tree(missing)):
+            with self.assertRaisesRegex(ValueError, "Incomplete committed executor inventory"):
+                verifier.executor_entries(Path("/inert-controller"), "c" * 40)
+
+    def test_selected_source_shared_manifest_drift_is_refused(self):
+        """Changing the local library paths cannot keep the real C/S inventory equal."""
+        contents = self.executor_fixture()
+        contents["shared/deps.edn"] = b'{:paths ["src/cljs"]}\n'
+        changed = {**contents, "shared/deps.edn": b'{:paths ["unreviewed-source"]}\n'}
+        controller, selected = "c" * 40, "b" * 40
+        with tempfile.TemporaryDirectory(prefix="knoxx-shared-manifest-source-") as directory:
+            root = Path(directory)
+            for path, raw in contents.items():
+                target = root / path; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(raw)
+            def committed(checkout, *args):
+                self.assertEqual(root, checkout)
+                if args == ("rev-parse", "HEAD"): return controller.encode() + b"\n"
+                if args == ("merge-base", "--is-ancestor", selected, controller): return b""
+                if args[:3] == ("ls-tree", "-r", "-z"):
+                    self.assertIn(args[3], (controller, selected))
+                    return self.executor_tree(contents if args[3] == controller else changed)
+                if args[0] == "show": return contents[args[1].split(":", 1)[1]]
+                self.fail(f"Unexpected controlled Git read: {args}")
+            with patch.dict(os.environ, {"GITHUB_WORKSPACE": str(root)}, clear=True), \
+                    patch.object(verifier, "__file__", str(root / "scripts/verify-production-mutation-evidence.py")), \
+                    patch.object(verifier, "git_bytes", side_effect=committed):
+                with self.assertRaisesRegex(ValueError, "Selected source executor differs"):
+                    verifier.guard_source_executor(selected, {"controller_sha": controller})
+
+    def test_local_shared_manifest_bytes_are_checked_in_both_checkouts(self):
+        """Matching committed blobs still require the actual controller and S bytes."""
+        contents = self.executor_fixture()
+        contents["shared/deps.edn"] = b'{:paths ["src/cljs"]}\n'
+        controller, selected = "c" * 40, "b" * 40
+        manifest = "shared/deps.edn"
+        with tempfile.TemporaryDirectory(prefix="knoxx-shared-manifest-physical-") as directory:
+            root = Path(directory); application = root / "application"; application.mkdir()
+            for checkout in (root, application):
+                for path, raw in contents.items():
+                    target = checkout / path; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(raw)
+            def committed(checkout, *args):
+                if args == ("rev-parse", "HEAD"):
+                    return (selected if checkout == application else controller).encode() + b"\n"
+                if args == ("merge-base", "--is-ancestor", selected, controller): return b""
+                if args[:3] == ("ls-tree", "-r", "-z"): return self.executor_tree(contents)
+                if args[0] == "show": return contents[args[1].split(":", 1)[1]]
+                self.fail(f"Unexpected controlled Git read: {args}")
+            with patch.dict(os.environ, {"GITHUB_WORKSPACE": str(root)}, clear=True), \
+                    patch.object(verifier, "__file__", str(root / "scripts/verify-production-mutation-evidence.py")), \
+                    patch.object(verifier, "git_bytes", side_effect=committed):
+                self.assertEqual(root, verifier.guard_source_executor(selected, {"controller_sha": controller}, application))
+                for checkout, message in ((root, "Controller executor input changed"),
+                                          (application, "application executor input changed")):
+                    with self.subTest(checkout=checkout.name):
+                        (checkout / manifest).write_bytes(b'{:paths ["unreviewed-source"]}\n')
+                        with self.assertRaisesRegex(ValueError, message):
+                            verifier.guard_source_executor(selected, {"controller_sha": controller}, application)
+                        (checkout / manifest).write_bytes(contents[manifest])
+                self.assertEqual(root, verifier.guard_source_executor(selected, {"controller_sha": controller}, application))
+
     def test_production_uses_signed_snapshot_and_rechecks_native_and_report_custody(self):
         """Control transport calls while preserving the wrapper's custody ordering."""
         _, _, context = self.fixture()
@@ -1084,6 +1156,35 @@ class ProductionAuthenticationTests(unittest.TestCase):
                             verifier.verify(SHA, evidence)
                 for path, raw in reports.items():
                     path.write_bytes(raw)
+
+
+class RequiredVerifierGateTests(unittest.TestCase):
+    def test_required_workflows_execute_equipped_verifier_suite(self):
+        """Both actual workflow routes run the suite with local Python/Java/Clojure."""
+        repository = Path(__file__).resolve().parent.parent
+        for relative, job_name in ((".github/workflows/ci.yml", "knoxx"),
+                                   (".github/workflows/eta-mu-review.yml", "production-evidence")):
+            with self.subTest(workflow=relative):
+                workflow = yaml.load((repository / relative).read_text(), Loader=yaml.BaseLoader)
+                self.assertIn(job_name, workflow["jobs"])
+                steps = workflow["jobs"][job_name]["steps"]
+                gates = [(index, step) for index, step in enumerate(steps)
+                         if "scripts/test-production-mutation-evidence.py" in step.get("run", "")]
+                self.assertEqual(1, len(gates), "required verifier invocation must exist once")
+                index, gate = gates[0]
+                self.assertNotIn("continue-on-error", gate)
+                before = steps[:index]
+                self.assertTrue(any(step.get("uses", "").startswith("actions/setup-java@")
+                                    and step.get("with", {}).get("java-version") == "21" for step in before))
+                self.assertTrue(any(step.get("uses", "").startswith("DeLaGuardo/setup-clojure@")
+                                    and step.get("with", {}).get("cli") == "1.12.5.1654" for step in before))
+                command = gate["run"]
+                self.assertIn('python3 -m venv "$RUNNER_TEMP/knoxx-production-evidence-python"', command)
+                self.assertIn("'PyYAML==6.0.2'", command)
+                self.assertIn('"$RUNNER_TEMP/knoxx-production-evidence-python/bin/python" scripts/test-production-mutation-evidence.py', command)
+                if job_name == "production-evidence":
+                    self.assertEqual("production-evidence", workflow["jobs"]["review"]["needs"])
+                    self.assertEqual("false", workflow["jobs"]["review"]["with"]["setup_eta_mu_toolchain"])
 
 
 if __name__ == "__main__":

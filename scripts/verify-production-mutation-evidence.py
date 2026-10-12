@@ -298,7 +298,7 @@ SERVICES_PATH = ".github/workflows/deploy-stack.yml"
 HELPER_PREFIXES = ("backend/mutation/", "backend/scripts/", "backend/test/",
                    ".github/actions/knoxx-setup/")
 HELPER_FILES = {"scripts/verify-production-mutation-evidence.py", "backend/deps.edn",
-                "backend/shadow-cljs.edn"}
+                "backend/shadow-cljs.edn", "shared/deps.edn"}
 # Explicit portable compiler input for the reviewed Shadow :macros contract.
 # Unknown compiler configuration refuses until its input set/hash is reviewed.
 # Ordinary .cljc application sources remain selectable S inputs.
