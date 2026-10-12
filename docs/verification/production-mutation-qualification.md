@@ -11,25 +11,76 @@ cd ..
 python3 scripts/test-production-mutation-evidence.py
 ```
 
-To verify actual campaign evidence, select one completed production workflow
-run and its exact 40-hex source SHA S. Download all four artifacts from that same run:
-`production-mutation-0`, `production-mutation-1`, `production-mutation-2`, and
-`production-mutation-3`. Each supplies `batch-N.edn.json` and `payload-store/`.
-Use a fresh evidence directory outside the checkout containing exactly those four batch JSON reports
-and one merged `payload-store/` directory with the union of their digest-named
-blobs. If the same digest occurs in several artifacts, its bytes must be
-identical; refuse a differing duplicate rather than overwriting it. Preserve the
-original downloads and failed verifier output. This is the layout produced by
-the workflow's `actions/download-artifact` step with `merge-multiple: true`.
+Production qualification uses the protected workflow's authenticated executor.
+It has three distinct source coordinates: **C** is the current protected Knoxx
+controller revision, **G** is the current protected initiating caller revision,
+and **S** is the selected immutable application source. The direct Knoxx
+`workflow_dispatch` route has C = G. The reusable route accepts only the
+protected `open-hax/services` `.github/workflows/deploy-stack.yml` caller and
+requires the native run-attempt `referenced_workflows` entry to identify C.
+`github.workflow_sha` is not substituted for the called revision.
 
-From a clean checkout at the same reviewed source S, with Java 21 and Clojure CLI
-1.12.5.1654 available, run the committed verifier:
+Before application execution, the controller requires S to be an ancestor of C
+and compares the committed execution inputs of both sources: mutation runner,
+subprocess and test adapters, test fixtures, compiler macro inputs, setup action,
+package/lock configuration and verifier. The selected application's code may
+change; the executor and its configuration may not. Every matching input is
+also compared with its physical checkout bytes. An older S with different
+executor inputs refuses qualification rather than falling back to its old
+verifier. A protected main advance during the run also refuses the current
+context; this conservative route supplies no immutable-main exception.
+
+The integration/e2e job and all four mutation jobs must actually succeed in
+one native run attempt. Their diagnostic artifacts have fixed names
+`production-mutation-RUN-ATTEMPT-S-N`, where N is 0 through 3. Failed jobs still
+retain diagnostic uploads, but cannot reach the signing job. A separate job
+with no application execution downloads only the exact current-attempt native
+artifact IDs and signs the four complete `batch-N.edn.json` subjects using
+`actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6` (v4.2.2).
+Only this signing job has OIDC and attestation write permissions. It performs
+no compiler or test invocation and has no `always()` path.
+
+The qualification job runs the verifier from C and keeps S in the separate
+`application/` checkout. It downloads the same native artifact IDs into a fresh
+external evidence directory containing four reports and the merged digest-named
+`payload-store/`. Every report must pass the real official `gh attestation
+verify` command. The verifier then checks the verified certificate's signer
+workflow/C, initiating caller repository identity/ref/G and workflow path,
+GitHub-hosted runner, and exact run/attempt. The signed subject digest binds the
+report's complete bytes, including S and its compile/test/payload evidence.
+The caller-controlled attestation predicate is not identity authority. The
+standard provenance source digest represents G, not S.
+
+The production entry point remains:
 
 ```sh
-SOURCE_SHA='<exact40hex-source-S>'
-EVIDENCE_DIR='<fresh-external-directory-with-four-batch-json-reports-and-payload-store>'
 python3 scripts/verify-production-mutation-evidence.py "$SOURCE_SHA" "$EVIDENCE_DIR"
 ```
+
+It requires fresh authenticated native workflow context and refuses a manual
+local invocation or unsigned synthetic reports. An unavailable official tool,
+missing or unsupported certificate field, stale caller/controller, wrong run
+attempt, partial native pagination, failed producer or changed report bytes
+remains a failed qualification. Real official CLI output and native hosted
+execution must be qualified before this source proposal supplies deployment
+credit; mocked adapter controls establish no cryptographic verification.
+The currently pinned Services caller must first receive reviewed controller
+and permission updates (`id-token: write` and `attestations: write`) before its
+reusable route is usable.
+
+Local evidence characterization uses the explicitly named
+`validate_structural_evidence(S, directory)` API. It validates report, canonical
+identity and physical payload custody only; it grants **no production credit**.
+A synthetic fixture can retain one shared runtime payload and red output under
+many real canonical identities for these structural controls. Those repetitions
+are not 1000 executions and cannot pass the production entry point unsigned.
+
+This route declares the protected workflow and its reviewed executor to be the
+trusted builder. It authenticates their successful execution and resulting
+reports; it does not independently replay every compiler invocation or prove
+that a compromised trusted builder, runner/toolchain or hostile application
+cannot lie. Unique labels or report-supplied verification booleans are not a
+substitute for this authenticated trust boundary.
 
 A successful verifier reports the exact source and at least 1000 distinct
 completed assertion kills across four batches. It rechecks full retained
@@ -41,8 +92,10 @@ rejects changed bytes even when size, inode and modification time are preserved.
 These focused synthetic and cross-runtime contract controls supply no campaign,
 integration/e2e, native SDK or production readiness credit.
 
-The verifier invokes `clojure -Srepro -M:mutation --source-bindings S` in that
-checkout's backend before admission and again after its byte checks. This
+The verifier invokes `clojure -Srepro -M:mutation --source-bindings S` in the
+guarded S checkout's backend before structural admission and again after its
+byte checks. The C verifier supplies that backend explicitly; its own source
+location must not accidentally regenerate identities from C. This
 read-only canonical command uses the existing source discovery, fingerprint and
 source-preserving rewrite functions to regenerate every candidate's original
 and mutated source hashes. It checks clean HEAD/index/input custody before and
@@ -139,6 +192,11 @@ deterministic ordinal partition after exclusions. Invalid executions and real
 survivors are retained and fail the run; replenishment never disguises them.
 The four-batch verifier still requires at least 250 distinct completed assertion
 kills in each batch, no duplicate global fingerprints, and the exact source SHA.
+Every exclusion belongs to that batch's canonical ordinal partition. Killed
+identities must equal the first selected canonical partition prefix after only
+those explicit exclusions; omission or reordering of a survivor cannot replace
+it with a later candidate. These checks remain canonical structural admission,
+not an alternative mutation discovery or selection policy.
 
 First qualify a baseline and two to five actual candidates on the committed
 source using the production workflow's Java/Clojure/pnpm/Node/SDK inputs. Record

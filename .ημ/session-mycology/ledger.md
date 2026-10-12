@@ -321,3 +321,12 @@
   spore: none
   receipt-refs: 42aaad33be065200cfdbd37101d3f653bbdc09f1466dfdc40a553d4b22f194b9
   note: Use the existing canonical JVM discovery/fingerprint/rewrite and validate exact source-S membership at both ends. Real source fixture transport tests are not production campaigns. Keep old cleanup/artifact disputes separate; green unchanged supervisor controls do not manufacture a fix or rejection. No new spore, promotion, deployment or native approval.
+- ts: 2026-10-12T04:35:28.818100644Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Authenticate production mutation executor and enforce canonical partition prefix
+  p-efficiency: 0.88
+  p-friction: 0.35
+  p-skill-candidate: 0.50
+  spore: none
+  receipt-refs: d8ce9e4c49a2d85d1d515d7dbacda995a0e428cedc7a27a0b81441d3671bb154
+  note: Official authenticated executor admission replaces unsigned production credit; canonical prefix and exclusion custody use the existing JVM inventory. Actual source qualification44PASS and old unsigned acceptance versus new refusal are bounded local proof. Public official crypto controls and reader oracle are separate from real Knoxx campaigns/native review/hosted CMS readiness. Four exact source files applied with outside source/index/inodes preserved. No new spore.

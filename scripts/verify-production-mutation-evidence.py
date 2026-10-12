@@ -2,6 +2,7 @@
 """Require four disjoint batches of completed assertion kills on one source."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import stat
@@ -69,13 +70,13 @@ def source_binding(binding, fingerprint=None):
             and binding["original-sha256"] != binding["mutated-sha256"], "Invalid bound source hashes")
 
 
-def canonical_source_bindings(sha):
+def canonical_source_bindings(sha, backend=None):
     """Ask the committed canonical runner to reconstruct identities from source S.
 
     Python transports and matches this inventory; mutation discovery, fingerprint
     semantics and source rewriting remain in knoxx.mutation-test.
     """
-    backend = Path(__file__).resolve().parent.parent / "backend"
+    backend = Path(__file__).resolve().parent.parent / "backend" if backend is None else backend
     try:
         result = subprocess.run(["clojure", "-Srepro", "-M:mutation", "--source-bindings", sha],
                                 cwd=backend, check=True, capture_output=True, text=True, timeout=600)
@@ -209,17 +210,19 @@ def test_evidence(result, killed, payload):
     require(red == killed, "Kill requires completed red assertions; baseline requires green")
 
 
-def verify(sha, directory):
+def validate_structural_evidence(sha, directory, *, _backend=None, _reports=None):
+    """Validate data/custody only; this API grants no production qualification."""
     require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "Immutable commit required")
     files = list(Path(directory).glob("*.json"))
     require(len(files) == 4, "Exactly four completed batches required")
-    canonical = canonical_source_bindings(sha)
+    canonical = canonical_source_bindings(sha, _backend)
     store = physical_path(Path(directory) / "payload-store", directory=True)
     referenced = set()
     verified = {}  # Explicit invocation-local cache, never reused across stores or runs.
     seen, indexes, excluded = set(), set(), set()
+    selections = []
     for path in files:
-        batch = json.loads(path.read_text())
+        batch = json.loads(path.read_bytes() if _reports is None else _reports[path])
         require(batch.get("schema_version") == 3 and batch.get("source_sha") == sha
                 and batch.get("status") == "passed" and batch.get("baseline") == "passed",
                 "Invalid, legacy or stale batch")
@@ -233,10 +236,14 @@ def verify(sha, directory):
         indexes.add(index)
         require(isinstance(batch.get("mutants"), list) and len(batch["mutants"]) >= 250,
                 "Insufficient mutations in batch")
+        batch_excluded = set()
         for entry in batch.get("excluded", []):
             key = entry.get("fingerprint")
             require(isinstance(key, str) and bool(re.fullmatch(r"[0-9a-f]{64}", key))
                     and key not in excluded, "Duplicate or invalid equivalent exclusion")
+            candidate = canonical.get(key)
+            require(candidate is not None and candidate["ordinal"] % 4 == index,
+                    "Equivalent exclusion is not a canonical candidate of this batch")
             require(bool(re.fullmatch(r"[0-9a-f]{64}", entry.get("source-sha256", "")))
                     and bool(re.fullmatch(r"[0-9a-f]{40}", entry.get("basis-source-sha", "")))
                     and bool(re.fullmatch(r"[0-9a-f]{64}", entry.get("manifest-sha256", "")))
@@ -247,6 +254,7 @@ def verify(sha, directory):
                                           entry.get("review-reference", ""))),
                     "Equivalent exclusion lacks explicit source/review provenance")
             excluded.add(key)
+            batch_excluded.add(key)
         for mutant in batch["mutants"]:
             key = mutant["fingerprint"]
             require(isinstance(key, str) and bool(re.fullmatch(r"[0-9a-f]{64}", key)) and key not in seen,
@@ -263,7 +271,13 @@ def verify(sha, directory):
                     "Unchanged executed code cannot qualify as a kill")
             test_evidence(mutant.get("result"), killed=True, payload=payload)
             seen.add(key)
+        partition = [key for key, candidate in sorted(canonical.items(), key=lambda item: item[1]["ordinal"])
+                     if candidate["ordinal"] % 4 == index and key not in batch_excluded]
+        selections.append(([mutant["fingerprint"] for mutant in batch["mutants"]], partition))
     require(not (seen & excluded), "Equivalent exclusion cannot receive kill credit")
+    for claimed, partition in selections:
+        require(claimed == partition[:len(claimed)],
+                "Batch omits or reorders canonical candidates; survivors cannot be skipped")
     stored = list(store.iterdir())
     require(all(digest_shape(path.name, 64) and physical_path(path) for path in stored)
             and {path.name for path in stored} == referenced, "Payload store has unexpected or missing blobs")
@@ -273,12 +287,311 @@ def verify(sha, directory):
         blob = physical_path(path).read_bytes()
         require(len(blob) == verified[path.name] and hashlib.sha256(blob).hexdigest() == path.name,
                 "Verified payload blob changed before final custody check")
-    require(canonical_source_bindings(sha) == canonical,
+    require(canonical_source_bindings(sha, _backend) == canonical,
             "Canonical source bindings changed during evidence verification")
     return len(seen)
 
 
+KNOXX = "open-hax/knoxx"
+SIGNER_PATH = ".github/workflows/deploy-production.yml"
+SERVICES_PATH = ".github/workflows/deploy-stack.yml"
+HELPER_PREFIXES = ("backend/mutation/", "backend/scripts/", "backend/test/",
+                   ".github/actions/knoxx-setup/")
+HELPER_FILES = {"scripts/verify-production-mutation-evidence.py", "backend/deps.edn",
+                "backend/shadow-cljs.edn"}
+CONFIG_NAMES = {"package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc",
+                ".pnpmfile.cjs", "pnpmfile.cjs", ".gitignore", ".gitattributes"}
+REPORT_NAMES = [f"batch-{index}.edn.json" for index in range(4)]
+
+
+def official_json(args, paginated=False):
+    """Invoke the real official transport; diagnostics never include token bytes."""
+    try:
+        result = subprocess.run(["gh", *args], check=True, capture_output=True,
+                                text=True, timeout=120)
+        require(len(result.stdout.encode("utf-8")) <= 16 * 1024 * 1024,
+                "Official response exceeds bounded capture")
+        value = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("Official native or cryptographic verification failed") from error
+    require(isinstance(value, list if paginated else dict), "Invalid official response shape")
+    return value
+
+
+def native(path):
+    """Read one authenticated native JSON object through the official CLI."""
+    return official_json(["api", "--method", "GET", "-H", "Accept: application/vnd.github+json",
+                          "-H", "X-GitHub-Api-Version: 2022-11-28", path])
+
+
+def native_pages(path, key):
+    """Require complete count-checked native pagination and unique identities."""
+    pages = official_json(["api", "--method", "GET", "--paginate", "--slurp",
+                           "-H", "Accept: application/vnd.github+json",
+                           "-H", "X-GitHub-Api-Version: 2022-11-28", path], paginated=True)
+    require(pages and all(isinstance(page, dict) and isinstance(page.get(key), list)
+                         and type(page.get("total_count")) is int for page in pages),
+            "Incomplete native pagination")
+    entries = [entry for page in pages for entry in page[key]]
+    require(all(page["total_count"] == len(entries) for page in pages),
+            "Native pagination count mismatch")
+    require(all(isinstance(entry, dict) and type(entry.get("id")) is int and entry["id"] > 0
+                for entry in entries) and len({entry["id"] for entry in entries}) == len(entries),
+            "Duplicate or malformed native identity")
+    return entries
+
+
+def protected_main(repository):
+    """Protected current-main identity comes from fresh native facts, never a report."""
+    repo = native(f"repos/{repository}")
+    branch = native(f"repos/{repository}/branches/main")
+    require(repo.get("full_name") == repository and type(repo.get("id")) is int
+            and repo["id"] > 0 and repo.get("default_branch") == "main"
+            and repo.get("fork") is False and repo.get("archived") is False
+            and branch.get("name") == "main" and branch.get("protected") is True,
+            "Trusted protected main is unavailable")
+    sha = branch.get("commit", {}).get("sha")
+    require(digest_shape(sha, 40), "Invalid protected main commit")
+    return repo["id"], sha
+
+
+def trusted_execution_context():
+    """Admit only current protected Knoxx dispatch or the protected Services route.
+
+    Native called-workflow SHA establishes reusable C; github.workflow_sha is not
+    substituted for it. The official certificate will independently bind this
+    context. These fresh reads do not accept a supplied authorization flag.
+    """
+    env = os.environ
+    require(env.get("GITHUB_ACTIONS") == "true"
+            and env.get("GITHUB_SERVER_URL") == "https://github.com"
+            and env.get("GITHUB_API_URL") == "https://api.github.com"
+            and env.get("GITHUB_REF") == "refs/heads/main"
+            and isinstance(env.get("GH_TOKEN"), str) and bool(env["GH_TOKEN"].strip()),
+            "Mandatory authenticated production workflow context is missing")
+    caller = env.get("GITHUB_REPOSITORY")
+    require(caller in (KNOXX, "open-hax/services"), "Unsupported production caller")
+    run_id, attempt = env.get("GITHUB_RUN_ID", ""), env.get("GITHUB_RUN_ATTEMPT", "")
+    require(bool(re.fullmatch(r"[1-9][0-9]*", run_id))
+            and bool(re.fullmatch(r"[1-9][0-9]*", attempt)), "Invalid native run coordinates")
+    caller_id, caller_sha = protected_main(caller)
+    _, controller_sha = protected_main(KNOXX)
+    require(env.get("GITHUB_SHA") == caller_sha, "Caller is no longer current protected main")
+    run = native(f"repos/{caller}/actions/runs/{run_id}/attempts/{attempt}")
+    caller_path = SIGNER_PATH if caller == KNOXX else SERVICES_PATH
+    event = env.get("GITHUB_EVENT_NAME")
+    require(event in (("workflow_dispatch",) if caller == KNOXX
+                     else ("workflow_dispatch", "pull_request_target")), "Unsupported production event")
+    workflow_ref = f"{caller}/{caller_path}@refs/heads/main"
+    require(env.get("GITHUB_WORKFLOW_REF") == workflow_ref
+            and type(run.get("id")) is int and run["id"] == int(run_id)
+            and type(run.get("run_attempt")) is int and run["run_attempt"] == int(attempt)
+            and run.get("head_sha") == caller_sha and run.get("head_branch") == "main"
+            and run.get("event") == event and run.get("repository", {}).get("id") == caller_id
+            and run.get("repository", {}).get("full_name") == caller
+            and isinstance(run.get("path"), str) and run["path"].split("@", 1)[0] == caller_path,
+            "Native caller workflow binding mismatch")
+    if caller == KNOXX:
+        require(controller_sha == caller_sha, "Direct controller revision mismatch")
+    else:
+        refs = run.get("referenced_workflows")
+        require(isinstance(refs, list), "Missing native reusable-workflow references")
+        matches = [ref for ref in refs if isinstance(ref, dict)
+                   and isinstance(ref.get("path"), str)
+                   and ref["path"].split("@", 1)[0] == f"{KNOXX}/{SIGNER_PATH}"]
+        require(len(matches) == 1 and matches[0].get("sha") == controller_sha,
+                "Called controller is not current protected Knoxx main")
+        require(matches[0]["path"] in (f"{KNOXX}/{SIGNER_PATH}@{controller_sha}",
+                                      f"{KNOXX}/{SIGNER_PATH}@main")
+                and matches[0].get("ref", "refs/heads/main") == "refs/heads/main",
+                "Unsupported native reusable-workflow reference")
+    return {"caller": caller, "caller_id": caller_id, "caller_sha": caller_sha,
+            "caller_path": caller_path, "controller_sha": controller_sha,
+            "run_id": int(run_id), "attempt": int(attempt), "ref": "refs/heads/main",
+            "invocation": f"https://github.com/{caller}/actions/runs/{run_id}/attempts/{attempt}"}
+
+
+def git_bytes(root, *args):
+    """Read committed Git objects with inherited Git overrides and hooks disabled."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+    try:
+        return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                               *args], cwd=root, env=env, check=True,
+                              capture_output=True, timeout=120).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError("Trusted executor committed source read failed") from error
+
+
+def executor_entries(root, commit):
+    """Exact committed transitive executor/config inventory, not mutation identity law."""
+    entries = {}
+    for raw in git_bytes(root, "ls-tree", "-r", "-z", commit).split(b"\0"):
+        if not raw:
+            continue
+        metadata, path_raw = raw.split(b"\t", 1)
+        path = path_raw.decode("utf-8")
+        if (path in HELPER_FILES or path.startswith(HELPER_PREFIXES)
+                or Path(path).name in CONFIG_NAMES
+                or (path.startswith(("backend/", "shared/")) and path.endswith(".clj"))):
+            mode, kind, blob = metadata.decode("ascii").split()
+            require(mode in ("100644", "100755") and kind == "blob", "Unsafe executor input mode")
+            entries[path] = (mode, blob)
+    require(HELPER_FILES.issubset(entries)
+            and all(any(path.startswith(prefix) for path in entries) for prefix in HELPER_PREFIXES),
+            "Incomplete committed executor inventory")
+    return entries
+
+
+def guard_source_executor(sha, context, application=None):
+    """C owns verification; S may differ only when its execution inputs equal C."""
+    require(digest_shape(sha, 40), "Immutable selected source required")
+    root = physical_path(Path(os.environ.get("GITHUB_WORKSPACE", "")), directory=True)
+    require(Path(__file__).absolute() == root / "scripts/verify-production-mutation-evidence.py"
+            and git_bytes(root, "rev-parse", "HEAD").strip().decode("ascii") == context["controller_sha"],
+            "Verifier is not in the authenticated controller checkout")
+    git_bytes(root, "merge-base", "--is-ancestor", sha, context["controller_sha"])
+    expected = executor_entries(root, context["controller_sha"])
+    require(executor_entries(root, sha) == expected, "Selected source executor differs from trusted controller")
+    for relative in expected:
+        require(physical_path(root / relative).read_bytes()
+                == git_bytes(root, "show", f'{context["controller_sha"]}:{relative}'),
+                "Controller executor input changed after checkout")
+    if application is not None:
+        app = physical_path(application, directory=True)
+        require(app == root / "application"
+                and git_bytes(app, "rev-parse", "HEAD").strip().decode("ascii") == sha,
+                "Selected application checkout is not exact S")
+        for relative in expected:
+            require(physical_path(app / relative).read_bytes()
+                    == git_bytes(root, "show", f'{sha}:{relative}'),
+                    "Selected application executor input changed after checkout")
+    return root
+
+
+def producer_artifacts(sha, context):
+    """Select fixed current-attempt artifacts only after real producer jobs succeed."""
+    prefix = f'production-mutation-{context["run_id"]}-{context["attempt"]}-{sha}-'
+    jobs = native_pages(f'repos/{context["caller"]}/actions/runs/{context["run_id"]}'
+                        f'/attempts/{context["attempt"]}/jobs?per_page=100', "jobs")
+    for name in ["Knoxx integration-e2e", *[f"Knoxx mutation batch {index}" for index in range(4)]]:
+        matches = [job for job in jobs if job.get("name", "").split(" / ")[-1] == name]
+        require(len(matches) == 1 and matches[0].get("status") == "completed"
+                and matches[0].get("conclusion") == "success",
+                "Required native producer did not complete successfully")
+    artifacts = native_pages(f'repos/{context["caller"]}/actions/runs/{context["run_id"]}'
+                             '/artifacts?per_page=100', "artifacts")
+    selected = [artifact for artifact in artifacts if artifact.get("name", "").startswith(prefix)]
+    expected = [prefix + str(index) for index in range(4)]
+    require(len(selected) == 4 and sorted(artifact["name"] for artifact in selected) == expected,
+            "Missing, additional or ambiguous current-attempt producer artifacts")
+    for artifact in selected:
+        run = artifact.get("workflow_run", {})
+        require(artifact.get("expired") is False and type(artifact.get("size_in_bytes")) is int
+                and artifact["size_in_bytes"] > 0
+                and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", "")))
+                and run.get("id") == context["run_id"] and run.get("repository_id") == context["caller_id"]
+                and run.get("head_repository_id") == context["caller_id"]
+                and run.get("head_sha") == context["caller_sha"] and run.get("head_branch") == "main",
+                "Producer artifact native source custody mismatch")
+    return sorted(selected, key=lambda item: item["name"])
+
+
+def report_bytes(sha, directory):
+    """Freeze exact report bytes; only these bytes enter the later structural reader."""
+    root = physical_path(Path(directory), directory=True)
+    paths = sorted(root.glob("*.json"))
+    require([path.name for path in paths] == REPORT_NAMES, "Exactly four fixed producer reports required")
+    reports = {}
+    for index, path in enumerate(paths):
+        raw = physical_path(path).read_bytes()
+        value = json.loads(raw)
+        require(isinstance(value, dict) and value.get("source_sha") == sha
+                and type(value.get("batch_index")) is int and value["batch_index"] == index,
+                "Signed report selected source or batch mismatch")
+        reports[path] = raw
+    return reports
+
+
+def authenticated_report(path, raw, context):
+    """Official cryptography first, then certificate-only C/G/run identity checks."""
+    results = official_json(["attestation", "verify", str(path), "--repo", context["caller"],
+                             "--signer-workflow", f"{KNOXX}/{SIGNER_PATH}",
+                             "--signer-digest", context["controller_sha"],
+                             "--source-digest", context["caller_sha"], "--source-ref", context["ref"],
+                             "--deny-self-hosted-runners", "--format", "json"], paginated=True)
+    digest = hashlib.sha256(raw).hexdigest()
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        verified = result.get("verificationResult", {})
+        certificate = verified.get("signature", {}).get("certificate", {})
+        statement = verified.get("statement", {})
+        signer_uri = certificate.get("buildSignerURI")
+        if (certificate.get("issuer") == "https://token.actions.githubusercontent.com"
+                and signer_uri in (f"https://github.com/{KNOXX}/{SIGNER_PATH}@refs/heads/main",
+                                   f'https://github.com/{KNOXX}/{SIGNER_PATH}@{context["controller_sha"]}')
+                and certificate.get("buildSignerDigest") == context["controller_sha"]
+                and certificate.get("sourceRepositoryURI") == f'https://github.com/{context["caller"]}'
+                and certificate.get("sourceRepositoryIdentifier") == str(context["caller_id"])
+                and certificate.get("sourceRepositoryDigest") == context["caller_sha"]
+                and certificate.get("sourceRepositoryRef") == context["ref"]
+                and certificate.get("buildConfigURI")
+                == f'https://github.com/{context["caller"]}/{context["caller_path"]}@{context["ref"]}'
+                and certificate.get("buildConfigDigest") == context["caller_sha"]
+                and certificate.get("runnerEnvironment") == "github-hosted"
+                and certificate.get("runInvocationURI") == context["invocation"]
+                and isinstance(verified.get("verifiedTimestamps"), list) and verified["verifiedTimestamps"]
+                and statement.get("predicateType") == "https://slsa.dev/provenance/v1"
+                and any(isinstance(subject, dict) and subject.get("digest", {}).get("sha256") == digest
+                        for subject in statement.get("subject", []))):
+            require(physical_path(path).read_bytes() == raw, "Authenticated report bytes changed")
+            return
+    raise ValueError("No authenticated current-controller/current-caller/current-attempt report")
+
+
+def verify(sha, directory):
+    """Production qualification requires real native context and official authentication."""
+    context = trusted_execution_context()
+    application = Path(os.environ["GITHUB_WORKSPACE"]) / "application"
+    guard_source_executor(sha, context, application)
+    artifacts = producer_artifacts(sha, context)
+    reports = report_bytes(sha, directory)
+    for path, raw in reports.items():
+        authenticated_report(path, raw, context)
+    count = validate_structural_evidence(sha, directory, _backend=application / "backend", _reports=reports)
+    require(all(physical_path(path).read_bytes() == raw for path, raw in reports.items()),
+            "Authenticated reports changed during structural verification")
+    guard_source_executor(sha, context, application)
+    require(trusted_execution_context() == context and producer_artifacts(sha, context) == artifacts,
+            "Native execution context or producer custody changed during verification")
+    return count
+
+
+def executor_main(args):
+    """Small workflow adapter surface; neither preparer grants mutation credit."""
+    if len(args) == 2 and args[0] == "--prepare-source":
+        sha = args[1]
+        context = trusted_execution_context()
+        guard_source_executor(sha, context)
+        print(json.dumps({"source_sha": sha, "controller_sha": context["controller_sha"]}))
+    elif len(args) == 2 and args[0] == "--producer-artifact-ids":
+        context = trusted_execution_context()
+        guard_source_executor(args[1], context)
+        print(",".join(str(item["id"]) for item in producer_artifacts(args[1], context)))
+    elif len(args) == 3 and args[0] == "--attest-subjects":
+        sha, directory = args[1:]
+        context = trusted_execution_context()
+        guard_source_executor(sha, context)
+        producer_artifacts(sha, context)
+        reports = report_bytes(sha, directory)
+        print("\n".join(str(path) for path in reports))
+    else:
+        require(len(args) == 2, "Expected immutable source and evidence directory")
+        sha, directory = args
+        count = verify(sha, directory)
+        print(f"Qualified {sha}: {count} distinct completed test kills across four batches")
+
+
 if __name__ == "__main__":
-    source_sha, evidence_directory = sys.argv[1:]
-    count = verify(source_sha, evidence_directory)
-    print(f"Qualified {source_sha}: {count} distinct completed test kills across four batches")
+    executor_main(sys.argv[1:])
