@@ -626,10 +626,16 @@
                         error))))))
 
 (defn run-compiled-tests!
-  "Keep completed compile evidence when test preflight I/O yields no test result."
+  "Keep completed compile evidence when test custody yields no test result."
   [opts compile-result]
   (try
     (run-mutant-tests! (assoc opts :payload (:payload compile-result)))
+    (catch clojure.lang.ExceptionInfo error
+      (if (contains? (ex-data error) :compile-result)
+        (throw error)
+        (throw (ex-info (.getMessage error)
+                        (assoc (ex-data error) :compile-result compile-result)
+                        error))))
     (catch IOException error
       (throw (ex-info (or (.getMessage error) "Custody I/O failed")
                       {:compile-result compile-result

@@ -73,6 +73,18 @@ def enable_subreaper():
         raise RuntimeError("PR_GET_CHILD_SUBREAPER did not confirm custody")
 
 
+def close_custody_resources(resources):
+    """Attempt every owned resource close and retain all ordinary failures."""
+    failures = []
+    for name, close in resources:
+        try:
+            close()
+        except Exception as error:
+            failures.append(f"{name} {type(error).__name__}: {error}")
+    if failures:
+        raise RuntimeError("; ".join(failures))
+
+
 class OwnedChildren:
     """Track only descendants of this fresh adapter, using stable pidfds."""
 
@@ -156,9 +168,10 @@ class OwnedChildren:
                     pass
 
     def close(self):
-        for _, fd in self.entries.values():
-            os.close(fd)
+        resources = [(f"pidfd {pid}", lambda fd=fd: os.close(fd))
+                     for pid, (_, fd) in self.entries.items()]
         self.entries.clear()
+        close_custody_resources(resources)
 
 
 class Capture:
@@ -194,8 +207,8 @@ class Capture:
                 self.truncated = True
 
     def close(self):
-        self.selector.close()
-        self.pipe.close()
+        close_custody_resources([("selector", self.selector.close),
+                                ("output pipe", self.pipe.close)])
 
 
 def leader_exit(pid):
@@ -244,6 +257,22 @@ def supervise(command, timeout_ms, max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
     handlers = {}
     cleanup_complete = True
     timed_out = False
+    observed_exit_code = None
+
+    def observe_leader_exit():
+        nonlocal observed_exit_code
+        observed = leader_exit(process.pid)
+        if observed:
+            observed_exit_code = (observed.si_status if observed.si_code == os.CLD_EXITED
+                                  else -observed.si_status)
+        return observed
+
+    def finalization_failure(stage, error):
+        nonlocal termination, diagnostic, cleanup_complete
+        termination = "cleanup-error" if process else "setup-error"
+        cleanup_complete = False
+        diagnostic = f"{diagnostic}; {stage} {type(error).__name__}: {error}".lstrip("; ")
+
     try:
         if not command or min(timeout_ms, max_output_bytes, cleanup_ms) <= 0:
             raise ValueError("Command and positive timeout/output/cleanup limits required")
@@ -264,7 +293,7 @@ def supervise(command, timeout_ms, max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
             owned.discover()
             owned.reap_nonleader()
             capture.drain(POLL_SECONDS)
-            observed_exit = leader_exit(process.pid)
+            observed_exit = observe_leader_exit()
             now = time.monotonic()
             if cancelled:
                 termination = "cancelled"
@@ -298,8 +327,8 @@ def supervise(command, timeout_ms, max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
     finally:
         if process:
             cleanup_complete = False
-            cleanup_deadline = time.monotonic() + cleanup_ms / 1000
             try:
+                cleanup_deadline = time.monotonic() + cleanup_ms / 1000
                 # Popen established a private session, and its leader is still
                 # unreaped. Group cleanup cannot hit a reused/shared group id.
                 # Adoption then brings even setsid/double-fork escapes directly
@@ -333,7 +362,7 @@ def supervise(command, timeout_ms, max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
                         time.sleep(POLL_SECONDS)
                     if capture and capture.truncated and termination == "exited":
                         termination = "output-limit"
-                    exited = process.returncode is not None or leader_exit(process.pid)
+                    exited = process.returncode is not None or observe_leader_exit()
                     children = direct_children(os.getpid()) - {process.pid}
                     if exited and not children and (not capture or capture.eof):
                         if process.returncode is None:
@@ -353,21 +382,32 @@ def supervise(command, timeout_ms, max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
                 termination = "cleanup-error"
                 diagnostic = f"{diagnostic}; cleanup {type(error).__name__}: {error}".lstrip("; ")
             finally:
+                finalizers = []
                 if capture:
-                    capture.close()
+                    finalizers.append(("capture close", capture.close))
                 elif process.stdout:
-                    process.stdout.close()
+                    finalizers.append(("output pipe close", process.stdout.close))
                 if owned:
-                    owned.close()
+                    finalizers.append(("owned pidfds close", owned.close))
+                for stage, finalize in finalizers:
+                    try:
+                        finalize()
+                    except Exception as error:
+                        finalization_failure(stage, error)
         for sig, handler in handlers.items():
-            signal.signal(sig, handler)
+            try:
+                signal.signal(sig, handler)
+            except Exception as error:
+                finalization_failure(f"restore signal {sig}", error)
     output = bytes(capture.data) if capture else b""
     try:
         output.decode("utf-8")
     except UnicodeDecodeError:
         termination = "cleanup-error"
-        diagnostic = "Captured output is not losslessly representable as UTF-8 text"
-    return result_record(termination, output, process.returncode if process else None,
+        diagnostic = (diagnostic + "; Captured output is not losslessly representable as UTF-8 text").lstrip("; ")
+    exit_code = (process.returncode if process and process.returncode is not None
+                 else observed_exit_code)
+    return result_record(termination, output, exit_code,
                          timed_out, capture.truncated if capture else bool(process),
                          cleanup_complete, max_output_bytes, diagnostic)
 
@@ -388,9 +428,10 @@ def main(argv=None):
     try:
         args = parser.parse_args(argv)
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
-        result = supervise(command, args.timeout_ms, args.max_output_bytes, args.cleanup_ms)
-    except Exception as error:
+    except (ValueError, argparse.ArgumentError) as error:
         result = result_record("setup-error", diagnostic=f"{type(error).__name__}: {error}")
+    else:
+        result = supervise(command, args.timeout_ms, args.max_output_bytes, args.cleanup_ms)
     print(json.dumps(result, ensure_ascii=True, separators=(",", ":")))
 
 

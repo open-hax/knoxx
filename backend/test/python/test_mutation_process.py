@@ -111,7 +111,7 @@ class MutationProcessTests(unittest.TestCase):
         outer_cleanup()
 
     def run_command(self, command, timeout_ms=350, max_output_bytes=None,
-                    send_signal=None, adapter_setup=None):
+                    send_signal=None, adapter_setup=None, cleanup_complete=True):
         args = [sys.executable, str(SUPERVISOR), "--timeout-ms", str(timeout_ms)]
         if max_output_bytes is not None:
             args += ["--max-output-bytes", str(max_output_bytes)]
@@ -140,7 +140,7 @@ class MutationProcessTests(unittest.TestCase):
             self.assertEqual(stderr, b"", "outer result must be JSON only")
             result = json.loads(stdout)
             self.assertLess(time.monotonic() - start, 2.7)
-            self.assertTrue(result["cleanup-complete?"])
+            self.assertEqual(result["cleanup-complete?"], cleanup_complete, json.dumps(result, sort_keys=True))
             self.assertEqual(own_descendants(), {},
                              "supervisor left owned live/zombie children")
             return result
@@ -297,6 +297,147 @@ module.main(sys.argv[2:])
                                   adapter_setup=wrapper)
         self.assertEqual(result["termination"], "cleanup-error")
         self.assertTrue(result["cleanup-complete?"])
+
+    def test_late_finalizers_preserve_completed_child_and_attempt_every_restore(self):
+        with tempfile.TemporaryDirectory(prefix="knoxx-late-finalizers-") as directory:
+            marker = Path(directory) / "attempts.json"
+            wrapper = """
+import importlib.util, json, pathlib, sys
+spec = importlib.util.spec_from_file_location('mutation_process', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+marker = pathlib.Path(MARKER)
+attempts = []
+def record(name):
+    attempts.append(name)
+    marker.write_text(json.dumps(attempts))
+original_capture_close = module.Capture.close
+original_owned_close = module.OwnedChildren.close
+original_signal = module.signal.signal
+signal_calls = 0
+def capture_close(self):
+    original_capture_close(self)
+    record('capture')
+    raise OSError('injected late capture close')
+def owned_close(self):
+    original_owned_close(self)
+    record('owned')
+    raise OSError('injected late owned close')
+def restore_signal(sig, handler):
+    global signal_calls
+    signal_calls += 1
+    previous = original_signal(sig, handler)
+    if signal_calls > 3:
+        record('restore-' + str(sig))
+        raise OSError('injected late signal restore ' + str(sig))
+    return previous
+module.Capture.close = capture_close
+module.OwnedChildren.close = owned_close
+module.signal.signal = restore_signal
+module.main(sys.argv[2:])
+""".replace("MARKER", repr(str(marker)))
+            result = self.run_command(
+                [sys.executable, "-c", "print('completed child evidence', flush=True); raise SystemExit(7)"],
+                adapter_setup=wrapper, cleanup_complete=False,
+            )
+            self.assertEqual(result["termination"], "cleanup-error")
+            self.assertEqual(result["exit-code"], 7)
+            self.assertEqual(result["output"], "completed child evidence\n")
+            self.assertEqual(result["captured-output-bytes"], 25)
+            self.assertEqual(result["output-sha256"], hashlib.sha256(b"completed child evidence\n").hexdigest())
+            self.assertFalse(result["timed-out?"])
+            self.assertFalse(result["capture-truncated?"])
+            self.assertIn("late capture close", result["diagnostic"])
+            self.assertIn("late owned close", result["diagnostic"])
+            self.assertIn("late signal restore", result["diagnostic"])
+            self.assertEqual(json.loads(marker.read_text()), [
+                "capture", "owned", *["restore-" + str(sig) for sig in
+                                       (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD)],
+            ])
+
+    def test_proc_custody_failure_keeps_observed_exit_and_never_claims_healthy(self):
+        wrapper = """
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('mutation_process', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+original_exit = module.leader_exit
+original_identity = module.process_identity
+original_live = module.OwnedChildren.live_descendants
+observed = failed = False
+def observe(pid):
+    global observed
+    result = original_exit(pid)
+    observed = observed or bool(result)
+    return result
+def identity(pid):
+    global failed
+    if observed and not failed:
+        failed = True
+        raise PermissionError('injected unreadable owned /proc identity')
+    return original_identity(pid)
+def live(self):
+    module.process_identity(module.os.getpid())
+    return original_live(self)
+module.leader_exit = observe
+module.process_identity = identity
+module.OwnedChildren.live_descendants = live
+module.main(sys.argv[2:])
+"""
+        result = self.run_command(
+            [sys.executable, "-c", "print('observed child', flush=True); raise SystemExit(7)"],
+            adapter_setup=wrapper,
+        )
+        self.assertEqual(result["termination"], "cleanup-error")
+        self.assertEqual(result["exit-code"], 7)
+        self.assertEqual(result["output"], "observed child\n")
+        self.assertIn("PermissionError", result["diagnostic"])
+        self.assertIn("unreadable owned /proc identity", result["diagnostic"])
+
+    def test_resource_close_failure_does_not_skip_other_owned_closes(self):
+        spec = importlib.util.spec_from_file_location("mutation_process", SUPERVISOR)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        attempts = []
+        class Resource:
+            def __init__(self, name):
+                self.name = name
+            def close(self):
+                attempts.append(self.name)
+                raise OSError("injected " + self.name)
+        capture = module.Capture.__new__(module.Capture)
+        capture.selector, capture.pipe = Resource("selector"), Resource("pipe")
+        with self.assertRaises(Exception) as failure:
+            capture.close()
+        self.assertEqual(attempts, ["selector", "pipe"])
+        self.assertIn("selector", str(failure.exception))
+        self.assertIn("pipe", str(failure.exception))
+        owned = module.OwnedChildren.__new__(module.OwnedChildren)
+        owned.entries = {10: (100, 101), 20: (200, 202)}
+        attempts.clear()
+        def denied_close(fd):
+            attempts.append(fd)
+            raise OSError("injected pidfd " + str(fd))
+        with patch.object(module.os, "close", side_effect=denied_close):
+            with self.assertRaises(Exception) as failure:
+                owned.close()
+        self.assertEqual(attempts, [101, 202])
+        self.assertEqual(owned.entries, {})
+        self.assertIn("101", str(failure.exception))
+        self.assertIn("202", str(failure.exception))
+
+    def test_proc_permission_and_malformed_identity_are_not_missing_processes(self):
+        spec = importlib.util.spec_from_file_location("mutation_process", SUPERVISOR)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with patch.object(module.Path, "read_text", side_effect=PermissionError("proc denied")):
+            with self.assertRaises(PermissionError):
+                module.process_identity(os.getpid())
+            with self.assertRaises(PermissionError):
+                module.direct_children(os.getpid())
+        with patch.object(module.Path, "read_text", return_value="1 (broken) S"):
+            with self.assertRaises((IndexError, ValueError)):
+                module.process_identity(os.getpid())
 
     def test_platform_and_prctl_setup_fail_closed_without_spawn(self):
         spec = importlib.util.spec_from_file_location("mutation_process", SUPERVISOR)

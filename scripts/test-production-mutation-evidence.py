@@ -1,11 +1,14 @@
 """Adversarial synthetic evidence controls; these never earn campaign credit."""
+from collections import Counter
 import copy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
     "mutation_verifier", Path(__file__).with_name("verify-production-mutation-evidence.py"))
@@ -21,6 +24,34 @@ FIXTURE_BYTES = {LOADER: LOADER_BYTES, RUNTIME + "/goog.base.js": b"var goog = {
                  RUNTIME + "/goog.base.js.map": b'{"version":3,"file":"goog.base.js"}\n',
                  RUNTIME + "/shadow.module.main.append.js": b"void 0;\n",
                  RUNTIME + "/sample.test.js.map": b'{"version":3}\n'}
+
+
+# Historical actual runner contract data, not current qualification evidence.
+# Source78843174b7fb3cf27a3ad0c8497b74bdb9bf882c, actual-compile-result-v2.json
+# SHA2561af951628ddb6aae3aa673ae9983ffeddfc78e168c345e6aec5b76148a6ecbbe.
+# Paired with an independent canonical JVM assertion of this exact vector.
+RUNNER_DIGEST_VECTOR = [{'path': '.shadow-cljs/builds/test-ci/dev/out/cljs-runtime/borkdude.dynaload.js',
+  'kind': 'runtime-js',
+  'bytes': 15632,
+  'sha256': '01056d679bdde793374719dc7299db423b8301bd163fcc8251b78fdccf673f7c'},
+ {'path': '.shadow-cljs/builds/test-ci/dev/out/cljs-runtime/borkdude.dynaload.js.map',
+  'kind': 'source-map',
+  'bytes': 21877,
+  'sha256': 'c99be5cf888716d794dfce5282d343ca10397fd017e2f96ad0559ab0581512f7'},
+ {'path': 'target/test/test-ci.cjs',
+  'kind': 'loader',
+  'bytes': 98437,
+  'sha256': '037202de10342bd13a49ba4cc4c09f978287091ff23e974d3753be452a0c11d4'}]
+RUNNER_PAYLOAD_DIGEST = "fdea337fc410ac8f655a4c458204beab2e8922d71cdec834d6edc05500fed7a4"
+RUNNER_CODE_DIGEST = "5a9a3c92dc82b9c895c2686b3b9c2a0bb88c333bb1e0744205abfcd78fdcbc5e"
+# Exact root and first two ordered import lines from actual emitted loader
+# SHA256037202de10342bd13a49ba4cc4c09f978287091ff23e974d3753be452a0c11d4.
+RUNNER_LOADER_FRAGMENT = (
+    b"var SHADOW_IMPORT_PATH = __dirname + '/../../.shadow-cljs/builds/test-ci/dev/out/cljs-runtime';\n"
+    b'SHADOW_IMPORT("goog.debug.error.js");\n'
+    b'SHADOW_IMPORT("goog.dom.nodetype.js");\n'
+)
+RUNNER_LOADER_IMPORTS = ['goog.debug.error.js', 'goog.dom.nodetype.js']
 
 
 def payload(binding, module):
@@ -243,8 +274,6 @@ class QualificationEvidenceTests(unittest.TestCase):
             {"exit-code": 137}, {"termination": "signal"}, {"cleanup-complete?": False},
             {"capture-truncated?": True}, {"fatal?": True}, {"output-sha256": "0" * 64},
             {"tests": 0}, {"failures": 0}, {"summaries": 2},
-            {"output": "Ran 10 tests containing 40 assertions.\n1 failure, 0 errors.\n[shadow-test-guard] FATAL fixture"},
-            {"output": "Ran 10 tests containing 40 assertions.\n1 failure, 0 errors.\n1 failure, 0 errors."},
         ]
         for change in changes:
             with self.subTest(change=change):
@@ -252,6 +281,26 @@ class QualificationEvidenceTests(unittest.TestCase):
                 batches[0]["mutants"][0]["result"].update(change)
                 with self.assertRaises((ValueError, KeyError)):
                     self.verify(batches)
+
+    def test_fatal_marker_in_actual_output_is_denied(self):
+        batches = fixture_batches()
+        result = batches[0]["mutants"][0]["result"]
+        output = result["output"] + "\n[shadow-test-guard] FATAL fixture"
+        result.update(evidence(output, 1))
+        self.assertFalse(result["fatal?"])  # Exercise the actual output clause.
+        with self.assertRaisesRegex(ValueError, "Fatal execution cannot qualify"):
+            self.verify(batches)
+
+    def test_unmatched_completed_summary_is_denied(self):
+        batches = fixture_batches()
+        result = batches[0]["mutants"][0]["result"]
+        output = result["output"] + "\n1 failure, 0 errors."
+        result.update(evidence(output, 1))
+        # Keep the other recorded counters consistent with the forged output,
+        # so removing only the summary-count guard would wrongly admit it.
+        result["failures"] = 2
+        with self.assertRaisesRegex(ValueError, "Missing or unmatched completed summaries"):
+            self.verify(batches)
 
     def test_missing_baseline_and_legacy_schema_are_denied(self):
         for change in ({"schema_version": 1}, {"schema_version": 2}, {"baseline_evidence": None}):
@@ -268,19 +317,107 @@ class QualificationEvidenceTests(unittest.TestCase):
                                    "manifest-path": "backend/mutation/reviewed-equivalents.edn",
                                    "rationale": "Reviewed observational equivalence",
                                    "review-reference": "https://github.com/open-hax/knoxx/pull/1"}]
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Equivalent exclusion cannot receive kill credit"):
             self.verify(batches)
 
     def test_explicit_exclusion_receives_zero_evaluated_credit(self):
         batches = fixture_batches()
-        batches[0]["excluded"] = [{"fingerprint": "f" * 64, "relative-path": "a.cljc", "source-sha256": "c" * 64,
+        removed = batches[0]["mutants"].pop(0)
+        replacement = copy.deepcopy(removed)
+        fingerprint = "e" * 64
+        replacement.update(id="replacement", fingerprint=fingerprint)
+        for binding in [replacement["source-binding"], replacement["compile"]["payload"]["source-binding"],
+                        replacement["result"]["source-binding"]]:
+            binding["fingerprint"] = fingerprint
+        batches[0]["mutants"].append(replacement)
+        batches[0]["excluded"] = [{"fingerprint": removed["fingerprint"], "relative-path": "a.cljc", "source-sha256": "c" * 64,
                                    "basis-source-sha": "d" * 40, "manifest-sha256": "e" * 64,
                                    "manifest-path": "backend/mutation/reviewed-equivalents.edn",
                                    "rationale": "Synthetic reviewed equivalent fixture", "review-reference": "https://github.com/open-hax/knoxx/pull/1"}]
+        self.assertEqual(250, len(batches[0]["mutants"]))
+        seen = {mutant["fingerprint"] for batch in batches for mutant in batch["mutants"]}
+        self.assertNotIn(removed["fingerprint"], seen)
+        self.assertEqual(1000, len(seen))
         self.assertEqual(1000, self.verify(batches))
-        batches[0]["mutants"].pop()
-        with self.assertRaises(ValueError):
+
+    def test_manifest_formula_matches_current_runner_vector(self):
+        self.assertEqual(RUNNER_PAYLOAD_DIGEST, verifier.manifest_digest(RUNNER_DIGEST_VECTOR))
+        self.assertEqual(RUNNER_CODE_DIGEST, verifier.manifest_digest(
+            [entry for entry in RUNNER_DIGEST_VECTOR if entry["kind"] != "source-map"]))
+        self.assertEqual(RUNNER_PAYLOAD_DIGEST, fixture_digest(RUNNER_DIGEST_VECTOR))
+
+    def test_actual_emitted_loader_fragment_matches_layout(self):
+        blobs = {LOADER: RUNNER_LOADER_FRAGMENT, RUNTIME + "/goog.base.js": b"var goog = {};\n",
+                 RUNTIME + "/" + RUNNER_LOADER_IMPORTS[0]: b"void 0;\n",
+                 RUNTIME + "/" + RUNNER_LOADER_IMPORTS[1]: b"void 1;\n"}
+        files = [{"path": path, "kind": "loader" if path == LOADER else "runtime-js",
+                  "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+                 for path, raw in sorted(blobs.items())]
+        fixture = {"schema-version": 1, "source-sha": SHA, "source-binding": {"kind": "baseline"},
+                   "loader-path": LOADER, "runtime-root": RUNTIME, "imports": RUNNER_LOADER_IMPORTS,
+                   "files": files, "sha256": fixture_digest(files), "code-sha256": fixture_digest(files)}
+        with tempfile.TemporaryDirectory(prefix="knoxx-loader-vector-") as directory:
+            store = Path(directory)
+            for raw in blobs.values():
+                (store / hashlib.sha256(raw).hexdigest()).write_bytes(raw)
+            referenced = set()
+            self.assertEqual(hashlib.sha256(RUNNER_LOADER_FRAGMENT).hexdigest(),
+                             verifier.payload_evidence(fixture, SHA, {"kind": "baseline"}, store, referenced))
+            self.assertEqual({entry["sha256"] for entry in files}, referenced)
+
+    def test_shared_blobs_are_read_once_then_rechecked_at_end(self):
+        original = Path.read_bytes
+        reads = Counter()
+        def observed(path):
+            if path.parent.name == "payload-store":
+                reads[path.name] += 1
+            return original(path)
+        with patch.object(Path, "read_bytes", observed):
+            self.assertEqual(1000, self.verify(fixture_batches()))
+        expected = {hashlib.sha256(raw).hexdigest(): 2
+                    for raw in [*FIXTURE_BYTES.values(), b"var answer = true;\n", b"var answer = false;\n"]}
+        expected[hashlib.sha256(LOADER_BYTES).hexdigest()] = 1005  # Parse1004 payloads, then final rehash.
+        self.assertEqual(expected, dict(reads))
+
+    def test_each_verify_call_revalidates_its_own_store(self):
+        self.assertEqual(1000, self.verify(fixture_batches()))
+        digest = hashlib.sha256(b"var answer = false;\n").hexdigest()
+        with self.assertRaisesRegex(ValueError, "Compiled payload bytes mismatch"):
+            self.verify(fixture_batches(), lambda store: (store / digest).write_bytes(b"tampered\n"))
+
+    def test_cached_blob_size_must_match_each_manifest(self):
+        batches = fixture_batches()
+        compiled = batches[0]["mutants"][0]["compile"]
+        files = compiled["payload"]["files"]
+        next(entry for entry in files if entry["path"] == RUNTIME + "/goog.base.js")["bytes"] += 1
+        compiled["payload"]["sha256"] = fixture_digest(files)
+        compiled["payload"]["code-sha256"] = fixture_digest([entry for entry in files if entry["kind"] != "source-map"])
+        batches[0]["mutants"][0]["result"]["input-payload-sha256"] = compiled["payload"]["sha256"]
+        with self.assertRaisesRegex(ValueError, "Compiled payload bytes mismatch"):
             self.verify(batches)
+
+    def test_final_recheck_detects_same_inode_size_and_mtime_tamper(self):
+        original = Path.read_bytes
+        loader_digest = hashlib.sha256(LOADER_BYTES).hexdigest()
+        runtime_digest = hashlib.sha256(b"var answer = false;\n").hexdigest()
+        loader_reads = 0
+        def tamper_after_last_payload(path):
+            nonlocal loader_reads
+            raw = original(path)
+            if path.parent.name == "payload-store" and path.name == loader_digest:
+                loader_reads += 1
+                if loader_reads == 1004:
+                    target = path.parent / runtime_digest
+                    before = target.stat()
+                    target.write_bytes(b"var answer = FALSE;\n")
+                    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+                    after = target.stat()
+                    self.assertEqual((before.st_ino, before.st_size, before.st_mtime_ns),
+                                     (after.st_ino, after.st_size, after.st_mtime_ns))
+            return raw
+        with patch.object(Path, "read_bytes", tamper_after_last_payload):
+            with self.assertRaisesRegex(ValueError, "Verified payload blob changed before final custody check"):
+                self.verify(fixture_batches())
 
 
 if __name__ == "__main__":

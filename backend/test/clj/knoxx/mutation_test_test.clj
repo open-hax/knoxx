@@ -194,6 +194,121 @@
             (is (= original-source (slurp source-file))))))
       (finally (delete-fixture! root)))))
 
+(deftest pretest-custody-ex-info-retains-compile-without-running-tests
+  (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
+        source-dir (io/file backend-dir "src/cljs")
+        source-file (io/file source-dir "demo.cljs")
+        original-source (slurp source-file)
+        mutant (first (mutation/discover-mutants {:src-dir (.getPath source-dir)}))
+        opts (assoc fixture :src-dir (.getPath source-dir))
+        complete {:exit-code 0 :timed-out? false :termination "exited" :cleanup-complete? true
+                  :capture-truncated? false :source-verified-before? true :source-verified-after? true
+                  :artifact-path mutation/payload-loader
+                  :artifact-sha256 (:sha256 (some #(when (= "loader" (:kind %)) %) (:files payload)))
+                  :output "[:test-ci] Build completed. (2 files, 1 compiled, 0 warnings, 0.1s)"}
+        original-source-guard mutation/assert-source-custody!
+        original-payload-guard mutation/assert-payload-custody!
+        original-custody-failure mutation/custody-failure]
+    (try
+      (doseq [guard [:source :payload]
+              caller [:baseline :mutant]]
+        (let [guard-error (ex-info (str "injected pretest " (name guard) " custody failure") {:guard guard :tampered true})
+              compiled (atom nil)
+              caught (atom nil)
+              test-runs (atom 0)]
+          (with-redefs [mutation/compile-mutant! (fn [compile-opts]
+                                                 (let [result (assoc complete :payload
+                                                                     (assoc payload :source-binding (:source-binding compile-opts)))]
+                                                   (reset! compiled result)
+                                                   result))
+                        mutation/assert-source-custody! (fn [guard-opts]
+                                                          (if (= :source guard) (throw guard-error)
+                                                              (original-source-guard guard-opts)))
+                        mutation/assert-payload-custody! (fn [guard-opts]
+                                                           (if (= :payload guard) (throw guard-error)
+                                                               (original-payload-guard guard-opts)))
+                        mutation/run-process! (fn [_] (swap! test-runs inc) (throw (AssertionError. "test child must remain uninvoked")))
+                        mutation/custody-failure (fn [error] (reset! caught error) (original-custody-failure error))]
+            (let [result (try (if (= :baseline caller) (mutation/baseline! opts)
+                                 (mutation/evaluate-mutant! opts mutant))
+                              (catch Exception error error))
+                  failure (if (= :baseline caller) (:compile result) (:result result))
+                  report-file (io/file backend-dir "target" (str "pretest-info-" (name caller) "-" (name guard) ".edn"))
+                  report (when (map? result)
+                           (mutation/write-report! {:run? true :source-sha (:source-sha fixture)
+                                                    :baseline (if (= :baseline caller) (:status result) :passed)
+                                                    :baseline-evidence (when (= :baseline caller) result)
+                                                    :report-file (.getPath report-file)}
+                                                   (if (= :baseline caller) [] [result])))
+                  native (when report (json/read-str (slurp (str report-file ".json")) :key-fn keyword))
+                  native-failure (if (= :baseline caller) (get-in native [:baseline_evidence :compile])
+                                     (get-in native [:mutants 0 :result]))]
+              (is (zero? @test-runs))
+              (is (mutation/compiled? @compiled))
+              (is (= (if (= :baseline caller) :failed :invalid) (:status result)))
+              (is (= "custody-rejected" (:termination failure)))
+              (is (nil? (:exit-code failure)))
+              (is (= @compiled (get-in failure [:custody-error :compile-result])))
+              (is (= {:guard guard :tampered true}
+                     (dissoc (:custody-error failure) :compile-result)))
+              (is (= (.getMessage guard-error) (:output failure)))
+              (is (identical? guard-error (some-> @caught .getCause)))
+              (is (not (contains? (:custody-error failure) :test-result)))
+              (is (not-any? #(contains? failure %) [:tests :assertions :failures :errors]))
+              (is (= 3 (:schema_version native)))
+              (is (= "failed" (:status native)))
+              (is (= 0 (get-in native [:summary :killed])))
+              (is (= 0 (get-in native [:summary :evaluated])))
+              (is (= @compiled (get-in native-failure [:custody-error :compile-result])))
+              (is (nil? (get-in native [:baseline_evidence :test])))
+              (is (= original-source (slurp source-file)))))))
+      (finally (delete-fixture! root)))))
+
+(deftest existing-compile-custody-is-not-replaced
+  (let [current {:output "current completed compile" :payload {:sha256 "current"}}]
+    (doseq [attached [{:output "previously attached compile"} nil]]
+      (let [error (ex-info "existing custody failure" {:compile-result attached :guard :payload})]
+        (with-redefs [mutation/run-mutant-tests! (fn [_] (throw error))]
+          (is (identical? error (try (mutation/run-compiled-tests! {} current)
+                                    (catch clojure.lang.ExceptionInfo caught caught))))
+          (is (= attached (:compile-result (ex-data error)))))))))
+
+(deftest actual-compiler-inventory-digest-has-cross-runtime-golden-vector
+  ;; Three historical compiler entries are a conformance vector, not a full payload.
+  (let [files [
+               {:path ".shadow-cljs/builds/test-ci/dev/out/cljs-runtime/borkdude.dynaload.js" :kind "runtime-js"
+                :bytes 15632 :sha256 "01056d679bdde793374719dc7299db423b8301bd163fcc8251b78fdccf673f7c"}
+               {:path ".shadow-cljs/builds/test-ci/dev/out/cljs-runtime/borkdude.dynaload.js.map" :kind "source-map"
+                :bytes 21877 :sha256 "c99be5cf888716d794dfce5282d343ca10397fd017e2f96ad0559ab0581512f7"}
+               {:path "target/test/test-ci.cjs" :kind "loader"
+                :bytes 98437 :sha256 "037202de10342bd13a49ba4cc4c09f978287091ff23e974d3753be452a0c11d4"}]
+        code-files (remove #(= "source-map" (:kind %)) files)]
+    (is (= "fdea337fc410ac8f655a4c458204beab2e8922d71cdec834d6edc05500fed7a4" (mutation/payload-digest files)))
+    (is (= "5a9a3c92dc82b9c895c2686b3b9c2a0bb88c333bb1e0744205abfcd78fdcbc5e" (mutation/payload-digest code-files)))))
+
+(deftest actual-emitted-loader-fragment-is-a-layout-control
+  ;; Root plus first two imports are an actual historical fragment, not a full loader.
+  (let [{:keys [root backend-dir] :as fixture} (payload-fixture!)
+        runtime (io/file backend-dir mutation/payload-runtime)
+        loader (io/file backend-dir mutation/payload-loader)
+        fragment (str "var SHADOW_IMPORT_PATH = __dirname + '/../../.shadow-cljs/builds/test-ci/dev/out/cljs-runtime';\n"
+                      "SHADOW_IMPORT(\"goog.debug.error.js\");\n"
+                      "SHADOW_IMPORT(\"goog.dom.nodetype.js\");\n")]
+    (try
+      (.delete (io/file runtime "demo.js"))
+      (.delete (io/file runtime "demo.js.map"))
+      (spit loader fragment)
+      (spit (io/file runtime "goog.debug.error.js") "global.debug_fixture = true;\n")
+      (spit (io/file runtime "goog.dom.nodetype.js") "global.dom_fixture = true;\n")
+      (let [snapshot (mutation/payload-snapshot! fixture)]
+        (is (= ["goog.debug.error.js" "goog.dom.nodetype.js"] (:imports snapshot)))
+        (is (= mutation/payload-runtime (:runtime-root snapshot)))
+        (is (= "f6eac5a90eae5e7786018901b7c590100742b15ec3f3a6e1913f8f5462ae1671"
+               (:sha256 (first (filter #(= "loader" (:kind %)) (:files snapshot)))))))
+      (spit loader (str/replace fragment "/../../.shadow-cljs/" "/../.shadow-cljs/"))
+      (is (thrown? clojure.lang.ExceptionInfo (mutation/payload-snapshot! fixture)))
+      (finally (delete-fixture! root)))))
+
 (deftest unchanged-loader-cannot-hide-changed-runtime-test-input
   (let [{:keys [root backend-dir payload] :as fixture} (payload-fixture!)
         runtime-file (io/file backend-dir (:runtime-root payload) "demo.js")

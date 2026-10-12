@@ -303,3 +303,12 @@
   spore: none
   receipt-refs: N/prod-goal-knoxx388-five-path-source-receipt-v1.stdout
   note: Native review led to explicit stable pidfd cleanup and actual missed-group control RED1 to supervisor14GREEN. Preserve ordinary escape predecessor local1/1 pass discrepancy. Native bundle failure reproducedNode24 with explicitcallercontracts RED1; testonlydefaults controlled separately; new callerpreservation check and wholeJS79 pass. Supervisorcontrols now reached by CI/reviewgate. Actual fiveinputbeforeafter stable, checkout1 and independent source assessment no findings. No currentbaseline/four250campaign, no sourceequivalence adjudication, no spore or promotion.
+- ts: 2026-10-12T01:09:03.084817225Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Preserve late mutation custody and qualify native SDK setup without borrowing campaign credit
+  p-efficiency: 0.78
+  p-friction: 0.69
+  p-skill-candidate: 0.35
+  spore: none
+  receipt-refs: fb530e92423dbf73e2db2ea53661888668ff27f047d933670cea32a183baf0f3,632944a45d671d08fc9a3e4cff4d0185326fcadc92c7affbb4378b3b7eb8ee53
+  note: Preserve completed child evidence when cleanup or preflight fails, and distinguish a missing invocation from a failed child. Strengthened adverse controls must reach their intended guard with consistent hashes. Actual YAML fixtures establish Git isolation and physical sibling refusal while packages remain inert. Raw-index metadata refused the b01 outer pilot despite inner green tests: keep INVALID, do not rewrite it as successful qualification. Source-specific focused green does not replace the unchanged four disjoint250 campaign. No new spore or promotion.

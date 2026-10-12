@@ -74,8 +74,9 @@ def manifest_digest(files):
     return hashlib.sha256(rows.encode("utf-8")).hexdigest()
 
 
-def payload_evidence(payload, sha, binding, store, referenced):
+def payload_evidence(payload, sha, binding, store, referenced, verified=None):
     """Recompute the fixed Shadow test-ci payload identity from preserved bytes."""
+    verified = {} if verified is None else verified
     require(isinstance(payload, dict) and type(payload.get("schema-version")) is int
             and payload["schema-version"] == 1
             and payload.get("source-sha") == sha and payload.get("source-binding") == binding,
@@ -109,9 +110,13 @@ def payload_evidence(payload, sha, binding, store, referenced):
                 and entry["kind"] == expected[entry["path"]]
                 and type(entry["bytes"]) is int and entry["bytes"] > 0
                 and digest_shape(entry["sha256"], 64), "Malformed compiled file identity")
-        blob = physical_path(store / entry["sha256"]).read_bytes()
-        require(len(blob) == entry["bytes"] and hashlib.sha256(blob).hexdigest() == entry["sha256"],
-                "Compiled payload bytes mismatch")
+        path = physical_path(store / entry["sha256"])
+        if entry["sha256"] not in verified or entry["kind"] == "loader":
+            blob = path.read_bytes()
+            require(len(blob) == entry["bytes"] and hashlib.sha256(blob).hexdigest() == entry["sha256"],
+                    "Compiled payload bytes mismatch")
+            verified[entry["sha256"]] = len(blob)
+        require(verified[entry["sha256"]] == entry["bytes"], "Compiled payload bytes mismatch")
         referenced.add(entry["sha256"])
         if entry["kind"] == "loader":
             try:
@@ -133,7 +138,7 @@ def payload_evidence(payload, sha, binding, store, referenced):
     return loader_hash
 
 
-def compile_evidence(result, sha, binding, store, referenced):
+def compile_evidence(result, sha, binding, store, referenced, verified=None):
     require(digest_shape(sha, 40), "Immutable compile source required")
     source_binding(binding, binding.get("fingerprint") if isinstance(binding, dict)
                    and binding.get("kind") == "mutant" else None)
@@ -143,7 +148,7 @@ def compile_evidence(result, sha, binding, store, referenced):
     require(result.get("source-verified-before?") is True and result.get("source-verified-after?") is True,
             "Compile source custody was not preserved")
     payload = result.get("payload")
-    loader_hash = payload_evidence(payload, sha, binding, store, referenced)
+    loader_hash = payload_evidence(payload, sha, binding, store, referenced, verified)
     require(result.get("artifact-path") == LOADER and result.get("artifact-sha256") == loader_hash,
             "Compiled entrypoint identity mismatch")
     return payload
@@ -178,6 +183,7 @@ def verify(sha, directory):
     require(len(files) == 4, "Exactly four completed batches required")
     store = physical_path(Path(directory) / "payload-store", directory=True)
     referenced = set()
+    verified = {}  # Explicit invocation-local cache, never reused across stores or runs.
     seen, indexes, excluded = set(), set(), set()
     for path in files:
         batch = json.loads(path.read_text())
@@ -187,7 +193,7 @@ def verify(sha, directory):
         baseline = batch.get("baseline_evidence")
         require(isinstance(baseline, dict) and baseline.get("status") == "passed", "Missing green baseline evidence")
         baseline_binding = {"kind": "baseline"}
-        baseline_payload = compile_evidence(baseline.get("compile"), sha, baseline_binding, store, referenced)
+        baseline_payload = compile_evidence(baseline.get("compile"), sha, baseline_binding, store, referenced, verified)
         test_evidence(baseline.get("test"), killed=False, payload=baseline_payload)
         index = batch["batch_index"]
         require(type(index) is int and index in range(4) and index not in indexes, "Invalid batch index")
@@ -215,7 +221,7 @@ def verify(sha, directory):
             require(mutant["status"] == "killed" and mutant["phase"] == "test", "Mutation was not test-killed")
             binding = mutant.get("source-binding")
             source_binding(binding, key)
-            payload = compile_evidence(mutant.get("compile"), sha, binding, store, referenced)
+            payload = compile_evidence(mutant.get("compile"), sha, binding, store, referenced, verified)
             require(payload["code-sha256"] != baseline_payload["code-sha256"],
                     "Unchanged executed code cannot qualify as a kill")
             test_evidence(mutant.get("result"), killed=True, payload=payload)
@@ -224,6 +230,12 @@ def verify(sha, directory):
     stored = list(store.iterdir())
     require(all(digest_shape(path.name, 64) and physical_path(path) for path in stored)
             and {path.name for path in stored} == referenced, "Payload store has unexpected or missing blobs")
+    # Rehash each unique blob once at the end: cached bytes may have changed
+    # in-place without changing size, inode or a restored modification time.
+    for path in stored:
+        blob = physical_path(path).read_bytes()
+        require(len(blob) == verified[path.name] and hashlib.sha256(blob).hexdigest() == path.name,
+                "Verified payload blob changed before final custody check")
     return len(seen)
 
 
