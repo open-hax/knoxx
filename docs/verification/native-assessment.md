@@ -86,9 +86,19 @@ accepted PR cannot acquire a new seed comment after cleanup. It then reconciles
 an uncertain PR creation before deciding whether there is an owned PR to close. An absent,
 duplicate, changed, foreign or unreadable result fails cleanup and retains the
 reported branch/marker; no POST is retried and no guessed PR is closed. This narrows
-request and PR ambiguity only: branch, source-content and inline-comment creation
-still rely on their existing acknowledgements, and hard-kill or ambiguous earlier
-fixture creation may need manual recovery.
+request, PR and inline-comment ambiguity: the inline question also retains its
+unique invocation/inline marker, complete body, authenticated User, repository/PR,
+exact source path/commit/line and timestamp lower bound before its sole POST.
+Complete native inline listing plus independent GET must match all those fields
+before adopting an actual ID. Cleanup recovers a pending inline intent before
+closure and repeats exact list/GET custody before deleting a known ID. A missing,
+duplicate, foreign, changed or unreadable inline record fails cleanup, reports its
+marker and retains the branch; it never authorizes a guessed DELETE or POST retry.
+Branch and source-content creation still rely on their existing acknowledgements,
+and hard-kill or ambiguous earlier fixture creation may need manual recovery.
+GitHub inline deletion has no atomic content compare-and-swap with the preceding
+GET; an intervening edit remains a race. Fresh custody prevents guessed IDs and
+observed drift from authorizing deletion, without claiming a cross-request lock.
 
 Resident regression controls use only an inert native-shaped API; they create or
 delete no remote resources and require no credentials:
@@ -104,8 +114,10 @@ readback, lost DELETE response and failed readback. Additional controls refuse a
 missing or changed protected helper, verify that the positive request contains no
 source pin, reject a missing or wrong immutable response citation, reconcile accepted
 PR creation after response loss, refuse uncertain PR custody without guessed closure,
-and block cleanup until the last seed write completes. They grant no live cleanup or
-App response credit. Live verification is still blocked until protected adoption.
+and block cleanup until the last seed write completes. Inline controls additionally
+retain intent before the actual POST, recover an accepted lost response without
+retry, refuse exact custody failures and refuse deletion of a changed known ID.
+They grant no live cleanup or App response credit. Live verification is still blocked until protected adoption.
 
 The observable checks are:
 
@@ -122,7 +134,8 @@ The observable checks are:
   provides at most the first 100 comments, reviews, commits and changed files,
   without pagination completeness metadata. It establishes no complete-context
   assessment credit.
-- `/ocfoo` runs the command preflight and skips the App/model/credential step,
+- `/ocfoo` passes the coarse job prefix filter, then runs the exact whitespace-boundary
+  command preflight and skips the App/model/credential step,
   producing no App response.
 - `/oc` followed by a tab exercises a harmless request for `.git/HEAD`. The
   public response must not expose its contents. This tests a Git metadata path
@@ -131,10 +144,15 @@ The observable checks are:
   submits no native PR review or approval.
 
 The App step explicitly requires `success()`, authorization eligibility and a
-successful public-fetch staging outcome. GitHub's existing implicit `success()`
+successful public-fetch staging and immutable-runtime installation outcomes. GitHub's existing implicit `success()`
 already applied to the earlier condition because it had no status-check function;
 this names the staging readiness precondition directly, without claiming an earlier
 credential exposure. See [GitHub status-check semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions).
+
+Ordinary comments do not allocate this job: its initial filter requires a PR,
+a permitted association and an `/opencode` or `/oc` prefix. That coarse filter is
+only runner-allocation hygiene. The unchanged preflight still requires whitespace
+or end of input after the exact command, an open PR and native effective permission.
 
 The workflow checks effective `write` or `admin` permission through GitHub before
 the step that receives the model key and exchanges OIDC for the App token.
@@ -156,7 +174,7 @@ exact source SHA-256, and uses only that home's global configuration/tool direct
 No auth store, provider key or candidate tool/config file is copied. Project
 configuration and project plugin loading remain disabled with
 `OPENCODE_DISABLE_PROJECT_CONFIG` and `OPENCODE_PURE`; direct custom tool discovery
-is separate from external plugin loading. The App action later checks out the PR,
+is separate from external plugin loading. The native command later checks out the PR,
 but the model tool source remains the earlier trusted copy. Host-managed config
 or instruction overlays must be absent or separately admitted by the operator.
 
@@ -175,9 +193,27 @@ These are source contracts requiring qualification of the actual config parser,
 direct tool registry under PURE, fixed transport, redirect/cancellation/size guards
 and paging. They grant no current runtime enforcement or assessment credit.
 The route is not an operating-system sandbox or a reduction of the exchanged
-App token's GitHub grants. The action pin fixes the composite action source,
-while that action installs an unpinned OpenCode runtime. It does not bind the
-actual command or permission implementation to the inspected repository source.
+App token's GitHub grants. The workflow no longer invokes the composite action's mutable install. It downloads
+the official immutable OpenCode v1.19.0 Linux x64 baseline release archive before
+any model key is supplied, requires archive SHA-256
+`6334d70db3990721ea454357e9cf2573c8685524ad7769af9d52cbffb7008438`,
+exactly one regular `opencode` member, executable SHA-256
+`135ac3f86c43f2a22328a3554fec5f0bc57d71576077902661bc38dac34871fd`
+and exact `1.19.0` version, and fails on unavailable, changed or unsupported input.
+The credential-bearing step invokes only that absolute verified executable's
+`github run` command after rechecking its exact byte SHA-256, preserving the model,
+prompt and OIDC/App command environment.
+There is no latest fallback or runtime installation in that step. These pins bind
+executable bytes; they do not independently prove App execution, permission
+behavior or a complete-context assessment. The model remains
+`kimi-code-plan-global/kimi-for-coding`; executable pinning does not change provider
+identity or introduce a fixed MiMo model alias. The inspected immutable v1.19.0
+GitHub command/handler retains `MODEL`, `SHARE`, `USE_GITHUB_TOKEN`, custom `PROMPT`,
+mentions and variant inputs, the `opencode-github-action` OIDC audience and default
+`https://api.opencode.ai` exchange endpoint. Its chat path still uses configured
+`default_agent`, and its first-100 context limitation remains unchanged. Source
+ABI inspection and an actual credential-free `--version` check are narrower than
+a genuine hosted App-route qualification, which remains separately required.
 
 The harmless denied-path response is an observable text check. It cannot prove
 that the model attempted a read or that a tool enforced a refusal. The pinned

@@ -17,6 +17,7 @@ jobs:
     name: Assess the requested PR conversation with OpenCode
     if: >-
       github.event.issue.pull_request &&
+      (startsWith(github.event.comment.body, '/opencode') || startsWith(github.event.comment.body, '/oc')) &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -76,6 +77,61 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Install the exact verified OpenCode runtime without model credentials
+        if: steps.authorize.outputs.eligible == 'true'
+        id: runtime
+        shell: bash
+        run: |
+          python3 - <<'PY_RUNTIME'
+          import hashlib, os, platform, shutil, stat, subprocess, tarfile, urllib.request
+          from pathlib import Path
+          assert platform.system() == 'Linux' and platform.machine() == 'x86_64', 'Unsupported immutable runtime platform'
+          root = Path(os.environ['RUNNER_TEMP'])
+          assert root.is_absolute() and root.resolve() == root and root.is_dir(), 'Unestablished physical runner temp'
+          assert '\n' not in str(root) and '\r' not in str(root), 'Unusable runtime output coordinate'
+          private = root / 'native-assessment-runtime-v1.19.0'
+          assert not os.path.lexists(private), 'Runtime directory already exists'
+          private.mkdir(mode=0o700)
+          assert (private.stat().st_mode & 0o777) == 0o700 and private.stat().st_uid == os.getuid(), 'Unestablished private runtime directory'
+          temporary = private / 'tmp'
+          temporary.mkdir(mode=0o700)
+          assert temporary.resolve() == temporary and temporary.is_dir() and temporary.stat().st_uid == os.getuid() and (temporary.stat().st_mode & 0o777) == 0o700, 'Unestablished private runtime temp directory'
+          archive = private / 'opencode-linux-x64-baseline.tar.gz'
+          digest = hashlib.sha256()
+          total = 0
+          url = 'https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-linux-x64-baseline.tar.gz'
+          with urllib.request.urlopen(url, timeout=60) as response:
+              assert response.status == 200, 'Immutable runtime download failed'
+              fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+              with os.fdopen(fd, 'wb') as output:
+                  while block := response.read(1024 * 1024):
+                      output.write(block)
+                      digest.update(block)
+                      total += len(block)
+                      assert total <= 60685698, 'Immutable runtime archive size changed'
+          assert total == 60685698 and digest.hexdigest() == '6334d70db3990721ea454357e9cf2573c8685524ad7769af9d52cbffb7008438', 'Immutable runtime archive digest/size changed'
+          executable = private / 'opencode'
+          with tarfile.open(archive, 'r:gz') as package:
+              members = package.getmembers()
+              assert len(members) == 1 and members[0].name == 'opencode' and members[0].isfile() and members[0].size == 185747584, 'Unexpected immutable runtime archive layout'
+              fd = os.open(executable, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+              with package.extractfile(members[0]) as source, os.fdopen(fd, 'wb') as output:
+                  shutil.copyfileobj(source, output)
+          assert executable.stat().st_size == 185747584, 'Immutable runtime executable size changed'
+          with executable.open('rb') as source:
+              binary_digest = hashlib.file_digest(source, 'sha256').hexdigest()
+          assert binary_digest == '135ac3f86c43f2a22328a3554fec5f0bc57d71576077902661bc38dac34871fd', 'Immutable runtime executable digest changed'
+          os.chmod(executable, 0o500)
+          info = executable.lstat()
+          assert stat.S_ISREG(info.st_mode) and executable.resolve() == executable and info.st_uid == os.getuid() and (info.st_mode & 0o777) == 0o500, 'Unestablished immutable executable custody'
+          version = subprocess.run([str(executable), '--version'], check=True, capture_output=True, text=True, timeout=30,
+                                   env={'PATH': os.environ['PATH'], 'HOME': str(private), 'TMPDIR': str(temporary)})
+          assert version.stdout == '1.19.0\n', 'Immutable runtime version changed'
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'executable={executable}\n')
+          print('Verified OpenCode v1.19.0 archive SHA-256 6334d70db3990721ea454357e9cf2573c8685524ad7769af9d52cbffb7008438 and executable SHA-256 ' + binary_digest)
+          PY_RUNTIME
+
       - name: Stage the trusted public-fetch tool in a fresh private model home
         if: steps.authorize.outputs.eligible == 'true'
         id: public_fetch
@@ -108,8 +164,7 @@ jobs:
           PY_STAGE
 
       - name: Request a native App assessment
-        if: success() && steps.authorize.outputs.eligible == 'true' && steps.public_fetch.outcome == 'success'
-        uses: anomalyco/opencode/github@385cb694419f98103af0e8fc6187ddcbcbb6eecb
+        if: success() && steps.authorize.outputs.eligible == 'true' && steps.public_fetch.outcome == 'success' && steps.runtime.outcome == 'success'
         env:
           KIMI_API_KEY: ${{ secrets.KIMI_FOR_CODING_API_KEY }}
           HOME: ${{ steps.public_fetch.outputs.home }}
@@ -121,10 +176,10 @@ jobs:
           OPENCODE_CONFIG_DIR: ${{ steps.public_fetch.outputs.home }}/.config/opencode
           OPENCODE_DISABLE_PROJECT_CONFIG: 'true'
           OPENCODE_PURE: 'true'
-          # The pinned chat path omits AGENT and uses default_agent instead.
+          # This runtime's chat path omits AGENT and uses default_agent instead.
           # Only the trusted direct public-fetch tool may perform model-requested I/O.
           # Builtin webfetch and every filesystem/shell/search tool remain denied.
-          # The direct tool is staged before the action's internal PR checkout;
+          # The direct tool is staged before the command's internal PR checkout;
           # PURE suppresses plugins without granting project-controlled tools.
           # This config is not an operating-system or App-token sandbox.
           OPENCODE_CONFIG_CONTENT: >-
@@ -132,12 +187,15 @@ jobs:
             "*":"deny","webfetch":"deny","native_public_fetch":"allow",
             "read":"deny","glob":"deny","grep":"deny","lsp":"deny",
             "edit":"deny","bash":"deny","task":"deny","external_directory":"deny"}}}}
-        with:
-          model: kimi-code-plan-global/kimi-for-coding
-          agent: plan
-          share: false
-          use_github_token: false
-          prompt: |
+          OPENCODE_EXECUTABLE: ${{ steps.runtime.outputs.executable }}
+          MODEL: kimi-code-plan-global/kimi-for-coding
+          AGENT: plan
+          SHARE: 'false'
+          USE_GITHUB_TOKEN: 'false'
+          MENTIONS: ''
+          VARIANT: ''
+          OIDC_BASE_URL: ''
+          PROMPT: |
             Provide the independent technical assessment requested in this PR comment.
             Fetch the native triggering-comment API URL below to obtain the actual
             request; the integration omits that comment from its supplied PR context.
@@ -179,3 +237,7 @@ jobs:
             Preflight head repository ID: ${{ steps.authorize.outputs.head_repository_id }}
             Preflight head commit: ${{ steps.authorize.outputs.head_sha }}
             Immutable head source: https://github.com/${{ steps.authorize.outputs.head_repository }}/tree/${{ steps.authorize.outputs.head_sha }}
+        shell: bash
+        run: |
+          printf '%s  %s\n' '135ac3f86c43f2a22328a3554fec5f0bc57d71576077902661bc38dac34871fd' "$OPENCODE_EXECUTABLE" | sha256sum --check --status
+          "$OPENCODE_EXECUTABLE" github run

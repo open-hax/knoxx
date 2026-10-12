@@ -19,10 +19,27 @@
 (def owned-pr {:id 200 :node_id "owned-pr" :number 300 :state "closed"
                :base {:repo owned-repo}
                :head {:repo owned-repo :ref owned-branch :sha owned-head}})
+(def request-user {:login "inert-operator" :id 400 :node_id "inert-user" :type "User"})
+(def owned-inline-marker (str "<!-- native-assessment-verifier invocation=" owned-id " inline=inert-inline -->"))
+(def owned-inline-record
+  {:id 601 :node_id "owned-inline" :body (str "Inert inline question\n\n" owned-inline-marker) :user request-user
+   :created_at "2026-10-12T00:00:00Z" :updated_at "2026-10-12T00:00:00Z"
+   :pull_request_url "https://api.github.com/repos/open-hax/knoxx/pulls/300"
+   :url "https://api.github.com/repos/open-hax/knoxx/pulls/comments/601"
+   :html_url "https://github.com/open-hax/knoxx/pull/300#discussion_r601"
+   :path (str "docs/verification/.native-assessment/" owned-id "/source.txt")
+   :line 1 :original_line 1 :side "RIGHT" :commit_id owned-head :original_commit_id owned-head})
+(def owned-inline-intent
+  {:repository "open-hax/knoxx" :repository-id 100 :pr-number 300 :pr-id 200 :pr-node-id "owned-pr"
+   :user request-user :marker owned-inline-marker :body (:body owned-inline-record) :head owned-head
+   :file (:path owned-inline-record) :not-before (java.time.Instant/parse "2026-10-12T00:00:00Z")
+   :post-finished (let [finished (promise)] (deliver finished true) finished)
+   :status :reconciled :comment-id 601})
 (def owned-resources {:repository "open-hax/knoxx" :repository-id 100
                       :invocation-id owned-id :branch owned-branch :branch-head owned-head
                       :branch-created? true :branch-ref-node-id "owned-ref" :fixture-seeded? true
                       :pr-number 300 :pr-id 200 :pr-node-id "owned-pr" :root-comment-id 601
+                      :inline-intent owned-inline-intent
                       :request-ids [500] :run-ids #{700} :workflow-id 800
                       :started-at "2026-10-12T00:00:00Z"})
 
@@ -34,7 +51,7 @@
                         {:id 501 :user app-identity :body "Reply [github run](/open-hax/knoxx/actions/runs/700)"}
                         {:id 502 :user {:login "unrelated"}}
                         {:id 503 :user app-identity :body "Other request [github run](/open-hax/knoxx/actions/runs/701)"}])
-        inline (atom [{:id 601} {:id 602}])
+        inline (atom [owned-inline-record {:id 602}])
         native (fn [method endpoint & [_payload]]
                  (swap! calls conj [method endpoint])
                  (cond
@@ -42,6 +59,8 @@
                                           (if (:closure-error controls) (throw (ex-info "inert closure refusal" {})) {:state "closed"}))
                    (and (= method "GET") (= endpoint "repos/open-hax/knoxx")) (or (:repo controls) owned-repo)
                    (and (= method "GET") (= endpoint "repos/open-hax/knoxx/pulls/300")) (or (:pr controls) owned-pr)
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx/pulls/comments/601"))
+                   owned-inline-record
                    (and (= method "DELETE") (str/includes? endpoint "/issues/comments/"))
                    (do (when (:comment-error controls) (throw (ex-info "inert comment refusal" {})))
                        (when-not (:comments-remain controls)
@@ -212,14 +231,13 @@
       (test/is (every? #(= 1 %) (vals (frequencies deletes))))
       (test/is (= (if closure-error? 0 1) (count (ref-deletes result)))))))
 
-(def request-user {:login "inert-operator" :id 400 :node_id "inert-user" :type "User"})
 
 (defn request-cleanup-case "Run actual request!/cleanup! with inert accepted/lost-response native records." [controls]
   (reset! cleaned? false)
   (reset! resources (merge owned-resources {:request-ids [] :request-intents [] :run-ids #{}
                                            :request-user request-user :delete-owned-branch? false}
                           (:resources controls)))
-  (let [calls (atom []) comments (atom []) inline (atom [{:id 601} {:id 602}])
+  (let [calls (atom []) comments (atom []) inline (atom [owned-inline-record {:id 602}])
         closed? (atom false) ref-present? (atom true) post-state (atom nil) issue-reads (atom 0)
         run (atom {:id 700 :display_title "Native assessment 900" :status "in_progress"})
         native (fn [method endpoint & [payload]]
@@ -254,6 +272,8 @@
                    (and (= method "GET") (= endpoint "repos/open-hax/knoxx/actions/runs/700")) @run
                    (and (= method "POST") (= endpoint "repos/open-hax/knoxx/actions/runs/700/cancel"))
                    (do (swap! run assoc :status "completed") nil)
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx/pulls/comments/601"))
+                   owned-inline-record
                    (and (= method "DELETE") (str/includes? endpoint "/issues/comments/"))
                    (do (swap! comments (fn [rows] (filterv #(not= (:id %) (parse-long (last (str/split endpoint #"/")))) rows))) nil)
                    (and (= method "DELETE") (= endpoint "repos/open-hax/knoxx/pulls/comments/601"))
@@ -446,6 +466,7 @@
   (reset! cleaned? false)
   (reset! resources {:workflow-id 800 :request-user request-user :delete-owned-branch? false})
   (let [calls (atom []) records (atom []) inline (atom []) post-state (atom nil) list-reads (atom 0)
+        inline-post-state (atom nil) inline-list-reads (atom 0)
         base {:repository-id 100 :branch "main" :head owned-head}
         native (fn [method endpoint & [payload]]
                  (swap! calls conj [method endpoint])
@@ -470,8 +491,26 @@
                      (if (:acknowledged controls) (first @records)
                          (throw (ex-info "Inert response lost after accepted PR POST" {}))))
                    (and (= method "POST") (= endpoint "repos/open-hax/knoxx/pulls/300/comments"))
-                   (do (when-let [before-inline (:before-inline controls)] (before-inline))
-                       (reset! inline [{:id 601} {:id 602}]) {:id 601})
+                   (do (reset! inline-post-state @resources)
+                       (when-let [before-inline (:before-inline controls)] (before-inline))
+                       (when-not (:inline-absent controls)
+                         (let [now (str (java.time.Instant/now))
+                               record (merge {:id 601 :node_id "owned-inline" :body (:body payload) :user request-user
+                                              :created_at now :updated_at now
+                                              :pull_request_url "https://api.github.com/repos/open-hax/knoxx/pulls/300"
+                                              :url "https://api.github.com/repos/open-hax/knoxx/pulls/comments/601"
+                                              :html_url "https://github.com/open-hax/knoxx/pull/300#discussion_r601"
+                                              :path (:path payload) :line (:line payload) :original_line (:line payload)
+                                              :side (:side payload) :commit_id (:commit_id payload) :original_commit_id (:commit_id payload)}
+                                             (:inline-record controls))]
+                           (reset! inline (cond-> [record {:id 602}]
+                                            (:inline-duplicate controls) (conj (assoc record :id 603))))))
+                       (if (:inline-lost-response controls)
+                         (throw (ex-info "Inert response lost after accepted inline POST" {}))
+                         (first @inline)))
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx/pulls/comments/601"))
+                   (if (:inline-get-error controls) (throw (ex-info "Inert inline GET failure" {}))
+                       (merge (first @inline) (:inline-get-record controls)))
                    (and (= method "GET") (= endpoint "repos/open-hax/knoxx")) owned-repo
                    (and (= method "GET") (= endpoint "repos/open-hax/knoxx/pulls/300"))
                    (if (:get-error controls) (throw (ex-info "Inert fixture PR GET failure" {}))
@@ -490,7 +529,11 @@
                             (and (:initially-absent controls) (= 1 @list-reads)) []
                             :else @records))
                   (str/includes? endpoint "/issues/300/comments") [{:id 910 :user {:login "foreign"}}]
-                  (str/includes? endpoint "/pulls/300/comments") @inline
+                  (str/includes? endpoint "/pulls/300/comments")
+                  (do (swap! inline-list-reads inc)
+                      (cond (:inline-list-error controls) (throw (ex-info "Inert inline listing failure" {}))
+                            (and (:inline-initially-absent controls) (= 1 @inline-list-reads)) []
+                            :else @inline))
                   :else (throw (ex-info "Unexpected inert fixture page" {}))))
         outcome (with-redefs [cleanup-completion (promise) checks (atom 0) api native pages pager
                              stop-owned-runs! (fn [] (swap! calls conj ["TERMINAL"]) true)]
@@ -499,10 +542,12 @@
                     (let [seed-result (try {:value (seed! "open-hax/knoxx" base)}
                                            (catch Exception error {:refusal (:code (ex-data error)) :message (.getMessage error)}))
                           cleanup-output (let [writer (java.io.StringWriter.)]
+                                           (when-let [before-cleanup (:before-cleanup controls)] (before-cleanup inline))
                                            (binding [*out* writer *err* writer] (cleanup!) (cleanup!))
                                            (str writer))]
                       {:seed-result seed-result :cleanup-output cleanup-output})))]
-    (merge outcome {:calls @calls :resources @resources :records @records :inline @inline :post-state @post-state})))
+    (merge outcome {:calls @calls :resources @resources :records @records :inline @inline :post-state @post-state
+                    :inline-post-state @inline-post-state})))
 
 (test/deftest accepted-pr-response-loss-recovers-the-owned-draft
   (doseq [controls [{:acknowledged true} {} {:initially-absent true}]]
@@ -605,6 +650,76 @@
     (test/is (not (get-in result [:resources :cleanup-failed?])))
     (test/is (= 1 (count (filter #(= ["PATCH" "repos/open-hax/knoxx/pulls/300"] %) (:calls result)))))
     (test/is (= 1 (count (filter #(= ["DELETE" "repos/open-hax/knoxx/pulls/comments/601"] %) (:calls result)))))))
+
+
+(test/deftest accepted-inline-response-loss-recovers-only-the-owned-question
+  (doseq [controls [{:acknowledged true}
+                    {:acknowledged true :inline-lost-response true}
+                    {:acknowledged true :inline-lost-response true :inline-initially-absent true}]]
+    (let [result (fixture-pr-case controls) calls (:calls result)
+          intent (get-in result [:inline-post-state :inline-intent])
+          index-of (fn [wanted] (or (first (keep-indexed #(when (= wanted %2) %1) calls)) -1))
+          readback (index-of ["GET" "repos/open-hax/knoxx/pulls/comments/601"])
+          deletion (index-of ["DELETE" "repos/open-hax/knoxx/pulls/comments/601"])]
+      (test/is (= 1 (count (filter #(= ["POST" "repos/open-hax/knoxx/pulls/300/comments"] %) calls))))
+      (test/is (= :pending (:status intent)))
+      (test/is (= request-user (:user intent)))
+      (test/is (= owned-head (:head intent)))
+      (test/is (and (string? (:marker intent)) (str/ends-with? (:body intent) (:marker intent))
+                    (str/includes? (:marker intent) (str "invocation=" (get-in result [:inline-post-state :invocation-id])))))
+      (test/is (= 601 (get-in result [:resources :root-comment-id])))
+      (test/is (= 601 (get-in result [:resources :inline-intent :comment-id])))
+      (test/is (= :reconciled (get-in result [:resources :inline-intent :status])))
+      (test/is (= (if (:inline-lost-response controls) :uncertain :acknowledged)
+                  (get-in result [:resources :inline-intent :post-outcome])))
+      (test/is (and (<= 0 readback) (< readback deletion)))
+      (test/is (= 1 (count (filter #(= ["DELETE" "repos/open-hax/knoxx/pulls/comments/601"] %) calls))))
+      (test/is (= [602] (mapv :id (:inline result))))
+      (test/is (not (get-in result [:resources :cleanup-failed?])))
+      (test/is (empty? (ref-deletes result)))
+      (test/is (str/includes? (:cleanup-output result) "RETAIN fixture branch:"))
+      (if (:inline-initially-absent controls)
+        (test/is (= :inline-comment-absent (get-in result [:seed-result :refusal])))
+        (test/is (get-in result [:seed-result :value]))))))
+
+(test/deftest uncertain-inline-custody-refuses-without-guessed-cleanup
+  (doseq [[controls expected]
+          [[{:inline-absent true} :inline-comment-absent]
+           [{:inline-duplicate true} :inline-comment-duplicate]
+           [{:inline-record {:user (assoc request-user :id 999)}} :inline-comment-user]
+           [{:inline-record {:body "changed after POST"}} :inline-comment-absent]
+           [{:inline-record {:path "other/source.txt"}} :inline-comment-body-context]
+           [{:inline-record {:commit_id (apply str (repeat 40 "b"))}} :inline-comment-body-context]
+           [{:inline-record {:line 2}} :inline-comment-body-context]
+           [{:inline-record {:original_line 2}} :inline-comment-body-context]
+           [{:inline-record {:in_reply_to_id 602}} :inline-comment-body-context]
+           [{:inline-record {:html_url "https://github.com/foreign/repo/pull/300#discussion_r601"}} :inline-comment-body-context]
+           [{:inline-record {:created_at "2000-01-01T00:00:00Z"}} :inline-comment-timestamp]
+           [{:inline-record {:id 0}} :inline-comment-id]
+           [{:inline-get-record {:body "changed native GET"}} :inline-comment-readback]
+           [{:inline-get-error true} :inline-native-readback]
+           [{:inline-list-error true} :inline-native-readback]]]
+    (let [result (fixture-pr-case (merge {:acknowledged true :inline-lost-response true} controls)) calls (:calls result)]
+      (test/is (= expected (get-in result [:seed-result :refusal])) (str controls))
+      (test/is (= 1 (count (filter #(= ["POST" "repos/open-hax/knoxx/pulls/300/comments"] %) calls))))
+      (test/is (nil? (get-in result [:resources :root-comment-id])))
+      (test/is (true? (get-in result [:resources :cleanup-failed?])))
+      (test/is (empty? (filter #(#{"PATCH" "DELETE" "TERMINAL"} (first %)) calls)))
+      (test/is (str/includes? (:cleanup-output result) "pending inline marker"))
+      (test/is (str/includes? (:cleanup-output result) "RETAIN fixture branch:")))))
+
+(test/deftest known-inline-id-needs-fresh-exact-custody-before-delete
+  (doseq [change [(fn [record] (update record :body str "\nchanged after seed"))
+                  (fn [record] (assoc record :user (assoc request-user :id 999)))
+                  (fn [record] (assoc record :id 603))]]
+    (let [result (fixture-pr-case {:acknowledged true
+                                  :before-cleanup (fn [inline] (swap! inline #(assoc % 0 (change (first %)))))})]
+      (test/is (get-in result [:seed-result :value]))
+      (test/is (= 1 (count (filter #(= ["POST" "repos/open-hax/knoxx/pulls/300/comments"] %) (:calls result)))))
+      (test/is (true? (get-in result [:resources :cleanup-failed?])))
+      (test/is (empty? (filter #(= "DELETE" (first %)) (:calls result))))
+      (test/is (= 602 (:id (second (:inline result)))))
+      (test/is (str/includes? (:cleanup-output result) "RETAIN fixture branch:")))))
 
 (let [{:keys [fail error]} (test/run-tests 'user)]
   (when (pos? (+ fail error)) (System/exit 1)))

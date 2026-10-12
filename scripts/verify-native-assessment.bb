@@ -173,6 +173,98 @@
       (if (:code (ex-data error)) (throw error)
           (throw (ex-info "Native request reconciliation read failed" {:code :request-native-readback} error))))))
 
+(defn- inline-comment-binding "Select native inline identity, source, content and User for exact list/GET custody." [comment]
+  (assoc (select-keys comment [:id :node_id :body :created_at :updated_at :pull_request_url :url :html_url
+                              :path :line :original_line :side :commit_id :original_commit_id :in_reply_to_id])
+         :user (select-keys (:user comment) [:login :id :node_id :type])))
+
+(defn- reconcile-inline! "Recover only this invocation's unique inline question after complete native listing and exact GET." [intent]
+  (try
+    (let [{:keys [repository repository-id pr-number pr-id pr-node-id marker body user not-before
+                  head file post-finished comment-id]} intent]
+      (request-require! (= true (deref post-finished 60000 ::unfinished))
+                        :inline-post-unfinished "Inline POST completion is unestablished")
+      (let [repo (api "GET" (str "repos/" repository))
+            pr (api "GET" (str "repos/" repository "/pulls/" pr-number))]
+        (request-require! (and (= repository (:full_name repo)) (= repository-id (:id repo))
+                               (= pr-number (:number pr)) (= pr-id (:id pr)) (= pr-node-id (:node_id pr))
+                               (= repository-id (get-in pr [:base :repo :id]))
+                               (= repository (get-in pr [:base :repo :full_name]))
+                               (= repository-id (get-in pr [:head :repo :id]))
+                               (= repository (get-in pr [:head :repo :full_name]))
+                               (= head (get-in pr [:head :sha])))
+                          :inline-native-context "Inline repository/PR/source identity changed"))
+      (let [matches (filterv #(and (string? (:body %)) (str/includes? (:body %) marker))
+                             (pages (str "repos/" repository "/pulls/" pr-number "/comments") nil))]
+        (request-require! (= 1 (count matches))
+                          (if (empty? matches) :inline-comment-absent :inline-comment-duplicate)
+                          "Inline marker has no unique native comment")
+        (let [listed (first matches) id (:id listed)]
+          (request-require! (and (pos-int? id) (string? (:node_id listed)) (not (str/blank? (:node_id listed)))
+                                 (or (nil? comment-id) (= comment-id id)))
+                            :inline-comment-id "Native inline identity is malformed or changed")
+          (request-require! (= user (select-keys (:user listed) [:login :id :node_id :type]))
+                            :inline-comment-user "Native inline User differs from the authenticated operator")
+          (request-require! (and (= body (:body listed)) (= file (:path listed))
+                                 (= 1 (:line listed)) (= 1 (:original_line listed)) (= "RIGHT" (:side listed))
+                                 (= head (:commit_id listed)) (= head (:original_commit_id listed))
+                                 (nil? (:in_reply_to_id listed))
+                                 (= (str "https://api.github.com/repos/" repository "/pulls/" pr-number) (:pull_request_url listed))
+                                 (= (str "https://api.github.com/repos/" repository "/pulls/comments/" id) (:url listed))
+                                 (= (str "https://github.com/" repository "/pull/" pr-number "#discussion_r" id) (:html_url listed)))
+                            :inline-comment-body-context "Native inline body, source or repository/PR URLs differ")
+          (let [created (try (Instant/parse (:created_at listed)) (catch Exception _ nil))
+                updated (try (Instant/parse (:updated_at listed)) (catch Exception _ nil))]
+            (request-require! (and created updated (not (.isBefore created ^Instant not-before))
+                                   (not (.isBefore updated ^Instant created)))
+                              :inline-comment-timestamp "Native inline timestamps do not bind this POST intent"))
+          (let [record (api "GET" (str "repos/" repository "/pulls/comments/" id))]
+            (request-require! (= (inline-comment-binding listed) (inline-comment-binding record))
+                              :inline-comment-readback "Native inline GET differs from its complete-list record")
+            (swap! resources
+                   (fn [state]
+                     (request-require! (= marker (get-in state [:inline-intent :marker]))
+                                       :inline-owned-intent "Inline intent changed during reconciliation")
+                     (-> state
+                         (assoc :root-comment-id id)
+                         (update :inline-intent assoc :comment-id id :record (inline-comment-binding record)
+                                 :status :reconciled))))
+            record))))
+    (catch Exception error
+      (if (:code (ex-data error)) (throw error)
+          (throw (ex-info "Native inline reconciliation read failed" {:code :inline-native-readback} error))))))
+
+(defn- create-fixture-inline! "Retain full owned inline intent before one POST; reconcile acknowledgement or response loss." [repository pr head file]
+  (let [{:keys [repository-id invocation-id pr-number pr-id pr-node-id request-user]} @resources
+        marker (str "<!-- native-assessment-verifier invocation=" invocation-id " inline=" (UUID/randomUUID) " -->")
+        body (str "Verifier question: report the exact first source line and explain this inert fixture. Do not change code.\n\n" marker)
+        post-finished (promise)
+        intent {:repository repository :repository-id repository-id :pr-number pr-number :pr-id pr-id
+                :pr-node-id pr-node-id :user request-user :marker marker :body body :head head :file file
+                :not-before (.truncatedTo (Instant/now) ChronoUnit/SECONDS)
+                :post-finished post-finished :status :pending}]
+    (request-require! (and (= repository (:repository @resources)) (= pr-number (:number pr))
+                           (= pr-id (:id pr)) (= pr-node-id (:node_id pr))
+                           (pos-int? repository-id) (pos-int? pr-number) (pos-int? pr-id)
+                           (string? pr-node-id) (not (str/blank? pr-node-id))
+                           (string? invocation-id) (boolean (re-matches #"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}" invocation-id))
+                           (= "User" (:type request-user)) (pos-int? (:id request-user))
+                           (every? #(and (string? %) (not (str/blank? %))) [(:login request-user) (:node_id request-user)])
+                           (= head (:branch-head @resources)) (string? head) (boolean (re-matches #"[0-9a-f]{40}" head))
+                           (= file (str "docs/verification/.native-assessment/" invocation-id "/source.txt"))
+                           (nil? (:inline-intent @resources)))
+                      :inline-owned-intent "Inline needs the actual invocation-owned repository/PR/source/User binding")
+    (swap! resources assoc :inline-intent intent)
+    (println "INLINE intent:" marker "owned PR" (str repository "#" pr-number) "source" head file)
+    (try
+      (api "POST" (str "repos/" repository "/pulls/" pr-number "/comments")
+           {:commit_id head :path file :line 1 :side "RIGHT" :body body})
+      (swap! resources assoc-in [:inline-intent :post-outcome] :acknowledged)
+      (catch Exception _ (swap! resources assoc-in [:inline-intent :post-outcome] :uncertain))
+      (finally (deliver post-finished true)))
+    ;; Even an acknowledged ID is not deletion authority without list/GET custody.
+    (reconcile-inline! (:inline-intent @resources))))
+
 (defn- reconcile-pending-requests! "Recover uncertain POST identities before owned workflow drain or deletion." []
   (doseq [intent (:request-intents @resources) :when (not= :reconciled (:status intent))]
     (reconcile-request! intent))
@@ -248,7 +340,7 @@
                            (true? (:branch-created? @resources)) (= branch (:branch @resources))
                            (= invocation (:invocation-id @resources)) (= branch (str "codex/native-assessment-" invocation))
                            (boolean (re-matches #"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}" invocation))
-                           (= head (:branch-head @resources)) (boolean (re-matches #"[0-9a-f]{40}" head))
+                           (= head (:branch-head @resources)) (string? head) (boolean (re-matches #"[0-9a-f]{40}" head))
                            (string? (:branch base)) (not (str/blank? (:branch base)))
                            (= "User" (:type user)) (pos-int? (:id user))
                            (every? #(and (string? %) (not (str/blank? %))) [(:login user) (:node_id user)]))
@@ -313,6 +405,10 @@
       (when-let [intent (:pr-create-intent @resources)]
         (when (not= :reconciled (:status intent))
           (attempt "pending fixture PR reconciliation" #(reconcile-fixture-pr! intent)))))
+    (when (empty? @failures)
+      (when-let [intent (:inline-intent @resources)]
+        (when (not= :reconciled (:status intent))
+          (attempt "pending inline reconciliation" #(reconcile-inline! intent)))))
     (let [{:keys [repository branch pr-number root-comment-id]} @resources
           closed? (atom (and (empty? @failures) (nil? pr-number)))
           terminal? (atom (and (empty? @failures) (nil? pr-number)))]
@@ -340,7 +436,13 @@
                               "Seeded request/App comments remain"))
           (when root-comment-id
             (attempt "fixture inline comment"
-                     #(api "DELETE" (str "repos/" repository "/pulls/comments/" root-comment-id)))
+                     #(let [intent (:inline-intent @resources)]
+                        (request-require! (and (= :reconciled (:status intent)) (= root-comment-id (:comment-id intent)))
+                                          :inline-owned-intent "Known inline ID lacks reconciled invocation custody")
+                        (let [record (reconcile-inline! intent)]
+                          (request-require! (= root-comment-id (:id record))
+                                            :inline-comment-id "Fresh inline ID changed before deletion")
+                          (api "DELETE" (str "repos/" repository "/pulls/comments/" root-comment-id)))))
             (attempt "fixture inline-comment absence readback"
                      #(require! (not-any? (fn [comment] (= root-comment-id (:id comment)))
                                          (pages (str "repos/" repository "/pulls/" pr-number "/comments") nil))
@@ -356,6 +458,8 @@
                        "owned PR" pr-number "branch" branch "runs" (:run-ids @resources)
                        "pending PR marker" (when (not= :reconciled (get-in @resources [:pr-create-intent :status]))
                                               (get-in @resources [:pr-create-intent :marker]))
+                        "pending inline marker" (when (not= :reconciled (get-in @resources [:inline-intent :status]))
+                                                  (get-in @resources [:inline-intent :marker]))
                         "pending request markers" (mapv :marker (filter #(not= :reconciled (:status %))
                                                                         (:request-intents @resources)))))
             (swap! resources assoc :cleanup-failed? true))
@@ -452,12 +556,10 @@
               head (get-in written [:commit :sha])
               _ (swap! resources assoc :branch-head head)
               pr (create-fixture-pr! repository base head branch id)
-              root (api "POST" (str "repos/" repository "/pulls/" (:number pr) "/comments")
-                        {:commit_id head :path file :line 1 :side "RIGHT"
-                         :body "Verifier question: report the exact first source line and explain this inert fixture. Do not change code."})]
+              root (create-fixture-inline! repository pr head file)]
           (swap! resources assoc :root-comment-id (:id root))
           (pass! (= head (get-in pr [:head :sha])) "seeded draft PR serves the exact inert source commit")
-          (require! (pos-int? (:id root)) "Seeded inline question acknowledgement is unestablished")
+          (require! (pos-int? (:id root)) "Seeded inline question native custody is unestablished")
           (swap! resources assoc :fixture-seeded? true)
           {:pr pr :head head :file file :source-marker source-marker :root root}))
       (finally (deliver seed-finished true)))))
@@ -606,7 +708,7 @@
                                (pages (str "repos/" repo "/pulls/" number "/reviews") nil)))
                "the App emitted no native PR review or approval")
         (println "WARN no separate human read/triage account was supplied; association-without-write denial is not live-verified")
-        (println "WARN source permissions are configured controls, not an OS/App-token sandbox; the pinned action installs an unpinned runtime")
+        (println "WARN exact runtime bytes and source permissions are configured controls, not an OS/App-token sandbox")
         (println "PASS" @checks "observations; no review, agreement, disposition, approval or deployment credit"))
       (finally (cleanup!)))
     (require! (not (:cleanup-failed? @resources)) "Owned fixture cleanup failed")))
