@@ -210,3 +210,12 @@
   spore: none
   receipt-refs: 6b818bfc-dc7f-43c2-93da-197d05ac7b1c
   note: Keep explicit destructive cleanup separate from ordinary verifier authority. Retain branch by default; bind creation/closed PR/terminal runs/fresh ref identity, attempt one approved DELETE and preserve uncertainty without retry. Resident inert6tests95assertions plus corrected kondo passed; actual live cleanup and branch deletion remain unexecuted/unapproved.
+- ts: 2026-10-12T18:26:23.430413842Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-native-assessment-route-main-v1
+  task: Repair cleanup claim vs completion race with a shared completion result
+  p-efficiency: 0.80
+  p-friction: 0.45
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 013182cd86d7c57cd163a62941bf179aefeb636233103e72076b54e345694365
+  note: An atomic claim is not completion. Keep unchanged effects behind one winner and make later callers await completed success/refusal. Reproduce early return with blocked actual closure and observed losing CAS, then verify shared outcomes and no duplicate effects. Actual7tests121assertions pass; configuredlint zero warnings. Preserve the first quoting setup failure separately; no new spore/promotion or live native cleanup.

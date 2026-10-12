@@ -7,7 +7,7 @@
             [clojure.string :as str]
             [clojure.test :as test]))
 
-(declare api app-identity cleaned? cleanup! options pages ref-readback resources stop-owned-runs!)
+(declare api app-identity cleaned? cleanup-completion cleanup! options pages ref-readback resources stop-owned-runs!)
 (load-file "scripts/verify-native-assessment.bb")
 
 (def owned-id "12345678-1234-1234-1234-123456789abc")
@@ -38,7 +38,8 @@
         native (fn [method endpoint & [_payload]]
                  (swap! calls conj [method endpoint])
                  (cond
-                   (= method "PATCH") (if (:closure-error controls) (throw (ex-info "inert closure refusal" {})) {:state "closed"})
+                   (= method "PATCH") (do (when-let [before-closure (:before-closure controls)] (before-closure))
+                                          (if (:closure-error controls) (throw (ex-info "inert closure refusal" {})) {:state "closed"}))
                    (and (= method "GET") (= endpoint "repos/open-hax/knoxx")) (or (:repo controls) owned-repo)
                    (and (= method "GET") (= endpoint "repos/open-hax/knoxx/pulls/300")) (or (:pr controls) owned-pr)
                    (and (= method "DELETE") (str/includes? endpoint "/issues/comments/"))
@@ -55,7 +56,8 @@
                    (swap! calls conj ["REF" repository branch])
                    (when (and (not @ref-present?) (:readback-error controls)) (throw (ex-info "inert failed readback" {})))
                    (if @ref-present? {:status 200 :record (or (:ref controls) owned-ref)} {:status 404 :record {:message "Not Found" :status "404"}}))
-        output (with-redefs [api native
+        output (with-redefs [cleanup-completion (promise)
+                  api native
                   pages (fn [endpoint _key]
                           (swap! calls conj ["PAGE" endpoint])
                           (cond (str/includes? endpoint "/issues/") @comments
@@ -65,9 +67,12 @@
                                      (when (:terminal-error controls) (throw (ex-info "inert active run" {}))) true)
                   ref-readback read-ref]
                   (with-out-str
-                    (cleanup!)
-                    ;; Shutdown/finally re-entry cannot retry a destructive operation.
-                    (cleanup!)))]
+                    (if-let [run-cleanup (:run-cleanup controls)]
+                      (run-cleanup)
+                      (do
+                        (cleanup!)
+                        ;; Shutdown/finally re-entry cannot retry a destructive operation.
+                        (cleanup!)))))]
     {:calls @calls :resources @resources :comments @comments :inline @inline
      :ref-present? @ref-present? :output output}))
 
@@ -152,6 +157,60 @@
                     {:exit 1 :out "HTTP/2.0 404 Not Found\r\n\r\n{\"message\":\"unknown\",\"status\":\"404\"}"}]]
     (with-redefs [process/process (fn [& _] (delay response))]
       (test/is (thrown? Exception (ref-readback "open-hax/knoxx" owned-branch))))))
+
+(test/deftest concurrent-cleanup-waits-for-success-and-failure
+  ;; Block the winning caller inside the actual closure effect. Observe the
+  ;; other caller's real losing CAS before checking that it has not returned.
+  (doseq [closure-error? [false true]]
+    (let [entered (promise) release (promise) lost-claim (promise)
+          winner-result (promise) loser-result (promise)
+          invoke (fn [result]
+                   (deliver result (try {:value (cleanup!)}
+                                        (catch Throwable error {:error error}))))
+          result (cleanup-case
+                  {:closure-error closure-error?
+                   :before-closure (fn []
+                                     (deliver entered true)
+                                     (require! (= true (deref release 5000 ::timeout))
+                                               "Inert cleanup release timed out"))
+                   :run-cleanup
+                   (fn []
+                     (let [actual-cas compare-and-set!
+                           winner (Thread. ^Runnable #(invoke winner-result) "inert-cleanup-winner")
+                           loser (Thread. ^Runnable #(invoke loser-result) "inert-cleanup-loser")]
+                       ;; These are private test threads, never live shutdown hooks.
+                       (.setDaemon winner true)
+                       (.setDaemon loser true)
+                       (with-redefs [compare-and-set!
+                                     (fn [reference old-value new-value]
+                                       (let [claimed? (actual-cas reference old-value new-value)]
+                                         (when (and (identical? reference cleaned?) (not claimed?))
+                                           (deliver lost-claim true))
+                                         claimed?))]
+                         (try
+                           (.start winner)
+                           (test/is (= true (deref entered 5000 ::timeout)))
+                           (.start loser)
+                           (test/is (= true (deref lost-claim 5000 ::timeout)))
+                           (test/is (= ::still-running (deref winner-result 100 ::still-running)))
+                           (test/is (= ::still-running (deref loser-result 100 ::still-running)))
+                           (finally
+                             (deliver release true)
+                             (.join winner 5000)
+                             (.join loser 5000)))
+                         (test/is (not (.isAlive winner)))
+                         (test/is (not (.isAlive loser)))
+                         (test/is (= {:value (not closure-error?)} (deref winner-result 1000 ::timeout)))
+                         (test/is (= (deref winner-result 1000 ::timeout) (deref loser-result 1000 ::timeout)))
+                         ;; A later re-entry sees the same completed result without
+                         ;; repeating the existing destructive cleanup operations.
+                         (test/is (= {:value (cleanup!)} (deref winner-result 1000 ::timeout))))))})
+          calls (:calls result)
+          deletes (filter #(= "DELETE" (first %)) calls)]
+      (test/is (= 1 (count (filter #(= "PATCH" (first %)) calls))))
+      (test/is (= closure-error? (true? (get-in result [:resources :cleanup-failed?]))))
+      (test/is (every? #(= 1 %) (vals (frequencies deletes))))
+      (test/is (= (if closure-error? 0 1) (count (ref-deletes result)))))))
 
 (let [{:keys [fail error]} (test/run-tests 'user)]
   (when (pos? (+ fail error)) (System/exit 1)))

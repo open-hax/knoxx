@@ -22,6 +22,7 @@
 (def disclosure "Context limit: this integration supplies at most the first 100 comments, reviews, commits and changed files, without pagination completeness metadata. This response does not establish complete PR or conversation coverage.")
 (def resources (atom {}))
 (def cleaned? (atom false))
+(def cleanup-completion (promise))
 (def checks (atom 0))
 
 (defn require! "Refuse a failed precondition or observation." [ok message]
@@ -144,8 +145,7 @@
              (some #(str/includes? (:body comment)
                                    (str "[github run](/" repository "/actions/runs/" % ")")) run-ids)))))
 
-(defn cleanup! "Close/drain and remove owned comments; optionally delete only the guarded invocation ref." []
-  (when (compare-and-set! cleaned? false true)
+(defn- cleanup-owned! "Perform only the winning caller's existing owned cleanup effects." []
     (let [{:keys [repository branch pr-number root-comment-id]} @resources
           failures (atom []) closed? (atom (nil? pr-number)) terminal? (atom (nil? pr-number))
           attempt (fn [label f]
@@ -195,7 +195,22 @@
                    :uncertain "UNKNOWN fixture branch deletion (failed):"
                    "RETAIN fixture branch:"))
                  (str repository "@refs/heads/" branch)
-                 "URL" (str "https://github.com/" repository "/tree/" branch))))))
+                 "URL" (str "https://github.com/" repository "/tree/" branch)))))
+
+(defn cleanup! "Finish cleanup once; concurrent callers wait and receive its success or failure." []
+  (let [outcome (if (compare-and-set! cleaned? false true)
+                  (let [completed (try
+                                    {:result (do (cleanup-owned!)
+                                                 (not (:cleanup-failed? @resources)))}
+                                    (catch Throwable error {:error error}))]
+                    ;; Publish only after every active cleanup effect has completed.
+                    ;; Preserve an unexpected failure for every waiting caller too.
+                    (deliver cleanup-completion completed)
+                    completed)
+                  @cleanup-completion)]
+    (if-let [error (:error outcome)]
+      (throw error)
+      (:result outcome))))
 
 (defn options "Accept repository, bounded timeout and one explicit owned-branch deletion option." [args]
   (let [opts (loop [remaining args result {:repo "open-hax/knoxx" :timeout-seconds 1800 :delete-owned-branch? false}]
