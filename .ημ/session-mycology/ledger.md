@@ -192,3 +192,12 @@
   spore: none
   receipt-refs: root-comment-route-event-v1.edn
   note: Verify installation and repository event workflow independently. Keep scoped assessment separate from full review and settlement. No spore.
+- ts: 2026-10-12T16:02:06.590165683Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-native-assessment-route-main-v1
+  task: Qualify constrained native assessment preflight and human verifier
+  p-efficiency: 0.82
+  p-friction: 0.38
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 3fb2326f-f46f-44cd-b00e-174cdc017f21,9b64031fa19403c000690748712b277bedc3dee5f2ecb59d43a2e2d22d7bb95e
+  note: Check native effective permission before model/App secrets, deny filesystem aliases and project loading, retrieve actual triggering API request, and require protected adoption before live fixtures. Keep configured controls and inert guard tests distinct from actual runtime/App proof. Retain fixture branches pending deletion authorization; no spore.
