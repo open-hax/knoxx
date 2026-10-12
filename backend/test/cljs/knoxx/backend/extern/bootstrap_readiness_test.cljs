@@ -144,6 +144,8 @@
                       (js/Promise.resolve true))]
         (await (bootstrap/stop-http-before-load!
                 (fn [] (swap! events* conj :done)))))
+      (aset js/process "uptime" previous-uptime)
+      (aset js/console "log" previous-log)
       (test/is (= [:stop-flush :close-http :done] @events*)
                "The real public reload callback completes its close before done")
       (test/is (= ["[knoxx-hot-reload] before-load: closing HTTP server"
@@ -186,9 +188,11 @@
       (test/is (= 1 (count @closed*)))
       (test/is (identical? app (first @closed*)))
       (test/is (false? (.-listening (.-server app))))
-      (aset js/console "log"
-            (fn [& args] (swap! probe-logs* conj (vec args))))
-      (let [response (await (.inject app #js {:method "GET" :url "/api/dev/hmr"}))]
+      (let [response (try
+                       (aset js/console "log"
+                             (fn [& args] (swap! probe-logs* conj (vec args))))
+                       (await (.inject app #js {:method "GET" :url "/api/dev/hmr"}))
+                       (finally (aset js/console "log" previous-log)))]
         (test/is (= 200 (.-statusCode response)))
         (test/is (= "hmr fixture" (.-body response)))
         (test/is (= bootstrap/hmr-probe-token
@@ -196,7 +200,11 @@
         (test/is (= [["[knoxx-hot-reload-probe]" bootstrap/hmr-probe-token]]
                     (mapv #(vec (take 2 %)) @probe-logs*))
                  "The HMR request emits the process probe marker"))
-      (let [response (await (.inject app #js {:method "GET" :url "/health"}))]
+      (let [response (try
+                       (aset js/console "log"
+                             (fn [& args] (swap! probe-logs* conj (vec args))))
+                       (await (.inject app #js {:method "GET" :url "/health"}))
+                       (finally (aset js/console "log" previous-log)))]
         (test/is (= 200 (.-statusCode response)))
         (test/is (= "healthy fixture" (.-body response)))
         (test/is (nil? (aget (.-headers response) "x-knoxx-hmr-probe")))
