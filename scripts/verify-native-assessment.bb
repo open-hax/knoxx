@@ -14,7 +14,9 @@
   (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.util Base64 UUID]))
+           [java.util Base64 UUID]
+            [java.time Instant]
+            [java.time.temporal ChronoUnit]))
 
 (def workflow-path ".github/workflows/opencode-native-assessment.yml")
 (def app-identity {:login "opencode-agent[bot]" :id 219766164
@@ -111,6 +113,69 @@
       (require! (and (nil? delete-error) absent?) "Owned branch deletion or absence readback is unestablished")
       (println "PASS deleted the invocation-created unchanged branch with native absence readback:" (str repository "@" full-ref)))))
 
+(defn- request-require! "Refuse unestablished request custody with an inspectable code." [ok code message]
+  (when-not ok (throw (ex-info message {:code code}))))
+
+(defn- request-comment-binding "Select the exact native request fields used by list/GET custody." [comment]
+  (assoc (select-keys comment [:id :node_id :body :created_at :updated_at :issue_url :url :html_url])
+         :user (select-keys (:user comment) [:login :id :node_id :type])))
+
+(defn- reconcile-request! "Adopt one actual request ID only after complete native listing and exact GET readback." [intent]
+  (try
+    (let [{:keys [repository repository-id pr-number pr-id pr-node-id marker body user not-before post-finished]} intent]
+      (request-require! (= true (deref post-finished 60000 ::unfinished))
+                        :request-post-unfinished "Request POST completion is unestablished")
+      (let [repo (api "GET" (str "repos/" repository))
+            pr (api "GET" (str "repos/" repository "/pulls/" pr-number))]
+        (request-require! (and (= repository (:full_name repo)) (= repository-id (:id repo))
+                               (= pr-number (:number pr)) (= pr-id (:id pr)) (= pr-node-id (:node_id pr))
+                               (= repository-id (get-in pr [:base :repo :id]))
+                               (= repository (get-in pr [:base :repo :full_name])))
+                          :request-native-context "Native request repository/PR identity changed"))
+      (let [matches (filterv #(and (string? (:body %)) (str/includes? (:body %) marker))
+                             (pages (str "repos/" repository "/issues/" pr-number "/comments") nil))]
+        (request-require! (= 1 (count matches))
+                          (if (empty? matches) :request-comment-absent :request-comment-duplicate)
+                          "Request marker has no unique native comment")
+        (let [listed (first matches) id (:id listed)
+              issue-url (str "https://api.github.com/repos/" repository "/issues/" pr-number)]
+          (request-require! (and (pos-int? id) (string? (:node_id listed)) (not (str/blank? (:node_id listed))))
+                            :request-comment-id "Native request comment identity is malformed")
+          (request-require! (= user (select-keys (:user listed) [:login :id :node_id :type]))
+                            :request-comment-user "Native request User identity differs from the authenticated operator")
+          (request-require! (and (= body (:body listed)) (= issue-url (:issue_url listed))
+                                 (= (str "https://api.github.com/repos/" repository "/issues/comments/" id) (:url listed))
+                                 (= (str "https://github.com/" repository "/pull/" pr-number "#issuecomment-" id) (:html_url listed)))
+                            :request-comment-body-context "Native request body or repository/PR URLs differ")
+          (let [created (try (Instant/parse (:created_at listed)) (catch Exception _ nil))
+                updated (try (Instant/parse (:updated_at listed)) (catch Exception _ nil))]
+            (request-require! (and created updated (not (.isBefore created ^Instant not-before))
+                                   (not (.isBefore updated ^Instant created)))
+                              :request-comment-timestamp "Native request timestamps do not bind this POST intent"))
+          (let [record (api "GET" (str "repos/" repository "/issues/comments/" id))]
+            (request-require! (= (request-comment-binding listed) (request-comment-binding record))
+                              :request-comment-readback "Native request GET differs from its complete-list record")
+            (swap! resources
+                   (fn [state]
+                     (request-require! (not-any? #(and (not= marker (:marker %)) (= id (:comment-id %)))
+                                                (:request-intents state))
+                                       :request-comment-id-reuse "One native comment ID cannot belong to two request intents")
+                     (-> state
+                         (update :request-ids (fn [ids] (vec (distinct (conj (or ids []) id)))))
+                         (update :request-intents
+                                 (fn [intents] (mapv #(if (= marker (:marker %))
+                                                       (assoc % :comment-id id :record (request-comment-binding record)
+                                                              :status :reconciled) %) intents))))))
+            record))))
+    (catch Exception error
+      (if (:code (ex-data error)) (throw error)
+          (throw (ex-info "Native request reconciliation read failed" {:code :request-native-readback} error))))))
+
+(defn- reconcile-pending-requests! "Recover uncertain POST identities before owned workflow drain or deletion." []
+  (doseq [intent (:request-intents @resources) :when (not= :reconciled (:status intent))]
+    (reconcile-request! intent))
+  true)
+
 (defn stop-owned-runs! "Cancel active runs bound to the fixture requests, then confirm terminal state." []
   (let [{:keys [repository workflow-id started-at request-ids]} @resources
         titles (set (map #(str "Native assessment " %) request-ids))
@@ -157,7 +222,11 @@
                                 "Fixture PR did not close")
                       (reset! closed? true)))
         (when @closed?
-          (attempt "owned workflow terminal readback" #(reset! terminal? (stop-owned-runs!)))))
+          (let [reconciled? (atom false)]
+            (attempt "pending request reconciliation"
+                     #(reset! reconciled? (reconcile-pending-requests!)))
+            (when @reconciled?
+              (attempt "owned workflow terminal readback" #(reset! terminal? (stop-owned-runs!)))))))
       (when (and @closed? @terminal?)
         (when pr-number
           (attempt "fixture issue comments"
@@ -183,7 +252,9 @@
       (if (seq @failures)
         (do (binding [*out* *err*]
               (println "FAIL cleanup:" (str/join ", " @failures)
-                       "owned PR" pr-number "branch" branch "runs" (:run-ids @resources)))
+                       "owned PR" pr-number "branch" branch "runs" (:run-ids @resources)
+                       "pending request markers" (mapv :marker (filter #(not= :reconciled (:status %))
+                                                                        (:request-intents @resources)))))
             (swap! resources assoc :cleanup-failed? true))
         (when pr-number (println "PASS closed the owned draft PR, drained its runs and removed its seeded comments")))
       (when branch
@@ -254,7 +325,7 @@
         content (str source-marker "\nInert verifier source; no credentials or production state.\n")]
     (swap! resources assoc :repository repository :repository-id (:repository-id base)
            :invocation-id id :branch branch :branch-head (:head base)
-           :branch-created? false :request-ids [] :run-ids #{})
+           :branch-created? false :request-ids [] :request-intents [] :run-ids #{})
     (let [created (api "POST" (str "repos/" repository "/git/refs") {:ref (str "refs/heads/" branch) :sha (:head base)})]
       (require! (and (= (str "refs/heads/" branch) (:ref created)) (= (:head base) (get-in created [:object :sha]))
                      (= "commit" (get-in created [:object :type])) (string? (:node_id created)) (not (str/blank? (:node_id created))))
@@ -278,10 +349,38 @@
         (swap! resources assoc :fixture-seeded? true)
         {:pr pr :head head :file file :source-marker source-marker :root root}))))
 
-(defn request! "Publish only inside the owned fixture PR." [repository number body]
-  (let [record (api "POST" (str "repos/" repository "/issues/" number "/comments") {:body body})]
-    (swap! resources update :request-ids conj (:id record))
-    record))
+(defn request! "Send one marked owned request; reconcile native identity even after a lost POST response." [repository number body]
+  (let [{:keys [repository-id invocation-id pr-number pr-id pr-node-id request-user]} @resources
+        request-id (str (UUID/randomUUID))
+        marker (str "<!-- native-assessment-verifier invocation=" invocation-id " request=" request-id " -->")
+        post-finished (promise)
+        intent {:repository repository :repository-id repository-id :pr-number number
+                :pr-id pr-id :pr-node-id pr-node-id :user request-user :marker marker
+                :body (str body "\n\n" marker) :not-before (.truncatedTo (Instant/now) ChronoUnit/SECONDS)
+                :post-finished post-finished :status :pending}]
+    (request-require! (and (= repository (:repository @resources)) (= number pr-number)
+                           (pos-int? repository-id) (pos-int? pr-id) (pos-int? number)
+                           (string? pr-node-id) (not (str/blank? pr-node-id))
+                           (string? invocation-id) (boolean (re-matches #"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}" invocation-id))
+                           (= "User" (:type request-user)) (pos-int? (:id request-user))
+                           (every? #(and (string? %) (not (str/blank? %)))
+                                   [(:login request-user) (:node_id request-user)])
+                           (string? body) (not (str/blank? body)))
+                      :request-owned-intent "Request needs the actual invocation-owned repository/PR/User binding")
+    ;; The complete unique body/identity is retained before the sole possible POST.
+    (swap! resources update :request-intents (fnil conj []) intent)
+    (println "REQUEST intent:" marker "owned PR" (str repository "#" number)
+             "not-before" (str (:not-before intent)))
+    (flush)
+    (let [outcome (try
+                    (api "POST" (str "repos/" repository "/issues/" number "/comments") {:body (:body intent)})
+                    :acknowledged
+                    (catch Exception _ :uncertain)
+                    (finally (deliver post-finished true)))]
+      (swap! resources update :request-intents
+             (fn [intents] (mapv #(if (= marker (:marker %)) (assoc % :post-outcome outcome) %) intents))))
+    ;; An acknowledgement alone is not custody. Never retry a sent POST.
+    (reconcile-request! intent)))
 
 (defn wait-run! "Wait for the exact request's native workflow run and completed job." [repository workflow base request timeout]
   (let [deadline (+ (System/currentTimeMillis) (* timeout 1000))
@@ -370,7 +469,8 @@
     (require! (= "active" (:state workflow)) "BLOCKED: protected workflow is not active")
     (require! (= app-identity (select-keys native-app (keys app-identity))) "Installed App account identity changed")
     (pass! true "native caller permission and physical App account identity match the route")
-    (swap! resources assoc :workflow-id (:id workflow) :delete-owned-branch? delete-owned-branch?)
+    (swap! resources assoc :workflow-id (:id workflow) :delete-owned-branch? delete-owned-branch?
+            :request-user (select-keys caller [:login :id :node_id :type]))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable cleanup!))
     (try
       (let [fixture (seed! repo base)

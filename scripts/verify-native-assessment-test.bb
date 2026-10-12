@@ -7,7 +7,7 @@
             [clojure.string :as str]
             [clojure.test :as test]))
 
-(declare api app-identity cleaned? cleanup-completion cleanup! options pages ref-readback resources stop-owned-runs!)
+(declare api app-identity cleaned? cleanup-completion cleanup! options pages ref-readback resources stop-owned-runs! request!)
 (load-file "scripts/verify-native-assessment.bb")
 
 (def owned-id "12345678-1234-1234-1234-123456789abc")
@@ -211,6 +211,160 @@
       (test/is (= closure-error? (true? (get-in result [:resources :cleanup-failed?]))))
       (test/is (every? #(= 1 %) (vals (frequencies deletes))))
       (test/is (= (if closure-error? 0 1) (count (ref-deletes result)))))))
+
+(def request-user {:login "inert-operator" :id 400 :node_id "inert-user" :type "User"})
+
+(defn request-cleanup-case "Run actual request!/cleanup! with inert accepted/lost-response native records." [controls]
+  (reset! cleaned? false)
+  (reset! resources (merge owned-resources {:request-ids [] :request-intents [] :run-ids #{}
+                                           :request-user request-user :delete-owned-branch? false}
+                          (:resources controls)))
+  (let [calls (atom []) comments (atom []) inline (atom [{:id 601} {:id 602}])
+        closed? (atom false) ref-present? (atom true) post-state (atom nil) issue-reads (atom 0)
+        run (atom {:id 700 :display_title "Native assessment 900" :status "in_progress"})
+        native (fn [method endpoint & [payload]]
+                 (swap! calls conj [method endpoint])
+                 (cond
+                   (and (= method "POST") (= endpoint "repos/open-hax/knoxx/issues/300/comments"))
+                   (do
+                     (reset! post-state @resources)
+                     (when-not (:absent controls)
+                       (let [now (str (java.time.Instant/now))
+                             original-record (merge {:id 900 :node_id "inert-request" :body (:body payload) :user request-user
+                                                     :created_at now :updated_at now
+                                                     :issue_url "https://api.github.com/repos/open-hax/knoxx/issues/300"
+                                                     :url "https://api.github.com/repos/open-hax/knoxx/issues/comments/900"
+                                                     :html_url "https://github.com/open-hax/knoxx/pull/300#issuecomment-900"}
+                                                    (:record controls))
+                             record (if (:edited controls) (update original-record :body str "\nchanged after POST") original-record)]
+                         (reset! comments (cond-> [record
+                                                 {:id 901 :user app-identity :body "Reply [github run](/open-hax/knoxx/actions/runs/700)"}
+                                                 {:id 910 :user {:login "foreign"} :body "Unrelated"}
+                                                 {:id 911 :user app-identity :body "Foreign [github run](/open-hax/knoxx/actions/runs/701)"}]
+                                          (:duplicate controls) (conj (assoc record :id 902))))))
+                     (if (:acknowledged controls) (first @comments)
+                         (throw (ex-info "Inert response lost after the sole POST" {}))))
+                   (= method "PATCH") (do (reset! closed? true) {:state "closed"})
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx")) owned-repo
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx/pulls/300"))
+                   (assoc owned-pr :state (if @closed? "closed" "open"))
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx/issues/comments/900"))
+                   (if (:get-error controls) (throw (ex-info "Inert native GET failure" {}))
+                       (merge (first @comments) (:get-record controls)))
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx/actions/runs/700")) @run
+                   (and (= method "POST") (= endpoint "repos/open-hax/knoxx/actions/runs/700/cancel"))
+                   (do (swap! run assoc :status "completed") nil)
+                   (and (= method "DELETE") (str/includes? endpoint "/issues/comments/"))
+                   (do (swap! comments (fn [rows] (filterv #(not= (:id %) (parse-long (last (str/split endpoint #"/")))) rows))) nil)
+                   (and (= method "DELETE") (= endpoint "repos/open-hax/knoxx/pulls/comments/601"))
+                   (do (swap! inline (fn [rows] (filterv #(not= 601 (:id %)) rows))) nil)
+                   (and (= method "DELETE") (str/includes? endpoint "/git/refs/heads/"))
+                   (do (reset! ref-present? false) nil)
+                   :else (throw (ex-info (str "Unexpected inert request API " method " " endpoint) {}))))
+        pager (fn [endpoint key]
+                (swap! calls conj ["PAGE" endpoint])
+                (cond
+                  (str/includes? endpoint "/issues/300/comments")
+                  (do (swap! issue-reads inc)
+                      (cond (:list-error controls) (throw (ex-info "Inert native list failure" {}))
+                            (and (:initially-absent controls) (= 1 @issue-reads)) []
+                            :else @comments))
+                  (= key :workflow_runs) [@run {:id 701 :display_title "Native assessment 910" :status "in_progress"}]
+                  (str/includes? endpoint "/pulls/300/comments") @inline
+                  :else (throw (ex-info "Unexpected inert request page" {}))))
+        observation (with-redefs [cleanup-completion (promise) api native pages pager
+                                 ref-readback (fn [& _] (if @ref-present? {:status 200 :record owned-ref}
+                                                             {:status 404 :record {:message "Not Found" :status "404"}}))]
+                      (let [request-result (try {:value (request! "open-hax/knoxx" 300 "/opencode assess the inert source")}
+                                                (catch Exception error {:refusal (:code (ex-data error))
+                                                                        :message (.getMessage error)}))
+                            cleanup-results (with-out-str
+                                              (cleanup!)
+                                              (cleanup!))]
+                        {:request-result request-result :output cleanup-results}))]
+    (merge observation {:calls @calls :resources @resources :comments @comments :inline @inline
+                        :post-state @post-state :ref-present? @ref-present?})))
+
+(test/deftest lost-request-response-reconciles-before-owned-cleanup
+  (doseq [controls [{:acknowledged true} {} {:initially-absent true}]]
+    (let [result (request-cleanup-case controls) calls (:calls result)
+          intents (get-in result [:post-state :request-intents])
+          intent (first intents)
+          request-posts (filter #(= ["POST" "repos/open-hax/knoxx/issues/300/comments"] %) calls)
+          cancels (filter #(= ["POST" "repos/open-hax/knoxx/actions/runs/700/cancel"] %) calls)
+          deletes (filter #(= "DELETE" (first %)) calls)]
+      (test/is (= 1 (count request-posts)))
+      (test/is (= 1 (count intents)))
+      (test/is (= request-user (:user intent)))
+      (test/is (and (string? (:body intent))
+                    (str/includes? (:body intent) (str "invocation=" owned-id " request="))))
+      (test/is (and (string? (:body intent)) (string? (:marker intent))
+                    (str/ends-with? (:body intent) (:marker intent))))
+      (test/is (and (string? (:marker intent))
+                    (boolean (re-find #"request=[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12} -->$" (:marker intent)))))
+      (if (:initially-absent controls)
+        (test/is (= :request-comment-absent (get-in result [:request-result :refusal])))
+        (test/is (= 900 (get-in result [:request-result :value :id]))))
+      (test/is (= [900] (get-in result [:resources :request-ids])))
+      (test/is (= :reconciled (get-in result [:resources :request-intents 0 :status])))
+      (test/is (= #{700} (get-in result [:resources :run-ids])))
+      (test/is (= 1 (count cancels)))
+      (test/is (= [["DELETE" "repos/open-hax/knoxx/issues/comments/900"]
+                   ["DELETE" "repos/open-hax/knoxx/issues/comments/901"]
+                   ["DELETE" "repos/open-hax/knoxx/pulls/comments/601"]] (vec deletes)))
+      (test/is (not (get-in result [:resources :cleanup-failed?])))
+      (test/is (:ref-present? result))
+      (test/is (= [910 911] (mapv :id (:comments result))))
+      (test/is (= [602] (mapv :id (:inline result))))
+      (when (:initially-absent controls)
+        (let [index-after (fn [wanted after-index]
+                            (or (first (keep-indexed (fn [index call]
+                                                       (when (and (< after-index index) (= wanted call)) index))
+                                                     calls))
+                                -1))
+              closure (index-after ["PATCH" "repos/open-hax/knoxx/pulls/300"] -1)
+              reconciliation (index-after ["GET" "repos/open-hax/knoxx/issues/comments/900"] closure)
+              discovery (or (first (keep-indexed #(when (and (= "PAGE" (first %2))
+                                                           (str/includes? (second %2) "/actions/workflows/")) %1) calls))
+                            -1)
+              found? (fn [index] (and (integer? index) (<= 0 index)))]
+          (test/is (found? closure))
+          (test/is (found? reconciliation))
+          (test/is (found? discovery))
+          (test/is (and (found? closure) (found? reconciliation) (< closure reconciliation)))
+          (test/is (and (found? reconciliation) (found? discovery) (< reconciliation discovery))))))))
+
+(test/deftest request-reconciliation-refusals-retain-with-zero-deletes
+  (doseq [[controls expected]
+          [[{:absent true} :request-comment-absent]
+           [{:duplicate true} :request-comment-duplicate]
+           [{:record {:user (assoc request-user :id 999)}} :request-comment-user]
+           [{:record {:issue_url "https://api.github.com/repos/other/repo/issues/300"}} :request-comment-body-context]
+           [{:edited true} :request-comment-body-context]
+           [{:record {:created_at "2000-01-01T00:00:00Z"}} :request-comment-timestamp]
+           [{:record {:id 0}} :request-comment-id]
+           [{:get-record {:body "changed native GET"}} :request-comment-readback]
+           [{:get-error true} :request-native-readback]
+           [{:list-error true} :request-native-readback]]]
+    (let [result (request-cleanup-case (assoc controls :resources {:delete-owned-branch? true}))
+          calls (:calls result)]
+      (test/is (= expected (get-in result [:request-result :refusal])) (str controls))
+      (test/is (= 1 (count (filter #(= ["POST" "repos/open-hax/knoxx/issues/300/comments"] %) calls))))
+      (test/is (empty? (filter #(= "DELETE" (first %)) calls)))
+      (test/is (empty? (filter #(str/includes? (second %) "/actions/") calls)))
+      (test/is (empty? (get-in result [:resources :request-ids])))
+      (test/is (true? (get-in result [:resources :cleanup-failed?])))
+      (test/is (:ref-present? result)))))
+
+(test/deftest malformed-request-ownership-refuses-before-post
+  (doseq [invalid [{:request-user (assoc request-user :type "Bot")}
+                   {:request-user (assoc request-user :node_id "")}
+                   {:invocation-id "not-the-owned-invocation"}
+                   {:pr-id 0} {:repository "other/repo"}]]
+    (let [result (request-cleanup-case {:resources invalid})]
+      (test/is (= :request-owned-intent (get-in result [:request-result :refusal])))
+      (test/is (nil? (:post-state result)))
+      (test/is (empty? (filter #(= "POST" (first %)) (:calls result)))))))
 
 (let [{:keys [fail error]} (test/run-tests 'user)]
   (when (pos? (+ fail error)) (System/exit 1)))

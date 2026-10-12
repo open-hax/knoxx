@@ -63,6 +63,21 @@ shutdown hook; use the reported fixture coordinates to close its owned PR,
 drain its runs and remove only its seeded comments if such an interruption occurs.
 Retain its `codex/native-assessment-<UUID>` branch.
 
+Before each request POST, the verifier retains the complete request body with a
+unique invocation/request marker, the authenticated native User tuple, owned
+repository/PR identity, and local UTC second lower bound. It sends that POST once.
+An acknowledgement supplies no ownership by itself: complete native issue-comment
+listing plus an independent exact comment GET must establish one matching body,
+User, repository/PR URL, timestamp and positive comment ID. A response lost after
+GitHub accepts the POST can therefore recover the actual ID without repeating the
+write. Cleanup reconciles pending requests before discovering/draining their runs.
+Absent, duplicate, foreign, changed or unreadable records fail cleanup and retain
+the branch; they never authorize a guessed comment/run deletion. A POST still in
+flight has a bounded completion wait. Clock skew before the retained lower bound
+also refuses custody. This narrows request ambiguity only: branch, source-content,
+PR and inline-comment creation still rely on their existing acknowledgements, and
+hard-kill or ambiguous earlier fixture creation may need manual recovery.
+
 Resident regression controls use only an inert native-shaped API; they create or
 delete no remote resources and require no credentials:
 
@@ -103,19 +118,39 @@ not impersonate one or fabricate a native unauthorized actor.
 
 Filesystem reads, glob, grep, LSP, outside-directory access, editing, shell
 execution and task delegation are denied entirely. This includes Git metadata,
-token/configuration carriers and private key files. Allowed requested HTTPS URLs
-are limited to `api.github.com`, `raw.githubusercontent.com`, `github.com` and
-`opencode.ai`. The URL permission checks the initial request; it is not a verified
-redirect or network sandbox. Project configuration and project plugin loading
-are disabled with `OPENCODE_DISABLE_PROJECT_CONFIG` and `OPENCODE_PURE`. Path
-globs alone cannot confine symlinks or automatic adjacent instruction reads, so
-this route does not enable filesystem reads. Other tools are denied. These are
-OpenCode configuration rules, not an operating-system sandbox or a reduction of
-the exchanged App token's GitHub grants. The action pin fixes the composite
-action source, while that action installs an unpinned OpenCode runtime. It does
-not bind the actual command or permission implementation to the inspected
-repository source. Permission behavior therefore needs evidence from the actual
-installed runtime before it can be called dynamically verified.
+token/configuration carriers and private key files. Builtin `webfetch` is also
+denied: the measured OpenCode 1.19.0 config parser rejected its URL-object
+permission even though current documentation shows that shape. The only allowed
+model-requested I/O tool is the trusted direct `native_public_fetch` tool.
+
+The workflow copies that tool from its initial protected workflow checkout into
+an absent, physical, private 0700 model home under `RUNNER_TEMP`, verifies the
+exact source SHA-256, and uses only that home's global configuration/tool directory.
+No auth store, provider key or candidate tool/config file is copied. Project
+configuration and project plugin loading remain disabled with
+`OPENCODE_DISABLE_PROJECT_CONFIG` and `OPENCODE_PURE`; direct custom tool discovery
+is separate from external plugin loading. The App action later checks out the PR,
+but the model tool source remains the earlier trusted copy. Host-managed config
+or instruction overlays must be absent or separately admitted by the operator.
+
+The tool asks the existing OpenCode permission API before I/O, performs GET only,
+and sends fixed headers without tokens, cookies or caller-supplied credentials.
+Only HTTPS port 443 on `api.github.com`, `raw.githubusercontent.com`, `github.com`
+and `opencode.ai` is accepted. Every redirect is checked before contact, with at
+most three redirects. Each response has a 30-second deadline and 5 MiB byte cap;
+compression, incomplete framing and invalid UTF-8 are refused. BOM and Unicode
+codepoints are preserved. The output is a bounded raw-text page with the complete
+response's byte SHA-256 and `next_offset`; all pages of one response must retain
+that SHA. A completed download is not complete reading. Private, unavailable,
+changed, over-cap or refused evidence remains an explicit assessment limitation.
+
+These are source contracts requiring qualification of the actual config parser,
+direct tool registry under PURE, fixed transport, redirect/cancellation/size guards
+and paging. They grant no current runtime enforcement or assessment credit.
+The route is not an operating-system sandbox or a reduction of the exchanged
+App token's GitHub grants. The action pin fixes the composite action source,
+while that action installs an unpinned OpenCode runtime. It does not bind the
+actual command or permission implementation to the inspected repository source.
 
 The harmless denied-path response is an observable text check. It cannot prove
 that the model attempted a read or that a tool enforced a refusal. The pinned
@@ -124,6 +159,13 @@ raw failed-tool record needed for that conclusion. The script prints this
 limitation as `WARN`; it grants no dynamic read-denial credit. Never replace the
 harmless probe with a request to print `.git/config`, authentication files or
 credential contents: a failing boundary would then disclose a live secret.
+
+The workflow preflight captures the actual PR `head.sha`, head repository full
+name and native numeric ID from its one native PR read, validates those shapes,
+and supplies that immutable source coordinate explicitly to the model. This binds
+the head observed during preflight; an issue-comment event does not expose the
+historical PR head. A later push must be reported as drift rather than silently
+changing the assessment's source. The checkout remains the trusted workflow source.
 
 The fixed prompt fetches the native triggering-comment API URL because a custom
 prompt causes the pinned command to omit the triggering body, and its PR context
