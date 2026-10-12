@@ -59,5 +59,3 @@ jobs:
             Reply with your assessment through the App's normal comment response.
 
             Triggering comment: ${{ github.event.comment.html_url }}
-            Request:
-            ${{ github.event.comment.body }}
