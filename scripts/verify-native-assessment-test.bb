@@ -7,7 +7,7 @@
             [clojure.string :as str]
             [clojure.test :as test]))
 
-(declare api app-identity cleaned? cleanup-completion cleanup! options pages ref-readback resources stop-owned-runs! request!)
+(declare api app-identity app-responses checks cleaned? cleanup-completion cleanup! disclosure options pages positive! protected-source! ref-readback resources seed! stop-owned-runs! request! wait-run!)
 (load-file "scripts/verify-native-assessment.bb")
 
 (def owned-id "12345678-1234-1234-1234-123456789abc")
@@ -365,6 +365,246 @@
       (test/is (= :request-owned-intent (get-in result [:request-result :refusal])))
       (test/is (nil? (:post-state result)))
       (test/is (empty? (filter #(= "POST" (first %)) (:calls result)))))))
+
+(def protected-helper-text (slurp ".github/scripts/native_public_fetch.js"))
+
+(defn protected-helper-case "Exercise actual protected-source! with immutable native files and no native writes." [controls]
+  (let [calls (atom []) workflow "inert exact workflow bytes"
+        helper (str protected-helper-text (when (:local-changed controls) "\nchanged local"))
+        encoded (fn [text] (.encodeToString (java.util.Base64/getEncoder)
+                                           (.getBytes text java.nio.charset.StandardCharsets/UTF_8)))
+        native (fn [method endpoint & [_payload]]
+                 (swap! calls conj [method endpoint])
+                 (cond
+                   (= endpoint "repos/open-hax/knoxx") (assoc owned-repo :default_branch "main")
+                   (= endpoint "repos/open-hax/knoxx/branches/main") {:protected true :commit {:sha owned-head}}
+                   (= endpoint (str "repos/open-hax/knoxx/contents/.github/workflows/opencode-native-assessment.yml?ref=" owned-head))
+                   {:type "file" :encoding "base64" :content (encoded workflow)}
+                   (= endpoint (str "repos/open-hax/knoxx/contents/.github/scripts/native_public_fetch.js?ref=" owned-head))
+                   (if (:remote-missing controls) (throw (ex-info "Inert helper unavailable" {}))
+                       (merge {:type "file" :encoding "base64"
+                               :content (encoded (str protected-helper-text (when (:remote-changed controls) "\nchanged remote")))}
+                              (:helper-record controls)))
+                   :else (throw (ex-info (str "Unexpected inert protected read " endpoint) {}))))
+        local (fn [path]
+                (case path
+                  ".github/workflows/opencode-native-assessment.yml" workflow
+                  ".github/scripts/native_public_fetch.js" (if (:local-missing controls)
+                                                               (throw (ex-info "Inert local helper unavailable" {})) helper)
+                  (throw (ex-info "Unexpected local protected read" {}))))
+        outcome (with-redefs [api native slurp local checks (atom 0)]
+                  (try {:value (protected-source! "open-hax/knoxx")}
+                       (catch Exception error {:error (.getMessage error)})))]
+    {:outcome outcome :calls @calls}))
+
+(test/deftest protected-helper-precondition-refuses-before-fixtures
+  (let [result (protected-helper-case {})]
+    (test/is (= {:repository-id 100 :branch "main" :head owned-head} (get-in result [:outcome :value])))
+    (test/is (some #(= ["GET" (str "repos/open-hax/knoxx/contents/.github/scripts/native_public_fetch.js?ref=" owned-head)] %)
+                   (:calls result))))
+  (doseq [controls [{:remote-missing true} {:local-missing true} {:remote-changed true}
+                    {:local-changed true} {:local-changed true :remote-changed true}
+                    {:helper-record {:type "dir"}} {:helper-record {:encoding "none"}}
+                    {:helper-record {:content nil}}]]
+    (let [result (protected-helper-case controls)]
+      (test/is (string? (get-in result [:outcome :error])) (str controls))
+      (test/is (nil? (get-in result [:outcome :value])))
+      (test/is (every? #(= "GET" (first %)) (:calls result))))))
+
+(def positive-fixture {:pr {:number 300} :head owned-head :file "docs/verification/.native-assessment/inert/source.txt"
+                       :source-marker "source-marker-not-in-request" :root {:url "https://api.github.com/repos/open-hax/knoxx/pulls/comments/601"}})
+(def positive-source-url (str "https://raw.githubusercontent.com/open-hax/knoxx/" owned-head "/" (:file positive-fixture)))
+
+(defn positive-coordinate-case "Observe actual positive! against inert native replies and capture its real request." [reply]
+  (let [body (atom nil)
+        outcome (with-redefs [checks (atom 0)
+                             request! (fn [_repo _number text] (reset! body text) {:id 500})
+                             wait-run! (fn [& _] {:run {:id 700 :conclusion "success"}
+                                                :job {:steps [{:name "Request a native App assessment" :conclusion "success"}]}})
+                             app-responses (fn [& _] [{:body reply :html_url "https://github.com/open-hax/knoxx/pull/300#issuecomment-501"}])]
+                  (try (positive! "open-hax/knoxx" {} {} positive-fixture 60) {:success true}
+                       (catch Exception error {:error (.getMessage error)})))]
+    {:outcome outcome :request @body}))
+
+(test/deftest positive-request-does-not-supply-the-source-pin
+  (let [reply (str (:source-marker positive-fixture) "\n" positive-source-url "\n" disclosure)
+        result (positive-coordinate-case reply)]
+    (test/is (true? (get-in result [:outcome :success])))
+    (test/is (str/includes? (:request result) (:file positive-fixture)))
+    (test/is (not (str/includes? (:request result) owned-head)))
+    (test/is (not (str/includes? (:request result) "https://raw.githubusercontent.com/")))
+    (test/is (not (str/includes? (:request result) (:source-marker positive-fixture))))))
+
+(test/deftest positive-observation-requires-exact-immutable-citation
+  (doseq [url [nil (str/replace positive-source-url owned-head (apply str (repeat 40 "b")))
+               (str/replace positive-source-url "open-hax/knoxx" "other/repo")]]
+    (let [result (positive-coordinate-case (str (:source-marker positive-fixture) "\n" url "\n" disclosure))]
+      (test/is (string? (get-in result [:outcome :error])) (str url))
+      (test/is (not (get-in result [:outcome :success]))))))
+
+(defn fixture-pr-case "Exercise actual seed!/cleanup! with accepted or uncertain PR creation and exact inert native custody." [controls]
+  (reset! cleaned? false)
+  (reset! resources {:workflow-id 800 :request-user request-user :delete-owned-branch? false})
+  (let [calls (atom []) records (atom []) inline (atom []) post-state (atom nil) list-reads (atom 0)
+        base {:repository-id 100 :branch "main" :head owned-head}
+        native (fn [method endpoint & [payload]]
+                 (swap! calls conj [method endpoint])
+                 (cond
+                   (and (= method "POST") (= endpoint "repos/open-hax/knoxx/git/refs"))
+                   {:ref (:ref payload) :node_id "inert-created-ref" :object {:type "commit" :sha owned-head}}
+                   (= method "PUT") {:commit {:sha owned-head}}
+                   (and (= method "POST") (= endpoint "repos/open-hax/knoxx/pulls"))
+                   (let [now (str (java.time.Instant/now))]
+                     (reset! post-state @resources)
+                     (when-not (:absent controls)
+                       (let [record (merge {:id 200 :node_id "owned-pr" :number 300 :state "open" :draft true
+                                            :title (:title payload) :body (:body payload) :user request-user
+                                            :created_at now :updated_at now
+                                            :url "https://api.github.com/repos/open-hax/knoxx/pulls/300"
+                                            :html_url "https://github.com/open-hax/knoxx/pull/300"
+                                            :head {:repo owned-repo :ref (:head payload) :sha owned-head}
+                                            :base {:repo owned-repo :ref "main" :sha owned-head}}
+                                           (:record controls))]
+                         (reset! records (cond-> [record]
+                                           (:duplicate controls) (conj (assoc record :id 201 :number 301))))))
+                     (if (:acknowledged controls) (first @records)
+                         (throw (ex-info "Inert response lost after accepted PR POST" {}))))
+                   (and (= method "POST") (= endpoint "repos/open-hax/knoxx/pulls/300/comments"))
+                   (do (when-let [before-inline (:before-inline controls)] (before-inline))
+                       (reset! inline [{:id 601} {:id 602}]) {:id 601})
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx")) owned-repo
+                   (and (= method "GET") (= endpoint "repos/open-hax/knoxx/pulls/300"))
+                   (if (:get-error controls) (throw (ex-info "Inert fixture PR GET failure" {}))
+                       (merge (first @records) (:get-record controls)))
+                   (and (= method "PATCH") (= endpoint "repos/open-hax/knoxx/pulls/300"))
+                   (do (swap! records #(mapv (fn [pr] (assoc pr :state "closed")) %)) {:state "closed"})
+                   (and (= method "DELETE") (= endpoint "repos/open-hax/knoxx/pulls/comments/601"))
+                   (do (swap! inline #(filterv (fn [comment] (not= 601 (:id comment))) %)) nil)
+                   :else (throw (ex-info (str "Unexpected inert fixture API " method " " endpoint) {}))))
+        pager (fn [endpoint _key]
+                (swap! calls conj ["PAGE" endpoint])
+                (cond
+                  (str/includes? endpoint "/pulls?state=all&head=")
+                  (do (swap! list-reads inc)
+                      (cond (:list-error controls) (throw (ex-info "Inert fixture PR listing failure" {}))
+                            (and (:initially-absent controls) (= 1 @list-reads)) []
+                            :else @records))
+                  (str/includes? endpoint "/issues/300/comments") [{:id 910 :user {:login "foreign"}}]
+                  (str/includes? endpoint "/pulls/300/comments") @inline
+                  :else (throw (ex-info "Unexpected inert fixture page" {}))))
+        outcome (with-redefs [cleanup-completion (promise) checks (atom 0) api native pages pager
+                             stop-owned-runs! (fn [] (swap! calls conj ["TERMINAL"]) true)]
+                  (if-let [run-seed-and-cleanup (:run-seed-and-cleanup controls)]
+                    (run-seed-and-cleanup #(seed! "open-hax/knoxx" base) calls)
+                    (let [seed-result (try {:value (seed! "open-hax/knoxx" base)}
+                                           (catch Exception error {:refusal (:code (ex-data error)) :message (.getMessage error)}))
+                          cleanup-output (let [writer (java.io.StringWriter.)]
+                                           (binding [*out* writer *err* writer] (cleanup!) (cleanup!))
+                                           (str writer))]
+                      {:seed-result seed-result :cleanup-output cleanup-output})))]
+    (merge outcome {:calls @calls :resources @resources :records @records :inline @inline :post-state @post-state})))
+
+(test/deftest accepted-pr-response-loss-recovers-the-owned-draft
+  (doseq [controls [{:acknowledged true} {} {:initially-absent true}]]
+    (let [result (fixture-pr-case controls) calls (:calls result)
+          intent (get-in result [:post-state :pr-create-intent])
+          index-of (fn [wanted] (or (first (keep-indexed #(when (= wanted %2) %1) calls)) -1))
+          pr-read (index-of ["GET" "repos/open-hax/knoxx/pulls/300"])
+          closure (index-of ["PATCH" "repos/open-hax/knoxx/pulls/300"])]
+      (test/is (= 1 (count (filter #(= ["POST" "repos/open-hax/knoxx/pulls"] %) calls))))
+      (test/is (= request-user (:user intent)))
+      (test/is (and (string? (:marker intent)) (string? (:body intent))
+                    (str/ends-with? (:body intent) (:marker intent))
+                    (str/includes? (:marker intent) (str "fixture=" (get-in result [:post-state :invocation-id])))))
+      (test/is (= :pending (:status intent)))
+      (test/is (= 300 (get-in result [:resources :pr-number])))
+      (test/is (= 200 (get-in result [:resources :pr-id])))
+      (test/is (= "owned-pr" (get-in result [:resources :pr-node-id])))
+      (test/is (= :reconciled (get-in result [:resources :pr-create-intent :status])))
+      (test/is (= (if (:acknowledged controls) :acknowledged :uncertain)
+                  (get-in result [:resources :pr-create-intent :post-outcome])))
+      (test/is (and (<= 0 pr-read) (< pr-read closure)))
+      (test/is (= 1 (count (filter #(= ["PATCH" "repos/open-hax/knoxx/pulls/300"] %) calls))))
+      (test/is (= "closed" (:state (first (:records result)))))
+      (test/is (not (get-in result [:resources :cleanup-failed?])))
+      (test/is (empty? (filter #(and (string? (second %)) (str/includes? (second %) "/git/refs/heads/")) calls)))
+      (test/is (str/includes? (:cleanup-output result) "RETAIN fixture branch:"))
+      (if (:initially-absent controls)
+        (do (test/is (= :fixture-pr-absent (get-in result [:seed-result :refusal])))
+            (test/is (empty? (:inline result))))
+        (do (test/is (get-in result [:seed-result :value]))
+            (test/is (= [602] (mapv :id (:inline result)))))))))
+
+(test/deftest uncertain-pr-custody-refusals-never-close-a-guessed-pr
+  (doseq [[controls expected]
+          [[{:absent true} :fixture-pr-absent]
+           [{:duplicate true} :fixture-pr-duplicate]
+           [{:record {:user (assoc request-user :id 999)}} :fixture-pr-user]
+           [{:record {:body "changed after POST"}} :fixture-pr-absent]
+           [{:record {:title "changed title"}} :fixture-pr-content-context]
+           [{:record {:draft false}} :fixture-pr-content-context]
+           [{:record {:head {:repo owned-repo :ref "main" :sha owned-head}}} :fixture-pr-content-context]
+           [{:record {:base {:repo (assoc owned-repo :id 999) :ref "main" :sha owned-head}}} :fixture-pr-content-context]
+           [{:record {:created_at "2000-01-01T00:00:00Z"}} :fixture-pr-timestamp]
+           [{:record {:id 0}} :fixture-pr-id]
+           [{:get-record {:title "changed native GET"}} :fixture-pr-readback]
+           [{:get-error true} :fixture-pr-native-readback]
+           [{:list-error true} :fixture-pr-native-readback]]]
+    (let [result (fixture-pr-case controls) calls (:calls result)]
+      (test/is (= expected (get-in result [:seed-result :refusal])) (str controls))
+      (test/is (= 1 (count (filter #(= ["POST" "repos/open-hax/knoxx/pulls"] %) calls))))
+      (test/is (nil? (get-in result [:resources :pr-number])))
+      (test/is (true? (get-in result [:resources :cleanup-failed?])))
+      (test/is (empty? (filter #(#{"PATCH" "DELETE" "TERMINAL"} (first %)) calls)))
+      (test/is (str/includes? (:cleanup-output result) "pending PR marker"))
+      (test/is (str/includes? (:cleanup-output result) "RETAIN fixture branch:")))))
+
+(test/deftest cleanup-waits-for-the-last-seed-write
+  (let [entered (promise) release (promise) claimed (promise)
+        seed-result (promise) cleanup-result (promise)
+        result (fixture-pr-case
+                {:acknowledged true
+                 :before-inline (fn []
+                                  (deliver entered true)
+                                  (require! (= true (deref release 5000 ::timeout)) "Inert seed release timed out"))
+                 :run-seed-and-cleanup
+                 (fn [seed calls]
+                   (let [seed-thread (Thread. ^Runnable
+                                              (fn [] (deliver seed-result
+                                                              (try {:value (seed)}
+                                                                   (catch Throwable error {:error error})))))
+                         cleanup-thread (Thread. ^Runnable
+                                                 (fn [] (deliver cleanup-result
+                                                                 (try {:value (cleanup!)}
+                                                                      (catch Throwable error {:error error})))))
+                         watch-key ::seed-cleanup-claim]
+                     (add-watch cleaned? watch-key
+                                (fn [_key _reference before after]
+                                  (when (and (false? before) (true? after)) (deliver claimed true))))
+                     (try
+                       (.start seed-thread)
+                       (test/is (= true (deref entered 5000 ::timeout)))
+                       (.start cleanup-thread)
+                       (test/is (= true (deref claimed 5000 ::timeout)))
+                       (test/is (= ::still-running (deref cleanup-result 100 ::still-running)))
+                       (test/is (let [finished (:seed-finished @resources)]
+                                  (and finished (not (realized? finished)))))
+                       (test/is (empty? (filter #(#{"PATCH" "DELETE" "TERMINAL"} (first %)) @calls)))
+                       (finally
+                         (deliver release true)
+                         (.join seed-thread 5000)
+                         (.join cleanup-thread 5000)
+                         (remove-watch cleaned? watch-key)))
+                     (test/is (not (.isAlive seed-thread)))
+                     (test/is (not (.isAlive cleanup-thread)))
+                     (test/is (get-in (deref seed-result 1000 ::timeout) [:value :pr]))
+                     (test/is (= {:value true} (deref cleanup-result 1000 ::timeout)))
+                     {:seed-result (deref seed-result 1000 ::timeout) :cleanup-output ""}))})]
+    (test/is (= "closed" (:state (first (:records result)))))
+    (test/is (= [602] (mapv :id (:inline result))))
+    (test/is (not (get-in result [:resources :cleanup-failed?])))
+    (test/is (= 1 (count (filter #(= ["PATCH" "repos/open-hax/knoxx/pulls/300"] %) (:calls result)))))
+    (test/is (= 1 (count (filter #(= ["DELETE" "repos/open-hax/knoxx/pulls/comments/601"] %) (:calls result)))))))
 
 (let [{:keys [fail error]} (test/run-tests 'user)]
   (when (pos? (+ fail error)) (System/exit 1)))

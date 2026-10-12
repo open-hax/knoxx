@@ -108,7 +108,7 @@ jobs:
           PY_STAGE
 
       - name: Request a native App assessment
-        if: steps.authorize.outputs.eligible == 'true'
+        if: success() && steps.authorize.outputs.eligible == 'true' && steps.public_fetch.outcome == 'success'
         uses: anomalyco/opencode/github@385cb694419f98103af0e8fc6187ddcbcbb6eecb
         env:
           KIMI_API_KEY: ${{ secrets.KIMI_FOR_CODING_API_KEY }}

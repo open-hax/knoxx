@@ -15,7 +15,10 @@ bb scripts/verify-native-assessment.bb --repo open-hax/knoxx --timeout-seconds 1
 ```
 
 The script compares the local workflow's exact SHA-256 with the native contents
-served by the protected default-branch commit, verifies workflow activation,
+served by the protected default-branch commit, and compares the local and native
+public-fetch helper at that same commit with the workflow's pinned SHA-256. A
+missing or changed helper refuses before fixtures, even when the YAML matches.
+It then verifies workflow activation,
 checks the current operator's native effective permission, and binds the physical
 App account to `opencode-agent[bot]`, database ID `219766164`, node ID
 `BOT_kgDODRldlA`. A failed precondition exits nonzero before seeding a fixture.
@@ -74,9 +77,18 @@ write. Cleanup reconciles pending requests before discovering/draining their run
 Absent, duplicate, foreign, changed or unreadable records fail cleanup and retain
 the branch; they never authorize a guessed comment/run deletion. A POST still in
 flight has a bounded completion wait. Clock skew before the retained lower bound
-also refuses custody. This narrows request ambiguity only: branch, source-content,
-PR and inline-comment creation still rely on their existing acknowledgements, and
-hard-kill or ambiguous earlier fixture creation may need manual recovery.
+also refuses custody. PR creation also retains a unique invocation marker, full title/body, authenticated
+User, owned repository/ref/head, base branch and timestamp lower bound before one
+POST. Complete filtered native PR listing plus exact GET must establish one matching
+record before its number/ID/node ID is adopted. Cleanup first waits, bounded, for
+all seeding writes to finish, including the inline question, so a concurrently
+accepted PR cannot acquire a new seed comment after cleanup. It then reconciles
+an uncertain PR creation before deciding whether there is an owned PR to close. An absent,
+duplicate, changed, foreign or unreadable result fails cleanup and retains the
+reported branch/marker; no POST is retried and no guessed PR is closed. This narrows
+request and PR ambiguity only: branch, source-content and inline-comment creation
+still rely on their existing acknowledgements, and hard-kill or ambiguous earlier
+fixture creation may need manual recovery.
 
 Resident regression controls use only an inert native-shaped API; they create or
 delete no remote resources and require no credentials:
@@ -88,7 +100,11 @@ clj-kondo --lint scripts/verify-native-assessment.bb scripts/verify-native-asses
 
 These controls exercise default retention, the explicit option, ordered cleanup,
 repository/ref/head/PR ownership changes, closure/run/comment failures, native 404
-readback, lost DELETE response and failed readback. They grant no live cleanup or
+readback, lost DELETE response and failed readback. Additional controls refuse a
+missing or changed protected helper, verify that the positive request contains no
+source pin, reject a missing or wrong immutable response citation, reconcile accepted
+PR creation after response loss, refuse uncertain PR custody without guessed closure,
+and block cleanup until the last seed write completes. They grant no live cleanup or
 App response credit. Live verification is still blocked until protected adoption.
 
 The observable checks are:
@@ -96,7 +112,12 @@ The observable checks are:
 - An unauthenticated comment POST receives HTTP 401.
 - `/opencode` followed by a newline reaches the actual App action. Its one
   response binds to the exact workflow run and quotes a source marker that was
-  absent from the request and native metadata.
+  absent from the request and native metadata. The request names the source file
+  and inline question but supplies neither a source SHA nor an immutable source URL.
+  The response must also cite the exact immutable source URL for the seeded commit.
+  This couples the observation to the expected workflow-supplied coordinate; it
+  does not prove that the model derived the coordinate only from preflight or
+  expose an internal fetch trace.
 - The response includes the unconditional disclosure that the integration
   provides at most the first 100 comments, reviews, commits and changed files,
   without pagination completeness metadata. It establishes no complete-context
@@ -108,6 +129,12 @@ The observable checks are:
   without asking the model to read the actual App credential in `.git/config`.
 - The seeded PR source commit remains unchanged, and the physical App account
   submits no native PR review or approval.
+
+The App step explicitly requires `success()`, authorization eligibility and a
+successful public-fetch staging outcome. GitHub's existing implicit `success()`
+already applied to the earlier condition because it had no status-check function;
+this names the staging readiness precondition directly, without claiming an earlier
+credential exposure. See [GitHub status-check semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions).
 
 The workflow checks effective `write` or `admin` permission through GitHub before
 the step that receives the model key and exchanges OIDC for the App token.

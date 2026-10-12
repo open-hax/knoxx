@@ -19,6 +19,8 @@
             [java.time.temporal ChronoUnit]))
 
 (def workflow-path ".github/workflows/opencode-native-assessment.yml")
+(def public-fetch-path ".github/scripts/native_public_fetch.js")
+(def public-fetch-sha256 "d4504ae25d9827e25617e7e4e4d49fb4e4490ec1d4fb74f20a6a545401954c49")
 (def app-identity {:login "opencode-agent[bot]" :id 219766164
                    :node_id "BOT_kgDODRldlA" :type "Bot"})
 (def disclosure "Context limit: this integration supplies at most the first 100 comments, reviews, commits and changed files, without pagination completeness metadata. This response does not establish complete PR or conversation coverage.")
@@ -176,6 +178,95 @@
     (reconcile-request! intent))
   true)
 
+(defn- fixture-pr-binding "Select exact list/GET identity and content used for invocation-owned PR custody." [pr]
+  {:record (select-keys pr [:id :node_id :number :title :body :draft :state :created_at :updated_at :url :html_url])
+   :user (select-keys (:user pr) [:login :id :node_id :type])
+   :head (assoc (select-keys (:head pr) [:ref :sha])
+                :repo (select-keys (get-in pr [:head :repo]) [:id :full_name]))
+   :base (assoc (select-keys (:base pr) [:ref :sha])
+                :repo (select-keys (get-in pr [:base :repo]) [:id :full_name]))})
+
+(defn- reconcile-fixture-pr! "Recover one actual owned PR only after complete listing and independent exact GET." [intent]
+  (try
+    (let [{:keys [repository repository-id branch head base-branch title body marker user not-before post-finished]} intent]
+      (request-require! (= true (deref post-finished 60000 ::unfinished))
+                        :fixture-pr-post-unfinished "Fixture PR POST completion is unestablished")
+      (let [repo (api "GET" (str "repos/" repository))]
+        (request-require! (and (= repository (:full_name repo)) (= repository-id (:id repo)))
+                          :fixture-pr-repository "Fixture PR native repository identity changed"))
+      (let [owner (first (str/split repository #"/"))
+            query (str "repos/" repository "/pulls?state=all&head="
+                       (URLEncoder/encode (str owner ":" branch) StandardCharsets/UTF_8)
+                       "&base=" (URLEncoder/encode base-branch StandardCharsets/UTF_8))
+            matches (filterv #(and (string? (:body %)) (str/includes? (:body %) marker)) (pages query nil))]
+        (request-require! (= 1 (count matches))
+                          (if (empty? matches) :fixture-pr-absent :fixture-pr-duplicate)
+                          "Fixture PR marker has no unique native record")
+        (let [listed (first matches) number (:number listed)
+              created (try (Instant/parse (:created_at listed)) (catch Exception _ nil))
+              updated (try (Instant/parse (:updated_at listed)) (catch Exception _ nil))]
+          (request-require! (and (pos-int? number) (pos-int? (:id listed))
+                                 (string? (:node_id listed)) (not (str/blank? (:node_id listed))))
+                            :fixture-pr-id "Native fixture PR identity is malformed")
+          (request-require! (= user (select-keys (:user listed) [:login :id :node_id :type]))
+                            :fixture-pr-user "Native fixture PR User differs from the authenticated operator")
+          (request-require! (and (= title (:title listed)) (= body (:body listed)) (true? (:draft listed))
+                                 (#{"open" "closed"} (:state listed))
+                                 (= repository-id (get-in listed [:head :repo :id]))
+                                 (= repository (get-in listed [:head :repo :full_name]))
+                                 (= branch (get-in listed [:head :ref])) (= head (get-in listed [:head :sha]))
+                                 (= repository-id (get-in listed [:base :repo :id]))
+                                 (= repository (get-in listed [:base :repo :full_name]))
+                                 (= base-branch (get-in listed [:base :ref]))
+                                 (= (str "https://api.github.com/repos/" repository "/pulls/" number) (:url listed))
+                                 (= (str "https://github.com/" repository "/pull/" number) (:html_url listed)))
+                            :fixture-pr-content-context "Native fixture PR content or repository/ref/head binding differs")
+          (request-require! (and created updated (not (.isBefore created ^Instant not-before))
+                                 (not (.isBefore updated ^Instant created)))
+                            :fixture-pr-timestamp "Native fixture PR timestamps do not bind this POST intent")
+          (let [record (api "GET" (str "repos/" repository "/pulls/" number))]
+            (request-require! (= (fixture-pr-binding listed) (fixture-pr-binding record))
+                              :fixture-pr-readback "Native fixture PR GET differs from its complete-list record")
+            (swap! resources assoc :pr-number number :pr-id (:id record) :pr-node-id (:node_id record)
+                   :started-at (:created_at record) :pr-create-intent (assoc intent :status :reconciled))
+            record))))
+    (catch Exception error
+      (if (:code (ex-data error)) (throw error)
+          (throw (ex-info "Native fixture PR reconciliation read failed" {:code :fixture-pr-native-readback} error))))))
+
+(defn- create-fixture-pr! "Retain exact owned creation intent before one POST; never retry an uncertain write." [repository base head branch invocation]
+  (let [user (:request-user @resources)
+        marker (str "<!-- native-assessment-verifier fixture=" invocation " -->")
+        post-finished (promise)
+        intent {:repository repository :repository-id (:repository-id base) :branch branch :head head
+                :base-branch (:branch base) :title (str "Native assessment verifier " invocation)
+                :body (str "Disposable verifier fixture. No approval, review round, disposition or deployment credit.\n\n" marker)
+                :marker marker :user user :not-before (.truncatedTo (Instant/now) ChronoUnit/SECONDS)
+                :post-finished post-finished :status :pending}]
+    (request-require! (and (= repository (:repository @resources))
+                           (= (:repository-id base) (:repository-id @resources)) (pos-int? (:repository-id base))
+                           (true? (:branch-created? @resources)) (= branch (:branch @resources))
+                           (= invocation (:invocation-id @resources)) (= branch (str "codex/native-assessment-" invocation))
+                           (boolean (re-matches #"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}" invocation))
+                           (= head (:branch-head @resources)) (boolean (re-matches #"[0-9a-f]{40}" head))
+                           (string? (:branch base)) (not (str/blank? (:branch base)))
+                           (= "User" (:type user)) (pos-int? (:id user))
+                           (every? #(and (string? %) (not (str/blank? %))) [(:login user) (:node_id user)]))
+                      :fixture-pr-owned-intent "Fixture PR creation needs actual invocation-owned repository/ref/head/User binding")
+    (swap! resources assoc :pr-create-intent intent)
+    (println "PR intent:" marker "owned branch" (str repository "@refs/heads/" branch)
+             "source" head "not-before" (str (:not-before intent)))
+    (flush)
+    (let [outcome (try
+                    (api "POST" (str "repos/" repository "/pulls")
+                         {:title (:title intent) :head branch :base (:base-branch intent) :draft true :body (:body intent)})
+                    :acknowledged
+                    (catch Exception _ :uncertain)
+                    (finally (deliver post-finished true)))]
+      (swap! resources update :pr-create-intent assoc :post-outcome outcome))
+    ;; A POST acknowledgement is not native custody; list/GET is mandatory.
+    (reconcile-fixture-pr! (:pr-create-intent @resources))))
+
 (defn stop-owned-runs! "Cancel active runs bound to the fixture requests, then confirm terminal state." []
   (let [{:keys [repository workflow-id started-at request-ids]} @resources
         titles (set (map #(str "Native assessment " %) request-ids))
@@ -211,11 +302,21 @@
                                    (str "[github run](/" repository "/actions/runs/" % ")")) run-ids)))))
 
 (defn- cleanup-owned! "Perform only the winning caller's existing owned cleanup effects." []
+  (let [failures (atom [])
+        attempt (fn [label f]
+                  (try (f) (catch Exception _ (swap! failures conj label))))]
+    (when-let [finished (:seed-finished @resources)]
+      (attempt "fixture seed completion"
+               #(require! (= true (deref finished 60000 ::unfinished))
+                          "Fixture seeding completion is unestablished")))
+    (when (empty? @failures)
+      (when-let [intent (:pr-create-intent @resources)]
+        (when (not= :reconciled (:status intent))
+          (attempt "pending fixture PR reconciliation" #(reconcile-fixture-pr! intent)))))
     (let [{:keys [repository branch pr-number root-comment-id]} @resources
-          failures (atom []) closed? (atom (nil? pr-number)) terminal? (atom (nil? pr-number))
-          attempt (fn [label f]
-                    (try (f) (catch Exception _ (swap! failures conj label))))]
-      (when pr-number
+          closed? (atom (and (empty? @failures) (nil? pr-number)))
+          terminal? (atom (and (empty? @failures) (nil? pr-number)))]
+      (when (and (empty? @failures) pr-number)
         ;; Close first so a late-created run fails preflight before receiving secrets.
         (attempt "fixture PR closure"
                  #(do (require! (= "closed" (:state (api "PATCH" (str "repos/" repository "/pulls/" pr-number) {:state "closed"})))
@@ -253,7 +354,9 @@
         (do (binding [*out* *err*]
               (println "FAIL cleanup:" (str/join ", " @failures)
                        "owned PR" pr-number "branch" branch "runs" (:run-ids @resources)
-                       "pending request markers" (mapv :marker (filter #(not= :reconciled (:status %))
+                       "pending PR marker" (when (not= :reconciled (get-in @resources [:pr-create-intent :status]))
+                                              (get-in @resources [:pr-create-intent :marker]))
+                        "pending request markers" (mapv :marker (filter #(not= :reconciled (:status %))
                                                                         (:request-intents @resources)))))
             (swap! resources assoc :cleanup-failed? true))
         (when pr-number (println "PASS closed the owned draft PR, drained its runs and removed its seeded comments")))
@@ -266,7 +369,7 @@
                    :uncertain "UNKNOWN fixture branch deletion (failed):"
                    "RETAIN fixture branch:"))
                  (str repository "@refs/heads/" branch)
-                 "URL" (str "https://github.com/" repository "/tree/" branch)))))
+                 "URL" (str "https://github.com/" repository "/tree/" branch))))))
 
 (defn cleanup! "Finish cleanup once; concurrent callers wait and receive its success or failure." []
   (let [outcome (if (compare-and-set! cleaned? false true)
@@ -315,39 +418,49 @@
     (require! (and (= "file" (:type remote)) (= "base64" (:encoding remote))
                    (= (sha256 local) (sha256 served)))
               "BLOCKED: protected main does not serve this exact workflow; adopt it before running the live verifier")
-    (pass! true (str "protected default branch serves exact workflow SHA-256 " (sha256 served)))
+    (let [helper (try (api "GET" (str "repos/" repository "/contents/" public-fetch-path "?ref=" head))
+                      (catch Exception _ (throw (ex-info "BLOCKED: exact protected public-fetch helper is unavailable" {}))))
+          local-helper (try (.getBytes (slurp public-fetch-path) StandardCharsets/UTF_8)
+                            (catch Exception _ (throw (ex-info "BLOCKED: local public-fetch helper is unavailable" {}))))]
+      (require! (and (= "file" (:type helper)) (= "base64" (:encoding helper)) (string? (:content helper)))
+                "BLOCKED: protected public-fetch helper is not a complete base64 file")
+      (let [served-helper (.decode (Base64/getMimeDecoder) ^String (:content helper))]
+        (require! (= public-fetch-sha256 (sha256 local-helper) (sha256 served-helper))
+                  "BLOCKED: local/protected public-fetch helper does not match the workflow's pinned SHA-256")))
+    (pass! true (str "protected default branch serves exact workflow and pinned public-fetch helper SHA-256 " public-fetch-sha256))
     {:repository-id (:id repo) :branch branch :head head}))
 
 (defn seed! "Create one inert source change and selected inline conversation." [repository base]
-  (let [id (str (UUID/randomUUID)) branch (str "codex/native-assessment-" id)
-        file (str "docs/verification/.native-assessment/" id "/source.txt")
-        source-marker (str "native-source-" (UUID/randomUUID))
-        content (str source-marker "\nInert verifier source; no credentials or production state.\n")]
-    (swap! resources assoc :repository repository :repository-id (:repository-id base)
-           :invocation-id id :branch branch :branch-head (:head base)
-           :branch-created? false :request-ids [] :request-intents [] :run-ids #{})
-    (let [created (api "POST" (str "repos/" repository "/git/refs") {:ref (str "refs/heads/" branch) :sha (:head base)})]
-      (require! (and (= (str "refs/heads/" branch) (:ref created)) (= (:head base) (get-in created [:object :sha]))
-                     (= "commit" (get-in created [:object :type])) (string? (:node_id created)) (not (str/blank? (:node_id created))))
-                "Created fixture ref acknowledgement did not bind ownership")
-      (swap! resources assoc :branch-created? true :branch-ref-node-id (:node_id created)))
-    (let [written (api "PUT" (str "repos/" repository "/contents/" file)
-                       {:message "Seed inert native assessment verification"
-                        :branch branch :content (.encodeToString (Base64/getEncoder) (.getBytes content StandardCharsets/UTF_8))})
-          head (get-in written [:commit :sha])
-          _ (swap! resources assoc :branch-head head)
-          pr (api "POST" (str "repos/" repository "/pulls")
-                  {:title (str "Native assessment verifier " id) :head branch :base (:branch base) :draft true
-                   :body "Disposable verifier fixture. No approval, review round, disposition or deployment credit."})]
-      (swap! resources assoc :pr-number (:number pr) :pr-id (:id pr) :pr-node-id (:node_id pr) :started-at (:created_at pr))
-      (let [root (api "POST" (str "repos/" repository "/pulls/" (:number pr) "/comments")
-                      {:commit_id head :path file :line 1 :side "RIGHT"
-                       :body "Verifier question: report the exact first source line and explain this inert fixture. Do not change code."})]
-        (swap! resources assoc :root-comment-id (:id root))
-        (pass! (= head (get-in pr [:head :sha])) "seeded draft PR serves the exact inert source commit")
-        (require! (pos-int? (:id root)) "Seeded inline question acknowledgement is unestablished")
-        (swap! resources assoc :fixture-seeded? true)
-        {:pr pr :head head :file file :source-marker source-marker :root root}))))
+  (let [seed-finished (promise)]
+    (swap! resources assoc :seed-finished seed-finished)
+    (try
+      (let [id (str (UUID/randomUUID)) branch (str "codex/native-assessment-" id)
+            file (str "docs/verification/.native-assessment/" id "/source.txt")
+            source-marker (str "native-source-" (UUID/randomUUID))
+            content (str source-marker "\nInert verifier source; no credentials or production state.\n")]
+        (swap! resources assoc :repository repository :repository-id (:repository-id base)
+               :invocation-id id :branch branch :branch-head (:head base)
+               :branch-created? false :request-ids [] :request-intents [] :run-ids #{})
+        (let [created (api "POST" (str "repos/" repository "/git/refs") {:ref (str "refs/heads/" branch) :sha (:head base)})]
+          (require! (and (= (str "refs/heads/" branch) (:ref created)) (= (:head base) (get-in created [:object :sha]))
+                         (= "commit" (get-in created [:object :type])) (string? (:node_id created)) (not (str/blank? (:node_id created))))
+                    "Created fixture ref acknowledgement did not bind ownership")
+          (swap! resources assoc :branch-created? true :branch-ref-node-id (:node_id created)))
+        (let [written (api "PUT" (str "repos/" repository "/contents/" file)
+                           {:message "Seed inert native assessment verification"
+                            :branch branch :content (.encodeToString (Base64/getEncoder) (.getBytes content StandardCharsets/UTF_8))})
+              head (get-in written [:commit :sha])
+              _ (swap! resources assoc :branch-head head)
+              pr (create-fixture-pr! repository base head branch id)
+              root (api "POST" (str "repos/" repository "/pulls/" (:number pr) "/comments")
+                        {:commit_id head :path file :line 1 :side "RIGHT"
+                         :body "Verifier question: report the exact first source line and explain this inert fixture. Do not change code."})]
+          (swap! resources assoc :root-comment-id (:id root))
+          (pass! (= head (get-in pr [:head :sha])) "seeded draft PR serves the exact inert source commit")
+          (require! (pos-int? (:id root)) "Seeded inline question acknowledgement is unestablished")
+          (swap! resources assoc :fixture-seeded? true)
+          {:pr pr :head head :file file :source-marker source-marker :root root}))
+      (finally (deliver seed-finished true)))))
 
 (defn request! "Send one marked owned request; reconcile native identity even after a lost POST response." [repository number body]
   (let [{:keys [repository-id invocation-id pr-number pr-id pr-node-id request-user]} @resources
@@ -418,9 +531,10 @@
 
 (defn positive! "Observe actual App reply/source reading and the mandatory context disclosure." [repository workflow base fixture timeout]
   (let [request (request! repository (get-in fixture [:pr :number])
-                          (str "/opencode\nAssess " (:url (:root fixture)) ". Fetch the immutable source https://raw.githubusercontent.com/"
-                               repository "/" (:head fixture) "/" (:file fixture)
-                               " and quote its exact first line. Do not change the source."))
+                          (str "/opencode\nAssess " (:url (:root fixture))
+                               ". Use the workflow-supplied preflight source repository and commit to fetch " (:file fixture)
+                               "; quote its exact first line and cite the exact immutable raw.githubusercontent.com source URL."
+                               " The request supplies no source commit or source URL. Do not change the source."))
         {:keys [run job]} (wait-run! repository workflow base request timeout)
         replies (app-responses repository (get-in fixture [:pr :number]) run)]
     (pass! (and (= "success" (:conclusion run))
@@ -428,7 +542,10 @@
            "a newline-delimited authorized request completed the actual App action")
     (pass! (= 1 (count replies)) "exactly one response came from the native installed App account and exact run")
     (pass! (str/includes? (:body (first replies)) (:source-marker fixture))
-           "the App response quotes immutable public source bytes absent from the request and supplied metadata")
+           "the App response quotes public source bytes absent from the request and supplied metadata")
+    (pass! (str/includes? (:body (first replies))
+                         (str "https://raw.githubusercontent.com/" repository "/" (:head fixture) "/" (:file fixture)))
+           "the App response cites the exact seeded immutable source coordinate absent from the request")
     (pass! (str/includes? (str/replace (:body (first replies)) #"\s+" " ") disclosure)
            "the actual response unconditionally discloses the first-100 context bound")
     (println "Native response:" (:html_url (first replies))
