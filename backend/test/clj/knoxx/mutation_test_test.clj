@@ -700,3 +700,63 @@
       (is (not (mutation/killed? result)))
       (is (not (mutation/passed-tests? result)))))
   (is (not (mutation/compiled? {:exit-code 0 :timed-out? false :output "Build completed. 2 warnings"}))))
+
+;; Terminal cleanup is characterized with spies; the parent test JVM is never
+;; shut down. Real exit-time observation belongs to a separate owned subprocess.
+(deftest cli-main-finalizes-source-bindings-and-suite-success
+  (let [events (atom [])
+        sha (apply str (repeat 40 "a"))
+        manifest {:schema-version 1 :source-sha sha :candidates []}
+        report {:status :planned}]
+    (with-redefs [mutation/source-bindings-manifest! (fn [opts]
+                                                     (swap! events conj [:bindings opts]) manifest)
+                  mutation/run-suite! (fn [opts] (swap! events conj [:suite opts]) report)
+                  clojure.core/flush (fn [] (swap! events conj :flush))
+                  clojure.core/shutdown-agents (fn [] (swap! events conj :shutdown))]
+      (let [output (with-out-str (is (nil? (mutation/-main "--source-bindings" sha))))]
+        (is (= manifest (json/read-str output :key-fn keyword)))
+        (is (= [[:bindings {:source-sha sha}] :flush :shutdown] @events)))
+      (reset! events [])
+      (is (identical? report (mutation/-main "--dry-run")))
+      (is (= [:flush :shutdown] (vec (rest @events))))
+      (is (= :suite (ffirst @events)))
+      (is (true? (get-in @events [0 1 :dry-run?]))))))
+
+(deftest cli-main-finalizes-help-without-running-suite
+  (let [events (atom [])]
+    (with-redefs [mutation/run-suite! (fn [_] (throw (AssertionError. "Help must not run a suite")))
+                  clojure.core/flush (fn [] (swap! events conj :flush))
+                  clojure.core/shutdown-agents (fn [] (swap! events conj :shutdown))]
+      (is (= (str mutation/usage "\n") (with-out-str (mutation/-main "--help"))))
+      (is (= [:flush :shutdown] @events)))))
+
+(deftest cli-main-finalizes-refusals-and-propagates-fatal-errors
+  (doseq [phase [:source-arity :source :parse :suite :fatal]]
+    (let [events (atom [])
+          failure (if (= :fatal phase) (AssertionError. "Fatal CLI fixture") (ex-info "CLI fixture failure" {:phase phase}))
+          args (case phase
+                 :source-arity ["--source-bindings"]
+                 :source ["--source-bindings" (apply str (repeat 40 "a"))]
+                 ["--dry-run"])]
+      (with-redefs [mutation/source-bindings-manifest! (fn [_] (throw failure))
+                    mutation/parse-args (fn [_] (if (= :parse phase) (throw failure) {:dry-run? true}))
+                    mutation/run-suite! (fn [_] (throw failure))
+                    clojure.core/flush (fn [] (swap! events conj :flush))
+                    clojure.core/shutdown-agents (fn [] (swap! events conj :shutdown))]
+        (let [caught (try (apply mutation/-main args)
+                          (catch clojure.lang.ExceptionInfo error error)
+                          (catch AssertionError error error))]
+          (if (= :source-arity phase)
+            (do (is (instance? clojure.lang.ExceptionInfo caught))
+                (is (= "Source binding command requires only one immutable SHA" (.getMessage ^Exception caught))))
+            (is (identical? failure caught)))
+          (is (= [:flush :shutdown] @events)))))))
+
+(deftest cli-main-shuts-down-agents-even-if-output-flush-fails
+  (let [events (atom [])
+        failure (java.io.IOException. "Injected flush failure")]
+    (with-redefs [mutation/run-suite! (constantly {:status :planned})
+                  clojure.core/flush (fn [] (swap! events conj :flush) (throw failure))
+                  clojure.core/shutdown-agents (fn [] (swap! events conj :shutdown))]
+      (is (identical? failure (try (mutation/-main "--dry-run") (catch java.io.IOException error error))))
+      (is (= [:flush :shutdown] @events)))))

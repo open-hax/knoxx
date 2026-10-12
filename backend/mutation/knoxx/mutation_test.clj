@@ -858,12 +858,18 @@
 
 (defn -main
   [& args]
-  (if (= "--source-bindings" (first args))
-    (do
-      (when-not (= 2 (count args))
-        (throw (ex-info "Source binding command requires only one immutable SHA" {})))
-      (println (json/write-str (source-bindings-manifest! {:source-sha (second args)}))))
-    (let [opts (parse-args args)]
-      (if (:help? opts)
-        (println usage)
-        (run-suite! opts)))))
+  (try
+    (if (= "--source-bindings" (first args))
+      (do
+        (when-not (= 2 (count args))
+          (throw (ex-info "Source binding command requires only one immutable SHA" {})))
+        (println (json/write-str (source-bindings-manifest! {:source-sha (second args)}))))
+      (let [opts (parse-args args)]
+        (if (:help? opts)
+          (println usage)
+          (run-suite! opts))))
+    (finally
+      ;; Only the terminal CLI owns the process-wide agent executors.
+      (try
+        (flush)
+        (finally (shutdown-agents))))))

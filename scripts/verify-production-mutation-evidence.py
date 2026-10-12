@@ -424,7 +424,11 @@ def git_bytes(root, *args):
 
 
 def executor_entries(root, commit):
-    """Exact committed transitive executor/config inventory, not mutation identity law."""
+    """Exact committed transitive executor/config inventory, not mutation identity law.
+
+    Portable .cljc can supply JVM compiler macros just like .clj. Conservatively
+    bind both families across backend/shared, tightening C/S executor equality.
+    """
     entries = {}
     for raw in git_bytes(root, "ls-tree", "-r", "-z", commit).split(b"\0"):
         if not raw:
@@ -433,7 +437,7 @@ def executor_entries(root, commit):
         path = path_raw.decode("utf-8")
         if (path in HELPER_FILES or path.startswith(HELPER_PREFIXES)
                 or Path(path).name in CONFIG_NAMES
-                or (path.startswith(("backend/", "shared/")) and path.endswith(".clj"))):
+                or (path.startswith(("backend/", "shared/")) and path.endswith((".clj", ".cljc")))):
             mode, kind, blob = metadata.decode("ascii").split()
             require(mode in ("100644", "100755") and kind == "blob", "Unsafe executor input mode")
             entries[path] = (mode, blob)

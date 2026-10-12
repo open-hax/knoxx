@@ -339,3 +339,12 @@
   spore: none
   receipt-refs: 55faac34-6a14-44cc-9e31-d445c6f71a89,d223c7075f230c2dc247ceb9d2725ce0f41d1a690386e83be36068ee986c30b6
   note: When intentional workflow topology adds signer/controller checkout steps, preserve all original per-checkout repository and persistence checks and update the exact expected multiset. Actual predecessor assertion failure and unchanged existing-test pass bound the repair. Keep production campaign and native review separate. No new spore or promotion.
+- ts: 2026-10-12T07:22:36.361407909Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-qualification-repair
+  task: Qualify portable macro source inventory and terminal JVM CLI finalization
+  p-efficiency: 0.82
+  p-friction: 0.52
+  p-skill-candidate: 0.45
+  spore: none
+  receipt-refs: 788b226f-e283-470c-9d74-8442ba0289a8,18e29fea41dc3f4ae4c7dab93554007050915245e6d95daf1a6ace654a879eef
+  note: Current4c0 predecessor genuine Python four-method failure and JVM four-test ten-failure controls turned green with exactly four source edits. Actual completed-future CLI timeout45.071s became normal2.781s. Full48Python and32JVM335 assertions plus lint passed. Include portable .cljc macro sources and preserve flush plus shutdown in terminal finally. Public pinned JVM dependencies were fetched; no offline claim. Existing cleanup disputes and real production campaigns remain separate. No new spore or promotion.

@@ -826,6 +826,105 @@ class ProductionAuthenticationTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "executor differs"):
                         verifier.guard_source_executor(SHA, context, application)
 
+    def executor_fixture(self):
+        """Committed byte fixtures exercise the real selector; no Git/native reads."""
+        contents = {path: b"trusted executor input\n" for path in verifier.HELPER_FILES}
+        contents.update({prefix + "fixture.txt": b"tracked helper\n" for prefix in verifier.HELPER_PREFIXES})
+        contents.update({"backend/src/cljs/knoxx/backend/macros.cljc":
+                         b"(ns knoxx.backend.macros)\n(defmacro fixture [] true)\n",
+                         "shared/src/cljs/fixture/macros.cljc":
+                         b"(ns fixture.macros)\n(defmacro fixture [] true)\n",
+                         "backend/src/clj/fixture.clj": b"(ns fixture)\n",
+                         "backend/src/cljs/ordinary.cljs": b"(ns ordinary)\n",
+                         "frontend/ordinary.cljc": b"(ns frontend)\n"})
+        return contents
+
+    def executor_tree(self, contents, override=None):
+        """Encode inert ls-tree byte rows, preserving modes and blob identities."""
+        rows = []
+        for path, raw in sorted(contents.items()):
+            mode, kind = (override or {}).get(path, ("100644", "blob"))
+            blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+            rows.append(f"{mode} {kind} {blob}\t{path}".encode() + b"\0")
+        return b"".join(rows)
+
+    def test_executor_inventory_includes_portable_jvm_compiler_sources(self):
+        contents = self.executor_fixture()
+        with patch.object(verifier, "git_bytes", return_value=self.executor_tree(contents)) as transport:
+            entries = verifier.executor_entries(Path("/inert-controller"), "c" * 40)
+        self.assertEqual((Path("/inert-controller"), "ls-tree", "-r", "-z", "c" * 40),
+                         transport.call_args.args)
+        self.assertIn("backend/src/cljs/knoxx/backend/macros.cljc", entries)
+        self.assertIn("shared/src/cljs/fixture/macros.cljc", entries)
+        self.assertIn("backend/src/clj/fixture.clj", entries)
+        self.assertNotIn("backend/src/cljs/ordinary.cljs", entries)
+        self.assertNotIn("frontend/ordinary.cljc", entries)
+        self.assertEqual("100644", entries["backend/src/cljs/knoxx/backend/macros.cljc"][0])
+
+    def test_selected_source_cljc_macro_drift_is_refused(self):
+        """C/S equality must see actual changed macro blobs, using the real inventory."""
+        contents = self.executor_fixture()
+        controller, selected = "c" * 40, "b" * 40
+        for macro in ("backend/src/cljs/knoxx/backend/macros.cljc", "shared/src/cljs/fixture/macros.cljc"):
+            with self.subTest(macro=macro), tempfile.TemporaryDirectory(prefix="knoxx-macro-source-") as directory:
+                root = Path(directory)
+                for path, raw in contents.items():
+                    target = root / path; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(raw)
+                changed = {**contents, macro: contents[macro].replace(b"true", b"false")}
+                def committed(checkout, *args):
+                    self.assertEqual(root, checkout)
+                    if args == ("rev-parse", "HEAD"): return controller.encode() + b"\n"
+                    if args == ("merge-base", "--is-ancestor", selected, controller): return b""
+                    if args[:3] == ("ls-tree", "-r", "-z"):
+                        self.assertIn(args[3], (controller, selected))
+                        return self.executor_tree(contents if args[3] == controller else changed)
+                    if args[0] == "show": return contents[args[1].split(":", 1)[1]]
+                    self.fail(f"Unexpected controlled Git read: {args}")
+                with patch.dict(os.environ, {"GITHUB_WORKSPACE": str(root)}, clear=True), \
+                        patch.object(verifier, "__file__", str(root / "scripts/verify-production-mutation-evidence.py")), \
+                        patch.object(verifier, "git_bytes", side_effect=committed):
+                    with self.assertRaisesRegex(ValueError, "Selected source executor differs"):
+                        verifier.guard_source_executor(selected, {"controller_sha": controller})
+
+    def test_local_cljc_macro_bytes_are_checked_in_both_checkouts(self):
+        """Matching committed blobs cannot hide changed controller/application bytes."""
+        contents = self.executor_fixture()
+        controller, selected = "c" * 40, "b" * 40
+        macro = "backend/src/cljs/knoxx/backend/macros.cljc"
+        with tempfile.TemporaryDirectory(prefix="knoxx-macro-physical-") as directory:
+            root = Path(directory); application = root / "application"; application.mkdir()
+            for checkout in (root, application):
+                for path, raw in contents.items():
+                    target = checkout / path; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(raw)
+            def committed(checkout, *args):
+                if args == ("rev-parse", "HEAD"):
+                    return (selected if checkout == application else controller).encode() + b"\n"
+                if args == ("merge-base", "--is-ancestor", selected, controller): return b""
+                if args[:3] == ("ls-tree", "-r", "-z"): return self.executor_tree(contents)
+                if args[0] == "show": return contents[args[1].split(":", 1)[1]]
+                self.fail(f"Unexpected controlled Git read: {args}")
+            with patch.dict(os.environ, {"GITHUB_WORKSPACE": str(root)}, clear=True), \
+                    patch.object(verifier, "__file__", str(root / "scripts/verify-production-mutation-evidence.py")), \
+                    patch.object(verifier, "git_bytes", side_effect=committed):
+                self.assertEqual(root, verifier.guard_source_executor(selected, {"controller_sha": controller}, application))
+                for checkout, message in ((root, "Controller executor input changed"),
+                                          (application, "application executor input changed")):
+                    with self.subTest(checkout=checkout.name):
+                        (checkout / macro).write_bytes(contents[macro].replace(b"true", b"false"))
+                        with self.assertRaisesRegex(ValueError, message):
+                            verifier.guard_source_executor(selected, {"controller_sha": controller}, application)
+                        (checkout / macro).write_bytes(contents[macro])
+                self.assertEqual(root, verifier.guard_source_executor(selected, {"controller_sha": controller}, application))
+
+    def test_portable_jvm_compiler_source_modes_cannot_bypass_inventory(self):
+        contents = self.executor_fixture()
+        macro = "backend/src/cljs/knoxx/backend/macros.cljc"
+        for mode, kind in (("120000", "blob"), ("160000", "commit")):
+            with self.subTest(mode=mode), patch.object(verifier, "git_bytes", return_value=
+                    self.executor_tree(contents, {macro: (mode, kind)})):
+                with self.assertRaisesRegex(ValueError, "Unsafe executor input mode"):
+                    verifier.executor_entries(Path("/inert-controller"), "c" * 40)
+
     def test_production_uses_signed_snapshot_and_rechecks_native_and_report_custody(self):
         """Control transport calls while preserving the wrapper's custody ordering."""
         _, _, context = self.fixture()
