@@ -25,17 +25,56 @@ source line plus an inline question. It posts three request comments inside that
 owned PR. Normal exit, exceptions, SIGINT and SIGTERM invoke cleanup: the script
 closes the draft PR first, cancels active runs belonging to its own request IDs
 and confirms terminal state before deleting its request comments and native App
-responses and removing its inline question. The uniquely named branch is retained;
-the script prints its repository, full ref and URL on success or cleanup failure.
-Branch deletion requires confirmation under the canonical PR flow and is outside
-this verifier. Closed-PR preflight prevents late requests from entering the
+responses and removing its inline question, with native comment absence readback.
+The uniquely named branch is retained by default; the script prints its repository,
+full ref and URL. Branch deletion requires explicit human confirmation under the
+canonical PR flow. After that approval, the operator may add the single optional
+`--delete-owned-branch` switch to this invocation:
+
+```sh
+# Use only after the human has explicitly approved this invocation's branch deletion.
+bb scripts/verify-native-assessment.bb --repo open-hax/knoxx --timeout-seconds 1800 --delete-owned-branch
+```
+
+The switch accepts no branch name, repository override beyond `--repo`, old fixture,
+or separate cleanup operation. It can delete only the branch this invocation created
+and acknowledged. A fully seeded owned PR must be closed, its observed/discovered
+owned runs terminal, and its seeded issue/inline comments absent. Then fresh native
+reads must match the exact repository ID/full name, PR ID/node ID/number/closed state,
+head/base repository, branch ref/node ID and unchanged source commit before the
+single DELETE. Native HTTP 404 readback establishes absence after an acknowledged
+DELETE. Any failed precondition or incomplete cleanup skips DELETE, retains the
+branch, and makes the run fail. The script never retries a sent DELETE.
+
+GitHub ref deletion has no atomic compare-and-swap with the preceding ownership
+read. A concurrent ref change remains a race the fresh guard cannot eliminate.
+If the DELETE response is lost or its absence readback fails, the branch may already
+be deleted; the verifier reports `UNKNOWN` or `ABSENT after uncertain deletion` and
+fails instead of claiming retention or successful cleanup. Reported coordinates
+remain available for a human to inspect. Preparing or testing this option does not
+authorize actual deletion.
+
+Closed-PR preflight prevents late requests from entering the
 credential/model step. GitHub retains the closed PR and workflow history. Cleanup failures
 are reported with the owned PR/branch/run IDs and make the run fail; resources are
 retained if closure or terminal state cannot be confirmed. No local fixture
 files or production data are written. A hard kill or host loss cannot run a
 shutdown hook; use the reported fixture coordinates to close its owned PR,
 drain its runs and remove only its seeded comments if such an interruption occurs.
-Retain its `verify/native-assessment-<UUID>` branch.
+Retain its `codex/native-assessment-<UUID>` branch.
+
+Resident regression controls use only an inert native-shaped API; they create or
+delete no remote resources and require no credentials:
+
+```sh
+bb scripts/verify-native-assessment-test.bb
+clj-kondo --lint scripts/verify-native-assessment.bb scripts/verify-native-assessment-test.bb
+```
+
+These controls exercise default retention, the explicit option, ordered cleanup,
+repository/ref/head/PR ownership changes, closure/run/comment failures, native 404
+readback, lost DELETE response and failed readback. They grant no live cleanup or
+App response credit. Live verification is still blocked until protected adoption.
 
 The observable checks are:
 

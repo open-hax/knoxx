@@ -201,3 +201,12 @@
   spore: none
   receipt-refs: 3fb2326f-f46f-44cd-b00e-174cdc017f21,9b64031fa19403c000690748712b277bedc3dee5f2ecb59d43a2e2d22d7bb95e
   note: Check native effective permission before model/App secrets, deny filesystem aliases and project loading, retrieve actual triggering API request, and require protected adoption before live fixtures. Keep configured controls and inert guard tests distinct from actual runtime/App proof. Retain fixture branches pending deletion authorization; no spore.
+- ts: 2026-10-12T17:50:22.185575752Z
+  session: 01a12257-fc69-7720-888c-dd2595ff7dc7
+  task: Qualify explicit invocation-owned fixture cleanup and retain uncertain native outcomes
+  p-efficiency: 0.65
+  p-friction: 0.65
+  p-skill-candidate: 0.65
+  spore: none
+  receipt-refs: 6b818bfc-dc7f-43c2-93da-197d05ac7b1c
+  note: Keep explicit destructive cleanup separate from ordinary verifier authority. Retain branch by default; bind creation/closed PR/terminal runs/fresh ref identity, attempt one approved DELETE and preserve uncertainty without retry. Resident inert6tests95assertions plus corrected kondo passed; actual live cleanup and branch deletion remain unexecuted/unapproved.

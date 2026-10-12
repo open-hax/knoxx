@@ -2,7 +2,8 @@
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;; Live GitHub/App exercise. Creates one uniquely named draft PR and branch;
 ;; closes/drains its PR/runs and removes seeded comments in finally and shutdown.
-;; Retains the uniquely named branch and reports its repository/ref/URL.
+;; Retains the uniquely named branch by default and reports its repository/ref/URL.
+;; --delete-owned-branch requires prior human approval under canonical PR flow.
 ;; No fixture is created unless protected main serves these exact workflow bytes.
 ;; Read denial is configured; public model prose is not tool-enforcement proof.
 (ns user
@@ -53,6 +54,62 @@
   (apply str (map #(format "%02x" (bit-and 255 %))
                   (.digest (MessageDigest/getInstance "SHA-256") bytes))))
 
+(defn ref-readback "Read one exact native ref; distinguish confirmed absence from transport failure." [repository branch]
+  (let [endpoint (str "repos/" repository "/git/ref/heads/" branch)
+        result @(process/process ["gh" "api" "--method" "GET" "--include"
+                                  "-H" "Accept: application/vnd.github+json"
+                                  "-H" "X-GitHub-Api-Version: 2022-11-28" endpoint]
+                                 {:out :string :err :string})
+        [headers body] (str/split (:out result) #"\r?\n\r?\n" 2)
+        status (some-> (re-matches #"HTTP/[0-9.]+ ([0-9]{3})(?: .*)?" (first (str/split-lines headers))) second parse-long)
+        record (when-not (str/blank? body) (json/parse-string body true))]
+    (require! (or (and (= 200 status) (zero? (:exit result)) (map? record))
+                  (and (= 404 status) (not (zero? (:exit result)))
+                       (= "Not Found" (:message record)) (= "404" (:status record))))
+              (str "Unestablished native ref readback: " endpoint))
+    {:status status :record record}))
+
+(defn delete-owned-branch! "Delete only the unchanged invocation-created ref after completed fixture cleanup." []
+  (let [{:keys [repository repository-id invocation-id branch branch-ref-node-id branch-head
+                branch-created? fixture-seeded? cleanup-ready? pr-number pr-id pr-node-id]} @resources
+        full-ref (str "refs/heads/" branch)]
+    (require! (and (true? branch-created?) (true? fixture-seeded?) (true? cleanup-ready?)
+                   (pos-int? repository-id) (pos-int? pr-number)
+                   (pos-int? pr-id) (string? pr-node-id) (not (str/blank? pr-node-id))
+                   (string? branch-ref-node-id) (not (str/blank? branch-ref-node-id))
+                   (string? invocation-id) (boolean (re-matches #"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}" invocation-id))
+                   (= branch (str "codex/native-assessment-" invocation-id))
+                   (string? branch-head) (boolean (re-matches #"[0-9a-f]{40}" branch-head)))
+              "Deletion requires complete invocation-created repository/ref/head/PR ownership")
+    (let [repo (api "GET" (str "repos/" repository))
+          pr (api "GET" (str "repos/" repository "/pulls/" pr-number))
+          {:keys [status record]} (ref-readback repository branch)]
+      (require! (and (= repository (:full_name repo)) (= repository-id (:id repo))
+                     (= pr-number (:number pr)) (= pr-id (:id pr)) (= pr-node-id (:node_id pr))
+                     (= "closed" (:state pr))
+                     (= repository-id (get-in pr [:base :repo :id]))
+                     (= repository (get-in pr [:base :repo :full_name]))
+                     (= repository-id (get-in pr [:head :repo :id]))
+                     (= repository (get-in pr [:head :repo :full_name]))
+                     (= branch (get-in pr [:head :ref])) (= branch-head (get-in pr [:head :sha]))
+                     (= 200 status) (= full-ref (:ref record)) (= branch-ref-node-id (:node_id record))
+                     (= "commit" (get-in record [:object :type])) (= branch-head (get-in record [:object :sha])))
+                "Fresh native repository/ref/head/closed-PR ownership guard refused branch deletion"))
+    ;; GitHub ref deletion has no compare-and-swap. Never retry a sent DELETE;
+    ;; a lost response can mean it already happened, so readback decides custody.
+    (swap! resources assoc :branch-deletion-status :uncertain)
+    (let [delete-error (try (api "DELETE" (str "repos/" repository "/git/refs/heads/" branch)) nil
+                            (catch Exception error error))
+          readback (try (ref-readback repository branch) (catch Exception _ nil))
+          absent? (= 404 (:status readback))]
+      (swap! resources assoc :branch-deletion-status
+             (cond (and absent? (nil? delete-error)) :deleted
+                   absent? :absent-after-uncertain-delete
+                   (= 200 (:status readback)) :retained
+                   :else :uncertain))
+      (require! (and (nil? delete-error) absent?) "Owned branch deletion or absence readback is unestablished")
+      (println "PASS deleted the invocation-created unchanged branch with native absence readback:" (str repository "@" full-ref)))))
+
 (defn stop-owned-runs! "Cancel active runs bound to the fixture requests, then confirm terminal state." []
   (let [{:keys [repository workflow-id started-at request-ids]} @resources
         titles (set (map #(str "Native assessment " %) request-ids))
@@ -79,9 +136,17 @@
             (Thread/sleep 2000)
             (recur (into cancelled (map :id active)))))))))
 
-(defn cleanup! "Close/drain the owned fixture and remove seeded comments; retain its branch." []
+(defn owned-issue-comment? "Match only this invocation's requests or exact owned-run App responses." [comment]
+  (let [{:keys [repository request-ids run-ids]} @resources]
+    (or (contains? (set request-ids) (:id comment))
+        (and (= app-identity (select-keys (:user comment) (keys app-identity)))
+             (string? (:body comment))
+             (some #(str/includes? (:body comment)
+                                   (str "[github run](/" repository "/actions/runs/" % ")")) run-ids)))))
+
+(defn cleanup! "Close/drain and remove owned comments; optionally delete only the guarded invocation ref." []
   (when (compare-and-set! cleaned? false true)
-    (let [{:keys [repository branch pr-number root-comment-id request-ids]} @resources
+    (let [{:keys [repository branch pr-number root-comment-id]} @resources
           failures (atom []) closed? (atom (nil? pr-number)) terminal? (atom (nil? pr-number))
           attempt (fn [label f]
                     (try (f) (catch Exception _ (swap! failures conj label))))]
@@ -97,12 +162,24 @@
         (when pr-number
           (attempt "fixture issue comments"
                    #(doseq [comment (pages (str "repos/" repository "/issues/" pr-number "/comments") nil)
-                            :when (or (contains? (set request-ids) (:id comment))
-                                      (= app-identity (select-keys (:user comment) (keys app-identity))))]
+                            :when (owned-issue-comment? comment)]
                       (api "DELETE" (str "repos/" repository "/issues/comments/" (:id comment)))))
+          (attempt "fixture issue-comment absence readback"
+                   #(require! (empty? (filter owned-issue-comment?
+                                             (pages (str "repos/" repository "/issues/" pr-number "/comments") nil)))
+                              "Seeded request/App comments remain"))
           (when root-comment-id
             (attempt "fixture inline comment"
-                     #(api "DELETE" (str "repos/" repository "/pulls/comments/" root-comment-id))))))
+                     #(api "DELETE" (str "repos/" repository "/pulls/comments/" root-comment-id)))
+            (attempt "fixture inline-comment absence readback"
+                     #(require! (not-any? (fn [comment] (= root-comment-id (:id comment)))
+                                         (pages (str "repos/" repository "/pulls/" pr-number "/comments") nil))
+                                "Seeded inline comment remains")))))
+      (when (and branch (:delete-owned-branch? @resources) (empty? @failures))
+        (attempt "owned branch deletion"
+                 #(do (require! (and pr-number @closed? @terminal?) "Cannot delete a fixture branch without completed owned PR/run cleanup")
+                      (swap! resources assoc :cleanup-ready? true)
+                      (delete-owned-branch!))))
       (if (seq @failures)
         (do (binding [*out* *err*]
               (println "FAIL cleanup:" (str/join ", " @failures)
@@ -110,19 +187,29 @@
             (swap! resources assoc :cleanup-failed? true))
         (when pr-number (println "PASS closed the owned draft PR, drained its runs and removed its seeded comments")))
       (when branch
-        (println "RETAIN fixture branch:" (str repository "@refs/heads/" branch)
+        (println (if-not (:branch-created? @resources)
+                   "UNKNOWN fixture branch creation (no deletion sent):"
+                   (case (:branch-deletion-status @resources)
+                   :deleted "DELETED fixture branch:"
+                   :absent-after-uncertain-delete "ABSENT after uncertain deletion (failed):"
+                   :uncertain "UNKNOWN fixture branch deletion (failed):"
+                   "RETAIN fixture branch:"))
+                 (str repository "@refs/heads/" branch)
                  "URL" (str "https://github.com/" repository "/tree/" branch))))))
 
-(defn options "Accept only a repository and a bounded polling timeout." [args]
-  (let [opts (loop [remaining args result {:repo "open-hax/knoxx" :timeout-seconds 1800}]
+(defn options "Accept repository, bounded timeout and one explicit owned-branch deletion option." [args]
+  (let [opts (loop [remaining args result {:repo "open-hax/knoxx" :timeout-seconds 1800 :delete-owned-branch? false}]
                (if-let [flag (first remaining)]
-                 (let [value (second remaining)]
-                   (require! (some? value) (str "Missing value for " flag))
-                   (recur (nnext remaining)
-                          (case flag
-                            "--repo" (assoc result :repo value)
-                            "--timeout-seconds" (assoc result :timeout-seconds (parse-long value))
-                            (throw (ex-info (str "Unknown option: " flag) {})))))
+                 (if (= "--delete-owned-branch" flag)
+                   (do (require! (not (:delete-owned-branch? result)) "Duplicate --delete-owned-branch")
+                       (recur (next remaining) (assoc result :delete-owned-branch? true)))
+                   (let [value (second remaining)]
+                     (require! (some? value) (str "Missing value for " flag))
+                     (recur (nnext remaining)
+                            (case flag
+                              "--repo" (assoc result :repo value)
+                              "--timeout-seconds" (assoc result :timeout-seconds (parse-long value))
+                              (throw (ex-info (str "Unknown option: " flag) {}))))))
                  result))]
     (require! (boolean (re-matches #"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" (:repo opts))) "Invalid repository")
     (require! (and (integer? (:timeout-seconds opts)) (<= 60 (:timeout-seconds opts) 3600)) "Timeout must be 60–3600 seconds")
@@ -137,6 +224,7 @@
                     (catch Exception _ (throw (ex-info "BLOCKED: exact protected workflow is unavailable; adopt it before live verification" {}))))
         local (.getBytes (slurp workflow-path) StandardCharsets/UTF_8)
         served (.decode (Base64/getMimeDecoder) ^String (:content remote))]
+    (require! (and (= repository (:full_name repo)) (pos-int? (:id repo))) "BLOCKED: native repository identity is unestablished")
     (require! (true? (:protected branch-data)) "BLOCKED: default branch is not protected")
     (require! (and (= "file" (:type remote)) (= "base64" (:encoding remote))
                    (= (sha256 local) (sha256 served)))
@@ -145,25 +233,34 @@
     {:repository-id (:id repo) :branch branch :head head}))
 
 (defn seed! "Create one inert source change and selected inline conversation." [repository base]
-  (let [id (str (UUID/randomUUID)) branch (str "verify/native-assessment-" id)
+  (let [id (str (UUID/randomUUID)) branch (str "codex/native-assessment-" id)
         file (str "docs/verification/.native-assessment/" id "/source.txt")
         source-marker (str "native-source-" (UUID/randomUUID))
         content (str source-marker "\nInert verifier source; no credentials or production state.\n")]
-    (api "POST" (str "repos/" repository "/git/refs") {:ref (str "refs/heads/" branch) :sha (:head base)})
-    (swap! resources assoc :repository repository :branch branch :request-ids [] :run-ids #{})
+    (swap! resources assoc :repository repository :repository-id (:repository-id base)
+           :invocation-id id :branch branch :branch-head (:head base)
+           :branch-created? false :request-ids [] :run-ids #{})
+    (let [created (api "POST" (str "repos/" repository "/git/refs") {:ref (str "refs/heads/" branch) :sha (:head base)})]
+      (require! (and (= (str "refs/heads/" branch) (:ref created)) (= (:head base) (get-in created [:object :sha]))
+                     (= "commit" (get-in created [:object :type])) (string? (:node_id created)) (not (str/blank? (:node_id created))))
+                "Created fixture ref acknowledgement did not bind ownership")
+      (swap! resources assoc :branch-created? true :branch-ref-node-id (:node_id created)))
     (let [written (api "PUT" (str "repos/" repository "/contents/" file)
                        {:message "Seed inert native assessment verification"
                         :branch branch :content (.encodeToString (Base64/getEncoder) (.getBytes content StandardCharsets/UTF_8))})
           head (get-in written [:commit :sha])
+          _ (swap! resources assoc :branch-head head)
           pr (api "POST" (str "repos/" repository "/pulls")
                   {:title (str "Native assessment verifier " id) :head branch :base (:branch base) :draft true
                    :body "Disposable verifier fixture. No approval, review round, disposition or deployment credit."})]
-      (swap! resources assoc :pr-number (:number pr) :started-at (:created_at pr))
+      (swap! resources assoc :pr-number (:number pr) :pr-id (:id pr) :pr-node-id (:node_id pr) :started-at (:created_at pr))
       (let [root (api "POST" (str "repos/" repository "/pulls/" (:number pr) "/comments")
                       {:commit_id head :path file :line 1 :side "RIGHT"
                        :body "Verifier question: report the exact first source line and explain this inert fixture. Do not change code."})]
         (swap! resources assoc :root-comment-id (:id root))
         (pass! (= head (get-in pr [:head :sha])) "seeded draft PR serves the exact inert source commit")
+        (require! (pos-int? (:id root)) "Seeded inline question acknowledgement is unestablished")
+        (swap! resources assoc :fixture-seeded? true)
         {:pr pr :head head :file file :source-marker source-marker :root root}))))
 
 (defn request! "Publish only inside the owned fixture PR." [repository number body]
@@ -247,7 +344,7 @@
     (println "WARN public response/absence of contents does not prove a tool attempted the read or enforced a refusal; raw failed-tool evidence is not supplied by this pinned chat logger")))
 
 (defn main "Run self-checking preconditions, positive/adverse observations and owned cleanup." []
-  (let [{:keys [repo timeout-seconds]} (options *command-line-args*)
+  (let [{:keys [repo timeout-seconds delete-owned-branch?]} (options *command-line-args*)
         base (protected-source! repo)
         caller (api "GET" "user")
         permission (api "GET" (str "repos/" repo "/collaborators/" (:login caller) "/permission"))
@@ -258,7 +355,7 @@
     (require! (= "active" (:state workflow)) "BLOCKED: protected workflow is not active")
     (require! (= app-identity (select-keys native-app (keys app-identity))) "Installed App account identity changed")
     (pass! true "native caller permission and physical App account identity match the route")
-    (swap! resources assoc :workflow-id (:id workflow))
+    (swap! resources assoc :workflow-id (:id workflow) :delete-owned-branch? delete-owned-branch?)
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable cleanup!))
     (try
       (let [fixture (seed! repo base)
@@ -282,7 +379,8 @@
       (finally (cleanup!)))
     (require! (not (:cleanup-failed? @resources)) "Owned fixture cleanup failed")))
 
-(try (main)
-     (catch Exception error
-       (binding [*out* *err*] (println "FAIL" (.getMessage error)))
-       (System/exit 1)))
+(when (= *file* (System/getProperty "babashka.file"))
+  (try (main)
+       (catch Exception error
+         (binding [*out* *err*] (println "FAIL" (.getMessage error)))
+         (System/exit 1))))
