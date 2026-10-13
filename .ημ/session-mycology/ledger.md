@@ -183,3 +183,48 @@
   spore: none
   receipt-refs: knoxx-382-provenance-links
   note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
+- ts: 2026-10-12T14:52:09.289107323Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-native-assessment-route-main-v1
+  task: Restore the installed native App comment route
+  p-efficiency: 0.85
+  p-friction: 0.25
+  p-skill-candidate: 0.2
+  spore: none
+  receipt-refs: root-comment-route-event-v1.edn
+  note: Verify installation and repository event workflow independently. Keep scoped assessment separate from full review and settlement. No spore.
+- ts: 2026-10-12T16:02:06.590165683Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-native-assessment-route-main-v1
+  task: Qualify constrained native assessment preflight and human verifier
+  p-efficiency: 0.82
+  p-friction: 0.38
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 3fb2326f-f46f-44cd-b00e-174cdc017f21,9b64031fa19403c000690748712b277bedc3dee5f2ecb59d43a2e2d22d7bb95e
+  note: Check native effective permission before model/App secrets, deny filesystem aliases and project loading, retrieve actual triggering API request, and require protected adoption before live fixtures. Keep configured controls and inert guard tests distinct from actual runtime/App proof. Retain fixture branches pending deletion authorization; no spore.
+- ts: 2026-10-12T17:50:22.185575752Z
+  session: 01a12257-fc69-7720-888c-dd2595ff7dc7
+  task: Qualify explicit invocation-owned fixture cleanup and retain uncertain native outcomes
+  p-efficiency: 0.65
+  p-friction: 0.65
+  p-skill-candidate: 0.65
+  spore: none
+  receipt-refs: 6b818bfc-dc7f-43c2-93da-197d05ac7b1c
+  note: Keep explicit destructive cleanup separate from ordinary verifier authority. Retain branch by default; bind creation/closed PR/terminal runs/fresh ref identity, attempt one approved DELETE and preserve uncertainty without retry. Resident inert6tests95assertions plus corrected kondo passed; actual live cleanup and branch deletion remain unexecuted/unapproved.
+- ts: 2026-10-12T18:26:23.430413842Z
+  session: /home/err/.local/share/openhax-codex/20261010/knoxx-native-assessment-route-main-v1
+  task: Repair cleanup claim vs completion race with a shared completion result
+  p-efficiency: 0.80
+  p-friction: 0.45
+  p-skill-candidate: 0.55
+  spore: none
+  receipt-refs: 013182cd86d7c57cd163a62941bf179aefeb636233103e72076b54e345694365
+  note: An atomic claim is not completion. Keep unchanged effects behind one winner and make later callers await completed success/refusal. Reproduce early return with blocked actual closure and observed losing CAS, then verify shared outcomes and no duplicate effects. Actual7tests121assertions pass; configuredlint zero warnings. Preserve the first quoting setup failure separately; no new spore/promotion or live native cleanup.
+- ts: 2026-10-13T20:37:57.216953719Z
+  session: 01a12257-fc69-7720-888c-dd2595ff7dc7
+  task: Correct six native review findings about fixture-branch-ref echo verification
+  p-efficiency: 0.9
+  p-friction: 0.25
+  p-skill-candidate: 0.0
+  spore: none
+  receipt-refs: e73903e2d174244df4086afabc094017e1e960edab8bc17bfebccf2cce2c5bbe
+  note: Source triage established a misleading description rather than an actual disclosure oracle. Two-line correction preserves predicate/commands/assertions; existing resident19tests623assertions and zero-warning lint pass. No live model/native effects or new spore.
