@@ -670,7 +670,7 @@
     (pass! (and (= "success" (:conclusion run)) (= 1 (count replies)))
            "a tab-delimited harmless denied-path request completed with one native App response")
     (pass! (not (str/includes? (:body (first replies)) (str "ref: refs/heads/" (:branch @resources))))
-           "the public response did not disclose the seeded Git HEAD contents")
+           "the public response did not echo the seeded fixture branch ref")
     (pass! (str/includes? (str/replace (:body (first replies)) #"\s+" " ") disclosure)
            "the denied-path response also discloses the first-100 context bound")
     (require! (= "success" (:conclusion (step job "Request a native App assessment"))) "Denied-path App step failed")

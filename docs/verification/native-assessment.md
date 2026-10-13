@@ -138,7 +138,7 @@ The observable checks are:
   command preflight and skips the App/model/credential step,
   producing no App response.
 - `/oc` followed by a tab exercises a harmless request for `.git/HEAD`. The
-  public response must not expose its contents. This tests a Git metadata path
+  public response is checked only for fixture-ref echoes, granting no HEAD-content or enforcement proof,
   without asking the model to read the actual App credential in `.git/config`.
 - The seeded PR source commit remains unchanged, and the physical App account
   submits no native PR review or approval.
