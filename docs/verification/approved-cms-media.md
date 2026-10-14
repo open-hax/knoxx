@@ -27,14 +27,18 @@ and publications stay outside its ownership.
 The fixture's native CMS and publication route handlers are production code.
 The auth-context seam supplies a disposable session principal. Translation
 evidence and split stores are explicitly process-local empty verification
-stores; these are not a production persistence fallback. The public reader
-validates the native manifest and serves only a committed route's artifact and
+stores. The receipt journal is also process-local, with the runtime's existing
+retention bound; none of these stores is a production persistence fallback.
+CMS readbacks in this run prove receipt wiring within that owned process, not
+survival across restart or a configured durable receipt adapter. The public
+reader validates the native manifest and serves only a committed route's artifact and
 the exact supplied selected image. Its HTML wrapper is a disposable reader,
 not a claim that the Website deployment has been qualified.
 
 Before writing, the script verifies its physical Git root and full HEAD, hashes
-the four renderer paths and fixture adapter, hashes the freshly compiled
-artifact, and compares that proof with the live process. The process rechecks
+the renderer, receipt reader, CMS projection, receipt law and fixture adapter
+paths, hashes the freshly compiled artifact, and compares that proof with the
+live process. The process rechecks
 the source and compiled bytes before listening. This prevents a pass against
 another checkout or a stale fixture build. Source and checkout identity are
 compared before and after compilation; a concurrent source change fails before
@@ -52,6 +56,14 @@ The runnable checks prove these outcomes:
   requests desired state. Native `POST /api/publications/reconcile` materializes
   the English source and returns an actual materialized receipt. The verifier
   obtains each identity and public path from the native topology response.
+- Before reconciliation, both native CMS publication list and document GETs
+  show desired `published` with observed `null`. After the real English POST,
+  `GET /api/publications/receipts` retains that emitted materialized receipt.
+  The same two CMS GETs must then show observed equal to its non-empty concrete
+  correlation revision while desired remains `published`. Document and
+  publication IDs come from the server's qualified topology identities;
+  nothing derives them from the private CMS `doc_id`, injects a receipt or
+  fills in a default observation.
 - Anonymous public readback displays exactly one real selected artwork image
   and a canonical `We Are The Place` Suno listen destination. The served artwork
   digest equals the supplied original digest.
@@ -63,7 +75,16 @@ The runnable checks prove these outcomes:
   as whole-output approval.
 - A native CMS revision changing only unsigned `metadata.blocks` retains its
   history but cannot change publication bytes. Reconciliation converges to a
-  noop rather than displaying a metadata-only injected image or track.
+  noop rather than displaying a metadata-only injected image or track. The
+  committed manifest also stays byte-identical. The receipt route retains the
+  original materialization and the real noop, and both CMS GETs must retain
+  that original observed revision with desired still `published`.
+
+The run-owned `verification.json` records the actual materialized and noop
+receipts and both CMS responses after each operation, alongside artifact and
+manifest digests. Its successful assertions require native HTTP readbacks;
+syntax checks or source-only precondition tests do not establish these live
+results. Shell teardown removes this file with the rest of the fixture.
 
 Each passing check explains the fact it establishes. Any failure prints its
 reason and exits nonzero; teardown still runs. There is no successful retained
@@ -134,8 +155,12 @@ Use `GET /api/cms/publications/documents` to recover the server-returned English
 and Spanish publication identities and paths. Request desired state with the
 state PATCH body above, then explicitly reconcile English. Require a
 materialized/noop receipt, native manifest, exact artifact bytes and a real
-Website readback; a save or state edit is not publication proof. The documents
-own the reviewed reference text and publication artifacts. Their referenced
+Website readback. After materialization, also reread both CMS publication GETs
+using the returned qualified document identity and require the exact English
+publication's observed revision to match the real materialized receipt's
+correlation revision while desired remains `published`; a subsequent noop
+must retain that observation. A save or state edit is not publication proof.
+The documents own the reviewed reference text and publication artifacts. Their referenced
 artwork remains separately staged media, and the music destinations remain
 public Suno song links.
 

@@ -39,6 +39,7 @@
             [knoxx.backend.infra.publication-target-static-site :as static-site]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.law.error-body :as error-body]
+            [knoxx.backend.law.publication-receipts :as receipts-law]
             [knoxx.backend.law.publication-reconciler :as trigger-law]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
 
@@ -156,6 +157,26 @@
   (let [scope (production-scope config ctx)]
     (await (production/make-runtime! config scope (production-journal scope)))))
 
+(defn- receipt-evidence-configured?
+  [config]
+  (or (:publication/reconciliation config) (production/configured? config)))
+
+(defn ^:async receipt-evidence!
+  "Read the existing scoped receipt journal for trusted request scope.
+
+   Organization comes from the admitted context and project from server config,
+   exactly as for reconciliation. Reading never constructs the production
+   runtime or invokes its translation/artifact effects. nil means unconfigured;
+   an unavailable or malformed configured reader throws, never becomes empty.
+   This journal remains process-local, with its existing retention bound."
+  [config ctx]
+  (when (receipt-evidence-configured? config)
+    (let [scope (production-scope config ctx)
+          journal (or (:journal (runtime-for config scope))
+                      (production-journal scope))]
+      (receipts-law/assert-receipt-evidence!
+       {:receipts (await ((:receipts journal)))}))))
+
 ;; ── Responses ──────────────────────────────────────────────────────────────
 
 (defn- error-status
@@ -217,12 +238,11 @@
 (defn- ^:async handle-receipts!
   "Answer with the receipt journal the configured reconciler has emitted into."
   [config ctx _request reply]
-  (if-let [{:keys [journal]}
-           (runtime-for config (production-scope config ctx))]
-    (await (send-result! reply (fn [] {:receipts ((:receipts journal))})))
-    (if (production/configured? config)
-      (let [journal (production-journal (production-scope config ctx))]
-        (await (send-result! reply (fn [] {:receipts ((:receipts journal))}))))
+  ;; Keep this route's organization requirement even when unconfigured. CMS
+  ;; may still render desired intent without a receipt capability.
+  (let [scope (production-scope config ctx)]
+    (if (receipt-evidence-configured? config)
+      (await (send-result! reply #(receipt-evidence! config scope)))
       (fastify/send-json! reply 503
                           {:detail "publication reconciliation is not configured"}))))
 

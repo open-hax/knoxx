@@ -8,7 +8,8 @@
 
   Receipts are *observed execution facts*. They never carry desired state, and
   desired state never carries them."
-  (:require [knoxx.backend.law.publication :as publication]))
+  (:require [knoxx.backend.law.publication :as publication]
+            [malli.core :as m]))
 
 (def ConcreteRevision
   "Re-exported so the effect boundary depends on one law namespace. Anything the
@@ -126,6 +127,30 @@
    [:publication/noop NoopReceipt]
    [:publication/blocked BlockedReceipt]
    [:publication/failed FailedReceipt]])
+
+(def ReceiptEvidenceRegistry
+  "Ordered existing receipts admitted at a reader boundary. Desired state is
+   absent; a malformed reader result must not become an empty observation."
+  {:publication/receipt Receipt
+   :publication/receipt-evidence
+   [:map {:closed true}
+    [:receipts [:vector [:ref :publication/receipt]]]]})
+
+(def ReceiptEvidence
+  "Named reader contract composed from the existing receipt owner law."
+  [:schema {:registry ReceiptEvidenceRegistry}
+   [:ref :publication/receipt-evidence]])
+
+(def receipt-evidence-valid?
+  "Executable admission for the named receipt reader contract."
+  (m/validator ReceiptEvidence))
+
+(defn assert-receipt-evidence!
+  "Admit a reader's receipt vector without coercion or changing its records."
+  [evidence]
+  (if (receipt-evidence-valid? evidence)
+    evidence
+    (publication/assert-valid! :publication/receipt-evidence ReceiptEvidence evidence)))
 
 (defn assert-plan!
   [plan]

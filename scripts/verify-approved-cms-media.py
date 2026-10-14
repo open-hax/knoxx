@@ -16,6 +16,10 @@ SOURCE_PATHS = (
     "backend/src/cljs/knoxx/backend/law/publication_media.cljc",
     "backend/src/cljs/knoxx/backend/domain/publication_content.cljc",
     "backend/src/cljs/knoxx/backend/infra/publication_runtime.cljs",
+    "backend/src/cljs/knoxx/backend/infra/routes/publication_reconcile.cljs",
+    "backend/src/cljs/knoxx/backend/infra/routes/cms_publication.cljs",
+    "backend/src/cljs/knoxx/backend/domain/cms_publication.cljs",
+    "backend/src/cljs/knoxx/backend/law/publication_receipts.cljs",
     "backend/test/cljs/knoxx/backend/infra/publication_runtime_test.cljs",
     "backend/test/cljs/knoxx/backend/extern/approved_media_verifier.cljs",
 )
@@ -114,6 +118,27 @@ def check(condition, message):
     print("PASS " + message, flush=True)
 
 
+def verify_cms_observation(cms, document_id, publication_id, revision, stage):
+    """Read both native CMS views; compare observed with real receipt evidence."""
+    listed = cms.json("GET", "/api/cms/publications/documents")
+    matches = [view for view in listed["documents"] if view["document"]["id"] == document_id]
+    check(len(matches) == 1, f"{stage}: CMS list retains exactly the server-returned document identity")
+    document = cms.json("GET", "/api/cms/publications/documents/"
+                        + urllib.parse.quote(document_id, safe=""))
+    for name, view in (("list", matches[0]), ("document", document)):
+        check(view["document"]["id"] == document_id,
+              f"{stage}: CMS {name} GET returns the qualified document identity")
+        publications = [row for row in view["publications"] if row["id"] == publication_id]
+        check(len(publications) == 1 and publications[0]["document"] == document_id
+              and publications[0]["locale"] == "en",
+              f"{stage}: CMS {name} GET retains the exact English publication identity")
+        row = publications[0]
+        expectation = "null before materialization" if revision is None else "the emitted concrete revision"
+        check(row["desired"] == "published" and row["observed"] == revision,
+              f"{stage}: CMS {name} GET keeps desired published and observed equals {expectation}")
+    return {"list": listed, "document": document}
+
+
 def verify(run_root, proof_file):
     """Seed through real routes; inspect public bytes and fail-closed controls."""
     run_root = Path(run_root)
@@ -154,7 +179,14 @@ def verify(run_root, proof_file):
     anonymous.json("GET", document_path + "/history", expected=403)
     topology = cms.json("GET", "/api/cms/publications/documents")
     check(len(topology["documents"]) == 1, "native save produced one dedicated publication document")
-    publications = {row["locale"]: row for row in topology["documents"][0]["publications"]}
+    publication_document = topology["documents"][0]
+    publication_document_id = publication_document["document"]["id"]
+    publications = {row["locale"]: row for row in publication_document["publications"]}
+    check("/" in publication_document_id and all("/" in row["id"]
+          and row["document"] == publication_document_id for row in publications.values()),
+          "native topology supplies qualified document and publication identities without deriving them from CMS doc_id")
+    anonymous.json("GET", "/api/cms/publications/documents/"
+                   + urllib.parse.quote(publication_document_id, safe=""), expected=403)
     check(set(publications) == {"en", "es"} and all(row["desired"] == "withheld" for row in publications.values()),
           "native save created withheld English and Spanish intents; save alone published nothing")
     check(public.request("GET", publications["en"]["path"])[0] == 404,
@@ -162,9 +194,21 @@ def verify(run_root, proof_file):
     for row in publications.values():
         intent = "/api/cms/publications/intents/" + urllib.parse.quote(row["id"], safe="")
         cms.json("PATCH", intent, {"state": "published"})
+    verify_cms_observation(cms, publication_document_id, publications["en"]["id"], None,
+                           "before reconciliation")
     english = cms.json("POST", "/api/publications/reconcile", {"publicationId": publications["en"]["id"]})
     check(english["type"] == "publication/materialized",
           "native reconciliation materialized source-locale text under its declared review policy")
+    materialized_revision = english["revision"]
+    check(english["publication"] == publications["en"]["id"]
+          and isinstance(materialized_revision, str) and bool(materialized_revision.strip())
+          and materialized_revision != "source/current" and english["path"] == publications["en"]["path"],
+          "materialized receipt correlates the exact English publication, concrete revision and public artifact path")
+    emitted = cms.json("GET", "/api/publications/receipts")["receipts"]
+    check(english in emitted, "native receipt GET retains the actual materialized POST receipt")
+    observed_materialized = verify_cms_observation(
+        cms, publication_document_id, publications["en"]["id"], materialized_revision,
+        "after materialization")
     status, rendered, headers = public.request("GET", publications["en"]["path"])
     check(status == 200 and headers.get("content-type", "").startswith("text/html"),
           "anonymous public readback serves the actual manifest artifact as HTML")
@@ -195,14 +239,26 @@ def verify(run_root, proof_file):
     repeated = cms.json("POST", "/api/publications/reconcile", {"publicationId": publications["en"]["id"]})
     check(repeated["type"] == "publication/noop" and public.request("GET", publications["en"]["path"])[1] == rendered,
           "metadata-only revision cannot change the publication bytes or create an unapproved image")
+    check(public.request("GET", "/published/manifest.edn")[1] == manifest,
+          "metadata-only noop retains the already committed native manifest")
+    emitted_after_noop = cms.json("GET", "/api/publications/receipts")["receipts"]
+    check(english in emitted_after_noop and repeated in emitted_after_noop,
+          "native receipt GET retains materialization alongside the actual metadata-only noop receipt")
+    observed_noop = verify_cms_observation(
+        cms, publication_document_id, publications["en"]["id"], materialized_revision,
+        "after metadata-only noop")
     check(len(cms.json("GET", document_path + "/history")["revisions"]) == 2,
           "native history retains the original and metadata revision without rewriting either")
     result = {"publication-path": publications["en"]["path"], "public-url": receipt["public-origin"] + publications["en"]["path"],
               "public-html-sha256": sha256(rendered), "manifest-sha256": sha256(manifest),
               "asset-sha256": sha256(asset), "song-destination": SONG, "actual-local-tracks": 0,
+              "document-id": publication_document_id, "publication-id": publications["en"]["id"],
+              "materialized-receipt": english, "noop-receipt": repeated,
+              "cms-after-materialized": observed_materialized, "cms-after-noop": observed_noop,
               "proof": proof}
     (run_root / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
     print("WARN fixture identity and process-local empty evidence stores do not verify password login, Mongo persistence or provider output.")
+    print("WARN CMS observed readback proves only this process-local scoped receipt journal; restart persistence and durable receipt adapters need separate evidence.")
     print("WARN music listening destination is selected public metadata; this run does not prove current remote playback or ingest audio bytes.")
     print("WARN supplied artwork is separately staged; CMS owns the source reference and publication, not transferred media byte custody.")
     print("WARN translated media authenticity is separately covered by publication-runtime-test; a real Spanish provider/review journey remains required.")

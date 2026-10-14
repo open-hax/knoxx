@@ -351,3 +351,19 @@
             (is (= {:detail error-body/opaque-detail} (:body response))))))
       (is (= 1 @artifact-calls*))
       (is (= 1 (memory/materialization-count target)))))))
+
+(deftest ^:async unconfigured-cms-still-renders-desired-intent-and-receipt-get-stays-503
+  (await
+   (with-publication-routes!
+    (^:async fn [{:keys [new-app! config artifact-calls* target]}]
+      (let [app (new-app! (dissoc config :publication/reconciliation))
+            receipts (await (inject! app "GET" "/api/publications/receipts" nil))]
+        (is (= 503 (:status receipts)))
+        (is (= {:detail "publication reconciliation is not configured"} (:body receipts)))
+        (doseq [[url row-path] (cms-get-paths)]
+          (let [response (await (inject! app "GET" url nil))]
+            (is (= 200 (:status response)))
+            (is (= "published" (get-in response (into [:body] (conj row-path :desired)))))
+            (is (nil? (get-in response (into [:body] (conj row-path :observed)))))))
+        (is (= 0 @artifact-calls*))
+        (is (= 0 (memory/materialization-count target))))))))
