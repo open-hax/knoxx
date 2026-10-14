@@ -292,3 +292,12 @@
   spore: none
   receipt-refs: 139ae20e4a813bc7461453445e7766d21853ea73,264d62bec18e2ee618b8a4fd0952f060448489d23add28e5eac43c80ebc0a3c1
   note: A failing migration progress law needs actual source retirement with preserved behavior. Keep a small slice within its existing card and preserve all metadata and historical body. Separate native API parity from inherited lifecycle hardening, and an observed local browser runtime from required hosted capability. Publish concrete scope and use canonical planning/readiness before RED; no inflated estimate, inaccurate infrastructure exemption, invented readiness or new planning stack. No new spore or promotion.
+- ts: 2026-10-14T21:31:00.878158539Z
+  session: 01a12257-fc69-7720-888c-dd2595ff7dc7
+  task: private-native-WebSocket-migration-browser-proof
+  p-efficiency: 0.88
+  p-friction: 0.48
+  p-skill-candidate: 0
+  spore: none
+  receipt-refs: root-private-frontend-native-browser-canonical-receipt.edn
+  note: Actual native460/2101 andoptimized8controlgroups support thefrontendmigration, notproduction. Keep controlledfixture/seededmetrics andoriginalAVA failure separate. Correctsource-lineattribution beforecausalclaims: bothpredecessor/candidate reachAudit sessions butmiss fork-run-active, causedbyignoredkeywordPromise.then callback introducedJune13. Preserveunchangedassertions/timeouts andrequireactualboundaryregressionbeforeminimalrepair. No spore/promotion.
