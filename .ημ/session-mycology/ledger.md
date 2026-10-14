@@ -274,3 +274,12 @@
   spore: none
   receipt-refs: ff9ecc33-3c20-4963-a27f-89f5b2878889
   note: Define cleanup before allocating a disposable directory and arm its traps before the first operation that can fail. Injected owned mkdir exit73 proves prior leak and corrected cleanup while preserving exit status. Keep full native fixture and production qualification historical; no provider or shared-state mutations. Preserve every historical byte. No extra spore or promotion.
+- ts: 2026-10-14T12:17:49.528016531Z
+  session: 01a12257-fc69-7720-888c-dd2595ff7dc7
+  task: actual-CMS-observed-receipts-native-HTTP-repair
+  p-efficiency: 0.78
+  p-friction: 0.42
+  p-skill-candidate: 0.1
+  spore: none
+  receipt-refs: cf279974633c6feb3ec5249bb7164f5cf6e4a32474e4bc1fc567c705f06ba234
+  note: Test the registered routes instead of injecting projection evidence. Share the existing admitted org/project journal reader, retain the actual causal RED, and prove both CMS GET observations through real reconciliation and receipt GET. Full lint remains inherited red with exact causal diagnostic equality; scope qualification is not full repository admission. Own the disposable HTTP runtime and exact source proof. Process-local receipts remain a durability prerequisite; source tests are not production or Spanish provider proof. No extra spore or promotion.
