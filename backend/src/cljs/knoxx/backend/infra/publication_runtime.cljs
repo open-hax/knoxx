@@ -8,6 +8,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.document-admission :as document-admission]
             [knoxx.backend.domain.node.fs :as fs]
+            [knoxx.backend.domain.publication-content :as publication-content]
             [knoxx.backend.domain.translation-evidence :as evidence-domain]
             [knoxx.backend.domain.translation-review-inventory :as review-inventory]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
@@ -28,19 +29,11 @@
 
 (def target-id :open-hax.publication/static-site)
 
-(defn- escape-html [value]
-  (str/escape (str value)
-              {\& "&amp;" \< "&lt;" \> "&gt;" \" "&quot;" \' "&#39;"}))
-
 (defn render-fragment
-  "Render semantic text blocks. Styling remains the website/view contract's
-   concern; this artifact carries no theme or placement decision."
+  "Render approved semantic text and media references through the pure contract.
+   Styling remains the website/view contract's concern."
   [blocks]
-  (str "<article class=\"published-document\">"
-       (str/join "" (map #(str "<p>" (-> % escape-html
-                                          (str/replace "\n" "<br>")) "</p>")
-                         (remove str/blank? blocks)))
-       "</article>"))
+  (publication-content/render-fragment blocks))
 
 (defn- document-root [roots document]
   (get roots (:document/id document)))
@@ -58,24 +51,9 @@
     (str/split content #"\n\s*\n")))
 
 (defn- ^:async translated-blocks!
-  "The localized blocks for one intent, from the strongest source that has them.
-
-  The order is a precedence, not a fallback chain of equals.
-
-  1. **Agent-submitted content**, keyed by the *output* revision named on the
-     receipt the gate itself matched. First because it is the only source whose
-     bytes are tied to a specific reviewed revision — see
-     `infra.translation-agent-content`. Reading it requires a receipt, so
-     `nil` here means no agent has translated this revision, never that one has
-     and the bytes were skipped.
-  2. **Authored locale files**, the deliberately-kept fallback. Real
-     translations somebody wrote by hand, stamped with a 1970 authored-at by
-     `infra.publication-contract-content` precisely so agent output supersedes
-     them. They keep every declared locale renderable while the agent path fills
-     in, which is the whole reason they were not deleted.
-  3. **OpenPlanner segments**, the legacy transport this cutover is leaving. Last
-     because it is the dependency being removed; still present because retiring
-     a transport before its content has moved is how a live site loses pages."
+  "Read receipt-bound agent output, then authored files, then legacy segments.
+   Every source must match the admitted content digest; a mismatching authored
+   file stops the lookup. Authored receipts predate agent output so it wins."
   [client scope roots document intent receipt content-root]
   (if-some [submitted (await (agent-content/content-for-receipt! content-root receipt))]
     (authenticated-blocks receipt submitted)
@@ -103,6 +81,17 @@
                                         (map :translated_text
                                              (:segments response))))))))
 
+(defn- rendered-artifact [intent concrete-revision receipt blocks]
+  (when (seq blocks)
+    (law/assert-valid!
+     :publication/runtime-artifact law/PublicationArtifact
+     (cond-> {:artifact/content (render-fragment blocks)
+              :artifact/media-type "text/html"
+              :artifact/encoding "utf-8"
+              :artifact/locale (:publication/locale intent)
+              :artifact/revision concrete-revision}
+       receipt (assoc :artifact/content-revision (:translation/revision receipt))))))
+
 (defn artifact-source
   "The artifact one admitted intent renders to, at one concrete revision.
 
@@ -125,15 +114,7 @@
                    (await (source-blocks! roots document))
                    (await (translated-blocks! client scope roots document intent
                                               receipt content-root)))]
-      (when (seq blocks)
-        (law/assert-valid!
-         :publication/runtime-artifact
-         law/PublicationArtifact
-         {:artifact/content (render-fragment blocks)
-          :artifact/media-type "text/html"
-          :artifact/encoding "utf-8"
-          :artifact/locale (:publication/locale intent)
-          :artifact/revision concrete-revision})))))
+      (rendered-artifact intent concrete-revision receipt blocks))))
 
 (defn locale-admissible?
   [index]
@@ -145,6 +126,65 @@
 (defn configured?
   [config]
   (boolean (some-> (:publication-content-root config) str not-empty)))
+
+(defn- ^:async publication-context! [config scope evidence-store]
+  (let [records (await (publications/resource-records! config))
+        index (document-admission/visible-publication-index
+               (publications/publication-index records) scope)
+        documents (vec (vals (:documents index)))
+        roots (translation/document-source-roots config records)
+        source-revisions (await (source-revision/source-revisions!
+                                 config documents roots))
+        authored (await (contract-content/ensure-receipts!
+                         evidence-store index roots scope source-revisions))
+        desired-work (mapv #(assoc %
+                                   :translation/org-id (:org-id scope)
+                                   :translation/project (:project scope))
+                           (review-inventory/desired-work index source-revisions))]
+    {:index index :documents documents :roots roots
+     :source-revisions source-revisions :authored authored :desired-work desired-work}))
+
+(defn- ^:async reviewed-evidence! [config scope evidence-store context]
+  (let [{:keys [documents roots source-revisions authored desired-work]} context]
+    (await (translation/gate-evidence!
+            config evidence-store scope documents roots
+            {:source-revisions source-revisions
+             :current-authored authored
+             :desired-work desired-work
+             :authenticate-content? true
+             ;; Publication joins current split history, including a durable
+             ;; rejection whose projection has not yet completed.
+             :enforce-split-review-readiness? true
+             :split-store (split-registry/current)
+             :digest-hex crypto/sha256-hex}))))
+
+(defn- publication-facts [evidence facts]
+  (assoc facts :publication-content-revision
+         (fn [document garden locale revision]
+           (:translation/revision
+            (evidence-domain/receipt-for evidence document garden locale revision)))))
+
+(defn- runtime-reconciler [config scope journal context reviewed]
+  (let [{:keys [index roots]} context
+        {:keys [evidence facts]} reviewed
+        root (:publication-content-root config)
+        target {:publication-target/id target-id
+                :publication-target/kind :publication-target/static-site
+                :publication-target/config {:content-root root}
+                :publication-target/enabled? true}]
+    {:reconciler
+     (reconciler/make-reconciler
+      {:registry (registry/make-registry [target]
+                                         {:publication-target/static-site
+                                          static-site/static-site-target})
+       :store (static-site/static-site-store root)
+       :load-index! (constantly (js/Promise.resolve index))
+       :evidence-facts (constantly (publication-facts evidence facts))
+       :artifact-source (artifact-source (openplanner-client/client config)
+                                         scope index roots evidence root)
+       :locale-admissible? (locale-admissible? index)
+       :emit-receipt! (:emit! journal)})
+     :journal journal}))
 
 (defn ^:async make-runtime!
   "Build a request-scoped reconciler from fresh desired state and evidence.
@@ -160,48 +200,6 @@
                            (throw (ex-info "translation evidence persistence is not configured"
                                            {:status 503
                                             :code "translation_evidence_unavailable"})))
-        records (await (publications/resource-records! config))
-        index (document-admission/visible-publication-index
-               (publications/publication-index records) scope)
-        documents (vec (vals (:documents index)))
-        roots (translation/document-source-roots config records)
-        source-revisions (await (source-revision/source-revisions!
-                                 config documents roots))
-        authored (await (contract-content/ensure-receipts!
-                         evidence-store index roots scope source-revisions))
-        desired-work (mapv #(assoc %
-                                   :translation/org-id (:org-id scope)
-                                   :translation/project (:project scope))
-                           (review-inventory/desired-work index source-revisions))
-        {:keys [evidence facts]} (await (translation/gate-evidence!
-                                         config evidence-store scope documents roots
-                                         {:source-revisions source-revisions
-                                          :current-authored authored
-                                          :desired-work desired-work
-                                          :authenticate-content? true
-                                          ;; A split rejection is durable before
-                                          ;; its projection. Publication must
-                                          ;; join current history and fail closed
-                                          ;; during that crash window rather than
-                                          ;; trust an older whole-file approval.
-                                          :enforce-split-review-readiness? true
-                                          :split-store (split-registry/current)
-                                          :digest-hex crypto/sha256-hex}))
-        root (:publication-content-root config)
-        target {:publication-target/id target-id
-                :publication-target/kind :publication-target/static-site
-                :publication-target/config {:content-root root}
-                :publication-target/enabled? true}]
-    {:reconciler
-     (reconciler/make-reconciler
-      {:registry (registry/make-registry [target]
-                                         {:publication-target/static-site
-                                          static-site/static-site-target})
-       :store (static-site/static-site-store root)
-       :load-index! (constantly (js/Promise.resolve index))
-       :evidence-facts (constantly facts)
-       :artifact-source (artifact-source (openplanner-client/client config)
-                                         scope index roots evidence root)
-       :locale-admissible? (locale-admissible? index)
-       :emit-receipt! (:emit! journal)})
-     :journal journal}))
+        context (await (publication-context! config scope evidence-store))
+        reviewed (await (reviewed-evidence! config scope evidence-store context))]
+    (runtime-reconciler config scope journal context reviewed)))

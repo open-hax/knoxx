@@ -18,8 +18,28 @@ function wsUrl(base: string, sessionId?: string, conversationId?: string | null)
   return url.toString();
 }
 
+export type StreamTokenMetadata = { runId?: string; kind?: string } & (
+  | { operation?: undefined; offset?: undefined }
+  | { operation: 'replace'; offset: number }
+);
+
+function decodeTokenPayload(payload: Record<string, unknown>): { token: string; meta: StreamTokenMetadata } | null {
+  const runId = typeof payload.run_id === 'string' ? payload.run_id : undefined;
+  const kind = typeof payload.kind === 'string' ? payload.kind : undefined;
+  if (payload.operation !== undefined) {
+    if (payload.operation !== 'replace' || typeof payload.token !== 'string'
+      || (kind !== 'assistant_message' && kind !== 'reasoning')
+      || typeof payload.offset !== 'number' || !Number.isSafeInteger(payload.offset)
+      || payload.offset < 0 || payload.offset > payload.token.length) return null;
+    return { token: payload.token, meta: { runId, kind, operation: 'replace', offset: payload.offset } };
+  }
+  // An offset without its operation must never turn a full snapshot into a delta.
+  if (payload.offset !== undefined) return null;
+  return { token: String(payload.token ?? ''), meta: { runId, kind } };
+}
+
 export interface StreamHandlers {
-  onToken?: (token: string, meta?: { runId?: string; kind?: string }) => void;
+  onToken?: (token: string, meta?: StreamTokenMetadata) => void;
   onStats?: (stats: Record<string, unknown>) => void;
   onConsole?: (line: string) => void;
   onEvent?: (event: Record<string, unknown>) => void;
@@ -80,10 +100,9 @@ export function connectStream(
         const payload = message.payload ?? {};
 
         if (message.channel === "tokens") {
-          handlers.onToken?.(String(payload.token ?? ""), {
-            runId: payload.run_id as string | undefined,
-            kind: typeof payload.kind === "string" ? payload.kind : undefined,
-          });
+          const decoded = decodeTokenPayload(payload);
+          if (decoded) handlers.onToken?.(decoded.token, decoded.meta);
+          else handlers.onConsole?.('Malformed token packet');
         } else if (message.channel === "stats") {
           handlers.onStats?.(payload);
         } else if (message.channel === "console") {

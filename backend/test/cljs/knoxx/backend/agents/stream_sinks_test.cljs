@@ -1,5 +1,5 @@
 (ns knoxx.backend.agents.stream-sinks-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.realtime :as realtime]
             [knoxx.backend.infra.agent.stream.sinks :as sinks]
@@ -53,3 +53,15 @@
   (let [custom-sink {:fake true}]
     (is (= custom-sink (sinks/sink-or-default {:run-event-sink custom-sink})))
     (is (satisfies? sinks/IRunEventSink (sinks/sink-or-default {})))))
+
+(deftest replacement-sink-rejects-malformed-coordinates-before-effects
+  (let [effects* (atom [])
+        state {:run-id "run" :conversation-id "conv" :session-id "session"}]
+    (with-redefs [run-state/update-run! (fn [& args] (swap! effects* conj args))
+                  realtime/broadcast-ws-session! (fn [& args] (swap! effects* conj args))]
+      (doseq [[kind offset snapshot] [[:tool_call 0 "Text"] [:agent_message -1 "Text"]
+                                      [:agent_message 0.5 "Text"] [:reasoning 5 "Text"]
+                                      [:reasoning 0 nil] [:reasoning 0 ["Text"]]]]
+        (is (thrown-with-msg? cljs.core/ExceptionInfo #"Invalid stream replacement"
+                             (sinks/replace-stream-text! state kind offset snapshot))))
+      (is (empty? @effects*)))))
