@@ -283,3 +283,12 @@
   spore: none
   receipt-refs: cf279974633c6feb3ec5249bb7164f5cf6e4a32474e4bc1fc567c705f06ba234
   note: Test the registered routes instead of injecting projection evidence. Share the existing admitted org/project journal reader, retain the actual causal RED, and prove both CMS GET observations through real reconciliation and receipt GET. Full lint remains inherited red with exact causal diagnostic equality; scope qualification is not full repository admission. Own the disposable HTTP runtime and exact source proof. Process-local receipts remain a durability prerequisite; source tests are not production or Spanish provider proof. No extra spore or promotion.
+- ts: 2026-10-14T13:56:04.941859802Z
+  session: 01a12257-fc69-7720-888c-dd2595ff7dc7
+  task: scope-existing-WebSocket-port-for-real-frontend-migration
+  p-efficiency: 0.78
+  p-friction: 0.35
+  p-skill-candidate: 0.00
+  spore: none
+  receipt-refs: 139ae20e4a813bc7461453445e7766d21853ea73,264d62bec18e2ee618b8a4fd0952f060448489d23add28e5eac43c80ebc0a3c1
+  note: A failing migration progress law needs actual source retirement with preserved behavior. Keep a small slice within its existing card and preserve all metadata and historical body. Separate native API parity from inherited lifecycle hardening, and an observed local browser runtime from required hosted capability. Publish concrete scope and use canonical planning/readiness before RED; no inflated estimate, inaccurate infrastructure exemption, invented readiness or new planning stack. No new spore or promotion.
