@@ -1,14 +1,14 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, RunDetail } from '../../lib/types';
-import { connectStream, type StreamConnection, type StreamHandlers } from '../../lib/ws';
+import { connectStream, type StreamConnection, type StreamHandlers } from '../../lib/api';
 import { getRun, knoxxUndoSessionTurn } from '../../lib/api';
 import { createChatRuntimeActions } from './chat-runtime-actions';
 import { useChatRuntimeEffects } from './chat-runtime-effects';
 
-vi.mock('../../lib/ws', () => ({ connectStream: vi.fn() }));
 vi.mock('../../lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../lib/api')>()),
+  connectStream: vi.fn(),
   getRun: vi.fn(),
   getRunEvents: vi.fn(),
   knoxxAbort: vi.fn(),

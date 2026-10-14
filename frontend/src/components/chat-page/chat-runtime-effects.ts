@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
-import { connectStream, type StreamConnection, type StreamTokenMetadata } from '../../lib/ws';
+import { connectStream, type StreamConnection, type StreamTokenMetadata } from '../../lib/api';
 import { getRunEvents } from '../../lib/api';
 import type { ChatMessage, RunDetail, RunEvent } from '../../lib/types';
 import type { SemanticSearchMatch } from './types';
