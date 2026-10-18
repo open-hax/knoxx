@@ -169,12 +169,19 @@
    [:preview {:optional true} [:maybe :string]]])
 
 (def TokenEvent
-  [:map {:closed false}
-   [:run_id :string]
-   [:conversation_id :string]
-   [:session_id :string]
-   [:kind [:enum "assistant_message" "reasoning"]]
-   [:token :string]])
+  [:and
+   [:map {:closed false}
+    [:run_id :string]
+    [:conversation_id :string]
+    [:session_id :string]
+    [:kind [:enum "assistant_message" "reasoning"]]
+    [:token :string]
+    [:operation {:optional true} [:enum "replace"]]
+    [:offset {:optional true} [:int {:min 0 :max 9007199254740991}]]]
+   [:fn (fn [{:keys [token offset] :as event}]
+          (if (contains? event :operation)
+            (and (string? token) (number? offset) (<= offset (count token)))
+            (not (contains? event :offset))))]])
 
 (def TurnResponse
   [:map {:closed false}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchIngestionProgress } from '../lib/nextApi';
-import { connectStream } from '../lib/ws';
+import { connectStream } from '../lib/api';
 
 interface StatSample {
   t: number;

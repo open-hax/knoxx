@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatTraceBlock, MemorySessionRow } from "../../lib/types";
 import {
   appendTraceTextDelta,
+  replaceTraceText,
   contextPath,
   memoryRowsToMessages,
   selectWorkspaceJob,
@@ -142,11 +143,11 @@ describe("workspace-context shared utilities", () => {
     expect(memoryRowsToMessages(rows).map((m) => m.id)).toEqual(["r:assistant"]);
   });
 
-  it("collapses overlapping streaming trace deltas", () => {
-    const blocks: ChatTraceBlock[] = [{ id: "reasoning-1", kind: "reasoning", status: "streaming", content: "The answer" }];
+  it("preserves repeated characters and whitespace in literal streaming trace deltas", () => {
+    const blocks: ChatTraceBlock[] = [{ id: "reasoning-1", kind: "reasoning", status: "streaming", content: "Knox" }];
 
-    expect(appendTraceTextDelta(blocks, "reasoning", "answer is stable.")).toEqual([
-      { id: "reasoning-1", kind: "reasoning", status: "streaming", content: "The answer is stable.", at: undefined },
+    expect(appendTraceTextDelta(appendTraceTextDelta(blocks, "reasoning", "x\n"), "reasoning", "\n")).toEqual([
+      { id: "reasoning-1", kind: "reasoning", status: "streaming", content: "Knoxx\n\n", at: undefined },
     ]);
   });
 });
@@ -163,3 +164,86 @@ function job(job_id: string, status: string, created_at: string): WorkspaceJob {
     chunks_created: 0,
   };
 }
+
+
+describe("explicit trace text corrections", () => {
+  const prefix = "🌱 prior. ";
+  const blocks: ChatTraceBlock[] = [
+    { id: "prior", kind: "agent_message", status: "done", content: prefix },
+    { id: "reason", kind: "reasoning", status: "streaming", content: "Reasoning" },
+    { id: "tool", kind: "tool_call", status: "done", toolCallId: "tool-1" },
+    { id: "current", kind: "agent_message", status: "streaming", content: "Draft" },
+    { id: "later-tool", kind: "tool_call", status: "done", toolCallId: "tool-2" },
+    { id: "obsolete", kind: "agent_message", status: "streaming", content: " stale" },
+  ];
+
+  it("preserves earlier provider text, tools, and reasoning while replacing only the current text tail", () => {
+    const corrected = replaceTraceText(blocks, "agent_message", prefix + "Final", prefix.length);
+    expect(corrected).toEqual([
+      blocks[0], blocks[1], blocks[2], { ...blocks[3], content: "Final" }, blocks[4],
+    ]);
+    expect(replaceTraceText(corrected, "agent_message", prefix + "Final", prefix.length)).toEqual(corrected);
+    expect(blocks[3].content).toBe("Draft");
+  });
+
+  it("preserves a prefix inside a crossing block and removes only matching-kind later blocks", () => {
+    expect(replaceTraceText([{ ...blocks[0], content: "PrefixDraft" }, blocks[2], blocks[5]], "agent_message", "PrefixFinal", 6)).toEqual([
+      { ...blocks[0], content: "PrefixFinal", status: "streaming" }, blocks[2],
+    ]);
+  });
+
+  it("removes an empty corrected suffix without removing tools or the other text kind", () => {
+    expect(replaceTraceText(blocks, "agent_message", prefix, prefix.length)).toEqual(blocks.slice(0, 3).concat(blocks[4]));
+    expect(replaceTraceText(blocks, "reasoning", "", 0)).toEqual(blocks.filter((block) => block.kind !== "reasoning"));
+  });
+
+  it("preserves a completed prefix when an empty correction cuts a crossing block", () => {
+    const prefixBlock: ChatTraceBlock = { id: "prior", kind: "agent_message", status: "done", content: "PrefixDraft" };
+    expect(replaceTraceText([prefixBlock, blocks[2], blocks[5]], "agent_message", "Prefix", 6)).toEqual([
+      { ...prefixBlock, content: "Prefix" }, blocks[2],
+    ]);
+  });
+
+  it("retains an entire prior block when the corrected current message has no existing trace block", () => {
+    const corrected = replaceTraceText(blocks.slice(0, 3), "agent_message", prefix + "Final", prefix.length);
+    expect(corrected.slice(0, 3)).toEqual(blocks.slice(0, 3));
+    expect(corrected[3]).toMatchObject({ kind: "agent_message", status: "streaming", content: "Final" });
+  });
+
+  it("allocates distinct text identities after a correction removes interleaved blocks", () => {
+    const interleaved: ChatTraceBlock[] = [
+      { id: "reasoning:0", kind: "reasoning", status: "streaming", content: "First thought" },
+      { id: "agent_message:1", kind: "agent_message", status: "done", content: "Prior" },
+      { id: "reasoning:2", kind: "reasoning", status: "streaming", content: "Second thought" },
+      { id: "agent_message:3", kind: "agent_message", status: "done", content: "Kept" },
+      { id: "tool:t", kind: "tool_call", status: "done", toolCallId: "t" },
+    ];
+    const cleared = replaceTraceText(interleaved, "reasoning", "", 0);
+    const appended = appendTraceTextDelta(cleared, "agent_message", "Later");
+    expect(appended.slice(0, 3)).toEqual([interleaved[1], interleaved[3], interleaved[4]]);
+    expect(appended[3]).toMatchObject({ kind: "agent_message", content: "Later" });
+    expect(new Set(appended.map(({ id }) => id)).size).toBe(appended.length);
+    const fallback = replaceTraceText(cleared, "reasoning", "Fresh thought", 0);
+    expect(fallback.slice(0, 3)).toEqual(cleared);
+    expect(new Set(fallback.map(({ id }) => id)).size).toBe(fallback.length);
+  });
+
+  it.each(["agent_message", "reasoning"] as const)("recovers the entire %s snapshot when no channel prefix was retained", (kind) => {
+    const untouched = blocks.filter((block) => block.kind !== kind);
+    const snapshot = prefix + "Corrected";
+    const corrected = replaceTraceText(untouched, kind, snapshot, prefix.length);
+    expect(corrected.slice(0, untouched.length)).toEqual(untouched);
+    expect(corrected.filter((block) => block.kind === kind).map((block) => block.content ?? "").join("")).toBe(snapshot);
+    expect(replaceTraceText(corrected, kind, snapshot, prefix.length)).toEqual(corrected);
+  });
+
+  it.each(["🌱 pri", "Stale prior. "])("converges a partial or stale retained prefix %j to the complete snapshot", (retained) => {
+    const original = [{ ...blocks[0], content: retained }, blocks[2], blocks[3], blocks[1], blocks[4], blocks[5]];
+    const snapshot = prefix + "Corrected";
+    const corrected = replaceTraceText(original, "agent_message", snapshot, prefix.length);
+    expect(corrected.filter((block) => block.kind === "agent_message").map((block) => block.content ?? "").join("")).toBe(snapshot);
+    expect(corrected.filter((block) => block.kind !== "agent_message")).toEqual([blocks[2], blocks[1], blocks[4]]);
+    expect(replaceTraceText(corrected, "agent_message", snapshot, prefix.length)).toEqual(corrected);
+    expect(original[0].content).toBe(retained);
+  });
+});

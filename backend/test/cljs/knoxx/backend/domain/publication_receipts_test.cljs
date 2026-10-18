@@ -85,11 +85,12 @@
 
     (testing "a titled materialization projects the title, and still agrees
               with what the planner desires for a titled document"
-      (let [titled (assoc materialized :materialized/title "Probe")
+      (let [titled (assoc materialized :materialized/title "Probe"
+                                     :materialized/content-revision "reviewed-output")
             observed-titled (receipts/observed-materialization titled)
             desired (plan/desired-materialization
                      {:publication/path "/docs/demo" :document/title "Probe"}
-                     "abc123")]
+                     "abc123" "reviewed-output")]
         (is (= (set receipts/drift-keys) (set (keys observed-titled))))
         (is (= desired observed-titled)
             "a route whose title matches converges; one whose title is absent
@@ -140,5 +141,6 @@
                 (keys (receipts/observed-materialization materialized))))
     (is (= (set receipts/drift-keys)
            (set (keys (receipts/observed-materialization
-                       (assoc materialized :materialized/title "Probe")))))
-        "and a titled one projects all of them")))
+                       (assoc materialized :materialized/title "Probe"
+                                           :materialized/content-revision "reviewed-output")))))
+        "a titled output-bound receipt projects all optional convergence fields")))

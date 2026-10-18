@@ -64,6 +64,17 @@
                      intent (assoc artifact :artifact/revision "..."))
                     (str/split #"/"))))))
 
+(deftest translated-path-requires-bounded-file-identity
+  (let [translated (assoc artifact :artifact/content-revision "source+es@run/a")
+        file-id (apply str (repeat 64 "a"))
+        route (manifest/route-for-artifact intent translated file-id)]
+    (is (= (str "artifacts/knoxx.docs/probe/es/" file-id ".html") (:route/artifact route)))
+    (is (= "rev-7f3a91c" (:route/revision route)))
+    (is (= "source+es@run/a" (:route/content-revision route)))
+    (is (thrown? js/Error (manifest/artifact-relative-path intent translated)))
+    (doseq [invalid ["sanitized-run-a" "../run" (apply str (repeat 65 "a"))]]
+      (is (thrown? js/Error (manifest/route-for-artifact intent translated invalid))))))
+
 ;; ── routes ─────────────────────────────────────────────────────────────────
 
 (deftest route-carries-the-document-title

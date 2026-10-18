@@ -110,7 +110,8 @@
        (assoc :idempotency/key
               (try (effects/publish-idempotency-key (effects/target-id target)
                                                     (:intent plan)
-                                                    (:concrete-revision plan))
+                                                    (:concrete-revision plan)
+                                                    (get-in plan [:desired :materialized/content-revision]))
                    (catch :default _ nil)))
        (or (receipts-law/artifact-revision-conflict? evidence)
            (receipts-law/artifact-locale-conflict? evidence))
