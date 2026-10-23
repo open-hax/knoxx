@@ -6,7 +6,18 @@
  :nrepl {:port 4500},
  :js-options {:js-provider :import},
  :builds
- {:app
+ {:graph-query-probe
+  {:target :esm
+   :output-dir "dist-graph-probe"
+   :modules {:probe {:entries [knoxx.backend.infra.clients.openplanner-mongo]
+                     :exports {:createActorTools knoxx.backend.domain.mcp.mcp-expose/create-knoxx-custom-tools-js
+                              :config knoxx.backend.infra.config/cfg
+                              :close knoxx.backend.extern.openplanner-sdk/close-sdk!}}}
+   :js-options {:js-provider :import}
+   :compiler-options {:output-feature-set :es-next
+                      :optimizations :simple
+                      :infer-externs false}}
+  :app
   {:target :esm,
    :output-dir "dist",
    :modules
