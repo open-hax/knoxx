@@ -213,3 +213,13 @@
   spore: none
   receipt-refs: 9a859cde46ce6d9e7b8b123f5ea24514dd2a0ecac564d98dd7741c74cfba27c4
   note: "Bound changes to the exact runtime pin and required accountability; preserve prior bytes, incoming state and branch policy. Native service proof does not qualify a later member head."
+
+- ts: 2026-10-23T10:19:59.822353Z
+  session: codex/foresight-antigravity-rollout
+  task: Publish knoxx R6 reviewer runtime pin
+  p-efficiency: 0.95
+  p-friction: 0.05
+  p-skill-candidate: 0.0
+  spore: none
+  receipt-refs: 1094b45eb5e7230a0f99f5a773c8219c2cf58a6fd99960d62f265eb4a726ebbe
+  note: "Bound changes to the exact runtime pin and required accountability; preserve prior bytes, incoming state and branch policy. Native service proof does not qualify a later member head."
