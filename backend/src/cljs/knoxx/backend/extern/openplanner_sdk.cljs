@@ -7,7 +7,8 @@
    data shaped exactly like the corresponding /v1 REST response bodies."
   (:require ["@open-hax/openplanner-sdk" :as sdk-mod]
             ["@open-hax/openplanner-sdk/mongo-vectors" :as mongo-vectors]
-            [knoxx.backend.extern.json :as xjson]))
+            [knoxx.backend.extern.json :as xjson]
+            [knoxx.backend.extern.openplanner-graph :as graph]))
 
 (defonce ^:private sdk-promise* (atom nil))
 
@@ -53,6 +54,12 @@
 (defn- mongo-ctx
   ^js [^js sdk]
   #js {:mongo (.-mongo sdk)})
+
+(defn ^:async graph-memory
+  "Read structural graph memory through the configured SDK Mongo connection."
+  [payload]
+  (let [sdk (await (get-sdk!))]
+    (await (graph/query! (.-mongo sdk) payload))))
 
 (defn- configured-embedding-dimensions!
   []

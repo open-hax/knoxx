@@ -298,7 +298,8 @@
      (openplanner-client/client config)
      (cond-> {:q (or query "")
               :k limit
-              :includeText true}
+              :includeText true
+              :edgeLimit (max 0 (min 60 (or edge-limit 30)))}
        node-types (assoc :nodeTypes node-types)
        lakes (assoc :lakes lakes)
        max-cost (assoc :maxCost max-cost)))))
