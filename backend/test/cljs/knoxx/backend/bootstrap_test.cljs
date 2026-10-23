@@ -114,9 +114,9 @@
             :ensure-json-parser
             :add-debug-hook
             :register-default-plugins
-            :register-ws-routes
             :add-session-hook
             :register-http-routes
+            :register-ws-routes
             :start-persistence
             [:listen "127.0.0.1" 8123]
             :remember-app
@@ -125,4 +125,3 @@
             :notify-ready
             :log-listening]
            @events*))))
-

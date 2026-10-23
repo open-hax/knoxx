@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.auth.session
   (:refer-clojure :exclude [set])
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.auth.oidc :as oidc]
             [knoxx.backend.infra.clients.github :as github-client]
             [knoxx.backend.infra.db.policy :as policy-db]
             ["node:crypto" :as crypto]
@@ -528,13 +529,14 @@
   [_policy-context]
   (fn session-hook [req reply]
     (when (protected-auth-path? req)
-      (let [headers (.-headers req)
-            header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
-            header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
-            cookie-token (some-> req (aget "cookies") (aget COOKIE-NAME))]
-        (when (and (str/blank? header-email) (str/blank? header-mid) cookie-token)
-          (when-let [session-id (:sid (verify-token cookie-token))]
-            (hydrate-session-headers! reply headers session-id cookie-token)))))))
+      (when-not (oidc/present? req)
+        (let [headers (.-headers req)
+              header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
+              header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
+              cookie-token (some-> req (aget "cookies") (aget COOKIE-NAME))]
+          (when (and (str/blank? header-email) (str/blank? header-mid) cookie-token)
+            (when-let [session-id (:sid (verify-token cookie-token))]
+              (hydrate-session-headers! reply headers session-id cookie-token))))))))
 
 
 (defn resolve-auth-context
@@ -542,6 +544,9 @@
   (let [header-email (str/trim (or (aget (.-headers req) "x-knoxx-user-email") ""))
         header-mid (str/trim (or (aget (.-headers req) "x-knoxx-membership-id") ""))]
     (cond
+      (oidc/present? req)
+      (oidc/resolve-request! req policy-context)
+
       (or (not (str/blank? header-email)) (not (str/blank? header-mid)))
       (policy-db/resolve-context! policy-context (.-headers req))
 

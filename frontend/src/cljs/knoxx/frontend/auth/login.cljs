@@ -5,7 +5,8 @@
             [helix.core :as hx :refer [$ defnc]]
             [helix.hooks :as hooks]
             [helix.dom :as d]
-            [knoxx.frontend.auth.api :as api]))
+            [knoxx.frontend.auth.api :as api]
+            [knoxx.frontend.auth.device :as device]))
 
 (def ^:private input-class
   "w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none")
@@ -109,6 +110,14 @@
 (defn- url-param [k]
   (.get (js/URLSearchParams. js/window.location.search) k))
 
+(defnc device-login
+  "Present the same-origin device login control."
+  []
+  (let [container (hooks/use-ref nil)]
+    (hooks/use-effect []
+      (device/mount! @container #(js/window.location.reload)))
+    (d/div {:ref container})))
+
 (defnc login-page [{:keys [error on-login-success]}]
   (let [[config set-config!] (hooks/use-state nil)
         invite-code (url-param "invite")
@@ -129,10 +138,17 @@
                     (error-box error))
                   (when (some-> ^js config .-localPasswordEnabled)
                     ($ local-login-form {:on-success on-login-success}))
+                  (when (some-> ^js config .-axxiumOidcEnabled)
+                    (d/a {:href "/api/auth/axxium/start"
+                          :class-name (str submit-class " block text-center")}
+                         "Continue with Axxium"))
+                  (when (some-> ^js config .-axxiumDeviceEnabled)
+                    ($ device-login))
                   (if (some-> ^js config .-githubEnabled)
                     (github-button (some-> ^js config .-loginUrl))
-                    (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
-                           "GitHub OAuth is not configured. Contact your administrator."))
+                    (when-not (some-> ^js config .-axxiumOidcEnabled)
+                      (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
+                             "GitHub OAuth is not configured. Contact your administrator.")))
                   (divider "or redeem an invite")
                   ($ invite-form {:initial-code invite-code
                                   :initial-email invite-email
