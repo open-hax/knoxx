@@ -34,3 +34,35 @@ They do not claim vector similarity, weighted semantic traversal, or vector
 coverage for the audit corpus. Lake filters constrain stored project names;
 node-type filters select seeds, while incident endpoint types can differ.
 The existing REST mode retains its own graph query implementation.
+
+## Observed candidate verification
+
+The candidate compiled from `28e42721962d2ad15646087f962ae886d6341ded`
+was invoked inside the existing production backend container as its unprivileged
+`node` user, using its existing application configuration. The isolated module
+lived under `/app/state/verification/direct-mongo-audit-graph/`; production
+application modules and serving processes were unchanged.
+
+The actual actor tool factory exposed `graph_query` for `system_admin`. Its
+execute function passed harness/principal retrieval, syscall provenance,
+incident host/effective-principal/path relations, zero edge budget, wrong-lake
+isolation and denied-context tool filtering. One returned observation was
+`audit:observation:67102285bcffbd42945508260593fcc934948b4589b537d9752b7f320d3351e5`,
+pointing to the same SHA in `linux_audit.events`. This is a read of live data,
+not a seeded fixture and not a model-generated answer.
+
+Local and remote SHA-256 hashes matched:
+
+- `probe.js`: `1fee919e723e6ef03d74fad8e46580077787f64f272c6af21bb9e1427a183163`
+- `knoxx.backend.extern.openplanner_graph.js`: `de6cc8d3c46d893594ca784aec3af9eb7a7a84c3d4a5d0e65747c319e3ba139a`
+- `knoxx.backend.domain.graph_query.js`: `51462800d65c150a2e296419bab7cb6c255eee031587bdfd07a5e0dee5fa5b73`
+
+The probe includes the current main branch's `fs-ext-extra-prebuilt` runtime
+dependency in its isolated directory because the older serving image lacks it.
+No package was installed into the serving application's node_modules.
+
+The current-main candidate suite passed 1,851 tests and 9,119 assertions with
+zero failures/errors and zero compiler warnings. Server and probe builds passed.
+A separate invocation of the connected production MCP `graph_query` still
+returned `OpenPlanner is not configured`: reviewed deployment and that final
+connected-tool readback remain outstanding.
