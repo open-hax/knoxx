@@ -156,3 +156,13 @@
   spore: none
   receipt-refs: pr-review-to-merge
   note: A review queue needs a merged-state completion gate and a continuation objective that still owns fixes, reviewers and merge. Direct user-requested skill authored; no additional spore or automatic distribution. Separate worktrees preserve concurrent global skill edits.
+
+- ts: 2026-10-23T04:52:17.095949Z
+  session: wright/knoxx-axxium-oidc-consumer
+  task: Prepare bounded redirect SSO consumer and fail-closed admission
+  p-efficiency: 0.70
+  p-friction: 0.56
+  p-skill-candidate: 0.40
+  spore: none
+  receipt-refs: 2026-10-23T04:52:17.095949Z
+  note: Compiler success can coexist with a runtime import failure and exit 0. Check actual execution. Optional native hooks, cached request contexts and upgraded transports each need explicit revocation admission. No spore or global distribution; dependency and compiler failures remain visible to the parent.

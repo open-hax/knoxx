@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.auth.authz
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.auth.oidc :as oidc]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.http :as http]
@@ -55,20 +56,24 @@
   [runtime request]
   (if-not (policy-db-enabled? runtime)
     nil
-    (if-let [cached (aget request "__knoxxRequestContext")]
-      cached
-      (let [headers (or (aget request "headers") #js {})
-            header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
-            header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
-            policy-context (policy-db runtime)
-            ctx-promise (if (or (not (str/blank? header-email))
-                                (not (str/blank? header-mid)))
-                          (db-policy/resolve-context! policy-context headers)
-                          ;; Fall back to cookie-backed auth context resolution.
-                          (auth-session/resolve-auth-context request policy-context))
-            ctx (await ctx-promise)]
-        (aset request "__knoxxRequestContext" ctx)
-        ctx))))
+    (if (oidc/present? request)
+      ;; A reused request (including upgraded transports) cannot turn a past
+      ;; OIDC admission or hydrated identity headers into permanent authority.
+      (auth-session/resolve-auth-context request (policy-db runtime))
+      (if-let [cached (aget request "__knoxxRequestContext")]
+        cached
+        (let [headers (or (aget request "headers") #js {})
+              header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
+              header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
+              policy-context (policy-db runtime)
+              ctx-promise (if (or (not (str/blank? header-email))
+                                  (not (str/blank? header-mid)))
+                            (db-policy/resolve-context! policy-context headers)
+                            ;; Fall back to cookie-backed auth context resolution.
+                            (auth-session/resolve-auth-context request policy-context))
+              ctx (await ctx-promise)]
+          (aset request "__knoxxRequestContext" ctx)
+          ctx)))))
 
 (defn ^:async with-request-context!
   "Resolve auth context and call (f ctx). Returns a promise.

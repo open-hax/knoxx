@@ -129,11 +129,17 @@
     (catch :default _ nil)))
 
 (defn- provider-choice [config]
-  (if (some-> ^js config .-githubEnabled)
+  (d/div {:class-name "space-y-3"}
+   (when (some-> ^js config .-axxiumOidcEnabled)
+     (d/a {:href "/api/auth/axxium/start"
+           :class-name (str submit-class " block text-center")}
+          "Continue with Axxium"))
+   (if (some-> ^js config .-githubEnabled)
     (github-button (some-> ^js config .-loginUrl))
-    (when-not (= "axxium" (some-> ^js config .-identityProvider))
+    (when-not (or (some-> ^js config .-axxiumOidcEnabled)
+                  (= "axxium" (some-> ^js config .-identityProvider)))
       (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
-             "GitHub OAuth is not configured. Contact your administrator."))))
+             "GitHub OAuth is not configured. Contact your administrator.")))))
 
 (defn- local-login-choice [config on-login-success]
   (when (some-> ^js config .-localPasswordEnabled)

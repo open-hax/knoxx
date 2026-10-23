@@ -1,4 +1,5 @@
 .env
+.verify-axxium-oidc.*/
 node_modules/
 dist/
 backend/target/
