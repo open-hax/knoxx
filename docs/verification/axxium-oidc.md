@@ -24,8 +24,11 @@ do not put them in tracked files, browser storage or verification transcripts.
 The **only** callback URI to register is
 `<KNOXX_PUBLIC_BASE_URL>/api/auth/axxium/callback`. The authority should register
 `authorization_code`, response type `code`, `client_secret_post`, and
-`openid profile`. This consumer does not request email, refresh tokens, roles,
-administration, device access or federation permission.
+`openid profile`. Set the authority client's `refresh-enabled?` option for
+root-bound rotating refresh tokens retained only in the product backend.
+Optional device initiation requires `KNOXX_AXXIUM_DEVICE_ENABLED=true` and an
+RFC8628-enabled authority client. No offline access, email, roles, administration,
+or federation permission is requested. See `renewal-device-source.md`.
 
 Each approved link is shaped like this **fictional example**, not an account
 to create:
@@ -98,7 +101,7 @@ login. Restart/reload loses these sessions and requires redirect login again.
 Multiple backend workers need sticky routing for start/callback/session traffic
 or a separately reviewed shared server-side store. Pending transactions are
 capped at 1,000 and sessions at 10,000, with expired entries pruned on insertion.
-With the authority's current five-minute ID-token lifetime, users reenter the
+With a code-only authority registration, users reenter the
 redirect flow at least that often; their authority-host root cookie provides
 SSO while valid. No root cookie is copied between machines.
 

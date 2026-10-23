@@ -4,6 +4,7 @@
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.axxium :as axxium]
             [knoxx.backend.infra.auth.oidc :as oidc]
+            [knoxx.backend.infra.auth.oidc-device :as oidc-device]
             [knoxx.backend.infra.auth.password :as password]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as policy-db]))
@@ -66,6 +67,7 @@
         (fn [_req ^js reply]
           (.send reply (clj->js {:githubEnabled github-enabled
                                  :axxiumOidcEnabled (oidc/enabled?)
+                                 :axxiumDeviceEnabled (true? (:device-enabled? (oidc-wire/configured)))
                                  :axxiumOidcLoginUrl (when (oidc/enabled?) "/api/auth/axxium/start")
                                  :localPasswordEnabled (or (axxium/enabled?) (local-password-enabled?))
                                  :identityProvider (when (axxium/enabled?) "axxium")
@@ -337,7 +339,10 @@
                             (not (str/blank? client-secret)))]
     (when policy-context
       (auth-session/set-db-session-store! policy-context))
-    (oidc/register! app policy-context (oidc-wire/configured) auth-session/resolve-auth-context)
+    (let [config (oidc-wire/configured)
+          consumer (when config (oidc/create-consumer config))]
+      (oidc/register-consumer! app policy-context consumer auth-session/resolve-auth-context)
+      (oidc-device/register! app consumer policy-context))
     (register-auth-config-route! app public-base-url github-enabled)
     (register-signup-route! app policy-context public-base-url)
     (register-local-login-route! app policy-context public-base-url)

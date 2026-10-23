@@ -12,7 +12,7 @@
               :membership {:id "membership-1" :actor-id "actor-1"} :org {:id "org-1"}
               :actor {:id "actor-1" :binding "actor-1"}})
 (def grant "Validated fixture identity lifetime." {:subject "subject-1" :expires-at 200000})
-(def evidence "Current client-scoped fixture introspection." {:active true :client_id "knoxx-fixture" :sub "subject-1" :exp 200})
+(def evidence "Current client-scoped fixture introspection." {:active true :scope "openid profile" :client_id "knoxx-fixture" :sub "subject-1" :exp 200})
 
 (defn rejected?
   "Extract only the error code from a rejected admission."
@@ -58,3 +58,13 @@
   (test/is (nil? (law/require-fresh-evidence! 100000 104999)))
   (test/is (= :oidc-evidence-stale (rejected? #(law/require-fresh-evidence! 100000 105000))))
   (test/is (= :oidc-evidence-stale (rejected? #(law/require-fresh-evidence! 100000 99999)))))
+
+(test/deftest cookie-writes-require-exact-product-origin
+  (doseq [method ["GET" "HEAD" "OPTIONS"]]
+    (test/is (nil? (law/require-browser-origin! config {:method method}))))
+  (doseq [method ["POST" "PUT" "PATCH" "DELETE"]]
+    (test/is (nil? (law/require-browser-origin! config
+                    {:method method :origin (:public-origin config)})))
+    (doseq [origin [nil "null" "https://sibling.example" "https://knoxx.example.attacker.test"]]
+      (test/is (= :oidc-origin-invalid
+                  (rejected? #(law/require-browser-origin! config {:method method :origin origin})))))))

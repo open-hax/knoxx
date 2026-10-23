@@ -5,7 +5,8 @@
             [helix.core :as hx]
             [helix.dom :as d]
             [helix.hooks :as hooks]
-            [knoxx.frontend.auth.api :as api]))
+            [knoxx.frontend.auth.api :as api]
+            [knoxx.frontend.auth.device :as device]))
 
 (def ^:private input-class
   "w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none")
@@ -128,12 +129,22 @@
     (set-config! (await (api/fetch-auth-config)))
     (catch :default _ nil)))
 
+(hx/defnc device-login
+  "Same-origin device presentation delegates all protocol work to the backend."
+  []
+  (let [container (hooks/use-ref nil)]
+    (hooks/use-effect []
+      (device/mount! @container #(js/window.location.reload)))
+    (d/div {:ref container})))
+
 (defn- provider-choice [config]
   (d/div {:class-name "space-y-3"}
    (when (some-> ^js config .-axxiumOidcEnabled)
      (d/a {:href "/api/auth/axxium/start"
            :class-name (str submit-class " block text-center")}
           "Continue with Axxium"))
+   (when (some-> ^js config .-axxiumDeviceEnabled)
+     (hx/$ device-login))
    (if (some-> ^js config .-githubEnabled)
     (github-button (some-> ^js config .-loginUrl))
     (when-not (or (some-> ^js config .-axxiumOidcEnabled)

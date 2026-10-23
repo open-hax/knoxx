@@ -216,3 +216,26 @@
                                (js/JSON.stringify (.-headers callback)))))
         (test/is (= 400 (.-statusCode (await (.inject app callback-request))))))
       (finally (await (.close app))))))
+
+(defn- ^:async verify-cookie-write-origin!
+  "Exercise the real admission hook and prove refusal precedes route effects."
+  [done]
+  (let [f (fixture) app (await (route-fixture! f)) effects (atom 0)]
+    (try
+      (.post app "/api/fixture/write"
+             (fn [_request reply]
+               (swap! effects inc)
+               (wire/send! reply 200 {:written true})))
+      (doseq [origin [nil "https://sibling.example" "https://knoxx.example.attacker.test" "https://knoxx.example"]]
+        (let [{:keys [session-id]} (await (sign-in! f))
+              headers (cond-> {:cookie (str wire/session-cookie "=" session-id)}
+                        origin (assoc :origin origin))
+              response (await (.inject app (clj->js {:method "POST" :url "/api/fixture/write"
+                                                       :headers headers})))]
+          (test/is (= (if (= origin "https://knoxx.example") 200 403) (.-statusCode response)))))
+      (test/is (= 1 @effects))
+      (catch :default error (test/is false (str error)))
+      (finally (await (.close app)) (done)))))
+
+(test/deftest cookie-write-origin-is-checked-before-route-effects
+  (test/async done (verify-cookie-write-origin! done)))

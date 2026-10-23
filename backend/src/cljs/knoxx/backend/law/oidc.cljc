@@ -51,6 +51,8 @@
                    (= subject (:sub evidence))
                    (or (nil? (:iss evidence)) (= issuer (:iss evidence)))
                    (or (nil? aud) (some #{client-id} audiences))
+                   (string? (:scope evidence))
+                   (contains? (set (re-seq #"\S+" (:scope evidence))) "openid")
                    (number? (:exp evidence)) (< now-ms (* 1000 (:exp evidence)))
                    (number? expires-at) (< now-ms expires-at))
       (throw (ex-info "Axxium login expired or was revoked. Sign in again."
@@ -64,3 +66,44 @@
   (when-not (<= 0 (- now started) 4999)
     (throw (ex-info "Axxium admission evidence took too long. Sign in again."
                     {:status 503 :code :oidc-evidence-stale}))))
+
+(def session-limit-ms "Finite browser admission bound, independent of token renewal." 86400000)
+(def refresh-window-ms "Refresh before normal token expiry." 30000)
+
+(defn session-bound
+  "A renewable browser session requires the authority's current stored parent bound."
+  [grant evidence now]
+  (if (:refresh-token grant)
+    (let [bound (:root_session_expires_at evidence)]
+      (when-not (and (number? bound) (< now (* bound 1000)))
+        (throw (ex-info "Axxium root session bound is missing" {:status 401 :code :oidc-grant-invalid})))
+      (min (+ now session-limit-ms) (* bound 1000)))
+    (:expires-at grant)))
+
+(defn require-renewal!
+  "Renewal preserves subject and original nonce; nonce may be omitted by the OP."
+  [previous renewed]
+  (when-not (and (= (:subject previous) (:subject renewed))
+                 (nonblank? (:refresh-token renewed))
+                 (not= (:refresh-token previous) (:refresh-token renewed))
+                 (or (nil? (:nonce renewed)) (= (:nonce previous) (:nonce renewed))))
+    (throw (ex-info "Shared login renewal refused" {:status 401 :code :oidc-grant-invalid})))
+  renewed)
+
+(defn device-poll-admission
+  "Pure browser transaction admission, separate from the engine's OAuth polling policy."
+  [tx now]
+  (cond
+    (nil? tx) :refuse
+    (<= (:expires-at tx) now) :expired
+    (= "completing" (:status tx)) :refuse
+    (< now (:next-poll tx)) :slow
+    :else :continue))
+
+(defn require-browser-origin!
+  "Require exact product origin for cookie-authenticated state changes."
+  [{:keys [public-origin]} {:keys [method origin]}]
+  (when-not (or (contains? #{"GET" "HEAD" "OPTIONS"} method)
+                (= public-origin origin))
+    (throw (ex-info "Shared login requires the configured Knoxx origin"
+                    {:status 403 :code :oidc-origin-invalid}))))

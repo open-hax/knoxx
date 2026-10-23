@@ -12,16 +12,30 @@
   {:before (fn []
              (set! api/fetch-auth-config
                    (fn [] (js/Promise.resolve #js {:axxiumOidcEnabled true
+                                                   :axxiumDeviceEnabled true
                                                    :localPasswordEnabled true
                                                    :githubEnabled false}))))
    :after (fn []
             (rtl/cleanup)
             (set! api/fetch-auth-config original-fetch-config))})
 
-(test/deftest ^:async redirect-entry-keeps-native-password-login
+(defn- ^:async redirect-entry*
+  "Test helper catches rejection through the explicit completion bridge."
+  []
   (let [page (rtl/render (hx/$ login/login-page {:on-login-success (fn [] nil)}))]
     (await (rtl/waitFor (fn [] (.getByRole page "link" #js {:name "Continue with Axxium"}))))
     (let [link (.getByRole page "link" #js {:name "Continue with Axxium"})]
       (test/is (= "/api/auth/axxium/start" (.getAttribute link "href"))))
     (test/is (some? (.getByRole page "button" #js {:name "Sign in with password"})))
-    (test/is (some? (.getByLabelText page "Password")))))
+    (test/is (some? (.getByLabelText page "Password")))
+    (test/is (some? (.getByRole page "button" #js {:name "Sign in using another device"})))))
+
+(defn- ^:async run-entry-test!
+  "Do not permit a rejected render helper to escape cljs.test completion."
+  [done]
+  (try (await (redirect-entry*))
+       (catch :default error (test/is false (str error)))
+       (finally (done))))
+
+(test/deftest redirect-entry-keeps-native-password-and-device-login
+  (test/async done (run-entry-test! done)))

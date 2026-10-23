@@ -4,7 +4,8 @@
             ["node:crypto" :as crypto]
             [cljs.test :as test]
             [knoxx.backend.extern.axxium-oidc :as wire]
-            [knoxx.backend.law.oidc-test :as fixture]))
+            [knoxx.backend.law.oidc-test :as fixture]
+            [knoxx.backend.law.oidc :as law]))
 
 (defn- response
   "Return a protocol JSON response to the RP's injected fetch transport."
@@ -54,6 +55,14 @@
                       (cond
                         (.endsWith path "/.well-known/openid-configuration") (response @discovery)
                         (= path "/oidc/jwks") (response {:keys [(assoc jwk :kid "fixture-key" :alg "RS256") ]})
+                        (and (= path "/oidc/token") (= "refresh_token" (.get params "grant_type")))
+                        (if (and (= "fixture-refresh" (.get params "refresh_token"))
+                                 (= (:client-id fixture/config) (.get params "client_id"))
+                                 (= (:client-secret fixture/config) (.get params "client_secret")))
+                          (response {:access_token "rotated-access" :refresh_token "rotated-refresh"
+                                     :token_type "Bearer" :expires_in 300
+                                     :id_token (await (signed-token (.-privateKey key-pair) (:nonce @expected) @claims))})
+                          (response {:error "invalid_grant"} 400))
                         (= path "/oidc/token")
                         (if (and (= (:challenge @expected) (pkce-challenge (or (.get params "code_verifier") "")))
                                  (= (wire/callback-uri fixture/config) (.get params "redirect_uri"))
@@ -137,3 +146,26 @@
       (finally
         (set! (.-setTimeout js/globalThis) original-set)
         (set! (.-clearTimeout js/globalThis) original-clear)))))
+
+(defn- ^:async refresh-protocol*
+  "Exercise the pinned library's refresh path and the separate nonce/subject continuity law."
+  [done]
+  (try
+    (let [{:keys [claims] :as f} (await (protocol-fixture!))
+          {:keys [rp tx]} (await (transaction! f))
+          previous {:subject "subject-1" :nonce (:nonce tx) :refresh-token "fixture-refresh"}]
+      (test/is (= "rotated-refresh" (:refresh-token (await (wire/refresh! rp fixture/config previous)))))
+      (doseq [invalid [{:iss "https://evil.invalid"} {:aud "other-client"} {:exp 1}]]
+        (reset! claims invalid)
+        (test/is (await (rejection? #(wire/refresh! rp fixture/config previous)))))
+      (doseq [invalid [{:nonce "substituted"} {:sub "other-subject"}]]
+        (reset! claims invalid)
+        (let [renewed (await (wire/refresh! rp fixture/config previous))]
+          (test/is (thrown? js/Error (law/require-renewal! previous renewed)))))
+      (reset! claims {:nonce nil})
+      (test/is (law/require-renewal! previous (await (wire/refresh! rp fixture/config previous)))))
+    (catch :default error (test/is false (str error)))
+    (finally (done))))
+
+(test/deftest maintained-rp-refresh-signature-and-identity-continuity
+  (test/async done (refresh-protocol* done)))

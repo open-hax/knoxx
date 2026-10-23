@@ -43,6 +43,7 @@
       :public-origin (aget (.-env js/process) "KNOXX_PUBLIC_BASE_URL")
       :client-id (aget (.-env js/process) "KNOXX_AXXIUM_OIDC_CLIENT_ID")
       :client-secret (aget (.-env js/process) "KNOXX_AXXIUM_OIDC_CLIENT_SECRET")
+      :device-enabled? (= "true" (aget (.-env js/process) "KNOXX_AXXIUM_DEVICE_ENABLED"))
       :links (js->clj (js/JSON.parse (or (aget (.-env js/process) "KNOXX_AXXIUM_OIDC_LINKS") "[]"))
                       :keywordize-keys true)})))
 
@@ -72,6 +73,10 @@
                                     #js {:id_token_signed_response_alg "RS256"}
                                     (client/ClientSecretPost (:client-secret config)) options))]
      (require-metadata! config (.serverMetadata rp))
+     (when (:device-enabled? config)
+       (let [endpoint (require-https! (.-device_authorization_endpoint (.serverMetadata rp)))]
+         (when-not (= (.-origin endpoint) (.-origin (js/URL. (:issuer config))))
+           (throw (ex-info "Device endpoint escaped configured authority" {:status 503})))))
      ;; Code flow over TLS does not otherwise require signature verification in
      ;; openid-client. Explicitly require JWKS verification as well as claims.
      (client/enableNonRepudiationChecks rp)
@@ -104,8 +109,42 @@
       (when-not (and (law/nonblank? (.-access_token tokens)) claims
                      (law/nonblank? (.-sub claims)) (number? (.-exp claims)))
         (throw (ex-info "OIDC response missing grant evidence" {:status 401})))
-      {:subject (.-sub claims) :expires-at (* 1000 (.-exp claims))
-       :access-token (.-access_token tokens)})))
+      {:subject (.-sub claims) :nonce (.-nonce claims)
+       :expires-at (min (* 1000 (.-exp claims))
+                        (+ (now-ms) (* 1000 (.-expires_in tokens))))
+       :refresh-token (.-refresh_token tokens) :access-token (.-access_token tokens)})))
+
+(defn- token-grant
+  "Shape only a library-validated token response; every identity field remains checked."
+  [config tokens]
+  (let [claims (.claims tokens)
+        aud (when claims (.-aud claims))
+        audiences (if (string? aud) [aud] (vec (array-seq aud)))]
+    (when-not (and claims (= (:issuer config) (.-iss claims))
+                   (some #{(:client-id config)} audiences)
+                   (law/nonblank? (.-sub claims)) (number? (.-exp claims))
+                   (law/nonblank? (.-access_token tokens)) (number? (.-expires_in tokens)))
+      (throw (ex-info "Shared login token refused" {:status 401 :code :oidc-grant-invalid})))
+    {:subject (.-sub claims) :nonce (.-nonce claims)
+     :expires-at (min (* 1000 (.-exp claims)) (+ (now-ms) (* 1000 (.-expires_in tokens))))
+     :access-token (.-access_token tokens) :refresh-token (.-refresh_token tokens)}))
+
+(defn ^:async refresh!
+  "Use the maintained refresh grant with signature checks enabled at discovery."
+  [rp config grant]
+  (let [renewed (token-grant config (await (client/refreshTokenGrant rp (:refresh-token grant))))]
+    renewed))
+
+(defn ^:async revoke-grant!
+  "Attempt both revocations even if one endpoint call fails."
+  [rp grant]
+  (let [results (await (js/Promise.allSettled
+                        (clj->js (mapv (fn [[hint token]]
+                                         (client/tokenRevocation rp token #js {:token_type_hint hint}))
+                                       (filter second [["refresh_token" (:refresh-token grant)]
+                                                       ["access_token" (:access-token grant)]])))))]
+    (when (some #(= "rejected" (.-status %)) (array-seq results))
+      (throw (ex-info "Shared login revocation unavailable" {:status 503})))))
 
 (defn ^:async introspect!
   "Return client-authenticated introspection as CLJS data."
@@ -117,10 +156,69 @@
   [rp token]
   (await (client/tokenRevocation rp token #js {:token_type_hint "access_token"})))
 
+(def device-cookie "Host-only device transaction handle." "__Host-knoxx_axxium_device")
+
+(defn- trusted-verification-uri!
+  "A verification link must stay at the fixed HTTPS authority, without userinfo/fragment."
+  [config value]
+  (let [url (js/URL. value)]
+    (when-not (and (= "https:" (.-protocol url))
+                   (= (.-origin url) (.-origin (js/URL. (:issuer config))))
+                   (= "" (.-username url)) (= "" (.-password url)) (= "" (.-hash url)))
+      (throw (ex-info "Device verification URI refused" {:status 503}))))
+  value)
+
+(defn ^:async device-start!
+  "Retain native device_code only inside an opaque, abortable library handle."
+  [rp config]
+  (let [response (await (client/initiateDeviceAuthorization rp #js {:scope "openid profile"}))
+        seconds (.-expires_in response)
+        interval (or (.-interval response) 5)
+        controller (js/AbortController.)]
+    (when-not (and (integer? seconds) (<= 1 seconds 600)
+                   (integer? interval) (<= 5 interval 600)
+                   (law/nonblank? (.-user_code response)))
+      (throw (ex-info "Device lifetime refused" {:status 503})))
+    (trusted-verification-uri! config (.-verification_uri response))
+    (when (.-verification_uri_complete response)
+      (trusted-verification-uri! config (.-verification_uri_complete response)))
+    {:handle #js {:response response :controller controller
+                  :timer (js/setTimeout (fn [] (.abort controller)) (* 1000 seconds))}
+     :expires-at (+ (now-ms) (* 1000 seconds))
+     :public (cond-> {:user_code (.-user_code response) :verification_uri (.-verification_uri response)
+                      :expires_in seconds :interval interval}
+               (.-verification_uri_complete response)
+               (assoc :verification_uri_complete (.-verification_uri_complete response)))}))
+
+(defn cancel-device!
+  "Abort library polling and release its bounded timer."
+  [handle]
+  (.abort (.-controller handle))
+  (js/clearTimeout (.-timer handle)))
+
+(defn ^:async device-grant!
+  "The maintained RP performs RFC8628 polling/backoff and ID signature/claim checks."
+  [rp config handle]
+  (try
+    (token-grant config
+      (await (client/pollDeviceAuthorizationGrant rp (.-response handle) nil
+               #js {:signal (.-signal (.-controller handle))})))
+    (catch :default error (throw error))))
+
+(defn device-failure
+  "Expose only bounded public status vocabulary, never protocol exception details."
+  [error]
+  (case (.-error error)
+    "access_denied" "denied"
+    "expired_token" "expired"
+    "failed"))
+
 (defn request-data
   "Decode only the request fields used by this boundary; cookies stay opaque."
   [request]
-  {:session-id (some-> request .-cookies (aget session-cookie))
+  {:method (.-method request)
+   :session-id (some-> request .-cookies (aget session-cookie))
+   :device-id (some-> request .-cookies (aget "__Host-knoxx_axxium_device"))
    :browser-binding (some-> request .-cookies (aget transaction-cookie))
    ;; Fastify's query parser uses a null/custom prototype. Decode entries
    ;; explicitly: js->clj alone leaves that native object opaque.
@@ -176,18 +274,35 @@
   "Give OIDC WebSocket transports a hard 25-second admission lease.
    Reconnection must pass introspection again. Close the underlying transport,
    rather than allowing an upgraded connection to retain an unlimited grant."
-  [request]
+  ([request] (limit-upgrade! request js/Infinity))
+  ([request expires-at]
   (when (upgraded-request? request)
     (when-let [socket (some-> request .-raw .-socket)]
-      (let [timer (js/setTimeout (fn [] (.destroy socket)) 25000)]
+      (let [timer (js/setTimeout (fn [] (.destroy socket)) (max 1 (min 25000 (- expires-at (now-ms)))))]
         (.unref timer)
-        (.once socket "close" (fn [] (js/clearTimeout timer)))))))
+        (.once socket "close" (fn [] (js/clearTimeout timer))))))))
 
 (defn register-routes!
   "Mount the fixed protocol routes with supplied async handlers."
-  [app {:keys [admit start callback logout]}]
+  [app {:keys [admit start callback logout device-start device-poll device-cancel]}]
   ;; This hook is mandatory for OIDC and independent of the native opt-in hook.
   (.addHook app "onRequest" admit)
   (.get app "/api/auth/axxium/start" start)
   (.get app callback-path callback)
-  (.post app "/api/auth/axxium/logout" logout))
+  (.post app "/api/auth/axxium/logout" logout)
+  (when device-start
+    (.post app "/api/auth/axxium/device/start" device-start)
+    (.post app "/api/auth/axxium/device/poll" device-poll)
+    (.post app "/api/auth/axxium/device/cancel" device-cancel)))
+
+(defn register-device-routes!
+  "Own Fastify registration for the three fixed same-origin device endpoints."
+  [app {:keys [start poll cancel]}]
+  (.post app "/api/auth/axxium/device/start" start)
+  (.post app "/api/auth/axxium/device/poll" poll)
+  (.post app "/api/auth/axxium/device/cancel" cancel))
+
+(defn on-device-expiry!
+  "Remove sensitive transaction state when the bounded controller aborts."
+  [handle expire!]
+  (.addEventListener (.-signal (.-controller handle)) "abort" expire! #js {:once true}))

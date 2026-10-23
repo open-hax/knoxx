@@ -10,11 +10,12 @@
   "Construct isolated state with explicit protocol effects, also used by adversarial tests."
   ([config]
    (create-consumer config {:discover! wire/discover! :authorization! wire/authorization!
-                            :exchange! wire/exchange! :introspect! wire/introspect!
+                            :exchange! wire/exchange! :refresh! wire/refresh! :introspect! wire/introspect!
+                            :revoke-grant! wire/revoke-grant!
                             :revoke! wire/revoke! :now wire/now-ms :random wire/random-id}))
   ([config effects]
    (wire/require-config! config)
-   {:config config :effects effects :client (atom nil) :pending (atom {}) :sessions (atom {})}))
+   {:config config :effects effects :client (atom nil) :pending (atom {}) :sessions (atom {}) :renewing (atom {}) :devices (atom {}) :cancel-device (atom nil)}))
 
 (defn enabled? "Report whether operator-configured redirect SSO is installed." []
   (some? @installed))
@@ -33,7 +34,7 @@
 (defn- require-consumer! "Fail closed for a cookie whose consumer is disabled." []
   (or @installed (unavailable!)))
 
-(defn- ^:async client!
+(defn ^:async client!
   "Retain only successful discovery; failure is never cached as admission."
   [{:keys [config effects client]}]
   (or @client
@@ -44,7 +45,7 @@
 (defn- prune!
   "Bound the lifetime and count of sensitive heap records."
   [entries now limit]
-  (swap! entries #(into {} (filter (fn [[_ value]] (< now (:expires-at value)))) %))
+  (swap! entries #(into {} (filter (fn [[_ value]] (< now (or (:session-expires-at value) (:expires-at value))))) %))
   (when (>= (count @entries) limit) (unavailable!)))
 
 (defn ^:async begin!
@@ -91,47 +92,106 @@
         evidence (await ((:introspect! effects) rp (:access-token grant)))]
     (law/require-grant! config grant evidence ((:now effects)))))
 
-(defn ^:async complete!
-  "Exchange one browser-bound code, require an approved local link and current grant."
-  [{:keys [config effects sessions] :as consumer} policy-context query browser-binding]
-  (let [transaction (consume-transaction! consumer query browser-binding)
-        rp (await (client! consumer))
-        grant (await ((:exchange! effects) rp config query transaction))]
+(declare revoke-grant!)
+
+(defn ^:async establish!
+  "Common code/device completion: linkage, local policy and live parent evidence."
+  [{:keys [config effects sessions] :as consumer} policy-context grant current?]
+  (let [rp (await (client! consumer))]
     (try
       (let [link (law/approved-link! (:links config) (:issuer config) (:subject grant))
             started ((:now effects))
             ctx (await (local-context! policy-context link))
-            _ (await (grant-evidence! consumer grant))
+            evidence (await (grant-evidence! consumer grant))
+            bound (law/session-bound grant evidence started)
             _ (law/require-fresh-evidence! started ((:now effects)))
             session-id ((:random effects))]
         (prune! sessions ((:now effects)) 10000)
-        (swap! sessions assoc session-id (assoc grant :link link))
+        (when-not (current?)
+          (throw (ex-info "Axxium session was signed out" {:status 401 :code :oidc-session-expired})))
+        (swap! sessions assoc session-id (assoc grant :link link :session-expires-at bound))
         {:session-id session-id :context ctx
-         :ttl (max 1 (quot (- (:expires-at grant) ((:now effects))) 1000))})
+         :ttl (max 1 (quot (- bound ((:now effects))) 1000))})
       (catch :default error
-        (try (await ((:revoke! effects) rp (:access-token grant)))
+        (try (await (revoke-grant! consumer rp grant))
              (catch :default _ nil))
         (throw error)))))
+
+(defn ^:async complete!
+  "Consume a browser-bound authorization code before using common admission."
+  [{:keys [config effects] :as consumer} policy-context query browser-binding]
+  (let [transaction (consume-transaction! consumer query browser-binding)
+        rp (await (client! consumer))
+        grant (await ((:exchange! effects) rp config query transaction))]
+    (await (establish! consumer policy-context grant (constantly true)))))
+
+(defn- ^:async revoke-grant!
+  "Revoke every server-held token; injected older fixtures may supply access-only effects."
+  [consumer rp grant]
+  (if-let [revoke (:revoke-grant! (:effects consumer))]
+    (await (revoke rp grant))
+    (await ((:revoke! (:effects consumer)) rp (:access-token grant)))))
+
+(defn- ^:async renew-session!
+  "A single rotation wins only while the exact prior session still exists."
+  [{:keys [config sessions effects] :as consumer} session-id previous]
+  (let [rp (await (client! consumer))
+        renewed (await ((:refresh! effects) rp config previous))]
+    (try
+      (law/require-renewal! previous renewed)
+      (let [evidence (await (grant-evidence! consumer renewed))
+            bound (min (:session-expires-at previous)
+                       (law/session-bound renewed evidence ((:now effects))))
+            current (merge previous renewed {:nonce (:nonce previous) :session-expires-at bound})]
+        (when-not (= previous (get @sessions session-id))
+          (throw (ex-info "Axxium session was signed out" {:status 401 :code :oidc-session-expired})))
+        (swap! sessions assoc session-id current)
+        current)
+      (catch :default error
+        (try (await (revoke-grant! consumer rp renewed)) (catch :default _ nil))
+        (throw error)))))
+
+(defn- ^:async current-grant!
+  "Singleflight is per opaque session, never per actor or browser account."
+  [{:keys [effects renewing] :as consumer} session-id grant]
+  (if (and (:refresh-token grant)
+           (<= (- (:expires-at grant) ((:now effects))) law/refresh-window-ms))
+    (if-let [pending (get @renewing session-id)]
+      (await pending)
+      (let [pending (renew-session! consumer session-id grant)]
+        (swap! renewing assoc session-id pending)
+        (try (await pending)
+             (finally (swap! renewing dissoc session-id)))))
+    grant))
 
 (defn ^:async resolve-session!
   "Authorize an opaque OIDC session with live authority evidence and fresh local policy."
   [{:keys [sessions effects] :as consumer} policy-context session-id]
   (let [grant (get @sessions session-id)]
-    (when-not (and grant (< ((:now effects)) (:expires-at grant)))
+    (when-not (and grant (< ((:now effects)) (or (:session-expires-at grant) (:expires-at grant))))
       (swap! sessions dissoc session-id)
       (throw (ex-info "Axxium session expired. Sign in again." {:status 401 :code :oidc-session-expired})))
     (try
-      (let [started ((:now effects))
+      (let [grant (await (current-grant! consumer session-id grant))
+            started ((:now effects))
             evidence (await (grant-evidence! consumer grant))
             ctx (await (local-context! policy-context (:link grant)))]
         (law/require-fresh-evidence! started ((:now effects)))
         (law/require-grant! (:config consumer) grant evidence ((:now effects)))
+        (when (:refresh-token grant)
+          (law/session-bound grant evidence ((:now effects))))
         ;; Logout must win an in-flight introspection or policy lookup.
         (when-not (= grant (get @sessions session-id))
           (throw (ex-info "Axxium session was signed out" {:status 401 :code :oidc-session-expired})))
-        (assoc ctx :auth-provider "axxium-oidc"))
+        (with-meta (assoc ctx :auth-provider "axxium-oidc")
+          {:oidc/expires-at (min (:expires-at grant)
+                                 (or (:session-expires-at grant) (:expires-at grant))
+                                 (law/session-bound grant evidence ((:now effects))))}))
       (catch :default error
-        (swap! sessions dissoc session-id)
+        (let [[before _] (swap-vals! sessions dissoc session-id)]
+          (when-let [current (get before session-id)]
+            (try (await (revoke-grant! consumer (await (client! consumer)) current))
+                 (catch :default _ nil))))
         (if (:code (ex-data error)) (throw error) (unavailable!))))))
 
 (defn resolve-request!
@@ -141,26 +201,29 @@
 
 (defn ^:async logout!
   "Delete local admission before revocation; failed authority calls cannot restore it."
-  [{:keys [sessions effects] :as consumer} session-id]
-  (let [[before _after] (swap-vals! sessions dissoc session-id)]
-    (when-let [grant (get before session-id)]
-      (await ((:revoke! effects) (await (client! consumer)) (:access-token grant))))))
+  ([consumer session-id] (await (logout! consumer session-id nil)))
+  ([{:keys [sessions cancel-device] :as consumer} session-id device-id]
+   (let [[before _after] (swap-vals! sessions dissoc session-id)]
+     (when-let [cancel @cancel-device] (await (cancel device-id)))
+     (when-let [grant (get before session-id)]
+       (await (revoke-grant! consumer (await (client! consumer)) grant))))))
 
 (defn ^:async logout-request!
   "Require exact trusted Origin for browser logout; report remote revocation failure safely."
   [request reply]
-  (let [{:keys [session-id origin browser-binding]} (wire/request-data request)
+  (let [{:keys [session-id origin browser-binding device-id]} (wire/request-data request)
         consumer (require-consumer!)]
     (if-not (= (get-in consumer [:config :public-origin]) origin)
       {:status 403 :body {:error "Logout requires the configured Knoxx origin"}}
       (do
         (wire/clear-cookie! reply wire/session-cookie)
         (wire/clear-cookie! reply wire/transaction-cookie)
+        (wire/clear-cookie! reply wire/device-cookie)
         (when browser-binding
           (swap! (:pending consumer)
                  #(into {} (remove (fn [[_ tx]] (= browser-binding (:browser-binding tx)))) %)))
         (try
-          (await (logout! consumer session-id))
+          (await (logout! consumer session-id device-id))
           {:status 200 :body {:ok true}}
           (catch :default _
             {:status 503 :body {:error "Signed out of Knoxx; authority revocation could not be confirmed"}}))))))
@@ -181,9 +244,16 @@
              (or (present? request) (and (enabled?) (wire/upgraded-request? request))))
     (try
       (if (present? request)
-        (do
-          (wire/replace-identity-headers! request (await (resolve-request! request policy-context)))
-          (wire/limit-upgrade! request))
+        (let [consumer (require-consumer!)
+                _ (law/require-browser-origin! (:config consumer) (wire/request-data request))
+                ctx (await (resolve-request! request policy-context))
+                id (:session-id (wire/request-data request))
+                grant (get @(:sessions consumer) id)
+                bound (or (:session-expires-at grant) (:expires-at grant))]
+            (wire/replace-identity-headers! request ctx)
+            (wire/set-cookie! reply wire/session-cookie id
+              (max 0 (quot (- bound (wire/now-ms)) 1000)))
+            (wire/limit-upgrade! request (:oidc/expires-at (meta ctx))))
         ;; A reconnect after a refused/cleared OIDC cookie must not become an
         ;; anonymous realtime subscription. Existing native identities still work.
         (if native-auth
