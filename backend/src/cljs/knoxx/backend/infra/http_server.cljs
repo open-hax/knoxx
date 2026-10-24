@@ -9,7 +9,7 @@
 
 (defn create-app!
   []
-  (Fastify #js {:logger true
+  (Fastify #js {:logger #js {:redact #js ["req.url" "req.headers.authorization" "req.headers.cookie"]}
                 :bodyLimit (* 50 1024 1024)
                 :requestTimeout 600000
                 :connectionTimeout 600000

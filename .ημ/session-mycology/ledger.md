@@ -183,3 +183,12 @@
   spore: none
   receipt-refs: knoxx-382-provenance-links
   note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
+- ts: 2026-10-23T06:49:14.972498138Z
+  session: /home/err/.local/share/codex-work/axxium-sso/knoxx-current
+  task: Verify selected shared owner and integrate current-release SSO sources
+  p-efficiency: 0.62
+  p-friction: 0.71
+  p-skill-candidate: 0.3
+  spore: none
+  receipt-refs: 67b6e410,7aed3176,cd68800
+  note: Port minimal source deltas onto current accepted releases; preserve independent append-only streams in their immutable commits and append owner-generated provenance instead of conflict union. Real Fastify origin/enrollment negative cases caught cross-product admission gaps. No spore or global memory mutation.
