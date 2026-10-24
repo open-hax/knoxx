@@ -83,3 +83,29 @@
 
 (deftest subject-and-nonce-continuity-and-finite-root-bound
   (async done (run-test! substitutions* done)))
+
+(defn- ^:async straddling-admission* []
+  (doseq [old-inactive? [false true]]
+    (let [{:keys [consumer policy clock evidence revoked]} (setup)
+          release (atom nil) entered (atom nil)
+          barrier (js/Promise. (fn [resolve _] (reset! release resolve)))
+          started (js/Promise. (fn [resolve _] (reset! entered resolve)))
+          blocked (assoc-in consumer [:effects :introspect!]
+                    (fn ^:async introspect [_ token]
+                      (if (= token "access")
+                        (do (@entered) (await barrier) (assoc @evidence :active (not old-inactive?)))
+                        @evidence)))]
+      (swap! (:sessions consumer) update "handle" assoc :expires-at 131000)
+      (let [straddling (oidc/resolve-session! blocked policy "handle")]
+        (await started)
+        (reset! clock 102000)
+        (is (:user (await (oidc/resolve-session! blocked policy "handle"))))
+        (@release)
+        (if old-inactive?
+          (is (await (refused straddling)))
+          (is (:user (await straddling))))
+        (is (= "rotated-server-only" (:refresh-token (get @(:sessions consumer) "handle"))))
+        (is (empty? @revoked) "old evidence must never revoke the successful successor")))))
+
+(deftest admission-straddling-the-renewal-window-preserves-the-successor
+  (async done (run-test! straddling-admission* done)))

@@ -107,3 +107,19 @@
                 (= public-origin origin))
     (throw (ex-info "Shared login requires the configured Knoxx origin"
                     {:status 403 :code :oidc-origin-invalid}))))
+
+(defn require-session-continuity!
+  "Renewal may replace tokens; logout, rebinding and the current deadline still fence admission."
+  [attempted current now]
+  (when-not (and current
+                 (= (select-keys attempted [:subject :link :nonce])
+                    (select-keys current [:subject :link :nonce]))
+                 (< now (or (:session-expires-at current) (:expires-at current))))
+    (throw (ex-info "Axxium session was signed out" {:status 401 :code :oidc-session-expired})))
+  current)
+
+(defn pending-evictions
+  "Choose oldest unadmitted entries to make one bounded slot, including equal-deadline ties."
+  [entries limit]
+  (->> entries (sort-by (comp :expires-at val))
+       (take (max 0 (inc (- (count entries) limit)))) (mapv key)))

@@ -107,19 +107,19 @@ SSO while valid. No root cookie is copied between machines.
 
 ## Automated verification
 
-Install dependencies and regenerate the backend lockfiles using a supported
-Node version (24 recommended) and the normal parent-owned package workflow.
-The dependency is pinned in `backend/package.json`; this worker could not
-resolve it from npm because registry DNS failed. **Lockfile resolution and
-runtime tests are outstanding; do not deploy this source from stale locks.**
+The maintained RP and backend lockfile are pinned and committed. Install with a
+supported Node24 runtime and the frozen lockfile. Parent runtime/backend/frontend
+checks have passed; the latest receipt records exact source and counts. The old
+worker registry-resolution limitation below is historical, not an outstanding
+lockfile requirement.
 
 ```sh
-pnpm -C backend add --save-exact openid-client@6.8.8
+pnpm -C backend install --frozen-lockfile
 pnpm -C backend typecheck
 pnpm -C backend exec shadow-cljs compile test
 pnpm -C backend exec shadow-cljs compile server
 pnpm -C backend boundary:check
-pnpm -C frontend exec shadow-cljs compile test
+pnpm -C frontend test:cljs
 pnpm -C frontend run build
 ```
 
@@ -131,7 +131,7 @@ headers, current grant checks, expiry/revocation/outage, logout races and Origin
 Protocol tests use the actual pinned RP against a disposable in-memory signing
 and discovery fixture. They open no sockets and create no real accounts.
 
-Worker observations: portable JVM laws ran green (4 tests, 32 assertions);
+Historical preparation-worker observations (superseded by parent runtime checks): portable JVM laws ran green (4 tests, 32 assertions);
 backend compilation emitted
 zero warnings; CLJS test execution failed loading the unavailable
 `openid-client` module. Frontend test compilation hit unchanged
@@ -185,3 +185,16 @@ identity/collision, wrong registered client/audience, authority unavailable,
 access-token expiry, authority actor disable, local Knoxx logout, existing native
 login and live WebSocket reconnect behavior on each approved host. Do not infer
 federation enrollment or provider access from a successful shared login.
+
+
+## Parent current-release verification
+
+The current-main candidate retains the existing password/invite UI and explicit
+local actor/membership policy. Parent backend runtime1876 tests/9302 assertions, frontend457 tests/2049
+assertions, production server compilation and changed-frontend lint pass with
+zero failures, errors and compiler/linter warnings. Native source checks cover
+renewal-window straddles, failed-old-evidence successor preservation, origin
+refusal without cookie/session destruction, bounded pending eviction and local
+logout after OIDC disablement. Exact final counts and source commits are recorded
+in the newest Receipt River entries. Hosted CI and independent exact-head review
+remain release gates; these tests do not claim live fleet acceptance.

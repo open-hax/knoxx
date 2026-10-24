@@ -62,3 +62,28 @@
 
 (deftest cancellation-and-expiry-win-inflight-local-admission
   (async done (run-test! cancelled* done)))
+
+(defn- ^:async capacity* []
+  (let [{:keys [consumer]} (setup)
+        now (wire/now-ms) oldest #js {:controller (js/AbortController.)}
+        next-handle #js {:controller (js/AbortController.)}]
+    (reset! (:devices consumer)
+      (into {} (for [n (range 1000)]
+                 [(str "old-" n) {:handle (if (zero? n) oldest #js {:controller (js/AbortController.)})
+                                  :status "pending" :expires-at (+ now 10000 n)}])))
+    (with-redefs [wire/random-id (constantly "new-transaction")
+                  wire/device-start! (fn [_ _] {:handle next-handle :expires-at (+ now 600000)
+                                                 :public {:interval 5}})
+                  wire/device-grant! (fn [_ _ _] (throw (ex-info "Synthetic pending failure" {})))
+                  wire/on-device-expiry! (fn [_ _] nil)]
+      (try
+        (let [created (await (device/begin! consumer "https://knoxx.example" nil))]
+          (is (= "new-transaction" (:id created)))
+          (is (= 1000 (count @(:devices consumer))))
+          (is (not (contains? @(:devices consumer) "old-0")))
+          (is (true? (.. oldest -controller -signal -aborted))))
+        (finally
+          (doseq [id (keys @(:devices consumer))] (await (device/cancel! consumer id))))))))
+
+(deftest device-capacity-cancels-oldest-instead-of-disabling-new-sign-in
+  (async done (run-test! capacity* done)))

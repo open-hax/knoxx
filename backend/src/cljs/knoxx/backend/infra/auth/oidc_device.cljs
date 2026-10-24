@@ -49,6 +49,13 @@
                  (= "pending" (:status (get @(:devices consumer) id))))
         (swap! (:devices consumer) update id assoc :status (wire/device-failure error))))))
 
+(defn- ^:async make-room!
+  "Cancel and revoke the oldest unadmitted device transactions at capacity."
+  [consumer]
+  (while (>= (count @(:devices consumer)) 1000)
+    (when-let [id (first (law/pending-evictions @(:devices consumer) 1000))]
+      (await (cancel! consumer id)))))
+
 (defn ^:async begin!
   "Initiate against trusted discovery; return only user-facing RFC8628 fields."
   [consumer origin previous]
@@ -56,15 +63,12 @@
   (await (cancel! consumer previous))
   (doseq [[id tx] @(:devices consumer)]
     (when (<= (:expires-at tx) (wire/now-ms)) (await (cancel! consumer id))))
-  (when (>= (count @(:devices consumer)) 1000)
-    (throw (ex-info "Device sign-in busy" {:status 503})))
+  (await (make-room! consumer))
   (let [rp (await (oidc/client! consumer))
         result (await (wire/device-start! rp (:config consumer)))
         id (wire/random-id)
         tx (assoc result :status "pending" :next-poll 0)]
-    (when (>= (count @(:devices consumer)) 1000)
-      (when (:handle tx) (wire/cancel-device! (:handle tx)))
-      (throw (ex-info "Device sign-in busy" {:status 503})))
+    (await (make-room! consumer))
     (swap! (:devices consumer) assoc id tx)
     (wire/on-device-expiry! (:handle tx) #(expire! consumer id))
     (work! consumer rp id tx)

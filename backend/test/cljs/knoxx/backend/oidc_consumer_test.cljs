@@ -7,7 +7,8 @@
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.oidc :as oidc]
             [knoxx.backend.infra.auth.session :as session]
-            [knoxx.backend.law.oidc-test :as fixture]))
+            [knoxx.backend.law.oidc-test :as fixture]
+            [knoxx.backend.infra.routes.auth :as auth-routes]))
 
 (defn- fixture
   "Create mutable evidence, never a fabricated human or database session."
@@ -232,10 +233,55 @@
                         origin (assoc :origin origin))
               response (await (.inject app (clj->js {:method "POST" :url "/api/fixture/write"
                                                        :headers headers})))]
-          (test/is (= (if (= origin "https://knoxx.example") 200 403) (.-statusCode response)))))
+          (test/is (= (if (= origin "https://knoxx.example") 200 403) (.-statusCode response)))
+          (when-not (= origin "https://knoxx.example")
+            (test/is (nil? (aget (.-headers response) "set-cookie")))
+            (test/is (contains? @(:sessions (:consumer f)) session-id)))))
       (test/is (= 1 @effects))
       (catch :default error (test/is false (str error)))
       (finally (await (.close app)) (done)))))
 
 (test/deftest cookie-write-origin-is-checked-before-route-effects
   (test/async done (verify-cookie-write-origin! done)))
+
+(defn- ^:async bounded-start* [done]
+  (try
+    (let [{:keys [consumer policy clock]} (fixture)
+          bounded (assoc-in consumer [:effects :authorization!]
+                    (fn [_ _] {:state (str "bounded-" @clock) :nonce "nonce" :verifier "verifier"
+                               :url "https://authority.example/authorize"}))
+          first-binding (await (oidc/begin! bounded))]
+      (dotimes [_ 1000] (swap! clock inc) (await (oidc/begin! bounded)))
+      (test/is (= 1000 (count @(:pending consumer))))
+      (test/is (not (contains? @(:pending consumer) "bounded-100000")))
+      (test/is (= :oidc-state-invalid
+                 (await (rejection-code #(oidc/complete! bounded policy
+                   {"state" "bounded-100000" "code" "code"} (:browser-binding first-binding))))))
+      (let [latest (await (oidc/begin! bounded))]
+        (test/is (:session-id (await (oidc/complete! bounded policy
+                            {"state" (str "bounded-" @clock) "code" "code"}
+                            (:browser-binding latest)))))))
+    (catch :default error (test/is false (str error)))
+    (finally (done))))
+
+(test/deftest pending-capacity-evicts-oldest-without-globally-refusing-login
+  (test/async done (bounded-start* done)))
+
+(defn- ^:async disabled-consumer-logout* [done]
+  (let [app (fastify)]
+    (try
+      (.register app cookie-plugin)
+      (with-redefs [wire/configured (constantly nil)]
+        (auth-routes/register-auth-routes app {}))
+      (let [response (await (.inject app #js {:method "POST" :url "/api/auth/logout"
+                       :headers #js {:cookie "__Host-knoxx_axxium_session=stale; knoxx_session=invalid"}}))
+            cookies (js/JSON.stringify (aget (.-headers response) "set-cookie"))]
+        (test/is (= 200 (.-statusCode response)))
+        (test/is (true? (aget (.json response) "ok")))
+        (test/is (re-find #"__Host-knoxx_axxium_session=" cookies))
+        (test/is (re-find #"knoxx_session=" cookies)))
+      (catch :default error (test/is false (str error)))
+      (finally (await (.close app)) (done)))))
+
+(test/deftest stale-oidc-cookie-cannot-block-native-logout-after-rollback
+  (test/async done (disabled-consumer-logout* done)))

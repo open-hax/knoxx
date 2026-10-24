@@ -58,7 +58,7 @@ local actor attribution, cancel/denial/expiry, and refusal after root logout.
 The worker did not run a live tour or capture user data. Synthetic tests do not
 replace multi-host integration and human device qualification.
 
-The full frontend CLJS target was also attempted: 462 tests, 2 failures and 7
+Historical preparation branch only: the full frontend CLJS target was also attempted: 462 tests, 2 failures and 7
 errors in the migration Git adapter tests, all reporting `spawnSync git EPERM`.
 The focused OIDC UI target passes separately. Frontend Vitest reports 44 files
 passing (231 tests, 41 todo), and the production frontend build compiles with zero
@@ -71,3 +71,16 @@ input are unnecessary; the existing whole-suite targets cover the new tests and
 retain the checked-in migration inventory. Use backend `pnpm test` and frontend
 `pnpm test:cljs`; no migration guard was relaxed. Parent native backend ran1871
  tests/9251assertions with zero failures/errors.
+
+
+## Current-main parent results
+
+The earlier preparation counts and migration-inventory failure above are
+historical. Parent removed the unnecessary focused shadow targets and retained
+the inventory guard. Before review fixes, accepted-main-based source passed1872
+backend tests/9276 assertions and457 frontend tests/2049 assertions, with zero
+compiler warnings. Review follow-up adds renewal-window straddle and rollback
+logout tests and preserves live sessions on origin/policy refusal; the latest
+receipt records final counts. The changed login namespace now passes the actual
+hosted changed-file linter with zero errors and warnings. Deployment, browser
+sign-in, device approval and cross-host acceptance remain distinct requirements.

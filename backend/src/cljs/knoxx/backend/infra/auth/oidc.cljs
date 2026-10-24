@@ -48,16 +48,24 @@
   (swap! entries #(into {} (filter (fn [[_ value]] (< now (or (:session-expires-at value) (:expires-at value))))) %))
   (when (>= (count @entries) limit) (unavailable!)))
 
+(defn- make-pending-room!
+  "Bound unadmitted transactions by eviction, without a global login refusal."
+  [entries now limit]
+  (swap! entries
+         (fn [stored]
+           (let [live (into {} (filter (fn [[_ tx]] (< now (:expires-at tx)))) stored)]
+             (apply dissoc live (law/pending-evictions live limit))))))
+
 (defn ^:async begin!
   "Create a five-minute one-use transaction bound to a separate browser cookie."
   [{:keys [config effects pending] :as consumer}]
   (let [now ((:now effects))]
-    (prune! pending now 1000)
+    (make-pending-room! pending now 1000)
     (let [rp (await (client! consumer))
           transaction (await ((:authorization! effects) rp config))
           browser-binding ((:random effects))]
       ;; Recheck after awaits so concurrent begin requests cannot overrun the cap.
-      (prune! pending ((:now effects)) 1000)
+      (make-pending-room! pending ((:now effects)) 1000)
       (swap! pending assoc (:state transaction)
              (assoc transaction :browser-binding browser-binding :expires-at (+ now 300000)))
       {:url (:url transaction) :browser-binding browser-binding})))
@@ -66,10 +74,12 @@
   "Remove state before any await, including failed attempts and browser-binding mismatches."
   [{:keys [effects pending]} query browser-binding]
   (let [state (get query "state")
-        candidate (if (string? state) state
-                      (some (fn [[transaction-state tx]] (when (= browser-binding (:browser-binding tx)) transaction-state)) @pending))
-        [before _after] (swap-vals! pending dissoc candidate)
-        transaction (get before candidate)]
+        ;; A malformed query may consume this browser's pending attempt for
+        ;; cleanup, but only an explicit scalar query state can authorize it.
+        state-to-consume (if (string? state) state
+                            (some (fn [[id tx]] (when (= browser-binding (:browser-binding tx)) id)) @pending))
+        [before _after] (swap-vals! pending dissoc state-to-consume)
+        transaction (when (string? state) (get before state))]
     (when-not (and (law/nonblank? state) (law/nonblank? (get query "code"))
                    (= state (:state transaction))
                    (every? string? (vals query))
@@ -164,15 +174,26 @@
              (finally (swap! renewing dissoc session-id)))))
     grant))
 
+(defn- ^:async discard-failed-grant!
+  "Revoke only the attempted version, never a successful concurrent successor."
+  [{:keys [sessions] :as consumer} session-id attempted]
+  (let [[before after] (swap-vals! sessions
+                         #(if (= attempted (get % session-id)) (dissoc % session-id) %))]
+    (when (and (contains? before session-id) (not (contains? after session-id)))
+      (try (await (revoke-grant! consumer (await (client! consumer)) (get before session-id)))
+           (catch :default _ nil)))))
+
 (defn ^:async resolve-session!
   "Authorize an opaque OIDC session with live authority evidence and fresh local policy."
   [{:keys [sessions effects] :as consumer} policy-context session-id]
-  (let [grant (get @sessions session-id)]
+  (let [grant (get @sessions session-id)
+        attempted (atom grant)]
     (when-not (and grant (< ((:now effects)) (or (:session-expires-at grant) (:expires-at grant))))
       (swap! sessions dissoc session-id)
       (throw (ex-info "Axxium session expired. Sign in again." {:status 401 :code :oidc-session-expired})))
     (try
       (let [grant (await (current-grant! consumer session-id grant))
+            _ (reset! attempted grant)
             started ((:now effects))
             evidence (await (grant-evidence! consumer grant))
             ctx (await (local-context! policy-context (:link grant)))]
@@ -181,17 +202,15 @@
         (when (:refresh-token grant)
           (law/session-bound grant evidence ((:now effects))))
         ;; Logout must win an in-flight introspection or policy lookup.
-        (when-not (= grant (get @sessions session-id))
-          (throw (ex-info "Axxium session was signed out" {:status 401 :code :oidc-session-expired})))
+        (law/require-session-continuity! grant (get @sessions session-id) ((:now effects)))
         (with-meta (assoc ctx :auth-provider "axxium-oidc")
           {:oidc/expires-at (min (:expires-at grant)
                                  (or (:session-expires-at grant) (:expires-at grant))
+                                 (or (:session-expires-at (get @sessions session-id))
+                                     (:expires-at (get @sessions session-id)))
                                  (law/session-bound grant evidence ((:now effects))))}))
       (catch :default error
-        (let [[before _] (swap-vals! sessions dissoc session-id)]
-          (when-let [current (get before session-id)]
-            (try (await (revoke-grant! consumer (await (client! consumer)) current))
-                 (catch :default _ nil))))
+        (await (discard-failed-grant! consumer session-id @attempted))
         (if (:code (ex-data error)) (throw error) (unavailable!))))))
 
 (defn resolve-request!
@@ -260,7 +279,9 @@
           (wire/replace-identity-headers! request (await (native-auth request policy-context)))
           (throw (ex-info "A signed-in session is required" {:status 401}))))
       (catch :default error
-        (wire/clear-cookie! reply wire/session-cookie)
+        (when-not (and @installed
+                       (contains? @(:sessions @installed) (:session-id (wire/request-data request))))
+          (wire/clear-cookie! reply wire/session-cookie))
         (wire/send! reply (or (:status (ex-data error)) 401)
                     {:error "Axxium session is no longer admissible. Sign in again."})))))
 

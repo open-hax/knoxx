@@ -212,7 +212,11 @@
 
 (defn- ^:async logout-handler!
   [req reply public-base-url]
-  (let [oidc-result (when (oidc/present? req) (await (oidc/logout-request! req reply)))
+  (let [oidc-result (when (oidc/present? req)
+                      (try (await (oidc/logout-request! req reply))
+                           (catch :default _
+                             (oidc-wire/clear-cookie! reply oidc-wire/session-cookie)
+                             nil)))
         cookie-token (some-> req (aget "cookies") (aget auth-session/COOKIE-NAME))]
     (when-not (= 403 (:status oidc-result))
       (when cookie-token
