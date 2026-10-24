@@ -77,10 +77,9 @@ retain the checked-in migration inventory. Use backend `pnpm test` and frontend
 
 The earlier preparation counts and migration-inventory failure above are
 historical. Parent removed the unnecessary focused shadow targets and retained
-the inventory guard. Before review fixes, accepted-main-based source passed1872
-backend tests/9276 assertions and457 frontend tests/2049 assertions, with zero
-compiler warnings. Review follow-up adds renewal-window straddle and rollback
-logout tests and preserves live sessions on origin/policy refusal; the latest
-receipt records final counts. The changed login namespace now passes the actual
+the inventory guard. The current main-based source passes1876 backend tests/9302 assertions and457
+frontend tests/2049 assertions, with zero failures, errors and compiler warnings.
+Review follow-up adds renewal-window straddle, capacity and rollback logout tests
+and preserves live sessions on origin/policy refusal. The changed login namespace now passes the actual
 hosted changed-file linter with zero errors and warnings. Deployment, browser
 sign-in, device approval and cross-host acceptance remain distinct requirements.
