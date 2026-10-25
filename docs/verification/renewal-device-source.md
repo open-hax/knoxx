@@ -35,11 +35,10 @@ with code login and never creates a root actor. No browser login grants federati
 
 ```sh
 npm --prefix backend run typecheck
-npm --prefix backend run test:oidc
+pnpm -C backend test
 npm --prefix backend run build
 npm --prefix frontend run build
 npm --prefix frontend test
-npm --prefix frontend run test:oidc
 npm --prefix frontend run test:cljs
 ```
 

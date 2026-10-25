@@ -94,7 +94,7 @@ print('PASS begin uses fixed callback, state, nonce, S256 and a secure HttpOnly 
 PY
 expected=400; label='missing code consumes this browser transaction without creating a session'
 expect -b "$fixture_dir/cookies" "$KNOXX_VERIFY_ORIGIN/api/auth/axxium/callback?state=$(cat "$fixture_dir/state")"
-expected=400; label='consumed state cannot be replayed'
+expected=400; label='invalid code is refused without creating a session; isolated one-use tests prove replay protection'
 expect -b "$fixture_dir/cookies" "$KNOXX_VERIFY_ORIGIN/api/auth/axxium/callback?state=$(cat "$fixture_dir/state")&code=invalid"
 printf 'WARN real login, approved/colliding links, authority outage/revocation/expiry and actor disable need operator qualification; no human session was fabricated\n'
 printf '%s failed checks\n' "$failures"

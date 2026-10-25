@@ -223,21 +223,23 @@
   [done]
   (let [f (fixture) app (await (route-fixture! f)) effects (atom 0)]
     (try
-      (.post app "/api/fixture/write"
-             (fn [_request reply]
-               (swap! effects inc)
-               (wire/send! reply 200 {:written true})))
-      (doseq [origin [nil "https://sibling.example" "https://knoxx.example.attacker.test" "https://knoxx.example"]]
+      (doseq [path ["/api/fixture/write" "/api/auth/invite"]]
+        (.post app path
+               (fn [_request reply]
+                 (swap! effects inc)
+                 (wire/send! reply 200 {:written true}))))
+      (doseq [path ["/api/fixture/write" "/api/auth/invite"]
+              origin [nil "https://sibling.example" "https://knoxx.example.attacker.test" "https://knoxx.example"]]
         (let [{:keys [session-id]} (await (sign-in! f))
               headers (cond-> {:cookie (str wire/session-cookie "=" session-id)}
                         origin (assoc :origin origin))
-              response (await (.inject app (clj->js {:method "POST" :url "/api/fixture/write"
+              response (await (.inject app (clj->js {:method "POST" :url path
                                                        :headers headers})))]
           (test/is (= (if (= origin "https://knoxx.example") 200 403) (.-statusCode response)))
           (when-not (= origin "https://knoxx.example")
             (test/is (nil? (aget (.-headers response) "set-cookie")))
             (test/is (contains? @(:sessions (:consumer f)) session-id)))))
-      (test/is (= 1 @effects))
+      (test/is (= 2 @effects))
       (catch :default error (test/is false (str error)))
       (finally (await (.close app)) (done)))))
 

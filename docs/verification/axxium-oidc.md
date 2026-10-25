@@ -177,8 +177,9 @@ captures login, authorized Knoxx and post-revocation login screenshots in
 `docs/verification/screenshots/`. The operator enters credentials/consent in the
 authority-host browser UI, then explicitly signs out at the authority or revokes
 the grant. It does not export cookies/storage, fabricate consent, or capture
-callback URLs. The tour closes its browser session on exit. Screenshot files
-are ignored and contain UI data; inspect locally before sharing.
+callback URLs. The tour closes its browser session and removes its dedicated screenshot
+directory on exit or interruption. Screenshots contain account UI data and are
+available only during the run; any retained export requires explicit review.
 
 Before production qualification, also run separate real tests for an unlinked
 identity/collision, wrong registered client/audience, authority unavailable,

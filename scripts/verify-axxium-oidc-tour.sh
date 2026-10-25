@@ -5,15 +5,15 @@
 # signs out there manually. Device flow/federation and native retirement are out
 # of scope. Screenshot artifacts contain UI data and are regenerated per run.
 set -Eeuo pipefail
+printf 'WARN this guided tour skips device flow, federation, native retirement, collision, wrong audience, expiry, outage and local logout; qualify these separately with isolated tests and real host/client registrations\n'
 step="preconditions"
 trap 'status=$?; printf "FAIL tour step %s exited %s\n" "$step" "$status" >&2; exit "$status"' ERR
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$repo_root/scripts/verify-axxium-oidc.sh"
 command -v agent-browser >/dev/null
 session_name="axxium-oidc-tour-$$"
-shot_dir="$repo_root/docs/verification/screenshots/axxium-oidc-$(date +%s)-$$"
-mkdir -p "$shot_dir"
-chmod 700 "$shot_dir"
+mkdir -p "$repo_root/docs/verification/screenshots"
+shot_dir="$(mktemp -d "$repo_root/docs/verification/screenshots/axxium-oidc-XXXXXXXXXX")"
 ab() { agent-browser --session "$session_name" "$@"; }
 cleanup() {
   # Navigation restores the Knoxx origin even if interrupted at the authority.
@@ -21,6 +21,7 @@ cleanup() {
   ab open "$KNOXX_VERIFY_ORIGIN/login" >/dev/null 2>&1 || true
   ab eval 'fetch("/api/auth/axxium/logout", {method:"POST", credentials:"include"}).then(r => r.status)' >/dev/null 2>&1 || true
   ab close >/dev/null 2>&1 || true
+  rm -rf -- "$shot_dir"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -51,5 +52,4 @@ status="$(ab eval 'fetch("/api/auth/context", {credentials:"include"}).then(r =>
 ab open "$KNOXX_VERIFY_ORIGIN/login" >/dev/null
 ab screenshot "$shot_dir/03-revoked-login.png" >/dev/null
 printf 'PASS authority logout/revocation refused the next protected request\n'
-printf 'WARN collision, wrong audience, expiry, outage and local logout are covered by isolated tests; qualify real host/client registrations separately\n'
-printf 'Screenshots: %s\n' "$shot_dir"
+printf 'Screenshots were captured for this run; the dedicated directory is removed on exit\n'

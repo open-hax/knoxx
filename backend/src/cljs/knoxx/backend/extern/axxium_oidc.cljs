@@ -228,10 +228,10 @@
    :origin (aget (.-headers request) "origin")})
 
 (defn protected-request?
-  "Skip login/logout endpoints; protect auth context and all other admitted surfaces."
+  "Protect cookie-authenticated context/invite routes and admitted product surfaces."
   [request]
   (let [path (first (str/split (.-url request) #"\?"))]
-    (or (= path "/api/auth/context")
+    (or (contains? #{"/api/auth/context" "/api/auth/invite" "/api/auth/invites"} path)
         (not (str/starts-with? path "/api/auth/")))))
 
 (defn set-cookie!
