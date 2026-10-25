@@ -9,6 +9,8 @@ printf 'WARN this guided tour skips device flow, federation, native retirement, 
 step="preconditions"
 trap 'status=$?; printf "FAIL tour step %s exited %s\n" "$step" "$status" >&2; exit "$status"' ERR
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Keep unrelated planner credentials out of verification/browser subprocesses.
+unset OPENPLANNER_BASE_URL OPENPLANNER_API_KEY
 "$repo_root/scripts/verify-axxium-oidc.sh"
 command -v agent-browser >/dev/null
 session_name="axxium-oidc-tour-$$"
