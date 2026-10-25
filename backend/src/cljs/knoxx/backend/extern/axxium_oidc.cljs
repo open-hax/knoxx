@@ -230,7 +230,8 @@
 (defn protected-request?
   "Protect cookie-authenticated context/invite routes and admitted product surfaces."
   [request]
-  (let [path (first (str/split (.-url request) #"\?"))]
+  (let [path (or (some-> request .-routeOptions .-url)
+                 (first (str/split (.-url request) #"\?")))]
     (or (contains? #{"/api/auth/context" "/api/auth/invite" "/api/auth/invites"} path)
         (not (str/starts-with? path "/api/auth/")))))
 

@@ -228,7 +228,7 @@
                (fn [_request reply]
                  (swap! effects inc)
                  (wire/send! reply 200 {:written true}))))
-      (doseq [path ["/api/fixture/write" "/api/auth/invite"]
+      (doseq [path ["/api/fixture/write" "/api/auth/invite" "/api/auth/%69nvite"]
               origin [nil "https://sibling.example" "https://knoxx.example.attacker.test" "https://knoxx.example"]]
         (let [{:keys [session-id]} (await (sign-in! f))
               headers (cond-> {:cookie (str wire/session-cookie "=" session-id)}
@@ -239,7 +239,7 @@
           (when-not (= origin "https://knoxx.example")
             (test/is (nil? (aget (.-headers response) "set-cookie")))
             (test/is (contains? @(:sessions (:consumer f)) session-id)))))
-      (test/is (= 2 @effects))
+      (test/is (= 3 @effects))
       (catch :default error (test/is false (str error)))
       (finally (await (.close app)) (done)))))
 

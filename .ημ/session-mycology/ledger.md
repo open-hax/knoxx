@@ -201,3 +201,11 @@
   spore: none
   receipt-refs: open-hax/knoxx#394,4369628748
   note: Exercise exact authenticated route paths, since a broad auth-prefix exemption bypassed otherwise correct origin policy. Verify pinned dependency units from installed primary source before accepting a plausible review claim. Scope lint to its owning backend configuration. Cleanup synthetic screenshots on interruption and distinguish wire invalid-code refusal from isolated one-use proof. No spore or promotion.
+
+- ts: 2026-10-25T08:46:15.857460+00:00
+  origin: shared-login-encoded-invite-origin
+  p-efficiency: 0.8
+  p-friction: 0.35
+  p-skill-candidate: 0.4
+  receipt-refs: shared-login-and-federation; native4370097788
+  note: Transport admission must use the framework matched route template when routing normalizes encoded static paths. Exercise the real router and verify refusal precedes handler effects; raw URL lexical tests alone miss this boundary.
