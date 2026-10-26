@@ -59,6 +59,13 @@ adapter explicitly enables its JWKS signature checks in code flow. See the
 
 ## Runtime behavior and boundaries
 
+Request logs retain a query-free `path` for operational diagnosis. The named
+`extern.http-logging` adapter serializes method, path, host and remote address
+without copying query parameters or headers; the existing URL, authorization
+and cookie redaction rules remain enabled. A real Fastify/Pino memory-sink test
+checks callback code/state and credential exclusion. This proves the configured
+logger behavior, not the retention or access policy of deployed log storage.
+
 - `GET /api/auth/axxium/start` redirects to the authority. Five-minute state,
   nonce and PKCE verifier stay server-side. An independent secure, HttpOnly,
   host-only transaction cookie binds the callback to the initiating browser.
