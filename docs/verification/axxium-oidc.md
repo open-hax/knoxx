@@ -192,13 +192,21 @@ Each PASS explains the admission it proves; failures exit nonzero. WARN lines
 identify the real-human and authority tests it cannot perform.
 
 The tour uses the existing `agent-browser` CLI in a fresh visible session and
-captures login, authorized Knoxx and post-revocation login screenshots in
+captures login, authorized Knoxx and post-refusal login screenshots in
 `docs/verification/screenshots/`. The operator enters credentials/consent in the
 authority-host browser UI, then explicitly signs out at the authority or revokes
 the grant. It does not export cookies/storage, fabricate consent, or capture
 callback URLs. The tour closes its browser session and removes its dedicated screenshot
 directory on exit or interruption. Screenshots contain account UI data and are
 available only during the run; any retained export requires explicit review.
+
+The tour's final 401/403 proves refusal of the protected request. Its wait for
+the operator is unbounded, so token or session expiry can produce that same
+status. The tour does not distinguish expiry from authority revocation. Real
+revocation qualification additionally needs separate authority-side evidence
+bound to the affected grant/root session and a still-active baseline near that
+action. Retain the action time and subsequent refusal; the tour's PASS alone
+does not satisfy that release requirement.
 
 Before production qualification, also run separate real tests for an unlinked
 identity/collision, wrong registered client/audience, authority unavailable,

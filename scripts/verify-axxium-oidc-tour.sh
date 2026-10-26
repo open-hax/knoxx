@@ -46,12 +46,13 @@ status="$(ab eval 'fetch("/api/auth/context", {credentials:"include"}).then(r =>
 ab screenshot "$shot_dir/02-knoxx-authorized.png" >/dev/null
 printf 'PASS the real redirect login acquired a protected Knoxx context\n'
 printf 'Sign out at the Axxium authority in another browser tab (or have the operator revoke this grant).\n'
-step="await-authority-revocation"
+step="await-operator-action"
 read -r -p 'Press Enter after root-session logout or revocation: ' _answer
-step="verify-revocation"
+step="verify-protected-refusal"
 status="$(ab eval 'fetch("/api/auth/context", {credentials:"include"}).then(r => r.status)')"
-[[ "$status" == *401* || "$status" == *403* ]] || { echo 'FAIL authority revocation did not refuse protected auth context'; exit 1; }
+[[ "$status" == *401* || "$status" == *403* ]] || { echo 'FAIL protected auth context was not refused after the operator action'; exit 1; }
 ab open "$KNOXX_VERIFY_ORIGIN/login" >/dev/null
-ab screenshot "$shot_dir/03-revoked-login.png" >/dev/null
-printf 'PASS authority logout/revocation refused the next protected request\n'
+ab screenshot "$shot_dir/03-refused-login.png" >/dev/null
+printf 'PASS protected request was refused; expiry and authority revocation are not distinguished\n'
+printf 'WARN revocation qualification still requires separate authority-side evidence and a still-active baseline near the action\n'
 printf 'Screenshots were captured for this run; the dedicated directory is removed on exit\n'
