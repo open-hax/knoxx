@@ -117,12 +117,26 @@
   [{:keys [consumer policy]}]
   (let [app (fastify)]
     (.register app cookie-plugin)
-    (oidc/register-consumer! app policy consumer)
+    (oidc/register-consumer! app policy consumer session/resolve-auth-context)
     (.get app "/ws/stream" (fn [_request reply] (wire/send! reply 200 {:fixture true})))
     (.get app "/api/auth/context"
           (^:async fn [request reply]
             (wire/send! reply 200 (await (session/resolve-auth-context request policy)))))
     app))
+
+(test/deftest ^:async identity-selectors-without-credentials-do-not-authenticate
+  (let [{:keys [calls] :as f} (fixture)
+        app (await (route-fixture! f))]
+    (try
+      (doseq [[url upgrade] [["/api/auth/context" nil] ["/ws/stream" "websocket"]]]
+        (let [headers (cond-> {"x-knoxx-user-email" "forged@example.invalid"
+                               "x-knoxx-membership-id" "admin-membership"
+                               "x-knoxx-org-id" "other-tenant"}
+                        upgrade (assoc "upgrade" upgrade))
+              response (await (.inject app (clj->js {:method "GET" :url url :headers headers})))]
+          (test/is (= 401 (.-statusCode response)) "Identity selectors supply no credential")))
+      (test/is (empty? @calls) "Unauthenticated selectors never reach local membership lookup")
+      (finally (await (.close app))))))
 
 (test/deftest ^:async protected-context-does-not-fall-back-to-spoofed-headers
   (let [{:keys [evidence] :as f} (fixture)
