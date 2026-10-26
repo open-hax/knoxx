@@ -205,6 +205,23 @@
                                                             :headers #js {:upgrade "websocket"}})))))
       (finally (await (.close app))))))
 
+(test/deftest ^:async oidc-websocket-requires-exact-browser-origin
+  (let [{:keys [consumer] :as f} (fixture)
+        {:keys [session-id]} (await (sign-in! f))
+        app (await (route-fixture! f))]
+    (try
+      (doseq [origin ["https://sibling.example" "null" ""]]
+        (let [response (await (.inject app #js {:method "GET" :url "/ws/stream"
+                                                :headers #js {:upgrade "websocket" :origin origin
+                                                              :cookie (str wire/session-cookie "=" session-id)}}))]
+          (test/is (= 403 (.-statusCode response)) "Cookie-bearing upgrades need the exact product origin")))
+      (test/is (contains? @(:sessions consumer) session-id) "Refused origin cannot destroy the valid session")
+      (test/is (= 200 (.-statusCode
+                       (await (.inject app #js {:method "GET" :url "/ws/stream"
+                                                :headers #js {:upgrade "websocket" :origin "https://knoxx.example"
+                                                              :cookie (str wire/session-cookie "=" session-id)}})))))
+      (finally (await (.close app))))))
+
 (test/deftest ^:async logout-requires-exact-origin-and-has-no-redirect-input
   (let [f (fixture) {:keys [session-id]} (await (sign-in! f)) app (await (route-fixture! f))]
     (try

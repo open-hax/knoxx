@@ -39,3 +39,22 @@
 
 (test/deftest redirect-entry-keeps-native-password-and-device-login
   (test/async done (run-entry-test! done)))
+
+(defn- ^:async verify-provider-warning!
+  "Render pending, failed, device-only and genuinely unconfigured provider states."
+  [done]
+  (try
+    (doseq [[fetch-config warning?] [[(fn [] (js/Promise. (fn [_resolve _reject] nil))) false]
+                                    [(fn [] (js/Promise.reject (js/Error. "isolated config outage"))) false]
+                                    [(fn [] (js/Promise.resolve #js {:axxiumDeviceEnabled true})) false]
+                                    [(fn [] (js/Promise.resolve #js {})) true]]]
+      (set! api/fetch-auth-config fetch-config)
+      (let [page (rtl/render (hx/$ login/login-page {:on-login-success (fn [] nil)}))]
+        (await (rtl/act (^:async fn [] (await (js/Promise.resolve)))))
+        (test/is (= warning? (some? (.queryByText page "GitHub OAuth is not configured. Contact your administrator."))))
+        (rtl/cleanup)))
+    (catch :default error (test/is false (str error)))
+    (finally (done))))
+
+(test/deftest provider-warning-requires-loaded-unconfigured-providers
+  (test/async done (verify-provider-warning! done)))
