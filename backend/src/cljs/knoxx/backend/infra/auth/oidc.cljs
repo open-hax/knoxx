@@ -260,7 +260,9 @@
   "Reject revoked OIDC admission before any route can consume identity headers."
   [policy-context native-auth request reply]
   (when (and (wire/protected-request? request)
-             (or (present? request) (and (enabled?) (wire/upgraded-request? request))))
+             (or (present? request)
+                 (and (enabled?)
+                      (or (wire/upgraded-request? request) (wire/identity-headers? request)))))
     (try
       (if (present? request)
         (let [consumer (require-consumer!)
@@ -273,8 +275,8 @@
             (wire/set-cookie! reply wire/session-cookie id
               (max 0 (quot (- bound (wire/now-ms)) 1000)))
             (wire/limit-upgrade! request (:oidc/expires-at (meta ctx))))
-        ;; A reconnect after a refused/cleared OIDC cookie must not become an
-        ;; anonymous realtime subscription. Existing native identities still work.
+        ;; Neither an anonymous reconnect nor caller-supplied identity selectors
+        ;; establish authority. Native credentials must resolve their own identity.
         (if native-auth
           (wire/replace-identity-headers! request (await (native-auth request policy-context)))
           (throw (ex-info "A signed-in session is required" {:status 401}))))

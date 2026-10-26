@@ -56,9 +56,11 @@
   [runtime request]
   (if-not (policy-db-enabled? runtime)
     nil
-    (if (oidc/present? request)
+    (if (or (oidc/enabled?) (oidc/present? request))
       ;; A reused request (including upgraded transports) cannot turn a past
       ;; OIDC admission or hydrated identity headers into permanent authority.
+      ;; With OIDC enabled, native credentials also resolve independently of
+      ;; caller-supplied identity selectors and any cached request context.
       (auth-session/resolve-auth-context request (policy-db runtime))
       (if-let [cached (aget request "__knoxxRequestContext")]
         cached

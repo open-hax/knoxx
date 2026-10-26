@@ -63,8 +63,13 @@ print('PASS redirect SSO is enabled at the fixed browser entry')
 PY
 expected='401 403'; label='anonymous auth context cannot acquire a Knoxx identity'
 expect "$KNOXX_VERIFY_ORIGIN/api/auth/context"
+expected='401 403'; label='identity selectors without credentials cannot acquire a Knoxx identity'
+expect -H 'X-Knoxx-Membership-Id: untrusted-admin' \
+  -H 'X-Knoxx-User-Email: untrusted@example.invalid' "$KNOXX_VERIFY_ORIGIN/api/auth/context"
 expected='401 403'; label='anonymous WebSocket reconnect cannot bypass a cleared OIDC cookie'
 expect -H 'Upgrade: websocket' "$KNOXX_VERIFY_ORIGIN/ws/stream"
+expected='401 403'; label='identity selectors cannot authenticate a WebSocket reconnect'
+expect -H 'Upgrade: websocket' -H 'X-Knoxx-Membership-Id: untrusted-admin' "$KNOXX_VERIFY_ORIGIN/ws/stream"
 expected=401; label='unknown OIDC session cannot fall back to supplied native identity headers'
 expect -H 'Cookie: __Host-knoxx_axxium_session=not-a-session' \
   -H 'X-Knoxx-Membership-Id: untrusted-admin' "$KNOXX_VERIFY_ORIGIN/api/auth/context"

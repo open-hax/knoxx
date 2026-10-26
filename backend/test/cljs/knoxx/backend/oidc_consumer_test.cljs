@@ -138,6 +138,48 @@
       (test/is (empty? @calls) "Unauthenticated selectors never reach local membership lookup")
       (finally (await (.close app))))))
 
+(test/deftest ^:async native-api-key-selects-its-own-account
+  (let [{:keys [calls policy] :as f} (fixture)
+        policy (assoc policy :sync-user-from-actor-contract! (fn [_] nil))
+        app (await (route-fixture! (assoc f :policy policy)))
+        env (.-env js/process)
+        previous-key (aget env "KNOXX_API_KEY")
+        previous-email (aget env "KNOXX_API_KEY_USER_EMAIL")]
+    (aset env "KNOXX_API_KEY" "isolated-api-key")
+    (aset env "KNOXX_API_KEY_USER_EMAIL" "native@example.invalid")
+    (try
+      (let [response (await (.inject app #js {:method "GET" :url "/api/auth/context"
+                                              :headers #js {"x-api-key" "isolated-api-key"
+                                                            "x-knoxx-user-email" "forged@example.invalid"
+                                                            "x-knoxx-membership-id" "admin-membership"}}))]
+        (test/is (= 200 (.-statusCode response)))
+        (test/is (seq @calls))
+        (test/is (every? #(= {"x-knoxx-user-email" "native@example.invalid"} (second %)) @calls)
+                 "Verified API credentials determine membership lookup, never supplied selectors"))
+      (finally
+        (if previous-key (aset env "KNOXX_API_KEY" previous-key) (js-delete env "KNOXX_API_KEY"))
+        (if previous-email (aset env "KNOXX_API_KEY_USER_EMAIL" previous-email)
+            (js-delete env "KNOXX_API_KEY_USER_EMAIL"))
+        (await (.close app))))))
+
+(test/deftest ^:async enabled-oidc-does-not-trust-a-native-request-cache
+  (let [{:keys [policy calls] :as f} (fixture)
+        app (await (route-fixture! f))
+        original-policy-db authz/policy-db
+        request #js {:headers #js {"x-knoxx-membership-id" "admin-membership"}
+                     :cookies #js {}
+                     "__knoxxRequestContext" fixture/context}]
+    (set! authz/policy-db (fn [_] policy))
+    (try
+      (try
+        (await (authz/resolve-request-context! nil request))
+        (test/is false "A cached identity without credentials must be refused")
+        (catch :default error (test/is (= 401 (.-status error)))))
+      (test/is (empty? @calls))
+      (finally
+        (set! authz/policy-db original-policy-db)
+        (await (.close app))))))
+
 (test/deftest ^:async protected-context-does-not-fall-back-to-spoofed-headers
   (let [{:keys [evidence] :as f} (fixture)
         {:keys [session-id]} (await (sign-in! f))

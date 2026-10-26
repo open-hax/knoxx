@@ -254,6 +254,13 @@
   (.header reply "Referrer-Policy" "no-referrer")
   (.send (.code reply status) (clj->js body)))
 
+(defn identity-headers?
+  "Identify caller-supplied identity selectors; their presence supplies no authentication."
+  [request]
+  (boolean
+   (some #(not (str/blank? (aget (.-headers request) %)))
+         ["x-knoxx-user-email" "x-knoxx-membership-id" "x-knoxx-org-id" "x-knoxx-org-slug"])))
+
 (defn replace-identity-headers!
   "Overwrite browser-supplied identity and tenant selectors with the verified Knoxx context."
   [request ctx]

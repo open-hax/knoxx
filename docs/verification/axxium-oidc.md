@@ -88,6 +88,13 @@ adapter explicitly enables its JWKS signature checks in code flow. See the
   Qualify frontend
   reconnect behavior before cutover; periodic OIDC socket reconnects are an
   explicit tradeoff of this conservative source implementation.
+- When Axxium OIDC is enabled, identity headers alone cannot authenticate HTTP
+  or WebSocket requests, including after a browser clears its OIDC cookie.
+  Native cookies and configured API keys resolve their own account; supplied
+  membership, email and tenant selectors cannot override that identity. The
+  anonymous boundary script checks refusal with fictional selectors, and the
+  isolated consumer suite checks native API-key selection and cached-context
+  refusal. Legacy header authentication while OIDC is disabled is unchanged.
 
 `extern.axxium-oidc` owns openid-client, trusted environment/URI decoding,
 browser cookies, request/header conversion, Fastify registration and the

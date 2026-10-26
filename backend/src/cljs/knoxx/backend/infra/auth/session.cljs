@@ -547,7 +547,8 @@
       (oidc/present? req)
       (oidc/resolve-request! req policy-context)
 
-      (or (not (str/blank? header-email)) (not (str/blank? header-mid)))
+      (and (not (oidc/enabled?))
+           (or (not (str/blank? header-email)) (not (str/blank? header-mid))))
       (policy-db/resolve-context! policy-context (.-headers req))
 
       (valid-api-key-request? req)
