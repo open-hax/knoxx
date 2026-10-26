@@ -122,12 +122,8 @@
         (normalize-session-data s))
       (catch js/Error _ nil))))
 
-(defn- session-ttl-seconds
-  []
-  (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10))
-
 (defn- ^:async store-session
-  [session-id data]
+  [_session-id data]
   (let [normalized (normalize-session-data data)
         token (or (:raw-token normalized) "")]
     (try
@@ -137,19 +133,13 @@
     ;; The policy DB (Mongo) is the sole session store
     nil))
 
-(defn- parse-stored-session
-  [raw]
-  (try
-    (normalize-session-data (js/JSON.parse raw))
-    (catch :default _err nil)))
-
 (defn- ^:async load-session
-  [session-id token]
+  [_session-id token]
   ;; The policy DB (Mongo) is the sole session store
   (await (db-load-session (or token ""))))
 
 (defn ^:async delete-session
-  [session-id token]
+  [_session-id token]
   ;; Delete from the policy DB (authoritative)
   (when (and @db-session-store (not (str/blank? token)))
     (try

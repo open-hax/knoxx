@@ -206,6 +206,11 @@
 (defn record-membership-id [record] (or (:membership-id record) (:membershipId record) (:membership_id record)))
 (defn record-actor-id [record] (or (:actor-id record) (:actorId record) (:actor_id record)))
 
+(defn- principal-pair-present?
+  "Require both normalized principal selectors before comparing them."
+  [caller stored]
+  (and (not (str/blank? caller)) (not (str/blank? stored))))
+
 (defn principal-match?
   [ctx record]
   (let [ctx-membership (str (or (ctx-membership-id ctx) ""))
@@ -224,14 +229,11 @@
     (cond
       (not actor-match?) false
       (system-admin? ctx) true
-      (and (not (str/blank? ctx-membership))
-           (not (str/blank? record-membership)))
+      (principal-pair-present? ctx-membership record-membership)
       (= ctx-membership record-membership)
-      (and (not (str/blank? ctx-user))
-           (not (str/blank? record-user)))
+      (principal-pair-present? ctx-user record-user)
       (= ctx-user record-user)
-      (and (not (str/blank? ctx-email))
-           (not (str/blank? record-email)))
+      (principal-pair-present? ctx-email record-email)
       (= ctx-email record-email)
       :else
       (and actor-bound?
