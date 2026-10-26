@@ -213,7 +213,9 @@
         original-limit-upgrade wire/limit-upgrade!]
     ;; Fastify inject supplies an HTTP fixture socket, not an upgraded native
     ;; transport. Observe the lease boundary without scheduling its real timer.
-    (set! wire/limit-upgrade! (fn [_request expires-at] (swap! leases conj expires-at)))
+    (set! wire/limit-upgrade!
+          (fn ([_request] nil)
+              ([_request expires-at] (swap! leases conj expires-at))))
     (try
       (doseq [origin ["https://sibling.example" "null" ""]]
         (let [response (await (.inject app #js {:method "GET" :url "/ws/stream"

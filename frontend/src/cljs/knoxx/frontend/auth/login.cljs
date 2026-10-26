@@ -145,7 +145,9 @@
      (hx/$ device-login))
    (if (some-> ^js config .-githubEnabled)
     (github-button (some-> ^js config .-loginUrl))
-    (when-not (some-> ^js config .-axxiumOidcEnabled)
+    (when (and config
+               (not (.-axxiumOidcEnabled ^js config))
+               (not (.-axxiumDeviceEnabled ^js config)))
       (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
              "GitHub OAuth is not configured. Contact your administrator.")))))
 

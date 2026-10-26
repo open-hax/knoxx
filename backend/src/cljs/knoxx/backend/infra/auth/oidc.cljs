@@ -256,6 +256,14 @@
     (wire/send! reply (if safe? status 503)
                 {:error (if safe? (ex-message error) "Axxium login could not be completed. Start again.")})))
 
+(defn- require-request-origin!
+  "Apply the browser-origin contract to HTTP and upgraded transports."
+  [consumer request]
+  (law/require-browser-origin!
+   (:config consumer)
+   (cond-> (wire/request-data request)
+     (wire/upgraded-request? request) (assoc :method "UPGRADE"))))
+
 (defn- ^:async admit-request!
   "Reject revoked OIDC admission before any route can consume identity headers."
   [policy-context native-auth request reply]
@@ -266,7 +274,7 @@
     (try
       (if (present? request)
         (let [consumer (require-consumer!)
-                _ (law/require-browser-origin! (:config consumer) (wire/request-data request))
+                _ (require-request-origin! consumer request)
                 ctx (await (resolve-request! request policy-context))
                 id (:session-id (wire/request-data request))
                 grant (get @(:sessions consumer) id)
