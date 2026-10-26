@@ -208,7 +208,12 @@
 (test/deftest ^:async oidc-websocket-requires-exact-browser-origin
   (let [{:keys [consumer] :as f} (fixture)
         {:keys [session-id]} (await (sign-in! f))
-        app (await (route-fixture! f))]
+        app (await (route-fixture! f))
+        leases (atom [])
+        original-limit-upgrade wire/limit-upgrade!]
+    ;; Fastify inject supplies an HTTP fixture socket, not an upgraded native
+    ;; transport. Observe the lease boundary without scheduling its real timer.
+    (set! wire/limit-upgrade! (fn [_request expires-at] (swap! leases conj expires-at)))
     (try
       (doseq [origin ["https://sibling.example" "null" ""]]
         (let [response (await (.inject app #js {:method "GET" :url "/ws/stream"
@@ -216,11 +221,15 @@
                                                               :cookie (str wire/session-cookie "=" session-id)}}))]
           (test/is (= 403 (.-statusCode response)) "Cookie-bearing upgrades need the exact product origin")))
       (test/is (contains? @(:sessions consumer) session-id) "Refused origin cannot destroy the valid session")
+      (test/is (empty? @leases) "Refused origins cannot acquire an upgraded transport lease")
       (test/is (= 200 (.-statusCode
                        (await (.inject app #js {:method "GET" :url "/ws/stream"
                                                 :headers #js {:upgrade "websocket" :origin "https://knoxx.example"
                                                               :cookie (str wire/session-cookie "=" session-id)}})))))
-      (finally (await (.close app))))))
+      (test/is (= 1 (count @leases)) "The configured origin is admitted to the transport boundary")
+      (finally
+        (set! wire/limit-upgrade! original-limit-upgrade)
+        (await (.close app))))))
 
 (test/deftest ^:async logout-requires-exact-origin-and-has-no-redirect-input
   (let [f (fixture) {:keys [session-id]} (await (sign-in! f)) app (await (route-fixture! f))]
