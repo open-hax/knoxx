@@ -67,9 +67,11 @@ expected='401 403'; label='identity selectors without credentials cannot acquire
 expect -H 'X-Knoxx-Membership-Id: untrusted-admin' \
   -H 'X-Knoxx-User-Email: untrusted@example.invalid' "$KNOXX_VERIFY_ORIGIN/api/auth/context"
 expected='401 403'; label='anonymous WebSocket reconnect cannot bypass a cleared OIDC cookie'
-expect -H 'Upgrade: websocket' "$KNOXX_VERIFY_ORIGIN/ws/stream"
+websocket_handshake=(-H 'Connection: Upgrade' -H 'Upgrade: websocket'
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==')
+expect "${websocket_handshake[@]}" "$KNOXX_VERIFY_ORIGIN/ws/stream"
 expected='401 403'; label='identity selectors cannot authenticate a WebSocket reconnect'
-expect -H 'Upgrade: websocket' -H 'X-Knoxx-Membership-Id: untrusted-admin' "$KNOXX_VERIFY_ORIGIN/ws/stream"
+expect "${websocket_handshake[@]}" -H 'X-Knoxx-Membership-Id: untrusted-admin' "$KNOXX_VERIFY_ORIGIN/ws/stream"
 expected=401; label='unknown OIDC session cannot fall back to supplied native identity headers'
 expect -H 'Cookie: __Host-knoxx_axxium_session=not-a-session' \
   -H 'X-Knoxx-Membership-Id: untrusted-admin' "$KNOXX_VERIFY_ORIGIN/api/auth/context"

@@ -78,7 +78,7 @@
       (when-not (and (number? bound) (< now (* bound 1000)))
         (throw (ex-info "Axxium root session bound is missing" {:status 401 :code :oidc-grant-invalid})))
       (min (+ now session-limit-ms) (* bound 1000)))
-    (:expires-at grant)))
+    (min (+ now session-limit-ms) (:expires-at grant))))
 
 (defn require-renewal!
   "Renewal preserves subject and original nonce; nonce may be omitted by the OP."
