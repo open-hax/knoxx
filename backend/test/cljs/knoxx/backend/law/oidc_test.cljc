@@ -68,3 +68,18 @@
     (doseq [origin [nil "null" "https://sibling.example" "https://knoxx.example.attacker.test"]]
       (test/is (= :oidc-origin-invalid
                   (rejected? #(law/require-browser-origin! config {:method method :origin origin})))))))
+
+(test/deftest browser-session-bound-is-finite-with-or-without-renewal
+  (let [now 100000
+        deadline (+ now law/session-limit-ms)]
+    (doseq [expiry [(dec deadline) deadline (inc deadline) (+ deadline 86400000)]]
+      (test/is (= (min deadline expiry)
+                  (law/session-bound (assoc grant :expires-at expiry) evidence now))))
+    (test/is (= deadline
+                (law/session-bound (assoc grant :refresh-token "fixture-refresh")
+                                   (assoc evidence :root_session_expires_at (/ (+ deadline 100000) 1000)) now)))
+    (test/is (= 200000
+                (law/session-bound (assoc grant :refresh-token "fixture-refresh")
+                                   (assoc evidence :root_session_expires_at 200) now)))
+    (test/is (= :oidc-grant-invalid
+                (rejected? #(law/session-bound (assoc grant :refresh-token "fixture-refresh") evidence now))))))
