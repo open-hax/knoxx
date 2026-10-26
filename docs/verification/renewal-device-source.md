@@ -54,6 +54,16 @@ with its checkout/runtime preconditions. Verify a protected request after the
 original token TTL and logout during renewal. On a second browser request a code,
 approve it from the existing real Axxium root session, and verify matching code,
 local actor attribution, cancel/denial/expiry, and refusal after root logout.
+While testing cancellation, delay a device start response, cancel that attempt
+and start again. Also try unmounting and reopening the control before the first
+response arrives. Start and Cancel responses are serialized within the browser
+module, so the successor must wait for cancellation's cookie update. A stale
+Start response cannot enqueue another untargeted cancel behind that successor.
+Polling remains independent of this queue, so cancellation can fence an
+in-flight backend admission. A failed cancellation request releases its queue
+slot; the next Start still passes the backend's normal previous-attempt cleanup.
+The mounted-control tests simulate delayed responses and browser cookie updates;
+repeat these cases with actual browsers during release qualification.
 The worker did not run a live tour or capture user data. Synthetic tests do not
 replace multi-host integration and human device qualification.
 

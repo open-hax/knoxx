@@ -20,10 +20,10 @@
 (defn- complete!
   "Apply a browser-managed cookie when a delayed response arrives, once."
   [fixture index]
-  (when-let [{:keys [operation resolve completed]} (get @(:requests fixture) index)]
+  (when-let [{:keys [operation resolve-response completed]} (get @(:requests fixture) index)]
     (when (compare-and-set! completed false true)
       (reset! (:cookie fixture) (when (= "start" operation) (str "attempt-" index)))
-      (resolve (response index)))))
+      (resolve-response (response index)))))
 
 (defn- mount-page!
   "Mount the real device UI; return its controls and native cleanup."
@@ -41,10 +41,11 @@
     (set! (.-fetch js/globalThis)
       (fn [path _init]
         (js/Promise.
-          (fn [resolve _reject]
+          (fn [resolve-response reject-response]
             (let [index (count @(:requests fixture))]
               (swap! (:requests fixture) conj
-                     {:operation (last (.split path "/")) :resolve resolve :completed (atom false)})
+                     {:operation (last (.split path "/")) :resolve-response resolve-response
+                      :reject-response reject-response :completed (atom false)})
               (when @(:automatic fixture) (complete! fixture index)))))))
     fixture))
 
@@ -119,3 +120,57 @@
 
 (test/deftest cancel-response-cannot-clear-a-successor-cookie
   (test/async done (verify-late-cancel! done)))
+
+(defn- ^:async verify-failed-cancel!
+  "A failed HTTP request releases its queue slot instead of wedging future starts."
+  [done]
+  (let [fixture (setup!) page (mount-page!) pages (atom [page])]
+    (try
+      (.click (:start page))
+      (await (flush!))
+      (complete! fixture 0)
+      (await (flush!))
+      (.click (:cancel page))
+      (.click (:start page))
+      (await (flush!))
+      (let [{:keys [reject-response completed]} (get @(:requests fixture) 1)]
+        (reset! completed true)
+        (reject-response (js/Error. "isolated cancel connection failure")))
+      (await (flush!))
+      (test/is (= ["start" "cancel" "start"] (operations fixture)))
+      (complete! fixture 2)
+      (await (flush!))
+      (test/is (= "attempt-2" @(:cookie fixture)))
+      (catch :default error (test/is false (str error)))
+      (finally (await (finish! fixture pages)) (done)))))
+
+(test/deftest failed-cancel-does-not-block-a-successor
+  (test/async done (verify-failed-cancel! done)))
+
+(defn- ^:async verify-cancel-during-poll!
+  "An unfinished poll cannot hold the queue needed to fence server admission."
+  [done]
+  (let [fixture (setup!) page (mount-page!) pages (atom [page])
+        original-timeout js/setTimeout poll-callback (atom nil)]
+    (try
+      (set! (.-setTimeout js/globalThis)
+        (fn [callback interval-ms]
+          (when (= 600000 interval-ms) (reset! poll-callback callback))
+          (original-timeout callback interval-ms)))
+      (.click (:start page))
+      (await (flush!))
+      (complete! fixture 0)
+      (await (flush!))
+      (@poll-callback)
+      (await (flush!))
+      (.click (:cancel page))
+      (await (flush!))
+      (test/is (= ["start" "poll" "cancel"] (operations fixture)))
+      (catch :default error (test/is false (str error)))
+      (finally
+        (set! (.-setTimeout js/globalThis) original-timeout)
+        (await (finish! fixture pages))
+        (done)))))
+
+(test/deftest cancellation-remains-independent-of-inflight-polling
+  (test/async done (verify-cancel-during-poll! done)))

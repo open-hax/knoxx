@@ -10,7 +10,7 @@
     (.appendChild parent node)
     node))
 
-(defn- ^:async request!
+(defn- ^:async send-request!
   "Call only a fixed same-origin backend operation; cookies are browser-managed."
   [operation]
   (let [response (await (js/fetch (str "/api/auth/axxium/device/" operation)
@@ -19,6 +19,25 @@
     (when-not (or (.-ok response) (= 429 (.-status response)))
       (throw (js/Error. "Device sign-in unavailable. Start again.")))
     (js->clj (await (.json response)) :keywordize-keys true)))
+
+(defonce ^{:private true :doc "Serialize cookie mutations across controls, including unmount/remount."} mutation-tail
+  (atom nil))
+
+(defn- ^:async request!
+  "Finish each start/cancel response before dispatching the next cookie mutation.
+   Polls remain independent so an in-flight admission can still be cancelled."
+  [operation]
+  (if (= "poll" operation)
+    (await (send-request! operation))
+    (let [previous @mutation-tail release (atom nil)
+          completed (js/Promise. (fn [resolve-completion _reject] (reset! release resolve-completion)))]
+      (reset! mutation-tail completed)
+      (try
+        (when previous (await previous))
+        (await (send-request! operation))
+        (finally
+          (@release)
+          (compare-and-set! mutation-tail completed nil))))))
 
 (defn- trusted-link!
   "Defend the display edge; the backend additionally pins the authority's exact origin."
@@ -108,10 +127,11 @@
     (set! (.-textContent (:display state)) "Requesting a device code…")
     (try
       (let [result (await (request! "start"))]
-        (if (current? state generation)
-          (do (show-code! state result)
-              (schedule! state generation (or (:interval result) 5)))
-          (try (await (request! "cancel")) (catch :default _ nil))))
+        ;; The queued cancel or successor start already owns cleanup. A stale
+        ;; response must not append an untargeted cancel behind its successor.
+        (when (current? state generation)
+          (show-code! state result)
+          (schedule! state generation (or (:interval result) 5))))
       (catch :default _ (fail! state generation "Device sign-in unavailable. Start again.")))))
 
 (defn mount!

@@ -86,9 +86,12 @@ curl --silent --show-error --max-time 15 -D "$fixture_dir/start" -o /dev/null -c
 python3 - "$fixture_dir/start" "$fixture_dir/config" "$fixture_dir/state" <<'PY'
 import json, sys, urllib.parse
 lines = open(sys.argv[1]).read().splitlines()
-assert any(line.startswith('HTTP/') and '302' in line for line in lines), 'FAIL begin did not redirect'
 location = next(line.split(':', 1)[1].strip() for line in lines if line.lower().startswith('location:'))
 u = urllib.parse.urlsplit(location); q = urllib.parse.parse_qs(u.query)
+if q.get('state'):
+    # Preserve the pending transaction for EXIT cleanup before any assertion.
+    open(sys.argv[3], 'w').write(q['state'][0])
+assert any(line.startswith('HTTP/') and '302' in line for line in lines), 'FAIL begin did not redirect'
 c = json.load(open(sys.argv[2]))
 assert u.scheme == 'https' and u.hostname != 'attacker.invalid'
 assert q['redirect_uri'] == [c['publicBaseUrl'] + '/api/auth/axxium/callback']
@@ -96,7 +99,6 @@ assert q['code_challenge_method'] == ['S256'] and q.get('code_challenge') and q.
 assert not any(k in q for k in ('access_token', 'client_secret', 'code_verifier'))
 assert any('HttpOnly' in line and 'Secure' in line and 'SameSite=Lax' in line
            for line in lines if line.lower().startswith('set-cookie:'))
-open(sys.argv[3], 'w').write(q['state'][0])
 print('PASS begin uses fixed callback, state, nonce, S256 and a secure HttpOnly browser binding')
 PY
 expected=400; label='missing code consumes this browser transaction without creating a session'
