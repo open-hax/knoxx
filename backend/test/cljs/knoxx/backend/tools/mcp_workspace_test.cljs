@@ -53,8 +53,14 @@
         (is (true? (aget first-page "truncated")))
         (is (false? (aget second-page "truncated")))
         (is (= input (str (aget first-page "content") (aget second-page "content")))))
+      (let [eof-page (aget (await (invoke (.-size (await (.stat fs file))))) "details")]
+        (is (= "" (aget eof-page "content")))
+        (is (false? (aget eof-page "truncated")))
+        (is (nil? (aget eof-page "next_offset_bytes"))))
       ;; Invalid UTF-8 must not trap a client at offset zero.
       (await (.writeFile fs file (.alloc js/Buffer 20010 128)))
       (let [page (aget (await (invoke 0)) "details")]
         (is (= 20000 (aget page "next_offset_bytes"))))
+      (await (.unlink fs file))
+      (is (try (await (invoke 0)) false (catch :default err (= "ENOENT" (.-code err)))))
       (finally (await (.rm fs dir #js {:recursive true :force true}))))))
