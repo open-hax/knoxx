@@ -40,5 +40,5 @@
         (is (contains? names "read"))
         (is (not (contains? names "write")))
         (is (not (contains? names "bash")))
-        (is (not (:ok denied))))
+        (is (not= :ok (:status (mcp/call-outcome denied)))))
       (finally (await (harness/stop! started))))))
