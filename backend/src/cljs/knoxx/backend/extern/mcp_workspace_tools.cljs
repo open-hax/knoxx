@@ -34,14 +34,23 @@
       (recur (dec end))
       end)))
 
+(defn- ^:async fill-read-buffer!
+  "Read until the bounded buffer is full or the file reaches EOF."
+  [handle buffer offset]
+  (loop [filled 0]
+    (if (= filled (.-length buffer))
+      filled
+      (let [result (await (.read handle buffer filled (- (.-length buffer) filled) (+ offset filled)))
+            n (.-bytesRead result)]
+        (if (zero? n) filled (recur (+ filled n)))))))
+
 (defn- ^:async read-file-page!
   "Read a bounded UTF-8 byte page and report the next byte offset."
   [resolved offset]
   (let [handle (await (.open fs resolved "r"))
         buffer (.alloc js/Buffer (+ read-page-bytes 4))]
     (try
-      (let [result (await (.read handle buffer 0 (.-length buffer) offset))
-            bytes-read (.-bytesRead result)
+      (let [bytes-read (await (fill-read-buffer! handle buffer offset))
             end (utf8-page-end buffer bytes-read)
             content (.toString buffer "utf8" 0 end)
             size (.-size (await (.stat handle)))
