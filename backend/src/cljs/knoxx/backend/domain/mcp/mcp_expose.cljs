@@ -9,6 +9,7 @@
    is decoded before delegating to the agent hydration tool factories."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.agent.hydration :as hydration]
+            [knoxx.backend.extern.mcp-workspace-tools :as workspace-tools]
             [knoxx.backend.domain.contracts.loader :as contracts]
             [knoxx.backend.infra.config :as runtime-config]
             [knoxx.backend.runtime.state :as runtime-state]))
@@ -139,5 +140,6 @@
               ctx-js (js->clj ctx-js :keywordize-keys true)
               :else nil)
         cfg (resolve-config config)
-        tools (hydration/create-knoxx-custom-tools runtime cfg ctx)]
+        tools (.concat (hydration/create-knoxx-custom-tools runtime cfg ctx)
+                       (workspace-tools/create-workspace-tools runtime cfg ctx))]
     (attach-sub-agent-metadata-to-tools! tools cfg)))

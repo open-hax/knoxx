@@ -207,6 +207,12 @@
      :create-parents (not= false (aget body "create_parents"))
      :parent (.dirname path path-str)}))
 
+(defn ^:async write-workspace-file!
+  "Write UTF-8 content; when overwrite is false, create exclusively."
+  [path-str content overwrite]
+  (await (.writeFile fs path-str content
+                     (clj->js {:encoding "utf8" :flag (if overwrite "w" "wx")}))))
+
 (defroute register-write-route!
   [ensure-role-can-use! resolve-workspace-path]
   "POST" "/api/tools/write"
@@ -217,15 +223,11 @@
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write" agent-contract-id)
           {:keys [path-str content overwrite create-parents parent]} (write-body-params body resolve-workspace-path runtime config)]
       (try
-        (when-not overwrite
-          (try
-            (await (.stat fs path-str))
-            (json-response! reply 409 {:detail (str "File exists and overwrite is false: " path-str)})
-            (catch :default _
-              nil)))
         (when create-parents
           (await (.mkdir fs parent (clj->js {:recursive true}))))
-        (await (.writeFile fs path-str content "utf8"))
+        ;; Exclusive creation must be atomic: a separate stat check both races
+        ;; concurrent writers and can continue after a 409 response.
+        (await (write-workspace-file! path-str content overwrite))
         (json-response! reply 200 {:ok true :role role :path path-str
                                    :bytes_written (.-length (.from js/Buffer content "utf8"))})
         (catch :default err

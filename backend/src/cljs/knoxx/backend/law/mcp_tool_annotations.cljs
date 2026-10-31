@@ -23,7 +23,10 @@
 (def declared
   "Tool name -> annotations, each justified by that tool's implementation in
    knoxx.backend.infra.openplanner.tools."
-  {;; Reads of our own corpus and graph. Nothing leaves the system.
+  {"read" {:readOnlyHint true :openWorldHint false}
+   "write" {:readOnlyHint false :destructiveHint true :openWorldHint false}
+   "bash" {:readOnlyHint false :destructiveHint true :openWorldHint true}
+   ;; Reads of our own corpus and graph. Nothing leaves the system.
    "graph_query"      {:readOnlyHint true  :openWorldHint false}
    "semantic_query"   {:readOnlyHint true  :openWorldHint false}
    "memory_search"    {:readOnlyHint true  :openWorldHint false}
