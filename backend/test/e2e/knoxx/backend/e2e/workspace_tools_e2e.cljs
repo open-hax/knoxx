@@ -1,6 +1,7 @@
 (ns knoxx.backend.e2e.workspace-tools-e2e
   "Direct workspace tools through the actual MCP transport, in a disposable root."
   (:require [cljs.test :refer [deftest is]]
+            [clojure.string :as str]
             [knoxx.backend.e2e.harness :as harness]
             [knoxx.backend.e2e.mcp-client :as mcp]
             ["node:fs/promises" :as fs]
@@ -23,7 +24,12 @@
         (is (= "hello" (:detail (mcp/call-outcome read))))
         (is (= "hello" (:detail (mcp/call-outcome bash))))
         (is (= :tool-error (:status (mcp/call-outcome failed))))
-        (is (= "hello" (await (.readFile fs (.join path dir "probe.txt") "utf8")))))
+        (is (= "hello" (await (.readFile fs (.join path dir "probe.txt") "utf8"))))
+        (await (.writeFile fs (.join path dir "long.txt") (str (apply str (repeat 19999 "a")) "🙂tail") "utf8"))
+        (let [first-page (mcp/call-outcome (await (mcp/call-tool! client "read" {:path "long.txt"})))
+              next-page (mcp/call-outcome (await (mcp/call-tool! client "read" {:path "long.txt" :offset_bytes 19999})))]
+          (is (str/includes? (:detail first-page) "offset_bytes=19999"))
+          (is (= "🙂tail" (:detail next-page)))))
       (finally
         (await (harness/stop! started))
         (await (.rm fs dir #js {:recursive true :force true}))))))

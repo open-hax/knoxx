@@ -70,8 +70,10 @@
       (let [text (str/join "\n" (sort (array-seq (await (.readdir fs resolved)))))
             content (subs text 0 (min (count text) read-page-bytes))]
         (tool-text-result content {:path resolved :content content :truncated (< (count content) (count text))}))
-      (let [page (await (read-file-page! resolved offset))]
-        (tool-text-result (:content page) page)))))
+      (let [page (await (read-file-page! resolved offset))
+            text (cond-> (:content page)
+                   (:truncated page) (str "\n\n[Continue with offset_bytes=" (:next_offset_bytes page) "]"))]
+        (tool-text-result text page)))))
 
 (defn- ^:async write-execute
   "Write UTF-8 content, refusing replacement unless explicitly requested."
