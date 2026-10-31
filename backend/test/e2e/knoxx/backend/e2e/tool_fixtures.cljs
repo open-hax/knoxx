@@ -43,7 +43,10 @@
   "OpenPlanner is not configured")
 
 (def fixtures
-  {;; ── corpus and memory ────────────────────────────────────────────────────
+  {"read" {:needs "a configured workspace fixture"}
+   "write" {:write true :needs "a disposable workspace fixture"}
+   "bash" {:write true :needs "a disposable workspace fixture"}
+   ;; ── corpus and memory ────────────────────────────────────────────────────
    "semantic_query"   {:args {:query "knoxx architecture" :topK 3}
                        :allowed-error openplanner-not-configured}
    "graph_query"      {:args {:query "knoxx" :limit 3}
