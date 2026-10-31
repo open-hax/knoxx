@@ -259,9 +259,10 @@
   (ensure-json-parser! app)
   (add-debug-hook! app)
   (await (register-default-plugins! app))
-  (await (register-ws-routes! runtime app))
   (await (add-session-hook! app policy-context cookie-hook?))
-  (await (register-http-routes! runtime app cfg policy-context)))
+  (await (register-http-routes! runtime app cfg policy-context))
+  ;; Child WebSocket routes inherit the mandatory OIDC admission hook.
+  (await (register-ws-routes! runtime app)))
 
 (defn ^:async start-http!
   "Compose routes and mandatory persistence before accepting HTTP or signaling ready.

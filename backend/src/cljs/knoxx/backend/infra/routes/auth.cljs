@@ -1,7 +1,10 @@
 (ns knoxx.backend.infra.routes.auth
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.axxium-oidc :as oidc-wire]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.axxium :as axxium]
+            [knoxx.backend.infra.auth.oidc :as oidc]
+            [knoxx.backend.infra.auth.oidc-device :as oidc-device]
             [knoxx.backend.infra.auth.password :as password]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as policy-db]))
@@ -63,6 +66,9 @@
   (.get app "/api/auth/config"
         (fn [_req ^js reply]
           (.send reply (clj->js {:githubEnabled github-enabled
+                                 :axxiumOidcEnabled (oidc/enabled?)
+                                 :axxiumDeviceEnabled (true? (:device-enabled? (oidc-wire/configured)))
+                                 :axxiumOidcLoginUrl (when (oidc/enabled?) "/api/auth/axxium/start")
                                  :localPasswordEnabled (or (axxium/enabled?) (local-password-enabled?))
                                  :identityProvider (when (axxium/enabled?) "axxium")
                                  :publicBaseUrl public-base-url
@@ -206,15 +212,21 @@
 
 (defn- ^:async logout-handler!
   [req reply public-base-url]
-  (let [cookie-token (some-> req (aget "cookies") (aget auth-session/COOKIE-NAME))]
-    (when cookie-token
-      (let [payload (auth-session/verify-token cookie-token)]
-        (when-let [session-id (:sid payload)]
-          (try
-            (await (auth-session/delete-session session-id cookie-token))
-            (catch :default _ nil)))))
-    (auth-session/clear-session-cookie reply public-base-url)
-    (.send reply (clj->js {:ok true}))))
+  (let [oidc-result (when (oidc/present? req)
+                      (try (await (oidc/logout-request! req reply))
+                           (catch :default _
+                             (oidc-wire/clear-cookie! reply oidc-wire/session-cookie)
+                             nil)))
+        cookie-token (some-> req (aget "cookies") (aget auth-session/COOKIE-NAME))]
+    (when-not (= 403 (:status oidc-result))
+      (when cookie-token
+        (let [payload (auth-session/verify-token cookie-token)]
+          (when-let [session-id (:sid payload)]
+            (try
+              (await (auth-session/delete-session session-id cookie-token))
+              (catch :default _ nil)))))
+      (auth-session/clear-session-cookie reply public-base-url))
+    (oidc-wire/send! reply (or (:status oidc-result) 200) (or (:body oidc-result) {:ok true}))))
 
 (defn- register-logout-route!
   [^js app public-base-url]
@@ -331,6 +343,10 @@
                             (not (str/blank? client-secret)))]
     (when policy-context
       (auth-session/set-db-session-store! policy-context))
+    (let [config (oidc-wire/configured)
+          consumer (when config (oidc/create-consumer config))]
+      (oidc/register-consumer! app policy-context consumer auth-session/resolve-auth-context)
+      (oidc-device/register! app consumer policy-context))
     (register-auth-config-route! app public-base-url github-enabled)
     (register-signup-route! app policy-context public-base-url)
     (register-local-login-route! app policy-context public-base-url)

@@ -3,17 +3,17 @@
   401 renders the login surface instead of protected content, and invite
   redemption refreshes the auth context into the protected app. Global
   fetch is mocked (the auth api uses raw fetch, not the knoxx helper)."
-  (:require [cljs.test :refer [deftest is async use-fixtures]]
-            ["@testing-library/react" :as rtl]
-            [helix.core :refer [$ defnc]]
+  (:require ["@testing-library/react" :as rtl]
+            [cljs.test :as test]
+            [helix.core :as hx]
             [helix.dom :as d]
-            [knoxx.frontend.auth.context :as auth]
-            [knoxx.frontend.auth.boundary :refer [auth-boundary]]))
+            [knoxx.frontend.auth.boundary :as boundary]
+            [knoxx.frontend.auth.context :as auth]))
 
 ;; jsdom globals come from the :test build's :prepend-js.
 
-(def fetch-calls (atom []))
-(def context-status (atom 401))
+(def fetch-calls "Observed isolated auth HTTP calls." (atom []))
+(def context-status "Configured isolated auth response status." (atom 401))
 
 (defn- json-response [status body]
   #js {:ok (< status 400)
@@ -43,7 +43,7 @@
 
 (def ^:private real-fetch js/fetch)
 
-(use-fixtures :each
+(test/use-fixtures :each
   {:before (fn []
              (reset! fetch-calls [])
              (reset! context-status 401)
@@ -61,61 +61,66 @@
    (rtl/waitFor (fn [] (when-not (pred) (throw (js/Error. (str "still waiting: " msg)))))
                 (clj->js (or opts {})))))
 
-(defnc protected-content []
+(hx/defnc protected-content "Protected application fixture." []
   (d/div "Protected Knoxx workspace"))
 
 (defn- render-boundary []
-  (rtl/render ($ auth-boundary {:children ($ protected-content)})))
+  (rtl/render (hx/$ boundary/auth-boundary {:children (hx/$ protected-content)})))
 
-(deftest renders-login-surface-on-401
-  (async done
-    (let [r (render-boundary)]
-      (-> (wait-until "login page" #(some? (.queryByText r "Knowledge operations platform")))
-          (.then (fn []
-                   (is (some? (.queryByText r "GitHub OAuth is not configured. Contact your administrator.")))
-                   (is (nil? (.queryByText r "Protected Knoxx workspace")))
-                   (let [context-call (first (filter #(re-find #"/api/auth/context" (:path %)) @fetch-calls))]
-                     (is (some? context-call))
-                     (is (= "include" (.-credentials ^js (:init context-call)))))
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+(defn- ^:async verify-login-surface! [done]
+  (try
+    (let [page (render-boundary)]
+      (await (wait-until "login page" #(some? (.queryByText page "Knowledge operations platform"))))
+      ;; The mocked config disables every provider; its warning appears only
+      ;; after that response arrives, independently of the initial login render.
+      (await (wait-until "provider configuration"
+                         #(some? (.queryByText page "GitHub OAuth is not configured. Contact your administrator."))))
+      (test/is (nil? (.queryByText page "Protected Knoxx workspace")))
+      (let [context-call (first (filter #(re-find #"/api/auth/context" (:path %)) @fetch-calls))]
+        (test/is (some? context-call))
+        (test/is (= "include" (.-credentials ^js (:init context-call))))))
+    (catch :default error (test/is false (str "unexpected: " error)))
+    (finally (done))))
 
-(deftest invite-redemption-refreshes-into-protected-app
-  (async done
-    (let [r (render-boundary)]
-      (-> (wait-until "login page" #(some? (.queryByText r "Knowledge operations platform")))
-          (.then (fn []
-                   (.change rtl/fireEvent (.getByLabelText r "Email")
-                            #js {:target #js {:value "pi@open-hax.local"}})
-                   (.change rtl/fireEvent (.getByLabelText r "Invite code")
-                            #js {:target #js {:value "INVITE-1"}})
-                   (.click rtl/fireEvent (.getByRole r "button" #js {:name "Redeem invite"}))
-                   (wait-until "redeemed" #(some? (.queryByText r "Invite accepted! Redirecting…")))))
-          (.then (fn []
-                   (wait-until "protected app" #(some? (.queryByText r "Protected Knoxx workspace"))
-                               {:timeout 1500})))
-          (.then (fn []
-                   (let [redeem (first (filter #(re-find #"/api/auth/invite/redeem" (:path %)) @fetch-calls))
-                         ^js init (:init redeem)]
-                     (is (= "POST" (.-method init)))
-                     (is (= "include" (.-credentials init)))
-                     (is (= {"code" "INVITE-1" "email" "pi@open-hax.local"}
-                            (js->clj (js/JSON.parse (.-body init))))))
-                   (is (= 2 (count (filter #(re-find #"/api/auth/context" (:path %)) @fetch-calls)))
-                       "auth context refetched after redemption")
-                   (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+(test/deftest renders-login-surface-on-401
+  (test/async done (verify-login-surface! done)))
 
-(defnc auth-consumer []
+(defn- ^:async verify-invite-redemption! [done]
+  (try
+    (let [page (render-boundary)]
+      (await (wait-until "login page" #(some? (.queryByText page "Knowledge operations platform"))))
+      (.change rtl/fireEvent (.getByLabelText page "Email") #js {:target #js {:value "pi@open-hax.local"}})
+      (.change rtl/fireEvent (.getByLabelText page "Invite code") #js {:target #js {:value "INVITE-1"}})
+      (.click rtl/fireEvent (.getByRole page "button" #js {:name "Redeem invite"}))
+      (await (wait-until "redeemed" #(some? (.queryByText page "Invite accepted! Redirecting…"))))
+      (await (wait-until "protected app" #(some? (.queryByText page "Protected Knoxx workspace")) {:timeout 1500}))
+      (let [redeem (first (filter #(re-find #"/api/auth/invite/redeem" (:path %)) @fetch-calls))
+            ^js init (:init redeem)]
+        (test/is (= "POST" (.-method init)))
+        (test/is (= "include" (.-credentials init)))
+        (test/is (= {"code" "INVITE-1" "email" "pi@open-hax.local"}
+                    (js->clj (js/JSON.parse (.-body init))))))
+      (test/is (= 2 (count (filter #(re-find #"/api/auth/context" (:path %)) @fetch-calls)))
+               "auth context refetched after redemption"))
+    (catch :default error (test/is false (str "unexpected: " error)))
+    (finally (done))))
+
+(test/deftest invite-redemption-refreshes-into-protected-app
+  (test/async done (verify-invite-redemption! done)))
+
+(hx/defnc auth-consumer "Observe the auth context provided to signed-in children." []
   (let [^js a (auth/use-auth)]
     (d/div (str "signed in as " (.. a -user -email)
                 " admin=" (.-isSystemAdmin a)))))
 
-(deftest authenticated-children-can-use-auth
+(defn- ^:async verify-authenticated-child! [done]
+  (try
+    (let [page (rtl/render (hx/$ boundary/auth-boundary {:children (hx/$ auth-consumer)}))]
+      (await (wait-until "consumer sees auth"
+                         #(some? (.queryByText page "signed in as pi@open-hax.local admin=true")))))
+    (catch :default error (test/is false (str "unexpected: " error)))
+    (finally (done))))
+
+(test/deftest authenticated-children-can-use-auth
   (reset! context-status 200)
-  (async done
-    (let [r (rtl/render ($ auth-boundary {:children ($ auth-consumer)}))]
-      (-> (wait-until "consumer sees auth"
-                      #(some? (.queryByText r "signed in as pi@open-hax.local admin=true")))
-          (.then (fn [] (done)))
-          (.catch (fn [err] (is false (str "unexpected: " err)) (done)))))))
+  (test/async done (verify-authenticated-child! done)))

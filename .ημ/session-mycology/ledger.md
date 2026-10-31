@@ -183,3 +183,29 @@
   spore: none
   receipt-refs: knoxx-382-provenance-links
   note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
+- ts: 2026-10-23T06:49:14.972498138Z
+  session: /home/err/.local/share/codex-work/axxium-sso/knoxx-current
+  task: Verify selected shared owner and integrate current-release SSO sources
+  p-efficiency: 0.62
+  p-friction: 0.71
+  p-skill-candidate: 0.3
+  spore: none
+  receipt-refs: 67b6e410,7aed3176,cd68800
+  note: Port minimal source deltas onto current accepted releases; preserve independent append-only streams in their immutable commits and append owner-generated provenance instead of conflict union. Real Fastify origin/enrollment negative cases caught cross-product admission gaps. No spore or global memory mutation.
+- ts: 2026-10-25T04:27:19.318729030Z
+  session: /home/err/.local/share/codex-work/axxium-sso/knoxx-current
+  task: Close invite origin guard gap with native admission regression
+  p-efficiency: 0.85
+  p-friction: 0.25
+  p-skill-candidate: 0.1
+  spore: none
+  receipt-refs: open-hax/knoxx#394,4369628748
+  note: Exercise exact authenticated route paths, since a broad auth-prefix exemption bypassed otherwise correct origin policy. Verify pinned dependency units from installed primary source before accepting a plausible review claim. Scope lint to its owning backend configuration. Cleanup synthetic screenshots on interruption and distinguish wire invalid-code refusal from isolated one-use proof. No spore or promotion.
+
+- ts: 2026-10-25T08:46:15.857460+00:00
+  origin: shared-login-encoded-invite-origin
+  p-efficiency: 0.8
+  p-friction: 0.35
+  p-skill-candidate: 0.4
+  receipt-refs: shared-login-and-federation; native4370097788
+  note: Transport admission must use the framework matched route template when routing normalizes encoded static paths. Exercise the real router and verify refusal precedes handler effects; raw URL lexical tests alone miss this boundary.

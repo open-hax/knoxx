@@ -5,11 +5,12 @@
             ["@fastify/websocket" :default fastifyWebsocket]
             ["@fastify/multipart" :default fastifyMultipart]
             ["@fastify/cookie" :default fastifyCookie]
-            ["@fastify/formbody" :default fastifyFormbody]))
+            ["@fastify/formbody" :default fastifyFormbody]
+            [knoxx.backend.extern.http-logging :as logging]))
 
 (defn create-app!
   []
-  (Fastify #js {:logger true
+  (Fastify #js {:logger (logging/options)
                 :bodyLimit (* 50 1024 1024)
                 :requestTimeout 600000
                 :connectionTimeout 600000

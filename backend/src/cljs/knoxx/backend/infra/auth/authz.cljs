@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.auth.authz
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.auth.oidc :as oidc]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.http :as http]
@@ -55,20 +56,26 @@
   [runtime request]
   (if-not (policy-db-enabled? runtime)
     nil
-    (if-let [cached (aget request "__knoxxRequestContext")]
-      cached
-      (let [headers (or (aget request "headers") #js {})
-            header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
-            header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
-            policy-context (policy-db runtime)
-            ctx-promise (if (or (not (str/blank? header-email))
-                                (not (str/blank? header-mid)))
-                          (db-policy/resolve-context! policy-context headers)
-                          ;; Fall back to cookie-backed auth context resolution.
-                          (auth-session/resolve-auth-context request policy-context))
-            ctx (await ctx-promise)]
-        (aset request "__knoxxRequestContext" ctx)
-        ctx))))
+    (if (or (oidc/enabled?) (oidc/present? request))
+      ;; A reused request (including upgraded transports) cannot turn a past
+      ;; OIDC admission or hydrated identity headers into permanent authority.
+      ;; With OIDC enabled, native credentials also resolve independently of
+      ;; caller-supplied identity selectors and any cached request context.
+      (auth-session/resolve-auth-context request (policy-db runtime))
+      (if-let [cached (aget request "__knoxxRequestContext")]
+        cached
+        (let [headers (or (aget request "headers") #js {})
+              header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
+              header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
+              policy-context (policy-db runtime)
+              ctx-promise (if (or (not (str/blank? header-email))
+                                  (not (str/blank? header-mid)))
+                            (db-policy/resolve-context! policy-context headers)
+                            ;; Fall back to cookie-backed auth context resolution.
+                            (auth-session/resolve-auth-context request policy-context))
+              ctx (await ctx-promise)]
+          (aset request "__knoxxRequestContext" ctx)
+          ctx)))))
 
 (defn ^:async with-request-context!
   "Resolve auth context and call (f ctx). Returns a promise.
@@ -199,6 +206,11 @@
 (defn record-membership-id [record] (or (:membership-id record) (:membershipId record) (:membership_id record)))
 (defn record-actor-id [record] (or (:actor-id record) (:actorId record) (:actor_id record)))
 
+(defn- principal-pair-present?
+  "Require both normalized principal selectors before comparing them."
+  [caller stored]
+  (and (not (str/blank? caller)) (not (str/blank? stored))))
+
 (defn principal-match?
   [ctx record]
   (let [ctx-membership (str (or (ctx-membership-id ctx) ""))
@@ -217,14 +229,11 @@
     (cond
       (not actor-match?) false
       (system-admin? ctx) true
-      (and (not (str/blank? ctx-membership))
-           (not (str/blank? record-membership)))
+      (principal-pair-present? ctx-membership record-membership)
       (= ctx-membership record-membership)
-      (and (not (str/blank? ctx-user))
-           (not (str/blank? record-user)))
+      (principal-pair-present? ctx-user record-user)
       (= ctx-user record-user)
-      (and (not (str/blank? ctx-email))
-           (not (str/blank? record-email)))
+      (principal-pair-present? ctx-email record-email)
       (= ctx-email record-email)
       :else
       (and actor-bound?
