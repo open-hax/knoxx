@@ -35,3 +35,22 @@
       (let [result (await (invoke "bash" #js {:command "exit 7"}))]
         (is (true? (aget result "isError"))))
       (finally (await (.rm fs dir #js {:recursive true :force true}))))))
+
+(deftest ^:async file-read-is-bounded-and-pages-utf8
+  (let [dir (await (.mkdtemp fs (.join path (.tmpdir os) "knoxx-mcp-pages-")))
+        file (.join path dir "large.txt")
+        input (str (apply str (repeat 19999 "a")) "🙂" "tail")
+        tools (workspace/create-workspace-tools nil {:workspace-root dir}
+                                                {:toolPolicies [{:toolId "read" :effect "allow"}]})
+        invoke (fn [offset] ((aget (by-name tools "read") "execute") "test"
+                             #js {:path "large.txt" :offset_bytes offset} nil nil nil))]
+    (try
+      (await (.writeFile fs file input "utf8"))
+      (let [first-page (aget (await (invoke 0)) "details")
+            offset (aget first-page "next_offset_bytes")
+            second-page (aget (await (invoke offset)) "details")]
+        (is (= 19999 offset))
+        (is (true? (aget first-page "truncated")))
+        (is (false? (aget second-page "truncated")))
+        (is (= input (str (aget first-page "content") (aget second-page "content")))))
+      (finally (await (.rm fs dir #js {:recursive true :force true}))))))

@@ -12,24 +12,57 @@
 
 (def ^:private ^{:doc "Promise-based child process boundary."} exec-file-async (promisify execFile))
 
-(def ^{:doc "MCP workspace read input schema."} read-params [:map [:path :string]])
+(def ^{:doc "MCP workspace read input schema."} read-params
+  [:map [:path :string]
+   [:offset_bytes {:optional true :description "Zero-based UTF-8 byte offset from a previous next_offset_bytes response."}
+    [:int {:min 0 :max 9007199254740991}]]])
 (def ^{:doc "MCP workspace write input schema."} write-params [:map [:path :string] [:content :string]
                    [:overwrite {:optional true} :boolean]])
 (def ^{:doc "MCP direct Bash input schema."} bash-params [:map [:command :string]
                   [:workdir {:optional true} :string]
                   [:timeout_ms {:optional true} [:int {:min 1000 :max 120000}]]])
 
+(def ^:private ^{:doc "Maximum UTF-8 bytes returned per file-read page."} read-page-bytes 20000)
+
+(defn- utf8-page-end
+  "Choose a byte boundary without splitting a UTF-8 continuation sequence."
+  [buffer bytes-read]
+  (loop [end (min read-page-bytes bytes-read)]
+    (if (and (< end bytes-read)
+             (pos? end)
+             (= 128 (bit-and 192 (aget buffer end))))
+      (recur (dec end))
+      end)))
+
+(defn- ^:async read-file-page!
+  "Read a bounded UTF-8 byte page and report the next byte offset."
+  [resolved offset]
+  (let [handle (await (.open fs resolved "r"))
+        buffer (.alloc js/Buffer (+ read-page-bytes 4))]
+    (try
+      (let [result (await (.read handle buffer 0 (.-length buffer) offset))
+            bytes-read (.-bytesRead result)
+            end (utf8-page-end buffer bytes-read)
+            content (.toString buffer "utf8" 0 end)
+            size (.-size (await (.stat handle)))
+            truncated (< (+ offset end) size)]
+        {:path resolved :content content :truncated truncated
+         :offset_bytes offset :next_offset_bytes (when truncated (+ offset end))})
+      (finally (await (.close handle))))))
+
 (defn- ^:async read-execute
-  "Read a file or directory through the MCP tool boundary."
+  "Read a file page or directory through the MCP tool boundary."
   [runtime config _id params _a _b _c]
   (let [requested (str (or (aget params "path") ""))
         resolved (resolve-workspace-path runtime config requested)
-        stat (await (.stat fs resolved))
-        text (if (.isDirectory stat)
-               (str/join "\n" (sort (array-seq (await (.readdir fs resolved)))))
-               (await (.readFile fs resolved "utf8")))
-        content (subs text 0 (min (count text) 20000))]
-    (tool-text-result content {:path resolved :content content :truncated (< (count content) (count text))})))
+        offset (or (aget params "offset_bytes") 0)
+        stat (await (.stat fs resolved))]
+    (if (.isDirectory stat)
+      (let [text (str/join "\n" (sort (array-seq (await (.readdir fs resolved)))))
+            content (subs text 0 (min (count text) read-page-bytes))]
+        (tool-text-result content {:path resolved :content content :truncated (< (count content) (count text))}))
+      (let [page (await (read-file-page! resolved offset))]
+        (tool-text-result (:content page) page)))))
 
 (defn- ^:async write-execute
   "Write UTF-8 content, refusing replacement unless explicitly requested."
@@ -75,7 +108,7 @@
     (clj->js
      (vec (remove nil?
                   [(when (allowed? "read")
-                     (tool "read" "Workspace Read" "Read a file or list a directory in configured workspace roots. Symlinks are not a containment boundary." read-params read-execute))
+                     (tool "read" "Workspace Read" "Read a file in bounded UTF-8 byte pages or list a directory in configured workspace roots. Use next_offset_bytes to continue. Symlinks are not a containment boundary." read-params read-execute))
                    (when (allowed? "write")
                      (tool "write" "Workspace Write" "Write a file in a configured workspace root; overwrite must be explicit. Symlinks are not a containment boundary." write-params write-execute))
                    (when (allowed? "bash")
