@@ -27,12 +27,16 @@
 (defn- utf8-page-end
   "Choose a byte boundary without splitting a UTF-8 continuation sequence."
   [buffer bytes-read]
-  (loop [end (min read-page-bytes bytes-read)]
-    (if (and (< end bytes-read)
-             (pos? end)
-             (= 128 (bit-and 192 (aget buffer end))))
-      (recur (dec end))
-      end)))
+  (let [boundary (min read-page-bytes bytes-read)]
+    (loop [end boundary scanned 0]
+      (if (and (< end bytes-read)
+               (pos? end)
+               (= 128 (bit-and 192 (aget buffer end))))
+        ;; A valid UTF-8 character has at most three continuation bytes. For
+        ;; malformed binary input, advance at the original boundary instead of
+        ;; returning a zero-length page that can never make progress.
+        (if (< scanned 3) (recur (dec end) (inc scanned)) boundary)
+        end))))
 
 (defn- ^:async fill-read-buffer!
   "Read until the bounded buffer is full or the file reaches EOF."
