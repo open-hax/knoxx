@@ -565,18 +565,8 @@
                   (filter #(approval-in-scope? % scope)))
          (vals (:approvals @state)))))
 
-(defn memory-store
-  "An `ITranslationEvidenceStore` over one atom.
-
-   Used by tests and by the verification script. It is not a fallback for the
-   durable store: a binding lost on restart can never be joined to the worker's
-   answer, so the translation would complete and no receipt would ever exist."
-  []
-  (let [state (atom {:dispatches {}
-                     :completion-owners {}
-                     :receipts {}
-                     :approvals {}})]
-    (reify ITranslationEvidenceStore
+(defrecord MemoryTranslationEvidenceStore [state]
+  ITranslationEvidenceStore
       (reserve-dispatch! [_ record]
         (reserve-memory! state record))
 
@@ -611,4 +601,10 @@
         (record-memory-approval! state approval))
 
       (approvals! [_ scope]
-        (memory-approvals state scope)))))
+        (memory-approvals state scope)))
+
+(defn memory-store
+  "Create the reference protocol with an inspectable state atom for validated replay.
+   This factory is never a durable-provider fallback."
+  ([] (memory-store (atom {:dispatches {} :completion-owners {} :receipts {} :approvals {}})))
+  ([state] (->MemoryTranslationEvidenceStore state)))

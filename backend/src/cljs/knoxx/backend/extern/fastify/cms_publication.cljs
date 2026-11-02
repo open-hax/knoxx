@@ -8,12 +8,14 @@
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.routes.cms-publication :as facade]
+            [knoxx.backend.infra.wiki-commands :as commands]
+            [knoxx.backend.infra.wiki-publication :as wiki-publication]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
 
 (def read-permission "org.publications.read")
-(def write-permission "org.publications.manage")
+(def write-permission "org.publications.publish")
 
 (defn- request-scope
   [ctx]
@@ -92,6 +94,9 @@
    in #230 and the translation config routes in #233."
   [handlers ctx permission operation]
   ((:ensure-permission! handlers) ctx permission)
+  (if (= permission write-permission)
+    (commands/ensure-command! ctx "wiki_publish" "publication/publish")
+    (commands/ensure-command! ctx "wiki_list" "publication/read"))
   (await (operation)))
 
 (defn- route-handler
@@ -103,7 +108,7 @@
          (await
           (respond! handlers reply
                     #(guarded! handlers ctx permission
-                               (fn [] (operation (request-scope ctx)
+                               (fn [] (operation ctx (request-scope ctx)
                                                  decoded))))))))))
 
 (defn register-cms-publication-routes!
@@ -111,20 +116,23 @@
   (let [{:keys [route!]} handlers]
     (route! app "GET" "/api/cms/publications/documents"
             (route-handler runtime handlers read-permission
-                           (fn [scope _decoded]
+                           (fn [_ctx scope _decoded]
                              (facade/list-documents! config scope))))
     (route! app "GET" "/api/cms/publications/documents/:documentId"
             (route-handler runtime handlers read-permission
-                           (fn [scope decoded]
+                           (fn [_ctx scope decoded]
                              (facade/document-view!
                               config scope
                               (get-in decoded [:params :documentId])))))
     (route! app "PATCH" "/api/cms/publications/intents/:publicationId"
             (route-handler runtime handlers write-permission
-                           (fn [scope decoded]
-                             (facade/set-publication-state!
-                              config scope
-                              (resource-identity/decode-keyword
-                               (get-in decoded [:params :publicationId]))
-                              (cms/decode-publication-state-patch (:body decoded))))))
+                           (fn [ctx scope decoded]
+                             (let [publication (resource-identity/decode-keyword
+                                                (get-in decoded [:params :publicationId]))
+                                   body (:body decoded)
+                                   patch (cms/decode-publication-state-patch
+                                          (dissoc body :expected_revision))]
+                               (wiki-publication/with-owned-revision!
+                                config ctx publication (:expected_revision body)
+                                #(facade/set-publication-state! config scope publication patch))))))
     nil))

@@ -6,7 +6,7 @@
    POST /api/publications/reconcile decodes a trigger, runs the reconciler,
    and answers with the correlated receipt. GET /api/publications/receipts
    answers with the receipt journal the runtime emitted into. Both authorize:
-   reconciliation changes what is public (`org.publications.manage`), while
+   reconciliation changes what is public (`org.publications.publish`), while
    receipts only name what happened (`org.publications.read`).
 
    The reconciler is built once per config from `:publication/reconciliation`:
@@ -38,6 +38,8 @@
             [knoxx.backend.infra.publication-target-registry :as registry]
             [knoxx.backend.infra.publication-target-static-site :as static-site]
             [knoxx.backend.infra.routes.publications :as publications]
+            [knoxx.backend.infra.wiki-commands :as commands]
+            [knoxx.backend.infra.wiki-publication :as wiki-publication]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication-reconciler :as trigger-law]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
@@ -45,7 +47,7 @@
 (def reconcile-permission
   "Reconciliation changes what is public, so it holds the publication write
    permission rather than inventing a parallel one."
-  "org.publications.manage")
+  "org.publications.publish")
 
 (def receipts-permission
   "Receipts name what was materialized where — publication read authority."
@@ -192,27 +194,22 @@
                              (error-body/error-body err status)))))))
 
 (defn- ^:async handle-reconcile!
-  "Run one decoded trigger and answer with its correlated receipt. 503 when no
-   reconciler is configured: the demand is lawful, the capability is absent."
+  "Reconcile one owned placement at the source revision the caller reviewed."
   [config ctx request reply]
-  (if-let [{:keys [reconciler]}
-           (runtime-for config (production-scope config ctx))]
-    (await (send-result! reply
-                         #(reconciler/reconcile!
-                           reconciler
-                           (decode-trigger (fastify/request-body request)))))
-    (if (production/configured? config)
-      (await
-       (send-result!
-        reply
-        (^:async fn []
-          (let [{:keys [reconciler]} (await (production-runtime! config ctx))]
-            (await
-             (reconciler/reconcile!
-              reconciler
-              (decode-trigger (fastify/request-body request))))))))
-      (fastify/send-json! reply 503
-                          {:detail "publication reconciliation is not configured"}))))
+  (await
+   (send-result!
+    reply
+    (^:async fn []
+      (let [body (fastify/request-body request)
+            trigger (decode-trigger body)
+            built (or (runtime-for config (production-scope config ctx))
+                      (when (production/configured? config)
+                        (await (production-runtime! config ctx))))]
+        (when-not built
+          (throw (ex-info "Publication reconciliation is not configured" {:status 503})))
+        (await (wiki-publication/with-owned-revision!
+                config ctx (:publication/id trigger) (:expected_revision body)
+                #(reconciler/reconcile! (:reconciler built) trigger))))))))
 
 (defn- ^:async handle-receipts!
   "Answer with the receipt journal the configured reconciler has emitted into."
@@ -243,6 +240,7 @@
               runtime request reply
               (^:async fn [ctx]
                 (ensure-permission! ctx reconcile-permission)
+                (commands/ensure-command! ctx "wiki_publish" "publication/publish")
                 (await (handle-reconcile! config ctx request reply))))))})
   (fastify/route!
    app

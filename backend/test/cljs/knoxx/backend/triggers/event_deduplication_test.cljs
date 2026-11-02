@@ -1,11 +1,15 @@
 (ns knoxx.backend.triggers.event-deduplication-test
   "Test that event deduplication does not silently drop legitimate events."
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :refer [deftest is testing use-fixtures]]
             [knoxx.backend.domain.condition.builtin :as condition-builtins]
             [knoxx.backend.domain.driver.builtin :as driver-builtin]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.domain.resources.loader :as resources]
-            [knoxx.backend.domain.source.runtime :as source-runtime]))
+            [knoxx.backend.domain.source.runtime :as source-runtime]
+            [knoxx.backend.triggers.action-fixture :as action-fixture]))
+
+(def action-calls (atom []))
+(use-fixtures :each (action-fixture/recording-fixture action-calls))
 
 (def fixture-config
   {:contracts-dir "test/fixtures/trigger-contracts"})
@@ -107,56 +111,39 @@
         (is (= ["retryable-event"] (:matchedTriggers retry)))
         (is (= 1 @attempts))))))
 
-(deftest ^:async different-event-ids-are-not-deduplicated
-  (testing "dispatching different events should not be deduplicated"
-    (driver-builtin/register-built-in-drivers!)
-    (condition-builtins/register-builtins!)
-    (event-dispatch/reset-dedup!)
-    (let [event1 {:event/type :discord.message
-                  :event/id "id-1"
-                  :event/actor "discord_automation"
-                  :event/payload {:content "hey frankie"
-                                  :gatewayBotUserId "12345"
-                                  :gatewayActorId "discord_automation"
-                                  :channelId "123"}}
-          event2 {:event/type :discord.message
-                  :event/id "id-2"
-                  :event/actor "discord_automation"
-                  :event/payload {:content "hey frankie again"
-                                  :gatewayBotUserId "12345"
-                                  :gatewayActorId "discord_automation"
-                                  :channelId "123"}}]
-      ;; Both should throw because runtime is unavailable
-      (try
-        (await (source-runtime/dispatch-driver-event!
-                fixture-config :driver/discord "discord_automation" event1))
-        (is false "First should have thrown")
-        (catch :default _ nil))
-      (try
-        (await (source-runtime/dispatch-driver-event!
-                fixture-config :driver/discord "discord_automation" event2))
-        (is false "Second should have thrown")
-        (catch :default _ nil)))))
+(defn- discord-event
+  [id content]
+  {:event/type :discord.message :event/id id :event/actor "discord_automation"
+   :event/payload {:content content :gatewayBotUserId "12345"
+                   :gatewayActorId "discord_automation" :channelId "123"}})
 
-(deftest ^:async missing-event-id-gets-generated-and-deduplicated
-  (testing "events without IDs get generated IDs; same payload may dedupe"
+(deftest ^:async different-event-ids-are-not-deduplicated
+  (testing "distinct ids each reach the action, even through the same source"
     (driver-builtin/register-built-in-drivers!)
     (condition-builtins/register-builtins!)
     (event-dispatch/reset-dedup!)
-    (let [event {:event/type :discord.message
-                 :event/actor "discord_automation"
-                 :event/payload {:content "hey frankie"
-                                 :gatewayBotUserId "12345"
-                                 :gatewayActorId "discord_automation"
-                                 :channelId "123"}}]
-      ;; First dispatch throws because runtime is unavailable
-      (try
-        (await (source-runtime/dispatch-driver-event!
-                fixture-config :driver/discord "discord_automation" event))
-        (is false "Should have thrown")
-        (catch :default _ nil))
-      ;; Second dispatch may or may not throw depending on generated ID
-      (try
-        (await (source-runtime/dispatch-driver-event!
-                fixture-config :driver/discord "discord_automation" event))
-        (catch :default _ nil)))))
+    (doseq [event [(discord-event "id-1" "hey frankie")
+                   (discord-event "id-2" "hey frankie again")]]
+      (let [result (await (source-runtime/dispatch-driver-event!
+                           fixture-config :driver/discord "discord_automation" event))]
+        (is (= ["ussyverse_social_replies_event"] (:matchedTriggers result)))
+        (is (= :completed (:dedup/status result)))))
+    (is (= ["id-1" "id-2"] (mapv #(get-in % [:ctx :event :event/id]) @action-calls)))))
+
+(deftest ^:async missing-event-id-is-generated-and-can-be-replayed
+  (testing "a generated id can be retained for an exact retry without duplicating effects"
+    (driver-builtin/register-built-in-drivers!)
+    (condition-builtins/register-builtins!)
+    (event-dispatch/reset-dedup!)
+    (let [event (discord-event nil "hey frankie")
+          result (await (source-runtime/dispatch-driver-event!
+                          fixture-config :driver/discord "discord_automation" event))
+          generated-id (get-in result [:event :event/id])
+          replay (await (source-runtime/dispatch-driver-event!
+                          fixture-config :driver/discord "discord_automation"
+                          (assoc event :event/id generated-id)))]
+      (is (seq generated-id))
+      (is (= ["ussyverse_social_replies_event"] (:matchedTriggers result)))
+      (is (true? (:skipped replay)))
+      (is (= :completed (:dedup/status replay)))
+      (is (= 1 (count @action-calls))))))

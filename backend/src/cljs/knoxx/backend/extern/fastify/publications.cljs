@@ -13,6 +13,7 @@
   (:require [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.routes.publications :as publications]
+            [knoxx.backend.infra.wiki-commands :as commands]
             [knoxx.backend.law.error-body :as error-body]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-identity :as resource-identity]))
@@ -129,7 +130,7 @@
            (send-projection!
             reply
             #(guarded! handlers ctx
-                        (fn [] (operation (request-scope ctx) decoded)))))))))))
+                        (fn [] (operation (request-scope ctx) (assoc decoded :context ctx))))))))))))
 
 (defn register-publication-routes!
   [app runtime config handlers]
@@ -138,9 +139,8 @@
    {:method "GET"
     :url "/api/publications/documents"
     :handler (authorized-route runtime handlers
-                               (fn [scope _decoded]
-                                 (publications/list-publication-documents!
-                                  config scope)))})
+                               (fn [_scope decoded]
+                                 (commands/list! config (:context decoded))))})
   (fastify/route!
    app
    {:method "GET"

@@ -1,5 +1,9 @@
 (ns knoxx.backend.infra.translation-agent-dispatch-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require ["node:fs/promises" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            [cljs.test :as test]
+            [knoxx.backend.extern.event-queue-fixture :as queue-fixture]
             [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.translation-agent-dispatch :as dispatch]
             [knoxx.backend.infra.translation-agent-sink :as agent-sink]
@@ -7,10 +11,7 @@
             [knoxx.backend.infra.translation-split-store :as split-store]
             [knoxx.backend.law.translation-agent :as agent-law]
             [knoxx.backend.law.translation-dispatch :as dispatch-law]
-            [knoxx.backend.law.translation-split :as split-law]
-            ["node:fs/promises" :as fs]
-            ["node:os" :as os]
-            ["node:path" :as path]))
+            [knoxx.backend.law.translation-split :as split-law]))
 
 (def ^:private work
   {:document :open-hax.documents/promethean
@@ -29,11 +30,6 @@
 (def ^:private source "Open Hax is a garden for tools, research, art, and systems.")
 
 (defn- digest-hex [value] (str "h" (hash value)))
-
-(defn- flush-promises!
-  []
-  (js/Promise. (fn [resolve _reject]
-                 (js/setTimeout resolve 0))))
 
 (defn- deps
   "Dispatch dependencies over a recording emitter."
@@ -80,7 +76,7 @@
           (js/Promise.resolve
            {:matchedTriggers [:publication/translation-needed]}))))))
 
-(deftest ^:async claimed-work-binds-its-run-before-the-event-is-emitted
+(test/deftest ^:async claimed-work-binds-its-run-before-the-event-is-emitted
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)
         emitted (atom [])
@@ -91,44 +87,44 @@
         record (:dispatch/record result)
         event (first @emitted)]
 
-    (testing "the work was accepted and exactly one event announced it"
-      (is (= :dispatch/accepted (:dispatch/outcome result)))
-      (is (= 1 (count @emitted))))
+    (test/testing "the work was accepted and exactly one event announced it"
+      (test/is (= :dispatch/accepted (:dispatch/outcome result)))
+      (test/is (= 1 (count @emitted))))
 
-    (testing "the claim carries the run id before the event goes out"
+    (test/testing "the claim carries the run id before the event goes out"
       ;; The ordering the whole namespace exists for: a session that submits
       ;; immediately must find a claim that already names its run.
-      (is (= (:translation/run-id result) (:dispatch/batch-id record)))
-      (is (= (:translation/run-id result)
+      (test/is (= (:translation/run-id result) (:dispatch/batch-id record)))
+      (test/is (= (:translation/run-id result)
              (get-in event [:event/payload :resource-policies :run_id]))))
 
-    (testing "the event is the contract the trigger subscribes to"
-      (is (= agent-law/event-type (:event/type event)))
-      (is (= (dispatch/event-id (:translation/run-id result)) (:event/id event))))
+    (test/testing "the event is the contract the trigger subscribes to"
+      (test/is (= agent-law/event-type (:event/type event)))
+      (test/is (= (dispatch/event-id (:translation/run-id result)) (:event/id event))))
 
-    (testing "the event carries the pin, so the action forwards one it never builds"
-      (is (agent-law/contract-backed?
+    (test/testing "the event carries the pin, so the action forwards one it never builds"
+      (test/is (agent-law/contract-backed?
            (get-in event [:event/payload :resource-policies])))
-      (is (agent-law/split-backed?
+      (test/is (agent-law/split-backed?
            (get-in event [:event/payload :resource-policies])))
-      (is (= (:dispatch/key record)
+      (test/is (= (:dispatch/key record)
              (get-in event [:event/payload :resource-policies :dispatch_key]))))
 
-    (testing "the full turn exists before the event can name it"
+    (test/testing "the full turn exists before the event can name it"
       (let [turn (await (split-store/turn-for-run!
                          translation-store (:translation/run-id result)))]
-        (is (= (:translation-turn/id turn)
+        (test/is (= (:translation-turn/id turn)
                (get-in event [:event/payload :turn-id])))
-        (is (= (count (get-in turn [:translation-turn/manifest
+        (test/is (= (count (get-in turn [:translation-turn/manifest
                                     :split-manifest/splits]))
                (get-in event [:event/payload :split-count])))))
 
-    (testing "the output revision is derivable from the bound claim"
+    (test/testing "the output revision is derivable from the bound claim"
       ;; Without the binding this throws, which is what would make a fast
       ;; submission unjoinable.
-      (is (string? (dispatch-law/output-revision record))))))
+      (test/is (string? (dispatch-law/output-revision record))))))
 
-(deftest ^:async asking-twice-does-not-start-two-sessions
+(test/deftest ^:async asking-twice-does-not-start-two-sessions
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)
         emitted (atom [])
@@ -140,19 +136,19 @@
         first-pass (await (dispatch/dispatch-work! d work context source))
         second-pass (await (dispatch/dispatch-work! d work context source))]
 
-    (testing "the second pass re-announces but the live dispatcher owns it once"
-      (is (= :dispatch/accepted (:dispatch/outcome first-pass)))
-      (is (= :dispatch/duplicate (:dispatch/outcome second-pass)))
-      (is (= 2 (count @emitted)))
-      (is (= 1 (count @triggered)))
-      (is (= (mapv :event/id @emitted)
+    (test/testing "the second pass re-announces but the live dispatcher owns it once"
+      (test/is (= :dispatch/accepted (:dispatch/outcome first-pass)))
+      (test/is (= :dispatch/duplicate (:dispatch/outcome second-pass)))
+      (test/is (= 2 (count @emitted)))
+      (test/is (= 1 (count @triggered)))
+      (test/is (= (mapv :event/id @emitted)
              [(first @triggered) (first @triggered)])))
 
-    (testing "the duplicate explains why replay is safe across a restart"
-      (is (re-find #"already owned by this live process"
+    (test/testing "the duplicate explains why replay is safe across a restart"
+      (test/is (re-find #"already owned by this live process"
                    (:dispatch/detail second-pass))))))
 
-(deftest ^:async a-restart-replays-process-lost-queued-work-with-the-same-turn
+(test/deftest ^:async a-restart-replays-process-lost-queued-work-with-the-same-turn
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)
         first-events (atom [])
@@ -180,18 +176,18 @@
                                                    restarted-triggered
                                                    restarted-process-seen))
                        work context source))]
-    (testing "a fresh process ledger accepts the durable attempt again"
-      (is (= :dispatch/accepted (:dispatch/outcome replay)))
-      (is (= run-id (:translation/run-id replay)))
-      (is (= [(dispatch/event-id run-id)] @first-triggered))
-      (is (= [(dispatch/event-id run-id)] @restarted-triggered)))
+    (test/testing "a fresh process ledger accepts the durable attempt again"
+      (test/is (= :dispatch/accepted (:dispatch/outcome replay)))
+      (test/is (= run-id (:translation/run-id replay)))
+      (test/is (= [(dispatch/event-id run-id)] @first-triggered))
+      (test/is (= [(dispatch/event-id run-id)] @restarted-triggered)))
 
-    (testing "replay reuses the immutable turn and its pinned dictionary"
-      (is (= original-turn
+    (test/testing "replay reuses the immutable turn and its pinned dictionary"
+      (test/is (= original-turn
              (await (split-store/turn-for-run! translation-store run-id))))
-      (is (= (first @first-events) (first @restarted-events))))))
+      (test/is (= (first @first-events) (first @restarted-events))))))
 
-(deftest ^:async recovery-settles-a-complete-durable-set-without-provider-rerun
+(test/deftest ^:async recovery-settles-a-complete-durable-set-without-provider-rerun
   (let [temp-root (await (.mkdtemp fs (.join path (.tmpdir os)
                                              "knoxx-translation-prefix-")))
         evidence-store (store/memory-store)
@@ -241,25 +237,25 @@
               receipts (await (store/completed-translations!
                                evidence-store {:org-id "open-hax"
                                                :project nil}))]
-          (testing "recovery settles the first durable candidate set directly"
-            (is (= :dispatch/completed (:dispatch/outcome recovered)))
-            (is (some? (:translation/receipt recovered)))
-            (is (= 1 (count receipts)))
-            (is (= :dispatch/completed
+          (test/testing "recovery settles the first durable candidate set directly"
+            (test/is (= :dispatch/completed (:dispatch/outcome recovered)))
+            (test/is (some? (:translation/receipt recovered)))
+            (test/is (= 1 (count receipts)))
+            (test/is (= :dispatch/completed
                    (:dispatch/outcome
                     (await (store/dispatch-for-key!
                             evidence-store
                             (get-in first-pass [:dispatch/record
                                                 :dispatch/key])))))))
-          (testing "no second provider event is emitted"
-            (is (empty? @provider-events))
-            (is (= 1 (count @candidate-events)))
-            (is (re-find #"without rerunning"
+          (test/testing "no second provider event is emitted"
+            (test/is (empty? @provider-events))
+            (test/is (= 1 (count @candidate-events)))
+            (test/is (re-find #"without rerunning"
                          (:dispatch/detail recovered))))))
       (finally
         (await (.rm fs temp-root #js {:recursive true :force true}))))))
 
-(deftest ^:async replay-repairs-a-crash-between-claim-and-run-binding
+(test/deftest ^:async replay-repairs-a-crash-between-claim-and-run-binding
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)
         emitted (atom [])
@@ -274,22 +270,22 @@
                        work context source))
         recovered (:dispatch/record replay)
         run-id (:translation/run-id replay)]
-    (is (= :reserved (:reservation/status reservation)))
-    (testing "the same attempt receives its deterministic run binding"
-      (is (= :dispatch/accepted (:dispatch/outcome replay)))
-      (is (= (:dispatch/attempt-id record)
+    (test/is (= :reserved (:reservation/status reservation)))
+    (test/testing "the same attempt receives its deterministic run binding"
+      (test/is (= :dispatch/accepted (:dispatch/outcome replay)))
+      (test/is (= (:dispatch/attempt-id record)
              (:dispatch/attempt-id recovered)))
-      (is (= (agent-law/run-id record digest-hex) run-id))
-      (is (= run-id (:dispatch/batch-id recovered))))
+      (test/is (= (agent-law/run-id record digest-hex) run-id))
+      (test/is (= run-id (:dispatch/batch-id recovered))))
 
-    (testing "the missing turn is admitted before its recovered event"
-      (is (some? (await (split-store/turn-for-run!
+    (test/testing "the missing turn is admitted before its recovered event"
+      (test/is (some? (await (split-store/turn-for-run!
                          translation-store run-id))))
-      (is (= run-id
+      (test/is (= run-id
              (get-in (first @emitted)
                      [:event/payload :resource-policies :run_id]))))))
 
-(deftest ^:async replay-repairs-a-crash-between-run-binding-and-turn-admission
+(test/deftest ^:async replay-repairs-a-crash-between-run-binding-and-turn-admission
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)
         emitted (atom [])
@@ -307,20 +303,20 @@
                        (deps evidence-store emitted
                              :translation-store translation-store)
                        work context source))]
-    (is (nil? turn-before))
-    (testing "replay completes the same bound attempt instead of minting another"
-      (is (= :dispatch/accepted (:dispatch/outcome replay)))
-      (is (= (:dispatch/attempt-id bound)
+    (test/is (nil? turn-before))
+    (test/testing "replay completes the same bound attempt instead of minting another"
+      (test/is (= :dispatch/accepted (:dispatch/outcome replay)))
+      (test/is (= (:dispatch/attempt-id bound)
              (get-in replay [:dispatch/record :dispatch/attempt-id])))
-      (is (= run-id (:translation/run-id replay))))
+      (test/is (= run-id (:translation/run-id replay))))
 
-    (testing "the recovered event can only be built after the turn is durable"
-      (is (some? (await (split-store/turn-for-run!
+    (test/testing "the recovered event can only be built after the turn is durable"
+      (test/is (some? (await (split-store/turn-for-run!
                          translation-store run-id))))
-      (is (= (dispatch/event-id run-id)
+      (test/is (= (dispatch/event-id run-id)
              (:event/id (first @emitted)))))))
 
-(deftest ^:async an-agent-runner-fails-a-claim-bound-to-a-legacy-worker
+(test/deftest ^:async an-agent-runner-fails-a-claim-bound-to-a-legacy-worker
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)
         emitted (atom [])
@@ -336,28 +332,28 @@
                                  (deps evidence-store emitted
                                        :translation-store translation-store)
                                  work context source))]
-    (testing "the incompatible owner becomes an explicit retriable failure"
-      (is (= :dispatch/failed (:dispatch/outcome first-agent-pass)))
-      (is (= legacy-batch-id
+    (test/testing "the incompatible owner becomes an explicit retriable failure"
+      (test/is (= :dispatch/failed (:dispatch/outcome first-agent-pass)))
+      (test/is (= legacy-batch-id
              (get-in first-agent-pass [:dispatch/record :dispatch/batch-id])))
-      (is (re-find #"non-agent producer run"
+      (test/is (re-find #"non-agent producer run"
                    (:dispatch/detail first-agent-pass)))
-      (is (= :dispatch/failed
+      (test/is (= :dispatch/failed
              (:dispatch/outcome
               (await (store/dispatch-for-key!
                       evidence-store (:dispatch/key bound))))))
-      (is (empty? @emitted)))
+      (test/is (empty? @emitted)))
 
-    (testing "the next admission replaces the failed worker attempt"
+    (test/testing "the next admission replaces the failed worker attempt"
       (let [retry (await (dispatch/dispatch-work!
                           (deps evidence-store emitted
                                 :translation-store translation-store)
                           work context source))]
-        (is (= :dispatch/accepted (:dispatch/outcome retry)))
-        (is (not= legacy-batch-id (:translation/run-id retry)))
-        (is (= 1 (count @emitted)))))))
+        (test/is (= :dispatch/accepted (:dispatch/outcome retry)))
+        (test/is (not= legacy-batch-id (:translation/run-id retry)))
+        (test/is (= 1 (count @emitted)))))))
 
-(deftest ^:async a-rejected-provider-turn-makes-the-exact-claim-retriable
+(test/deftest ^:async a-rejected-provider-turn-makes-the-exact-claim-retriable
   (let [evidence-store (store/memory-store)
         translation-store (split-store/memory-store digest-hex)
         emitted (atom [])
@@ -376,25 +372,25 @@
         first-run-id (:translation/run-id first-pass)
         first-event-id (dispatch/event-id first-run-id)
         settle! (get @settlers first-event-id)]
-    (is (fn? settle!))
+    (test/is (fn? settle!))
     (await (settle! {:event-turn/status :failed
                      :event-turn/detail "provider unavailable"}))
 
-    (testing "the full-turn callback releases only its exact accepted attempt"
+    (test/testing "the full-turn callback releases only its exact accepted attempt"
       (let [failed (await (store/dispatch-for-key!
                            evidence-store
                            (get-in first-pass [:dispatch/record :dispatch/key])))]
-        (is (= :dispatch/failed (:dispatch/outcome failed)))
-        (is (re-find #"provider unavailable" (:dispatch/detail failed)))))
+        (test/is (= :dispatch/failed (:dispatch/outcome failed)))
+        (test/is (re-find #"provider unavailable" (:dispatch/detail failed)))))
 
-    (testing "the next reconciliation creates a fresh attempt and event"
+    (test/testing "the next reconciliation creates a fresh attempt and event"
       (let [retry (await (dispatch/dispatch-work! d work context source))]
-        (is (= :dispatch/accepted (:dispatch/outcome retry)))
-        (is (not= first-run-id (:translation/run-id retry)))
-        (is (not= first-event-id
+        (test/is (= :dispatch/accepted (:dispatch/outcome retry)))
+        (test/is (not= first-run-id (:translation/run-id retry)))
+        (test/is (not= first-event-id
                   (:event/id (last @emitted))))))))
 
-(deftest ^:async a-no-tool-settlement-can-complete-only-through-the-durable-sink
+(test/deftest ^:async a-no-tool-settlement-can-complete-only-through-the-durable-sink
   (let [temp-root (await (.mkdtemp fs (.join path (.tmpdir os)
                                              "knoxx-structured-settlement-")))
         evidence-store (store/memory-store)
@@ -438,7 +434,7 @@
       (let [started (await (dispatch/dispatch-work! d work context source))
             run-id (:translation/run-id started)
             settle! (get @settlers (dispatch/event-id run-id))]
-        (is (fn? settle!))
+        (test/is (fn? settle!))
         ;; Model the exact Ollama failure this regression exposed: the generic
         ;; turn returned prose but no structured tool call.
         (await (settle! {:event-turn/status :failed
@@ -448,15 +444,15 @@
               receipts (await (store/completed-translations!
                                evidence-store {:org-id "open-hax"
                                                :project nil}))]
-          (testing "only canonical sink completion satisfies the obligation"
-            (is (= :dispatch/completed (:dispatch/outcome record)))
-            (is (= 1 (count receipts)))
-            (is (= [301000] @recovery-deadlines))
-            (is (= 1 (count @candidate-events))))))
+          (test/testing "only canonical sink completion satisfies the obligation"
+            (test/is (= :dispatch/completed (:dispatch/outcome record)))
+            (test/is (= 1 (count receipts)))
+            (test/is (= [301000] @recovery-deadlines))
+            (test/is (= 1 (count @candidate-events))))))
       (finally
         (await (.rm fs temp-root #js {:recursive true :force true}))))))
 
-(deftest ^:async settlement-replays-a-completed-receipt-after-event-projection-fails
+(test/deftest ^:async settlement-replays-a-completed-receipt-after-event-projection-fails
   (let [temp-root (await (.mkdtemp fs (.join path (.tmpdir os)
                                              "knoxx-settlement-event-repair-")))
         evidence-store (store/memory-store)
@@ -510,25 +506,27 @@
                           nil
                           (catch :default err err))
             settle! (get @settlers (dispatch/event-id run-id))]
-        (is (= "candidate event store unavailable" (ex-message first-error)))
-        (is (fn? settle!))
+        (test/is (= "candidate event store unavailable" (ex-message first-error)))
+        (test/is (fn? settle!))
         (await (settle! {:event-turn/status :failed
                          :event-turn/detail "ordinary tool turn failed"}))
         (let [record (await (store/dispatch-for-batch! evidence-store run-id))
               receipts (await (store/completed-translations!
                                evidence-store {:org-id "open-hax"
                                                :project nil}))]
-          (testing "a projection exception still reaches exact terminal replay"
-            (is (= :dispatch/completed (:dispatch/outcome record)))
-            (is (= 1 @structured-recoveries))
-            (is (= 3 (count @projections)))
-            (is (apply = @projections)))
-          (testing "repair preserves the one immutable receipt"
-            (is (= 1 (count receipts))))))
+          (test/testing "a projection exception still reaches exact terminal replay"
+            (test/is (= :dispatch/completed (:dispatch/outcome record)))
+            (test/is (= 1 @structured-recoveries))
+            (test/is (= 3 (count @projections)))
+            (test/is (apply = @projections)))
+          (test/testing "repair preserves the one immutable receipt"
+            (test/is (= 1 (count receipts))))))
       (finally
         (await (.rm fs temp-root #js {:recursive true :force true}))))))
 
-(deftest ^:async a-rejected-settlement-callback-is-redelivered-on-reconciliation
+(test/deftest ^:async a-rejected-settlement-callback-is-redelivered-on-reconciliation
+  (await (queue-fixture/with-queue!
+          (^:async fn []
   (agent-runner/reset-event-turn-queue!)
   (agent-runner/reset-event-turn-settlers!)
   (let [evidence-store (store/memory-store)
@@ -556,7 +554,7 @@
                 agent-runner/unregister-event-turn-settler!)
         first-pass (await (dispatch/dispatch-work! d work context source))
         first-event-id (dispatch/event-id (:translation/run-id first-pass))]
-    (agent-runner/enqueue-event-turn!
+    (await (agent-runner/enqueue-event-turn!
      {:llmModel "test-model" :collection-name "test"}
      {:run-id (:translation/run-id first-pass)
       :conversation-id (:translation/run-id first-pass)
@@ -564,11 +562,11 @@
       :message "translate"
       :agent-spec {:trigger-id "publication-translation"
                    :event-id first-event-id}}
-     (fn [] (js/Promise.reject (js/Error. "provider unavailable"))))
-    (await (flush-promises!))
+     (fn [] (js/Promise.reject (js/Error. "provider unavailable")))))
+    (await (queue-fixture/wait-idle!))
 
-    (testing "the rejected callback leaves the original claim accepted"
-      (is (= :dispatch/accepted
+    (test/testing "the rejected callback leaves the original claim accepted"
+      (test/is (= :dispatch/accepted
              (:dispatch/outcome
               (await (store/dispatch-for-key!
                       evidence-store
@@ -576,19 +574,19 @@
 
     (let [reconciliation (await (dispatch/dispatch-work!
                                  d work context source))]
-      (testing "reconciliation redelivers the cached provider failure"
-        (is (= :dispatch/failed (:dispatch/outcome reconciliation)))
-        (is (re-find #"provider unavailable"
+      (test/testing "reconciliation redelivers the cached provider failure"
+        (test/is (= :dispatch/failed (:dispatch/outcome reconciliation)))
+        (test/is (re-find #"provider unavailable"
                      (:dispatch/detail reconciliation)))
-        (is (= :dispatch/failed
+        (test/is (= :dispatch/failed
                (:dispatch/outcome
                 (await (store/dispatch-for-key!
                         evidence-store
                         (get-in first-pass [:dispatch/record :dispatch/key]))))))
-        (is (= 2 @settlement-deliveries))))
+        (test/is (= 2 @settlement-deliveries))))
 
-    (testing "a skipped old event does not retain its re-armed callback"
-      (agent-runner/enqueue-event-turn!
+    (test/testing "a skipped old event does not retain its re-armed callback"
+      (await (agent-runner/enqueue-event-turn!
        {:llmModel "test-model" :collection-name "test"}
        {:run-id (:translation/run-id first-pass)
         :conversation-id (:translation/run-id first-pass)
@@ -596,60 +594,60 @@
         :message "stale event"
         :agent-spec {:trigger-id "publication-translation"
                      :event-id first-event-id}}
-       (fn [] (js/Promise.resolve {:ok true})))
-      (await (flush-promises!))
-      (is (= 2 @settlement-deliveries)))
+       (fn [] (js/Promise.resolve {:ok true}))))
+      (await (queue-fixture/wait-idle!))
+      (test/is (= 2 @settlement-deliveries)))
 
     (let [retry (await (dispatch/dispatch-work! d work context source))]
-      (testing "the following claim is a fresh provider attempt"
-        (is (= :dispatch/accepted (:dispatch/outcome retry)))
-        (is (not= (:translation/run-id first-pass)
+      (test/testing "the following claim is a fresh provider attempt"
+        (test/is (= :dispatch/accepted (:dispatch/outcome retry)))
+        (test/is (not= (:translation/run-id first-pass)
                   (:translation/run-id retry)))
-        (is (= 2 (count @triggered)))))
+        (test/is (= 2 (count @triggered)))))
     (agent-runner/reset-event-turn-queue!)
-    (agent-runner/reset-event-turn-settlers!)))
+    (agent-runner/reset-event-turn-settlers!))))))
 
-(deftest ^:async an-event-nobody-subscribes-to-fails-the-retriable-claim
+(test/deftest ^:async an-event-nobody-subscribes-to-fails-the-retriable-claim
   (let [evidence-store (store/memory-store)
         emitted (atom [])
         result (await (dispatch/dispatch-work!
                        (deps evidence-store emitted :emit-result {:matchedTriggers []})
                        work context source))]
-    (testing "an emission without a matching trigger is not reported as accepted"
-      (is (= :dispatch/failed (:dispatch/outcome result)))
-      (is (re-find #"no enabled trigger subscribes" (:dispatch/detail result))))
+    (test/testing "an emission without a matching trigger is not reported as accepted"
+      (test/is (= :dispatch/failed (:dispatch/outcome result)))
+      (test/is (re-find #"no enabled trigger subscribes" (:dispatch/detail result))))
 
-    (testing "enabling the trigger lets the same work be claimed again"
-      (is (dispatch-law/retriable?
+    (test/testing "enabling the trigger lets the same work be claimed again"
+      (test/is (dispatch-law/retriable?
            (:dispatch/outcome (await (store/dispatch-for-key!
                                       evidence-store
                                       (:dispatch/key (:dispatch/record result)))))))
       (let [retry (await (dispatch/dispatch-work! (deps evidence-store emitted)
                                                    work context source))]
-        (is (= :dispatch/accepted (:dispatch/outcome retry)))
-        (is (= 2 (count @emitted)))))))
+        (test/is (= :dispatch/accepted (:dispatch/outcome retry)))
+        (test/is (= 2 (count @emitted)))))))
 
-(deftest ^:async a-dispatcher-that-throws-leaves-retriable-work
+(test/deftest ^:async a-dispatcher-that-throws-leaves-retriable-work
   (let [evidence-store (store/memory-store)
         emitted (atom [])
         result (await (dispatch/dispatch-work!
                        (deps evidence-store emitted :throw-on-emit true)
                        work context source))]
 
-    (testing "the failure is conclusive, because an in-process throw ran no action"
-      (is (= :dispatch/failed (:dispatch/outcome result)))
-      (is (re-find #"dispatcher is not running" (:dispatch/detail result))))
+    (test/testing "the failure is conclusive, because an in-process throw ran no action"
+      (test/is (= :dispatch/failed (:dispatch/outcome result)))
+      (test/is (re-find #"dispatcher is not running" (:dispatch/detail result))))
 
-    (testing "a failed claim is retriable, so the next pass re-announces the work"
-      (is (dispatch-law/retriable?
+    (test/testing "a failed claim is retriable, so the next pass re-announces the work"
+      (test/is (dispatch-law/retriable?
            (:dispatch/outcome (await (store/dispatch-for-key!
                                       evidence-store
                                       (:dispatch/key (:dispatch/record result)))))))
       (let [retry (await (dispatch/dispatch-work! (deps evidence-store emitted)
                                                    work context source))]
-        (is (= :dispatch/accepted (:dispatch/outcome retry)))))))
+        (test/is (= :dispatch/accepted (:dispatch/outcome retry)))))))
 
-(deftest ^:async a-retry-produces-a-new-run-and-therefore-a-new-output-revision
+(test/deftest ^:async a-retry-produces-a-new-run-and-therefore-a-new-output-revision
   (let [evidence-store (store/memory-store)
         emitted (atom [])
         failed (await (dispatch/dispatch-work!
@@ -660,18 +658,18 @@
                                :clock (constantly "2026-08-26T17:00:00.000Z"))
                         work context source))]
 
-    (testing "the retry reuses the dispatch key but not the run"
-      (is (= (:dispatch/key (:dispatch/record failed))
+    (test/testing "the retry reuses the dispatch key but not the run"
+      (test/is (= (:dispatch/key (:dispatch/record failed))
              (:dispatch/key (:dispatch/record retried))))
-      (is (not= (:dispatch/batch-id (:dispatch/record failed))
+      (test/is (not= (:dispatch/batch-id (:dispatch/record failed))
                 (:dispatch/batch-id (:dispatch/record retried)))))
 
-    (testing "so an approval of the first translation cannot authorize the second"
-      (is (not= (dispatch-law/output-revision (:dispatch/record retried))
+    (test/testing "so an approval of the first translation cannot authorize the second"
+      (test/is (not= (dispatch-law/output-revision (:dispatch/record retried))
                 (str (:dispatch/revision (:dispatch/record retried))
                      "+de@" (:dispatch/batch-id (:dispatch/record failed))))))))
 
-(deftest ^:async a-pin-that-names-bytes-nobody-has-is-refused-and-not-persisted
+(test/deftest ^:async a-pin-that-names-bytes-nobody-has-is-refused-and-not-persisted
   (let [evidence-store (store/memory-store)
         emitted (atom [])
         pinned {:document :open-hax.documents/promethean
@@ -681,13 +679,13 @@
         result (await (dispatch/dispatch-work! (deps evidence-store emitted)
                                                pinned context source))]
 
-    (testing "the refusal is terminal, because no retry makes a pin resolvable"
-      (is (= dispatch-law/unreachable-outcome (:dispatch/outcome result)))
-      (is (some? (:translation/refusal result)))
-      (is (empty? @emitted)))
+    (test/testing "the refusal is terminal, because no retry makes a pin resolvable"
+      (test/is (= dispatch-law/unreachable-outcome (:dispatch/outcome result)))
+      (test/is (some? (:translation/refusal result)))
+      (test/is (empty? @emitted)))
 
-    (testing "nothing was written, so restoring the pinned bytes unblocks it"
+    (test/testing "nothing was written, so restoring the pinned bytes unblocks it"
       ;; A pin refusal is a statement about current state, not an observed fact.
-      (is (nil? (await (store/dispatch-for-key!
+      (test/is (nil? (await (store/dispatch-for-key!
                         evidence-store
                         (:dispatch/key (:dispatch/record result)))))))))

@@ -1,7 +1,8 @@
 (ns knoxx.backend.infra.translation-agent-content-test
-  (:require [cljs.test :refer [deftest is testing]]
+  (:require [cljs.test :as t]
             [clojure.string :as str]
             [knoxx.backend.domain.node.fs :as fs]
+            [knoxx.backend.extern.provider-recovery-fixture :as disk]
             [knoxx.backend.infra.translation-agent-content :as content]
             [knoxx.backend.law.translation-dispatch :as dispatch-law]))
 
@@ -16,6 +17,7 @@
     :dispatch/document-wire-id "open-hax.documents/start-here"
     :dispatch/source-locale :en
     :dispatch/org-id "open-hax"
+    :dispatch/membership-id "content-member"
     :dispatch/project "promethean"
     :dispatch/source-digest "sha256-source"}
    :dispatch/accepted
@@ -23,37 +25,39 @@
    :attempt-id "content-attempt-1"
    :batch-id "content-run-1"))
 
-(deftest ^:async immutable-content-is-installed-from-a-complete-temp-file
-  (let [root (str "/tmp/knoxx-translation-content-" (.randomUUID js/crypto))
+(t/deftest ^:async immutable-content-is-installed-from-a-complete-temp-file
+  (let [root (disk/temporary-directory)
         output-revision (dispatch-law/output-revision (record))
         final-path (content/entry-path root output-revision)
         orphan-path (str final-path ".tmp-interrupted-writer")
         expected "Vollständige Übersetzung.\n"]
-    (fs/mkdir-sync! (content/store-dir root))
+    (try
+      (fs/mkdir-sync! (content/store-dir root))
     ;; A killed writer may leave an arbitrary sibling temp file. It must not
     ;; claim or corrupt the immutable final path on the next attempt.
     (fs/write-file-sync! orphan-path "partial")
 
     (let [first-value (await (content/write! root (record) output-revision expected))
           retry-value (await (content/write! root (record) output-revision expected))]
-      (testing "complete bytes are installed and equal retries reuse them"
-        (is (= first-value retry-value))
-        (is (= expected (:translation/content first-value)))
-        (is (= (pr-str first-value) (fs/read-file-sync final-path))))
+      (t/testing "complete bytes are installed and equal retries reuse them"
+        (t/is (= first-value retry-value))
+        (t/is (= expected (:translation/content first-value)))
+        (t/is (= (pr-str first-value) (fs/read-file-sync final-path))))
 
-      (testing "changed bytes cannot replace the installed inode"
+      (t/testing "changed bytes cannot replace the installed inode"
         (let [error (try
                       (await (content/write! root (record) output-revision
                                              "Andere Bytes.\n"))
                       nil
                       (catch :default err err))]
-          (is (some? error))
-          (is (= (pr-str first-value) (fs/read-file-sync final-path)))))
+          (t/is (some? error))
+          (t/is (= (pr-str first-value) (fs/read-file-sync final-path)))))
 
-      (testing "successful installs clean their own random temp link"
-        (is (= #{(fs/join (content/store-dir root)
+      (t/testing "successful installs clean their own random temp link"
+        (t/is (= #{(fs/join (content/store-dir root)
                            (last (str/split final-path #"/")))
                  orphan-path}
                (into #{}
                      (map #(fs/join (content/store-dir root) %))
-                     (fs/readdir-sync (content/store-dir root)))))))))
+                     (fs/readdir-sync (content/store-dir root)))))))
+      (finally (disk/remove! root)))))

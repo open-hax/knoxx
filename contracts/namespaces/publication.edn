@@ -38,6 +38,7 @@
     ;; scope through a trigger that did not ask.
     :resource-policies-from-event true
     :execution-snapshot-from-event true
+    :scope-from-event true
 
     :task
     "A publication intent needs this document translated.
