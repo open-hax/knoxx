@@ -30,9 +30,14 @@
 
 (defn- actor-update-payload
   [body]
-  {:org-id     (:orgId body)
-   :actor-id   (:actorId body)
-   :role-slugs (vec-value (:roleSlugs body))})
+  (let [fields {:orgId :org-id :actorId :actor-id :displayName :display-name
+                :status :status :membershipStatus :membership-status
+                :roleSlugs :role-slugs :toolPolicies :tool-policies}
+        payload (reduce-kv (fn [result wire internal]
+                             (if (contains? body wire) (assoc result internal (get body wire)) result))
+                           {} fields)
+        identity-fields (select-keys body [:email :username :authProvider :externalSubject :axxiumPrincipalId])]
+    (cond-> payload (seq identity-fields) (assoc :identity-fields (vec (keys identity-fields))))))
 
 (defn- credential-payload
   [body provider]

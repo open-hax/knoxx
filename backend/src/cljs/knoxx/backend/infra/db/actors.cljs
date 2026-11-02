@@ -93,7 +93,7 @@
                                         :actor/username normalized-email)
                 (some-> org-slug str str/trim not-empty) (assoc :actor/org (str/trim (str org-slug)))
                 (some-> display-name str str/trim not-empty) (assoc :actor/label (str/trim (str display-name)))
-                (seq role-slugs) (assoc :actor/roles (->> role-slugs
+                (some? role-slugs) (assoc :actor/roles (->> role-slugs
                                                           (keep (fn [role]
                                                                   (when-let [slug (some-> role str str/trim not-empty)]
                                                                     (keyword "role" (str/replace slug #"_" "-")))))

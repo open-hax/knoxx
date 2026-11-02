@@ -1,6 +1,9 @@
 (ns knoxx.backend.policy-db-credentials-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.infra.db.policy :as policy-db]))
+            [knoxx.backend.infra.db.policy :as policy-db]
+            [knoxx.backend.infra.mongo-client :as mongo-client]
+            [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy]
+            [knoxx.backend.infra.stores.mongo-policy-actor-credentials :as credentials]))
 
 (deftest list-actor-credentials-is-defined
   ;; Regression: discord/source called (.listActorCredentials policy-db "discord_bot")
@@ -20,19 +23,42 @@
           (is (identical? failure err)))))))
 
 (deftest ^:async list-actor-credentials-rejects-blank-provider
-  (testing "rejects with an error when provider is blank"
-    (let [mock-pool #js {:query (fn [_s _p] (js/Promise.resolve #js {:rows #js [] :rowCount 0}))}]
+  (testing "rejects the invalid provider before touching persistence"
+    (with-redefs [mongo-client/init-mongo!
+                  (fn [] (is false "invalid input must not connect to Mongo"))]
       (try
-        (await (policy-db/list-actor-credentials! mock-pool ""))
+        (await (policy-db/list-actor-credentials! nil ""))
         (is false "should have rejected on blank provider")
-        (catch :default _err
-          (is true "rejected as expected for blank provider"))))))
+        (catch :default error
+          (is (= "provider is required" (.-message error))))))))
 
-(deftest ^:async list-actor-credentials-returns-credentials-map
-  (testing "returns {:credentials [...]} shape regardless of backend"
-    (let [result (await (policy-db/list-actor-credentials! #js {} "discord_bot"))]
-      (is (map? result) "result is a CLJS map")
-      (is (vector? (:credentials result)) "credentials is a vector"))))
+(deftest ^:async list-actor-credentials-projects-the-returned-row
+  (let [calls (atom [])
+        row {:id "credential" :actor_id "actor" :user_id "user" :org_id "org"
+             :org_slug "editorial" :provider "discord_bot" :kind "token"
+             :account_identifier "account" :status "active"
+             :secret_json #js {:token "fixture-token"} :created_at "created" :updated_at "updated"}]
+    (with-redefs [mongo-client/init-mongo! (fn [] (swap! calls conj :connect) :db)
+                  mongo-policy/ensure-indexes! (fn [db] (swap! calls conj [:indexes db]))
+                  credentials/list-actor-credentials-by-provider!
+                  (fn
+                    ([_provider] (is false "facade must provide the resolved database"))
+                    ([db provider] (swap! calls conj [:read db provider]) [row]))]
+      (is (= {:credentials [{:id "credential" :actorId "actor" :userId "user" :orgId "org"
+                             :orgSlug "editorial" :provider "discord_bot" :kind "token"
+                             :accountIdentifier "account" :status "active"
+                             :secretJson {:token "fixture-token"} :createdAt "created" :updatedAt "updated"}]}
+             (await (policy-db/list-actor-credentials! nil "discord_bot"))))
+      (is (= [:connect [:indexes :db] [:read :db "discord_bot"]] @calls)))))
+
+(deftest ^:async list-actor-credentials-unavailable-store-is-an-explicit-empty-result
+  (with-redefs [mongo-client/init-mongo! (fn [] nil)
+                mongo-policy/ensure-indexes! (fn [_] (is false "unavailable store has no indexes"))
+                credentials/list-actor-credentials-by-provider!
+                (fn
+                  ([_provider] (is false "unavailable store cannot be queried"))
+                  ([_db _provider] (is false "unavailable store cannot be queried")))]
+    (is (= {:credentials []} (await (policy-db/list-actor-credentials! nil "discord_bot"))))))
 
 (deftest ^:async bootstrap-local-password-projection-test
   (let [captured* (atom nil)

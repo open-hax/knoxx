@@ -42,7 +42,7 @@
       (let [members (await (mongo/find-docs! (mongo/collection db directory/MEMBERSHIPS_COLLECTION)
                             {:user_id (:id user) :limit 1}))]
         (when (seq members)
-          (throw (ex-info "This local membership is inactive" {:status 403}))))
+          (throw (ex-info "This local membership is inactive" {:status 403})))))
     (let [org (when-not existing
                 (await (policy/ensure-self-org! (policy/context-pool policy-context) (:email actor) (:display_name actor))))]
       (when org
@@ -51,8 +51,10 @@
                   :role-slugs ["basic-user"] :auth-provider "axxium"
                   :external-subject (identity/subject issuer actor) :actor-id (:id actor)
                   :status "active" :membership-status "active" :is-default true})))
-      (await (policy/resolve-context! policy-context
-               (cond-> {"x-knoxx-user-email" (:email actor)}
-                 existing (assoc "x-knoxx-membership-id" (:id existing))
-                 org (assoc "x-knoxx-org-slug" (:slug org))))))))
-)
+      (let [row (if existing
+                  (await (directory/find-membership-row-with-user-org! db (:id existing)))
+                  (await (directory/find-membership-row-by-email-and-org!
+                           db {:user-email (:email actor) :org-id (:id org) :active-only true})))]
+        (when-not (and row (= (:id user) (:user_id row)))
+          (throw (ex-info "Remote identity membership changed" {:status 403 :code "identity_binding_conflict"})))
+        (await (policy/build-request-context (policy/context-pool policy-context) row))))))
