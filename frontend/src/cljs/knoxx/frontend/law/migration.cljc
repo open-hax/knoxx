@@ -144,18 +144,21 @@
 
 (defn assert-production-build!
   "Validate script presence and bridge ordering in parsed production build facts."
-  [{:keys [phases required-bridges available-scripts] :as facts}]
+  [{:keys [phases required-bridges available-scripts html-owned?] :as facts}]
   (when-not (every? available-scripts required-bridges)
     (throw (ex-info "Unsupported Vite migration configuration"
                     (assoc facts :detail "Active Shadow bridges require their governed build scripts"))))
   (let [bridges (take-while #{"build:bridge" "build:app-bridge"} phases)
         remaining (vec (drop (count bridges) phases))]
-    (when-not (and (contains? #{[:shadow] [:shadow :css] [:html :shadow] [:html :shadow :css]} remaining)
+    (when-not (and (contains? (if html-owned?
+                           #{[:html :shadow] [:html :shadow :css]}
+                           #{[:shadow] [:shadow :css] [:html :shadow] [:html :shadow :css]})
+                         remaining)
                    (= (count bridges) (count (set bridges)))
                    (every? (set bridges) required-bridges))
       (throw (ex-info "Unsupported Vite migration configuration"
                       (assoc facts :detail
-                             "Production build must compile every active bridge before Shadow release")))))
+                             "Production build must compile active bridges and owned HTML before Shadow release")))))
   facts)
 
 (def NonBlankString

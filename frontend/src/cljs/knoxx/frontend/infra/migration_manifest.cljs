@@ -319,6 +319,14 @@
                               :bridge-exports exports
                               :routes (route-records root (domain/legacy-route-exports bridge-records*))})))
 
+(defn current-application-records
+  "Read records for the governed application, which owns an HTML entry."
+  []
+  (let [root (repository-root)]
+    (html/assert-application-entrypoint! root)
+    (build/assert-application-configs! root)
+    (current-records)))
+
 (defn render-records
   "Render one EDN map per line with a terminal newline."
   [records]

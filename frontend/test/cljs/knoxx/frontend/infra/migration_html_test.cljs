@@ -3,7 +3,8 @@
             ["node:os" :as os]
             ["node:path" :as node-path]
             [cljs.test :as t]
-            [knoxx.frontend.infra.migration-html :as html]))
+            [knoxx.frontend.infra.migration-html :as html]
+            [knoxx.frontend.infra.migration-manifest :as manifest]))
 
 (defn- with-files [files inspect]
   (let [root (fs/mkdtempSync (node-path/join (os/tmpdir) "knoxx-migration-html-"))]
@@ -130,3 +131,18 @@
                "frontend/public/help.xhtml" "<html xmlns='http://www.w3.org/1999/xhtml'><body><p>Help</p><script type='application/json'>{}</script></body></html>"
                "frontend/public/cljs/app.js" "generatedShadowCode();"}
     (fn [root] (t/is (nil? (html/assert-entrypoints! root))))))
+
+(t/deftest application-entrypoint-cannot-be-retired-by-deleting-the-file
+  (with-files {}
+    (fn [root]
+      (t/is (thrown? js/Error (html/assert-application-entrypoint! root))))))
+
+(t/deftest governed-inventory-rejects-a-missing-application-entrypoint
+  (with-files {"frontend/package.json" "{}"}
+    (fn [root]
+      (let [cwd (.cwd js/process)]
+        (try
+          (.chdir js/process root)
+          (t/is (thrown-with-msg? js/Error #"Governed application HTML entry is missing"
+                                  (manifest/current-application-records)))
+          (finally (.chdir js/process cwd)))))))
