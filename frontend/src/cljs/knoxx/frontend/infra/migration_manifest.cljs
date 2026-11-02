@@ -244,7 +244,11 @@
                 (when (and (vector? node) (= 'helix.core (first node)))
                   (when-let [alias (:as (apply hash-map (rest node)))]
                     (symbol (str alias) "$")))))
-        (tree-seq coll? seq (source-forms path source))))
+        (->> (source-forms path source)
+             (filter #(and (seq? %) (= 'ns (first %))))
+             (mapcat #(drop 2 %))
+             (filter #(and (seq? %) (= :require (first %))))
+             (mapcat rest))))
 
 (defn- checked-route-forms [path source]
   (let [forms (vec (route-forms path source))
