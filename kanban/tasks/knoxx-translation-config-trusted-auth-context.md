@@ -89,8 +89,9 @@ translation-config GET.
    sender-constrained `ProposalSelectionCapability` requires the verified carrier tuple, source
    manifest, epoch, audience, expiry, and workload key, and can perform exactly one
    `translation-config:model-select` observation that returns no config payload. Swap each fact,
-   replay it, request general GET/PATCH, or invoke it after selection drift and prove failure before
-   repository I/O or disclosure. A valid sender-constrained batch capability requires the current
+   replay its proof, request general GET/PATCH, or invoke it after selection drift and prove a typed
+   non-effect for the replay and failure for the other cases, all before repository I/O or
+   disclosure. A valid sender-constrained batch capability requires the current
    active membership, delegation
    permission, organization, manifest, and epoch. Swap each fact and prove failure before I/O.
 6. A valid sender-constrained legacy-job capability requires membership absent plus the service

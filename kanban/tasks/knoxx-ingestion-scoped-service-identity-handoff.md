@@ -122,6 +122,7 @@ and sole-writer rules.
    and records an idempotency receipt. Valid sequential calls use fresh proofs. An exact retry or
    concurrent same-route replay receives the cached receipt or a typed non-effect and causes no
    duplicate protected effect; a proof from another sender or for different request material fails.
+   A repeated model-selection proof returns a typed non-effect without redisclosing the selection.
 11. Couple translation-config authority explicitly to #283. Ordinary membership-bearing API keys
     remain typed member principals under #283. The ingestion deployment key is instead a broker-only,
     membershipless service principal and cannot access the config repository. After carrier and
@@ -319,8 +320,9 @@ and sole-writer rules.
    operations. The batch variants bind admitted membership; the legacy-job variants prove
    membership absent and explicit service-principal job permission.
 4. Send an arbitrary membership with a valid service key; a swapped batch, membership, or
-   organization; and an expired, replayed, forged, or cross-route capability. Every variant fails
-   before policy lookup, segment read, agent start, or audio effect, with no administrator fallback.
+   organization; and an expired, forged, or cross-route capability. Every variant fails before
+   policy lookup, segment read, agent start, or audio effect, with no administrator fallback. An
+   exact same-route proof replay is instead handled by the idempotency rule in test 12.
 5. Prove the valid translation path retains translation config, segment read, agent start, and
    polling behavior across explicit-membership, same-organization, and safely admitted legacy
    batches. Prove the legacy single-job path retains polling plus processing, complete, and failed
