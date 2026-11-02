@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
-const verifier=fileURLToPath(new URL('../verify-audit-graph-query.mjs',import.meta.url));
+const verifier=fileURLToPath(new URL('../../../scripts/verify-audit-graph-query.mjs',import.meta.url));
 const fixture=fileURLToPath(new URL('./fixtures/audit-graph-probe.mjs',import.meta.url));
 function run(disconnected=''){
   return spawnSync(process.execPath,[verifier],{encoding:'utf8',env:{...process.env,
