@@ -125,7 +125,8 @@
       (let [t (js/setTimeout #(flush-audio! uid) voice-listener-silence-debounce-ms)]
         (swap! silence-timers assoc uid t)))))
 
-(defn- voice-listener-stop!
+(defn voice-listener-stop!
+  "Create a cleanup callback for voice listener resources."
   [guild-id speaking-map on-start-speaking on-end-speaking pcm-buffers streams decoders active-users silence-timers flush-audio!]
   (fn []
     (js/console.log "[voice:listener] stopping for guild:" guild-id)
@@ -137,7 +138,7 @@
       (try (.destroy d) (catch js/Error _)))
     (doseq [[uid t] @silence-timers]
       (js/clearTimeout t)
-      (flush-audio! uid))
+      (try (flush-audio! uid) (catch js/Error _)))
     (reset! pcm-buffers {})
     (reset! streams {})
     (reset! decoders {})

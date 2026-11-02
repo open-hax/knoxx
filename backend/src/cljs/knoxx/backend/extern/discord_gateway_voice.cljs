@@ -21,10 +21,11 @@
     (aset conn "__guildId" guild-id)
     conn))
 
-(defn- ^:async wait-for-voice-ready!
-  [conn]
+(defn ^:async await-voice-ready!
+  "Wait for readiness and destroy the connection if readiness fails."
+  [conn wait-ready]
   (try
-    (await (voice/entersState conn (.-Ready voice/VoiceConnectionStatus) 15000))
+    (await (wait-ready conn))
     (js/console.log "[voice:gw] voice connection ready for guild:" (voice-connection-guild-id conn))
     conn
     (catch js/Error err
@@ -34,10 +35,12 @@
 
 (defn ^:async gw-join-voice
   "Join a voice channel. Returns a VoiceConnection."
-  [ensure-client channel-id]
+  [ensure-client channel-id active?]
   (js/console.log "[voice:gw] joining channel:" channel-id)
   (let [active-client (await (ensure-client))
         channel (await (.fetch (.. active-client -channels) channel-id))]
+    (when-not (active? (some-> channel .-guildId))
+      (throw (js/Error. "Voice join cancelled by gateway shutdown")))
     (when-not channel
       (js/console.error "[voice:gw] channel not found:" channel-id)
       (throw (js/Error. (str "Channel not found: " channel-id))))
@@ -45,7 +48,7 @@
           conn (join-voice-connection! channel-id channel guild-id)]
       (js/console.log "[voice:gw] channel found:" channel-id "guild:" guild-id "selfDeaf:false")
       (js/console.log "[voice:gw] joinVoiceChannel returned, waiting for ready state…")
-      (await (wait-for-voice-ready! conn)))))
+      (await (await-voice-ready! conn #(voice/entersState % (.-Ready voice/VoiceConnectionStatus) 15000))))))
 
 (defn gw-leave-voice
   "Leave a voice channel for a guild."

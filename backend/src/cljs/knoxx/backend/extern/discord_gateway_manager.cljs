@@ -13,14 +13,15 @@
 (defn- gateway-stop!
   [voice-connections voice-listeners listener-epoch this-stop]
   (swap! listener-epoch inc)
-  (.forEach voice-listeners (fn [stop] (try (stop) (catch js/Error _))))
+  (.forEach voice-listeners (fn [_guild stop] (try (stop) (catch js/Error _))))
   (.clear voice-listeners)
   (destroy-voice-connections! voice-connections)
   (this-stop))
 
 (defn- ^:async start-voice-listener!
-  [voice-connections voice-listeners listener-epoch guild-id on-start on-audio]
+  [voice-connections voice-listeners listener-epoch guild-epochs guild-id on-start on-audio]
   (let [epoch @listener-epoch
+        guild-epoch (get @guild-epochs guild-id 0)
         stop (await (listener/gw-start-voice-listener voice-connections guild-id on-start on-audio))
         stopped? (atom false)]
     (letfn [(wrapped []
@@ -28,7 +29,9 @@
                 (reset! stopped? true)
                 (.delete voice-listeners wrapped)
                 (stop)))]
-      (if (= epoch @listener-epoch) (.add voice-listeners wrapped) (wrapped))
+      (if (and (= epoch @listener-epoch) (= guild-epoch (get @guild-epochs guild-id 0)))
+        (.set voice-listeners wrapped guild-id)
+        (wrapped))
       wrapped)))
 
 (defn- ^:async gateway-restart!
@@ -42,11 +45,17 @@
   (fn [] (.delete @listener-set listener)))
 
 (defn- ^:async gateway-join-voice!
-  [ensure-client voice-connections listener-epoch channel-id]
+  [ensure-client voice-connections listener-epoch guild-epochs channel-id]
   (let [epoch @listener-epoch
-        conn (await (voice-ops/gw-join-voice ensure-client channel-id))
+        guild-snapshot @guild-epochs
+        conn (await (voice-ops/gw-join-voice ensure-client channel-id
+                                            (fn [guild-id]
+                                              (and (= epoch @listener-epoch)
+                                                   (= (get guild-snapshot guild-id 0)
+                                                      (get @guild-epochs guild-id 0))))))
         guild-id (voice-ops/voice-connection-guild-id conn)]
-    (when-not (= epoch @listener-epoch)
+    (when-not (and (= epoch @listener-epoch)
+                   (= (get guild-snapshot guild-id 0) (get @guild-epochs guild-id 0)))
       (try (.destroy conn) (catch js/Error _))
       (throw (js/Error. "Voice join cancelled by gateway shutdown")))
     (.set voice-connections guild-id conn)
@@ -83,24 +92,29 @@
        :sendMessage (fn [channel-id text reply-to attachments] (messages/gw-send-message ensure-client channel-id text reply-to attachments))})
 
 (defn- gateway-voice-methods
-  [ensure-client voice-connections voice-listeners listener-epoch]
-  #js {:joinVoice (fn [channel-id] (gateway-join-voice! ensure-client voice-connections listener-epoch channel-id))
-       :leaveVoice (^:async fn [guild-id] (await (voice-ops/gw-leave-voice voice-connections guild-id)) #js {:guildId guild-id :left true})
+  [ensure-client voice-connections voice-listeners listener-epoch guild-epochs]
+  #js {:joinVoice (fn [channel-id] (gateway-join-voice! ensure-client voice-connections listener-epoch guild-epochs channel-id))
+       :leaveVoice (^:async fn [guild-id]
+                     (swap! guild-epochs update guild-id (fnil inc 0))
+                     (.forEach voice-listeners (fn [guild stop]
+                                                 (when (= guild guild-id) (try (stop) (catch js/Error _)))))
+                     (await (voice-ops/gw-leave-voice voice-connections guild-id))
+                     #js {:guildId guild-id :left true})
        :playAudio (fn [guild-id audio-buffer] (voice-ops/gw-play-audio voice-connections guild-id audio-buffer))
        :subscribeVoice (fn [guild-id user-id callback] (voice-ops/gw-subscribe-voice voice-connections guild-id user-id callback))
-       :startVoiceListener (fn [guild-id on-start on-audio] (start-voice-listener! voice-connections voice-listeners listener-epoch guild-id on-start on-audio))
+       :startVoiceListener (fn [guild-id on-start on-audio] (start-voice-listener! voice-connections voice-listeners listener-epoch guild-epochs guild-id on-start on-audio))
        :getVoiceConnection (fn [guild-id] (gateway-active-voice-connection voice-connections guild-id))
        :listVoiceMembers (fn [guild-id channel-id] (voice-ops/gw-list-voice-members ensure-client guild-id channel-id))})
 
 (defn- build-gateway-manager-methods
   [client-state ready-promise current-token listeners reaction-listeners voice-state-listeners
-   log this-stop build-client ensure-client voice-connections voice-listeners listener-epoch this-fn]
+   log this-stop build-client ensure-client voice-connections voice-listeners listener-epoch guild-epochs this-fn]
   (js/Object.assign
    #js {}
    (gateway-lifecycle-methods client-state ready-promise current-token listeners log this-stop build-client this-fn)
    (gateway-listener-methods listeners reaction-listeners voice-state-listeners)
    (gateway-message-methods ensure-client log this-fn)
-   (gateway-voice-methods ensure-client voice-connections voice-listeners listener-epoch)))
+   (gateway-voice-methods ensure-client voice-connections voice-listeners listener-epoch guild-epochs)))
 
 (defn- parse-gateway-manager-opts
   "Parse gateway manager options from a CLJS map or JS object."
@@ -122,7 +136,8 @@
    :reaction-listeners (atom (js/Set.))
    :voice-state-listeners (atom (js/Set.))
    :voice-connections (js/Map.)
-   :voice-listeners (js/Set.)
+   :voice-listeners (js/Map.)
+   :guild-epochs (atom {})
    :listener-epoch (atom 0)})
 
 (defn- gateway-manager-deps
@@ -135,7 +150,7 @@
 
 (defn- create-gateway-manager-object!
   [log {:keys [client-state ready-promise current-token listeners reaction-listeners
-               voice-state-listeners voice-connections voice-listeners listener-epoch] :as state}]
+               voice-state-listeners voice-connections voice-listeners listener-epoch guild-epochs] :as state}]
   (let [{:keys [build-client ensure-client]} (gateway-manager-deps log state)
         client-stop (fn [] (client/gw-stop client-state ready-promise current-token))
         this-stop (fn [] (gateway-stop! voice-connections voice-listeners listener-epoch client-stop))
@@ -144,7 +159,7 @@
       (reset! this-obj
               (build-gateway-manager-methods
                client-state ready-promise current-token listeners reaction-listeners voice-state-listeners
-               log this-stop build-client ensure-client voice-connections voice-listeners listener-epoch this-fn))
+               log this-stop build-client ensure-client voice-connections voice-listeners listener-epoch guild-epochs this-fn))
       @this-obj)))
 
 (defn createDiscordGatewayManager

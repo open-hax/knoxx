@@ -94,7 +94,7 @@
   (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
         destroyed (atom 0)
         connection #js {:guildId "guild" :destroy #(swap! destroyed inc)}]
-    (with-redefs [voice/gw-join-voice (fn [_ _] connection)]
+    (with-redefs [voice/gw-join-voice (fn [_ _ _] connection)]
       (await (.joinVoice manager "voice-channel"))
       (t/is (identical? connection (.getVoiceConnection manager "guild")))
       (t/is (identical? connection (.getVoiceConnection manager)))
@@ -105,7 +105,7 @@
 (defn- ^:async teardown-resources* []
   (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
         events (atom []) conn #js {:guildId "guild" :destroy #(swap! events conj :destroy)}]
-    (with-redefs [voice/gw-join-voice (fn [_ _] conn)
+    (with-redefs [voice/gw-join-voice (fn [_ _ _] conn)
                   listener/gw-start-voice-listener (fn [& _] (js/Promise.resolve #(swap! events conj :listener-stop)))]
       (await (.joinVoice manager "channel"))
       (let [stop-listener (await (.startVoiceListener manager "guild" nil nil))]
@@ -142,7 +142,7 @@
                                     :destroy (fn [] (swap! events conj :client-stop))})
         conn #js {:guildId "guild" :destroy #(swap! events conj :voice-stop)}]
     (with-redefs [client/build-discord-client fake-client
-                  voice/gw-join-voice (fn [_ _] conn)
+                  voice/gw-join-voice (fn [_ _ _] conn)
                   listener/gw-start-voice-listener (fn [& _] (js/Promise.resolve #(swap! events conj :listener-stop)))]
       (let [manager (gateway/createDiscordGatewayManager {:set-default? false})]
         (await (.start manager "old-fixture-token"))
@@ -177,7 +177,7 @@
         resolve-join (atom nil) destroyed (atom 0)
         pending (js/Promise. (fn [resolve _] (reset! resolve-join resolve)))
         conn #js {:guildId "guild" :destroy #(swap! destroyed inc)}]
-    (with-redefs [voice/gw-join-voice (fn [_ _] pending)]
+    (with-redefs [voice/gw-join-voice (fn [_ _ _] pending)]
       (let [joining (.joinVoice manager "channel")]
         (await (.stop manager))
         (@resolve-join conn)
@@ -190,4 +190,131 @@
   (t/async done
     ((^:async fn [] (try (await (pending-join-shutdown*))
                          (catch js/Error e (t/is false (str "join test rejected: " e)))
+                         (finally (done)))))))
+
+(defn- ^:async readiness-failure* []
+  (let [destroyed (atom 0) original (js/Error. "readiness failed")
+        conn #js {:destroy #(swap! destroyed inc)}
+        error (try (await (voice/await-voice-ready! conn (fn [_] (js/Promise.reject original)))) nil
+                   (catch js/Error e e))]
+    (t/is (identical? original error))
+    (t/is (= 1 @destroyed))))
+
+(t/deftest readiness-failure-destroys-connection
+  (t/async done
+    ((^:async fn [] (try (await (readiness-failure*))
+                         (catch js/Error e (t/is false (str "readiness test rejected: " e)))
+                         (finally (done)))))))
+
+(t/deftest throwing-audio-callback-does-not-abort-cleanup
+  (let [removed (atom []) flushed (atom []) destroyed (atom 0)
+        speaking #js {:removeListener (fn [kind _] (swap! removed conj kind))}
+        buffers (atom {"a" [1] "b" [2]})
+        streams (atom {"a" #js {:destroy #(swap! destroyed inc)}})
+        decoders (atom {"b" #js {:destroy #(swap! destroyed inc)}})
+        users (atom #{"a" "b"})
+        timers (atom {"a" (js/setTimeout (fn []) 60000) "b" (js/setTimeout (fn []) 60000)})
+        flush (fn [uid] (swap! flushed conj uid) (when (= uid "a") (throw (js/Error. "callback failed"))))
+        stop (listener/voice-listener-stop! "guild" speaking nil nil buffers streams decoders users timers flush)]
+    (stop)
+    (t/is (= #{"start" "end"} (set @removed)))
+    (t/is (= #{"a" "b"} (set @flushed)))
+    (t/is (= 2 @destroyed))
+    (t/is (every? empty? [@buffers @streams @decoders @users @timers]))))
+
+(defn- ^:async leave-stops-own-listeners* []
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
+        stopped (atom [])]
+    (with-redefs [listener/gw-start-voice-listener (fn [_ guild _ _] (js/Promise.resolve #(swap! stopped conj guild)))
+                  voice/gw-leave-voice (fn [& _] (js/Promise.resolve true))]
+      (await (.startVoiceListener manager "a" nil nil))
+      (await (.startVoiceListener manager "b" nil nil))
+      (await (.leaveVoice manager "a"))
+      (t/is (= ["a"] @stopped))
+      (await (.stop manager))
+      (t/is (= ["a" "b"] @stopped)))))
+
+(t/deftest leave-cleans-only-its-guild-listeners
+  (t/async done
+    ((^:async fn [] (try (await (leave-stops-own-listeners*))
+                         (catch js/Error e (t/is false (str "leave cleanup rejected: " e)))
+                         (finally (done)))))))
+
+(defn- ^:async cancelled-fetch* []
+  (let [resolve-fetch (atom nil) active (atom true) checked-guild (atom nil)
+        fetch (js/Promise. (fn [resolve _] (reset! resolve-fetch resolve)))
+        fake-client #js {:channels #js {:fetch (fn [_] fetch)}}
+        joining (voice/gw-join-voice (fn [] (js/Promise.resolve fake-client)) "channel" (fn [guild] (reset! checked-guild guild) @active))]
+    (reset! active false)
+    (@resolve-fetch #js {:guildId "guild"})
+    (let [error (try (await joining) nil (catch js/Error e (.-message e)))]
+      (t/is (= "Voice join cancelled by gateway shutdown" error))
+      (t/is (= "guild" @checked-guild)))))
+
+(t/deftest shutdown-during-channel-fetch-prevents-connection-creation
+  (t/async done
+    ((^:async fn [] (try (await (cancelled-fetch*))
+                         (catch js/Error e (t/is false (str "fetch test rejected: " e)))
+                         (finally (done)))))))
+
+(defn- ^:async pending-listener-leave* []
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
+        resolve-stop (atom nil) stopped (atom 0)
+        pending (js/Promise. (fn [resolve _] (reset! resolve-stop resolve)))]
+    (with-redefs [listener/gw-start-voice-listener (fn [& _] pending)
+                  voice/gw-leave-voice (fn [& _] (js/Promise.resolve true))]
+      (let [started (.startVoiceListener manager "guild" nil nil)]
+        (await (.leaveVoice manager "guild"))
+        (@resolve-stop #(swap! stopped inc))
+        (let [stop (await started)]
+          (t/is (= 1 @stopped))
+          (stop)
+          (t/is (= 1 @stopped)))))))
+
+(t/deftest pending-listener-cannot-outlive-leave
+  (t/async done
+    ((^:async fn [] (try (await (pending-listener-leave*))
+                         (catch js/Error e (t/is false (str "pending listener rejected: " e)))
+                         (finally (done)))))))
+
+(defn- ^:async pending-join-leave* []
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
+        resolve-join (atom nil) destroyed (atom 0)
+        pending (js/Promise. (fn [resolve _] (reset! resolve-join resolve)))
+        conn #js {:guildId "guild" :destroy #(swap! destroyed inc)}]
+    (with-redefs [voice/gw-join-voice (fn [_ _ _] pending)
+                  voice/gw-leave-voice (fn [& _] (js/Promise.resolve true))]
+      (let [joining (.joinVoice manager "channel")]
+        (await (.leaveVoice manager "guild"))
+        (@resolve-join conn)
+        (let [error (try (await joining) nil (catch js/Error e (.-message e)))]
+          (t/is (= "Voice join cancelled by gateway shutdown" error)))
+        (t/is (= 1 @destroyed))
+        (t/is (nil? (.getVoiceConnection manager "guild")))))))
+
+(t/deftest pending-join-cannot-outlive-leave
+  (t/async done
+    ((^:async fn [] (try (await (pending-join-leave*))
+                         (catch js/Error e (t/is false (str "join leave test rejected: " e)))
+                         (finally (done)))))))
+
+(defn- ^:async leave-during-fetch* []
+  (let [resolve-fetch (atom nil)
+        pending (js/Promise. (fn [resolve _] (reset! resolve-fetch resolve)))
+        fake-client #js {:channels #js {:fetch (fn [_] pending)}}]
+    (with-redefs [client/ensure-client! (fn [& _] (js/Promise.resolve fake-client))
+                  voice/gw-leave-voice (fn [& _] (js/Promise.resolve true))]
+      (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
+            joining (.joinVoice manager "channel")]
+        (await (js/Promise.resolve nil))
+        (await (.leaveVoice manager "guild"))
+        (@resolve-fetch #js {:guildId "guild"})
+        (let [error (try (await joining) nil (catch js/Error e (.-message e)))]
+          (t/is (= "Voice join cancelled by gateway shutdown" error)))
+        (t/is (nil? (.getVoiceConnection manager "guild")))))))
+
+(t/deftest leave-during-fetch-cancels-real-join-adapter
+  (t/async done
+    ((^:async fn [] (try (await (leave-during-fetch*))
+                         (catch js/Error e (t/is false (str "integrated cancellation rejected: " e)))
                          (finally (done)))))))
