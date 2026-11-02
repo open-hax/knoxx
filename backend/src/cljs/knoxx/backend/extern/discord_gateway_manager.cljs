@@ -42,9 +42,13 @@
   (fn [] (.delete @listener-set listener)))
 
 (defn- ^:async gateway-join-voice!
-  [ensure-client voice-connections channel-id]
-  (let [conn (await (voice-ops/gw-join-voice ensure-client channel-id))
+  [ensure-client voice-connections listener-epoch channel-id]
+  (let [epoch @listener-epoch
+        conn (await (voice-ops/gw-join-voice ensure-client channel-id))
         guild-id (voice-ops/voice-connection-guild-id conn)]
+    (when-not (= epoch @listener-epoch)
+      (try (.destroy conn) (catch js/Error _))
+      (throw (js/Error. "Voice join cancelled by gateway shutdown")))
     (.set voice-connections guild-id conn)
     #js {:guildId guild-id :channelId channel-id :joined true}))
 
@@ -80,7 +84,7 @@
 
 (defn- gateway-voice-methods
   [ensure-client voice-connections voice-listeners listener-epoch]
-  #js {:joinVoice (fn [channel-id] (gateway-join-voice! ensure-client voice-connections channel-id))
+  #js {:joinVoice (fn [channel-id] (gateway-join-voice! ensure-client voice-connections listener-epoch channel-id))
        :leaveVoice (^:async fn [guild-id] (await (voice-ops/gw-leave-voice voice-connections guild-id)) #js {:guildId guild-id :left true})
        :playAudio (fn [guild-id audio-buffer] (voice-ops/gw-play-audio voice-connections guild-id audio-buffer))
        :subscribeVoice (fn [guild-id user-id callback] (voice-ops/gw-subscribe-voice voice-connections guild-id user-id callback))

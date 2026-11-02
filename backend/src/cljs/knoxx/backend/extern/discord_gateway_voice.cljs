@@ -29,6 +29,7 @@
     conn
     (catch js/Error err
       (js/console.error "[voice:gw] voice connection failed to ready:" (.-message err))
+      (try (.destroy conn) (catch js/Error _))
       (throw err))))
 
 (defn ^:async gw-join-voice

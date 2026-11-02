@@ -171,3 +171,23 @@
 (t/deftest leave-waits-and-propagates-failure
   (t/async done
     ((^:async fn [] (try (await (leave-result*)) (catch js/Error e (t/is false (str "leave rejected unexpectedly: " e))) (finally (done)))))))
+
+(defn- ^:async pending-join-shutdown* []
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
+        resolve-join (atom nil) destroyed (atom 0)
+        pending (js/Promise. (fn [resolve _] (reset! resolve-join resolve)))
+        conn #js {:guildId "guild" :destroy #(swap! destroyed inc)}]
+    (with-redefs [voice/gw-join-voice (fn [_ _] pending)]
+      (let [joining (.joinVoice manager "channel")]
+        (await (.stop manager))
+        (@resolve-join conn)
+        (let [error (try (await joining) nil (catch js/Error e (.-message e)))]
+          (t/is (= "Voice join cancelled by gateway shutdown" error)))
+        (t/is (= 1 @destroyed) "late join is destroyed")
+        (t/is (nil? (.getVoiceConnection manager "guild")) "late join is not registered")))))
+
+(t/deftest pending-join-cannot-outlive-shutdown
+  (t/async done
+    ((^:async fn [] (try (await (pending-join-shutdown*))
+                         (catch js/Error e (t/is false (str "join test rejected: " e)))
+                         (finally (done)))))))
