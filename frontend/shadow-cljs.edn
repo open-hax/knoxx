@@ -76,6 +76,17 @@
    {:output-feature-set :es-next
     :warnings-as-errors true}}
 
+  :event-agent-proof
+  {:target :node-test
+   :output-to "dist/test/event-agent-proof.cjs"
+   :ns-regexp "knoxx\\.frontend\\.api\\.event-agent-bridge-test$"
+   :autorun true
+   :prepend-js "const { JSDOM } = require('jsdom'); const dom = new JSDOM('<!doctype html><html><body></body></html>', {url: 'https://frontend.invalid'}); globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.localStorage = dom.window.localStorage; globalThis.navigator = dom.window.navigator;"
+   :js-options {:js-provider :shadow
+                :resolve {"@open-hax/knoxx-frontend-bridge" {:target :file
+                           :file "dist/bridge/knoxx-frontend-bridge.es.js"}}}
+   :compiler-options {:output-feature-set :es-next :warnings-as-errors true}}
+
   :migration-manifest
   {:target :node-script
    :main knoxx.frontend.migration.main/main
