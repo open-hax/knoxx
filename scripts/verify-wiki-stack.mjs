@@ -18,7 +18,12 @@ import {translationTour, verifySourceUnaccepted} from './wiki-translation-tour.m
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(path.join(repo, 'backend/package.json'));
-const {chromium} = require(path.join(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES, 'playwright-core'));
+const modules = process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES;
+assert(modules && path.isAbsolute(modules), 'Set CODEX_PRIMARY_RUNTIME_NODE_MODULES to an absolute directory containing playwright-core');
+let chromium;
+try { ({chromium} = require(path.join(modules, 'playwright-core'))); }
+catch (error) { throw new Error(`Cannot load playwright-core from ${modules}: ${error.message}`); }
+assert(typeof chromium?.launch === 'function', 'playwright-core must expose chromium.launch');
 const outputDir = path.resolve(process.env.WIKI_EVIDENCE_DIR || path.join(repo, 'docs/verification/screenshots', `wiki-${Date.now()}`));
 const fixtureDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'knoxx-wiki-stack-'));
 const username = 'wiki-owner', email = 'owner@wiki.test', password = randomBytes(24).toString('base64url');

@@ -71,20 +71,31 @@ async function openTranslation(page, row) {
   await card.click();
 }
 
+export function translationAction(row, sourceRevision, priorCandidate) {
+  const selected = candidate(row);
+  if (row.revision === sourceRevision && row.reviewable === true && selected
+      && selected.candidate_set_id !== priorCandidate) return 'ready';
+  if (row.revision !== sourceRevision || row.work_state === 'in_flight' || row.work_state === 'ready') return 'wait';
+  if (row.allowed_actions?.some(action => action === 'dispatch' || action === 'retry')) return 'dispatch';
+  return 'wait';
+}
+
 async function dispatch(page, document, row, sourceRevision, priorCandidate, timeout) {
-  await openTranslation(page, row);
-  // Automatic generation can change the admitted action while navigation loads.
-  // Both visible controls call the same server command; use the current view.
-  const action = page.getByRole('button', { name: /^(Dispatch|Retry)$/ });
-  await action.waitFor();
-  assert.equal(await action.count(), 1, 'Exactly one current translation dispatch action must be admitted');
-  const receipt = await command(page, 'POST', '/api/publications/translations/dispatch',
-    () => action.click(), timeout);
-  const generated = await until(() => work(page, document, row.publication), value => {
-    const selected = candidate(value);
-    return value.revision === sourceRevision && value.reviewable === true
-      && selected && selected.candidate_set_id !== priorCandidate;
-  }, `a real generated candidate for ${row.publication}`, timeout);
+  let receipt = null;
+  let current = await work(page, document, row.publication);
+  if (translationAction(current, sourceRevision, priorCandidate) === 'dispatch') {
+    await openTranslation(page, current);
+    // Re-read after navigation: automatic generation may have claimed the work.
+    current = await work(page, document, row.publication);
+    if (translationAction(current, sourceRevision, priorCandidate) === 'dispatch') {
+      const action = page.getByRole('button', { name: /^(Dispatch|Retry)$/ });
+      assert.equal(await action.count(), 1, 'Exactly one current translation dispatch action must be admitted');
+      receipt = await command(page, 'POST', '/api/publications/translations/dispatch', () => action.click(), timeout);
+    }
+  }
+  const generated = await until(() => work(page, document, row.publication),
+    value => translationAction(value, sourceRevision, priorCandidate) === 'ready',
+    `a real generated candidate for ${row.publication}`, timeout);
   assert(candidate(generated).splits.every(split => typeof split.candidate_text === 'string'),
     'All candidate text must come from the persisted model result');
   await openTranslation(page, generated);

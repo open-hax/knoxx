@@ -33,7 +33,7 @@ repaired without weakening admission contracts or the fatal async-error guard.
 
 Run the complete browser workflow with `node scripts/verify-wiki-stack.mjs` after
 building the frontend, backend server and `wiki-verification` target, and setting
-the explicit warmed `FORESIGHT_MODEL_CACHE` and Chromium executable. The supervisor
+the explicit warmed `FORESIGHT_MODEL_CACHE`, `FORESIGHT_BROWSER_EXECUTABLE` pointing to a compatible Chromium executable, and `CODEX_PRIMARY_RUNTIME_NODE_MODULES` pointing to an absolute directory containing an installed `playwright-core` package. The supervisor validates the package and fails before creating fixtures if it is unavailable. The supervisor
 creates disposable users, ledgers and content, owns all service processes, and
 removes its fixtures when it exits. Its `result.json` and annotated screenshots
 are authoritative for that run only. Historical screenshots do not prove this
