@@ -85,7 +85,7 @@
                         reconciler {:trigger/id :wiki/publish :trigger/origin :route
                                     :publication/id publication}))]
     (commands/changed! scope)
-    {:receipt (wire/receipt->wire receipt)
+    {:receipt (law/assert-receipt-wire! (wire/receipt->wire receipt))
      :review (commands/decorate ctx (review-wire/projection->wire snapshot))}))
 
 (defn ^:async publish!

@@ -15,18 +15,7 @@
             [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-role-slugs ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.infra.routes.resources :as resource-routes]
-            [knoxx.backend.infra.publication-admission-hook :as publication-admission-hook]
-            [knoxx.backend.infra.translation-event-writer :as translation-event-writer]
-            [knoxx.backend.infra.stores.translation-evidence-registry :as translation-evidence-registry]
-            [knoxx.backend.infra.stores.translation-split-registry :as translation-split-registry]
-            [knoxx.backend.infra.routes.document-admission :as document-admission]
-            [knoxx.backend.infra.routes.publication-reconcile :as reconcile-routes]
-            [knoxx.backend.extern.fastify.publications :as publication-routes]
-            [knoxx.backend.extern.fastify.document-admission :as document-admission-routes]
-            [knoxx.backend.extern.fastify.translation-config :as translation-config-routes]
-            [knoxx.backend.extern.fastify.translation-dispatch :as translation-dispatch-routes]
-            [knoxx.backend.extern.fastify.translation-review :as translation-review-routes]
-            [knoxx.backend.extern.fastify.cms-publication :as cms-publication-routes]
+            [knoxx.backend.infra.routes.app.publication :as app-publication]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
@@ -1627,77 +1616,6 @@
                                           :ensure-permission! ensure-permission!
                                           :session-guard session-guard})))
 
-(defn- ^:async repair-publication-translation-events!
-  [client scope]
-  (let [evidence-store (translation-evidence-registry/current)
-        split-store (translation-split-registry/current)]
-    (when-not evidence-store
-      (throw (ex-info "translation evidence persistence is not configured"
-                      {:status 503
-                       :code "translation_evidence_unavailable"})))
-    (when-not split-store
-      (throw (ex-info "translation split persistence is not configured"
-                      {:status 503
-                       :code "translation_split_persistence_unavailable"})))
-    (await
-     (translation-event-writer/repair-completed-event-projections!
-      {:evidence-store evidence-store
-       :openplanner-client client
-       :split-store split-store}
-      (select-keys scope [:org-id :project])))))
-
-(defn- register-publication-surface-routes!
-  "The contract-owned publication surface: the resource projection, the CMS
-   editor's view of it, and translation configuration. None of these is gated on
-   a hosted publishing backend being reachable — resolving desired state with
-   that backend absent is the whole point."
-  [app runtime config]
-  (let [client (openplanner-client/client config)
-        helpers {:route! route!
-                 :json-response! json-response!
-                 :with-request-context! with-request-context!
-                 :ensure-permission! ensure-permission!}
-        admission-dependencies
-        {:client client
-         :repair-translation-events!
-         (partial repair-publication-translation-events! client)}
-        internal-admission!
-        (fn [scope selection]
-          (document-admission/admit-documents!
-           config
-           (assoc admission-dependencies
-                  :dispatch-document!
-                  (fn [document-id snapshot-deps]
-                    (translation-dispatch-routes/dispatch-selection-for-scope!
-                     config scope {:document document-id}
-                     (assoc snapshot-deps :client client))))
-           scope selection))]
-    ;; Generated draft tools call this cycle-free port. The handler derives all
-    ;; model work from the server-pinned scope carried on the originating
-    ;; admission event; no HTTP credential or agent-supplied identity is used.
-    (publication-admission-hook/register! internal-admission!)
-    ;; Fastify interop is owned by each extern adapter, which authorizes before
-    ;; touching the filesystem-backed projection.
-    (publication-routes/register-publication-routes!
-     app runtime config (select-keys helpers [:with-request-context!
-                                              :ensure-permission!]))
-    (cms-publication-routes/register-cms-publication-routes! app runtime config helpers)
-    (reconcile-routes/register-publication-reconcile-routes!
-     app runtime config (select-keys helpers [:with-request-context!
-                                              :ensure-permission!]))
-    (translation-config-routes/register-translation-config-routes!
-     app runtime config helpers)
-    (document-admission-routes/register-document-admission-routes!
-     app runtime config (select-keys helpers [:with-request-context!
-                                              :ensure-permission!])
-     admission-dependencies)
-    (translation-dispatch-routes/register-translation-dispatch-routes!
-     app runtime config (select-keys helpers [:with-request-context!
-                                              :ensure-permission!]))
-    (translation-review-routes/register-translation-review-routes!
-     app runtime config (select-keys helpers [:with-request-context!
-                                              :ensure-permission!]))))
-
 (defn- register-resource-and-media-routes!
   [app runtime config]
   (resource-routes/register-resource-routes! app runtime config
@@ -1706,7 +1624,7 @@
                                               :error-response! error-response!
                                               :with-request-context! with-request-context!
                                               :ensure-permission! ensure-permission!})
-  (register-publication-surface-routes! app runtime config)
+  (app-publication/register-publication-surface-routes! app runtime config)
   (model-routes/register-model-routes! app runtime config)
   (voice-routes/register-voice-routes! app runtime config
                                        {:route! route!

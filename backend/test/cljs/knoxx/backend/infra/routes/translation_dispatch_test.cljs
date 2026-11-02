@@ -558,7 +558,8 @@
     (testing "an unscoped receipt is not treated as global"
       ;; Admitting it into every tenant is the failure being fixed.
       (is (empty? (facade/tenant-receipts "org-a" [(dissoc (receipt "org-a")
-                                                           :translation/org-id)]))))))
+                                                           :translation/org-id)])))
+      (is (empty? (facade/tenant-receipts nil [(receipt nil)]))))))
 
 (deftest ^:async the-workers-real-report-vocabulary-is-accepted
   ;; Read from ingestion/src/kms_ingestion/translation/worker.clj. An earlier

@@ -24,14 +24,17 @@
   "Keep resource identities distinct and materialization separate from intent."
   [receipt]
   (identity/encode-wire-values
-   (cond-> (merge (fields receipt {:receipt/type :type :publication/id :publication
+   (cond-> (fields receipt {:receipt/type :type :publication/id :publication
                             :adapter/id :adapter :document/id :document
                             :idempotency/key :key :target :target :locale :locale
                             :revision :revision :path :path :reason :reason
                             :blockers :blockers})
-                   (fields receipt {:correlation/publication :publication
-                                    :correlation/revision :revision
-                                    :correlation/trigger :trigger :correlation/origin :origin}))
+     (some #(contains? receipt %) [:correlation/publication :correlation/revision
+                                  :correlation/trigger :correlation/origin])
+     (assoc :correlation (fields receipt {:correlation/publication :publication
+                                          :correlation/revision :revision
+                                          :correlation/trigger :trigger
+                                          :correlation/origin :origin}))
      (contains? receipt :materialized/revision)
      (assoc :materialized (fields receipt {:materialized/revision :revision
                                            :materialized/path :path

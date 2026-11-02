@@ -19,6 +19,25 @@
    [:org-id publication/NonBlankString]
    [:project [:maybe publication/NonBlankString]]])
 
+(def ReceiptWire
+  "Receipt identity and trigger correlation occupy distinct wire fields."
+  [:map
+   [:publication {:optional true} :string]
+   [:revision {:optional true} [:maybe :string]]
+   [:correlation {:optional true}
+    [:map {:closed true}
+     [:publication {:optional true} :string]
+     [:revision {:optional true} [:maybe :string]]
+     [:trigger {:optional true} :string]
+     [:origin {:optional true} :string]]]])
+
+(defn assert-receipt-wire!
+  "Reject a malformed publication receipt projection."
+  [receipt]
+  (when-not (m/validate ReceiptWire receipt)
+    (throw (ex-info "Invalid Wiki publication receipt" {:code "wiki_receipt_invalid"})))
+  receipt)
+
 (defn assert-command!
   "Classify malformed browser/tool requests before any resource write."
   [body]

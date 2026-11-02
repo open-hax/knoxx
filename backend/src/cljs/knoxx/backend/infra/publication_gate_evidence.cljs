@@ -59,7 +59,7 @@
    A receipt naming no organization is excluded rather than treated as global.
    Admitting it into every tenant is exactly the failure being fixed."
   [org-id receipts]
-  (filterv #(= org-id (:translation/org-id %)) receipts))
+  (filterv #(and (some? org-id) (= org-id (:translation/org-id %))) receipts))
 
 (defn- ^:async approvals-for-gate!
   "Load scoped approvals and optionally join current durable split history."
