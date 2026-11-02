@@ -34,7 +34,7 @@
             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
             [knoxx.backend.shape.session-persistence :refer [put-run!]]
             [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
-            [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
+            [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text final-answer-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.domain.agent.agent-context :as agent-ctx]
             [knoxx.backend.domain.time :refer [now-iso]]))
@@ -153,7 +153,11 @@
           :resources (cond-> {:provider "proxx"
                               :collection (:collection-name config)}
                        (get agent-spec :resource-policies) (assoc :agentResourcePolicies (get agent-spec :resource-policies)))}
-         auth-extra))
+         auth-extra
+         (when-let [actor-id (:actor-id agent-spec)]
+           {:memory_access (cond-> {:version 1 :visibility "private" :actor_id actor-id}
+                             (:org_id auth-extra) (assoc :org_id (:org_id auth-extra))
+                             (:org_slug auth-extra) (assoc :org_slug (:org_slug auth-extra)))})))
 
 (defn- emit-action-task-rendered-event!
   [run-id conversation-id session-id agent-spec]
@@ -255,10 +259,8 @@
 (defn- extract-turn-answer-and-reasoning
   "Extract the final answer and reasoning text from streaming state and assistant message."
   [state assistant-message]
-  (let [answer (let [chunked (apply str @(:chunks state))]
-                 (if (str/blank? chunked)
-                   (assistant-message-text assistant-message)
-                   chunked))
+  (let [answer (final-answer-text (assistant-message-text assistant-message)
+                                 (apply str @(:chunks state)))
         reasoning-text (let [streamed (apply str @(:reasoning-chunks state))
                              final-reasoning (assistant-message-reasoning-text assistant-message)]
                          (cond
@@ -435,6 +437,22 @@
     (remove-agent-session! conversation-id)
     response))
 
+(defn- build-completed-event
+  [run-id conversation-id session-id model-id sources elapsed usage-tokens ttft-ms]
+  (let [inp (:input-tokens usage-tokens)
+        out (:output-tokens usage-tokens)
+        tok-per-s (when (and (pos? (or out 0)) (pos? elapsed))
+                    (* 1000 (/ out elapsed)))]
+    (tool-event-payload run-id conversation-id session-id "run_completed"
+                        (cond-> {:status "completed"
+                                 :model model-id
+                                 :sources_count (count sources)
+                                 :total_time_ms elapsed}
+                          ttft-ms (assoc :ttft_ms ttft-ms)
+                          inp (assoc :input_tokens inp)
+                          out (assoc :output_tokens out)
+                          tok-per-s (assoc :tokens_per_s tok-per-s)))))
+
 (defn- ^:async finalize-turn-success!
   [config state session run-id conversation-id session-id started-ms model-id _mode
    hydration memory-hydration persisted-request-messages agent-spec]
@@ -443,10 +461,9 @@
         assistant-content-parts (content/assistant-content-parts assistant-message)
         usage-tokens (xturn-result/usage-tokens assistant-message)
         elapsed (- (.now js/Date) started-ms)
-        output-tokens (:output-tokens usage-tokens)
-        _tokens-per-second (when (and (pos? output-tokens) (pos? elapsed))
-                            (* 1000 (/ output-tokens elapsed)))
         sources (hydration-sources hydration)
+        running-run (update-run! run-id identity)
+        ttft-ms (:ttft_ms running-run)
         message-parts (cond-> []
                         (not (str/blank? reasoning-text))
                         (conj {:role "thinking"
@@ -455,17 +472,14 @@
                         (not (str/blank? answer))
                         (conj {:role "assistant"
                                :content answer}))
-        completed-event (tool-event-payload run-id conversation-id session-id "run_completed"
-                                            {:status "completed"
-                                             :model model-id
-                                             :sources_count (count sources)})]
+        completed-event (build-completed-event run-id conversation-id session-id model-id
+                                              sources elapsed usage-tokens ttft-ms)]
     (record-retrieval-sample! (:retrievalMode @settings-state*) elapsed)
     ;; Check the tool obligation against the still-running record. Stamping the
     ;; run completed first would expose a false-success window and index the
     ;; provider's call-shaped prose as completed memory before the guard could
     ;; correct it to failed.
-    (let [running-run (update-run! run-id identity)
-          pending-content-parts
+    (let [pending-content-parts
           (merge-content-parts
            assistant-content-parts
            (content/reply-attachment-content-parts (:tool_receipts running-run)))]
@@ -693,6 +707,11 @@
                              :agent-spec agent-spec})
     (try
       (let [_ (await (send-user-message-with-timeout! session content (:agent-turn-timeout-ms config)))]
+        (when-let [provider-error (xturn-result/provider-error-message
+                                  (latest-assistant-message session))]
+          (throw (ex-info provider-error
+                          {:error/kind :agent-provider-response-error
+                           :provider-stop-reason (xturn-result/provider-stop-reason (latest-assistant-message session))})))
         (agent-ctx/clear-context!)
         (unsubscribe)
         (await (finalize-turn-success!
@@ -711,9 +730,10 @@
                                      :session-id session-id})))
         (agent-ctx/clear-context!)
         (unsubscribe)
-        (turn-control/unregister-active-turn! conversation-id run-id)
         (await (finalize-turn-failure! config state session run-id conversation-id session-id started-ms
-                                      hydration memory-hydration persisted-request-messages agent-spec err))))))
+                                      hydration memory-hydration persisted-request-messages agent-spec err)))
+      (finally
+        (turn-control/unregister-active-turn! conversation-id run-id)))))
 
 
 

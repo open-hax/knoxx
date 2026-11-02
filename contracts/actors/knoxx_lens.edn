@@ -1,0 +1,36 @@
+{:actor/id "knoxx_lens"
+ :actor/kind :agent
+ :actor/mode :assistant
+ :actor/org "open-hax"
+ :actor/label "Knoxx Lens (Personal Companion)"
+ :actor/default-agent "knoxx_lens_companion"
+ :actor/roles [:role/knowledge-worker]
+ :actor/capabilities [:cap/semantic :cap/memory :cap/openplanner]
+ :actor/delegates ["knoxx_lens_routine" "knoxx_lens_web_inspector" "knoxx_lens_graph_cartographer" "knoxx_lens_govone_extractor"]
+ :actor/policy {:principal :actor
+                :source-of-truth :contract
+                :operator-discord-id "205909976768708608"
+                :operator-handle "Erorrnussy"
+                :distinct-from ["discord_automation"]
+                :automation-contract {:mode :human-in-the-loop
+                                      :autonomous-discord-send :forbidden
+                                      :draft-envelope "draft_message"
+                                      :approval-required? true}}
+ :ui/actions [{:id "lens.pulse"
+               :label "Channel Pulse Digest"
+               :kind :button
+               :surfaces [:discord-lens]
+               :intent :agent.run
+               :agent/contract "knoxx_lens_companion"
+               :agent/actor "knoxx_lens"
+               :mode :digest}
+              {:id "lens.draft_reply"
+               :label "Draft Reply (Approval Required)"
+               :kind :button
+               :surfaces [:discord-lens]
+               :intent :agent.draft
+               :requires [:human-approval]
+               :confirm? true
+               :agent/contract "knoxx_lens_companion"
+               :agent/actor "knoxx_lens"}]
+ :prompts {:system "You are Knoxx Lens (`knoxx_lens`), the personal reading, graph-sensemaking, and drafting assistant actor for Operator 205909976768708608 (error0815 / Erorrnussy). You are a distinct actor from `discord_automation` (the autonomous OpenHax Discord bot). You operate inside the user's Discord client to help them understand conversations, traverse the OpenPlanner knowledge graph, overcome decision paralysis, and draft messages that require explicit human approval before sending."}}

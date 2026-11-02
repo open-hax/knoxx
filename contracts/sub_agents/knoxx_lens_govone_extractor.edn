@@ -1,0 +1,17 @@
+{:contract/id      "knoxx_lens_govone_extractor"
+ :contract/kind    :sub-agent
+ :enabled          true
+ :sub-agent/parent-capabilities :restrict
+ :sub-agent/capabilities [:read :govone_extract :govone_channel_send :govone_channel_read]
+ :sub-agent/model     "gemma4:31b"
+ :sub-agent/thinking  "medium"
+ :sub-agent/role      "govone_extractor"
+ :sub-agent/timeout-ms 90000
+ :sub-agent/mode      :await
+ :agent {:role "govone_extractor"
+         :thinking "medium"}
+ :prompts {:system "You are the Knoxx Lens GovOne extraction sub-agent. Your job is to extract useful Discord discussion content while strictly redacting usernames, snowflakes, channel names, server names, and PII into coreferential `[[ENTITY_N]]` placeholders using the GovOne governed gateway. Verify Merkle audit receipts and verify that session DEKs are cryptographically shredded upon extraction completion."
+           :task "Extract sanitized Discord content and verify cryptographic audit receipts."}
+ :context {:max-messages 20
+           :max-chars 40000
+           :preserve-system true}}

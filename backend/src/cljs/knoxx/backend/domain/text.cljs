@@ -479,12 +479,16 @@
                    session (or (:session hit) (:session metadata) "unknown-session")
                    role (or (:role hit) (:role metadata) "memory")
                    snippet (sanitize-svg-content (or (:snippet hit) (:document hit) (:text hit) ""))
+                   preview-limit (if (= "knoxx.tool_receipt" (or (:kind hit) (:kind metadata))) 1600 280)
                    distance (:distance hit)]
                (str (inc idx) ". session=" session
+                    ", record_id=" (or (:id hit) (:parent_id metadata) "unknown-record")
+                    ", kind=" (or (:kind hit) (:kind metadata) "unknown")
+                    ", ts=" (or (:ts hit) (:ts metadata) "unknown")
                     ", role=" role
                     (when (number? distance)
                       (str ", distance=" (.toFixed (js/Number. distance) 3)))
-                    "\n   " (or (value->preview-text snippet 280) ""))))
+                    "\n   " (or (value->preview-text snippet preview-limit) ""))))
            hits)))
     (str "OpenPlanner memory search for: " query "\nNo prior Knoxx memory hits found.")))
 
@@ -511,8 +515,12 @@
           "\n\n"
           (map-indexed
            (fn [idx row]
-             (str (inc idx) ". [" (or (:role row) "event") "] "
-                  (or (value->preview-text (sanitize-svg-content (or (:text row) "")) 320) "")))
+             (let [kind (:kind row)
+                   preview-limit (if (= "knoxx.tool_receipt" kind) 1600 320)]
+               (str (inc idx) ". [" (or (:role row) "event") "]"
+                    " record_id=" (or (:id row) "unknown-record")
+                    " kind=" (or kind "unknown") " ts=" (or (:ts row) "unknown")
+                    "\n" (or (value->preview-text (sanitize-svg-content (or (:text row) "")) preview-limit) ""))))
            rows)))
     (str "OpenPlanner session " session-id " is empty or missing.")))
 
@@ -533,21 +541,25 @@
                                  (when-let [s (:score node)]
                                    (str " (score=" (float-format s) ")"))
                                  "\n   id=" (:id node)
+                                 (when-let [actor (:actor_id data)]
+                                   (str "\n   actor=" actor
+                                        (when-let [session (:session_id data)] (str " session=" session))))
                                  (when-let [path (or (:path data) (some-> (:id node) (str/replace #"^[^:]+:" "")))]
                                    (str "\n   path=" path))
                                  (when-let [url (:url data)]
                                    (str "\n   url=" url))
                                  (when text
-                                   (str "\n   text=" (or (value->preview-text text 280) ""))))))
+                                   (str "\n   text=" (or (value->preview-text text 600) ""))))))
                         nodes))
             edge-text (when (seq edges)
-                        (str/join
-                         "\n"
-                         (map (fn [edge]
-                                (let [etype (or (:edgeType edge) (when-let [sim (:similarity edge)]
-                                                                    (str "sim=" (float-format sim))))]
-                                  (str "- [" (or etype "link") "] " (:source edge) " -> " (:target edge))))
-                              edges)))
+                        (str "\n\nEdges:\n"
+                             (str/join
+                              "\n"
+                              (map (fn [edge]
+                                     (let [etype (or (:edgeType edge) (:edgeKind edge) (when-let [sim (:similarity edge)]
+                                                                         (str "sim=" (float-format sim))))]
+                                       (str "- [" (or etype "link") "] " (:source edge) " -> " (:target edge))))
+                                   edges))))
             clusters-text (when-let [clusters (seq (:clusters result))]
                             (str "\n\nClusters:\n"
                                  (str/join "\n"
@@ -557,6 +569,8 @@
                                                          (str "\n    top: " (str/join ", " (map :id top))))))
                                                 clusters))))]
         (str "Knowledge graph query"
+             (when-let [store (:store result)] (str "\nStore: " store))
+             (when-let [scope (:scope result)] (str "\nScope: " scope))
              (when-let [q (:query result)]
                (str "\nQuery: " q))
              (when-let [projects (seq (:projects result))]
@@ -568,4 +582,15 @@
              edge-text
              clusters-text))
       (str "Knowledge graph query returned no matching nodes."
+           (when-let [store (:store result)] (str "\nStore: " store))
+           (when-let [scope (:scope result)] (str "\nScope: " scope))
            (when stats (str " " (pr-str stats)))))))
+
+(defn final-answer-text
+  "Prefer the SDK's complete final text over provisional stream deltas.
+   A stream may lose whitespace or repeat the cumulative message at completion;
+   retain its text only when the SDK has no final textual content."
+  [final-text streamed-text]
+  (if (str/blank? (str final-text))
+    (str (or streamed-text ""))
+    final-text))

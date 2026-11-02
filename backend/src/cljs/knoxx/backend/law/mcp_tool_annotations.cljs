@@ -28,6 +28,20 @@
    "semantic_query"   {:readOnlyHint true  :openWorldHint false}
    "memory_search"    {:readOnlyHint true  :openWorldHint false}
    "memory_session"   {:readOnlyHint true  :openWorldHint false}
+   "lens_refine_topics" {:readOnlyHint true :openWorldHint false}
+   "lens_grab_context"  {:readOnlyHint true :openWorldHint false}
+   "lens_connections_graph" {:readOnlyHint true :openWorldHint false}
+   "lens_inspect_manifest"  {:readOnlyHint true :openWorldHint false}
+   "govone.extract"         {:readOnlyHint true :openWorldHint false}
+   "govone.channel.send"    {:readOnlyHint false :destructiveHint false :idempotentHint false :openWorldHint false}
+   "govone.channel.read"    {:readOnlyHint true :openWorldHint false}
+   "browser.control"        {:readOnlyHint false :destructiveHint false :openWorldHint true}
+   "media.extract"          {:readOnlyHint true :openWorldHint true}
+
+   ;; Local pinned schemas and actor-scoped GET transport have separate effects.
+   "social.features"  {:readOnlyHint true :openWorldHint false}
+   "social.describe"  {:readOnlyHint true :openWorldHint false}
+   "social.read"      {:readOnlyHint true :openWorldHint true}
 
    ;; Reads, but of the open internet — openWorldHint stays true.
    "websearch"        {:readOnlyHint true  :openWorldHint true}

@@ -15,6 +15,11 @@
 
    "discord.publish" {:id "discord.publish" :label "Discord Publish" :description "Publish updates to Discord" :risk-level "medium"}
    "discord.send" {:id "discord.send" :label "Discord Send" :description "Send Discord messages and replies" :risk-level "medium"}
+   "discord.react" {:id "discord.react" :label "Discord React" :description "React to an exact Discord message with an emoji" :risk-level "low"}
+   "discord.thread.create" {:id "discord.thread.create" :label "Discord Create Thread" :description "Create a conversation thread in a channel or from an existing message" :risk-level "medium"}
+   "social.features" {:id "social.features" :label "Explore Platform Features" :description "Find Discord and Bluesky operations by social intent" :risk-level "low"}
+   "social.describe" {:id "social.describe" :label "Describe Platform Operation" :description "Inspect exact API fields, local schema references and related native tools" :risk-level "low"}
+   "social.read" {:id "social.read" :label "Read Platform Operation" :description "Execute a pinned Discord or Bluesky JSON read with actor-owned credentials" :risk-level "medium"}
    "discord.read" {:id "discord.read" :label "Discord Read" :description "Read messages from Discord channels" :risk-level "medium"}
    "discord.channel.messages" {:id "discord.channel.messages" :label "Discord Channel Messages" :description "Fetch messages from a Discord channel" :risk-level "medium"}
    "discord.channel.scroll" {:id "discord.channel.scroll" :label "Discord Channel Scroll" :description "Scroll older messages in a Discord channel" :risk-level "medium"}
@@ -28,6 +33,15 @@
    "events.status" {:id "events.status" :label "Events Status" :description "Inspect events runtime state and the trigger/action/schedule/generator catalog" :risk-level "low"}
    "events.dispatch" {:id "events.dispatch" :label "Events Dispatch" :description "Dispatch a normalized event into the events runtime" :risk-level "low"}
    "triggers.fire" {:id "triggers.fire" :label "Triggers Fire" :description "Fire a trigger contract immediately through the trigger/action runtime" :risk-level "medium"}
+   "social.remember" {:id "social.remember" :label "Remember Conversation" :description "Save a private conversation snapshot from confirmed current-turn receipts" :risk-level "medium"}
+   "social.conversations" {:id "social.conversations" :label "Read Conversations" :description "Read own private conversation snapshots and exact platform references" :risk-level "low"}
+   "knowledge.record" {:id "knowledge.record" :label "Record Knowledge" :description "Create actor-owned private or explicitly shared knowledge" :risk-level "medium"}
+   "browser.read" {:id "browser.read" :label "Read Rendered Page" :description "Read Chromium-rendered source evidence" :risk-level "low"}
+   "knowledge.read" {:id "knowledge.read" :label "Read Knowledge" :description "Read an authorized original knowledge record" :risk-level "low"}
+   "knowledge.search" {:id "knowledge.search" :label "Search Knowledge" :description "Search accessible own/private and shared knowledge" :risk-level "low"}
+   "knowledge.link" {:id "knowledge.link" :label "Link Knowledge" :description "Append an evidenced relationship with bounded visibility" :risk-level "medium"}
+   "agent.dispatch" {:id "agent.dispatch" :label "Dispatch Specialized Agent" :description "Run a contract-pinned worker under the same actor" :risk-level "medium"}
+   "agent.dispatch.status" {:id "agent.dispatch.status" :label "Read Specialized Agent Result" :description "Read an actor-owned child run result" :risk-level "low"}
    "agents.spawn" {:id "agents.spawn" :label "Agents Spawn" :description "Launch a one-off normal Knoxx agent run through the shared agent runtime" :risk-level "medium"}
    "actors.send-message" {:id "actors.send-message" :label "Actors Send Message" :description "Send an actor-to-actor message as steer, follow-up, or event with lineage metadata" :risk-level "medium"}
 
@@ -84,6 +98,7 @@
    "audio.spectrogram" {:id "audio.spectrogram" :label "Audio Spectrogram" :description "Generate spectrogram from audio" :risk-level "medium"}
    "audio.waveform" {:id "audio.waveform" :label "Audio Waveform" :description "Generate waveform from audio" :risk-level "medium"}
 
+   "multimodal.inspect" {:id "multimodal.inspect" :label "Inspect Media" :description "Inspect image/audio using an explicit Proxx model" :risk-level "low"}
    "multimodal.upload" {:id "multimodal.upload" :label "Multimodal Upload" :description "Upload images, audio, video, and documents for multimodal AI" :risk-level "low"}
    "workspace_media.attach" {:id "workspace_media.attach" :label "Attach Workspace Media" :description "Attach an image, audio file, video, or document from the workspace into the response" :risk-level "low"}
 
@@ -92,6 +107,15 @@
    "graph_query" {:id "graph_query" :label "Graph Query" :description "Query the canonical knowledge graph" :risk-level "low"}
    "memory_search" {:id "memory_search" :label "Memory Search" :description "Search prior Knoxx sessions in OpenPlanner" :risk-level "low"}
    "memory_session" {:id "memory_session" :label "Memory Session" :description "Load a specific Knoxx session from OpenPlanner" :risk-level "low"}
+   "lens_refine_topics" {:id "lens_refine_topics" :label "Refine Channel Topics" :description "Curate crisp noun and proper-noun topics for the KnoxxLens Discord channel map and suggested actions" :risk-level "low"}
+   "lens_grab_context" {:id "lens_grab_context" :label "Grab Cross-Channel Graph Context" :description "Run a vector + structural graph query across Discord servers, channels, users, and URLs and pull surrounding message windows into context" :risk-level "low"}
+   "lens_connections_graph" {:id "lens_connections_graph" :label "Visual Connections Graph" :description "Synthesize multi-lake WebGL connection graph connecting people across Discord servers, topics, sequential message order, Bluesky, and desktop windows" :risk-level "low"}
+   "lens_inspect_manifest" {:id "lens_inspect_manifest" :label "Deterministic Manifest Gate" :description "Verify complete coverage of all links, images, attachments, and reactions in conversational scope" :risk-level "low"}
+   "govone.extract" {:id "govone.extract" :label "GovOne Sanitized Extraction" :description "Extract and sanitize Discord content, strip usernames and PII into placeholders, verify Merkle audit receipt, and crypto-shred session DEK" :risk-level "medium"}
+   "govone.channel.send" {:id "govone.channel.send" :label "GovOne Channel Send" :description "Send governed message to the social agent over the GovOne gateway channel session" :risk-level "medium"}
+   "govone.channel.read" {:id "govone.channel.read" :label "GovOne Channel Read" :description "Read incoming messages from the governed GovOne gateway channel session" :risk-level "low"}
+   "browser.control" {:id "browser.control" :label "Interactive Browser Control" :description "Navigate web pages interactively, perform clicks/types/scrolls, capture viewport screenshots, and run Intel NPU OCR" :risk-level "medium"}
+   "media.extract" {:id "media.extract" :label "Media & Attachment Extractor" :description "Extract and inspect multimodal media, attachments, video keyframes, audio, and images with Intel NPU OCR" :risk-level "low"}
    "save_translation" {:id "save_translation" :label "Save Translation" :description "Save translated content to database" :risk-level "low"}
    "save_publication_draft" {:id "save_publication_draft" :label "Save Publication Draft" :description "Persist and admit an immutable, review-bound publication draft" :risk-level "low"}
    "create_new_file" {:id "create_new_file" :label "Create New File" :description "Create a new file-backed artifact for the Knoxx canvas editor" :risk-level "low"}

@@ -1,0 +1,17 @@
+{:contract/id      "knoxx_lens_routine"
+ :contract/kind    :sub-agent
+ :enabled          true
+ :sub-agent/parent-capabilities :restrict
+ :sub-agent/capabilities [:read :semantic_query :graph_query :lens_connections_graph :lens_refine_topics]
+ :sub-agent/model     "gemma4:31b"
+ :sub-agent/thinking  "medium"
+ :sub-agent/role      "routine_cartographer"
+ :sub-agent/timeout-ms 120000
+ :sub-agent/mode      :await
+ :agent {:role "routine_cartographer"
+         :thinking "medium"}
+ :prompts {:system "You are the Knoxx Lens background routine cartographer. Your job is to crawl channel buffers, extract and refine noun/proper-noun topics, synthesize WebGL connections graphs, detect cross-server people bridges, and format structured digest summaries with permalink citations. Never hallucinate message links."
+           :task "Execute the scheduled or on-demand KnoxxLens cartography routine for the target channel/guild scope."}
+ :context {:max-messages 30
+           :max-chars 60000
+           :preserve-system true}}

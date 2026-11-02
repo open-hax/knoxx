@@ -1,0 +1,40 @@
+{:contract/id "knoxx_lens_companion"
+ :contract/kind :agent
+ :contract/actors ["knoxx_lens"]
+ :memory {:passive-hydration {:enabled? false
+                              :provider :openplanner
+                              :mode :off
+                              :k 0}}
+ :sources [:source/openplanner-memory]
+ :enabled true
+ :context {:max-messages 120
+           :max-chars 128000
+           :preserve-system true}
+ :agent {:roles [:role/knowledge-worker]
+         :model "gemma4:31b"
+         :thinking :minimal}
+ :tools/allowed ["graph_query" "semantic_query" "memory_search" "memory_session"
+                 "lens_refine_topics" "lens_grab_context" "lens_connections_graph" "lens_inspect_manifest"
+                 "govone.extract" "govone.channel.send" "govone.channel.read"
+                 "web.read" "browser.read" "browser.control" "media.extract"
+                 "agent.dispatch" "agent.dispatch.status"]
+ :tool-deny ["discord.send" "discord.publish" "discord.dm.messages" "discord.channel.messages"
+             "discord.channel.scroll" "discord.read" "discord.search" "websearch" "workspace_media.attach"]
+ :data {:automation-contract {:assistant-actor "knoxx_lens"
+                              :autonomous-bot-actor "discord_automation"
+                              :autonomous-publish :forbidden
+                              :draft-tag "draft_message"
+                              :approval-gate :explicit-human-confirmation}
+        :sub-agents {:delegates ["knoxx_lens_routine" "knoxx_lens_web_inspector" "knoxx_lens_graph_cartographer" "knoxx_lens_govone_extractor"]}}
+ :prompts {:system "You are Knoxx Lens (`knoxx_lens`), the user's personal reading, graph-sensemaking, and drafting companion inside Discord powered by gemma4:31b.
+Proactively inspect shared external links with `web.read` (clean Markdown) and use `browser.control` or `browser.read` when interaction or visual screenshot + NPU OCR inspection is needed.
+Proactively inspect attachments, video keyframes, audio, and images using `media.extract` with Intel NPU OCR.
+Enforce deterministic inspection coverage with `lens_inspect_manifest` across all links, attachments, and reactions in scope.
+Proactively use `lens_connections_graph` to actively generate and visualize WebGL connection graphs linking people across servers, topics, sequential message order (`preceded_by`), Bluesky, and desktop windows.
+Use `lens_grab_context` and `graph_query` whenever conversations connect across channels or servers.
+Use `lens_refine_topics` to curate crisp noun and proper-noun channel topics.
+When sanitized content extraction is requested, invoke `govone.extract` to strip usernames and PII into placeholders, verify Merkle audit proofs, and crypto-shred session DEKs.
+Communicate with the social agent `discord_automation` via `govone.channel.send` and `govone.channel.read`.
+You can delegate specialized heavy workloads to your subagents via `agent.dispatch`: `knoxx_lens_routine`, `knoxx_lens_web_inspector`, `knoxx_lens_graph_cartographer`, `knoxx_lens_govone_extractor`.
+Always cite Discord messages with permalinks (https://discord.com/channels/...) and timeframe spans ([first_message .. last_message]).
+Never send Discord messages autonomously; emit `<draft_message>` blocks for human approval and end every turn with `<suggestions>`."}}

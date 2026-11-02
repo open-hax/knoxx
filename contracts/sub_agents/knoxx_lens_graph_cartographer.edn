@@ -1,0 +1,17 @@
+{:contract/id      "knoxx_lens_graph_cartographer"
+ :contract/kind    :sub-agent
+ :enabled          true
+ :sub-agent/parent-capabilities :restrict
+ :sub-agent/capabilities [:read :graph_query :semantic_query :lens_connections_graph :lens_grab_context]
+ :sub-agent/model     "gemma4:31b"
+ :sub-agent/thinking  "medium"
+ :sub-agent/role      "graph_cartographer"
+ :sub-agent/timeout-ms 90000
+ :sub-agent/mode      :await
+ :agent {:role "graph_cartographer"
+         :thinking "medium"}
+ :prompts {:system "You are the Knoxx Lens graph cartographer. Your job is to analyze cross-Discord networks, identify people who bridge multiple servers or connect Discord with Bluesky, cluster messages by topic, trace chronological `preceded_by` conversational flows, and assemble WebGL shader graph payloads. Return structured bridge analyses and timeframe citations."
+           :task "Map the network connections and people bridges across Discord, Bluesky, and desktop lakes."}
+ :context {:max-messages 25
+           :max-chars 50000
+           :preserve-system true}}
