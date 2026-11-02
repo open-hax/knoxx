@@ -65,26 +65,46 @@
   [cfg session-id]
   (let [ws-url (str/replace (:base-url cfg) #"^http" "ws")]
     (js/Promise.
-     (fn [resolve _reject]
-       (try
-         (let [ws (js/WebSocket. (str ws-url "/api/v1/realtime?token=" (js/encodeURIComponent (:lens-token cfg)))
-                                 "govone.realtime.v1")]
-           (aset ws "onopen"
-                 (fn []
-                   (.send ws (js/JSON.stringify
-                              #js {:type "intervene"
-                                   :request_id (str "term-" session-id)
-                                   :payload #js {:session_id session-id
-                                                 :action "terminate"
-                                                 :reason "extraction completed; crypto-shred session DEK"}}))))
-           (aset ws "onmessage"
-                 (fn [msg]
-                   (let [parsed (js/JSON.parse (.-data msg))]
-                     (.close ws)
-                     (resolve {:terminated true :ack (js->clj parsed :keywordize-keys true)}))))
-           (aset ws "onerror" (fn [err] (resolve {:terminated false :error (str err)}))))
-         (catch :default err
-           (resolve {:terminated false :error (ex-message err)})))))))
+     (fn [res _rej]
+       (let [timeout-id (atom nil)]
+         (try
+           (let [ws (js/WebSocket. (str ws-url "/api/v1/realtime?token=" (js/encodeURIComponent (:lens-token cfg)))
+                                   "govone.realtime.v1")]
+             (reset! timeout-id
+                     (js/setTimeout
+                      (fn []
+                        (try (.close ws) (catch :default _ nil))
+                        (res {:terminated false :error "WebSocket intervention ack timeout"}))
+                      5000))
+             (aset ws "onopen"
+                   (fn []
+                     (.send ws (js/JSON.stringify
+                                #js {:type "intervene"
+                                     :request_id (str "term-" session-id)
+                                     :payload #js {:session_id session-id
+                                                   :action "terminate"
+                                                   :reason "extraction completed; crypto-shred session DEK"}}))))
+             (aset ws "onmessage"
+                   (fn [msg]
+                     (when-let [tid @timeout-id] (js/clearTimeout tid))
+                     (try
+                       (let [parsed (js->clj (js/JSON.parse (.-data msg)) :keywordize-keys true)
+                             t (or (:type parsed) (:action parsed))
+                             status (or (get-in parsed [:payload :status]) (:status parsed))
+                             ok? (or (= "intervention_ack" t)
+                                     (= "terminated" status)
+                                     (= "terminate" (get-in parsed [:payload :action])))]
+                         (.close ws)
+                         (res {:terminated ok? :ack parsed}))
+                       (catch :default e
+                         (res {:terminated false :error (ex-message e)})))))
+             (aset ws "onerror"
+                   (fn [err]
+                     (when-let [tid @timeout-id] (js/clearTimeout tid))
+                     (res {:terminated false :error (str err)}))))
+           (catch :default err
+             (when-let [tid @timeout-id] (js/clearTimeout tid))
+             (res {:terminated false :error (ex-message err)}))))))))
 
 (defn- find-discord-spans
   [text]
@@ -135,7 +155,7 @@
       (let [rest-op (openplanner-client/client config {:mode "rest" :timeout-ms 20000})
             payload {:query query :lakes lakes :max_nodes max-nodes
                      :include_desktop include-desktop :seed_node_ids seed-ids}
-            res (await (openplanner-client/v1-json! rest-op :post "/v1/graph/connections" payload))
+            res (await (openplanner-client/v1-json! rest-op :post "/graph/connections" payload))
             stats (get res :stats {})
             nodes (get res :nodes [])
             edges (get res :edges [])
@@ -191,25 +211,36 @@
                                             :messages [{:role "user" :content text}]
                                             :classifications spans}
                                            (:extractor-token cfg)))
-              red-text (get-in red-res [:data :redacted_messages 0 :content] text)
+              _ (when-not (and (:ok red-res) (get-in red-res [:data :redacted_messages 0 :content]))
+                  (throw (js/Error. (str "GovOne redaction failed: " (pr-str red-res)))))
+              red-text (get-in red-res [:data :redacted_messages 0 :content])
               resp-id (str "resp-" (.now js/Date))
-              _ (await (govone-http! cfg :post "/api/v1/inspect"
-                                     {:session_id sid :response_id resp-id :model_output red-text}
-                                     (:extractor-token cfg)))
+              insp-res (await (govone-http! cfg :post "/api/v1/inspect"
+                                             {:session_id sid :response_id resp-id :model_output red-text}
+                                             (:extractor-token cfg)))
+              _ (when-not (and (:ok insp-res) (not= (get-in insp-res [:data :status]) "rejected"))
+                  (throw (js/Error. (str "GovOne inspection policy rejected output: " (pr-str insp-res)))))
               rehyd-res (await (govone-http! cfg :post "/api/v1/rehydrate"
                                              {:session_id sid :response_id resp-id :variant "masked"}
                                              (:lens-token cfg)))
-              sanitized (get-in rehyd-res [:data :content] red-text)
+              _ (when-not (and (:ok rehyd-res) (get-in rehyd-res [:data :content]))
+                  (throw (js/Error. (str "GovOne rehydration failed: " (pr-str rehyd-res)))))
+              sanitized (get-in rehyd-res [:data :content])
               evidence (await (govone-http! cfg :get (str "/api/v1/evidence/" sid) nil (:auditor-token cfg)))
+              events (get-in evidence [:data :events] [])
+              merkle-root (get-in evidence [:data :merkle_root])
               _ (maybe-tool-update! on-update "Crypto-shredding session DEK via termination intervention…")
               term-res (await (terminate-session-dek! cfg sid))
               result {:sessionId sid
                       :sanitizedText sanitized
                       :placeholdersAssigned (get-in red-res [:data :placeholders_assigned] 0)
-                      :auditEvents (count (get-in evidence [:data :events] []))
+                      :auditEvents (count events)
+                      :merkleRoot merkle-root
                       :dekShredded (:terminated term-res)}]
           (tool-text-result (str "GovOne Sanitized Extraction:\n\n" sanitized "\n\n"
-                                 "[DEK Cryptographically Shredded: " (:terminated term-res) " | Merkle Audit Events: " (count (get-in evidence [:data :events] [])) "]")
+                                 "[DEK Cryptographically Shredded: " (:terminated term-res)
+                                 " | Merkle Audit Events: " (count events)
+                                 (when merkle-root (str " | Merkle Root: " merkle-root)) "]")
                             result))))))
 
 (defn make-govone-send-execute

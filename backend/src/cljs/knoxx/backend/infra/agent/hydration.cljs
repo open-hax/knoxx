@@ -3,13 +3,20 @@
    message assembly, and tool-suite composition.  All implementation lives
    in vertical domain slices under knoxx.backend.tools.<domain>."
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.agent.handoff :as handoff]
+            [knoxx.backend.infra.execution.tools :as execution]
+            [knoxx.backend.infra.execution.browser :as browser]
             [knoxx.backend.infra.core-memory :refer [filter-authorized-memory-hits!]]
             [knoxx.backend.domain.contracts.sources :as sources]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.openplanner.knowledge :as knowledge]
+            [knoxx.backend.infra.social.api-tools :as social-api]
+            [knoxx.backend.infra.openplanner.knowledge-scope :as memory-scope]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search!]]
             [knoxx.backend.infra.defaults :refer [default-settings]]
             [knoxx.backend.domain.text :refer [value->preview-text]]
             [knoxx.backend.domain.tools :as shared]
+            [knoxx.backend.extern.tools :as xtools]
             [knoxx.backend.infra.openplanner.semantic :as semantic]
             [knoxx.backend.domain.discord.tools :as discord]
             [knoxx.backend.domain.discord.voice-tools :as discord-voice]
@@ -22,12 +29,14 @@
             [knoxx.backend.domain.media.blaze :as blaze]
             [knoxx.backend.domain.bluesky.bluesky :as bluesky]
             [knoxx.backend.domain.media.multimodal :as multimodal]
+            [knoxx.backend.infra.media.inspection :as media-inspection]
             [knoxx.backend.domain.media.workspace :as workspace-media]
             [knoxx.backend.domain.sandbox-container :as sandbox]
             [knoxx.backend.tools.mcp :as mcp]
             [knoxx.backend.domain.contracts.tools :as contracts]
             [knoxx.backend.domain.nrepl :as nrepl]
-            [knoxx.backend.domain.session-mycology :as session-mycology]))
+            [knoxx.backend.domain.session-mycology :as session-mycology]
+            [knoxx.backend.infra.lens.tools :as lens-tools]))
 
 (defonce settings-state* (atom nil))
 
@@ -117,7 +126,7 @@
              k (max 1 (min 12 (positive-int-or (or (:k opts) (:top-k opts) (:topK opts)) 6)))]
          (try
            (let [result (await (openplanner-memory-search! config {:query message :k k}))
-                 hits (await (filter-authorized-memory-hits! config auth-context (:hits result)))]
+                 hits (await (filter-authorized-memory-hits! config (memory-scope/context (assoc config :graph-actor-id (:actor-id agent-spec)) auth-context) (:hits result)))]
              (assoc result :hits hits
                            :mode (or (passive-memory-hydration-mode opts) "triggered")
                            :elapsedMs (- (.now js/Date) started-ms)
@@ -220,19 +229,26 @@
             (.concat (discord/create-discord-custom-tools runtime config auth-context))
             (.concat (discord-voice/create-discord-voice-custom-tools runtime config auth-context))
             (.concat (events/create-events-custom-tools runtime config auth-context))
+            (.concat (xtools/tool-array (handoff/create-tools runtime config auth-context)))
+            (.concat (xtools/tool-array (execution/create-tools runtime config auth-context)))
+            (.concat (xtools/tool-array (browser/create-tools runtime config auth-context)))
             (.concat (actors/create-actors-custom-tools runtime config auth-context))
             (.concat (openplanner/create-openplanner-custom-tools runtime config auth-context))
+            (.concat (xtools/tool-array (knowledge/create-tools runtime config auth-context)))
+            (.concat (xtools/tool-array (social-api/create-tools runtime config auth-context)))
             (.concat (publication-draft/create-publication-draft-tools runtime config auth-context))
             (.concat (music/create-music-custom-tools runtime config auth-context))
             (.concat (voice/create-voice-synth-custom-tools runtime config auth-context))
             (.concat (blaze/create-blaze-custom-tools runtime config auth-context))
             (.concat (bluesky/create-bluesky-custom-tools runtime config auth-context))
             (.concat (multimodal/create-multimodal-custom-tools runtime config auth-context))
+            (.concat (xtools/tool-array (media-inspection/create-inspection-tools runtime config auth-context)))
             (.concat (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
             (.concat (sandbox/create-sandbox-custom-tools runtime config auth-context))
             (.concat (mcp/create-mcp-custom-tools runtime config auth-context))
             (.concat (session-mycology/create-session-mycology-tools runtime config auth-context))
-            (.concat (nrepl/create-nrepl-custom-tools runtime config auth-context))))
+            (.concat (nrepl/create-nrepl-custom-tools runtime config auth-context))
+            (.concat (xtools/tool-array (lens-tools/create-tools runtime config auth-context)))))
        (shared/filter-custom-tools-by-allow-set allowed-tool-ids))))
 
 (defn agent-custom-tool-suite
@@ -247,5 +263,7 @@
   ([runtime config auth-context agent-spec] (create-agent-custom-tools runtime config auth-context agent-spec nil))
   ([runtime config auth-context agent-spec allowed-tool-ids]
    (case (shared/agent-custom-tool-suite agent-spec)
-     :contract-librarian (contracts/create-contract-librarian-tools runtime config auth-context allowed-tool-ids)
+     :contract-librarian (xtools/append-tool-vector
+                          (contracts/create-contract-librarian-tools runtime config auth-context allowed-tool-ids)
+                          (execution/create-tools runtime config auth-context))
      (create-knoxx-custom-tools runtime config auth-context allowed-tool-ids))))
