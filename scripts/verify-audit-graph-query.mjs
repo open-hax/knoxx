@@ -31,14 +31,17 @@ try{
   assert.equal(observations.details.edges.length,0);
   const neighborhood=await graph.execute('audit-neighborhood-verification',{
     query:observation.id,lake:'linux-audit',limit:8,edgeLimit:12});
-  assert.ok(neighborhood.details.edges.some(e=>e.edgeType==='executed_as'));
-  assert.ok(neighborhood.details.edges.some(e=>e.edgeType==='observed_on'));
+  const touchesObservation=e=>e.source===observation.id||e.target===observation.id;
+  assert.ok(neighborhood.details.edges.some(e=>e.edgeType==='executed_as'&&touchesObservation(e)),
+    'observation must have an executed_as edge');
+  assert.ok(neighborhood.details.edges.some(e=>e.edgeType==='observed_on'&&touchesObservation(e)),
+    'observation must have an observed_on edge');
   const empty=await graph.execute('audit-scope-verification',{
     query:observation.id,lake:'definitely-not-linux-audit',limit:8,edgeLimit:12});
   assert.equal(empty.details.nodes.length,0);
   const denied=probe.createActorTools(null,config,{actor:{id:'verification-denied'},toolPolicies:[]});
   assert.ok(!denied.some(tool=>tool.name==='graph_query'),'A context without permission must not receive the tool.');
-  console.log('PASS actor tool returned an audit observation, root/host edges and raw-evidence provenance.');
+  console.log('PASS actor tool returned an audit observation with executed_as and observed_on relationships, plus raw-evidence provenance.');
   console.log('PASS edgeLimit=0, lake isolation and actor tool permission denial.');
   console.log(JSON.stringify({actorId:'system_admin',tool:'graph_query',mode:result.details.mode,
     observation:observation.id,evidence:observation.data.provenance.evidence,
