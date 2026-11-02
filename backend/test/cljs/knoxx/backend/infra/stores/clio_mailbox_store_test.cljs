@@ -52,7 +52,7 @@
         (is (= "delivered" (:mailbox/status (await (store/mark-delivery! provider sender "message-one" "delivered" {:claim-id claim-id})))))
         (is (= "delivered" (:mailbox/status (await (store/mark-delivery! provider sender "message-one" "delivered" {:claim-id claim-id})))))
         (is (= 409 (:status (await (refused #(store/mark-delivery! provider sender "message-one" "failed" {:claim-id claim-id :error "late"}))))))
-        (is (= 3 (count (ledger/history (:ledger provider))))))))))
+        (is (= 4 (count (ledger/history (:ledger provider))))))))))
 
 (deftest ^:async expired-lease-does-not-authorize-an-old-worker-after-replacement
   (await (fixture!
@@ -102,7 +102,7 @@
       (is (= "expired" (:mailbox/status (await (store/read-message provider receiver "message-one")))))
       (is (empty? (:entries (await (claim-one! provider "too-late")))))
       (is (= 409 (:status (await (refused #(store/acknowledge-entry! provider receiver "message-one"))))))
-      (is (= 1 (count (ledger/history (:ledger provider)))))
+      (is (= 2 (count (ledger/history (:ledger provider)))))
       (is (= "mailbox_clock_invalid" (:code (await (refused #(clio/open! (assoc options :clock! (constantly "bad"))))))))))))
 
 (deftest ^:async stable-claim-operation-retries-do-not-create-another-attempt
@@ -117,3 +117,53 @@
         (is (= "mailbox_operation_conflict"
                (:code (await (refused #(store/claim-deliveries! provider sender
                                                                {:mailbox-id "message-one" :operation-id "operation-one" :limit 2})))))))))))
+
+(deftest ^:async empty-claim-replays-after-new-entry
+  (await (fixture!
+    (^:async fn [provider options _clock]
+      (let [empty-result (await (store/claim-deliveries! provider admin {:operation-id "empty"}))]
+        (is (true? (:durable? empty-result)))
+        (is (empty? (:entries empty-result)))
+        (await (store/create-entry! provider sender message))
+        (is (= empty-result (await (store/claim-deliveries! (clio/open! options) admin {:operation-id "empty"})))))))))
+
+(deftest ^:async successful-retry-clears-prior-error
+  (await (fixture!
+    (^:async fn [provider _options _clock]
+      (await (store/create-entry! provider sender message))
+      (let [first-claim (first (:entries (await (claim-one! provider "first-failure"))))]
+        (await (store/mark-delivery! provider sender "message-one" "failed"
+                                     {:claim-id (get-in first-claim [:mailbox/delivery :claim-id]) :error "failed"}))
+        (let [retry (first (:entries (await (claim-one! provider "retry"))))
+              delivered (await (store/mark-delivery! provider sender "message-one" "delivered"
+                                                      {:claim-id (get-in retry [:mailbox/delivery :claim-id])}))]
+          (is (= "delivered" (:mailbox/status delivered)))
+          (is (nil? (get-in delivered [:mailbox/delivery :last-error]))))))))
+)
+
+(deftest ^:async delivered-with-error-retains-supplied-error
+  (await (fixture!
+    (^:async fn [provider _options _clock]
+      (await (store/create-entry! provider sender message))
+      (let [claim (first (:entries (await (claim-one! provider "contradictory"))))
+            result (await (store/mark-delivery! provider sender "message-one" "delivered"
+                                                {:claim-id (get-in claim [:mailbox/delivery :claim-id])
+                                                 :error "synthetic error"}))]
+        (is (= "delivered" (:mailbox/status result)))
+        (is (= "synthetic error" (get-in result [:mailbox/delivery :last-error]))))))))
+
+(deftest ^:async implicit-empty-claim-appends-in-candidate
+  (await (fixture!
+    (^:async fn [provider _options _clock]
+      (let [result (await (store/claim-deliveries! provider admin {}))]
+        (is (empty? (:entries result)))
+        (is (= 1 (count (ledger/history (:ledger provider))))))))))
+
+(deftest ^:async explicit-empty-retry-after-clock-advance
+  (await (fixture!
+    (^:async fn [provider _options clock]
+      (let [first-result (await (store/claim-deliveries! provider admin {:operation-id "stable-clock"}))]
+        (reset! clock "2026-09-12T12:00:01.000Z")
+        (let [outcome (await (refused #(store/claim-deliveries! provider admin {:operation-id "stable-clock"})))]
+          (is (nil? outcome) (str "same logical request must replay; got " outcome))
+          (is (empty? (:entries first-result)))))))))
