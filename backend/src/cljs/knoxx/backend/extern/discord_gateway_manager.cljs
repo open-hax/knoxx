@@ -11,9 +11,25 @@
   (.clear voice-connections))
 
 (defn- gateway-stop!
-  [voice-connections this-stop]
+  [voice-connections voice-listeners listener-epoch this-stop]
+  (swap! listener-epoch inc)
+  (.forEach voice-listeners (fn [stop] (try (stop) (catch js/Error _))))
+  (.clear voice-listeners)
   (destroy-voice-connections! voice-connections)
   (this-stop))
+
+(defn- ^:async start-voice-listener!
+  [voice-connections voice-listeners listener-epoch guild-id on-start on-audio]
+  (let [epoch @listener-epoch
+        stop (await (listener/gw-start-voice-listener voice-connections guild-id on-start on-audio))
+        stopped? (atom false)]
+    (letfn [(wrapped []
+              (when-not @stopped?
+                (reset! stopped? true)
+                (.delete voice-listeners wrapped)
+                (stop)))]
+      (if (= epoch @listener-epoch) (.add voice-listeners wrapped) (wrapped))
+      wrapped)))
 
 (defn- ^:async gateway-restart!
   [this-stop this-fn token]
@@ -41,9 +57,9 @@
         (.-value (.next connections))))))
 
 (defn- gateway-lifecycle-methods
-  [client-state ready-promise current-token listeners log this-stop build-client this-fn voice-connections]
+  [client-state ready-promise current-token listeners log this-stop build-client this-fn]
   #js {:start (fn [token] (client/gw-start client-state ready-promise current-token listeners log this-stop build-client token))
-       :stop (fn [] (gateway-stop! voice-connections this-stop))
+       :stop (fn [] (this-stop))
        :restart (fn [token] (gateway-restart! this-stop this-fn token))
        :status (fn [] (client/gw-status client-state))})
 
@@ -63,24 +79,24 @@
        :sendMessage (fn [channel-id text reply-to attachments] (messages/gw-send-message ensure-client channel-id text reply-to attachments))})
 
 (defn- gateway-voice-methods
-  [ensure-client voice-connections]
+  [ensure-client voice-connections voice-listeners listener-epoch]
   #js {:joinVoice (fn [channel-id] (gateway-join-voice! ensure-client voice-connections channel-id))
-       :leaveVoice (fn [guild-id] (voice-ops/gw-leave-voice voice-connections guild-id) #js {:guildId guild-id :left true})
+       :leaveVoice (^:async fn [guild-id] (await (voice-ops/gw-leave-voice voice-connections guild-id)) #js {:guildId guild-id :left true})
        :playAudio (fn [guild-id audio-buffer] (voice-ops/gw-play-audio voice-connections guild-id audio-buffer))
        :subscribeVoice (fn [guild-id user-id callback] (voice-ops/gw-subscribe-voice voice-connections guild-id user-id callback))
-       :startVoiceListener (fn [guild-id on-start on-audio] (listener/gw-start-voice-listener voice-connections guild-id on-start on-audio))
+       :startVoiceListener (fn [guild-id on-start on-audio] (start-voice-listener! voice-connections voice-listeners listener-epoch guild-id on-start on-audio))
        :getVoiceConnection (fn [guild-id] (gateway-active-voice-connection voice-connections guild-id))
        :listVoiceMembers (fn [guild-id channel-id] (voice-ops/gw-list-voice-members ensure-client guild-id channel-id))})
 
 (defn- build-gateway-manager-methods
   [client-state ready-promise current-token listeners reaction-listeners voice-state-listeners
-   log this-stop build-client ensure-client voice-connections this-fn]
+   log this-stop build-client ensure-client voice-connections voice-listeners listener-epoch this-fn]
   (js/Object.assign
    #js {}
-   (gateway-lifecycle-methods client-state ready-promise current-token listeners log this-stop build-client this-fn voice-connections)
+   (gateway-lifecycle-methods client-state ready-promise current-token listeners log this-stop build-client this-fn)
    (gateway-listener-methods listeners reaction-listeners voice-state-listeners)
    (gateway-message-methods ensure-client log this-fn)
-   (gateway-voice-methods ensure-client voice-connections)))
+   (gateway-voice-methods ensure-client voice-connections voice-listeners listener-epoch)))
 
 (defn- parse-gateway-manager-opts
   "Parse gateway manager options from a CLJS map or JS object."
@@ -101,7 +117,9 @@
    :listeners (atom (js/Set.))
    :reaction-listeners (atom (js/Set.))
    :voice-state-listeners (atom (js/Set.))
-   :voice-connections (js/Map.)})
+   :voice-connections (js/Map.)
+   :voice-listeners (js/Set.)
+   :listener-epoch (atom 0)})
 
 (defn- gateway-manager-deps
   [log {:keys [client-state ready-promise listeners reaction-listeners voice-state-listeners]}]
@@ -113,15 +131,16 @@
 
 (defn- create-gateway-manager-object!
   [log {:keys [client-state ready-promise current-token listeners reaction-listeners
-               voice-state-listeners voice-connections] :as state}]
+               voice-state-listeners voice-connections voice-listeners listener-epoch] :as state}]
   (let [{:keys [build-client ensure-client]} (gateway-manager-deps log state)
-        this-stop (fn [] (client/gw-stop client-state ready-promise current-token))
+        client-stop (fn [] (client/gw-stop client-state ready-promise current-token))
+        this-stop (fn [] (gateway-stop! voice-connections voice-listeners listener-epoch client-stop))
         this-obj (atom nil)]
     (letfn [(this-fn [] @this-obj)]
       (reset! this-obj
               (build-gateway-manager-methods
                client-state ready-promise current-token listeners reaction-listeners voice-state-listeners
-               log this-stop build-client ensure-client voice-connections this-fn))
+               log this-stop build-client ensure-client voice-connections voice-listeners listener-epoch this-fn))
       @this-obj)))
 
 (defn createDiscordGatewayManager

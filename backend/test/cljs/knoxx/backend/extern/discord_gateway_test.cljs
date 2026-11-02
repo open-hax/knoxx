@@ -4,7 +4,8 @@
             [knoxx.backend.extern.discord-gateway-client :as client]
             [knoxx.backend.extern.discord-gateway-codec :as codec]
             [knoxx.backend.extern.discord-gateway-messages :as messages]
-            [knoxx.backend.extern.discord-gateway-voice :as voice]))
+            [knoxx.backend.extern.discord-gateway-voice :as voice]
+            [knoxx.backend.extern.discord-gateway-voice-listener :as listener]))
 
 (defn- with-default-manager [run]
   (let [previous (gateway/gateway-manager)
@@ -100,3 +101,73 @@
       (await (.stop manager))
       (t/is (= 1 @destroyed))
       (t/is (nil? (.getVoiceConnection manager))))))
+
+(defn- ^:async teardown-resources* []
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
+        events (atom []) conn #js {:guildId "guild" :destroy #(swap! events conj :destroy)}]
+    (with-redefs [voice/gw-join-voice (fn [_ _] conn)
+                  listener/gw-start-voice-listener (fn [& _] (js/Promise.resolve #(swap! events conj :listener-stop)))]
+      (await (.joinVoice manager "channel"))
+      (let [stop-listener (await (.startVoiceListener manager "guild" nil nil))]
+        (await (.restart manager ""))
+        (t/is (= [:listener-stop :destroy] @events))
+        (t/is (nil? (.getVoiceConnection manager "guild")))
+        (stop-listener)
+        (t/is (= [:listener-stop :destroy] @events))))))
+
+(t/deftest teardown-cleans-voice-resources
+  (t/async done
+    ((^:async fn [] (try (await (teardown-resources*)) (catch js/Error e (t/is false (str "teardown rejected: " e))) (finally (done)))))))
+
+(defn- ^:async late-listener* []
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
+        resolve-stop (atom nil) stopped (atom 0)
+        pending (js/Promise. (fn [resolve _] (reset! resolve-stop resolve)))]
+    (with-redefs [listener/gw-start-voice-listener (fn [& _] pending)]
+      (let [started (.startVoiceListener manager "guild" nil nil)]
+        (await (.stop manager))
+        (@resolve-stop #(swap! stopped inc))
+        (let [stop-listener (await started)]
+          (t/is (= 1 @stopped))
+          (stop-listener)
+          (t/is (= 1 @stopped)))))))
+
+(t/deftest late-listener-cannot-outlive-shutdown
+  (t/async done
+    ((^:async fn [] (try (await (late-listener*)) (catch js/Error e (t/is false (str "late listener rejected: " e))) (finally (done)))))))
+
+(defn- ^:async token-replacement* []
+  (let [events (atom [])
+        fake-client (fn [& _] #js {:login (fn [_] (js/Promise.resolve true))
+                                    :destroy (fn [] (swap! events conj :client-stop))})
+        conn #js {:guildId "guild" :destroy #(swap! events conj :voice-stop)}]
+    (with-redefs [client/build-discord-client fake-client
+                  voice/gw-join-voice (fn [_ _] conn)
+                  listener/gw-start-voice-listener (fn [& _] (js/Promise.resolve #(swap! events conj :listener-stop)))]
+      (let [manager (gateway/createDiscordGatewayManager {:set-default? false})]
+        (await (.start manager "old-fixture-token"))
+      (await (.joinVoice manager "channel"))
+      (await (.startVoiceListener manager "guild" nil nil))
+      (await (.start manager "new-fixture-token"))
+      (t/is (= [:listener-stop :voice-stop :client-stop] @events))
+      (t/is (nil? (.getVoiceConnection manager "guild")))
+        (await (.stop manager))))))
+
+(t/deftest token-replacement-cleans-resources
+  (t/async done
+    ((^:async fn [] (try (await (token-replacement*)) (catch js/Error e (t/is false (str "replacement rejected: " e))) (finally (done)))))))
+
+(defn- ^:async leave-result* []
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})]
+    (with-redefs [voice/gw-leave-voice (fn [_ _] (js/Promise.resolve true))]
+      (let [result (await (.leaveVoice manager "guild"))]
+        (t/is (= "guild" (.-guildId result)))
+        (t/is (true? (.-left result)))))
+    (with-redefs [voice/gw-leave-voice (fn [_ _] (js/Promise.reject (js/Error. "leave failed")))]
+      (let [failure (try (await (.leaveVoice manager "guild")) nil
+                         (catch js/Error e (.-message e)))]
+        (t/is (= "leave failed" failure))))))
+
+(t/deftest leave-waits-and-propagates-failure
+  (t/async done
+    ((^:async fn [] (try (await (leave-result*)) (catch js/Error e (t/is false (str "leave rejected unexpectedly: " e))) (finally (done)))))))
