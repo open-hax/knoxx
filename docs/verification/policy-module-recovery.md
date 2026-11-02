@@ -38,8 +38,9 @@ qualified executable and cleans only its own temporary root/processes.
 - Real Mongo role changes synchronize effective actor-contract roles, including
   an empty set. Concurrent initial actor assignment has one winner; a stale
   conflicting contract cannot overwrite current user, membership or role state.
-- Real invitation CAS reserves before provisioning. A known provisioner failure
-  releases only its reservation, making retry possible. Concurrent or abandoned
+- Real invitation CAS reserves before provisioning. A provisioner failure explicitly certified as having no effects
+  releases only its reservation, making retry possible. Other exceptions retain
+  the reservation because user creation can have partially completed. Concurrent or abandoned
   claims cannot provision twice. The old HTTP redemption route retains 403/409/
   503 classification. Uncertain completion requires explicit verified recovery;
   cross-store rollback and automatic claim stealing are not promised.

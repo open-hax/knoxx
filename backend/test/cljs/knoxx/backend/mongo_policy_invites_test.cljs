@@ -24,7 +24,7 @@
 (deftest ^:async known-provisioning-failure-releases-only-its-owner-and-preserves-the-cause
   (await (with-reservation!
           (^:async fn []
-            (let [cause (ex-info "create failed" {:status 503 :code "create_failed"}) released (atom [])]
+            (let [cause (ex-info "create failed" {:status 503 :code "create_failed" :invite/no-effects true}) released (atom [])]
               (with-redefs [users/create-user! (fn [_ _ _ _] (throw cause))
                             admission/release! (fn [db id owner] (swap! released conj [db id owner]) true)
                             admission/finalize! (fn [_ _ _] (is false "failed provisioning must not finalize"))]
@@ -35,7 +35,7 @@
   (await (with-reservation!
           (^:async fn []
             (doseq [release [(fn [_ _ _] false) (fn [_ _ _] (throw (ex-info "Mongo unavailable" {})))]]
-              (with-redefs [users/create-user! (fn [_ _ _ _] (throw (ex-info "create failed" {})))
+              (with-redefs [users/create-user! (fn [_ _ _ _] (throw (ex-info "create failed" {:invite/no-effects true})))
                             admission/release! release
                             admission/finalize! (fn [_ _ _] (is false "release failure must not finalize"))]
                 (let [result (ex-data (await (caught redeem!)))]
@@ -52,5 +52,17 @@
                             admission/release! (fn [_ _ _] (is false "completed provisioning must retain uncertain ownership"))]
                 (let [result (ex-data (await (caught redeem!)))]
                   (is (= 1 @calls))
+                  (is (= 503 (:status result)))
+                  (is (= "invite_redemption_unconfirmed" (:code result))))))))))
+
+(deftest ^:async uncertain-provisioning-failure-retains-ownership
+  (await (with-reservation!
+          (^:async fn []
+            (let [effects (atom 0)]
+              (with-redefs [users/create-user! (fn [_ _ _ _] (swap! effects inc) (throw (ex-info "reply lost" {})))
+                            admission/release! (fn [_ _ _] (is false "uncertain effects must retain ownership"))
+                            admission/finalize! (fn [_ _ _] (is false "failed provisioning must not finalize"))]
+                (let [result (ex-data (await (caught redeem!)))]
+                  (is (= 1 @effects))
                   (is (= 503 (:status result)))
                   (is (= "invite_redemption_unconfirmed" (:code result))))))))))

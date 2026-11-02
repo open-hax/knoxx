@@ -1,6 +1,6 @@
 (ns knoxx.backend.infra.db.policy.invites
   "Mongo invite ownership around provisioning, which also writes actor contract files.
-   Known failures release the claim. Crashes or uncertain completion retain it for
+   Only failures explicitly certifying no effects release the claim. Other failures and crashes retain it for
    verified recovery: neither automatic lease stealing nor cross-store rollback is promised."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.mongo-policy-invites :as admission]
@@ -82,11 +82,15 @@
   (try
     (await (provision-member! (assoc invite :role-slugs
                                      (vec (or (seq (parse-role-slugs-json (:role_slugs invite))) ["basic-user"])))))
-    (catch :default cause (await (release-failed-provisioning! db invite cause)))))
+    (catch :default cause
+      (if (true? (:invite/no-effects (ex-data cause)))
+        (await (release-failed-provisioning! db invite cause))
+        (throw (unconfirmed invite cause))))))
 
 (defn ^:async redeem-invite!
   "Reserve, provision and finalize; authenticated callers supply the verified identity email.
-   The explicit trusted callback must finish membership/binding admission before finalization."
+   The trusted callback must finish membership/binding admission before finalization.
+   It may mark an exception :invite/no-effects true only when it can prove no effects occurred."
   ([pool code email]
    (await (redeem-invite! pool code email {:provision! #(legacy-provision! pool %)})))
   ([_pool code email {provision-member! :provision!}]

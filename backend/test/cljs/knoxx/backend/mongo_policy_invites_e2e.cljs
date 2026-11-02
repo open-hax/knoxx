@@ -19,7 +19,7 @@
       (with-redefs [connection/db! (fn [] db)
                     users/create-user! (fn [_ _ _ _]
                                          (swap! calls inc)
-                                         (throw (ex-info "Provisioning failed" {:status 503 :code "provisioning_failed"})))]
+                                         (throw (ex-info "Provisioning failed" {:status 503 :code "provisioning_failed" :invite/no-effects true})))]
         (is (= "provisioning_failed"
                (:code (await (refusal #(invites/redeem-invite! nil "known-failure" "alice@example.test"))))))
         (is (= 1 @calls))
