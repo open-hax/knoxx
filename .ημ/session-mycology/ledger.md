@@ -183,3 +183,13 @@
   spore: none
   receipt-refs: knoxx-382-provenance-links
   note: Validate proposed receipt envelopes before pushing; exact-head review evidence must be renewed after provenance fixes.
+
+- ts: 2026-10-23T04:16:24.360876+00:00
+  session: codex/direct-mongo-audit-graph
+  task: Verify the registered actor graph tool against live audit data
+  p-efficiency: 0.70
+  p-friction: 0.55
+  p-skill-candidate: 0.40
+  spore: none
+  receipt-refs: 2026-10-23T04:16:24.360876+00:00
+  note: Reproduce bootstrap client registration in isolated tool probes; report candidate actor execution separately from connected production MCP deployment.

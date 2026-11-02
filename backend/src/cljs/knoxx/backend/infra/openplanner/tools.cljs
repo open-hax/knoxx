@@ -373,7 +373,7 @@
 (def graph-query-tool
   (partial create-tool-obj
            "graph_query" "Graph Query"
-           "Query the canonical OpenPlanner knowledge graph across the workspace, web, bluesky, and knoxx-session lakes."
+           "Query the canonical OpenPlanner knowledge graph across lakes, including linux-audit. Direct-Mongo mode uses literal metadata matches and bounded one-hop relationships; it does not imply vector similarity."
            "Search the canonical knowledge graph when you need entities or cross-lake links rather than plain transcript memory or semantic document snippets."
            ["Use graph_query when the question is about entities, paths, URLs, provenance across lakes, or graph connectivity."
             "Prefer graph_query over guessing about prior conversations or actions."

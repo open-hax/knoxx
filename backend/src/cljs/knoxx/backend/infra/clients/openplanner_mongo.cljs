@@ -33,7 +33,7 @@
   (mongo-query! [_ payload]
     (xsdk/mongo-query payload))
   (graph-memory! [_ payload]
-    (openplanner-client/graph-memory! rest-client payload))
+    (xsdk/graph-memory payload))
   (graph-export! [_ opts]
     (openplanner-client/graph-export! rest-client opts))
   (upsert-document! [_ document]
