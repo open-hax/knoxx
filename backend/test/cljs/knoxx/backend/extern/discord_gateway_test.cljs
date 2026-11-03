@@ -29,6 +29,29 @@
         (let [manager (gateway/createDiscordGatewayManager opts)]
           (t/is (identical? manager (gateway/gateway-manager))))))))
 
+(t/deftest native-factory-rejects-invalid-default-ownership-options
+  (with-default-manager
+    (fn [sentinel]
+      (doseq [opts [{:set-default? "false"} {:set-default? 0}
+                    #js {:setDefault "false"} #js {:setDefault 0}]]
+        (gateway/set-manager! sentinel)
+        (t/is (thrown? js/Error (gateway/createDiscordGatewayManager opts)))
+        (t/is (identical? sentinel (gateway/gateway-manager)))))))
+
+(t/deftest native-factory-preserves-null-undefined-and-inherited-options
+  (with-default-manager
+    (fn [sentinel]
+      (doseq [value [nil js/undefined]]
+        (let [manager (gateway/createDiscordGatewayManager #js {:setDefault value})]
+          (t/is (identical? manager (gateway/gateway-manager)))))
+      (gateway/set-manager! sentinel)
+      (let [opts (js/Object.create #js {:setDefault false})]
+        (gateway/createDiscordGatewayManager opts)
+        (t/is (identical? sentinel (gateway/gateway-manager))))
+      (let [opts (js/Object.create #js {:setDefault "false"})]
+        (t/is (thrown? js/TypeError (gateway/createDiscordGatewayManager opts)))
+        (t/is (identical? sentinel (gateway/gateway-manager)))))))
+
 (t/deftest actor-manager-creation-preserves-default-and-existing-actor
   (with-default-manager
     (fn [sentinel]

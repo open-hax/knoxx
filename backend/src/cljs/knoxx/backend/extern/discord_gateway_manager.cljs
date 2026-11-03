@@ -82,16 +82,25 @@
    (gateway-message-methods ensure-client log this-fn)
    (gateway-voice-methods ensure-client voice-connections)))
 
+(defn- validate-default-ownership!
+  "Accept an omitted or boolean default-manager ownership option."
+  [value]
+  (when-not (or (nil? value) (boolean? value))
+    (throw (js/TypeError. "Discord gateway setDefault must be a boolean")))
+  value)
+
 (defn- parse-gateway-manager-opts
   "Parse gateway manager options from a CLJS map or JS object."
   [opts]
-  {:log (or (when (map? opts) (:log opts))
-            (when (object? opts) (aget opts "log"))
-            js/console)
-   :set-default? (not= false (cond
-                              (map? opts) (:set-default? opts)
-                              (object? opts) (aget opts "setDefault")
-                              :else nil))})
+  (let [set-default (validate-default-ownership!
+                     (cond
+                       (map? opts) (:set-default? opts)
+                       (object? opts) (aget opts "setDefault")
+                       :else nil))]
+    {:log (or (when (map? opts) (:log opts))
+              (when (object? opts) (aget opts "log"))
+              js/console)
+     :set-default? (not= false set-default)}))
 
 (defn- gateway-manager-state
   []
