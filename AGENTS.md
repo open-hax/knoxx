@@ -116,6 +116,16 @@ stops being read.
 
 ## PR Review and Merge Ownership
 
+For the user's 2026-11-03 native swarm workflow, use the native profile in
+the canonical `pr-flow` and `ultra-code` skills. Independent PRs may run
+concurrently with one coordinator per PR or dependent stack. Review immutable
+candidates in fresh reviewer and skeptic contexts, then review the integrated
+tree. The legacy one-active-stack and named-bot follow-up instructions below
+apply to that hosted-provider profile; they do not serialize unrelated PRs or
+add a named-provider prerequisite to native review. Actual GitHub required
+checks, approvals, conversations, exact-head guards and merge authorization
+still apply. See the [native profile in the operator guide](docs/review/pr-review-to-merge.md#native-agent-swarm-profile).
+
 When the user authorizes merging, use the repository's
 [`pr-review-to-merge` skill](.agents/skills/pr-review-to-merge/SKILL.md) and
 [operator guide](docs/review/pr-review-to-merge.md). Own the result through
