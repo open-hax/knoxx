@@ -44,7 +44,7 @@
   []
   (try
     (let [command (or (aget (.-argv js/process) 2) "--check")
-          records (infra/current-records)
+          records (infra/current-application-records)
           rendered (infra/render-records records)]
       (case command
         "--write" (do (infra/write-manifest! rendered)

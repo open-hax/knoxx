@@ -172,6 +172,9 @@ jobs:
       - name: Frontend typecheck (tsc)
         run: pnpm -C frontend run typecheck
 
+      - name: Frontend production bridge exports and styles
+        run: pnpm -C frontend run test:production-bridge
+
       - name: Frontend CLJS lint
         env:
           KNOXX_LINT_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}"

@@ -14,26 +14,31 @@
 (def ^:private support
   (require-runtime (str (.cwd js/process) "/e2e/knoxx_e2e_support.cjs")))
 
-(defn- then-assert
+(defn- ^:async await-assertions
   [promise assertions]
-  (.then promise assertions))
+  (assertions (await promise)))
 
-(defn main []
+(defn- register-audit-bridge! []
   ((.-serial test-fn)
    "agents audit tab bridges CLJS shell, TS session list, and TS chat UI"
    (fn [t]
-     (then-assert
+     (await-assertions
       (.runAuditBridgeSmoke support)
       (fn [^js result]
         (.true ^js t (.-hasAuditSessions result) "audit sessions section is mounted in the side panel")
         (.true ^js t (.-hasUnifiedActive result) "active runs appear in the unified audit session list")
         (.true ^js t (.-hasUnifiedHistory result) "history rows appear in the unified audit session list")
-        (.true ^js t (.-hasTrigger result) "selected agent trigger cards still render from CLJS contract data")))))
+        (.true ^js t (.-hasTrigger result) "selected agent trigger cards still render from CLJS contract data"))))))
+
+(defn main
+  "Register the three browser integration scenarios with the AVA runtime."
+  []
+  (register-audit-bridge!)
 
   ((.-serial test-fn)
    "audit session cards resume historical transcript into the chat pane"
    (fn [t]
-     (then-assert
+     (await-assertions
       (.runAuditSessionResume support)
       (fn [^js result]
         (.true ^js t (.-resumedUserMessage result) "memory user message is rendered by ChatWorkspacePane")
@@ -42,7 +47,7 @@
   ((.-serial test-fn)
    "contracts tab validates and saves CLJS editor state through TS bridge API mocks"
    (fn [t]
-     (then-assert
+     (await-assertions
       (.runContractsEditorSaveValidate support)
       (fn [^js result]
         (.true ^js t (.-validationPosted result) "validate API receives the edited contract EDN")

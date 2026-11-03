@@ -8,6 +8,7 @@ import path from "path";
 export default defineConfig({
   plugins: [react()],
   build: {
+    copyPublicDir: false,
     // Emit .map files so browser stack traces map back to TS sources.
     sourcemap: true,
     lib: {

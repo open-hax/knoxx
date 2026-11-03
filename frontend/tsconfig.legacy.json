@@ -3,7 +3,6 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": "./ts-legacy",
-    "jsx": "react",
     "declaration": false,
     "sourceMap": true
   },

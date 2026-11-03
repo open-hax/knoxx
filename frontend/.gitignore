@@ -1,0 +1,2 @@
+# Isolated test output; production browser artifacts stay under dist/.
+/dist-verification/

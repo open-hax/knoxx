@@ -394,3 +394,21 @@
               (str declaration "\n(def RouterComponent (aget router \"Route\"))\n"
                    "(def route-props #js {:path \"/chat\" :element ($ app/ChatPage)})\n"
                    "($ RouterComponent route-props)"))))))
+
+(t/deftest qualified-helix-constructors-preserve-the-same-route-census
+  (doseq [constructor ["$" "hx/$" "helix.core/$"]]
+    (t/is (= [{:route "\"/native\"" :implementation "native/Page" :status :native}]
+             (fixture-routes
+              (str "(" constructor " Route {:path \"/native\"\n :element (" constructor " native/Page)})")
+              nil nil " [helix.core :as hx]")))))
+
+(t/deftest lookalike-qualified-macros-do-not-claim-helix-authority
+  (t/is (thrown-with-msg?
+         js/Error #"Unsupported Shadow route syntax"
+         (fixture-routes "(fake/$ Route {:path \"/native\"\n :element ($ native/Page)})"
+                         nil nil " [fixture.fake :as fake]"))))
+
+(t/deftest helix-lookalike-data-does-not-declare-a-namespace-alias
+  (t/is (thrown-with-msg?
+         js/Error #"Unsupported Shadow route syntax"
+         (fixture-routes "(def data '[helix.core :as fake])\n(fake/$ Route {:path \"/native\"\n :element ($ native/Page)})"))))

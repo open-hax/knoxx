@@ -3,6 +3,7 @@
             ["node:os" :as os]
             ["node:path" :as node-path]
             [cljs.test :as t]
+            [clojure.string :as str]
             [knoxx.frontend.infra.migration-build :as build]
             [knoxx.frontend.infra.migration-imports :as imports]))
 
@@ -20,6 +21,12 @@
     (fn [root]
       (into {} (map (fn [[alias-name target]] [alias-name (node-path/relative root target)]))
             (build/assert-configs! root)))))
+
+(defn- inspect-application-configs! [configs]
+  (with-configs configs
+    (fn [root]
+      (into {} (map (fn [[alias-name target]] [alias-name (node-path/relative root target)]))
+            (build/assert-application-configs! root)))))
 
 (defn- inspect-config! [config-name source]
   (inspect-configs! {config-name source}))
@@ -391,3 +398,88 @@
     (t/is (thrown-with-msg?
             js/Error #"Unsupported Vite migration configuration"
             (inspect-config! "vite.config.ts" (vite-config properties))))))
+
+(t/deftest canonical-html-build-precedes-the-authoritative-shadow-output
+  (let [scripts {"build:bridge" "vite build --config vite.bridge.config.ts"
+                 "build:app-bridge" "vite build --config vite.app-bridge.config.ts"}
+        html-before (str/replace (production-build) "shadow-cljs release app"
+                                 "vite build --config vite.config.ts && shadow-cljs release app")
+        html-after (str/replace (production-build) "shadow-cljs release app"
+                                "shadow-cljs release app && vite build --config vite.config.ts")
+        configs #(assoc (bridge-configs (assoc scripts "build" %))
+                        "vite.config.ts" (vite-config "build:{copyPublicDir:false}"))]
+    (t/is (= {} (inspect-configs! (configs html-before))))
+    (t/is (thrown? js/Error (inspect-configs! (configs html-after))))))
+
+(t/deftest application-html-must-be-produced-before-shadow
+  (let [scripts {"build:bridge" "vite build --config vite.bridge.config.ts"
+                 "build:app-bridge" "vite build --config vite.app-bridge.config.ts"}
+        without-html (production-build)
+        with-html (str/replace without-html "shadow-cljs release app"
+                               "vite build --config vite.config.ts && shadow-cljs release app")
+        configs #(assoc (bridge-configs (assoc scripts "build" %))
+                        "index.html" "<!doctype html><script src='/cljs/app.js'></script>"
+                        "vite.config.ts" (vite-config "build:{copyPublicDir:false}")
+                        "shadow-cljs.edn" (shadow-config ["@open-hax/knoxx-app-bridge"
+                                                          "@open-hax/knoxx-frontend-bridge"]))]
+    (t/is (= {} (inspect-application-configs! (configs with-html))))
+    (t/is (thrown? js/Error (inspect-application-configs! (configs without-html))))))
+
+(t/deftest actual-application-build-cannot-drop-html-phase
+  (let [file-names ["vite.config.ts" "vite.bridge.config.ts" "vite.app-bridge.config.ts"
+                    "shadow-cljs.edn" "index.html"]
+        configs (into {} (map (fn [file] [file (fs/readFileSync file "utf8")])) file-names)
+        package (js/JSON.parse (fs/readFileSync "package.json" "utf8"))
+        command (.. package -scripts -build)]
+    (t/is (str/includes? command "vite build --config vite.config.ts && "))
+    (t/is (= {} (inspect-application-configs! (assoc configs "package.json" (js/JSON.stringify package)))))
+    (aset (.-scripts package) "build" (str/replace command "vite build --config vite.config.ts && " ""))
+    (t/is (thrown? js/Error (inspect-application-configs! (assoc configs "package.json" (js/JSON.stringify package)))))
+    (aset (.-scripts package) "build"
+          (str/replace command "vite build --config vite.config.ts && shadow-cljs release app"
+                       "shadow-cljs release app && vite build --config vite.config.ts"))
+    (t/is (thrown? js/Error (inspect-application-configs! (assoc configs "package.json" (js/JSON.stringify package)))))))
+
+(t/deftest owned-html-requires-a-production-build-command
+  (t/is (thrown? js/Error
+                 (inspect-application-configs! {"index.html" "<!doctype html>"
+                                    "package.json" (package-with-scripts {})}))))
+
+(t/deftest application-html-cannot-be-directed-outside-dist
+  (let [scripts {"build" "vite build --config vite.config.ts && shadow-cljs release app"}]
+    (t/is (= {} (inspect-application-configs!
+                   {"package.json" (package-with-scripts scripts)
+                    "vite.config.ts" (vite-config "build:{outDir:'dist'}")})))
+    (doseq [option ["outDir:'elsewhere'" "write:false" "ssr:true"]]
+      (let [configs {"package.json" (package-with-scripts scripts)
+                     "vite.config.ts" (vite-config (str "build:{" option "}"))}]
+        (t/is (= {} (inspect-configs! configs)))
+        (t/is (thrown? js/Error (inspect-application-configs! configs)))))))
+
+(t/deftest application-dist-cannot-be-a-symlink
+  (with-configs {"package.json" (package-with-scripts
+                                  {"build" "vite build --config vite.config.ts && shadow-cljs release app"})
+                 "vite.config.ts" (vite-config "build:{outDir:'dist'}")}
+    (fn [root]
+      (let [frontend (node-path/join root "frontend")
+            target (node-path/join root "elsewhere")]
+        (fs/mkdirSync target)
+        (fs/symlinkSync target (node-path/join frontend "dist"))
+        (t/is (= "Application dist must be a directory, not a symlink"
+                 (try (build/assert-application-configs! root)
+                      (catch :default error (:detail (ex-data error))))))))))
+
+(t/deftest application-html-output-cannot-be-a-symlink
+  (with-configs {"package.json" (package-with-scripts
+                                  {"build" "vite build --config vite.config.ts && shadow-cljs release app"})
+                 "vite.config.ts" (vite-config "build:{outDir:'dist'}")}
+    (fn [root]
+      (let [frontend (node-path/join root "frontend")
+            directory (node-path/join frontend "dist")
+            target (node-path/join root "elsewhere.html")]
+        (fs/mkdirSync directory)
+        (fs/writeFileSync target "")
+        (fs/symlinkSync target (node-path/join directory "index.html"))
+        (t/is (= "Application HTML output must be a regular file, not a symlink"
+                 (try (build/assert-application-configs! root)
+                      (catch :default error (:detail (ex-data error))))))))))
