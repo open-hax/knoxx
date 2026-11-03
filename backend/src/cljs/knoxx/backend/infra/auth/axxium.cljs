@@ -10,16 +10,34 @@
             [knoxx.backend.law.axxium-identity :as law]))
 (defn enabled? "Whether this instance delegates password authentication to Axxium." []
   (boolean (authority/configured-origin)))
-(defn ^:async authenticate! "Authenticate only against the configured HTTPS origin; never follow redirects." [email password]
-  (let [origin (authority/configured-origin)
-        _ (when-not origin (throw (ex-info "Axxium authentication is not configured" {:status 503})))
-        response (await (fetch/json! fetch/default-client
+(defn ^:async authenticate-with!
+  "Verify credentials and revoke Axxium's transient session through a supplied client."
+  [origin request! email password]
+  (let [_ (when-not origin (throw (ex-info "Axxium authentication is not configured" {:status 503})))
+        response (await (request!
                          {:url (str origin "/api/auth/login") :method "POST" :redirect "error"
                           :timeout-ms 10000 :json {:email email :password password}}))]
     (when-not (= 200 (:status response))
       (throw (ex-info "Axxium sign-in failed" {:status (if (= 401 (:status response)) 401 503)})))
-    ;; The provider's session cookie is not forwarded to the browser or persisted.
-    {:issuer origin :actor (law/require-actor! (get-in response [:body :actor]))}))
+    ;; Axxium issues a session during password verification. Knoxx keeps only
+    ;; the verified actor and revokes that transient provider session before
+    ;; creating its own independent session.
+    (let [token (get-in response [:body :token])]
+      (when-not (and (string? token) (seq token))
+        (throw (ex-info "Axxium did not return a revocable session" {:status 503})))
+      (let [revoke (await (request!
+                           {:url (str origin "/api/auth/logout") :method "POST"
+                            :redirect "error" :timeout-ms 10000
+                            :headers {"Authorization" (str "Bearer " token)}}))]
+        (when-not (= 200 (:status revoke))
+          (throw (ex-info "Axxium verification session could not be revoked" {:status 503}))))
+      {:issuer origin :actor (law/require-actor! (get-in response [:body :actor]))})))
+(defn ^:async authenticate!
+  "Authenticate only against the configured HTTPS origin; never follow redirects."
+  [email password]
+  (await (authenticate-with! (authority/configured-origin)
+                             #(fetch/json! fetch/default-client %)
+                             email password)))
 (defn- ^:async claim-user! [issuer actor]
   (let [db (await (policy/db!))
         users (mongo/collection db directory/USERS_COLLECTION)
