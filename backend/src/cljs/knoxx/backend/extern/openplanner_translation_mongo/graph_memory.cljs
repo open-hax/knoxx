@@ -3,8 +3,8 @@
 
   A segment contributes both a node and an edge. Mongo gives no cross-collection
   atomicity without a replica-set session, so the two writes are ordered and the
-  first is rolled back when the second fails. Graph memory must never hold a
-  node without its edge, or an edge pointing at a node that was never written."
+  first is rolled back when the second fails, while the write token prevents
+  that rollback from erasing a concurrent writer's newer node."
   (:require [knoxx.backend.extern.openplanner-translation-mongo.common :as common]
             [openplanner.translations.core :as translation]))
 
@@ -27,15 +27,51 @@
   (or (= 11000 (.-code err))
       (boolean (some-> (.-message err) (.includes "E11000")))))
 
+(defn- sdk-edge-projection
+  "Project a native translation edge without adopting an incumbent SDK edge."
+  [edge project]
+  (assoc edge
+         :_id (str (:source edge) "||" (:target edge) "||" (:kind edge))
+         :source_node_id (:source edge)
+         :target_node_id (:target edge)
+         :edge_kind (:kind edge)
+         :layer nil
+         :project project))
+
+(defn- scalar-equality
+  [value]
+  ;; Mongo equality also matches arrays containing the requested scalar.
+  ;; An array-valued alias or endpoint is not the declared native identity.
+  {:$eq value :$not {:$type "array"}})
+
+(defn- graph-element-selector
+  [element]
+  (if-not (:_id element)
+    {:id (:id element)}
+    ;; Native aliases and declared endpoints must already agree. Old native
+    ;; ObjectId edges retain their primary identity; a string primary identity
+    ;; must be canonical. Present SDK tuple fields must also agree before we
+    ;; fill fields absent from an old native row. None of these clauses admits
+    ;; an SDK row without the native alias, or silently moves an existing edge.
+    (assoc (into {} (map (fn [field] [field (scalar-equality (get element field))])
+                        [:id :source :target :kind]))
+           :$and (into [{:$or [{:_id (:_id element)}
+                               {:_id {:$type "objectId"}}]}]
+                       (map (fn [field]
+                              {:$or [{field (scalar-equality (get element field))}
+                                     {field {:$exists false}}]})
+                            [:source_node_id :target_node_id :edge_kind])))))
+
 (defn- ^:async upsert-element-once!
   [collection element now write-token]
   (let [result (await
                 (.findOneAndUpdate collection
-                                   #js {"id" (:id element)}
-                                   #js {"$set" (clj->js (assoc element
+                                   (clj->js (graph-element-selector element))
+                                   #js {"$set" (clj->js (assoc (dissoc element :_id)
                                                                :updated_at now
                                                                :graph_write_token write-token))
-                                        "$setOnInsert" #js {"created_at" now}}
+                                        "$setOnInsert" (clj->js (merge {:created_at now}
+                                                                       (select-keys element [:_id])))}
                                    #js {"upsert" true
                                         "returnDocument" "before"
                                         "includeResultMetadata" true}))]
@@ -91,7 +127,8 @@
 (defn ^:async upsert-graph-memory!
   "Upsert an approved segment into graph memory, returning {:success ...}.
 
-  Either both the node and the edge are present, or neither is."
+  An edge conflict returns failure and rolls back this call's node write when
+  the node still holds this call's token."
   [collection-map segment corrected-text]
   (let [plan (graph-memory-plan-for segment corrected-text)]
     (if-not (:ok? plan)
@@ -103,8 +140,13 @@
               node-id (get-in plan [:node :id])
               node-prior (await (upsert-graph-element! nodes (:node plan) now write-token))]
           (try
+            ;; The id selector deliberately cannot match an SDK edge that has
+            ;; no admitted translation alias. A canonical _id/tuple collision
+            ;; must fail and roll back the node instead of rewriting that edge.
             (await (upsert-graph-element! (:graph-edges collection-map)
-                                          (:edge plan) now write-token))
+                                          (sdk-edge-projection (:edge plan)
+                                                               (common/nonblank (common/jget segment "project")))
+                                          now write-token))
             {:success true}
             (catch :default err
               (await (rollback-graph-node! nodes node-id node-prior write-token))

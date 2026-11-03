@@ -26,7 +26,7 @@ OLD_EMAIL="bootstrap-old-${RUN_ID}@open-hax.local"
 NEW_EMAIL="bootstrap-new-${RUN_ID}@open-hax.local"
 OLD_PASSWORD="Verify-old-${RUN_ID}!"
 NEW_PASSWORD="Verify-new-${RUN_ID}!"
-SESSION_SECRET="knoxx-bootstrap-verifier-session-secret-${RUN_ID}"
+SESSION_SECRET=""
 FORMER_ORG_SLUG="bootstrap-former-${RUN_ID}"
 CURRENT_ORG_SLUG="bootstrap-current-${RUN_ID}"
 
@@ -142,6 +142,7 @@ start_server() {
       KNOXX_BOOTSTRAP_SYSTEM_ADMIN_PREVIOUS_EMAILS="$previous_emails" \
       KNOXX_PRIMARY_ORG_SLUG="$primary_org_slug" \
       KNOXX_LOCAL_PASSWORD_AUTH_ENABLED=true \
+      KNOXX_ENABLE_SESSION_HOOK=true \
       KNOXX_SESSION_SECRET="$SESSION_SECRET" \
       KNOXX_DISABLE_EVENT_RUNTIMES=true \
       KNOXX_SHUTDOWN_GRACE_MS=1000 \
@@ -203,10 +204,25 @@ login_response() {
   payload="$(jq -cn --arg email "$email" --arg password "$password" \
     '{email:$email,password:$password}')"
   curl -q --noproxy '*' -sS --max-time 10 -o "$body" -w '%{http_code}' \
+    --cookie-jar "${EVIDENCE_DIR}/${label}.cookies" \
     -H 'content-type: application/json' \
     --data "$payload" \
     "http://127.0.0.1:${SERVER_PORT}/api/auth/local/login" 2>/dev/null \
     || printf '000'
+}
+
+expect_cookie_context() {
+  local label="$1" email="$2" status
+  local body="${EVIDENCE_DIR}/${label}-context.json"
+  status="$(curl -q --noproxy '*' -sS --max-time 10 -o "$body" -w '%{http_code}' \
+    --cookie "${EVIDENCE_DIR}/${label}.cookies" \
+    "http://127.0.0.1:${SERVER_PORT}/api/auth/context" 2>/dev/null || printf '000')"
+  if [ "$status" = 200 ] && jq -e --arg email "$email" \
+    '.user.email == $email and (.membership.id | type) == "string"' "$body" >/dev/null 2>&1; then
+    pass "$label cookie resolves the expected principal on the protected context route"
+  else
+    fail "$label cookie did not resolve the expected protected context" "HTTP ${status}"
+  fi
 }
 
 expect_login() {
@@ -218,6 +234,7 @@ expect_login() {
         '.ok == true and .user.email == $email' \
         "${EVIDENCE_DIR}/${label}.json" >/dev/null 2>&1; then
         pass "$label authenticates the expected principal"
+        expect_cookie_context "$label" "$email"
       else
         fail "$label returned 200 without the expected principal" \
           "$(head -c 300 "${EVIDENCE_DIR}/${label}.json")"
@@ -248,6 +265,9 @@ printf 'run id: %s\n' "$RUN_ID"
 for tool in bash curl find git jq mongosh node pnpm readlink tar; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: ${tool}"
 done
+SESSION_SECRET="$(node --input-type=module -e \
+  'import {randomBytes} from "node:crypto"; process.stdout.write(randomBytes(32).toString("hex"));')" \
+  || die 'could not generate a private AES session key'
 [ -n "$MONGO_URI" ] \
   || die 'set KNOXX_BOOTSTRAP_VERIFY_MONGODB_URI to an isolated, transaction-capable Mongo deployment'
 

@@ -1,5 +1,5 @@
 (ns knoxx.backend.domain.action.run-trace
-  "Pure tool-event projection and missing-input enrichment for run traces."
+  "Pure text replacement, tool-event projection and input enrichment for run traces."
   (:require [clojure.string :as str]))
 
 (defn append-limited
@@ -9,6 +9,49 @@
     (if (> (count values) limit)
       (subvec values (- (count values) limit))
       values)))
+
+(defn next-text-id
+  "Allocate a text-block ID without reusing surviving IDs after tail deletion."
+  [blocks kind]
+  (let [ids (set (map :id blocks))]
+    (loop [index (count blocks)]
+      (let [candidate (str (name kind) ":" index)]
+        (if (contains? ids candidate) (recur (inc index)) candidate)))))
+
+(defn- replace-text-block [block remaining replacement at]
+  (let [prefix (subs (:content block) 0 remaining)
+        content (str prefix replacement)]
+    (when (seq content)
+      (cond-> (assoc block :content content)
+        (seq replacement) (assoc :status "streaming" :at at)))))
+
+(defn- project-text-replacement [kind replacement at state block]
+  (let [{:keys [items remaining replaced?]} state]
+    (if (not= kind (:kind block))
+      (update state :items conj block)
+      (cond
+        replaced? state
+        (>= remaining (count (:content block)))
+        (-> state (update :items conj block) (update :remaining - (count (:content block))))
+        :else
+        (assoc state :replaced? true :remaining 0
+               :items (if-let [changed (replace-text-block block remaining replacement at)]
+                        (conj items changed) items))))))
+
+(defn replace-text-tail
+  "Converge one channel to a full snapshot, preserving its exact observed prefix.
+   Missing or stale prefixes are restored; tools and other channels retain order."
+  [blocks kind offset snapshot at]
+  (let [observed (apply str (map :content (filter #(= kind (:kind %)) blocks)))
+        offset (if (str/starts-with? observed (subs snapshot 0 offset)) offset 0)
+        replacement (subs snapshot offset)
+        {:keys [items replaced?]}
+        (reduce (partial project-text-replacement kind replacement at)
+                {:items [] :remaining offset :replaced? false} (vec blocks))]
+    (if (and (not replaced?) (seq replacement))
+      (conj items {:id (next-text-id items kind) :kind kind
+                   :status "streaming" :content replacement :at at})
+      items)))
 
 (defn- tool-block-id [{:keys [tool_call_id tool_name at]}]
   (cond

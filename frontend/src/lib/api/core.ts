@@ -115,3 +115,46 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   return (await response.json()) as T;
 }
+
+export type StreamTokenMetadata = { runId?: string; kind?: string } & (
+  | { operation?: undefined; offset?: undefined }
+  | { operation: 'replace'; offset: number }
+);
+
+export interface StreamHandlers {
+  onToken?: (token: string, meta?: StreamTokenMetadata) => void;
+  onStats?: (stats: Record<string, unknown>) => void;
+  onConsole?: (line: string) => void;
+  onEvent?: (event: Record<string, unknown>) => void;
+  onLounge?: (message: Record<string, unknown>) => void;
+  onStatus?: (status: "connected" | "closed" | "error") => void;
+}
+
+export interface StreamConnection {
+  (): void; // Callable as cleanup function
+  disconnect: () => void;
+  setConversationId: (conversationId: string | null) => void;
+}
+
+type NativeStreamAdapter = (
+  handlers: StreamHandlers, sessionId: string | undefined,
+  conversationId: string | null | undefined, base: string,
+) => StreamConnection;
+
+/** Resolve the compiled CLJS adapter at call time, after its bundle loads. */
+export function connectStream(
+  handlers: StreamHandlers, sessionId?: string, initialConversationId?: string | null,
+): StreamConnection {
+  const owner = typeof window === "undefined" ? undefined : (window as unknown as {
+    knoxx?: { frontend?: { lib?: { ws?: { connect_stream_js?: NativeStreamAdapter } } } };
+  }).knoxx?.frontend?.lib?.ws;
+  if (typeof owner?.connect_stream_js !== "function") {
+    throw new Error("Knoxx compiled WebSocket adapter connect_stream_js is unavailable");
+  }
+  const connection = owner.connect_stream_js(handlers, sessionId, initialConversationId, API_BASE);
+  if (typeof connection !== "function" || typeof connection.disconnect !== "function"
+    || typeof connection.setConversationId !== "function") {
+    throw new Error("Knoxx compiled WebSocket adapter returned an invalid connection");
+  }
+  return connection;
+}
