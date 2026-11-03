@@ -1,0 +1,19 @@
+;; Source evidence only; no canonical ledger or Clio admission is claimed.
+{:run/id "swarm-review-e8943849-2ee5-49a5-965f-061bb61a5582" :run/date "2026-11-03"
+ :repository "open-hax/knoxx" :base "9d3f44af3d88409740c455c53a771424495eb2cf"
+ :request "Use native parallel harness agents and fresh reviewer contexts for concurrent swarms."
+ :host {:execution :chatgpt-native-collaboration :github-principal "riatzukiza"
+        :reviewer-principals :same-connector-distinct-contexts
+        :filesystem :shared-with-instructional-write-ownership}
+ :observed {:catalog-skill-documents 127 :child-and-adjacent-repositories 24
+            :protection-details :unavailable-403 :host-installation :not-verified}
+ :executed [:catalog-audit :repository-policy-audit :native-source-change :independent-review :skeptic-verification]
+ :verification {:native {:tests 9 :assertions 67 :failures 0 :errors 0}
+                :portable-pr-flow {:tests 10 :assertions 124 :failures 0 :errors 0}
+                :native-snapshot "8c574c323b9459e4eed56ece3b5553f4710a2d20e78eef7dbc28811845769bfe"
+                :native-qualification :complete-clean
+                :policy-review :four-findings-resolved
+                :ci-hosted :not-run-locally :legacy-runner :unqualified}
+ :persistence {:source :proposed-branch-tree :provider-review :not-claimed
+               :merge :not-performed :deployment :not-performed
+               :protection-change :none :clio-admission :not-observed}}
