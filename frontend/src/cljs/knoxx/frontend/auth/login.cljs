@@ -116,6 +116,7 @@
   []
   (d/div {:class-name "text-center"}
          (d/h1 {:class-name "text-3xl font-bold text-white"} "Knoxx")
+         (d/p {:class-name "mt-2 text-sm text-slate-400"} "Knowledge operations platform")
          (d/p {:class-name "mt-2 text-sm text-slate-400"}
               "A workspace for AI-assisted chat, tools, and connected services.")
          (d/p {:class-name "mt-2 text-sm text-slate-400"}
