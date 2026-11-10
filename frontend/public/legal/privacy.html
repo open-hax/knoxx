@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Knoxx Privacy Policy</title>
+  <style>
+    :root { color-scheme: dark; background: #0f172a; color: #e2e8f0; font: 1rem/1.65 system-ui, sans-serif; }
+    body { max-width: 68ch; margin: auto; padding: 2rem 1.25rem 4rem; }
+    a { color: #93c5fd; overflow-wrap: anywhere; }
+    h1, h2 { color: #f8fafc; line-height: 1.25; }
+    h2 { margin-top: 2rem; }
+  </style>
+</head>
+<body>
+  <nav aria-label="Knoxx"><a href="/">Knoxx home</a></nav>
+  <main>
+    <h1>Knoxx Privacy Policy</h1>
+    <p>Updated November 10, 2026</p>
+    <p>Knoxx is an OpenHax workspace for AI-assisted chat, tools, and connected services.
+      This notice explains how Knoxx handles information and how the connected
+      Axxium identity service and the Knoxx audit archive use Google data.</p>
+
+    <h2>Using Knoxx</h2>
+    <p>When you sign in with GitHub, we use your GitHub account identifier and
+      available profile details to identify your account and check your access.
+      We also process account and organization details, session cookies, content and
+      files you provide, tool requests and results, and operational and security
+      records. We use this information to provide the workspace, manage access,
+      run the features you choose, and investigate service or security issues.
+      When a feature uses an external model or connected service, we send the
+      content and metadata needed to fulfill the request to that provider.</p>
+
+    <h2>Google sign-in through Axxium</h2>
+    <p>If you choose Google sign-in through Axxium, Google supplies your account
+      identifier, verified email address, and available profile information such
+      as your display name. Axxium uses and stores the account identifier, email,
+      and display name to link or create your account and authenticate you. It
+      creates a session and uses a session cookie to keep you signed in.
+      This sign-in does not grant Google Drive access.</p>
+
+    <h2>Google Drive audit archive</h2>
+    <p>A separate grant lets an authorized operator use Google Drive for Knoxx
+      operational security records. The worker requests per-file access through
+      <code>drive.file</code>. It creates encrypted batches in a designated
+      private Drive folder and reads them back to verify delivery. These audit
+      records may contain system and account identifiers, timestamps, and
+      command or action details. Google receives the encrypted files and their
+      Drive metadata. The worker uses the file identifiers and integrity
+      checksums to record delivery, and keeps a protected refresh token to
+      continue archiving between operator sign-ins.</p>
+
+    <h2>Access, retention, and your choices</h2>
+    <p>Authorized operators and the providers needed to deliver a feature process
+      information for the purposes described here. We retain information as
+      needed to operate the service, protect it, and support recovery. The
+      archive worker acknowledges its local queue only after verifying delivery
+      of the encrypted copy.</p>
+    <p>You can revoke future Google access in your
+      <a href="https://myaccount.google.com/connections">Google Account connections</a>.
+      Revoking a connection and removing data already stored are separate
+      actions. For questions about this policy or requests to access, correct, or
+      delete your information, contact
+      <a href="mailto:foamy125@gmail.com">Knoxx support</a>.</p>
+  </main>
+</body>
+</html>
