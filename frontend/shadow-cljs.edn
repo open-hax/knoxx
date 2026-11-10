@@ -9,7 +9,7 @@
  ;; - Proxies backend traffic (/api, /ws, /health) to the backend
  ;; - Keeps shadow devtools endpoints local (/api/remote-*, /api/open-file)
  :dev-http
- {5173 {:roots ["." "dist"]
+ {5173 {:roots ["." "dist" "public/legal"]
         :push-state/index "index.html"
         :proxy-url "http://127.0.0.1:8000"
         :proxy-predicate knoxx.frontend.dev-http/proxy-predicate}}

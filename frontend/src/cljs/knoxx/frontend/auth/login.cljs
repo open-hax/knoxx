@@ -2,9 +2,9 @@
   "Login page. Helix port of src/pages/LoginPage.tsx (local password,
    GitHub OAuth redirect, invite redemption)."
   (:require [clojure.string :as str]
-            [helix.core :as hx :refer [$ defnc]]
-            [helix.hooks :as hooks]
+            [helix.core :as hx]
             [helix.dom :as d]
+            [helix.hooks :as hooks]
             [knoxx.frontend.auth.api :as api]))
 
 (def ^:private input-class
@@ -19,33 +19,42 @@
 (defn- success-box [text]
   (d/div {:class-name "rounded-lg bg-green-900/30 border border-green-800 p-3 text-sm text-green-300"} text))
 
-(defn- labeled-input [{:keys [id label type value on-change on-key-down placeholder mono]}]
+(defn- labeled-input [{:keys [id label value on-change on-key-down placeholder mono]
+                       input-type :type}]
   (d/div
    (d/label {:html-for id :class-name "block text-sm font-medium text-slate-300 mb-1"} label)
    (d/input {:id id
-             :type (or type "text")
+             :type (or input-type "text")
              :value value
              :on-change on-change
              :on-key-down on-key-down
              :placeholder placeholder
              :class-name (str input-class (when mono " font-mono"))})))
 
-(defnc local-login-form [{:keys [on-success]}]
+(defn- ^:async submit-auth!
+  "Submit an authentication request and show its result before redirecting."
+  [request on-success delay-ms fallback set-status! set-error!]
+  (set-status! :submitting)
+  (set-error! "")
+  (try
+    (await (request))
+    (set-status! :success)
+    (js/setTimeout on-success delay-ms)
+    (catch :default ^js error
+      (set-status! :error)
+      (set-error! (or (.-message error) fallback)))))
+
+(hx/defnc local-login-form
+  "Sign in using the enabled local password provider."
+  [{:keys [on-success]}]
   (let [[email set-email!] (hooks/use-state "")
         [password set-password!] (hooks/use-state "")
         [status set-status!] (hooks/use-state :idle)
         [error set-error!] (hooks/use-state "")
         submit! (fn []
                   (when (and (seq (str/trim email)) (seq password))
-                    (set-status! :submitting)
-                    (set-error! "")
-                    (-> (api/local-login email password)
-                        (.then (fn [_]
-                                 (set-status! :success)
-                                 (js/setTimeout on-success 300)))
-                        (.catch (fn [^js err]
-                                  (set-status! :error)
-                                  (set-error! (or (.-message err) "Login failed")))))))]
+                    (submit-auth! #(api/local-login email password) on-success 300
+                                  "Login failed" set-status! set-error!)))]
     (d/div {:class-name "space-y-4"}
            (labeled-input {:id "login-local-email" :label "Email" :type "email"
                            :value email :on-change #(set-email! (.. % -target -value))
@@ -63,22 +72,17 @@
                       :class-name submit-class}
                      (if (= :submitting status) "Signing in…" "Sign in with password")))))
 
-(defnc invite-form [{:keys [initial-code initial-email initial-error on-success]}]
+(hx/defnc invite-form
+  "Redeem an invitation to sign in to Knoxx."
+  [{:keys [initial-code initial-email initial-error on-success]}]
   (let [[code set-code!] (hooks/use-state (or initial-code ""))
         [email set-email!] (hooks/use-state (or initial-email ""))
         [status set-status!] (hooks/use-state :idle)
         [error set-error!] (hooks/use-state (or initial-error ""))
         submit! (fn []
                   (when (seq (str/trim code))
-                    (set-status! :submitting)
-                    (set-error! "")
-                    (-> (api/redeem-invite code email)
-                        (.then (fn [_]
-                                 (set-status! :success)
-                                 (js/setTimeout on-success 500)))
-                        (.catch (fn [^js err]
-                                  (set-status! :error)
-                                  (set-error! (or (.-message err) "Redemption failed")))))))]
+                    (submit-auth! #(api/redeem-invite code email) on-success 500
+                                  "Redemption failed" set-status! set-error!)))]
     (d/div {:class-name "space-y-4"}
            (labeled-input {:id "login-invite-email" :label "Email" :type "email"
                            :value email :on-change #(set-email! (.. % -target -value))
@@ -109,36 +113,51 @@
 (defn- url-param [k]
   (.get (js/URLSearchParams. js/window.location.search) k))
 
-(defnc login-page [{:keys [error on-login-success]}]
+(hx/defnc LoginIntro
+  "Show Knoxx's public description and privacy link on the sign-in page."
+  []
+  (d/div {:class-name "text-center"}
+         (d/h1 {:class-name "text-3xl font-bold text-white"} "Knoxx")
+         (d/p {:class-name "mt-2 text-sm text-slate-400"} "Knowledge operations platform")
+         (d/p {:class-name "mt-2 text-sm text-slate-400"}
+              "A workspace for AI-assisted chat, tools, and connected services.")
+         (d/p {:class-name "mt-2 text-sm text-slate-400"}
+              "Axxium offers Google sign-in. A separate Drive permission supports encrypted audit archiving.")
+         (d/a {:href "/privacy.html" :class-name "mt-2 inline-block text-sm text-blue-400 underline"}
+              "Privacy Policy")))
+
+(defn- ^:async load-auth-config!
+  "Load the advertised sign-in methods, preserving the default state on failure."
+  [set-config!]
+  (try
+    (set-config! (await (api/fetch-auth-config)))
+    (catch :default _ nil)))
+
+(hx/defnc login-page
+  "Render the public introduction and available sign-in methods."
+  [{:keys [error on-login-success]}]
   (let [[config set-config!] (hooks/use-state nil)
         invite-code (url-param "invite")
         invite-email (url-param "email")
         not-whitelisted? (= "not_whitelisted" (url-param "error"))]
-    (hooks/use-effect
-     []
-     (-> (api/fetch-auth-config)
-         (.then set-config!)
-         (.catch (fn [_] nil)))
-     nil)
-    (d/div {:class-name "flex min-h-screen items-center justify-center bg-slate-950"}
-           (d/div {:class-name "w-full max-w-md space-y-8 rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-xl"}
-                  (d/div {:class-name "text-center"}
-                         (d/h1 {:class-name "text-3xl font-bold text-white"} "Knoxx")
-                         (d/p {:class-name "mt-2 text-sm text-slate-400"} "Knowledge operations platform"))
+    (hooks/use-effect [] (load-auth-config! set-config!) nil)
+    (d/div {:class-name "flex h-full overflow-y-auto bg-slate-950 p-4"}
+           (d/div {:class-name "m-auto w-full max-w-md space-y-8 rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-xl"}
+                  (hx/$ LoginIntro)
                   (when (and (seq (or error "")) (not= error "Logged out"))
                     (error-box error))
                   (when (some-> ^js config .-localPasswordEnabled)
-                    ($ local-login-form {:on-success on-login-success}))
+                    (hx/$ local-login-form {:on-success on-login-success}))
                   (if (some-> ^js config .-githubEnabled)
                     (github-button (some-> ^js config .-loginUrl))
                     (d/div {:class-name "rounded-lg bg-amber-900/30 border border-amber-800 p-3 text-sm text-amber-300"}
                            "GitHub OAuth is not configured. Contact your administrator."))
                   (divider "or redeem an invite")
-                  ($ invite-form {:initial-code invite-code
-                                  :initial-email invite-email
-                                  :initial-error (when not-whitelisted?
-                                                   "Your GitHub account is not on the allowlist. Enter an invite code below to gain access.")
-                                  :on-success on-login-success})
+                  (hx/$ invite-form {:initial-code invite-code
+                                     :initial-email invite-email
+                                     :initial-error (when not-whitelisted?
+                                                      "Your GitHub account is not on the allowlist. Enter an invite code below to gain access.")
+                                     :on-success on-login-success})
                   (d/p {:class-name "text-center text-xs text-slate-600"}
                        "By signing in, you agree to the Knoxx terms of service.")
                   (d/p {:class-name "text-center text-xs text-slate-500"}
