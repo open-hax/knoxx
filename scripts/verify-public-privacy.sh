@@ -27,7 +27,7 @@ browser_started=0
 ab() { agent-browser --session "$session" "$@"; }
 cleanup() {
   if (( browser_started )); then ab close >/dev/null 2>&1 || true; fi
-  rm -r -- "$scratch"
+  rm -r -- "$scratch" || printf 'WARN  Could not clean the temporary verification directory.\n' >&2
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -68,6 +68,8 @@ import sys
 
 
 class Page(HTMLParser):
+    """Read title, disclosure text and link from the pre-hydration app mount."""
+
     def __init__(self, path):
         super().__init__()
         self.title = []
@@ -110,6 +112,7 @@ class Page(HTMLParser):
 
 
 def check(ok, message):
+    """Terminate the external check with a specific diagnostic on mismatch."""
     if not ok:
         sys.exit(f"FAIL  {message}")
 

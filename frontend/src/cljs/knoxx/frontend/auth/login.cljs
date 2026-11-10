@@ -31,7 +31,9 @@
              :placeholder placeholder
              :class-name (str input-class (when mono " font-mono"))})))
 
-(defn- ^:async submit-auth! [request on-success delay-ms fallback set-status! set-error!]
+(defn- ^:async submit-auth!
+  "Submit an authentication request and show its result before redirecting."
+  [request on-success delay-ms fallback set-status! set-error!]
   (set-status! :submitting)
   (set-error! "")
   (try
@@ -124,7 +126,9 @@
          (d/a {:href "/privacy.html" :class-name "mt-2 inline-block text-sm text-blue-400 underline"}
               "Privacy Policy")))
 
-(defn- ^:async load-auth-config! [set-config!]
+(defn- ^:async load-auth-config!
+  "Load the advertised sign-in methods, preserving the default state on failure."
+  [set-config!]
   (try
     (set-config! (await (api/fetch-auth-config)))
     (catch :default _ nil)))
