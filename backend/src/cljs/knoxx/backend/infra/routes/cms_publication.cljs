@@ -16,6 +16,7 @@
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.extern.cms-store :as files]
             [knoxx.backend.infra.cms-store :as cms-store]
+            [knoxx.backend.infra.routes.publication-reconcile :as reconcile]
             [knoxx.backend.infra.routes.publications :as publications]
             [knoxx.backend.law.publication :as law]
             [knoxx.backend.shape.resource-manifest :as manifest]))
@@ -27,21 +28,24 @@
 
 (defn evidence
   "Runtime evidence keyed by publication id. Receipts and blockers are supplied
-   by the caller so this facade stays free of any receipt store; with none
-   available the CMS still renders desired state, with observed simply absent."
+   by the shared scoped reader or an explicit caller; with no configured reader
+   the CMS still renders desired state, with observed simply absent."
   [{:keys [receipts blockers]}]
   {:receipts (cms/receipts->observed (or receipts []))
    :blockers (or blockers {})})
 
 (defn ^:async list-documents!
-  ([config scope] (list-documents! config scope {}))
+  ([config scope]
+   (list-documents! config scope (await (reconcile/receipt-evidence! config scope))))
   ([config scope runtime-evidence]
    (cms/list-view->wire (evidence runtime-evidence)
                         (resolver/list-document-views
                          (await (resource-index! config scope))))))
 
 (defn ^:async document-view!
-  ([config scope document-id] (document-view! config scope document-id {}))
+  ([config scope document-id]
+   (document-view! config scope document-id
+                   (await (reconcile/receipt-evidence! config scope))))
   ([config scope document-id runtime-evidence]
    (cms/document-view->wire (evidence runtime-evidence)
                             (resolver/document-view (await (resource-index! config scope))

@@ -78,6 +78,7 @@
    [:route/media-type [:and string? [:fn valid-media-type?]]]
    [:route/encoding [:fn nonblank-string?]]
    [:route/revision [:fn nonblank-string?]]
+   [:route/content-revision {:optional true} [:fn nonblank-string?]]
    [:publication/id [:fn qualified-keyword?]]
    [:route/document {:optional true} [:fn nonblank-string?]]
    [:route/title {:optional true} string?]])
@@ -171,6 +172,14 @@
           (str/replace #"\+.*$" "")
           sanitize-segment)))
 
+(defn- file-revision [artifact content-file-id]
+  (if (:artifact/content-revision artifact)
+    (if (and (string? content-file-id) (re-matches #"[0-9a-f]{64}" content-file-id))
+      content-file-id
+      (throw (ex-info "translated artifact requires a SHA-256 file identity"
+                      {:artifact/content-revision (:artifact/content-revision artifact)})))
+    (sanitize-segment (:artifact/revision artifact))))
+
 (defn artifact-relative-path
   "Where the bytes live, relative to the content root:
     `artifacts/<document>/<locale>/<revision>.<ext>`.
@@ -180,13 +189,16 @@
     `:artifact/locale`. The effect boundary has already established that
     intent and artifact agree before an adapter runs, so the two are equal
     here; deriving from intent keeps the route's file layout owned by the
-    publication that asked for it."
-  [intent artifact]
+    publication that asked for it. Translated outputs require a bounded digest
+    from the adapter; lossy sanitization cannot identify arbitrary run ids.
+    Source-only paths retain their historical layout."
+  ([intent artifact] (artifact-relative-path intent artifact nil))
+  ([intent artifact content-file-id]
   (str "artifacts/"
        (document-path-segment (:publication/document intent)) "/"
        (sanitize-segment (name (:publication/locale intent))) "/"
-       (sanitize-segment (:artifact/revision artifact)) "."
-       (media-type-extension (:artifact/media-type artifact))))
+       (file-revision artifact content-file-id) "."
+       (media-type-extension (:artifact/media-type artifact)))))
 
 ;; ── Route construction and transforms ───────────────────────────────────────
 
@@ -197,26 +209,27 @@
     validated artifact — no derivation, no defaulting. `:route/artifact` is
     the relative artifact PATH, never the artifact value.
 
-    `:route/title` comes from the hydrated intent's `:document/title`, which
-    `law.publication/hydrate-publication-intent` copies off the referenced
-    Document after validating it. It is what a reader's listing renders; the
-    contract has always declared the key optional and nothing populated it, so
-    every published route listed as untitled."
-  [intent artifact]
+    `:route/title` is the referenced Document title carried by the hydrated
+    intent, omitted when blank so readers can use their document-id fallback."
+  ([intent artifact] (route-for-artifact intent artifact nil))
+  ([intent artifact content-file-id]
   (cond-> {:route/path (:publication/path intent)
    :route/locale (:publication/locale intent)
    :route/document (document-path-segment (:publication/document intent))
    :route/revision (:artifact/revision artifact)
-   :route/artifact (artifact-relative-path intent artifact)
+   :route/artifact (artifact-relative-path intent artifact content-file-id)
    :route/media-type (:artifact/media-type artifact)
    :route/encoding (:artifact/encoding artifact)
    :publication/id (:publication/id intent)}
+
+    (some? (:artifact/content-revision artifact))
+    (assoc :route/content-revision (:artifact/content-revision artifact))
 
     ;; Optional, and omitted rather than blank. A reader's listing falls back to
     ;; the document id when there is no title, which is a worse label than a
     ;; real one and a better one than an empty string.
     (nonblank-string? (:document/title intent))
-    (assoc :route/title (:document/title intent))))
+    (assoc :route/title (:document/title intent)))))
 
 (defn find-route
   "The route materialized for `publication-id`, or nil. Keyed on publication

@@ -271,3 +271,20 @@
     (is (= :noop (:op (plan-for {:publication/state :withheld} {}))))
     (is (= :noop (:op (plan-for {:publication/state :draft} {}))))
     (is (= :noop (:op (plan-for {:publication/state :archived} {}))))))
+
+(deftest corrected-translation-drifts-without-changing-the-source-revision
+  (let [old (assoc converged-observation :materialized/content-revision "output-before-review")
+        publication-facts (assoc (facts {:observed old}) :publication-content-revision
+                                 (fn [document garden locale revision]
+                                   (is (= [(:publication/document intent) (:publication/garden intent)
+                                           (:publication/locale intent) "probe-revision"]
+                                          [document garden locale revision]))
+                                   "output-after-review"))
+        result (plan/reconcile-plan resource-index intent publication-facts)]
+    (is (= :publish (:op result)))
+    (is (= "probe-revision" (:concrete-revision result)))
+    (is (= "probe-revision" (get-in result [:desired :materialized/revision])))
+    (is (= "output-after-review" (get-in result [:desired :materialized/content-revision])))
+    (is (= :noop (:op (plan/reconcile-plan resource-index intent
+                                              (assoc publication-facts :materialized-publication
+                                                     (constantly (:desired result)))))))))

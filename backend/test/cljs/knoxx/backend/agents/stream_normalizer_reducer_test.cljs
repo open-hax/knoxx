@@ -43,6 +43,7 @@
       (is (= "message_update" (:type normalized)))
       (is (= "text_delta" (:assistant-event-type normalized)))
       (is (= "hello" (:delta normalized)))
+      (is (= "hello" (:text-snapshot normalized)))
       (is (= message (:partial-message normalized)))
       (is (= message (:message normalized)))))
   (testing "tool lifecycle provider JS shape includes parsed data and preview"
@@ -63,6 +64,76 @@
       (is (= {:ok true} (:result-raw end)))
       (is (= "completed" (:status (tool-lifecycle/run-event-extra :end end)))))))
 
+(deftest authoritative-array-snapshots-preserve-text-and-reasoning-independently
+  (let [message #js {:role "assistant"
+                     :content #js [#js {:type "output_text" :text "Knox"}
+                                   #js {:type "text" :text "x"}
+                                   #js {:type "reasoning" :text "ha"}
+                                   #js {:type "tool_call" :text "excluded"}
+                                   #js {:type "thinking" :thinking "ha"}
+                                   #js {:type "text" :text "\n\n"}
+                                   "Body"]}
+        normalized (provider-events/normalize
+                    #js {:type "message_update"
+                         :assistantMessageEvent #js {:type "text_delta" :delta "Body" :partial message}})]
+    (is (= "Knoxx\n\nBody" (provider-events/assistant-text-snapshot message)))
+    (is (= "Knoxx\n\nBody" (:text-snapshot normalized)))
+    (is (= "haha" (:reasoning-snapshot normalized))))
+  (testing "whitespace-only snapshots remain authoritative and fallback fields remain supported"
+    (is (= "\n\n" (provider-events/assistant-text-snapshot #js {:content #js [#js {:type "text" :text "\n\n"}]
+                                                                               :text "fallback"})))
+    (is (= "fallback" (provider-events/assistant-text-snapshot #js {:content #js [] :text "fallback"})))
+    (is (= "\n\n" (provider-events/assistant-reasoning-snapshot #js {:content #js [#js {:type "thinking" :thinking "\n\n"}]
+                                                                                    :reasoning "fallback"})))
+    (doseq [field ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"]]
+      (is (= "fallback" (provider-events/assistant-reasoning-snapshot (clj->js {field "fallback"})))))))
+
+(deftest text-snapshot-distinguishes-explicit-empty-from-omission
+  (doseq [message [#js {} #js {:content nil} #js {:content 4} #js {:content #js []}
+                   #js {:text 4 :errorMessage nil}
+                   #js {:content #js [nil #js {:type "text"} #js {:type "output_text" :text 4}]}
+                   #js {:content #js [#js {:type "toolCall" :id "call" :name "search"}]}
+                   #js {:content #js [#js {:type "reasoning" :text "Keep reasoning"}]}]]
+    (is (nil? (provider-events/assistant-text-snapshot message)))
+    (let [normalized (provider-events/normalize
+                      #js {:type "message_update" :assistantMessageEvent #js {:type "text_delta"
+                                                                            :delta "ha" :partial message}})
+          result (reducer/reduce-event (assoc (reducer/initial-state) :assistant-text "ha") normalized)]
+      (is (not (contains? normalized :text-snapshot)))
+      (is (= "haha" (get-in result [:state :assistant-text])))))
+  (doseq [message [#js {:content ""} #js {:text ""} #js {:errorMessage ""}
+                   #js {:content #js [""]}
+                   #js {:content #js [#js {:type "text" :text ""}] :text "fallback"}
+                   #js {:content #js [#js {:type "output_text" :text ""}]}]]
+    (is (= "" (provider-events/assistant-text-snapshot message)))
+    (let [normalized (provider-events/normalize
+                      #js {:type "message_update" :assistantMessageEvent #js {:type "text_delta"
+                                                                            :delta "ignored" :partial message}})
+          result (reducer/reduce-event (assoc (reducer/initial-state) :assistant-text "Draft") normalized)]
+      (is (= "" (:text-snapshot normalized)))
+      (is (= "" (get-in result [:state :assistant-text])))
+      (is (= [{:effect :replace-text :kind :agent_message :text ""}] (:effects result))))))
+
+(deftest reasoning-snapshot-distinguishes-explicit-empty-from-omission
+  (doseq [field ["reasoning_content" "reasoningContent" "reasoning_text" "reasoning" "thinking"]]
+    (is (= "" (provider-events/assistant-reasoning-snapshot (clj->js {field ""}))))
+    (is (nil? (provider-events/assistant-reasoning-snapshot (clj->js {field nil})))))
+  (doseq [message [#js {:content #js []} #js {:content #js [#js {:type "text" :text "Answer"}]}
+                   #js {:content #js [nil #js {:type "reasoning"}]} #js {:reasoning 4}
+                   #js {:content #js [#js {:type "thinking" :thinking 4}]}]]
+    (is (nil? (provider-events/assistant-reasoning-snapshot message))))
+  (doseq [message [#js {:reasoning ""} #js {:content #js [#js {:type "thinking" :thinking ""}]}
+                   #js {:content #js [#js {:type "thinking" :thinking 4 :text ""}]}
+                   #js {:content #js [#js {:type "thinking" :thinking "" :text 4}]}
+                   #js {:content #js [#js {:type "reasoning" :text ""}]}]]
+    (let [normalized (provider-events/normalize
+                      #js {:type "message_update" :assistantMessageEvent #js {:type "reasoning_delta"
+                                                                            :delta "ignored" :partial message}})
+          result (reducer/reduce-event (assoc (reducer/initial-state) :reasoning-text "Draft") normalized)]
+      (is (= "" (:reasoning-snapshot normalized)))
+      (is (= "" (get-in result [:state :reasoning-text])))
+      (is (= [{:effect :replace-text :kind :reasoning :text ""}] (:effects result))))))
+
 (deftest reducer-produces-pure-effects
   (testing "text deltas produce token effects without sinks"
     (let [result (reducer/reduce-event (reducer/initial-state)
@@ -80,6 +151,7 @@
           result (reducer/reduce-event state
                                        {:type "message_update"
                                         :assistant-event-type "text_delta"
+                                        :text-snapshot "Hello world"
                                         :delta "Hello world"})]
       (is (= "Hello world" (get-in result [:state :assistant-text])))
       (is (= [{:effect :token :kind :agent_message :delta " world"}]
@@ -128,3 +200,25 @@
       (is (= "running" (-> first-result :effects first :receipt :status)))
       (is (= :abort (-> death-result :effects second :effect)))
       (is (re-find #"death_spiral_detected" (-> death-result :effects second :reason))))))
+
+(deftest reducer-distinguishes-literal-deltas-from-explicit-snapshots
+  (let [fragments ["Knox" "x" "\n" "\n" "ha" "ha"]
+        result (reduce (fn [{:keys [state effects]} delta]
+                         (let [next-result (reducer/reduce-event state {:type "message_update"
+                                                                       :assistant-event-type "text_delta"
+                                                                       :delta delta})]
+                           {:state (:state next-result)
+                            :effects (into effects (:effects next-result))}))
+                       {:state (reducer/initial-state) :effects []}
+                       fragments)]
+    (is (= "Knoxx\n\nhaha" (get-in result [:state :assistant-text])))
+    (is (= fragments (mapv :delta (:effects result))))
+    (let [corrected (reducer/reduce-event (:state result) {:type "message_update"
+                                                         :assistant-event-type "text_delta"
+                                                         :text-snapshot "Knoxx\n\nFinal"})]
+      (is (= "Knoxx\n\nFinal" (get-in corrected [:state :assistant-text])))
+      (is (= [{:effect :replace-text :kind :agent_message :text "Knoxx\n\nFinal"}]
+             (:effects corrected)))
+      (is (empty? (:effects (reducer/reduce-event (:state corrected) {:type "message_update"
+                                                                   :assistant-event-type "text_delta"
+                                                                   :text-snapshot "Knoxx\n\nFinal"})))))))

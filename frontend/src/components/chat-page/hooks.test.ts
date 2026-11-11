@@ -1,5 +1,6 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { connectStream } from "../../lib/api";
 
 import {
   initializePersistedChatSession,
@@ -9,7 +10,9 @@ import {
   useChatSessionRecovery,
 } from "./hooks";
 
-vi.mock("../../lib/api", () => ({
+vi.mock("../../lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/api")>()),
+  API_BASE: "",
   getRun: vi.fn(),
   getSessionStatus: vi.fn(),
   listProxxModels: vi.fn(),
@@ -140,5 +143,40 @@ describe("chat session persistence helpers", () => {
       expect(setConversationId).toHaveBeenCalledWith("conversation-recover");
       expect(setIsSending).toHaveBeenCalledWith(true);
     });
+  });
+});
+
+
+describe("compiled WebSocket facade", () => {
+  const original = Object.getOwnPropertyDescriptor(window, "knoxx");
+  afterEach(() => {
+    if (original) Object.defineProperty(window, "knoxx", original);
+    else Reflect.deleteProperty(window, "knoxx");
+  });
+
+  it("resolves the adapter late and forwards API arguments and callable cleanup", () => {
+    Reflect.deleteProperty(window, "knoxx");
+    expect(() => connectStream({}, "session")).toThrow("connect_stream_js is unavailable");
+    const disconnect = vi.fn();
+    const setConversationId = vi.fn();
+    const connection = Object.assign(disconnect, { disconnect, setConversationId });
+    const adapter = vi.fn(() => connection);
+    Object.defineProperty(window, "knoxx", { configurable: true, value: {
+      frontend: { lib: { ws: { connect_stream_js: adapter } } },
+    } });
+    const handlers = { onToken: vi.fn() };
+    expect(connectStream(handlers, "session", "conversation")).toBe(connection);
+    expect(adapter).toHaveBeenCalledWith(handlers, "session", "conversation", "");
+    connection.setConversationId(null);
+    expect(setConversationId).toHaveBeenCalledWith(null);
+    connection();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a malformed compiled connection without substituting a transport", () => {
+    Object.defineProperty(window, "knoxx", { configurable: true, value: {
+      frontend: { lib: { ws: { connect_stream_js: () => ({}) } } },
+    } });
+    expect(() => connectStream({})).toThrow("returned an invalid connection");
   });
 });

@@ -8,8 +8,11 @@
    - Synchronous sink exceptions are not swallowed here; callers/tests should see
      them so wiring bugs fail fast."
   (:require [knoxx.backend.domain.action.run-state :as run-state]
+            [knoxx.backend.domain.action.run-trace :as run-trace]
             [knoxx.backend.domain.realtime :as realtime]
-            [knoxx.backend.infra.stores.mongo-session-store :as session-store]))
+            [knoxx.backend.domain.time :refer [now-iso]]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
+            [knoxx.backend.shape.agent.runtime :as runtime]))
 
 (defprotocol IRunEventSink
   (emit-run-event! [sink run-event])
@@ -66,3 +69,19 @@
   [state]
   (or (:run-event-sink state)
       (live-run-event-sink)))
+
+(defn replace-stream-text!
+  "Project a corrected message tail and broadcast an explicit full-text snapshot.
+   Offset preserves earlier provider messages; ordinary tokens remain append deltas."
+  [{:keys [run-id conversation-id session-id] :as state} kind offset snapshot]
+  (let [packet {:run_id run-id :conversation_id conversation-id :session_id session-id
+                :kind (if (= kind :agent_message) "assistant_message" "reasoning")
+                :operation "replace" :offset offset :token snapshot}
+        sink (sink-or-default state)
+        at (now-iso)]
+    (when-not (and (#{:agent_message :reasoning} kind) (runtime/valid? runtime/TokenEvent packet))
+      (throw (ex-info "Invalid stream replacement" {:kind kind :offset offset})))
+    (update-run-state! sink run-id
+                       #(update % :trace_blocks run-trace/replace-text-tail
+                                kind offset snapshot at))
+    (emit-token-event! sink packet)))

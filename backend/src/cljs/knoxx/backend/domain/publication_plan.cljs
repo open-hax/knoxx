@@ -36,11 +36,13 @@
   #{:draft :withheld :archived})
 
 (defn desired-materialization
-  [intent revision]
+  ([intent revision] (desired-materialization intent revision nil))
+  ([intent revision content-revision]
   (receipts/canonical-materialization
-   {:materialized/revision revision
+   (cond-> {:materialized/revision revision
     :materialized/path (:publication/path intent)
-    :materialized/title (:document/title intent)}))
+    :materialized/title (:document/title intent)}
+     (some? content-revision) (assoc :materialized/content-revision content-revision)))))
 
 (defn- observed-materialization
   "Compared against `desired-materialization` using the key set named by
@@ -61,13 +63,13 @@
 (defn- converge
   "Decide between blocked, noop, and publish for a publicly-intended
    publication, using the revision the gate already resolved."
-  [intent observed {:keys [concrete-revision blockers]}]
+  [intent observed {:keys [concrete-revision content-revision blockers]}]
   (if (seq blockers)
     {:op :blocked
      :intent intent
      :blockers blockers
      :concrete-revision concrete-revision}
-    (let [desired (desired-materialization intent concrete-revision)]
+    (let [desired (desired-materialization intent concrete-revision content-revision)]
       (if (= desired (observed-materialization observed))
         {:op :noop
          :intent intent
