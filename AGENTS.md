@@ -27,10 +27,10 @@ pnpm run build       # shadow-cljs release server (-> dist/)
 pnpm start           # node dist/server.js
 pnpm start:dev       # nbb launcher: waits for the server-dev build, then runs dist-dev/server.js
 pnpm test            # node --test test/js, then the :test build behind a fail-closed guard
-pnpm test:shadow     # shadow-cljs compile test: every knoxx.backend.*-test namespace, no filter
+pnpm test:shadow     # shadow-cljs compile test: compiles and runs (:autorun true) every knoxx.backend.*-test namespace, no filter
 pnpm lint            # clj-kondo --fail-level warning
 pnpm typecheck       # shadow-cljs compile server
-pnpm boundary:check  # raw-JS boundary gate (boundary:inventory prints the inventory)
+pnpm boundary:check  # checks the extern.js/extern.json import rule; not in CI or pre-push (boundary:inventory prints the inventory)
 
 # frontend/
 pnpm dev             # five watchers: Tailwind, two Vite bridges, bridge-triggered shadow rebuild, shadow-cljs watch app
@@ -58,13 +58,16 @@ KNOXX_SKIP_PRE_PUSH=1 git push         # escape hatch for the pre-push hook
 
 The pre-push hook runs: repo size lint → backend clj-kondo → backend shadow-cljs
 compile → ingestion clj-kondo → frontend size lint and typecheck → frontend
-changed-surface CLJS lint → frontend migration manifest check → `discord-bot`
-size lint and typecheck. The last two always fail because `discord-bot/` no
-longer exists (still true at `dc206984`).
+changed-surface CLJS lint → frontend migration manifest check → "discord bot
+size lint" → "discord bot typecheck". Those two `discord-bot` checks always fail
+because `discord-bot/` no longer exists, so `scripts/pre-push-checks.sh` exits 1
+and the installed hook blocks every push until they are fixed (still true at
+`dc206984`).
 
 ## Architecture
 
-Backend source, `backend/src/cljs/knoxx/backend/`:
+The backend is organized into vertical domain-driven slices under
+`backend/src/cljs/knoxx/backend/`:
 
 ```text
 domain/       domain logic; per-domain agent tools in domain/<name>/tools.cljs
@@ -78,7 +81,7 @@ runtime/      process-local runtime state
 tools/        mcp.cljs, the MCP bridge tool factory
 ```
 
-`knoxx.backend.infra.agent.hydration` composes the domain tool vectors. Domain namespaces must not import each other.
+`knoxx.backend.infra.agent.hydration` composes the domain tool vectors. Domain namespaces should never import each other.
 
 **Frontend dev.** The shadow-cljs dev HTTP server on `:5173` (`frontend/shadow-cljs.edn` `:dev-http`) serves the build output and proxies `/api/`, `/ws/` and `/health` to `http://127.0.0.1:8000`; shadow devtools endpoints (`/api/remote-*`, `/api/open-file`) stay local. Tailwind writes `dist/app.css`, Vite writes `dist/bridge/knoxx-frontend-bridge.es.js` and `dist/bridge/knoxx-app-bridge.es.js` (TypeScript APIs for CLJS), and shadow-cljs writes `dist/cljs/`.
 
@@ -113,13 +116,13 @@ When modeling domains, you must strictly differentiate between the grammar of mo
   3. `shape.*`: Structure-only morphisms over data shapes. Must be pure and domain-agnostic.
   4. `law.*` or `contract/guard/*`: Contracts, validators (e.g., Malli), assertions. No I/O.
 - Boundary Contracts: Every boundary-crossing function must name or call an explicit contract/schema validator (e.g., Malli) reflecting the Contract obligations of the relevant Category.
-- Extern Boundary Layer: `knoxx.backend.extern.*` is the only place raw JavaScript interop should be born, decoded, encoded, sequenced, or mutated. Non-extern namespaces must not import `knoxx.backend.extern.js` or `knoxx.backend.extern.json`; those generic helpers are implementation details for named extern adapters only. `pnpm -C backend boundary:check` enforces the import rule.
+- Extern Boundary Layer: `knoxx.backend.extern.*` is the only place raw JavaScript interop should be born, decoded, encoded, sequenced, or mutated. Non-extern namespaces must not import `knoxx.backend.extern.js` or `knoxx.backend.extern.json`; those generic helpers are implementation details for named extern adapters only. `pnpm -C backend boundary:check` checks the import rule; it is not wired into CI or the pre-push hook, so run it whenever you touch extern imports.
   - Use boundary-specific adapters named for the system they own: `extern.fastify`, `extern.fetch`, `extern.multipart`, `extern.websocket`, `extern.discord`, `extern.tools`, `extern.row-extra`, `extern.extension`, etc.
   - Domain, law, shape, and ordinary infra code should receive and return CLJS maps/vectors/scalars. If a raw JS object must cross a layer, it must be treated as an opaque handle and only inspected by the owning extern adapter.
   - Do not hide boundary leaks with aliases. A call site using `js->clj`, `clj->js`, `js/JSON`, `Object.keys`, `array-seq`, `#js`, `aget`, `aset`, `js/Promise.all`, `FormData`, `Blob`, Fastify request/reply internals, WebSocket methods, or SDK-native objects is probably in the wrong namespace unless the file is an extern adapter or explicitly documented low-level wrapper.
   - Fetch/HTTP clients pass CLJS request data such as `:json`, `:body`, `:headers`, and let `extern.fetch` build native `RequestInit` and encode/decode JSON. Persistence code uses data-specific codecs such as `extern.row-extra` rather than generic JSON parsing at the store call site.
   - Before adding a new extern namespace, name the real boundary it owns, keep the public API CLJS-first, add a small regression test for the conversion, and update the boundary inventory/gate if applicable.
-- Custom Macros: Macros must expand to ordinary, lintable shapes. Register custom macros in the package's `.clj-kondo/config.edn` (`backend/` or `frontend/`) using `:lint-as` (e.g., `clj-kondo.lint-as/def-catch-all`) on day one. Do not invent a shadow legal system.
+- Custom Macros: Macros must expand to ordinary, lintable shapes. Register custom macros in the owning package's `.clj-kondo/config.edn` (`backend/`, `frontend/` or `ingestion/`) using `:lint-as` (e.g., `clj-kondo.lint-as/def-catch-all`) on day one. Do not invent a shadow legal system.
 
 ## Coding Directives & Clean Code Doctrine
 
