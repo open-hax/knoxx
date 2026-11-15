@@ -4,6 +4,9 @@
             ["node:path" :as path]
             [clojure.string :as str]
             [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.domain.resources.validation :as validation]
+            [knoxx.backend.infra.resources.handlers :as handlers]
+            [knoxx.backend.infra.resources.writes :as writes]
             [knoxx.backend.infra.routes.contracts :as contract-routes]
             [knoxx.backend.infra.routes.resources :as resource-routes]))
 
@@ -479,3 +482,18 @@
               [:admit "successful-edn"]]
              @calls)
           "the later PUT snapshots the exact bytes retained after admission failure"))))
+
+(deftest ^:async admission-authorization-precedes-resource-persistence
+  (doseq [save! [resource-routes/handle-save-resource
+                 handlers/handle-save-contract]]
+    (let [response (atom nil)
+          wrote? (atom false)]
+      (with-redefs [validation/validate-resource-edn (fn [& _] {:ok true :contract {:document/id "entered"}})
+                    validation/validate-contract-edn (fn [& _] {:ok true :contract {:document/id "entered"}})
+                    writes/write-resource-and-admit! (fn [& _] (reset! wrote? true))]
+        (await (save! (fn [status body] (reset! response [status body]))
+                      {} "documents" "entered" "{}"
+                      {:orgId "org-1" :membershipId "member-1" :permissions []}
+                      (fn [& _] nil)))
+        (is (= 403 (first @response)))
+        (is (false? @wrote?) "denied admission must not persist resource bytes")))))

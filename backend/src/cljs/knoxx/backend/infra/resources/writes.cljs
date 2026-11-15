@@ -33,6 +33,15 @@
       (some-> (:session-project-name config) str not-empty)
       (assoc :project (str (:session-project-name config))))))
 
+(defn preflight-admission!
+  "Check admission authorization before any resource bytes are persisted."
+  [config ctx resource-class resource]
+  (when (admission-document-id resource-class resource)
+    (when ctx
+      (authz/ensure-permission! ctx translation-admission-permission)
+      (authz/ensure-permission! ctx publication-admission-permission))
+    (admission-scope config ctx)))
+
 (defn ^:async admit-saved-publication-resource!
   "Admit a saved document/publication through the app-owned internal hook."
   [config ctx resource-class resource admit!]

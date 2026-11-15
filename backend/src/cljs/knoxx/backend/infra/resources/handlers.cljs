@@ -74,6 +74,8 @@
 (defn- ^:async persist-resource!
   [do-json config {:keys [resource-class route-id edn-text ctx admit! parsed validation-out]}]
   (try
+         (when admit!
+           (writes/preflight-admission! config ctx resource-class parsed))
          (let [file-path (resources/resource-file-path config resource-class route-id)
                admission (await
                           (writes/write-resource-and-admit!
@@ -127,6 +129,8 @@
 (defn- ^:async persist-contract!
   [do-json config {:keys [resource-class route-id edn-text ctx admit! parsed validation-out]}]
   (try
+         (when admit!
+           (writes/preflight-admission! config ctx resource-class parsed))
          (let [file-path (resources/resource-file-path config resource-class route-id)
                admission (await
                           (writes/write-resource-and-admit!
