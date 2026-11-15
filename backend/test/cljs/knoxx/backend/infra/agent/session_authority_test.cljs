@@ -75,3 +75,22 @@
               (is (= (inc before) @created))))))
       (catch :default error (is false (str "Unexpected resource policy cache failure: " error)))
       (finally (reset! session/sessions* previous)))))
+
+(deftest ^:async system-turn-with-partial-context-keeps-unscoped-config
+  (let [conversation "partial-system-context-test"
+        previous @session/sessions*
+        captured (atom nil)]
+    (try
+      (with-redefs [session/create-session-manager!
+                    (fn [_runtime config _conversation _model _context _thinking _session _spec]
+                      (reset! captured config)
+                      {:fixture-handle 1})
+                    catalog/visible-session-signature (fn [_runtime _config _context _spec] "tools")
+                    extensions/build-extension-ctx (fn [_runtime _config & _args] {})
+                    extensions/dispatch-event (fn [_name _event _context] nil)
+                    agent/set-thinking-level! (fn [_session _level] nil)]
+        (await (session/ensure-agent-session! {} {:marker :system} conversation "model"
+                                              {:actorId "system-actor"}))
+        (is (= {:marker :system} @captured)))
+      (catch :default error (is false (str "Unexpected system session failure: " error)))
+      (finally (reset! session/sessions* previous)))))
