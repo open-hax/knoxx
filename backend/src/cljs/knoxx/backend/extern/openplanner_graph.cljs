@@ -1,17 +1,19 @@
 (ns knoxx.backend.extern.openplanner-graph
   "Mongo cursor boundary for read-only OpenPlanner graph-node events and edges."
-  (:require [knoxx.backend.domain.graph-query :as graph]
+  (:require ["mongodb" :refer [BSON]]
+            [knoxx.backend.domain.graph-query :as graph]
             [knoxx.backend.extern.json :as xjson]))
 
 (defn- ^:async find-rows!
-  "Read a bounded cursor and decode native rows at this boundary."
+  "Read bounded rows, normalizing BSON to Extended JSON before CLJS conversion."
   [collection selector projection sort-fields limit]
   (xjson/to-cljs
-   (await (-> (.find collection (clj->js selector)
+   (.serialize (.-EJSON BSON)
+               (await (-> (.find collection (clj->js selector)
                       (clj->js {:projection projection :maxTimeMS 5000}))
               (.sort (clj->js sort-fields))
               (.limit limit)
-              (.toArray)))))
+              (.toArray))))))
 
 (defn ^:async query!
   "Query canonical graph-node events with optional lake/type scope and bounded edges."
