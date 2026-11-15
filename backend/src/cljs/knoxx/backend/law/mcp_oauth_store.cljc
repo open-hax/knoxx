@@ -15,7 +15,7 @@
 (def Grant
   [:map {:closed true}
    [:clientId Text] [:membershipId Text] [:axxiumPrincipalId Text] [:axxiumEntityId Text]
-   [:orgSlug Text] [:tools [:vector {:min 1} Text]] [:createdAt Text]
+   [:orgSlug :string] [:tools [:vector {:min 1} Text]] [:createdAt Text]
    [:userEmail {:optional true} Text] [:actorId {:optional true} Text]])
 (def Code
   (into [:map {:closed true}] (concat (drop 2 Grant)

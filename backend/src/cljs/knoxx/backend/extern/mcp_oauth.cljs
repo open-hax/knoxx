@@ -282,7 +282,7 @@
     (when (str/blank? membership-id)
       (throw (params/http-error 400 "missing_membership" "No membership available for this session")))
     (let [records (await (mongo-mcp/list-tokens-for-membership! membership-id))]
-      (json-send! reply 200 {:ok true :tokens (->> records (remove nil?) into-array)}))))
+      (json-send! reply 200 {:ok true :tokens (vec (remove nil? records))}))))
 
 (defroute mcp-revoke-user-token! [browser-auth-guard] "DELETE" "/api/mcp/tokens/:tokenId" [browser-auth-guard]
   (let [auth-context  (aget request "authContext")

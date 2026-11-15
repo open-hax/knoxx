@@ -90,7 +90,7 @@
 
 (defn- grant [now]
   {:clientId "client-1" :membershipId "member-1" :axxiumPrincipalId "actor-1" :axxiumEntityId "entity-1"
-   :orgSlug "org-1" :tools ["wiki_get"] :createdAt (fixture/instant now)})
+   :orgSlug "" :tools ["wiki_get"] :createdAt (fixture/instant now)})
 
 (deftest ^:async oauth-exchange-is-single-use-and-never-persists-raw-credentials
   (let [directory (fixture/temporary-directory)]

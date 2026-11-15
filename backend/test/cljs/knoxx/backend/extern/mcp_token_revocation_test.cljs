@@ -71,7 +71,7 @@
     (await (seed! db token "member-a"))
     (with-redefs [dispatch/current (fn [] nil) mongo/get-db (fn [] db)]
       (let [inventory (await (request! "GET" nil "member-a"))
-            entries (mapv codec/decode (get-in inventory [:body :tokens]))]
+            entries (get-in inventory [:body :tokens])]
         (test/is (= 200 (:status inventory)))
         (test/is (= [id] (mapv :tokenId entries)))
         (test/is (not (str/includes? (pr-str inventory) token)) "legacy raw token data stays private")
