@@ -151,7 +151,8 @@
           (law/refuse! 409 "mailbox_claim_stale" "The message can no longer accept this outcome"))
         (let [updated (cond-> (-> entry (assoc :mailbox/status status :mailbox/updated-at at)
                                   (update :mailbox/delivery dissoc :lease-until))
-                        (= status "delivered") (assoc :mailbox/delivered-at at)
+                        (= status "delivered") (-> (assoc :mailbox/delivered-at at)
+                                                   (update :mailbox/delivery dissoc :last-error))
                         (:content-ref options) (assoc :mailbox/content-ref (:content-ref options))
                         (:error options) (assoc-in [:mailbox/delivery :last-error] (:error options)))]
           [(-> state (assoc-in [:entries key] updated)
@@ -179,6 +180,7 @@
           (law/refuse! 409 "mailbox_operation_conflict" "Mailbox operation id has different arguments"))
       (let [[next-state result] ((case kind :create create :register register :unregister unregister
                                        :claim claim :mark mark :ack acknowledge) state operation)]
-        [(if (= state next-state) state
-             (-> next-state (assoc-in [:operations key] {:request request :result result})
-                 (update :version (fnil inc 0)))) result]))))
+        [(if (or (= kind :claim) (not= state next-state))
+           (-> next-state (assoc-in [:operations key] {:request request :result result})
+               (update :version (fnil inc 0)))
+           state) result]))))
