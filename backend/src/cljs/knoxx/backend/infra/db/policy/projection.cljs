@@ -35,16 +35,18 @@
         display-name (or (some-> (:actor/label validated) str str/trim not-empty)
                          actor-id email)
         role-slugs (values/actor-projection-role-slugs validated)
-        user (await (mongo-directory/create-user!
-                     db {:email email :display-name display-name
-                         :auth-provider "actor-contract" :external-subject nil
-                         :status "active"}))
-        org (or (when-let [org-slug (some-> (:actor/org validated) str str/trim not-empty)]
-                  (await (mongo-directory/find-org-by-slug db org-slug)))
-                primary-org)]
+        org-slug (some-> (:actor/org validated) str str/trim not-empty)
+        org (if org-slug
+              (or (await (mongo-directory/find-org-by-slug db org-slug))
+                  (throw (js/Error. "actor organization was not found")))
+              primary-org)]
     (when-not org
       (throw (js/Error. "primary org is required for actor projection sync")))
-    (let [membership (await (mongo-directory/upsert-membership!
+    (let [user (await (mongo-directory/create-user!
+                       db {:email email :display-name display-name
+                           :auth-provider "actor-contract" :external-subject nil
+                           :status "active"}))
+          membership (await (mongo-directory/upsert-membership!
                              db {:user-id (:id user) :org-id (:id org)
                                  :status "active" :is-default true}))]
       (await (mongo-directory/set-membership-actor-id! db (:id membership) actor-id))

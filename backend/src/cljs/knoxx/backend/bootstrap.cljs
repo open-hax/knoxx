@@ -125,10 +125,10 @@
   (when cookie-hook?
     (http-server/add-hook! app "onRequest" (auth-session/create-session-hook policy-context))))
 
-(defn- register-http-routes!
+(defn- ^:async register-http-routes!
   [runtime app cfg policy-context]
-  (auth-routes/register-auth-routes app {:policy-context policy-context
-                                         :runtime runtime})
+  (await (auth-routes/register-auth-routes app {:policy-context policy-context
+                                               :runtime runtime}))
   (core/register-app-routes! runtime app cfg lounge-messages*)
   (proxy-routes/register-proxy-routes! app cfg)
   (mcp-http/register-mcp-http-routes! app runtime cfg))

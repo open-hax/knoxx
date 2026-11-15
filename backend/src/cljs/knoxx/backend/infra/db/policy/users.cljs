@@ -161,7 +161,9 @@
   [pool uid mid user-id {:keys [org-id actor-id role-slugs] :as payload}]
   (if (local-api/selected? pool)
     (local-api/command! pool :policy/update-user [user-id payload])
-    (let [ms (await (mongo-directory/find-membership-by-user-and-org! (await (policy-connection/db!)) user-id org-id))]
+    (let [_ (when (some #(contains? payload %) [:role-slugs :tool-policies :status :membership-status :display-name])
+              (throw (ex-info "Mongo user profile updates are unsupported" {:status 400 :code "unsupported_user_update"})))
+          ms (await (mongo-directory/find-membership-by-user-and-org! (await (policy-connection/db!)) user-id org-id))]
     (if-not ms
       (throw (js/Error. "membership not found"))
       (let [membership-id (:id ms)
