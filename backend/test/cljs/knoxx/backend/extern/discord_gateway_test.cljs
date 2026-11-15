@@ -100,3 +100,26 @@
       (await (.stop manager))
       (t/is (= 1 @destroyed))
       (t/is (nil? (.getVoiceConnection manager))))))
+
+(t/deftest ^:async restart-and-token-clear-destroy-voice-connections
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})
+        destroyed (atom 0)
+        connection #js {:guildId "guild" :destroy #(swap! destroyed inc)}]
+    (with-redefs [voice/gw-join-voice (fn [_ _] connection)]
+      (await (.joinVoice manager "voice-channel"))
+      (await (.restart manager ""))
+      (t/is (= 1 @destroyed))
+      (t/is (nil? (.getVoiceConnection manager "guild")))
+      (await (.joinVoice manager "voice-channel"))
+      (await (.start manager ""))
+      (t/is (= 2 @destroyed))
+      (t/is (nil? (.getVoiceConnection manager "guild"))))))
+
+(t/deftest ^:async leave-voice-propagates-async-failure
+  (let [manager (gateway/createDiscordGatewayManager {:set-default? false})]
+    (with-redefs [voice/gw-leave-voice (fn [_ _] (js/Promise.reject (js/Error. "leave failed")))]
+      (try
+        (await (.leaveVoice manager "guild"))
+        (t/is false "leave must reject")
+        (catch js/Error error
+          (t/is (= "leave failed" (.-message error))))))))
