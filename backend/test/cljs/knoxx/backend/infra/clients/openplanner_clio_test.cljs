@@ -30,6 +30,11 @@
       (catch :default error (is false (str "Unexpected local OpenPlanner test failure: " error)))
       (finally (fs/remove-tree! root)))))
 
+(deftest query-pagination-rejects-malformed-strings
+  (is (= {:limit 12 :offset 0 :k 5} (host/query-options {:limit "12" :offset "0" :k 5})))
+  (doseq [value ["" " " "1e2" "0x10" "1.0" "-1" "9007199254740992"]]
+    (is (thrown? js/Error (host/query-options {:limit value})) (str "Rejected " (pr-str value)))))
+
 (deftest ^:async event-facts-and-real-projection-contract-survive-restart
   (await (fixture!
     (^:async fn [root]
