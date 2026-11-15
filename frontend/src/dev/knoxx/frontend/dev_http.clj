@@ -22,6 +22,8 @@
       ;; application backend endpoints (should be proxied)
       (str/starts-with? path "/api/") true
       (str/starts-with? path "/ws/") true
+      (or (= path "/mcp") (str/starts-with? path "/mcp/")) true
+      (or (= path "/.well-known") (str/starts-with? path "/.well-known/")) true
       (= path "/health") true
 
       :else false)))

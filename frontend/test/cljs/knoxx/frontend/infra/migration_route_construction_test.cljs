@@ -407,3 +407,8 @@
          js/Error #"Unsupported Shadow route syntax"
          (fixture-routes "(fake/$ Route {:path \"/native\"\n :element ($ native/Page)})"
                          nil nil " [fixture.fake :as fake]"))))
+
+(t/deftest helix-lookalike-data-does-not-declare-a-namespace-alias
+  (t/is (thrown-with-msg?
+         js/Error #"Unsupported Shadow route syntax"
+         (fixture-routes "(def data '[helix.core :as fake])\n(fake/$ Route {:path \"/native\"\n :element ($ native/Page)})"))))
