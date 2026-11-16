@@ -227,8 +227,7 @@
   (let [triggers (->> (load-trigger-resources config)
                       (map trigger-normalize/normalize-trigger)
                       vec)]
-    {:running true
-     :configured true
+    {:configured true
      :events {:recentEvents @recent-events*}
      :triggers (mapv (fn [trigger]
                        {:id (:trigger/id trigger)

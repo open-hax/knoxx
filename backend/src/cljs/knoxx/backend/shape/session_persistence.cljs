@@ -105,3 +105,16 @@
     "Durably admit one runtime event and assign a stable per-run sequence.")
   (events-since [store run-id since]
     "Read events strictly after a sequence or legacy ISO timestamp; nil returns all."))
+
+(defprotocol IRunEventTailStore
+  (read-event-tail [store run-id limit assert-readable!]
+    "Read an unexpired run and its bounded chronological suffix from one durable observation.
+     Call assert-readable! with that exact run before reading its event suffix.
+     Resolves to {:run :events :event-count} or nil."))
+
+(defn event-tail
+  "Select a chronological suffix from a resident ordered event vector."
+  [events limit]
+  (let [event-count (count events)]
+    {:events (subvec events (max 0 (- event-count limit)))
+     :event-count event-count}))

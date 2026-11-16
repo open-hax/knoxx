@@ -36,11 +36,10 @@
 (defn- ^:async events-dispatch!
   [config generator-kind event-type payload]
   (js->clj (await (fetch-json! config "POST" "/api/admin/config/events/dispatch"
-                               {:event/generator (cond-> {}
-                                                   (not (str/blank? (str generator-kind)))
-                                                   (assoc :kind generator-kind))
-                                :event/type event-type
-                                :event/payload payload}))
+                               (cond-> {:eventType event-type
+                                        :payload payload}
+                                 (not (str/blank? (str generator-kind)))
+                                 (assoc :generatorKind generator-kind))))
            :keywordize-keys true))
 
 (defn- ^:async trigger-fire!
