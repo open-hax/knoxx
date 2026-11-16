@@ -4,4 +4,6 @@
  :actor/label "Promethean Duckman"
  :actor/roles [:role/duckman]
  :actor/default-agent "duckman_social"
- :actor/metadata {:execution/isolation-required true}}
+ :actor/metadata
+ {:execution/isolation-required true
+  :social/bindings-pending true}}

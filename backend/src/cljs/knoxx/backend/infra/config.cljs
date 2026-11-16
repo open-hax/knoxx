@@ -127,6 +127,8 @@
                              (aget js/process.env "OPENPLANNER_URL")
                              "http://host.docker.internal:7777")
    :openplanner-api-key (env "OPENPLANNER_API_KEY" "")
+   :social-knowledge-mongo-uri (env "KNOXX_SOCIAL_KNOWLEDGE_MONGODB_URI" nil)
+   :social-knowledge-mongo-db (env "KNOXX_SOCIAL_KNOWLEDGE_MONGODB_DB" nil)
    ;; "mongo" = data plane in-process via @open-hax/openplanner-sdk (direct
    ;; MongoDB + self-sourced embeddings); "rest" = force the fetch client.
    :openplanner-client-mode (env "KNOXX_OPENPLANNER_CLIENT_MODE" "mongo")})

@@ -27,7 +27,7 @@ capabilities/cap_social_dispatch_status.edn
 capabilities/cap_social_multimodal_inspect.edn
 generators/duck_original_clock.edn
 generators/social_original_clock.edn
-models/sol_6_1.edn
+models/gpt_6_1_sol.edn
 models/terra_6_1.edn
 namespaces/duckman-discord.edn
 namespaces/ussyverse.edn

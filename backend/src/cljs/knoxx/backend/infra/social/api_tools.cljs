@@ -16,6 +16,7 @@
             [knoxx.backend.infra.agent.tool-context :as tool-context]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.social.api-execution :as execution]
+            [knoxx.backend.infra.social.bindings :as bindings]
             [knoxx.backend.law.platform-api :as law]
             [knoxx.backend.law.platform-api-request :as request-law]))
 
@@ -73,6 +74,7 @@
   (let [loaded (await (asset/read! (resources/resource-root-paths config)))
         prepared (json-request/json-plan (:catalog loaded) input)
         actions (actions/planned-actions prepared actor-id)
+        _ (when (seq actions) (bindings/ensure-write-allowed! config actor-id))
         result (await (execution/execute! context run-id actions #(invoke-request! runtime (:plan prepared))))
         response (:response result)
         details {:platform (:platform input) :operation (:operation input) :method (get-in prepared [:plan :method])

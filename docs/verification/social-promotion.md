@@ -7,6 +7,8 @@ workspace for prototype turns. Give it synthetic events and a recording
 transport. The packaged contracts leave automatic social sources, triggers,
 and schedules disabled. Keep real platform credentials and deployment-specific
 channel, account, and workspace bindings in the operator's environment.
+The shipped actors declare `:social/bindings-pending true` so manual turns and
+direct MCP writes also refuse until those bindings have been installed.
 
 Run the focused social tests against synthetic Discord and Bluesky requests.
 The tests cover effect classification, actor scope, action admission, receipt
@@ -66,3 +68,11 @@ Check all-actor activity, drain the existing consumer, and verify exactly one
 active consumer for each bot identity at cutover. An execution worker is
 required for affected actors' shell and browser tools. Native subscription
 enrollment belongs to the host that owns the subscription.
+
+Set `KNOXX_SOCIAL_KNOWLEDGE_MONGODB_URI` and
+`KNOXX_SOCIAL_KNOWLEDGE_MONGODB_DB` to the actor knowledge deployment's separate
+Mongo database. That database must have a distinct name from Knoxx and the
+generic OpenPlanner store. Use an environment-owned credential scoped to that
+database. The knowledge SDK uses the configured embedding provider and checks
+the stored vector projection before acknowledging a write. Verify storage and
+actor visibility with synthetic records before rendering live bindings.

@@ -2,6 +2,7 @@
   (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.domain.action.run-state :as runs]
             [knoxx.backend.domain.agent.agent-context :as context]
+            [knoxx.backend.domain.contracts.loader :as contracts]
             [knoxx.backend.domain.social.api-actions :as actions]
             [knoxx.backend.domain.social.api-json-request :as request]
             [knoxx.backend.domain.social.api-receipts :as receipts]
@@ -12,6 +13,7 @@
             [knoxx.backend.infra.actor.acting :as acting]
             [knoxx.backend.infra.actor.credentials :as credentials]
             [knoxx.backend.infra.agent.session :as session]
+            [knoxx.backend.infra.routes.mcp.controls :as mcp-controls]
             [knoxx.backend.infra.social.api-tools :as tools]
             [knoxx.backend.law.social-delivery :as delivery]
             [knoxx.backend.platform-json-request-test :as fixture]
@@ -122,6 +124,46 @@
           (is (= "platform_action_context_required" (:code (ex-data error))))
           (is (empty? @observed))))
       (finally (if old (context/set-context! old) (context/clear-context!))))))
+
+(deftest ^:async pending-actor-bindings-deny-social-writes-at-all-admissions
+  (await
+   (with-runtime!
+    (^:async fn [_]
+      (let [[generic native] (suite {})
+            calls (atom [])
+            direct-discord #js {:name "discord_send"
+                                :execute (fn [& _] (swap! calls conj :direct-discord))}
+            direct-bluesky #js {:name "bluesky.publish"
+                                :execute (fn [& _] (swap! calls conj :direct-bluesky))}
+            read-tool #js {:name "discord_channel_messages"
+                           :execute (fn [& _] (swap! calls conj :read))}
+            follow-tool #js {:name "bluesky_follow"
+                             :execute (fn [& _] (swap! calls conj :native-follow))}
+            pending [{:contract {:actor/id "actor" :actor/metadata {:social/bindings-pending true}}}]]
+        (session/wrap-custom-tools-with-agent-context!
+         #js [follow-tool read-tool]
+         {:conversation-id "c" :agent-spec {:actor-id "actor"}
+          :resolve-bluesky-actor! (fn [_] (swap! calls conj :profile-resolution))})
+        (with-redefs [contracts/load-all-contracts-sync (constantly pending)
+                      credentials/get-credential! (fn [& _] (swap! calls conj :credentials))
+                      http/execute-json! (fn [& _] (swap! calls conj :transport))]
+          (let [generic-error (await (failure! generic input))
+                native-error (await (failure! native {:channel_id "123" :text "hello"}))
+                follow-error (await (failure! follow-tool {:actor "example.test"}))
+                direct-error (^:async fn [tool]
+                              (try (await (mcp-controls/execute! nil {} {:actor-id "actor"} tool #js {}))
+                                   nil
+                                   (catch :default error error)))
+                discord-error (await (direct-error direct-discord))
+                bluesky-error (await (direct-error direct-bluesky))]
+            (is (every? #(= "social_bindings_pending" (:code (ex-data %)))
+                        [generic-error native-error follow-error discord-error bluesky-error]))
+            (is (empty? @calls)))
+          (await (call! read-tool {:channel_id "123"}))
+          (await (mcp-controls/execute! nil {} {:actor-id "actor"} read-tool #js {}))
+          (await (mcp-controls/execute! nil {} {:actor-id "another-actor"} direct-discord #js {}))
+          (await (mcp-controls/execute! nil {} {:actor-id "another-actor"} direct-bluesky #js {}))
+          (is (= [:read :read :direct-discord :direct-bluesky] @calls))))))))
 
 (deftest ^:async destructive-api-write-is-refused-before-credentials
   (await

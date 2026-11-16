@@ -20,6 +20,7 @@
             [knoxx.backend.infra.agent.session-registry :as session-registry]
             [knoxx.backend.infra.agent.tool-catalog :as tool-catalog]
             [knoxx.backend.infra.http :refer [no-content?]]
+            [knoxx.backend.infra.social.bindings :as social-bindings]
             [knoxx.backend.infra.stores.composite-message-source :refer [->CompositeMessageSource]]
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
             [knoxx.backend.infra.stores.mongo-message-source :refer [->MongoMessageSource]]
@@ -82,7 +83,8 @@
     (assoc params :actor did)))
 
 (defn- ^:async invoke-context-tool!
-  [execute args tool-name context]
+  [execute args tool-name context config]
+  (social-bindings/ensure-native-tool-allowed! config (get-in context [:agent-spec :actor-id]) tool-name)
   (let [original-params (xtools/parameter-map (second args))
         params (if (contains? #{"bluesky.follow" "bluesky_follow"} tool-name)
                  (let [run-id (capture-follow-run! context)
@@ -118,7 +120,7 @@
     (assoc (merge inherited (when (= actor-id (:actor-id declared)) declared)) :actor-id actor-id)))
 
 (defn- wrap-tool-execute-with-agent-context!
-  [tool context]
+  [tool context config]
   (when-let [execute (eta-mu-extern/tool-execute tool)]
     (let [name (eta-mu-extern/tool-runtime-name tool)]
       (eta-mu-extern/set-tool-execute!
@@ -130,29 +132,31 @@
              (await (acting/run-as! (tool-acting-scope context)
                                     (fn []
                                       (if (:platform-admission context)
-                                        (tool-context/run-with! context #(invoke-context-tool! execute args name context))
-                                        (invoke-context-tool! execute args name context)))))
+                                        (tool-context/run-with! context #(invoke-context-tool! execute args name context config))
+                                        (invoke-context-tool! execute args name context config)))))
              (finally (restore-agent-context! previous))))))))
   tool)
 
 (defn wrap-custom-tools-with-agent-context!
   "Bind one trusted context, shared action admission, and shared evidence guards
    to the tool suite; native aliases cannot acquire independent reservations."
-  [custom-tools context]
-  (when custom-tools
-    (let [policy (:delivery-policy context)
-          captured {:conversation-id (:conversation-id context)
-                    :actor-id (get-in context [:agent-spec :actor-id])}
-          guard-context (assoc captured :policy policy)
-          context (if (and (seq (:actor-id captured)) (seq (:conversation-id captured)))
-                    (assoc context :platform-admission (action-admission/create captured)
-                           :delivery-guards {:discord (when policy (social-delivery/make-guard guard-context))
-                                             :bluesky (when (:bluesky-publish? policy)
-                                                        (social-delivery/make-bluesky-guard guard-context))})
-                    context)]
-      (doseq [tool (eta-mu-extern/tool-seq custom-tools)]
-        (wrap-tool-execute-with-agent-context! tool context))))
-  custom-tools)
+  ([custom-tools context]
+   (wrap-custom-tools-with-agent-context! custom-tools context nil))
+  ([custom-tools context config]
+   (when custom-tools
+     (let [policy (:delivery-policy context)
+           captured {:conversation-id (:conversation-id context)
+                     :actor-id (get-in context [:agent-spec :actor-id])}
+           guard-context (assoc captured :policy policy)
+           context (if (and (seq (:actor-id captured)) (seq (:conversation-id captured)))
+                     (assoc context :platform-admission (action-admission/create captured)
+                            :delivery-guards {:discord (when policy (social-delivery/make-guard guard-context))
+                                              :bluesky (when (:bluesky-publish? policy)
+                                                         (social-delivery/make-bluesky-guard guard-context))})
+                     context)]
+       (doseq [tool (eta-mu-extern/tool-seq custom-tools)]
+         (wrap-tool-execute-with-agent-context! tool context config))))
+   custom-tools))
 
 (defn prune-session-messages
   [agent-spec messages]
@@ -238,7 +242,8 @@
                                         :membership-id (authz/ctx-membership-id tool-auth-context)})
                        :delivery-policy (tool-catalog/social-delivery-policy config agent-spec)
                        :resolve-bluesky-actor! (partial bluesky/bluesky-profile! runtime)
-                       :agent-spec agent-spec})]
+                       :agent-spec agent-spec}
+                      config)]
     {:custom-tools custom-tools
      :tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)}))
 

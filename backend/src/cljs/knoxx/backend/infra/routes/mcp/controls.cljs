@@ -14,6 +14,7 @@
             [knoxx.backend.infra.routes.mcp.params :as params]
             [knoxx.backend.infra.routes.tools :as tool-routes]
             [knoxx.backend.infra.run-queries :as run-queries]
+            [knoxx.backend.infra.social.bindings :as social-bindings]
             [knoxx.backend.shape.app-shapes :as app-shapes]))
 
 (defn- require-mcp-actor!
@@ -129,14 +130,16 @@
 (defn ^:async execute!
   "Run a granted tool, applying caller identity to control operations."
   [runtime config acting ^js tool params]
-  (case (aget tool "name")
-    "events_status" (event-status config (:auth-context acting))
-    "agents_spawn" (let [ctx (require-mcp-actor! acting)
-                         result (await (start-agent! runtime config ctx (:actor-id acting)
-                                                     (aget params "message") (aget params "model")
-                                                     (parsed-object (aget params "agent_spec_json"))))]
-                     (structured-result (str "Spawned one-off agent run " (:run_id result)) result))
-    "events_dispatch" (await (dispatch-event! config acting params))
-    "actors_send-message" (await (send-message! runtime config acting params))
-    "triggers_fire" (await (fire-trigger! config acting params))
-    (await (.execute tool "mcp" params nil nil nil))))
+  (let [tool-name (aget tool "name")]
+    (social-bindings/ensure-native-tool-allowed! config (:actor-id acting) tool-name)
+    (case tool-name
+      "events_status" (event-status config (:auth-context acting))
+      "agents_spawn" (let [ctx (require-mcp-actor! acting)
+                           result (await (start-agent! runtime config ctx (:actor-id acting)
+                                                       (aget params "message") (aget params "model")
+                                                       (parsed-object (aget params "agent_spec_json"))))]
+                       (structured-result (str "Spawned one-off agent run " (:run_id result)) result))
+      "events_dispatch" (await (dispatch-event! config acting params))
+      "actors_send-message" (await (send-message! runtime config acting params))
+      "triggers_fire" (await (fire-trigger! config acting params))
+      (await (.execute tool "mcp" params nil nil nil)))))

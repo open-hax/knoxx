@@ -3,13 +3,15 @@
 
    The SDK is OpenPlanner's data plane as a library: direct MongoDB plus
    self-sourced embeddings (EMBED_PROVIDER_*), no REST hop. This adapter owns
-   the singleton SDK instance and all interop; callers pass and receive CLJS
-   data shaped exactly like the corresponding /v1 REST response bodies."
+   the shared instance, a separate isolated knowledge store, and all interop.
+   Callers pass and receive data shaped like the /v1 REST response bodies."
   (:require ["@open-hax/openplanner-sdk" :as sdk-mod]
             ["@open-hax/openplanner-sdk/mongo-vectors" :as mongo-vectors]
+            [clojure.string :as str]
             [knoxx.backend.extern.json :as xjson]))
 
 (defonce ^:private sdk-promise* (atom nil))
+(defonce ^:private isolated-sdk* (atom nil))
 
 (defn- resolve-mongo-uri
   "Resolve the MongoDB connection string from the same env lineage the rest of
@@ -26,19 +28,23 @@
       "openplanner"))
 
 (defn- create-sdk!
-  []
-  (sdk-mod/createOpenPlannerSdk
-   #js {:config #js {:mongodb #js {:uri (resolve-mongo-uri)
-                                   :dbName (resolve-mongo-db-name)}}
-        :log #js {:warn (fn [obj msg]
-                          (js/console.warn "[openplanner-sdk]" msg
-                                           (or (some-> obj (aget "err") (aget "message")) "")))}}))
+  [{:keys [uri db-name isolated?]}]
+  (let [mongo #js {:uri uri :dbName db-name}]
+    (when isolated?
+      (aset mongo "eventsCollection" "events"))
+    (sdk-mod/createOpenPlannerSdk
+     #js {:config #js {:mongodb mongo}
+          :log #js {:warn (fn [obj msg]
+                            (if isolated?
+                              (js/console.warn "[openplanner-sdk] isolated background operation failed")
+                              (js/console.warn "[openplanner-sdk]" msg
+                                               (or (some-> obj (aget "err") (aget "message")) ""))))}})))
 
 (defn- get-sdk!
   "Shared SDK instance as a js Promise; created on first use."
   ^js []
   (or @sdk-promise*
-      (let [created (create-sdk!)]
+      (let [created (create-sdk! {:uri (resolve-mongo-uri) :db-name (resolve-mongo-db-name)})]
         (reset! sdk-promise* created)
         created)))
 
@@ -49,6 +55,56 @@
     (reset! sdk-promise* nil)
     (let [sdk (await pending)]
       (await (.close sdk)))))
+
+(defn- isolated-mongo-target!
+  [{:keys [social-knowledge-mongo-uri social-knowledge-mongo-db]}]
+  (let [uri (some-> social-knowledge-mongo-uri str/trim not-empty)
+        db-name (some-> social-knowledge-mongo-db str/trim not-empty)
+        shared-db (some-> (resolve-mongo-db-name) str/trim not-empty)
+        shared-databases (into #{"admin" "config" "local"}
+                               (keep #(some-> % str/trim not-empty str/lower-case)
+                                     [shared-db
+                                      (aget js/process.env "OPENPLANNER_MONGODB_DB")]))]
+    (when-not (and uri (re-matches #"mongodb(?:\+srv)?://\S+" uri)
+                   db-name (re-matches #"[A-Za-z0-9][A-Za-z0-9_-]{0,62}" db-name))
+      (throw (ex-info "An explicit isolated MongoDB URI and database are required"
+                      {:status 503 :code "social_knowledge_unavailable"})))
+    (when (or (nil? shared-db) (contains? shared-databases (str/lower-case db-name)))
+      (throw (ex-info "The isolated knowledge database overlaps a shared or reserved database"
+                      {:status 503 :code "social_knowledge_database_overlap"})))
+    {:uri uri :db-name db-name}))
+
+(defn- ^:async open-isolated-sdk!
+  [target open!]
+  (try
+    (await (open! target))
+    (catch :default _
+      (throw (ex-info "Could not open the isolated knowledge database"
+                      {:status 503 :code "social_knowledge_connect_failed"})))))
+
+(defn- get-isolated-sdk!
+  [target open!]
+  (if-let [{previous :target pending :pending} @isolated-sdk*]
+    (do
+      (when-not (= previous target)
+        (throw (ex-info "An isolated knowledge target change requires a process restart"
+                        {:status 503 :code "social_knowledge_target_changed"})))
+      pending)
+    (let [pending (open-isolated-sdk! target open!)]
+      (reset! isolated-sdk* {:target target :pending pending})
+      pending)))
+
+(defn ^:async close-isolated-sdk!
+  "Close the isolated instance after its callers have drained."
+  []
+  (when-let [{:keys [pending]} @isolated-sdk*]
+    (reset! isolated-sdk* nil)
+    (when-let [sdk (try (await pending) (catch :default _ nil))]
+      (try
+        (await (.close sdk))
+        (catch :default _
+          (throw (ex-info "Could not close the isolated knowledge database"
+                          {:status 503 :code "social_knowledge_close_failed"})))))))
 
 (defn- mongo-ctx
   ^js [^js sdk]
@@ -415,31 +471,33 @@
   (let [sdk (await (get-sdk!))]
     (await (ensure-event-vectors-with-sdk! sdk event-ids))))
 
-(defn ^:async events!
-  "Ingest event envelopes. Same response shape as POST /v1/events.
+(defn- ^:async ingest-with-sdk!
+  [^js sdk events {:keys [await-index? await-background?]}]
+  (let [result (await (.ingestEvents sdk (clj->js events)))
+        background-indexing (aget result "backgroundIndexing")]
+    (when (and (or await-index? await-background?) background-indexing)
+      (await background-indexing))
+    (when await-index?
+      (await (ensure-event-vectors-with-sdk! sdk (mapv :id events))))
+    (js-delete result "acceptedEvents")
+    (js-delete result "backgroundIndexing")
+    (xjson/to-cljs result)))
 
-  Embedded callers that need read-your-writes may pass
-  `{:await-index? true}`. This awaits the SDK's detached embedding work before
-  removing its transport-only promise from the returned response."
+(defn ^:async events!
+  "Ingest event envelopes like POST /v1/events, optionally awaiting projection."
   ([events]
    (await (events! events {})))
-  ([events {:keys [await-index?]}]
-   (let [sdk (await (get-sdk!))
-         result (await (.ingestEvents sdk (clj->js events)))
-         background-indexing (aget result "backgroundIndexing")]
-     (when (and await-index? background-indexing)
-       (await background-indexing))
-     (when await-index?
-       (await (ensure-event-vectors-with-sdk! sdk (mapv :id events))))
-     (js-delete result "acceptedEvents")
-     (js-delete result "backgroundIndexing")
-     (xjson/to-cljs result))))
+  ([events opts]
+   (await (ingest-with-sdk! (await (get-sdk!)) events opts))))
+
+(defn- ^:async vector-search-with-sdk!
+  [^js sdk payload]
+  (xjson/to-cljs (await (.searchVector sdk (clj->js payload)))))
 
 (defn ^:async vector-search!
   "Vector search. Same response shape as POST /v1/search/vector."
   [payload]
-  (let [sdk (await (get-sdk!))]
-    (xjson/to-cljs (await (.searchVector sdk (clj->js payload))))))
+  (await (vector-search-with-sdk! (await (get-sdk!)) payload)))
 
 (defn ^:async session
   "Session detail. Same response shape as GET /v1/sessions/:id."
@@ -459,11 +517,37 @@
   (let [sdk (await (get-sdk!))]
     (xjson/to-cljs (await (sdk-mod/listCollectionsResponse (mongo-ctx sdk))))))
 
+(defn- ^:async query-with-sdk!
+  [^js sdk payload]
+  (xjson/to-cljs (await (sdk-mod/queryCollectionResponse (mongo-ctx sdk) (clj->js (or payload {}))))))
+
 (defn ^:async mongo-query
   "Raw collection query. Same response shape as POST /v1/mongo/query."
   [payload]
-  (let [sdk (await (get-sdk!))]
-    (xjson/to-cljs (await (sdk-mod/queryCollectionResponse (mongo-ctx sdk) (clj->js (or payload {})))))))
+  (await (query-with-sdk! (await (get-sdk!)) payload)))
+
+(defn- ^:async run-isolated-operation!
+  [operation value]
+  (try
+    (await (operation value))
+    (catch :default error
+      (throw (ex-info "Isolated knowledge storage operation failed"
+                      {:status 503
+                       :code (or (:code (ex-data error)) "social_knowledge_operation_failed")})))))
+
+(defn ^:async isolated-knowledge-store!
+  "Return only the operations social knowledge requires, bound to its SDK."
+  ([config]
+   (await (isolated-knowledge-store! config #(create-sdk! (assoc % :isolated? true)))))
+  ([config open!]
+   (let [target (isolated-mongo-target! config)
+         sdk (await (get-isolated-sdk! target open!))]
+     {:query! (partial run-isolated-operation! (partial query-with-sdk! sdk))
+      :vector-search! (partial run-isolated-operation! (partial vector-search-with-sdk! sdk))
+      :events! (partial run-isolated-operation!
+                        #(ingest-with-sdk! sdk % {:await-background? true}))
+      :awaited-events! (partial run-isolated-operation!
+                                #(ingest-with-sdk! sdk % {:await-index? true}))})))
 
 (defn ^:async health
   "Mongo-mode health probe shaped like the REST client's health! result:

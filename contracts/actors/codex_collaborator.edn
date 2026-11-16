@@ -4,4 +4,6 @@
  :actor/label "Codex collaborator"
  :actor/roles [:role/memory-collaborator :role/social-collaborator]
  :actor/default-agent "codex_social_collaborator"
- :actor/metadata {:execution/isolation-required true}}
+ :actor/metadata
+ {:execution/isolation-required true
+  :social/bindings-pending true}}

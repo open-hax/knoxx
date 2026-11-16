@@ -6,6 +6,7 @@
             [knoxx.backend.domain.time :as time]
             [knoxx.backend.domain.tools :as tools]
             [knoxx.backend.extern.crypto :as crypto]
+            [knoxx.backend.extern.openplanner-sdk :as sdk]
             [knoxx.backend.extern.tools :as xtools]
             [knoxx.backend.infra.agent.social-delivery :as delivery]
             [knoxx.backend.infra.agent.tool-context :as tool-context]
@@ -18,13 +19,19 @@
 
 (def project "knoxx-knowledge")
 
-(defn- isolated-client
+(defn- ^:async isolated-store!
   "Use an explicitly supplied actor knowledge store. The generic OpenPlanner
    client is also exposed through a broad proxy and is not privacy authority."
   [config]
-  (or (:social-knowledge-client config)
-      (throw (ex-info "No isolated social knowledge store has been configured"
-                      {:status 503 :code "social_knowledge_unavailable"}))))
+  (if-let [client (:social-knowledge-client config)]
+    {:query! (partial planner/mongo-query! client)
+     :vector-search! (partial planner/vector-search! client)
+     :events! (partial planner/events! client)
+     :awaited-events! (fn [events]
+                       (planner/ingest-events-awaiting-projections!
+                        (planner/assert-event-projection-repair-supported! client)
+                        events))}
+    (await (sdk/isolated-knowledge-store! config))))
 
 (defn- new-id [kind]
   (str project ":" kind ":" (crypto/random-hex 16)))
@@ -41,14 +48,13 @@
      :source (:source_node_id extra) :target (:target_node_id extra) :relation (:relation extra)}
       (:conversation_cursor extra) (assoc :conversation (:conversation_cursor extra)))))
 
-(defn- ^:async original! [client id]
+(defn- ^:async original! [store id]
   (when (and (string? id) (str/starts-with? id (str project ":")))
-    (first (:rows (await (planner/mongo-query! client
-                                             {:collection "events" :filter {:id id :project project}
-                                              :limit 1}))))))
+    (first (:rows (await ((:query! store) {:collection "events" :filter {:id id :project project}
+                                          :limit 1}))))))
 
-(defn- ^:async authorized-original! [client principal id]
-  (let [row (await (original! client id))]
+(defn- ^:async authorized-original! [store principal id]
+  (let [row (await (original! store id))]
     (when-not (and row (law/visible? principal (scope row)))
       (throw (ex-info "Knowledge resource is outside the acting identity"
                       {:status 403 :code "knowledge_scope_denied"})))
@@ -74,17 +80,17 @@
 (defn- ^:async persist-entry!
   [config principal parameters cursor]
   (let [parameters (law/assert-valid! law/RecordParameters parameters)
-        client (planner/assert-event-projection-repair-supported! (isolated-client config))
+        store (await (isolated-store! config))
         id (new-id "entry")
         events (entry-events config id principal parameters)
         [original graph-node] (if cursor (mapv #(assoc-in % [:extra :conversation_cursor] cursor) events) events)]
     (try
-      (await (planner/ingest-events-awaiting-projections! client [original]))
-      (await (planner/events! client [graph-node]))
+      (await ((:awaited-events! store) [original]))
+      (await ((:events! store) [graph-node]))
       (catch :default error
         (throw (ex-info (str "Knowledge projection did not complete; original id=" id)
                         {:status 503 :code "knowledge_projection_incomplete" :id id} error))))
-    (project-row (await (authorized-original! client principal id)))))
+    (project-row (await (authorized-original! store principal id)))))
 
 (defn record-execute
   "Persist original knowledge and await its vector projection before success."
@@ -137,9 +143,9 @@
     (let [parameters (conversation-law/assert-valid! conversation-law/ListParameters (xtools/parameter-map params))
           principal (law/assert-valid! law/Principal (identity/principal config auth-context))
           offset (get parameters :offset 0) limit (get parameters :limit 6)
-          result (await (planner/mongo-query! (isolated-client config)
-                                             {:collection "events" :filter (conversation-filter principal parameters)
-                                              :sort {:ts -1 :id -1} :skip offset :limit limit}))
+          store (await (isolated-store! config))
+          result (await ((:query! store) {:collection "events" :filter (conversation-filter principal parameters)
+                                         :sort {:ts -1 :id -1} :skip offset :limit limit}))
           visible (filter #(and (= "private" (:visibility (scope %)))
                                 (law/visible? principal (scope %))
                                 (= (:actor-id principal) (get-in % [:extra :conversation_cursor :actor-id]))
@@ -157,7 +163,8 @@
   (^:async fn [_runtime config _call-id params _a _b _c]
     (let [{:keys [id]} (law/assert-valid! law/ReadParameters (xtools/parameter-map params))
           principal (law/assert-valid! law/Principal (identity/principal config auth-context))
-          row (await (authorized-original! (isolated-client config) principal id))]
+          store (await (isolated-store! config))
+          row (await (authorized-original! store principal id))]
       (text/tool-text-result (pr-str (project-row row)) (project-row row)))))
 
 (defn search-execute
@@ -166,19 +173,18 @@
   (^:async fn [_runtime config _call-id params _a _b _c]
     (let [{:keys [query limit]} (law/assert-valid! law/SearchParameters (xtools/parameter-map params))
           principal (law/assert-valid! law/Principal (identity/principal config auth-context))
-          client (isolated-client config)
-          literal (await (planner/mongo-query! client
-                                               {:collection "events"
-                                                :filter {:project project :kind "knoxx.knowledge"
-                                                         :text {:$regex (law/literal-query-pattern query) :$options "i"}}
-                                                :limit 50}))
-          result (await (planner/vector-search! client {:q query :project project :kind "knoxx.knowledge" :k 50}))
+          store (await (isolated-store! config))
+          literal (await ((:query! store) {:collection "events"
+                                           :filter {:project project :kind "knoxx.knowledge"
+                                                    :text {:$regex (law/literal-query-pattern query) :$options "i"}}
+                                           :limit 50}))
+          result (await ((:vector-search! store) {:q query :project project :kind "knoxx.knowledge" :k 50}))
           hits (memory/vector-result-hits (:result result))
           ids (distinct (concat (keep :id (:rows literal))
                                 (keep #(or (get-in % [:metadata :session]) (:session %)) hits)))
           rows (loop [remaining ids visible []]
                  (if-let [id (first remaining)]
-                   (let [row (await (original! client id))]
+                   (let [row (await (original! store id))]
                      (recur (next remaining)
                             (cond-> visible (and row (law/visible? principal (scope row)))
                               (conj (project-row row)))))
@@ -195,9 +201,9 @@
     (let [{:keys [source target relation text visibility evidence]}
           (law/assert-valid! law/LinkParameters (xtools/parameter-map params))
           principal (law/assert-valid! law/Principal (identity/principal config auth-context))
-          client (isolated-client config)
-          source-row (await (authorized-original! client principal source))
-          target-row (await (authorized-original! client principal target))
+          store (await (isolated-store! config))
+          source-row (await (authorized-original! store principal source))
+          target-row (await (authorized-original! store principal target))
           _ (law/assert-link-endpoints! source-row target-row)
           access (law/link-scope principal (scope source-row) (scope target-row) visibility)
           id (new-id "link")
@@ -209,8 +215,8 @@
                   :extra {:knowledge_kind "link" :memory_access access :relation relation
                           :claim text :evidence (vec evidence) :epistemic_tier "derived"
                           :actor_id (:actor-id principal) :org_slug (:org-slug principal)}})]
-      (await (planner/events! client [(assoc event :text text)]))
-      (let [row (await (authorized-original! client principal id))]
+      (await ((:events! store) [(assoc event :text text)]))
+      (let [row (await (authorized-original! store principal id))]
         (text/tool-text-result (pr-str (project-row row)) (project-row row))))))
 
 (defn create-tools

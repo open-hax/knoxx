@@ -78,6 +78,8 @@ async function probe({ slot, files }) {
   'the Duckman contract does not resolve under a different actor');
   const eventConfig = await request('/api/admin/config/events');
   const { runtime } = await eventConfig.json();
+  requireCheck(eventConfig.ok && runtime?.disabled === true && runtime.running === false,
+    'the running backend reports disabled event processing');
   const scheduledAgents = ['ussyverse_social_creative', 'ussyverse_social_replies', 'open_hax_original_author',
     'duckman_original_author', 'duckman_discord_responder'];
   requireCheck(eventConfig.ok && scheduledAgents.every((id) => runtime?.triggers?.some((trigger) => trigger.agent === id))

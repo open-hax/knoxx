@@ -6,6 +6,7 @@
  :actor/roles [:role/discord-user]
  :actor/metadata
  {:execution/isolation-required true
+  :social/bindings-pending true
   :delegates ["open_hax_developer_gemma"
               "ussyverse_social_creative"
               "open_hax_developer_small"
