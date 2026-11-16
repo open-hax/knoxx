@@ -15,17 +15,23 @@ jobs:
     if: >-
       github.event.action != 'closed' &&
       contains(github.event.pull_request.labels.*.name, 'testing')
-    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@bbbf0c2ab25d2a2cbadfbb69f7d18c984b3a285b
+    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@cb4c5bd9a3b328869247f2a56304ade4abd598c4
+    # The called deployment job selects the testing environment's key.
+    secrets:
+      PROMETHEAN_ENVIRONMENT_SSH_KEY: ${{ secrets.PROMETHEAN_ENVIRONMENT_SSH_KEY }}
     with:
-      controller_sha: bbbf0c2ab25d2a2cbadfbb69f7d18c984b3a285b
+      controller_sha: cb4c5bd9a3b328869247f2a56304ade4abd598c4
       service: knoxx
       environment: testing
       pull_request: ${{ format('{0}', github.event.pull_request.number) }}
   staging:
     if: github.event.action == 'closed' && github.event.pull_request.merged == true
-    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@bbbf0c2ab25d2a2cbadfbb69f7d18c984b3a285b
+    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@cb4c5bd9a3b328869247f2a56304ade4abd598c4
+    # The called deployment job selects the staging environment's key.
+    secrets:
+      PROMETHEAN_ENVIRONMENT_SSH_KEY: ${{ secrets.PROMETHEAN_ENVIRONMENT_SSH_KEY }}
     with:
-      controller_sha: bbbf0c2ab25d2a2cbadfbb69f7d18c984b3a285b
+      controller_sha: cb4c5bd9a3b328869247f2a56304ade4abd598c4
       service: knoxx
       environment: staging
       pull_request: ${{ format('{0}', github.event.pull_request.number) }}
