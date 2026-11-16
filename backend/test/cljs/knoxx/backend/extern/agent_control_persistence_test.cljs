@@ -2,6 +2,7 @@
   "Actual live-control responses wait for their real ordered durable event writer."
   (:require [cljs.test :as test]
             [knoxx.backend.domain.realtime :as realtime]
+            [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.extern.agent-turn-fixture :as fixture]
             [knoxx.backend.extern.event-queue-fixture :as queue-fixture]
             [knoxx.backend.infra.agent.runtime :as runtime]
@@ -19,12 +20,20 @@
         promise (js/Promise. (fn [resolve reject] (reset! resolve* resolve) (reset! reject* reject)))]
     {:promise promise :resolve! #(@resolve* true) :reject! #(@reject* %)}))
 
+(defn- control-session [deliver!]
+  (reify agent/IAgentSession
+    (streaming? [_] true)
+    (current-turn [_] nil)
+    (messages [_] [])
+    (subscribe! [_ _] (fn []))
+    (send-user-message! [_ _] nil)
+    (follow-up! [_ message] (deliver! message))
+    (steer! [_ message] (deliver! message))
+    (set-thinking-level! [_ _] nil)
+    (abort! [_] nil)))
+
 (defn- session [failure]
-  (let [invoke (^:async fn [] (when failure (throw failure)))]
-    (reify agent/IAgentSession
-      (streaming? [_] true)
-      (follow-up! [_ _] (invoke))
-      (steer! [_ _] (invoke)))))
+  (control-session (^:async fn [_] (when failure (throw failure)))))
 
 (defn- ^:async control-outcome! [kind settled*]
   (try
@@ -51,8 +60,10 @@
 
 (defn- ^:async run-controlled! [kind control-failure write-failure]
   (let [provider @registry/session-store* append! runs/append-event!
-        writer (gate) entered* (atom false) settled* (atom false) published* (atom [])]
-    (with-redefs [sessions/active-agent-session (fn [_] (session control-failure))
+        writer (gate) entered* (atom false) settled* (atom false) published* (atom [])
+        active-session (session control-failure)]
+    (with-redefs [turn-control/active-turn (constantly (assoc coordinates :session active-session))
+                  sessions/active-agent-session (constantly active-session)
                   realtime/broadcast-ws-session! (fn [_ _ event] (swap! published* conj event))
                   runs/append-event! (^:async fn [store event]
                                       (reset! entered* true)
@@ -83,3 +94,35 @@
 (test/deftest ^:async rejected-write-prevents-success-publication (await (prove! false true)))
 (test/deftest ^:async failed-control-waits-for-durable-failure-event (await (prove! true false)))
 (test/deftest ^:async rejected-write-prevents-failure-publication (await (prove! true true)))
+
+
+(test/deftest ^:async stale-control-is-rejected-before-delivery
+  (let [delivered* (atom [])
+        session (control-session #(swap! delivered* conj %))]
+    (with-redefs [sessions/active-agent-session (constantly session)
+                  turn-control/active-turn (constantly (assoc coordinates :session session))]
+      (doseq [target [{:run-id "stale" :session-id (:session_id coordinates)}
+                      {:run-id (:run_id coordinates) :session-id "stale"}]]
+        (let [control (merge target {:conversation-id (:conversation_id coordinates)
+                                     :kind "steer" :message "must stay undelivered"})
+              outcome (try
+                        (await (runtime/queue-agent-control! {} {} control))
+                        (catch :default error (ex-message error)))]
+          (test/is (= "Control target does not match the active run and session" outcome))))
+      (test/is (empty? @delivered*)))))
+
+(test/deftest ^:async replaced-session-is-rejected-before-delivery
+  (let [delivered* (atom [])
+        registered (session nil)
+        replacement (control-session #(swap! delivered* conj %))
+        {:keys [conversation_id session_id run_id]} coordinates]
+    (with-redefs [turn-control/active-turn (constantly (assoc coordinates :session registered))
+                  sessions/active-agent-session (constantly replacement)]
+      (test/is (false? (runtime/control-ready? conversation_id session_id run_id)))
+      (let [outcome (try
+                      (await (runtime/queue-agent-control!
+                              {} {} {:conversation-id conversation_id :session-id session_id
+                                     :run-id run_id :kind "steer" :message "must stay undelivered"}))
+                      (catch :default error (ex-message error)))]
+        (test/is (= "No active running turn is available for live controls" outcome))
+        (test/is (empty? @delivered*))))))

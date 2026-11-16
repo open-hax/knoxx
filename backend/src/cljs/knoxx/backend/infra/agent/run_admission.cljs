@@ -5,6 +5,7 @@
             [knoxx.backend.domain.agent.run-admission :as data]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.extern.agent-turn-node :as host]
+            [knoxx.backend.infra.agent.provider.native-subscription :as subscription]
             [knoxx.backend.infra.agent.startup-settlement :as startup]
             [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.infra.run-event-payload :refer [tool-event-payload]]
@@ -70,9 +71,10 @@
   ([run-id session-id conversation-id started-at model-id mode thinking-level
     agent-spec auth-extra request-messages config before-prompt!]
    (let [token (or (get config startup/reservation-key) (host/random-uuid!))
-         base-run (assoc (data/build-initial-run run-id session-id conversation-id started-at model-id mode thinking-level
+         base-run (cond-> (data/build-initial-run run-id session-id conversation-id started-at model-id mode thinking-level
                                                   agent-spec auth-extra request-messages config)
-                         :startup_token token)
+                    true (assoc :startup_token token)
+                    (subscription/model-id? model-id) (assoc-in [:resources :provider] "claude-code"))
          thread (assoc (initial-thread base-run agent-spec auth-extra request-messages token)
                         :mode mode :thinking_level thinking-level)]
      (await (create-owned-run! base-run thread before-prompt! agent-spec mode thinking-level)))))

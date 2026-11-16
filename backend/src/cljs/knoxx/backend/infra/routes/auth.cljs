@@ -1,10 +1,12 @@
 (ns knoxx.backend.infra.routes.auth
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.axxium :as axxium]
             [knoxx.backend.infra.auth.password :as password]
             [knoxx.backend.infra.auth.session :as auth-session]
-            [knoxx.backend.infra.db.policy :as policy-db]))
+            [knoxx.backend.infra.db.policy :as policy-db]
+            [knoxx.backend.infra.routes.auth.mcp-login :as mcp-login]))
 
 (defn- body-map
   [req]
@@ -125,12 +127,39 @@
              (.send (.code reply 503) (clj->js {:error "Knoxx policy database is not configured"}))
              (signup-handler! req reply policy-context public-base-url)))))
 
+(defn- local-login-error!
+  [^js reply return-path status error]
+  (if return-path
+    (mcp-login/send-page! reply status return-path error)
+    (.send (.code reply status) (clj->js {:error error}))))
+
+(defn- finish-local-login!
+  [^js reply result return-path]
+  (if return-path
+    (.redirect reply return-path 303)
+    (.send reply (clj->js result))))
+
+(defn- ^:async login-with-password!
+  [req reply policy-context public-base-url return-path email password]
+  (let [auth-record (await (policy-db/local-password-auth-record-for-context! policy-context email))]
+    (if-not (password/valid-password? password (:secret-json auth-record))
+      (local-login-error! reply return-path 401 "Invalid username or password")
+      (let [ctx (await (policy-db/resolve-context!
+                        policy-context
+                        {"x-knoxx-user-email" (:email auth-record)
+                         "x-knoxx-membership-id" (:membership-id auth-record)}))
+            result (await (auth-session/create-session-from-context!
+                           reply (request-base-url req public-base-url) ctx
+                           {:email (:email auth-record)
+                            :display-name (:display-name auth-record)
+                            :auth-provider "local"}))]
+        (finish-local-login! reply result return-path)))))
+
 (defn- ^:async local-login-handler!
-  [req reply policy-context public-base-url]
+  [req reply policy-context public-base-url body return-path]
   (try
-    (let [body (body-map req)
-          email (str/lower-case (str/trim (str (or (:email body) (:username body) ""))))
-          password (str (or (:password body) ""))]
+    (let [email (str/lower-case (str/trim (str (or (aget body "email") (aget body "username") ""))))
+          password (str (or (aget body "password") ""))]
       (cond
         (axxium/enabled?)
         (let [verified (await (axxium/authenticate! email password))
@@ -140,55 +169,66 @@
                              {:email (get-in verified [:actor :email])
                               :display-name (get-in verified [:actor :display_name])
                               :auth-provider "axxium"}))]
-          (.send reply (clj->js result)))
+          (finish-local-login! reply result return-path))
 
         (not (local-password-enabled?))
-        (.send (.code reply 503) (clj->js {:error "Local password auth is disabled"}))
+        (local-login-error! reply return-path 503 "Local password auth is disabled")
 
         (or (str/blank? email) (str/blank? password))
-        (.send (.code reply 400) (clj->js {:error "email and password are required"}))
+        (local-login-error! reply return-path 400 "email and password are required")
 
         :else
-        (let [auth-record (await (policy-db/local-password-auth-record-for-context! policy-context email))]
-          (if-not (password/valid-password? password (:secret-json auth-record))
-            (.send (.code reply 401) (clj->js {:error "Invalid username or password"}))
-            (let [ctx (await (policy-db/resolve-context!
-                              policy-context
-                              {"x-knoxx-user-email" (:email auth-record)
-                               "x-knoxx-membership-id" (:membership-id auth-record)}))
-                  result (await (auth-session/create-session-from-context!
-                                 reply (request-base-url req public-base-url) ctx
-                                 {:email (:email auth-record)
-                                  :display-name (:display-name auth-record)
-                                  :auth-provider "local"}))]
-              (.send reply (clj->js result)))))))
+        (await (login-with-password! req reply policy-context public-base-url return-path email password))))
     (catch :default err
-      (.send (.code reply (or (:status (ex-data err)) (.-statusCode err) (.-status err) 500))
-             (clj->js {:error (or (.-message err) "Login failed")})))))
+      (local-login-error! reply return-path
+                          (or (:status (ex-data err)) (.-statusCode err) (.-status err) 500)
+                          (if return-path "Login failed" (or (.-message err) "Login failed"))))))
 
 (defn- register-local-login-route!
   [^js app policy-context public-base-url]
   (.post app "/api/auth/local/login"
          (fn [^js req ^js reply]
-           (if-not policy-context
-             (.send (.code reply 503) (clj->js {:error "Knoxx policy database is not configured"}))
-             (local-login-handler! req reply policy-context public-base-url)))))
+           ;; Fastify's form parser returns an object without Object.prototype.
+           (let [body (or (aget req "body") #js {})
+                 return-path (aget body "mcpReturnTo")
+                 form? (str/starts-with? (or (fastify/request-header req :content-type) "")
+                                         "application/x-www-form-urlencoded")]
+             (cond
+               (not policy-context)
+               (local-login-error! reply nil 503 "Knoxx policy database is not configured")
+
+               (and (or form? (some? return-path)) (not (mcp-login/return-path? return-path)))
+               (local-login-error! reply nil 400 "Invalid MCP sign-in return path")
+
+               (and return-path
+                    (not= (fastify/request-header req :origin)
+                          (.-origin (js/URL. public-base-url))))
+               (local-login-error! reply nil 403 "MCP sign-in requires a same-origin request")
+
+               :else (local-login-handler! req reply policy-context public-base-url body return-path))))))
 
 (defn- register-login-route!
   [^js app public-base-url github-enabled client-id]
   (.get app "/api/auth/login"
         (fn [^js req ^js reply]
-          (if-not github-enabled
-            (.send (.code reply 503) (clj->js {:error "GitHub OAuth not configured"}))
-            (let [redirect (str (or (some-> req (aget "query") (aget "redirect")) "/"))
-                  state (auth-session/create-state redirect)
-                  callback-url (.toString (js/URL. "/api/auth/callback/github" public-base-url))
-                  authorize-url (js/URL. "https://github.com/login/oauth/authorize")]
-              (.set (.-searchParams authorize-url) "client_id" client-id)
-              (.set (.-searchParams authorize-url) "redirect_uri" callback-url)
-              (.set (.-searchParams authorize-url) "state" state)
-              (.set (.-searchParams authorize-url) "scope" "read:user user:email")
-              (.redirect reply (.toString authorize-url)))))))
+          (let [return-path (some-> req (aget "query") (aget "redirect"))]
+            (cond
+              github-enabled
+              (let [redirect (str (or return-path "/"))
+                    state (auth-session/create-state redirect)
+                    callback-url (.toString (js/URL. "/api/auth/callback/github" public-base-url))
+                    authorize-url (js/URL. "https://github.com/login/oauth/authorize")]
+                (.set (.-searchParams authorize-url) "client_id" client-id)
+                (.set (.-searchParams authorize-url) "redirect_uri" callback-url)
+                (.set (.-searchParams authorize-url) "state" state)
+                (.set (.-searchParams authorize-url) "scope" "read:user user:email")
+                (.redirect reply (.toString authorize-url)))
+
+              (and (or (axxium/enabled?) (local-password-enabled?)) (mcp-login/return-path? return-path))
+              (mcp-login/send-page! reply 200 return-path nil)
+
+              :else
+              (.send (.code reply 503) (clj->js {:error "GitHub OAuth not configured"})))))))
 
 (defn- register-github-callback-route!
   [^js app policy-context public-base-url github-enabled client-id client-secret]

@@ -44,9 +44,18 @@
     (mutate! store {:kind :event :run-id (:run_id event) :event event :event-id (host/event-id event)}))
   (events-since [store run-id since]
     (clio/read! engine :run/events [run-id since (:at-ms (sample store))]))
+  protocol/IRunEventTailStore
+  (read-event-tail [store run-id limit assert-readable!]
+    (clio/read! engine :run/event-tail [run-id limit assert-readable! (:at-ms (sample store))]))
   directory-port/IRunDirectoryStore
   (list-runs [store scope]
     (clio/read! engine :run/directory [scope (:at-ms (sample store))])))
+
+(defn- read-tail [state run-id limit assert-readable! at]
+  (let [snapshot @state]
+    (when-let [run (domain/visible-run snapshot run-id at)]
+      (assert-readable! run)
+      (assoc (protocol/event-tail (get-in snapshot [:events run-id] []) limit) :run run))))
 
 (defn open!
   "Open a required directory with validated clock and instance identity before touching disk."
@@ -60,6 +69,7 @@
                                     :run/read (fn [state id at] (domain/visible-run @state id at))
                                     :run/active (fn [state id at] (domain/active-runs @state id at))
                                     :run/directory (fn [state scope at] (directory-view/visible @state scope at))
-                                    :run/events (fn [state id since at] (domain/events-since @state id since at))}
+                                    :run/events (fn [state id since at] (domain/events-since @state id since at))
+                                    :run/event-tail read-tail}
                             :writes {:run/admit admit!}})]
     (->ClioRunStore engine (:directory engine) clock! instance-id)))
