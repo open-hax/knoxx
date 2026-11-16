@@ -91,7 +91,7 @@ async function probe({ slot, files }) {
 
 function emit(sourceSha) {
   if (!/^[0-9a-f]{40}$/.test(sourceSha ?? '')) throw new Error('a full Knoxx source SHA is required');
-  const contents = (path) => execFileSync('git', ['show', `${sourceSha}:${path}`]);
+  const contents = (path) => execFileSync('git', ['show', `${sourceSha}:${path}`], { maxBuffer: 8 * 1024 * 1024 });
   const listed = contents(inventory).toString().trim().split('\n').map((path) => `contracts/${path}`);
   const files = Object.fromEntries([...new Set([inventory, modelPath, ...listed])].sort().map((path) => {
     if (!safePath(path)) throw new Error(`invalid promotion path ${path}`);
