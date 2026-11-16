@@ -3,7 +3,9 @@
   (:require [clojure.string :as str]
             [knoxx.backend.extern.eta-mu :as eta-mu-extern]
             [knoxx.backend.infra.agent.hydration :refer [create-agent-custom-tools]]
-            [knoxx.backend.infra.tooling :as tooling]))
+            [knoxx.backend.infra.execution.client :as execution-client]
+            [knoxx.backend.infra.tooling :as tooling]
+            [knoxx.backend.law.execution :as execution]))
 
 (defprotocol IToolCatalog
   (available-tools [catalog context]))
@@ -15,7 +17,7 @@
   [auth-context allowed-tool-ids]
   (if-not auth-context
     nil
-    (assoc auth-context
+    (assoc (dissoc auth-context :tool-policies)
            :toolPolicies (mapv (fn [tool-id]
                                  {:toolId tool-id :effect "allow"})
                                (sort (vec allowed-tool-ids))))))
@@ -30,12 +32,9 @@
 
 (defn builtin-tools
   [runtime config tool-auth-context agent-spec]
-  (tooling/create-runtime-tools runtime
-                                config
-                                tool-auth-context
-                                (:role agent-spec)
-                                (:contract-id agent-spec)
-                                (:actor-id agent-spec)))
+  (when-not (execution/restricted? config)
+    (tooling/create-runtime-tools runtime config tool-auth-context
+                                  (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec))))
 
 (defn custom-tools
   [runtime config tool-auth-context agent-spec allowed-tool-ids]
@@ -46,6 +45,12 @@
   [tool-name]
   (boolean (and (string? tool-name)
                 (re-matches #"^[A-Za-z0-9_-]{1,64}$" tool-name))))
+
+(defn social-delivery-policy
+  "Read evidence obligations from the selected trusted agent resource."
+  [config agent-spec]
+  (get-in (tooling/resolve-agent-contract config (:contract-id agent-spec) (:actor-id agent-spec))
+          [:contract :delivery/evidence]))
 
 (defn tool-runtime-names
   [builtin-tools custom-tools]
@@ -58,7 +63,8 @@
 
 (defn visible-session-signature
   [runtime config auth-context agent-spec]
-  (let [allowed-tool-ids (allowed-tool-ids config auth-context agent-spec)
+  (let [config (execution-client/effective-config config agent-spec)
+        allowed-tool-ids (allowed-tool-ids config auth-context agent-spec)
         tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
         builtin (or (builtin-tools runtime config tool-auth-context agent-spec) [])
         custom (if-let [tools (custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)]
@@ -70,6 +76,9 @@
                           sort
                           distinct
                           vec)
+             :execution-mode (:execution-mode config)
+             :execution-controller (:execution-base-url config)
+             :delivery-evidence (social-delivery-policy config agent-spec)
              :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
              :actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)
              :role (some-> (:role agent-spec) str str/trim not-empty)
@@ -90,7 +99,8 @@
 (defrecord DefaultToolCatalog [runtime config]
   IToolCatalog
   (available-tools [_ {:keys [auth-context agent-spec]}]
-    (let [allowed (allowed-tool-ids config auth-context agent-spec)
+    (let [config (execution-client/effective-config config agent-spec)
+          allowed (allowed-tool-ids config auth-context agent-spec)
           tool-auth-context (effective-tool-auth-context auth-context allowed)]
       {:allowed-tool-ids allowed
        :tool-auth-context tool-auth-context

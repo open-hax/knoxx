@@ -1,0 +1,4 @@
+#:cap{:id :cap/platform-api-request,
+      :tools [:social.request],
+      :description
+      "Actor-owned execution of discovered JSON platform operations. Session publication evidence, shared attempt admission and platform permissions apply. Credential, binary and streaming workflows remain separate."}

@@ -1,7 +1,17 @@
 {:actor/id "discord_automation"
- :actor/kind :agent ;; this should be assistent. Cause it's just gonna confuse you.
+ :actor/kind :agent
  :actor/org "open-hax"
  :actor/label "Discord Automation"
  :actor/default-agent "ussyverse_social_creative"
  :actor/roles [:role/discord-user]
- :prompts {:system "You are the Discord automation actor. Your base powers are Discord-native: reading channels, searching history, publishing messages, and handling attachments. You also have access to the full Knoxx creative tool suite through your assigned roles. Use tools accurately and concretely rather than performing competence. You're Operator is 205909976768708608 AKA error0815 AKA Erorrnussy."}}
+ :actor/metadata
+ {:execution/isolation-required true
+  :delegates ["open_hax_developer_gemma"
+              "ussyverse_social_creative"
+              "open_hax_developer_small"
+              "open_hax_developer_sol"
+              "open_hax_research_quick"
+              "open_hax_research_deep"
+              "open_hax_developer_terra"]}
+ :prompts
+ {:system "You are the Discord automation actor. Read channels, search history, publish messages, and handle attachments using only the tools, identities, and channel scope granted for this run. Refer to your assigned creative roles and verify each action before reporting delivery."}}

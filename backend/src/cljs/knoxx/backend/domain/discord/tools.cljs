@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.discord.rest-client :as discord-rest]
+            [knoxx.backend.domain.discord.context :as discord-context]
             [knoxx.backend.extern.discord :as xdiscord]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.label.quality :as quality-labels]
@@ -77,7 +78,10 @@
                                                 (when-let [url (:url embed)]
                                                   (str " <" url ">"))))
                                          embeds))))]
-    (str "<" (:authorUsername message) " (id:" (:authorId message) ")> "
+    (str "[message_id=" (:id message)
+         " timestamp=" (:timestamp message)
+         " bot=" (boolean (:authorIsBot message)) "] "
+         "<" (:authorUsername message) " (id:" (:authorId message) ")> "
          (if (str/blank? content) "[no text]" content)
          (or attachment-text "")
          (or embed-text ""))))
@@ -363,17 +367,40 @@
                                 :files file-list})))
 
 (defn ^:async post-discord-message-chunks!
+  "Retain confirmed chunk IDs if a later request fails; never call an empty
+   success response a delivered message or continue an unconfirmed sequence."
   [client channel-id reply-to file-list chunks]
-  (loop [[chunk & remaining] (seq chunks)
-         state nil]
+  (loop [[chunk & remaining] (seq chunks) state nil confirmed []]
     (if chunk
-      (recur remaining
-             (await (post-discord-message-chunk! client channel-id reply-to file-list chunk state)))
-      state)))
+      (let [result (try
+                     (await (post-discord-message-chunk! client channel-id reply-to file-list chunk state))
+                     (catch :default error
+                       (throw (ex-info (ex-message error)
+                                       (assoc (or (ex-data error) {}) :phase :platform
+                                              :delivered-message-ids confirmed)
+                                       error))))]
+        (when-not (and (string? (:id result)) (not (str/blank? (:id result))))
+          (throw (ex-info "Discord response did not confirm a message ID; do not retry."
+                          {:code "discord_delivery_unconfirmed" :phase :platform
+                           :delivered-message-ids confirmed})))
+        (recur remaining result (conj confirmed (:id result))))
+      (assoc state :knoxx/message-ids confirmed))))
 
 (defn ^:async resolve-discord-upload-attachment!
   [runtime config idx url]
   (await (maybe-render-svg! (await (fetch-discord-upload-attachment! runtime config url idx)))))
+
+(defn- ^:async prepare-discord-send!
+  [runtime config urls]
+  (try
+    {:file-list (await (xdiscord/promise-all-vector
+                        (map-indexed (partial resolve-discord-upload-attachment! runtime config) urls)))
+     :client (await (discord-client! runtime))}
+    (catch :default error
+      (throw (ex-info (ex-message error)
+                      {:code "discord_send_preflight_failed" :phase :preflight
+                       :delivered-message-ids []}
+                      error)))))
 
 (defn ^:async discord-send-message!
   [runtime config channel-id text reply-to attachment-urls]
@@ -387,17 +414,15 @@
         normalized (str/trim text-for-discord)
         all-urls (vec (concat (or attachment-urls []) (or attachmentUrls []) extracted-urls))]
     (when (str/blank? channel-id)
-      (throw (js/Error. "channel_id is required")))
+      (throw (ex-info "channel_id is required" {:phase :preflight})))
     (when (and (str/blank? normalized) (empty? all-urls))
-      (throw (js/Error. "text or attachment_urls is required")))
-    (let [file-list (await (xdiscord/promise-all-vector
-                            (map-indexed (partial resolve-discord-upload-attachment! runtime config)
-                                         all-urls)))
-          client (await (discord-client! runtime))
+      (throw (ex-info "text or attachment_urls is required" {:phase :preflight})))
+    (let [{:keys [file-list client]} (await (prepare-discord-send! runtime config all-urls))
           chunks (discord-message-chunks normalized)
           result (await (post-discord-message-chunks! client channel-id reply-to file-list chunks))]
       {:channelId channel-id
        :messageId (or (:id result) "")
+       :messageIds (:knoxx/message-ids result)
        :sent true
        :timestamp (or (:timestamp result) "")
        :chunkCount (count chunks)
@@ -550,7 +575,8 @@
                                                                                    :before (pget params :before)
                                                                                    :after (pget params :after)
                                                                                    :around (pget params :around)}))
-          messages (await (attach-openplanner-labels! config (:messages result)))
+          messages (-> (await (attach-openplanner-labels! config (:messages result)))
+                       (discord-context/project-messages (:discord-self-message-context config)))
           filtered (assoc result :messages messages :count (count messages))]
       (tool-text-result (discord-messages-text (str "Fetched " (:count filtered) " non-bad messages from channel " channel-id ".") messages)
                         filtered))))

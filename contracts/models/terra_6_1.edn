@@ -1,0 +1,12 @@
+{:model/id "openai/gpt-6.1-terra"
+ :model/provider :proxx
+ :model/api "openai-completions"
+ :model/label "GPT-6.1 Terra via Proxx"
+ :model/allowlisted true
+ :model/reasoning true
+ :model/default-thinking :medium
+ :model/thinking-levels [:low :medium :high]
+ :model/context-window 128000
+ :model/max-tokens 16000
+ :model/input [:text :image]
+ :model/compat {:supportsDeveloperRole true :supportsReasoningEffort true}}

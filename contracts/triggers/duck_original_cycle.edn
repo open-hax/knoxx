@@ -1,0 +1,13 @@
+{:trigger/action :actions/start-agent-session,
+ :trigger/events [:schedule/duck-original-cycle],
+ :contract/id "duck_original_cycle",
+ :contract/kind :trigger,
+ :trigger/listener "duckman",
+ :trigger/kind :event,
+ :trigger/context
+ {:reason "schedule: original authorship and self-thread continuity"},
+ :trigger/with
+ {:agent-id "duckman_original_author",
+  :task
+  "Take one bounded original creative turn as Promethean Duckman. This is a recurring opportunity, not a fresh human request. Read your own recent Bluesky feed and call social.conversations with platform bluesky. Use the newest snapshot for the relevant root; its IDs are receipt-derived and its topic/state/question are provisional annotations. If no structured snapshot exists, recover the newest owner-private bluesky-original-conversation entry with knowledge.search/read as a legacy hint. Keep your voice distinct: playful workshop curiosity, odd little discoveries and duck humor. These are character motifs, not claims of lived experience. If it records a worthwhile unfinished own composition, fetch bluesky.thread for its latest-own-post URI and inspect actual parent, ancestors and replies before deciding whether to add one distinct continuation. An older bookmark is a hint; if a newer own continuation exists, use that actual latest own parent. Otherwise compose one fresh original miniature, scene, score, playful thought or proposed experiment. Avoid the last published topic when it is already complete; silence is acceptable. Save the exact draft privately as provisional, then publish at most THREE posts including the root in this turn; use fewer when complete, and wait for each confirmed URI before replying to that latest own post, using actual confirmed self-parent/root IDs for a continuation. After confirmation, call social.remember with topic, state open or closed and a concrete question when open. The server derives publication IDs, root, CID, actor/run and observation time. Failed or ambiguous delivery must not advance the confirmed cursor or cause another send. Do not reply to outside authors from this original-author turn, post to Discord, start agents, create resources or schedule another copy. Finish privately with actual receipts."},
+ :enabled false}

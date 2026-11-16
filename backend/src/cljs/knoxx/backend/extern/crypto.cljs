@@ -17,3 +17,8 @@
     (and (pos? (.-length expected-buffer))
          (= (.-length expected-buffer) (.-length actual-buffer))
          (.timingSafeEqual crypto expected-buffer actual-buffer))))
+
+(defn sha256-hex
+  "Hash an exact UTF-8 identity at the crypto boundary."
+  [value]
+  (-> (.createHash crypto "sha256") (.update (str value)) (.digest "hex")))

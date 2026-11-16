@@ -1,6 +1,8 @@
 (ns knoxx.backend.domain.bluesky.bluesky
   "Bluesky ATProto tool factories."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.social.action-admission :as action-admission]
+            [knoxx.backend.infra.agent.tool-context :as tool-context]
             [knoxx.backend.domain.bluesky.client :as bsky-client]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
@@ -383,12 +385,13 @@
       (throw (js/Error. (str "Invalid AT-URI for unlike: " uri))))))
 
 (defn ^:async bluesky-follow! [runtime actor]
-  (let [session (await (bluesky-create-session! runtime))
-        profile (await (bluesky-profile! runtime actor))]
+  (let [subject (or (action-admission/canonical-follow-target actor)
+                    (:did (await (bluesky-profile! runtime actor))))
+        session (await (bluesky-create-session! runtime))]
     (await (bluesky-create-record!
             session "app.bsky.graph.follow"
             {"$type" "app.bsky.graph.follow"
-             :subject (:did profile)
+             :subject subject
              :createdAt (.toISOString (js/Date.))}))))
 
 (defn ^:async bluesky-unfollow! [runtime uri]
@@ -533,8 +536,10 @@
 (defn ^:async follow-execute [runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         actor (or (aget params "actor") "")]
-    (when (str/blank? actor)
-      (throw (js/Error. "actor is required")))
+    (when-not (and (:platform-admission (tool-context/current))
+                   (action-admission/canonical-follow-target actor))
+      (throw (ex-info "Bluesky follow requires an admitted turn and verified destination DID"
+                      {:code "platform_action_context_required" :phase :preflight})))
     (maybe-tool-update! on-update (str "Following " actor " on Bluesky…"))
     (let [result (await (bluesky-follow! runtime actor))]
       (tool-text-result (str "Followed " actor "\n" (or (:uri result) ""))

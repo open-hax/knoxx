@@ -1,0 +1,3 @@
+{:cap/id :cap/social-dispatch-status
+ :cap/tools [:agent.dispatch.status]
+ :cap/description "Tracks an existing bounded social delegation by run identifier."}

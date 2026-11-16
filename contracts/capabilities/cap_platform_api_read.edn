@@ -1,0 +1,3 @@
+{:cap/id :cap/platform-api-read
+ :cap/tools [:social.read]
+ :cap/description "Actor-owned JSON reads selected from pinned Discord and Bluesky API schemas. No arbitrary URLs, request credentials or platform writes."}

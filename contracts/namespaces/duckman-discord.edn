@@ -1,0 +1,36 @@
+{:namespace :duckman-discord
+ :resources
+ [{:source/id :source/duckman-discord-gateway
+   :source/type :event-generator
+   :source/name "Duckman Discord gateway"
+   :source/driver :driver/discord
+   :source/actor "duckman"
+   :source/listens [:discord.message]
+   :source/protocol {:lifecycle :long-running
+                     :dispatch :event-dispatch
+                     :credentials-owner "duckman"}
+   :enabled false}
+  {:trigger/id :respond
+   :trigger/kind :event
+   :trigger/emitter "duckman"
+   :trigger/listener "duckman"
+   :trigger/events [:discord.message]
+   :trigger/action :actions/start-agent-session
+   :trigger/condition
+   (and
+    (not (conditions/discord.author event ["KNOXX_SOCIAL_BINDING_DISCORD_ID_12"]))
+    (or
+     (and (not (true? (get-in event [:event/payload :authorIsBot])))
+          (or (conditions/discord.mention event)
+              (= "" (str (get-in event [:event/payload :guildId])))
+              (and
+               (conditions/discord.channel
+                event ["KNOXX_SOCIAL_BINDING_DISCORD_ID_2" "KNOXX_SOCIAL_BINDING_DISCORD_ID_14" "KNOXX_SOCIAL_BINDING_DISCORD_ID_1"])
+               (conditions/discord.keyword event ["duckman" "promethean duck"]))))
+     (and (conditions/discord.author event ["KNOXX_SOCIAL_BINDING_DISCORD_ID_10" "KNOXX_SOCIAL_BINDING_DISCORD_ID_13"])
+          (conditions/discord.mention event))))
+   :trigger/with
+   {:agent-id "duckman_discord_responder"
+    :task "Answer the triggering speaker as Duckman. Use discord.send once with this exact Channel ID and the actual Message ID as reply_to. If the speaker is returning to a topic, read social.conversations and the current channel first. Wait for confirmed delivery, then call social.remember separately with platform discord and a short useful topic, state and any open question. Stop after one reply. Do not explicitly mention other bots in this reply."}
+   :trigger/context {:reason "Duckman responds through his own Discord gateway"}
+   :enabled false}]}

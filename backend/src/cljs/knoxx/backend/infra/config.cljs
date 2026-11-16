@@ -108,6 +108,13 @@
 (defn- workspace-config
   []
   {:workspace-root (env-first ["WORKSPACE_ROOT" "WORKSPACE_PATH" "KNOXX_WORKSPACE_ROOT"] "/app/workspace")
+   :execution-mode (env "KNOXX_EXECUTION_MODE" "local")
+   :execution-base-url (env "KNOXX_EXECUTION_BASE_URL" "")
+   :execution-auth-key (env "KNOXX_EXECUTION_AUTH_KEY" "")
+   :execution-workspace-root (env "KNOXX_EXECUTION_WORKSPACE_ROOT" "/state/execution-workspaces")
+   :execution-legacy-actor (env "KNOXX_EXECUTION_LEGACY_ACTOR" "")
+   :browser-reader-file (env "KNOXX_BROWSER_READER_FILE" "/opt/knoxx/browser_read.py")
+   :browser-service-url (env "SHUVCRAWL_URL" "")
    :extra-workspace-roots (env-path-list "KNOXX_EXTRA_WORKSPACE_ROOTS")
    :music-library-root (let [value (some-> (aget js/process.env "KNOXX_MUSIC_LIBRARY_ROOT") str str/trim)]
                          (when-not (str/blank? (or value ""))

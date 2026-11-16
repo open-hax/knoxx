@@ -7,6 +7,7 @@
             ["node:fs/promises" :as fs]
             ["node:path" :as node-path]
             [knoxx.backend.extern.promise :as promise]
+            [knoxx.backend.law.execution :as execution]
             [knoxx.backend.shape.agent :refer [IAgentSession]]))
 
 ;; ─── Class constructors (read from module at call time) ──────────────────────
@@ -84,9 +85,9 @@
             (.setRuntimeApiKey auth-storage provider-id token))))
       (let [model-registry (ModelRegistry. auth-storage models-file)
             resource-loader (ResourceLoader.
-                             #js {:cwd (:workspace-root config)
-                                  :agentDir runtime-dir-value
-                                  :settingsManager settings-manager})]
+                             (clj->js (assoc (execution/resource-loader-options
+                                               (assoc config :agent-dir runtime-dir-value))
+                                              :settingsManager settings-manager)))]
         (await (.reload resource-loader))
         {:auth-storage auth-storage
          :model-registry model-registry
@@ -323,6 +324,22 @@
                          (required-first-options model context options))))))
   raw-agent)
 
+(defn session-resource-loader
+  "Give one session its contract prompt without mutating the shared SDK loader.
+   Bind delegated methods to the original loader so SDK private fields remain
+   valid, including after resource reload or system-prompt rebuild."
+  [loader system-prompt]
+  (if-let [prompt (some-> system-prompt str str/trim not-empty)]
+    (js/Proxy. loader
+               #js {:get (fn [target property _receiver]
+                           (if (= property "getSystemPrompt")
+                             (fn [] prompt)
+                             (let [value (aget target property)]
+                               (if (fn? value)
+                                 (.bind value target)
+                                 value))))})
+    loader))
+
 (defn ^:async create-session!
   "Create and wrap an eta-mu agent session from CLJS options. Returns a Promise
    because the eta-mu SDK creates sessions asynchronously."
@@ -336,7 +353,7 @@
                              :agentDir runtime-dir-value
                              :authStorage (:auth-storage opts)
                              :modelRegistry (:model-registry opts)
-                             :resourceLoader (:loader opts)
+                             :resourceLoader (session-resource-loader (:loader opts) (:system-prompt opts))
                              :settingsManager (:settings-manager opts)
                              :sessionManager (:session-manager opts)
                              :model (:model opts)
@@ -346,3 +363,22 @@
         raw-session (aget created "session")]
     (configure-tools-choice! (aget raw-session "agent") (:tools-choice opts))
     (wrap-eta-mu-session raw-session hook)))
+
+(defn isolated-coding-tools
+  "Keep SDK definitions, but replace every execute callback with the isolated port."
+  [cwd names execute!]
+  (let [module (or (aget eta-mu "default") eta-mu)]
+  (mapv (fn [name]
+          (let [factory (case name
+                          "read" (aget module "createReadToolDefinition")
+                          "write" (aget module "createWriteToolDefinition")
+                          "edit" (aget module "createEditToolDefinition")
+                          "bash" (aget module "createBashToolDefinition"))
+                tool (factory cwd)]
+            (aset tool "description" (str (aget tool "description")
+                                           " Execution is isolated to this actor's workspace; backend credentials and state are unavailable."))
+            (aset tool "execute"
+                  (^:async fn [_call-id params _signal _on-update _ctx]
+                    (clj->js (await (execute! name (js->clj params :keywordize-keys true))))))
+            tool))
+        names)))
