@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "license": "GPL-3.0-or-later",
+  "imports": {
+    "#knoxx-native-claude": "./src/cljs/knoxx/backend/extern/native_claude.mjs"
+  },
   "engines": {
     "node": ">=22.19.0"
   },

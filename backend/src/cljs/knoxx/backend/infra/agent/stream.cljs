@@ -184,14 +184,16 @@
 
 (defn register-active-turn!
   ([state abort!] (register-active-turn! state abort! nil))
-  ([{:keys [run-id conversation-id started-at] :as state} abort! agent-spec]
+  ([state abort! agent-spec] (register-active-turn! state abort! agent-spec nil))
+  ([{:keys [run-id conversation-id session-id started-at]} abort! agent-spec session]
    (turn-control/register-active-turn!
     conversation-id
-    {:run_id run-id
-     :session_id (:session-id state)
-     :started_at started-at
-     :agent_spec agent-spec
-     :abort! abort!})))
+    (cond-> {:run_id run-id
+             :session_id session-id
+             :started_at started-at
+             :agent_spec agent-spec
+             :abort! abort!}
+      session (assoc :session session)))))
 
 ;; ─── Event handlers ─────────────────────────────────────────────────────────
 

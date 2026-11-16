@@ -109,11 +109,16 @@
   ([trigger-id payload]
    (trigger-runtime/fire! (cfg) trigger-id payload)))
 
+(defn running?
+  "Whether this process has started the trigger, schedule, and source runtimes."
+  []
+  @running?*)
+
 (defn status
   ([]
    (status (cfg)))
   ([config]
-   {:running @running?*
+   {:running (running?)
     :triggers (trigger-runtime/status config)
     :schedules (schedule-runtime/status config)
     :sources (source-runtime/status)}))

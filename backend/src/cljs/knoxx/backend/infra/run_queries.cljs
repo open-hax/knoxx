@@ -18,19 +18,36 @@
                 (= (authz/ctx-org-id ctx) (authz/record-org-id run))))
        (authz/run-visible? ctx run)))
 
+(defn- selected-store! []
+  (or @registry/session-store*
+      (throw (ex-info "A durable run provider is required"
+                      {:status 503 :code "run_provider_unavailable"}))))
+
+(defn- require-visible! [ctx run]
+  (when-not run
+    (throw (ex-info "Run not found" {:status 404 :code "run_not_found"})))
+  (when-not (visible? ctx run)
+    (throw (ex-info "Access denied" {:status 403 :code "run_access_denied"})))
+  run)
+
 (defn ^:async read!
   "Read an existing run with fresh tenant and principal authorization."
   [ctx run-id]
   (authorize! ctx)
-  (let [store @registry/session-store*
-        _ (when-not store
-            (throw (ex-info "A durable run provider is required"
-                            {:status 503 :code "run_provider_unavailable"})))
-        run (await (persistence/get-run store run-id))]
-    (when-not run (throw (ex-info "Run not found" {:status 404 :code "run_not_found"})))
-    (when-not (visible? ctx run)
-      (throw (ex-info "Access denied" {:status 403 :code "run_access_denied"})))
-    run))
+  (require-visible! ctx (await (persistence/get-run (selected-store!) run-id))))
+
+(defn ^:async read-with-event-tail!
+  "Read accepted event headers without flushing or replaying the run's full history."
+  [ctx run-id limit]
+  (authorize! ctx)
+  (when-not (and (integer? limit) (<= 1 limit 100))
+    (throw (ex-info "Run event limit must be an integer between 1 and 100" {:status 400})))
+  (let [store (selected-store!)]
+    (when-not (satisfies? persistence/IRunEventTailStore store)
+      (throw (ex-info "The selected run provider does not support durable event tails"
+                      {:status 503 :code "run_event_provider_unsupported"})))
+    (or (await (persistence/read-event-tail store run-id limit (partial require-visible! ctx)))
+        (require-visible! ctx nil))))
 
 (defn- cursor [since]
   (cond

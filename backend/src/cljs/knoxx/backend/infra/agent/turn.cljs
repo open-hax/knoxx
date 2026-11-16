@@ -2,6 +2,7 @@
   "Main turn orchestrator: send-agent-turn! and supporting lifecycle functions."
   (:require [knoxx.backend.infra.run-event-payload :as run-payload]
             [clojure.string :as str]
+            [knoxx.backend.infra.agent.provider.native-subscription :as native-subscription]
             [knoxx.backend.infra.agent.initial-admission :as initial-admission]
             [knoxx.backend.infra.agent.hydration :refer [settings-state* ensure-settings!
                                                                 passive-hydration! passive-memory-hydration!
@@ -129,9 +130,9 @@
 
 (defn- extract-turn-answer-and-reasoning
   "Extract the final answer and reasoning text from streaming state and assistant message."
-  [state assistant-message]
+  [state assistant-message prefer-terminal-text?]
   (let [answer (let [chunked (apply str @(:chunks state))]
-                 (if (str/blank? chunked)
+                 (if (or prefer-terminal-text? (str/blank? chunked))
                    (assistant-message-text assistant-message)
                    chunked))
         reasoning-text (let [streamed (apply str @(:reasoning-chunks state))
@@ -284,7 +285,8 @@
   [config state session run-id conversation-id session-id started-ms model-id _mode
    hydration memory-hydration persisted-request-messages agent-spec]
   (let [assistant-message (latest-assistant-message session)
-        {:keys [answer reasoning-text]} (extract-turn-answer-and-reasoning state assistant-message)
+        {:keys [answer reasoning-text]} (extract-turn-answer-and-reasoning
+                                        state assistant-message (native-subscription/model-id? model-id))
         assistant-content-parts (content/assistant-content-parts assistant-message)
         usage-tokens (xturn-result/usage-tokens assistant-message)
         elapsed (- (.now js/Date) started-ms)
@@ -536,19 +538,22 @@
   (let [state (assoc (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms xturn-node/random-uuid!)
                      :event-stream-sink event-stream-sink)
         abort! (fn [reason] (stream/request-abort! state session reason))
-        _registered (stream/register-active-turn! state abort! agent-spec)
+        _registered (stream/register-active-turn! state abort! agent-spec session)
         unsubscribe (subscribe! session (stream/build-subscribe-handler state session))
         prompt (build-turn-prompt message agent-spec prompt-content-parts hydration memory-hydration)]
     (xturn-prompt/log-prompt! (assoc prompt :run-id run-id :session-id session-id
                                   :conversation-id conversation-id :model-id model-id :mode mode))
     (agent-ctx/set-context! {:session-id session-id :conversation-id conversation-id
                              :run-id run-id :agent-spec agent-spec})
-    (await (await-provider-prompt!
-            config state session prompt abort! unsubscribe
-            #(finalize-turn-success! config state session run-id conversation-id session-id started-ms model-id mode
-                                     hydration memory-hydration persisted-request-messages agent-spec)
-            #(finalize-turn-failure! config state session run-id conversation-id session-id started-ms
-                                     hydration memory-hydration persisted-request-messages agent-spec %)))))
+    (try
+      (await (await-provider-prompt!
+              config state session prompt abort! unsubscribe
+              #(finalize-turn-success! config state session run-id conversation-id session-id started-ms model-id mode
+                                       hydration memory-hydration persisted-request-messages agent-spec)
+              #(finalize-turn-failure! config state session run-id conversation-id session-id started-ms
+                                       hydration memory-hydration persisted-request-messages agent-spec %)))
+      (finally
+        (turn-control/unregister-active-turn! conversation-id run-id)))))
 
 (defn ^:async prompt-and-await!
   "Send, stream and finalize a turn, releasing only its explicitly owned observer.
@@ -683,7 +688,8 @@
 (defn- prepare-turn-context
   "Resolve turn parameters from the request and agent-spec.
    Returns a map of resolved values or throws for invalid inputs."
-  [_runtime config {:keys [conversation-id session-id message template-context model mode run-id auth-context thinking-level agent-spec]}]
+  [_runtime config {:keys [conversation-id session-id message template-context model mode run-id
+                           auth-context thinking-level agent-spec content-parts]}]
   (let [conversation-id (or conversation-id (xturn-node/random-uuid!))
         session-id (ensure-session-id session-id)
         auth-context (auth-context-for-agent-turn auth-context agent-spec)
@@ -692,6 +698,7 @@
         _ (remember-conversation-access! auth-context conversation-id)
         mode (or mode "direct")
         model-id (resolve-turn-model config model agent-spec)
+        _ (native-subscription/resolve-worker! config auth-context model-id agent-spec)
         {:keys [thinking-level-raw parsed-thinking-level thinking-level]} (resolve-turn-thinking-level config model-id thinking-level agent-spec)
         run-id (or run-id (xturn-node/random-uuid!))
         started-at (now-iso)
@@ -699,6 +706,8 @@
         existing-messages (vec (or (:messages (session-store/get-session-sync session-id)) []))
         seeded-messages (transcript/ensure-system-message existing-messages agent-spec)
         auth-extra (auth-snapshot auth-context)]
+    (when (and (native-subscription/model-id? model-id) (seq content-parts))
+      (throw (js/Error. "Native subscription sessions accept plain text only")))
     (when (and thinking-level-raw (nil? parsed-thinking-level))
       (throw (js/Error. (str "Unsupported thinking level: " thinking-level-raw ". Expected one of off, minimal, low, medium, high, xhigh."))))
     {:conversation-id conversation-id
@@ -719,14 +728,19 @@
   "Run passive hydration, memory hydration, content materialization, and session
    setup in parallel.  Returns a promise that resolves to the 4-element result vector."
   [runtime config {:keys [conversation-id session-id message mode model-id thinking-level agent-spec auth-context startup-owner] :as context} content-parts]
-  (let [max-bytes 32000000]
-    (await
-     (xpromise/all-vec
-      [(passive-hydration! runtime config mode message auth-context)
+  (if (native-subscription/model-id? model-id)
+    (let [session (await (initial-admission/construct-session! context
+                          #(ensure-agent-session! runtime config conversation-id model-id auth-context
+                                                  thinking-level session-id agent-spec startup-owner)))]
+      [nil nil [] session])
+    (let [max-bytes 32000000]
+      (await
+       (xpromise/all-vec
+        [(passive-hydration! runtime config mode message auth-context)
        (passive-memory-hydration! config conversation-id message auth-context agent-spec)
        (materialize-content-parts! runtime config model-id auth-context max-bytes content-parts)
        (initial-admission/construct-session! context
-        #(ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec startup-owner))]))))
+          #(ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec startup-owner))])))))
 
 (defn ^:async send-agent-turn!
   "Orchestrate a full agent turn: validate, hydrate, create run, prompt, and stream.
@@ -737,7 +751,8 @@
                 thinking-level agent-spec auth-extra seeded-messages message startup-owner]} ctx]
     ;; Enforce model allow-list and rate limits
     (await (policy/enforce-chat-policy! (:auth-context ctx) model-id))
-    (maybe-prime-session-title! runtime config conversation-id message)
+    (when-not (native-subscription/model-id? model-id)
+      (maybe-prime-session-title! runtime config conversation-id message))
     ;; Parallel: hydration, memory, content materialization, session setup
     (let [hydration-results (await (initial-admission/hydrate! ctx #(hydrate-and-materialize! runtime config ctx content-parts)))
           start-turn! (process-hydration-results-and-start-turn!

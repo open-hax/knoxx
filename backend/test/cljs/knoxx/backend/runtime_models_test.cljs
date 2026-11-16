@@ -83,3 +83,14 @@
       (is (= "off" (models/effective-thinking-level test-config "gemma4:e4b" nil)))
       (is (= "minimal" (models/effective-thinking-level test-config "gemma4:e4b" "minimal")))
       (is (= "xhigh" (models/effective-thinking-level test-config "gemma4:e4b" "xhigh"))))))
+
+(deftest proxx-gpt-6-sol-uses-deployed-model-contract
+  (let [model-id "openai/gpt-6.1-sol"
+        config {:contracts-dir "../contracts"
+                :agent-thinking-level "minimal"}
+        model (models/resolve-model-contract config model-id)]
+    (is (true? (models/allowlisted-model-id? config model-id)))
+    (is (= "proxx" (:provider model)))
+    (is (= "medium" (models/effective-thinking-level config model-id nil)))
+    (is (= "medium" (models/effective-thinking-level config model-id "minimal")))
+    (is (= "high" (models/effective-thinking-level config model-id "high")))))

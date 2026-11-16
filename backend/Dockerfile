@@ -26,6 +26,7 @@ RUN apt-get update \
 
 # Compiled by `shadow-cljs release server` before `docker build`.
 COPY dist ./dist
+COPY src/cljs/knoxx/backend/extern/native_claude.mjs ./src/cljs/knoxx/backend/extern/
 COPY docker ./docker
 
 # Compose/deployment MUST mount the real contracts tree at /app/contracts. It

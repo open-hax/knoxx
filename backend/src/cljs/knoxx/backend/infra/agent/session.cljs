@@ -6,6 +6,7 @@
             [knoxx.backend.infra.agent.content-codec :as content-codec]
             [knoxx.backend.infra.agent.history :as history]
             [knoxx.backend.infra.agent.provider.eta-mu :as eta-mu-provider]
+            [knoxx.backend.infra.agent.provider.native-subscription :as native-subscription]
             [knoxx.backend.infra.agent.session-registry :as session-registry]
             [knoxx.backend.infra.agent.tool-catalog :as tool-catalog]
             [knoxx.backend.infra.http :refer [no-content?]]
@@ -142,50 +143,52 @@
   ([runtime config conversation-id model-id auth-context thinking-level session-id]
    (create-session-manager! runtime config conversation-id model-id auth-context thinking-level session-id nil))
   ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec]
-   (let [{:keys [auth-storage model-registry settings-manager loader runtime-dir]} (await (ensure-eta-mu-runtime! runtime config))
-         thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
-                                                                      thinking-level
-                                                                      (:agent-thinking-level config)
-                                                                      "off"))
-         model-provider-id (or (some-> (resolve-model-contract config model-id) :provider)
-                               "proxx")
-         provider (eta-mu-provider/eta-mu-provider runtime config)
-          model (eta-mu-provider/resolve-model provider
-                                               model-registry
-                                               model-provider-id
-                                               model-id
-                                               (:proxx-default-model config))
-          allowed-tool-ids (tool-catalog/allowed-tool-ids config auth-context agent-spec)
-          tool-auth-context (tool-catalog/effective-tool-auth-context auth-context allowed-tool-ids)
-          {:keys [custom-tools tool-name-allowlist]} (session-provider-tools runtime config tool-auth-context agent-spec
-                                                                             allowed-tool-ids model-id session-id conversation-id)
-          preferred-session-id (some-> session-id str str/trim not-empty)
-          message-source (->CompositeMessageSource
-                           (->OpenPlannerMessageSource config)
-                          (->MongoMessageSource preferred-session-id))]
-     (if (no-content? model)
-       (js/Promise.reject (js/Error. (str "No eta-mu model configured for " model-id)))
-       (let [session-manager (eta-mu-extern/make-session-manager! (:workspace-root config) preferred-session-id)]
-         (eta-mu-extern/append-model-change! session-manager model-provider-id model-id)
-         (eta-mu-extern/append-thinking-level-change! session-manager thinking-level)
-         (let [{:keys [session-manager]} (await (rehydrate-session-manager! message-source session-manager conversation-id agent-spec))
-               session (await (eta-mu-provider/create-session!
-                               provider
-                               {:workspace-root (:workspace-root config)
-                                :runtime-dir runtime-dir
-                                :auth-storage auth-storage
-                                :model-registry model-registry
-                                :loader loader
-                                :settings-manager settings-manager
-                                :session-manager session-manager
-                                :model model
-                                :thinking-level thinking-level
-                                :tool-name-allowlist tool-name-allowlist
-                                :custom-tools custom-tools
-                                :tools-choice (:tools-choice agent-spec)
-                                :materialize! materialize!}))]
-           (set-thinking-level! session thinking-level)
-           session))))))
+   (if-let [selection (native-subscription/resolve-worker! config auth-context model-id agent-spec)]
+     (native-subscription/create-session selection (:system-prompt agent-spec))
+     (let [{:keys [auth-storage model-registry settings-manager loader runtime-dir]} (await (ensure-eta-mu-runtime! runtime config))
+           thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
+                                                                        thinking-level
+                                                                        (:agent-thinking-level config)
+                                                                        "off"))
+           model-provider-id (or (some-> (resolve-model-contract config model-id) :provider)
+                                 "proxx")
+           provider (eta-mu-provider/eta-mu-provider runtime config)
+            model (eta-mu-provider/resolve-model provider
+                                                 model-registry
+                                                 model-provider-id
+                                                 model-id
+                                                 (:proxx-default-model config))
+            allowed-tool-ids (tool-catalog/allowed-tool-ids config auth-context agent-spec)
+            tool-auth-context (tool-catalog/effective-tool-auth-context auth-context allowed-tool-ids)
+            {:keys [custom-tools tool-name-allowlist]} (session-provider-tools runtime config tool-auth-context agent-spec
+                                                                               allowed-tool-ids model-id session-id conversation-id)
+            preferred-session-id (some-> session-id str str/trim not-empty)
+            message-source (->CompositeMessageSource
+                             (->OpenPlannerMessageSource config)
+                            (->MongoMessageSource preferred-session-id))]
+       (if (no-content? model)
+         (js/Promise.reject (js/Error. (str "No eta-mu model configured for " model-id)))
+         (let [session-manager (eta-mu-extern/make-session-manager! (:workspace-root config) preferred-session-id)]
+           (eta-mu-extern/append-model-change! session-manager model-provider-id model-id)
+           (eta-mu-extern/append-thinking-level-change! session-manager thinking-level)
+           (let [{:keys [session-manager]} (await (rehydrate-session-manager! message-source session-manager conversation-id agent-spec))
+                 session (await (eta-mu-provider/create-session!
+                                 provider
+                                 {:workspace-root (:workspace-root config)
+                                  :runtime-dir runtime-dir
+                                  :auth-storage auth-storage
+                                  :model-registry model-registry
+                                  :loader loader
+                                  :settings-manager settings-manager
+                                  :session-manager session-manager
+                                  :model model
+                                  :thinking-level thinking-level
+                                  :tool-name-allowlist tool-name-allowlist
+                                  :custom-tools custom-tools
+                                  :tools-choice (:tools-choice agent-spec)
+                                  :materialize! materialize!}))]
+             (set-thinking-level! session thinking-level)
+             session)))))))
 
 (defn- claim-startup-session!
   "Join a pending construction; established sessions never become startup-owned."
@@ -269,7 +272,10 @@
                                                                       thinking-level
                                                                       (:agent-thinking-level config)
                                                                       "off"))
-         current-tool-signature (visible-session-signature runtime config auth-context agent-spec)
+         native-selection (native-subscription/resolve-worker! config auth-context model-id agent-spec)
+         current-tool-signature (if native-selection
+                                  [session-id (:system-prompt agent-spec) (:native-subscription-owner config) native-selection]
+                                  (visible-session-signature runtime config auth-context agent-spec))
          construct-this-session! (partial construct-session-and-ext-ctx! runtime config conversation-id model-id
                                           auth-context thinking-level session-id agent-spec current-tool-signature)]
      (if-let [entry (active-session-entry conversation-id)]
