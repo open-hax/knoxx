@@ -162,6 +162,10 @@
    :ollama-default-model (let [value (aget js/process.env "OLLAMA_DEFAULT_MODEL")]
                            (when (and (string? value) (not (str/blank? value)))
                              value))
+   :native-subscription-owner {:org-id (env "KNOXX_NATIVE_SUBSCRIPTION_ORG_ID" nil)
+                               :membership-id (env "KNOXX_NATIVE_SUBSCRIPTION_MEMBERSHIP_ID" nil)
+                               :actor-id (env "KNOXX_NATIVE_SUBSCRIPTION_ACTOR_ID" nil)}
+   :native-claude-home (env "KNOXX_CLAUDE_HOME" nil)
    :provider-base-urls (env-kv-map "KNOXX_PROVIDER_BASE_URLS")
    :provider-auth-tokens (env-kv-map "KNOXX_PROVIDER_AUTH_TOKENS")
    :provider-auth-headers (env-kv-map "KNOXX_PROVIDER_AUTH_HEADERS")

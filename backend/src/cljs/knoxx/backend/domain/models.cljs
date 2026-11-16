@@ -24,7 +24,8 @@
 
 (defn normalize-thinking-level
   [value]
-  (let [normalized (some-> value str str/trim str/lower-case not-empty)]
+  (let [level (if (keyword? value) (name value) value)
+        normalized (some-> level str str/trim str/lower-case not-empty)]
     (when (contains? thinking-levels normalized)
       normalized)))
 

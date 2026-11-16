@@ -84,9 +84,8 @@
                  (nonblank (:parent_run_id agent-spec)))}))
 
 (defn- resolve-target-sync
-  [params metadata]
-  (let [ctx (current-context)
-        target (nonblank (or (aget params "target") "self"))
+  [params metadata ctx]
+  (let [target (nonblank (or (aget params "target") "self"))
         type-hint (normalize-target-type (aget params "target_type"))
         parsed (prefixed-target target)
         target-type (or (:type parsed) type-hint)
@@ -148,7 +147,7 @@
 
 (defn- event-payload
   [target content metadata current mailbox-id]
-  (cond-> {:sourceKind "actor"
+  (cond-> {:generatorKind "actor"
            :eventKind "actors.message"
            :payload {:target (:target target)
                      :targetType (:target-type target)
@@ -166,12 +165,14 @@
     (assoc :id (actor-mailbox/mailbox-event-id mailbox-id))))
 
 (defn- send-event!
-  [config target content metadata mailbox-id]
-  (fetch-json! config "POST" "/api/admin/config/events/dispatch"
-               (event-payload target content metadata (current-context) mailbox-id)))
+  [config target content metadata current mailbox-id dispatch!]
+  (let [payload (event-payload target content metadata current mailbox-id)]
+    (if dispatch!
+      (dispatch! payload)
+      (fetch-json! config "POST" "/api/admin/config/events/dispatch" payload))))
 
 (defn- send-control!
-  [config target mode content metadata]
+  [config target mode content metadata control!]
   (let [conversation-id (:conversation-id target)
         session-id (:session-id target)
         run-id (:run-id target)]
@@ -183,12 +184,13 @@
       (js/Promise.reject (js/Error. "session_id is required for steer/follow-up actor messages"))
 
       :else
-      (fetch-json! config "POST" (control-path mode)
-                   {:message content
-                    :conversation_id conversation-id
-                    :session_id session-id
-                    :run_id run-id
-                    :metadata metadata}))))
+      (let [payload {:message content :conversation-id conversation-id
+                     :session-id session-id :run-id run-id :metadata metadata}]
+        (if control!
+          (control! (delivery-mode mode) payload)
+          (fetch-json! config "POST" (control-path mode)
+                       {:message content :conversation_id conversation-id
+                        :session_id session-id :run_id run-id :metadata metadata}))))))
 
 (defn- ^:async resolve-actor-route!
   [runtime target]
@@ -211,20 +213,19 @@
     (delivery-mode mode)))
 
 (defn- create-mailbox-entry!
-  [runtime target mode content metadata]
-  (let [current (current-context)]
-    (actor-mailbox/create-entry!
+  [runtime target mode content metadata current]
+  (actor-mailbox/create-entry!
      runtime
-     {:kind "actor-message"
-      :status "pending"
-      :source (actor-mailbox/source-from-context current)
-      :target target
-      :delivery-mode (mailbox-delivery-mode mode)
-      :content-ref (cond-> {}
-                     (:run-id target) (assoc :target-run-id (:run-id target))
-                     (:run-id current) (assoc :source-run-id (:run-id current)))
-      :metadata metadata
-      :preview content})))
+   {:kind "actor-message"
+    :status "pending"
+    :source (actor-mailbox/source-from-context current)
+    :target target
+    :delivery-mode (mailbox-delivery-mode mode)
+    :content-ref (cond-> {}
+                   (:run-id target) (assoc :target-run-id (:run-id target))
+                   (:run-id current) (assoc :source-run-id (:run-id current)))
+    :metadata metadata
+    :preview content}))
 
 (defn- mailbox-id
   [entry]
@@ -244,13 +245,13 @@
   (throw err))
 
 (defn- ^:async deliver-actor-message!
-  [runtime config mode content metadata resolved-target entry]
+  [runtime config mode content metadata resolved-target entry current {:keys [dispatch! control!]}]
   (let [mailbox-id (mailbox-id entry)
         metadata* (assoc metadata :mailboxId mailbox-id)]
     (try
       (let [result (await (if (= "event" mode)
-                            (send-event! config resolved-target content metadata* mailbox-id)
-                            (send-control! config resolved-target mode content metadata*)))
+                            (send-event! config resolved-target content metadata* current mailbox-id dispatch!)
+                            (send-control! config resolved-target mode content metadata* control!)))
             result* (js->clj result :keywordize-keys true)]
         (try
           (await (actor-mailbox/mark-delivered!
@@ -263,21 +264,23 @@
       (catch :default err
         (await (mark-failed-and-rethrow! runtime mailbox-id err))))))
 
-(defn ^:async actors-send-message-execute
-  [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        content (or (aget params "content") "")
+(defn ^:async deliver-message!
+  "Resolve and deliver a message using the supplied source and optional control capabilities."
+  [runtime config params on-update current {:keys [authorize!] :as operations}]
+  (let [content (or (aget params "content") "")
         mode (normalize-mode (aget params "mode"))
         metadata (parse-metadata (or (aget params "metadata_json")
                                      (aget params "metadataJson")))
-        target (resolve-target-sync params metadata)]
+        target (resolve-target-sync params metadata current)]
     (when (str/blank? (str content))
       (throw (js/Error. "content is required")))
     (maybe-tool-update! on-update (str "Sending actor message via " mode "…"))
     (let [session-target (await (resolve-session-conversation! target))
           resolved-target (await (resolve-actor-route! runtime session-target))
-          entry (await (create-mailbox-entry! runtime resolved-target mode content metadata))
-          {:keys [entry target result]} (await (deliver-actor-message! runtime config mode content metadata resolved-target entry))
+          authenticated-target (if authorize! (await (authorize! mode resolved-target)) resolved-target)
+          entry (await (create-mailbox-entry! runtime authenticated-target mode content metadata current))
+          {:keys [entry target result]}
+          (await (deliver-actor-message! runtime config mode content metadata authenticated-target entry current operations))
           summary (str "Sent actor message to " (:target target)
                        " via " (if (= "message" mode) "follow-up" mode))]
       (tool-text-result summary
@@ -288,6 +291,11 @@
                          :mailbox_durable (boolean (:mailbox/durable? entry))
                          :target target
                          :result result}))))
+
+(defn actors-send-message-execute
+  [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))]
+    (deliver-message! runtime config params on-update (current-context) nil)))
 
 (def actors-send-message-tool
   (partial create-tool-obj

@@ -103,3 +103,22 @@
     (doseq [token [false nil "not-a-uuid"]]
       (swap! (:documents fixture) assoc-in ["run" :persistence_token] token)
       (is (= "run_store_corrupt" (:code (await (refusal #(protocol/get-run provider "run")))))))))
+
+(deftest ^:async monitoring-reads-only-the-accepted-event-tail
+  (let [fixture (fixture/create) provider (open fixture (atom at))
+        header-reads (atom [])
+        read-header! native-events/read-header!]
+    (await (protocol/put-run! provider run))
+    (doseq [number (range 45)]
+      (await (protocol/append-event! provider (assoc event :event_id (str "history-" number)))))
+    (with-redefs [native-events/read-header! (fn [db reference run-key sequence]
+                                               (swap! header-reads conj sequence)
+                                               (read-header! db reference run-key sequence))]
+      (is (= 403 (:status (await (refusal #(protocol/read-event-tail provider "run" 20
+                                                                   (fn [_] (throw (ex-info "denied" {:status 403})))))))))
+      (is (empty? @header-reads) "Authorization failure stops before event replay")
+      (let [observation (await (protocol/read-event-tail provider "run" 20 identity))]
+        (is (= "completed" (get-in observation [:run :status])))
+        (is (= 45 (:event-count observation)))
+        (is (= (vec (range 26 46)) (mapv :sequence (:events observation))))
+        (is (= (vec (range 45 25 -1)) @header-reads))))))
