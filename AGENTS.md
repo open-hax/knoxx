@@ -52,6 +52,9 @@ When modeling domains, you must strictly differentiate between the grammar of mo
 
 ## Runtime Operations
 
+- Use [OpenHax Services](https://github.com/open-hax/services) for hosted Knoxx
+  deployments and live verification. Knoxx owns its build and qualification
+  workflows. See [Deployment ownership](README.md#deployment-ownership).
 - Do not restart Knoxx PM2 processes unless the user explicitly asks for a restart.
 - Prefer source edits and let shadow-cljs hot reload backend CLJS changes; Vite will reload frontend changes automatically.
 - If a restart seems necessary, report why and wait for the user to restart or approve it.

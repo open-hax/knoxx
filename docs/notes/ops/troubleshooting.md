@@ -32,8 +32,13 @@ Common causes:
 
 ## Image not updating
 
+For a hosted environment, verify the selected image and release receipt through
+[Services deployment guidance](../../../README.md#deployment-ownership).
+
+From the workstation backend build context and its local Compose project:
+
 ```bash
-docker build --no-cache -t knoxx-backend:latest .   # 2026-09-30: default image name per backend/scripts/rebuild-image.sh
+docker build --no-cache -t knoxx-backend:latest .
 docker compose up -d knoxx-backend --force-recreate
 ```
 

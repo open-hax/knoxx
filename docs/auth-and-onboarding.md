@@ -139,8 +139,9 @@ self-signup or infer admin rights from arbitrary email/password logins.
   `open-hax/services/digitalocean/hosts/production.yaml`.
 - **TLS and routing**: the Services-owned Caddy definition routes the frontend,
   API, WebSocket, and health surfaces to the Knoxx Compose project.
-- **Deployment**: a reviewed Services pull request carrying `deploy` at merge
-  time builds and deploys Knoxx from its reviewed `main` revision.
+- **Deployment**: run **Deploy Stack** from Services on `main` with
+  `scope: stack` and the full merged Knoxx SHA as `knoxx_ref`. See
+  [Deployment ownership](../README.md#deployment-ownership).
 - **Local development**: use the local Vite and Fastify endpoints; it is a
   separate runtime from production.
 

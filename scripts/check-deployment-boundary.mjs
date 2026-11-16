@@ -7,10 +7,18 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const self = "scripts/check-deployment-boundary.mjs";
-const retiredEntryPoints = [".github/workflows/deploy-testing.yml"];
+const retiredEntryPoints = [
+  ".github/workflows/deploy-testing.yml",
+  ".github/workflows/deploy-production.yml",
+  ".github/workflows/environment-promotion.yml",
+];
 const activeRoots = [".github/workflows", "scripts"];
 const currentContractFiles = ["README.md", "docs/auth-and-onboarding.md"];
 const rules = [
+  [
+    "hosted deploy called from the application repository",
+    /^\s*(?:-\s+)?uses:\s*['"]?open-hax\/services\/\.github\/workflows\/deploy-[\w-]+\.ya?ml@/,
+  ],
   ["retired Services workflow", /deploy-promethean\.ya?ml/],
   ["retired testing workflow", /deploy-testing\.ya?ml/],
   ["legacy VPS address", /\b104\.130\.159\.19\b/],
@@ -66,6 +74,9 @@ function selfTest() {
   const bad = [
     "uses: open-hax/services/.github/workflows/deploy-promethean.yaml@main",
     "follow .github/workflows/deploy-testing.yml",
+    "    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@0123456789abcdef",
+    "      - uses: 'open-hax/services/.github/workflows/deploy-stack-chain.yml@main'",
+    "    uses: open-hax/services/.github/workflows/deploy-knoxx-public-policy.yml@main",
     "ssh error@proxx.promethean.rest",
     "ssh error@104.130.159.19",
     "runtimeRoot: /home/error/devel/services/knoxx",
@@ -75,6 +86,8 @@ function selfTest() {
     "DEPLOY_USER: error",
   ];
   const safe = [
+    "Use https://github.com/open-hax/services/blob/main/.github/workflows/deploy-stack.yml",
+    "    uses: open-hax/services/.github/workflows/build-images.yml@main",
     "PROXX_PUBLIC_HOST=proxx.promethean.rest",
     "runtimeRoot: /srv/open-hax",
     "sshUser: deploy",

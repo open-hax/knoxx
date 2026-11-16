@@ -225,45 +225,19 @@ open-world write regardless of what it does.
 rise; lower it as entries are added to `law.mcp-tool-annotations`, which
 deliberately refuses to guess an annotation from a tool's name.
 
-## The deploy gate
+## The Services deployment gate
 
-> *2026-09-30:* in the current `open-hax/services` checkout (`7e5ad2c`),
-> `digitalocean/services/knoxx/verify.sh` has no MCP section and no file named
-> `probe-mcp.js` or referencing `KNOXX_MCP_*` exists. What follows describes the
-> intended gate; treat it as unverified until that change is found or landed.
+[Services owns the production verifier](https://github.com/open-hax/services/blob/main/digitalocean/services/knoxx/verify.sh).
+It runs `probe-mcp.js` inside the backend container over loopback. The
+production authentication contract resolves the dedicated
+`deploy_verifier` actor with only `semantic_query` and `events_status`.
+The verifier requires the configured loopback credential and successful
+calls to both tools. It rejects extra or duplicate tools, degraded schemas,
+and both JSON-RPC and tool errors.
 
-`digitalocean/services/knoxx/verify.sh` in the `open-hax/services` deployment repo gains an MCP
-section. A healthy backend with a broken tool surface is a real and previously
-undetectable failure — a schema conversion producing nothing callable, a tool
-vanishing from the catalog, an actor credential that no longer resolves — and
-none of it moves `/health`.
-
-The gate runs `probe-mcp.js` inside the backend container with
-`docker compose exec`, so it is on `127.0.0.1`, which `:require-loopback`
-permits and nothing off-box can reach. The backend port is not published to the
-host.
-
-It fails the deploy on: an unauthorized or unavailable surface, a catalog under
-`KNOXX_MCP_MIN_TOOLS` (default 20), any degraded tool, duplicate tool names, a
-probed tool missing from the catalog, or any `rpc-error`. A **tool-error** is
-reported and not fatal — the tool ran and said its dependency is not configured
-on that host, which is a legitimate answer.
-
-Three read-only tools are probed by default, each proving a different
-subsystem end to end: `semantic_query` the corpus data plane, `events_status`
-the events runtime, and `discord_list_servers` that the `system_admin`
-actor's credential still resolves. No writes — a deploy gate must not publish
-anything.
-
-The section skips itself when `KNOXX_MCP_LOOPBACK_TOKEN` is unset, unless
-`KNOXX_EXPECT_MCP_VERIFY=true`, which turns a missing secret into a failure so
-the only check covering the tool catalog cannot be silently lost.
-
-`probe-mcp.js` carries a `PROBE_SELFTEST=1` classifier matrix that
-`code-quality.yml` runs on every PR, following `probe-openplanner.js`. It
-covers the two mistakes that ship green: reading a `text/event-stream` body as
-JSON (a working surface looks empty) and treating a 200 as a pass (MCP reports
-a tool's own failure as a *successful* result carrying `isError`).
+This read-only deployment check covers the serving catalog, corpus query,
+and event runtime status. The local and deployed-client checks above cover
+the broader MCP tool behavior.
 
 ## Known gaps the first run surfaced
 

@@ -14,30 +14,32 @@ tags: [docker, shadow-cljs, pnpm, deployment]
 > image runs `node dist/server.js` (`backend/Dockerfile:48`). The old `:app` build
 > still exists (`backend/shadow-cljs.edn:9-11`) but is not the container entrypoint.
 
-## Quick Rebuild (from the Knoxx repository root)
+## Hosted deployments
+
+Use [Deployment ownership](../../../README.md#deployment-ownership) for
+the Services workflow and exact source revision. The commands below
+operate on a workstation checkout.
+
+## Quick local rebuild
+
+From the Knoxx repository root, run:
 
 ```bash
 backend/scripts/rebuild-image.sh
-# optional compose restart:
-KNOXX_BACKEND_COMPOSE_FILE=/path/to/compose.yml \
-KNOXX_BACKEND_COMPOSE_SERVICE=knoxx-backend \
-  backend/scripts/rebuild-image.sh
 ```
 
-The script builds image `${KNOXX_BACKEND_IMAGE:-knoxx-backend:latest}` and only
-restarts compose when `KNOXX_BACKEND_COMPOSE_FILE` is set
-(`backend/scripts/rebuild-image.sh:1-20`).
+The script builds the image named by `KNOXX_BACKEND_IMAGE`, which defaults to
+`knoxx-backend:latest`. For a workstation Compose project, set
+`KNOXX_BACKEND_COMPOSE_FILE` to its local file and
+`KNOXX_BACKEND_COMPOSE_SERVICE` to its backend service.
 
-## Manual Steps
+## Manual local build
 
 ```bash
 cd backend
-pnpm install                          # install deps if needed
-pnpm run build                        # shadow-cljs release server -> dist/server.js
+pnpm install
+pnpm run build
 docker build -t knoxx-backend:latest .
-# then restart the knoxx-backend service in whichever compose file deploys it,
-# e.g. services/digitalocean/services/knoxx/compose.yaml in the Foresight
-# services repository (service `knoxx-backend`, image from KNOXX_BACKEND_IMAGE).
 ```
 
 ## Dev / Watch Mode
