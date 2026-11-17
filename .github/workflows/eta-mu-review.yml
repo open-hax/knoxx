@@ -16,7 +16,7 @@ jobs:
     # Recovery workflow from eta-mu PR #339 (qualification pending). It preserves model stdout and
     # stderr, records invocation metadata, and permits only one omission-only
     # corrective attempt before failing closed.
-    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@b5b28237c45323cdc1914317260192163d957735
+    uses: open-hax/eta-mu/.github/workflows/opencode-code-review.yml@40058f43f47e9f793210803f185159cd81999986
     with:
       pr_head_sha: ${{ github.event.pull_request.head.sha }}
       setup_eta_mu_toolchain: false
