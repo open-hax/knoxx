@@ -57,6 +57,11 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     const filtered = await request('/v1/content/sample/versions?locales=en&statuses=draft');
     assert.equal(filtered.status, 200, await filtered.clone().text());
     assert.equal((await filtered.json()).items.length, 1);
+    const matchingContent = await request('/v1/content?locales=en&statuses=draft');
+    assert.equal(matchingContent.status, 200);
+    assert.deepEqual((await matchingContent.json()).items.map(item => item.key), ['sample']);
+    assert.equal((await request('/v1/contenttypes?locales=en')).status, 400);
+    assert.equal((await request('/v1/locales?statuses=draft')).status, 400);
     res = await request('/v1/content/sample/versions/1', { method: 'PATCH', headers: { 'content-type': 'application/merge-patch+json', 'if-match': '"stale"' }, body: '{"displayName":"Bad"}' });
     assert.equal(res.status, 412);
     client = new Client({ name: 'integration', version: '1' });

@@ -10,7 +10,7 @@
           :documented-models 75
           :note "Model count is not a route count. Group counts describe the reference, not implemented coverage."}
  :implemented-local
- [{:methods [:get :post] :path "/v1/content" :note "GET is a local discovery extension."}
+ [{:methods [:get :post] :path "/v1/content" :note "GET is a local discovery extension; locale/status filters match any one version satisfying both."}
   {:methods [:get :patch] :path "/v1/content/{key}" :note "Container mutation is not implemented."}
   {:methods [:get :post] :path "/v1/content/{key}/versions"}
   {:methods [:get :patch] :path "/v1/content/{key}/versions/{version}"}

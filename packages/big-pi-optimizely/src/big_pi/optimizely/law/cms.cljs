@@ -39,7 +39,7 @@
        (or (not (contains? v :displayName)) (nil? (:displayName v)) (display-name? (:displayName v)))
        (or (not (contains? v :properties)) (nil? (:properties v)) (map? (:properties v)))))
 
-(defn paging "Validate local pagination and filter query parameters." [query]
+(defn paging "Validate pagination and optionally version filter parameters." [query filters?]
   (let [parse (fn [s default]
                 (if (nil? s) default
                     (when (and (string? s) (re-matches #"[0-9]+" s))
@@ -47,7 +47,8 @@
         index (parse (get query "pageIndex") 0)
         size (parse (get query "pageSize") 100)]
     (when (and index size (<= 1 size 10000)
-               (every? #{"pageIndex" "pageSize" "locales" "statuses"} (keys query))
+               (every? (if filters? #{"pageIndex" "pageSize" "locales" "statuses"}
+                                    #{"pageIndex" "pageSize"}) (keys query))
                (every? #(or (nil? %) (and (vector? %) (every? string? %)))
                        [(get query "locales") (get query "statuses")]))
       {:pageIndex index :pageSize size})))

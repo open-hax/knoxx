@@ -6,6 +6,24 @@
   (cms/handle state {:method method :path path :body body :headers (or headers {})
                      :query (or query {}) :actor (or actor {})}))
 
+(deftest collection-filters-match-their-resource-shape
+  (let [create (fn [s key locale]
+                 (:state (request s :post "/v1/content" {:key key :contentType "Article"
+                           :initialVersion {:displayName key :locale locale :properties {}}})))
+        state (-> (cms/initial-state) (create "a" "en") (create "b" "de") (create "c" "en"))
+        state (:state (request state :post "/v1/content/a/versions" {:displayName "German" :locale "de" :properties {}}))
+        listing (fn [path query] (:response (request state :get path nil nil query)))]
+    (is (= ["a" "c"] (mapv :key (get-in (listing "/v1/content" {"locales" ["en"]}) [:body :items]))))
+    (is (= ["a" "b"] (mapv :key (get-in (listing "/v1/content" {"locales" ["de"] "statuses" ["draft"]}) [:body :items]))))
+    (is (= 3 (get-in (listing "/v1/content" {"statuses" ["draft"]}) [:body :totalCount])))
+    (is (= 0 (get-in (listing "/v1/content" {"locales" ["es"]}) [:body :totalCount])))
+    (is (= 0 (get-in (listing "/v1/content" {"statuses" ["published"]}) [:body :totalCount])))
+    (let [page (:body (listing "/v1/content" {"locales" ["en"] "pageIndex" "1" "pageSize" "1"}))]
+      (is (= 2 (:totalCount page))) (is (= ["c"] (mapv :key (:items page)))))
+    (is (= ["2"] (mapv :version (get-in (listing "/v1/content/a/versions" {"locales" ["de"] "statuses" ["draft"]}) [:body :items]))))
+    (doseq [path ["/v1/contenttypes" "/v1/locales"] query [{"locales" ["en"]} {"statuses" ["draft"]}]]
+      (is (= 400 (:status (listing path query)))))))
+
 (deftest content-lifecycle
   (let [initial (cms/initial-state)
         created (request initial :post "/v1/content"

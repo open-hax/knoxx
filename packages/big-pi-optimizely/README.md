@@ -57,6 +57,10 @@ curl -sS http://127.0.0.1:4175/v1/content \
 `GET /v1/content` is a **local discovery extension**, not a documented vendor
 collection endpoint. `GET /v1/capabilities` describes local support. Unsupported
 routes fail explicitly; an unsupported operation never returns fabricated success.
+The content discovery extension's `locales` and `statuses` filters match content
+when any one of its versions satisfies both filters. Version listings filter
+versions directly. Content-type and locale definition listings support pagination
+and reject those version filters. Totals count matching items before pagination.
 Publishing is deliberately unavailable in this initial draft workflow. The full
 publication and delivery compatibility stories remain in the epic.
 

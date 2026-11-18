@@ -56,12 +56,17 @@
 (defn- stale? [request entity]
   (let [match (get-in request [:headers "if-match"])]
     (and match (not= match "*") (not= match (current-tag entity)))))
-(defn- page [state request values]
-  (if-let [{:keys [pageIndex pageSize]} (law/paging (:query request))]
+(defn- page [state request values kind]
+  (if-let [{:keys [pageIndex pageSize]} (law/paging (:query request) (not= kind :definitions))]
     (let [locales (get-in request [:query "locales"])
           statuses (get-in request [:query "statuses"])
-          filtered (filter #(and (or (nil? locales) (some #{(:locale %)} locales))
-                                 (or (nil? statuses) (some #{(:status %)} statuses))) values)
+          matches? #(and (or (nil? locales) (some #{(:locale %)} locales))
+                         (or (nil? statuses) (some #{(:status %)} statuses)))
+          filtered (filter (fn [entity]
+                             (case kind
+                               :content (some matches? (vals (:versions entity)))
+                               :versions (matches? entity)
+                               :definitions true)) values)
           items (->> filtered (drop (* pageIndex pageSize)) (take pageSize) (mapv visible))]
       (response state 200 {:items items :pageIndex pageIndex :pageSize pageSize :totalCount (count filtered)}))
     (problem state 400 "invalid_query" "Invalid paging or filters")))
@@ -134,7 +139,7 @@
 
 (defn- entity-collection [state request kind fields]
   (case (:method request)
-    :get (page state request (sort-by :key (vals (get state kind))))
+    :get (page state request (sort-by :key (vals (get state kind))) :definitions)
     :post (let [data (:body request) key (:key data) path [kind key]]
             (cond
               (not (law/entity? data fields false)) (problem state 400 "invalid_body" "Invalid resource")
@@ -157,7 +162,7 @@
     (cond
       (= 1 (count parts))
       (case method
-        :get (page state request (sort-by :key (vals (:content state))))
+        :get (page state request (sort-by :key (vals (:content state))) :content)
         :post (create-content state request)
         (problem state 501 "unsupported_operation" "Operation is not implemented"))
 
@@ -172,7 +177,7 @@
       (and (= 3 (count parts)) (= section "versions"))
       (cond
         (nil? entity) (problem state 404 "not_found" "Content not found")
-        (= method :get) (page state request (sort-by #(parse-long (:version %)) (vals (:versions entity))))
+        (= method :get) (page state request (sort-by #(parse-long (:version %)) (vals (:versions entity))) :versions)
         (= method :post) (create-version state request key (:body request))
         :else (problem state 501 "unsupported_operation" "Operation is not implemented"))
 
