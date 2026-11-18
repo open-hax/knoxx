@@ -186,8 +186,10 @@ export async function startStdio() {
   const server = createServer(async (name, args) => {
     const result = await client.callTool({ name, arguments: args });
     const text = result.content?.find(x => x.type === 'text')?.text;
-    if (result.isError) return { status: 400, error: text };
-    return JSON.parse(text);
+    const response = JSON.parse(text);
+    if (!Number.isInteger(response?.status) || response.status < 100 || response.status > 599 ||
+        Boolean(result.isError) !== (response.status >= 400)) throw new Error('Invalid local response');
+    return response;
   });
   await server.connect(new StdioServerTransport());
 }

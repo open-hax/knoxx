@@ -93,13 +93,14 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
 });
 
 test('configured bridge imports an exact source and exports only a draft to the local emulator', async () => {
-  const calls = [], revisions = []; let doc, client;
+  const calls = [], revisions = []; let doc, client, stdio, dropWriteReply = false;
   const fixture = http.createServer(async (req, res) => {
     calls.push([req.method, req.url, req.headers.authorization]);
     let raw = ''; for await (const chunk of req) raw += chunk;
     res.setHeader('content-type', 'application/json');
     if (req.method === 'POST' && req.url === '/api/cms/documents') {
       doc = { ...JSON.parse(raw), doc_id: 'doc1', revision: 'rev1', revision_heads: ['rev1'], conflicted: false }; revisions.push(doc);
+      if (dropWriteReply) { req.socket.destroy(); return; }
       res.end(JSON.stringify(doc));
     } else if (req.method === 'PATCH' && req.url === '/api/cms/documents/doc1') {
       const body = JSON.parse(raw);
@@ -158,7 +159,26 @@ test('configured bridge imports an exact source and exports only a draft to the 
       assert.ok(calls.every(([, , auth]) => auth === 'Bearer fixture-token'));
       await client.close(); client = undefined;
     }
+    // The CMS accepted this write but its reply is lost: every transport must
+    // preserve uncertainty, rather than misreporting a rejected request.
+    dropWriteReply = true;
+    const before = calls.filter(([method]) => method === 'POST').length;
+    const operation = { name: 'big_pi_import_source', arguments: { key: 'source-title', version: '1', field: 'title', 'source-system': 'fixture' } };
+    client = new Client({ name: 'uncertain-http', version: '1' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: 'Bearer local' } } }));
+    const httpError = await client.callTool(operation);
+    assert.equal(httpError.isError, true);
+    const expected = JSON.parse(httpError.content[0].text);
+    assert.equal(expected.status, 502);
+    assert.equal(expected.body.code, 'outcome-uncertain');
+    stdio = new Client({ name: 'uncertain-stdio', version: '1' });
+    await stdio.connect(new StdioClientTransport({ command: resolve('node_modules/.bin/nbb'), args: ['-cp', 'src', '-m', 'big-pi.optimizely.main', '--stdio'], env: { ...env, BIG_PI_BASE_URL: base }, stderr: 'pipe' }));
+    const stdioError = await stdio.callTool(operation);
+    assert.equal(stdioError.isError, true);
+    assert.deepEqual(JSON.parse(stdioError.content[0].text), expected);
+    assert.equal(calls.filter(([method]) => method === 'POST').length - before, 2, 'one write per request; uncertain writes must not retry');
   } finally {
+    await stdio?.close();
     await client?.close();
     if (child.exitCode === null) { child.kill('SIGTERM'); await new Promise(r => child.once('exit', r)); }
     await new Promise(r => fixture.close(r)); await rm(dir, { recursive: true, force: true });
