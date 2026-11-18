@@ -55,6 +55,13 @@ function sameToken(auth, token) {
   const expected = Buffer.from(`Bearer ${token}`); const actual = Buffer.from(auth || '');
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
+function queryObject(query) {
+  // Fastify uses a query object with a custom prototype. Materialize a plain
+  // object for CLJS, and normalize form/explode array filters of length one.
+  return Object.fromEntries(Object.entries(query || {}).map(([key, value]) =>
+    [key,
+      ['locales', 'statuses'].includes(key) && typeof value === 'string' ? [value] : value]));
+}
 function stateStore(dir, initial, decode) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const lock = join(dir, 'writer.lock'); const fd = openSync(lock, 'wx', 0o600);
@@ -110,7 +117,8 @@ export async function startHttp(initial, decode, dispatch, bridge) {
     try { done(null, JSON.parse(body)); } catch (error) { error.statusCode = 400; done(error); }
   });
   let failed = false;
-  const call = async request => {
+  const call = async input => {
+    const request = { ...input, query: queryObject(input.query) };
     if (failed || store.failed) return { status: 503, headers: {}, body: { error: 'State unavailable; restart required' } };
     if (['/big-pi/import', '/big-pi/export'].includes(request.path)) {
       if (request.method !== 'POST') return { status: 405, headers: {}, body: { error: 'Method not allowed' } };

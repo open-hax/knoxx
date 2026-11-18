@@ -31,11 +31,20 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     assert.equal(await new Promise((resolve, reject) => { http.get(`${base}/v1/content`, { headers: { host: 'evil.example', authorization: `Bearer ${token}` } }, r => { r.resume(); resolve(r.statusCode); }).on('error', reject); }), 403);
     assert.equal((await request('/v1/unknown')).status, 501);
     assert.equal((await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' })).status, 400);
-    let res = await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify({ key: 'sample', contentType: 'Article', initialVersion: { displayName: 'Hello', locale: 'en', properties: { title: 'Original' } } }) });
+    const properties = { title: 'Original', 'a/b': 'one', 'c/b': 'two', 'free form': 'kept', '': 'empty key', nested: { 'a/b': null, 'c/b': 7 } };
+    let res = await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify({ key: 'sample', contentType: 'Article', initialVersion: { displayName: 'Hello', locale: 'en', properties } }) });
     assert.equal(res.status, 201); let etag = res.headers.get('etag');
     sourceId = res.headers.get('x-big-pi-source-id');
     assert.match(sourceId || '', /^[0-9a-f-]{36}$/, 'source store has a durable identity');
-    assert.equal((await res.json()).status, 'draft');
+    const createdBody = await res.json();
+    assert.equal(createdBody.status, 'draft');
+    assert.deepEqual(createdBody.properties, properties, 'arbitrary JSON field names survive transport');
+    const paged = await request('/v1/content?pageIndex=0&pageSize=1');
+    assert.equal(paged.status, 200, await paged.clone().text());
+    assert.equal((await paged.json()).totalCount, 1);
+    const filtered = await request('/v1/content/sample/versions?locales=en&statuses=draft');
+    assert.equal(filtered.status, 200, await filtered.clone().text());
+    assert.equal((await filtered.json()).items.length, 1);
     res = await request('/v1/content/sample/versions/1', { method: 'PATCH', headers: { 'content-type': 'application/merge-patch+json', 'if-match': '"stale"' }, body: '{"displayName":"Bad"}' });
     assert.equal(res.status, 412);
     client = new Client({ name: 'integration', version: '1' });
@@ -45,6 +54,7 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     assert.ok(listed.tools.find(t => t.name === 'big_pi_import_source').inputSchema.properties['expected-revision']);
     const read = await client.callTool({ name: 'big_pi_get_version', arguments: { id: 'sample', version: '1' } });
     assert.equal(JSON.parse(read.content[0].text).body.displayName, 'Hello');
+    assert.deepEqual(JSON.parse(read.content[0].text).body.properties, properties);
     const patch = await client.callTool({ name: 'big_pi_patch_draft', arguments: { id: 'sample', version: '1', etag, body: { displayName: 'Edited' } } });
     assert.equal(patch.isError, undefined);
     const invalid = await client.callTool({ name: 'big_pi_patch_draft', arguments: { id: 'sample', version: '1', etag, body: { status: 'published' } } });
@@ -53,13 +63,16 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     await stdio.connect(new StdioClientTransport({ command: resolve('node_modules/.bin/nbb'), args: ['-cp', 'src', '-m', 'big-pi.optimizely.main', '--stdio'], env: { ...env, BIG_PI_BASE_URL: base }, stderr: 'pipe' }));
     assert.ok((await stdio.listTools()).tools.some(t => t.name === 'big_pi_list_content'));
     assert.equal(JSON.parse((await stdio.callTool({ name: 'big_pi_get_version', arguments: { id: 'sample', version: '1' } })).content[0].text).body.displayName, 'Edited');
+    assert.deepEqual(JSON.parse((await stdio.callTool({ name: 'big_pi_get_version', arguments: { id: 'sample', version: '1' } })).content[0].text).body.properties, properties);
     await stdio.close(); stdio = null; await client.close(); client = null;
     const competing = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], { env: { ...env, BIG_PI_PORT: String(port + 1) }, stdio: 'ignore' });
     assert.notEqual(await new Promise(r => competing.once('exit', r)), 0, 'second writer must fail');
     await stop(); await start();
     res = await request('/v1/content/sample/versions/1');
     assert.equal(res.headers.get('x-big-pi-source-id'), sourceId, 'identity survives restart');
-    assert.equal((await res.json()).displayName, 'Edited');
+    const restored = await res.json();
+    assert.equal(restored.displayName, 'Edited');
+    assert.deepEqual(restored.properties, properties, 'JSON keys survive EDN persistence');
     await stop();
     await writeFile(join(dir, 'state.edn'), '{:generation 0}');
     const corrupt = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], { env, stdio: 'ignore' });
@@ -94,7 +107,8 @@ test('configured bridge imports an exact source and exports only a draft to the 
   const post = (path, body) => fetch(base + path, { method: 'POST', headers: { authorization: 'Bearer local', 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify(body) });
   try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/healthz`)).ok) break; } catch {} await pause(100); }
-    const created = await post('/v1/content', { key: 'source', contentType: 'Article', initialVersion: { displayName: 'Source', locale: 'en', properties: { title: 'Hello' } } });
+    const sourceProperties = { title: 'Hello', 'a/b': 'one', 'c/b': 'two', nested: { 'a/b': null } };
+    const created = await post('/v1/content', { key: 'source', contentType: 'Article', initialVersion: { displayName: 'Source', locale: 'en', properties: sourceProperties } });
     assert.equal(created.status, 201);
     const sourceId = created.headers.get('x-big-pi-source-id');
     let response = await post('/big-pi/import', { key: 'source', version: '1', field: 'title', 'source-system': 'fixture' });
@@ -102,6 +116,7 @@ test('configured bridge imports an exact source and exports only a draft to the 
     const imported = await response.json();
     assert.equal(imported.document.doc_id, 'doc1');
     assert.equal(imported.document.metadata.optimizely['source-id'], sourceId);
+    assert.deepEqual(imported.document.metadata.optimizely.payload.properties, sourceProperties);
     client = new Client({ name: 'bridge-update', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: 'Bearer local' } } }));
     const input = { key: 'source', version: '1', field: 'title', 'source-system': 'fixture', 'document-id': 'doc1' };
@@ -121,6 +136,7 @@ test('configured bridge imports an exact source and exports only a draft to the 
     assert.equal(response.status, 200, await response.clone().text());
     const result = await response.json(); assert.equal(result.vendor.status, 'draft'); assert.equal(result.vendor.locale, 'de');
     assert.equal(result.vendor.properties.title, 'Hallo');
+    assert.deepEqual(result.vendor.properties, { ...sourceProperties, title: 'Hallo' });
     assert.equal(JSON.stringify(result.vendor).includes('Internal reviewer note'), false);
     assert.equal(calls.filter(([method]) => method === 'PATCH').length, 2);
     assert.ok(calls.every(([, , auth]) => auth === 'Bearer fixture-token'));

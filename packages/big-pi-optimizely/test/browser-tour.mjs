@@ -31,7 +31,7 @@ test('browser authoring preserves technical text, versions and unsaved edits', {
   const child = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], {
     env: { ...process.env, BIG_PI_PORT: String(port), BIG_PI_TOKEN: token, BIG_PI_DATA_DIR: dir }, stdio: ['ignore', 'ignore', 'pipe'],
   });
-  let diagnostics = '', browser;
+  let diagnostics = '', browser, page;
   child.stderr.on('data', data => { diagnostics += data; });
   const errors = [];
   try {
@@ -45,7 +45,7 @@ test('browser authoring preserves technical text, versions and unsaved edits', {
     assert.ok(ready, `Server unavailable: ${diagnostics}`);
     const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
     browser = await chromium.launch({ executablePath, headless: true });
-    const page = await browser.newPage({ viewport: { width: 1365, height: 1100 } });
+    page = await browser.newPage({ viewport: { width: 1365, height: 1100 } });
     page.on('pageerror', error => errors.push(error.message));
     page.on('dialog', dialog => dialog.accept());
     await page.goto(base);
@@ -158,6 +158,15 @@ test('browser authoring preserves technical text, versions and unsaved edits', {
     assert.equal(await page.locator('#save').isDisabled(), true);
     assert.equal(await page.locator('#body').inputValue(), '');
     assert.deepEqual(errors, []);
+  } catch (error) {
+    if (page) {
+      console.error('Workbench status:', await page.locator('#notice').textContent({ timeout: 2000 }).catch(() => 'unavailable'));
+      console.error('Page errors:', errors);
+      const screenshots = resolve(process.env.BIG_PI_SCREENSHOTS_DIR || 'screenshots');
+      await mkdir(screenshots, { recursive: true });
+      await page.screenshot({ path: join(screenshots, 'failed.png'), fullPage: true }).catch(() => {});
+    }
+    throw error;
   } finally {
     await browser?.close();
     if (child.exitCode === null) { child.kill('SIGTERM'); await new Promise(resolve => child.once('exit', resolve)); }
