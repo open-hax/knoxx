@@ -6,7 +6,7 @@
 (def source {:key "article-1" :version "v1" :locale "en" :displayName "Title"
              :properties {:Body "Original" :Count 7}})
 (def provenance {:source-system "local" :source-id "store-a" :key "article-1" :version "v1" :field "Body"
-                 :locale "en" :etag "\"source-1\"" :payload source})
+                 :locale "en" :etag "\"source-1\"" :payload-format "big-pi-edn-v1" :payload-edn (pr-str source)})
 (def reviewed {:doc_id "doc1" :revision "r1" :title "Title" :content "Übersetzt"
                :metadata {:optimizely provenance}})
 (def history {:document (assoc reviewed :revision_heads ["r1"] :conflicted false)
@@ -31,7 +31,7 @@
                     (is (= "/v1/content/article-1/versions/v1" (get-in @calls [0 1 :path])))
                     (is (= provenance (get-in @calls [1 1 :body :metadata :optimizely])))
                     (is (= "internal" (get-in @calls [1 1 :body :visibility])))
-                    (is (= 7 (get-in @calls [1 1 :body :metadata :optimizely :payload :properties :Count])))
+                    (is (= (pr-str source) (get-in @calls [1 1 :body :metadata :optimizely :payload-edn])))
                     (done)))
           (p/catch (fn [e] (is false (str e)) (done)))))))
 
@@ -221,4 +221,23 @@
       (-> (bridge/export! (clients calls vendor {:status 200 :body h}) export-request)
           (p/then (fn [_] (is false "legacy provenance cannot authorize export")))
           (p/catch (fn [_] (is (not-any? #(= :post (get-in % [1 :method])) @calls))))
+          (p/finally done)))))
+
+(deftest rejects-invalid-payload-envelopes
+  (async done
+    (let [records [(dissoc provenance :payload-format)
+                   (assoc provenance :payload-format "unknown")
+                   (assoc provenance :payload-edn "{broken")
+                   (update provenance :payload-edn str " nil")
+                   (assoc provenance :payload-edn (pr-str (assoc source :version "other")))
+                   (-> provenance (dissoc :payload-format :payload-edn) (assoc :payload source))]]
+      (-> (reduce (fn [pending record]
+                    (p/then pending
+                            (fn [_]
+                              (let [calls (atom [])
+                                    h (assoc-in history [:revisions 0 :metadata :optimizely] record)]
+                                (-> (bridge/export! (clients calls vendor {:status 200 :body h}) export-request)
+                                    (p/then (fn [_] (is false "invalid envelope must be refused")))
+                                    (p/catch (fn [_] (is (not-any? #(= :post (get-in % [1 :method])) @calls)))))))))
+                  (p/resolved nil) records)
           (p/finally done)))))

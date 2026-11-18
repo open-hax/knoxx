@@ -116,7 +116,8 @@ test('configured bridge imports an exact source and exports only a draft to the 
     const imported = await response.json();
     assert.equal(imported.document.doc_id, 'doc1');
     assert.equal(imported.document.metadata.optimizely['source-id'], sourceId);
-    assert.deepEqual(imported.document.metadata.optimizely.payload.properties, sourceProperties);
+    assert.equal(imported.document.metadata.optimizely['payload-format'], 'big-pi-edn-v1');
+    assert.equal(typeof imported.document.metadata.optimizely['payload-edn'], 'string');
     client = new Client({ name: 'bridge-update', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: 'Bearer local' } } }));
     const input = { key: 'source', version: '1', field: 'title', 'source-system': 'fixture', 'document-id': 'doc1' };

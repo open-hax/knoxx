@@ -116,13 +116,17 @@ Import through `POST /big-pi/import` (or the corresponding MCP tool):
 
 This reads the selected source version and imports the selected plain string field
 to `POST /api/cms/documents`, preserving its source coordinate, ETag and complete
-payload under `metadata.optimizely`. The source title, field and metadata must fit
+payload under `metadata.optimizely`. The payload is a data-only EDN string in
+`payload-edn`, tagged with `payload-format: big-pi-edn-v1`. This preserves arbitrary
+JSON field names through the current Knoxx HTTP codec, which cannot round-trip
+every nested object key. Export decodes and validates that recorded payload before
+comparing it with the source. The source title, field and metadata must fit
 the current Knoxx CMS contract; unsupported structures are rejected, not flattened.
 The local `X-Big-Pi-Source-Id` response header identifies the source store; the
 bridge records that trusted identity under `metadata.optimizely.source-id`.
 `source-system` is a descriptive caller label. Export refuses a different store
 even if the key, version, payload and ETag happen to match. Back up the whole data
-directory, including `source-id`. Older provenance without the identity must be
+directory, including `source-id`. Older provenance without the identity or payload format must be
 re-imported before export.
 
 The imported document has internal visibility. To update an existing imported
@@ -158,8 +162,11 @@ bash scripts/verify-big-pi-local.sh
 npm run test:browser --prefix packages/big-pi-optimizely
 ```
 
-The package tests include pure behavior tests, injected transport tests, and live
-local HTTP/MCP tests using the real MCP SDK. Bridge transport tests use a separately
+The package tests include pure behavior tests, injected transport tests, a contract
+test against the actual unmodified Knoxx HTTP helpers and CMS body law, and live
+local HTTP/MCP tests using the real MCP SDK. The contract test adds the current
+repository's `backend/src/cljs` to the NBB test classpath; the package runtime does
+not depend on the backend. Bridge transport tests use a separately
 implemented Knoxx HTTP fixture. These do not establish that the complete Knoxx
 application, FutureSight's tenant, a vendor CMS installation or the entire Optimizely
 API passed. See [the verification guide](../../docs/verification/big-pi-optimizely-local.md)

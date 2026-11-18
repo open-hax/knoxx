@@ -1,6 +1,7 @@
 (ns big-pi.optimizely.bridge.cms
   "Exact-source import and draft-only return through injected HTTP transports."
-  (:require [clojure.string :as str]
+  (:require [cljs.reader :as reader]
+            [clojure.string :as str]
             [promesa.core :as p]))
 
 (defn- fail! [code message]
@@ -71,6 +72,18 @@
     (property body field)
     {:payload body :etag etag :source-id source-id}))
 
+(defn- decode-payload! [format encoded]
+  (when-not (and (= "big-pi-edn-v1" format) (string? encoded)
+                 (<= 1 (count encoded) 65536))
+    (fail! :invalid-provenance "Unsupported or missing source payload envelope"))
+  (let [payload (try (reader/read-string encoded)
+                     (catch :default _ (fail! :invalid-provenance "Malformed source payload envelope")))]
+    ;; This format is generated with pr-str. Exact canonical equality also
+    ;; rejects trailing forms which read-string would otherwise ignore.
+    (when-not (and (map? payload) (= encoded (pr-str payload)))
+      (fail! :invalid-provenance "Source payload is not one canonical EDN map"))
+    payload))
+
 (defn- source-request [key version]
   {:method :get :path (vendor-path key version) :headers {}})
 
@@ -116,8 +129,12 @@
           history (when document-id (get-history! knoxx document-id))
           current (when document-id (:document history))
           _ (when document-id (current! history document-id expected-revision))
+          payload-edn (pr-str payload)
+          _ (when-not (= payload (decode-payload! "big-pi-edn-v1" payload-edn))
+              (fail! :invalid-payload "Source payload cannot be preserved as EDN"))
           provenance {:source-system source-system :source-id source-id :key key :version version :field field
-                      :locale (:locale payload) :etag etag :payload payload}
+                      :locale (:locale payload) :etag etag :payload-format "big-pi-edn-v1"
+                      :payload-edn payload-edn}
           _ (when-not (or (nil? (:metadata current)) (map? (:metadata current)))
               (fail! :invalid-payload "Existing CMS metadata is not a map"))
           metadata (assoc (or (:metadata current) {}) :optimizely provenance)
@@ -151,7 +168,7 @@
     {:document document}))
 
 (defn- provenance! [document field]
-  (let [{:keys [source-system source-id key version locale etag payload] :as provenance}
+  (let [{:keys [source-system source-id key version locale etag payload-format payload-edn] :as provenance}
         (get-in document [:metadata :optimizely])]
     (when-not (map? provenance) (fail! :missing-provenance "Optimizely provenance is required"))
     (segment! "source system" source-system)
@@ -161,12 +178,13 @@
     (when-not (= field (:field provenance)) (fail! :field-mismatch "Field differs from imported field"))
     (locale! locale)
     (text! "ETag" etag 1024)
-    (when-not (and (map? payload) (= key (:key payload)) (= version (:version payload))
+    (let [payload (decode-payload! payload-format payload-edn)]
+      (when-not (and (map? payload) (= key (:key payload)) (= version (:version payload))
                    (= locale (:locale payload)))
       (fail! :invalid-provenance "Stored source coordinate is inconsistent"))
     (text! "source title" (:displayName payload) 200)
-    (property payload field)
-    provenance))
+      (property payload field)
+      (assoc provenance :payload payload))))
 
 (defn export!
   "Create a vendor draft from the explicitly selected sole current Knoxx revision.

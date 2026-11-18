@@ -10,6 +10,8 @@ if [[ ! -x "$big_pi_package/node_modules/.bin/nbb" ]]; then
 fi
 printf 'Verify: pure CMS laws, source provenance and draft-only bridge behavior.\n'
 npm --prefix "$big_pi_package" test
+printf 'Verify: provenance round-trips through the actual current Knoxx HTTP codec and body law.\n'
+npm --prefix "$big_pi_package" run test:knoxx-contract
 printf 'Verify: live HTTP, real MCP SDK clients, persistence and failure behavior.\n'
 npm --prefix "$big_pi_package" run test:integration
 printf 'PASS: local Big Pi compatibility tests completed.\n'

@@ -9,6 +9,8 @@ bash scripts/verify-big-pi-local.sh
 
 The verification script is the source of truth for its actual checks and exit status. The package also has `npm test --prefix packages/big-pi-optimizely` for domain and injected-client bridge tests and `npm run test:integration --prefix packages/big-pi-optimizely` for real loopback HTTP/MCP tests. Do not treat fixture bridge tests as verification against the Knoxx application or a vendor tenant.
 
+`npm run test:knoxx-contract --prefix packages/big-pi-optimizely` loads the repository's actual, unmodified `knoxx.backend.extern.fastify` request/response helpers and CMS body law. It verifies that the versioned provenance envelope survives that codec, including source keys containing slashes or spaces and nested nulls. This catches an incompatibility an ordinary JSON echo fixture cannot expose. It does not start Clio, authentication, organization isolation or the full Knoxx server.
+
 ## Browser tour
 
 ```bash

@@ -6,12 +6,16 @@ on:
       - 'packages/big-pi-optimizely/**'
       - 'scripts/*big-pi*'
       - '.github/workflows/big-pi-optimizely.yml'
+      - 'backend/src/cljs/knoxx/backend/extern/fastify.cljs'
+      - 'backend/src/cljs/knoxx/backend/law/cms_document.cljs'
   push:
     branches: [main]
     paths:
       - 'packages/big-pi-optimizely/**'
       - 'scripts/*big-pi*'
       - '.github/workflows/big-pi-optimizely.yml'
+      - 'backend/src/cljs/knoxx/backend/extern/fastify.cljs'
+      - 'backend/src/cljs/knoxx/backend/law/cms_document.cljs'
 
 permissions:
   contents: read
