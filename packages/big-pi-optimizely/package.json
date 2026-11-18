@@ -1,0 +1,28 @@
+{
+  "name": "@open-hax/big-pi-optimizely",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "description": "Local Optimizely CMS contract emulator and Big Pi/Knoxx integration sandbox",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "nbb -cp src -m big-pi.optimizely.main",
+    "start:mcp": "nbb -cp src -m big-pi.optimizely.main --stdio",
+    "test": "nbb -cp src:test -m runner",
+    "test:integration": "node --test test/integration.mjs",
+    "test:browser": "node --test test/browser-tour.mjs",
+    "test:all": "npm test && npm run test:integration && npm run test:browser"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "fastify": "5.6.1",
+    "nbb": "1.4.207",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

@@ -1,0 +1,8 @@
+# Merge this table into the intended project config after replacing /ABSOLUTE/PATH.
+# Start the HTTP sandbox first and export BIG_PI_TOKEN in the Codex environment.
+[mcp_servers.big_pi_local]
+command = "bash"
+args = ["/ABSOLUTE/PATH/knoxx/scripts/start-big-pi-mcp.sh"]
+env_vars = ["BIG_PI_TOKEN", "BIG_PI_BASE_URL"]
+startup_timeout_sec = 30
+tool_timeout_sec = 30

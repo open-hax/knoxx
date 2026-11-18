@@ -1,0 +1,41 @@
+name: Big Pi local Optimizely
+
+on:
+  pull_request:
+    paths:
+      - 'packages/big-pi-optimizely/**'
+      - 'scripts/*big-pi*'
+      - '.github/workflows/big-pi-optimizely.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/big-pi-optimizely/**'
+      - 'scripts/*big-pi*'
+      - '.github/workflows/big-pi-optimizely.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  local-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/big-pi-optimizely
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: packages/big-pi-optimizely/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:all
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: big-pi-browser-tour
+          path: packages/big-pi-optimizely/screenshots
+          if-no-files-found: ignore
