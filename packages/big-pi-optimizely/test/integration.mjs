@@ -46,6 +46,11 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     const createdBody = await res.json();
     assert.equal(createdBody.status, 'draft');
     assert.deepEqual(createdBody.properties, properties, 'arbitrary JSON field names survive transport');
+    const poisonPatch = await request('/v1/content/sample/versions/1', { method: 'PATCH',
+      headers: { 'content-type': 'application/merge-patch+json', 'if-match': etag },
+      body: '{"properties":{"__proto__":{"value":"data"}}}' });
+    assert.equal(poisonPatch.status, 400, 'merge patch uses the same prototype-key rejection');
+    assert.equal((await request('/v1/content/sample/versions/1')).headers.get('etag'), etag, 'rejected patch makes no state change');
     const paged = await request('/v1/content?pageIndex=0&pageSize=1');
     assert.equal(paged.status, 200, await paged.clone().text());
     assert.equal((await paged.json()).totalCount, 1);
@@ -114,40 +119,45 @@ test('configured bridge imports an exact source and exports only a draft to the 
   const post = (path, body) => fetch(base + path, { method: 'POST', headers: { authorization: 'Bearer local', 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify(body) });
   try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/healthz`)).ok) break; } catch {} await pause(100); }
-    const sourceProperties = { title: 'Hello', 'a/b': 'one', 'c/b': 'two', nested: { 'a/b': null } };
-    const created = await post('/v1/content', { key: 'source', contentType: 'Article', initialVersion: { displayName: 'Source', locale: 'en', properties: sourceProperties } });
-    assert.equal(created.status, 201);
-    const sourceId = created.headers.get('x-big-pi-source-id');
-    let response = await post('/big-pi/import', { key: 'source', version: '1', field: 'title', 'source-system': 'fixture' });
-    assert.equal(response.status, 200, await response.clone().text());
-    const imported = await response.json();
-    assert.equal(imported.document.doc_id, 'doc1');
-    assert.equal(imported.document.metadata.optimizely['source-id'], sourceId);
-    assert.equal(imported.document.metadata.optimizely['payload-format'], 'big-pi-edn-v1');
-    assert.equal(typeof imported.document.metadata.optimizely['payload-edn'], 'string');
-    client = new Client({ name: 'bridge-update', version: '1' });
-    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: 'Bearer local' } } }));
-    const input = { key: 'source', version: '1', field: 'title', 'source-system': 'fixture', 'document-id': 'doc1' };
-    const stale = await client.callTool({ name: 'big_pi_import_source', arguments: { ...input, 'expected-revision': 'old' } });
-    assert.equal(stale.isError, true);
-    assert.equal(JSON.parse(stale.content[0].text).status, 409);
-    assert.equal(doc.revision, 'rev1');
-    const updated = await client.callTool({ name: 'big_pi_import_source', arguments: { ...input, 'expected-revision': 'rev1' } });
-    assert.equal(updated.isError, undefined);
-    assert.equal(JSON.parse(updated.content[0].text).body.document.revision, 'rev2');
-    const translation = await fetch(`${env.BIG_PI_KNOXX_URL}/api/cms/documents/doc1`, {
-      method: 'PATCH', headers: { authorization: 'Bearer fixture-token', 'content-type': 'application/json' },
-      body: JSON.stringify({ title: doc.title, content: 'Hallo', visibility: 'internal', metadata: { ...doc.metadata, annotation: 'Internal reviewer note' }, parents: ['rev2'] }),
-    });
-    assert.equal(translation.status, 200);
-    response = await post('/big-pi/export', { 'document-id': 'doc1', revision: 'rev3', 'target-locale': 'de', field: 'title' });
-    assert.equal(response.status, 200, await response.clone().text());
-    const result = await response.json(); assert.equal(result.vendor.status, 'draft'); assert.equal(result.vendor.locale, 'de');
-    assert.equal(result.vendor.properties.title, 'Hallo');
-    assert.deepEqual(result.vendor.properties, { ...sourceProperties, title: 'Hallo' });
-    assert.equal(JSON.stringify(result.vendor).includes('Internal reviewer note'), false);
-    assert.equal(calls.filter(([method]) => method === 'PATCH').length, 2);
-    assert.ok(calls.every(([, , auth]) => auth === 'Bearer fixture-token'));
+    for (const field of ['title', '123', '-body']) {
+      calls.length = 0; revisions.length = 0;
+      const key = `source-${field}`;
+      const sourceProperties = { [field]: 'Hello', 'a/b': 'one', 'c/b': 'two', nested: { 'a/b': null } };
+      const created = await post('/v1/content', { key, contentType: 'Article', initialVersion: { displayName: 'Source', locale: 'en', properties: sourceProperties } });
+      assert.equal(created.status, 201);
+      const sourceId = created.headers.get('x-big-pi-source-id');
+      let response = await post('/big-pi/import', { key, version: '1', field, 'source-system': 'fixture' });
+      assert.equal(response.status, 200, await response.clone().text());
+      const imported = await response.json();
+      assert.equal(imported.document.doc_id, 'doc1');
+      assert.equal(imported.document.metadata.optimizely['source-id'], sourceId);
+      assert.equal(imported.document.metadata.optimizely['payload-format'], 'big-pi-edn-v1');
+      assert.equal(typeof imported.document.metadata.optimizely['payload-edn'], 'string');
+      client = new Client({ name: 'bridge-update', version: '1' });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: 'Bearer local' } } }));
+      const input = { key, version: '1', field, 'source-system': 'fixture', 'document-id': 'doc1' };
+      const stale = await client.callTool({ name: 'big_pi_import_source', arguments: { ...input, 'expected-revision': 'old' } });
+      assert.equal(stale.isError, true);
+      assert.equal(JSON.parse(stale.content[0].text).status, 409);
+      assert.equal(doc.revision, 'rev1');
+      const updated = await client.callTool({ name: 'big_pi_import_source', arguments: { ...input, 'expected-revision': 'rev1' } });
+      assert.equal(updated.isError, undefined);
+      assert.equal(JSON.parse(updated.content[0].text).body.document.revision, 'rev2');
+      const translation = await fetch(`${env.BIG_PI_KNOXX_URL}/api/cms/documents/doc1`, {
+        method: 'PATCH', headers: { authorization: 'Bearer fixture-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ title: doc.title, content: 'Hallo', visibility: 'internal', metadata: { ...doc.metadata, annotation: 'Internal reviewer note' }, parents: ['rev2'] }),
+      });
+      assert.equal(translation.status, 200);
+      response = await post('/big-pi/export', { 'document-id': 'doc1', revision: 'rev3', 'target-locale': 'de', field });
+      assert.equal(response.status, 200, await response.clone().text());
+      const result = await response.json(); assert.equal(result.vendor.status, 'draft'); assert.equal(result.vendor.locale, 'de');
+      assert.equal(result.vendor.properties[field], 'Hallo');
+      assert.deepEqual(result.vendor.properties, { ...sourceProperties, [field]: 'Hallo' });
+      assert.equal(JSON.stringify(result.vendor).includes('Internal reviewer note'), false);
+      assert.equal(calls.filter(([method]) => method === 'PATCH').length, 2);
+      assert.ok(calls.every(([, , auth]) => auth === 'Bearer fixture-token'));
+      await client.close(); client = undefined;
+    }
   } finally {
     await client?.close();
     if (child.exitCode === null) { child.kill('SIGTERM'); await new Promise(r => child.once('exit', r)); }

@@ -124,9 +124,7 @@ export async function startHttp(initial, decode, dispatch, bridge) {
   const token = process.env.BIG_PI_TOKEN || randomBytes(32).toString('hex');
   const store = stateStore(resolve(process.env.BIG_PI_DATA_DIR || '.local-data'), initial, decode);
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
-  app.addContentTypeParser('application/merge-patch+json', { parseAs: 'string' }, (_req, body, done) => {
-    try { done(null, JSON.parse(body)); } catch (error) { error.statusCode = 400; done(error); }
-  });
+  app.addContentTypeParser('application/merge-patch+json', { parseAs: 'string' }, app.getDefaultJsonParser('error', 'error'));
   let failed = false;
   const call = async input => {
     const request = { ...input, query: queryObject(input.query) };

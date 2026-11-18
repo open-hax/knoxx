@@ -22,6 +22,38 @@
 (def import-request {:key "article-1" :version "v1" :field "Body" :source-system "local"})
 (def export-request {:document-id "doc1" :revision "r1" :target-locale "de" :field "Body"})
 
+(deftest selected-field-retains-its-source-key
+  (async done
+    (-> (reduce
+          (fn [pending [field key]]
+            (p/then pending
+                    (fn [_]
+                      (let [calls (atom [])
+                            payload (assoc source :properties {key "Original" :Count 7})
+                            v (assoc vendor :body payload)
+                            c (clients calls v nil)]
+                        (-> (bridge/import! c (assoc import-request :field field))
+                            (p/then (fn [result]
+                                      (is (= "Original" (get-in result [:document :content])))
+                                      (let [doc (assoc (:document result) :content "Übersetzt")
+                                            h {:document doc :revisions [doc]}]
+                                        (bridge/export! (clients calls v {:status 200 :body h})
+                                                        (assoc export-request :field field)))))
+                            (p/then (fn [result]
+                                      (is (= {key "Übersetzt" :Count 7} (get-in result [:vendor :properties]))))))))))
+          (p/resolved nil) [["123" "123"] ["-body" "-body"] ["Body" "Body"] ["Body" :Body]])
+        (p/catch (fn [error] (is false (str error))))
+        (p/finally done))))
+
+(deftest ambiguous-field-key-is-rejected-before-write
+  (async done
+    (let [calls (atom [])
+          v (assoc-in vendor [:body :properties "Body"] "Duplicate")]
+      (-> (bridge/import! (clients calls v nil) import-request)
+          (p/then (fn [_] (is false "ambiguous JSON field names must not be accepted")))
+          (p/catch (fn [_] (is (= 1 (count @calls)))))
+          (p/finally done)))))
+
 (deftest import-exact-source-and-provenance
   (async done
     (let [calls (atom [])]

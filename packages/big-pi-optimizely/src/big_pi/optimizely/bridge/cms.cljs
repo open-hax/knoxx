@@ -48,11 +48,19 @@
 (defn- vendor-path [key version]
   (str "/v1/content/" (segment! "content key" key) "/versions/" (segment! "version" version)))
 
+(defn- property-key [payload field]
+  (let [properties (:properties payload)
+        field (segment! "field" field)
+        matching (when (map? properties)
+                   (filterv #(contains? properties %) [field (keyword field)]))]
+    (when-not (= 1 (count matching))
+      (fail! :unsupported-property "Selected property is missing or ambiguous"))
+    (first matching)))
+
 (defn- property [payload field]
   (let [properties (:properties payload)
-        field-key (keyword (segment! "field" field))]
-    (when-not (and (map? properties) (contains? properties field-key)
-                   (string? (get properties field-key))
+        field-key (property-key payload field)]
+    (when-not (and (string? (get properties field-key))
                    (<= (count (get properties field-key)) 262144))
       (fail! :unsupported-property "Selected property must be a bounded plain string"))
     (get properties field-key)))
@@ -216,7 +224,7 @@
           request {:method :post :path (str "/v1/content/" key "/versions")
                    :headers {"prefer" "return=representation"}
                    :body {:displayName (:displayName payload) :locale target-locale
-                          :properties (assoc (:properties payload) (keyword field) (:content document))}}
+                          :properties (assoc (:properties payload) (property-key payload field) (:content document))}}
           response (p/catch (p/then (p/resolved nil) (fn [_] (optimizely request)))
                             (fn [error] (throw (ex-info "Vendor draft outcome uncertain; inspect vendor before retrying"
                                                         {:code :outcome-uncertain :status 502} error))))
