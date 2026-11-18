@@ -22,11 +22,11 @@ export function jsonType(value) {
   return ['string', 'number', 'boolean'].includes(type) ? type : 'unsupported';
 }
 const schemas = {
-  big_pi_list_content: { query: z.record(z.string()).optional() },
+  big_pi_list_content: { query: z.record(z.string(), z.string()).optional() },
   big_pi_get_version: { id: z.string().min(1), version: z.string().min(1) },
-  big_pi_create_content: { body: z.record(z.unknown()) },
-  big_pi_create_draft: { id: z.string().min(1), body: z.record(z.unknown()).optional() },
-  big_pi_patch_draft: { id: z.string().min(1), version: z.string().min(1), etag: z.string().min(1), body: z.record(z.unknown()) },
+  big_pi_create_content: { body: z.record(z.string(), z.unknown()) },
+  big_pi_create_draft: { id: z.string().min(1), body: z.record(z.string(), z.unknown()).optional() },
+  big_pi_patch_draft: { id: z.string().min(1), version: z.string().min(1), etag: z.string().min(1), body: z.record(z.string(), z.unknown()) },
   big_pi_capabilities: {},
   big_pi_import_source: { key: z.string(), version: z.string(), field: z.string(), 'source-system': z.string(), 'document-id': z.string().optional(), 'expected-revision': z.string().optional() },
   big_pi_export_draft: { 'document-id': z.string(), revision: z.string(), 'target-locale': z.string(), field: z.string() }
@@ -44,7 +44,7 @@ function toolRequest(name, a) {
   }
 }
 function createServer(call) {
-  const server = new McpServer({ name: 'big-pi-local', version: '0.1.0' });
+  const server = new McpServer({ name: 'big-pi-local', version: '0.1.0' }, { maxToolInputElements: 10000 });
   for (const [name, inputSchema] of Object.entries(schemas)) {
     server.registerTool(name, { description: 'Big Pi local CMS sandbox operation', inputSchema }, async args => {
       try {

@@ -102,6 +102,9 @@ Tools are named `big_pi_*` and are local Big Pi tools. MCP transport interoperab
 does not imply compatibility with Optimizely's `cms_*`/`graph_*` tools. Listing,
 reading and draft operations use the same handlers as the REST API. There is no
 MCP publish tool.
+HTTP request bodies are limited to 1 MiB, and MCP tool arguments are limited to
+10,000 object keys and array elements before tool execution. These are local test
+profile limits; oversized input is rejected before modifying content.
 
 ## Connect the existing Knoxx CMS
 

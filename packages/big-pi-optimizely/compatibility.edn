@@ -23,6 +23,7 @@
                     {:methods [:post] :path "/big-pi/import"}
                     {:methods [:post] :path "/big-pi/export"}]
  :mcp {:transports [:streamable-http :stdio]
+       :max-tool-input-elements 10000 :max-http-body-bytes 1048576
        :tools ["big_pi_list_content" "big_pi_get_version" "big_pi_create_content"
                "big_pi_create_draft" "big_pi_patch_draft" "big_pi_capabilities"
                "big_pi_import_source" "big_pi_export_draft"]

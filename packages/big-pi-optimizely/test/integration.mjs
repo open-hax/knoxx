@@ -69,6 +69,13 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     const listed = await client.listTools();
     assert.ok(listed.tools.some(t => t.name === 'big_pi_patch_draft'));
     assert.ok(listed.tools.find(t => t.name === 'big_pi_import_source').inputSchema.properties['expected-revision']);
+    const queryResult = await client.callTool({ name: 'big_pi_list_content', arguments: { query: { locales: 'en', statuses: 'draft' } } });
+    assert.deepEqual(JSON.parse(queryResult.content[0].text).body.items.map(item => item.key), ['sample']);
+    const overBudget = await client.callTool({ name: 'big_pi_create_content', arguments: { body: {
+      contentType: 'Article', initialVersion: { displayName: 'Too many elements', locale: 'en', properties: { items: Array(10001).fill(1) } },
+    } } });
+    assert.equal(overBudget.isError, true, 'MCP rejects arguments beyond its element budget');
+    assert.equal((await (await request('/v1/content')).json()).totalCount, 1, 'rejected tool input cannot mutate state');
     const read = await client.callTool({ name: 'big_pi_get_version', arguments: { id: 'sample', version: '1' } });
     assert.equal(JSON.parse(read.content[0].text).body.displayName, 'Hello');
     assert.deepEqual(JSON.parse(read.content[0].text).body.properties, properties);
