@@ -31,7 +31,14 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     assert.equal(await new Promise((resolve, reject) => { http.get(`${base}/v1/content`, { headers: { host: 'evil.example', authorization: `Bearer ${token}` } }, r => { r.resume(); resolve(r.statusCode); }).on('error', reject); }), 403);
     assert.equal((await request('/v1/unknown')).status, 501);
     assert.equal((await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' })).status, 400);
-    const properties = { title: 'Original', 'a/b': 'one', 'c/b': 'two', 'free form': 'kept', '': 'empty key', nested: { 'a/b': null, 'c/b': 7 } };
+    assert.equal((await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: '{"contentType":"Article","initialVersion":{"displayName":"Invalid number","locale":"en","properties":{"Body":"x","value":1e400}}}' })).status, 400);
+    assert.equal((await fetch(`${base}/healthz`)).status, 200, 'invalid input must not disable the store');
+    assert.equal((await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: '{"contentType":"Article","initialVersion":{"displayName":"Prototype key","locale":"en","properties":{"Body":"x","__proto__":{"value":"data"}}}}' })).status, 400, 'retain Fastify prototype-key rejection');
+    const properties = { title: 'Original', 'a/b': 'one', 'c/b': 'two', 'free form': 'kept', '': 'empty key',
+      nested: { 'a/b': null, 'c/b': 7, constructor: 1, values: [{ constructor: { value: 'data' } }] },
+      special: { toString: 'plain data' } };
     let res = await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify({ key: 'sample', contentType: 'Article', initialVersion: { displayName: 'Hello', locale: 'en', properties } }) });
     assert.equal(res.status, 201); let etag = res.headers.get('etag');
     sourceId = res.headers.get('x-big-pi-source-id');

@@ -10,6 +10,17 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod';
 
 const urlPath = s => encodeURIComponent(s);
+export function jsonType(value) {
+  if (value === null || value === undefined) return 'null';
+  if (Array.isArray(value)) return 'array';
+  const type = typeof value;
+  if (type === 'object') {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null ? 'object' : 'unsupported';
+  }
+  if (type === 'number' && !Number.isFinite(value)) return 'unsupported';
+  return ['string', 'number', 'boolean'].includes(type) ? type : 'unsupported';
+}
 const schemas = {
   big_pi_list_content: { query: z.record(z.string()).optional() },
   big_pi_get_version: { id: z.string().min(1), version: z.string().min(1) },

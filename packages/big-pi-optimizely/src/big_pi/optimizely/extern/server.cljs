@@ -4,20 +4,22 @@
             [big-pi.optimizely.domain.cms :as cms]
             [cljs.reader :as reader]
             [clojure.string :as str]
-            [clojure.walk :as walk]
             [promesa.core :as p]))
 
 (defn- decode-json [value]
-  ;; Only identifier-like keys become keywords. Arbitrary JSON names (including
-  ;; spaces and empty strings) must stay strings so EDN can round-trip them.
-  (walk/postwalk
-   (fn [item]
-     (if (map? item)
-       (into {} (map (fn [[key value]]
-                       [(if (and (string? key) (re-matches #"[A-Za-z_][A-Za-z0-9_-]*" key))
-                          (keyword key) key) value])) item)
-       item))
-   (js->clj value)))
+  ;; Never use a data object's constructor to decide its type. Walk own entries
+  ;; so every accepted value is durable CLJS data, even with constructor keys.
+  (case (runtime/jsonType value)
+    "null" nil
+    "array" (mapv decode-json (array-seq value))
+    "object" (into {} (map (fn [entry]
+                             (let [key (aget entry 0)]
+                               [(if (re-matches #"[A-Za-z_][A-Za-z0-9_-]*" key)
+                                  (keyword key) key)
+                                (decode-json (aget entry 1))])))
+                   (array-seq (js/Object.entries value)))
+    ("string" "number" "boolean") value
+    (throw (ex-info "Unsupported JSON value" {:code :invalid-json}))))
 
 (defn- encode-json [value]
   ;; JSON field names are arbitrary strings. The default keyword encoder drops
@@ -31,14 +33,19 @@
       (throw (js/Error. "Invalid state snapshot")))
     state))
 
-(defn- dispatch [store raw]
-  (when (.-failed store) (throw (js/Error. "State unavailable")))
-  (let [request {:method (keyword (str/lower-case (.-method raw)))
+(defn- request-map [raw]
+  (try
+    {:method (keyword (str/lower-case (.-method raw)))
                  :path (.-path raw)
                  :query (js->clj (or (.-query raw) #js {}))
                  :headers (js->clj (or (.-headers raw) #js {}))
                  :body (decode-json (.-body raw))
                  :actor {:id "local" :capabilities #{:read :draft}}}
+    (catch :default _ nil)))
+
+(defn- dispatch [store raw]
+  (when (.-failed store) (throw (js/Error. "State unavailable")))
+  (let [request (request-map raw)
         before (.-value store)
         result (if (= (:path request) "/v1/capabilities")
                  {:state before :response {:status 200 :headers {} :body cms/capabilities}}
