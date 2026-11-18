@@ -121,3 +121,22 @@
     (is (= {:list [3]} (get-in updated [:response :body :properties :nested])))
     (is (= 400 (get-in (request state :get "/v1/content" nil nil {"pageSize" "10001"}) [:response :status])))
     (is (= 400 (get-in (request state :post "/v1/contenttypes" {:key "Broken" :displayName "Broken" :properties []}) [:response :status])))))
+
+(deftest generated-content-keys-skip-explicit-keys
+  (let [body {:contentType "Article" :initialVersion {:displayName "Name" :locale "en" :properties {}}}
+        explicit-2 (request (cms/initial-state) :post "/v1/content" (assoc body :key "content-2"))
+        single-auto (request (:state explicit-2) :post "/v1/content" body {"prefer" "return=representation"})
+        explicit-3 (request (cms/initial-state) :post "/v1/content" (assoc body :key "content-3"))
+        explicit-4 (request (:state explicit-3) :post "/v1/content" (assoc body :key "content-4"))
+        first-auto (request (:state explicit-4) :post "/v1/content" body {"prefer" "return=representation"})
+        second-auto (request (:state first-auto) :post "/v1/content" body {"prefer" "return=representation"})
+        duplicate (request (:state second-auto) :post "/v1/content" (assoc body :key "content-3"))]
+    (is (= 201 (get-in single-auto [:response :status])))
+    (is (= "content-3" (get-in single-auto [:response :body :key])))
+    (is (= 201 (get-in first-auto [:response :status])))
+    (is (= "content-5" (get-in first-auto [:response :body :key])))
+    (is (= 201 (get-in second-auto [:response :status])))
+    (is (= "content-6" (get-in second-auto [:response :body :key])))
+    (is (= 409 (get-in duplicate [:response :status])))
+    (is (= #{"content-3" "content-4" "content-5" "content-6"}
+           (set (keys (:content (:state second-auto))))))))

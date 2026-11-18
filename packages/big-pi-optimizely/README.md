@@ -25,7 +25,7 @@ to the terminal; paste it into the workbench. The token stays in the page's memo
 Use **Load a technical example** for synthetic source text, then edit or create a
 language draft. Values in the example are test data, not FLIR specifications.
 
-State lives in `packages/big-pi-optimizely/.local-data/` by default. Set
+State and its persistent source-store identity live in `packages/big-pi-optimizely/.local-data/` by default. Set
 `BIG_PI_DATA_DIR` to choose a different directory and `BIG_PI_PORT` to choose a port.
 `BIG_PI_TOKEN` supplies a stable token for local clients. Keep it outside Git.
 The server binds loopback only and refuses a second writer on the same directory.
@@ -118,6 +118,13 @@ This reads the selected source version and imports the selected plain string fie
 to `POST /api/cms/documents`, preserving its source coordinate, ETag and complete
 payload under `metadata.optimizely`. The source title, field and metadata must fit
 the current Knoxx CMS contract; unsupported structures are rejected, not flattened.
+The local `X-Big-Pi-Source-Id` response header identifies the source store; the
+bridge records that trusted identity under `metadata.optimizely.source-id`.
+`source-system` is a descriptive caller label. Export refuses a different store
+even if the key, version, payload and ETag happen to match. Back up the whole data
+directory, including `source-id`. Older provenance without the identity must be
+re-imported before export.
+
 The imported document has internal visibility. To update an existing imported
 document, provide its `document-id` and the `expected-revision` you observed.
 Existing metadata is preserved. Knoxx can represent concurrent saves as branches;
@@ -131,7 +138,7 @@ through `POST /big-pi/export`:
 ```
 
 The bridge reads exact history, requires a sole current unconflicted head, checks
-the original vendor payload and ETag, rechecks the Knoxx head, then creates a new
+the source-store identity, original vendor payload and ETag, rechecks the Knoxx head, then creates a new
 target-language **draft**. Only the selected translated field changes; unrelated
 source properties are preserved. CMS annotations and internal metadata are not
 copied into vendor properties. A revision selection is not an SME approval receipt.

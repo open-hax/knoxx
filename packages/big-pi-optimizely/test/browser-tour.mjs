@@ -22,6 +22,12 @@ test('browser authoring preserves technical text, versions and unsaved edits', {
   const dir = await mkdtemp(join(tmpdir(), 'big-pi-browser-'));
   const port = await freePort(), token = randomBytes(24).toString('hex');
   const base = `http://127.0.0.1:${port}`;
+  const api = async (path, options = {}) => fetch(base + path, {
+    ...options, headers: { authorization: `Bearer ${token}`, ...options.headers },
+  });
+  const createContent = body => api('/v1/content', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
   const child = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], {
     env: { ...process.env, BIG_PI_PORT: String(port), BIG_PI_TOKEN: token, BIG_PI_DATA_DIR: dir }, stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -52,6 +58,20 @@ test('browser authoring preserves technical text, versions and unsaved edits', {
     const original = await page.locator('#body').inputValue();
     assert.match(original, /−20 °C to 120 °C/);
     assert.match(original, /0\.05 °C/);
+    // JSON Merge Patch uses null for deletion; editing Body must leave other nulls intact.
+    assert.equal((await createContent({ key: 'null-properties', contentType: 'Article', initialVersion: {
+      displayName: 'Null preservation', locale: 'en', properties: { Body: 'Original', Other: null, nested: { value: null, kept: 7 } },
+    } })).status, 201);
+    await page.locator('#refresh').click();
+    await page.getByRole('button', { name: /null-properties/ }).click();
+    await page.getByRole('heading', { name: 'Null preservation' }).waitFor();
+    await page.locator('#body').fill('Edited plain text');
+    await page.locator('#save').click();
+    await page.getByText('Draft saved locally.').waitFor();
+    const preserved = await (await api('/v1/content/null-properties/versions/1')).json();
+    assert.deepEqual(preserved.properties, { Body: 'Edited plain text', Other: null, nested: { value: null, kept: 7 } });
+    await page.getByRole('button', { name: new RegExp(key) }).click();
+    await page.getByRole('heading', { name: 'Thermal sensor · field note' }).waitFor();
     await page.locator('#body').fill(original + '\n\nTerminology note: retain the distinction.');
     await page.locator('#save').click();
     await page.getByText('Draft saved locally.').waitFor();
@@ -63,9 +83,6 @@ test('browser authoring preserves technical text, versions and unsaved edits', {
     assert.equal(await page.locator('#body').inputValue(), translated);
     assert.equal(await page.locator('#locale').inputValue(), 'de');
     const version = await page.locator('#versions').inputValue();
-    const api = async (path, options = {}) => fetch(base + path, {
-      ...options, headers: { authorization: `Bearer ${token}`, ...options.headers },
-    });
     let current = await api(`/v1/content/${key}/versions/${version}`);
     const currentEtag = current.headers.get('etag');
     const draft = await current.json();
@@ -90,6 +107,31 @@ test('browser authoring preserves technical text, versions and unsaved edits', {
     await page.getByRole('heading', { name: 'Changed in another client' }).waitFor();
     assert.equal(await page.locator('#body').inputValue(), translated);
 
+    // Collections must remain reachable after the API's default 100-item page.
+    for (let i = 0; i < 100; i++) {
+      assert.equal((await createContent({ key: `page-${String(i).padStart(3, '0')}`, contentType: 'Article', initialVersion: {
+        displayName: `Page fixture ${i}`, locale: 'en', properties: { Body: 'Synthetic pagination fixture' },
+      } })).status, 201);
+    }
+    assert.equal((await createContent({ key: 'zz-last-content', contentType: 'Article', initialVersion: {
+      displayName: 'Last page content', locale: 'en', properties: { Body: 'Visible beyond the first page' },
+    } })).status, 201);
+    for (let i = 0; i < 100; i++) {
+      assert.equal((await api(`/v1/content/${key}/versions`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayName: `Version ${i + 3}`, locale: 'en', properties: { Body: original } }),
+      })).status, 201);
+    }
+    await page.locator('#refresh').click();
+    await page.getByRole('button', { name: /zz-last-content/ }).click();
+    await page.getByRole('heading', { name: 'Last page content' }).waitFor();
+    await page.getByRole('button', { name: new RegExp(key) }).click();
+    await page.getByRole('heading', { name: 'Version 102' }).waitFor();
+    assert.equal(await page.locator('#versions option').count(), 102);
+    assert.equal(await page.locator('#versions').inputValue(), '102');
+    await page.locator('#versions').selectOption(version);
+    await page.getByRole('heading', { name: 'Changed in another client' }).waitFor();
+
     // An unsupported field shape must leave the previous editor selection intact.
     await api('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key: 'unsupported-shape', contentType: 'Article', initialVersion: { locale: 'en', displayName: 'Structured field', properties: { Body: { html: '<p>Nested</p>' } } } }),
@@ -99,6 +141,10 @@ test('browser authoring preserves technical text, versions and unsaved edits', {
     await page.getByText('This editor supports the plain text Body field.', { exact: false }).waitFor();
     assert.equal(await page.locator('#content-id').textContent(), key);
     assert.equal(await page.locator('#body').inputValue(), translated);
+    await page.locator('#versions').selectOption('1');
+    await page.getByRole('heading', { name: 'Thermal sensor · field note' }).waitFor();
+    await page.locator('#versions').selectOption(version);
+    await page.getByRole('heading', { name: 'Changed in another client' }).waitFor();
 
     const screenshots = resolve(process.env.BIG_PI_SCREENSHOTS_DIR || 'screenshots');
     await mkdir(screenshots, { recursive: true });

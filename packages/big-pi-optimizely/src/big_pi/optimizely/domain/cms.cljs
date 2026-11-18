@@ -80,8 +80,16 @@
                               (assoc-in [:content key :generation] (inc (:generation state))))]
               (write-result updated request (get-in updated path) 201 (str "/v1/content/" key "/versions/" id))))))
 
+(defn- next-free-content-number [state]
+  (loop [number (:next-key state)]
+    (if (contains? (:content state) (str "content-" number))
+      (recur (inc number))
+      number)))
+
 (defn- create-content [state request]
-  (let [data (:body request) key (or (:key data) (str "content-" (:next-key state)))]
+  (let [data (:body request)
+        generated-number (when-not (:key data) (next-free-content-number state))
+        key (or (:key data) (str "content-" generated-number))]
     (cond
       (and (map? (:initialVersion data)) (contains? (:initialVersion data) :status) (not= "draft" (get-in data [:initialVersion :status]))) (problem state 403 "publication_forbidden" "Status cannot be set by draft writes")
       (contains? data :container) (problem state 501 "unsupported_operation" "Content containers are not implemented")
@@ -90,7 +98,8 @@
       (not (contains? (:locales state) (get-in data [:initialVersion :locale]))) (problem state 400 "invalid_locale" "Unknown locale")
       (contains? (:content state) key) (problem state 409 "already_exists" "Content already exists")
       :else (let [content (merge (select-keys data [:contentType :container]) {:key key :versions {} :next-version 1})
-                  s (-> state (changed [:content key] content) (update :next-key inc))
+                  s (-> state (changed [:content key] content)
+                        (assoc :next-key (if generated-number (inc generated-number) (inc (:next-key state)))))
                   result (create-version s (assoc request :headers (assoc (:headers request) "prefer" "return=representation")) key (:initialVersion data))
                   new-state (:state result)]
               (write-result new-state request (get-in new-state [:content key :versions "1"]) 201 (str "/v1/content/" key))))))

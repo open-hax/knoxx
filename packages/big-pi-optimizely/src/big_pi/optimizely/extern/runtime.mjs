@@ -60,8 +60,17 @@ function stateStore(dir, initial, decode) {
   const lock = join(dir, 'writer.lock'); const fd = openSync(lock, 'wx', 0o600);
   writeFileSync(fd, `${process.pid}\n`); fsyncSync(fd);
   const snapshot = join(dir, 'state.edn');
-  let value;
+  let value, identity;
   try {
+    const identityPath = join(dir, 'source-id');
+    if (existsSync(identityPath)) identity = readFileSync(identityPath, 'utf8').trim();
+    else {
+      identity = randomUUID();
+      const identityFd = openSync(identityPath, 'wx', 0o600);
+      try { writeFileSync(identityFd, `${identity}\n`); fsyncSync(identityFd); } finally { closeSync(identityFd); }
+      const directoryFd = openSync(dir, 'r'); try { fsyncSync(directoryFd); } finally { closeSync(directoryFd); }
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(identity)) throw new Error('Invalid source identity');
     if (existsSync(snapshot)) {
       const text = readFileSync(snapshot, 'utf8'); const split = text.indexOf('\n');
       const digest = text.slice(0, split), body = text.slice(split + 1);
@@ -71,7 +80,7 @@ function stateStore(dir, initial, decode) {
   }
   catch (e) { closeSync(fd); unlinkSync(lock); throw new Error(`Cannot read state: ${e.message}`); }
   return {
-    value,
+    value, identity,
     save(text) {
       const tmp = join(dir, `state.${randomUUID()}.tmp`); const out = openSync(tmp, 'wx', 0o600);
       try { writeFileSync(out, `${createHash('sha256').update(text).digest('hex')}\n${text}`); fsyncSync(out); } finally { closeSync(out); }

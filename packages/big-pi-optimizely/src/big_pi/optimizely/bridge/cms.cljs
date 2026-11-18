@@ -6,9 +6,10 @@
 (defn- fail! [code message]
   (throw (ex-info message {:code code
                            :status (case code
-                                     (:stale-or-conflicted :stale-source :field-mismatch) 409
+                                     (:stale-or-conflicted :stale-source :field-mismatch :source-identity-mismatch) 409
                                      :outcome-uncertain 502
                                      :upstream-failure 502
+                                     :source-identity-unavailable 502
                                      400)})))
 
 (defn- fields! [request allowed]
@@ -57,14 +58,18 @@
 
 (defn- checked-source! [response key version field]
   (let [{:keys [body headers]} (response! response "Source revision read")
-        etag (get headers "etag")]
+        etag (get headers "etag")
+        source-id (get headers "x-big-pi-source-id")]
     (when-not (and (= key (:key body)) (= version (:version body)))
       (fail! :source-mismatch "Source response does not match requested revision"))
     (text! "ETag" etag 1024)
+    (when-not (and (string? source-id) (<= 1 (count source-id) 100)
+                   (re-matches #"[A-Za-z0-9_-]+" source-id))
+      (fail! :source-identity-unavailable "Trusted source identity is missing or invalid"))
     (text! "title" (:displayName body) 200)
     (locale! (:locale body))
     (property body field)
-    {:payload body :etag etag}))
+    {:payload body :etag etag :source-id source-id}))
 
 (defn- source-request [key version]
   {:method :get :path (vendor-path key version) :headers {}})
@@ -107,11 +112,11 @@
           _ (segment! "field" field)
           _ (when document-id (segment! "document id" document-id))
           source (read-request! optimizely (source-request key version))
-          {:keys [payload etag]} (checked-source! source key version field)
+          {:keys [payload etag source-id]} (checked-source! source key version field)
           history (when document-id (get-history! knoxx document-id))
           current (when document-id (:document history))
           _ (when document-id (current! history document-id expected-revision))
-          provenance {:source-system source-system :key key :version version :field field
+          provenance {:source-system source-system :source-id source-id :key key :version version :field field
                       :locale (:locale payload) :etag etag :payload payload}
           _ (when-not (or (nil? (:metadata current)) (map? (:metadata current)))
               (fail! :invalid-payload "Existing CMS metadata is not a map"))
@@ -146,10 +151,11 @@
     {:document document}))
 
 (defn- provenance! [document field]
-  (let [{:keys [source-system key version locale etag payload] :as provenance}
+  (let [{:keys [source-system source-id key version locale etag payload] :as provenance}
         (get-in document [:metadata :optimizely])]
     (when-not (map? provenance) (fail! :missing-provenance "Optimizely provenance is required"))
     (segment! "source system" source-system)
+    (segment! "source identity" source-id)
     (segment! "content key" key)
     (segment! "version" version)
     (when-not (= field (:field provenance)) (fail! :field-mismatch "Field differs from imported field"))
@@ -176,11 +182,13 @@
           matching (filterv #(= revision (:revision %)) (:revisions history))
           _ (when-not (= 1 (count matching)) (fail! :missing-revision "Exact CMS revision is missing or ambiguous"))
           document (document! (first matching) document-id revision)
-          {:keys [key version etag payload locale]} (provenance! document field)
+          {:keys [key version etag payload locale source-id]} (provenance! document field)
           _ (when (= (str/lower-case locale) (str/lower-case target-locale))
               (fail! :invalid-target-locale "Target locale must differ from source locale"))
           source (read-request! optimizely (source-request key version))
           checked (checked-source! source key version field)
+          _ (when-not (= source-id (:source-id checked))
+              (fail! :source-identity-mismatch "Source store differs from the imported store"))
           _ (when-not (and (= etag (:etag checked)) (= payload (:payload checked)))
               (fail! :stale-source "Source revision changed since import"))
           ;; Recheck the current CMS head immediately before the write. The remote
@@ -205,4 +213,4 @@
                    (= (:properties (:body request)) (:properties result))
                    (= "draft" (some-> (:status result) str/lower-case)))
       (fail! :outcome-uncertain "Vendor response did not establish a draft; inspect vendor before retrying"))]
-    {:vendor result :source {:key key :version version} :document-revision revision}))
+    {:vendor result :source {:key key :version version :source-id source-id} :document-revision revision}))

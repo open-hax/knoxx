@@ -23,6 +23,16 @@ async function request(path, { method = 'GET', body, headers = {} } = {}) {
   if (!response.ok) throw new Error(response.status === 412 ? 'This draft changed since you loaded it. Your text is still here. Select a version again to compare before saving.' : data?.detail || data?.details || data?.title || `Request failed (${response.status}).`);
   return { data, etag: response.headers.get('etag') };
 }
+async function collection(path) {
+  const items = [];
+  for (let pageIndex = 0; ; pageIndex++) {
+    const { data } = await request(`${path}?pageIndex=${pageIndex}&pageSize=100`);
+    if (!Array.isArray(data?.items) || !Number.isInteger(data.totalCount)) throw new Error('Invalid collection response.');
+    items.push(...data.items);
+    if (items.length >= data.totalCount) return items;
+    if (!data.items.length) throw new Error('The collection changed while loading. Refresh to try again.');
+  }
+}
 async function busy(operation) {
   if (loading) return;
   loading = true; controls();
@@ -40,8 +50,7 @@ function clearEditor() {
   controls();
 }
 async function refreshList() {
-  const { data } = await request('/v1/content');
-  const items = data?.items || [];
+  const items = await collection('/v1/content');
   byId('content-list').replaceChildren();
   if (!items.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No content yet. Create a document or load the example below.'; byId('content-list').append(p); }
   for (const item of items) {
@@ -53,8 +62,7 @@ async function refreshList() {
   }
 }
 async function selectContent(key, requestedVersion) {
-  const { data } = await request(`/v1/content/${encodeURIComponent(key)}/versions`);
-  const versions = data.items || [];
+  const versions = await collection(`/v1/content/${encodeURIComponent(key)}/versions`);
   if (!versions.length) throw new Error('This content has no versions.');
   await loadVersion(requestedVersion || versions.at(-1).version, key);
   versionList = versions;
@@ -99,7 +107,7 @@ byId('editor').addEventListener('submit', event => { event.preventDefault(); bus
   else {
     if (draft.locale !== currentVersion.locale) throw new Error('Use Create language draft to make a separate language version.');
     if (!etag) throw new Error('No ETag was returned; reload the draft before editing.');
-    const { data } = await request(`/v1/content/${encodeURIComponent(selectedKey)}/versions/${encodeURIComponent(currentVersion.version)}`, { method: 'PATCH', body: { displayName: draft.displayName, properties: draft.properties }, headers: { 'If-Match': etag } });
+    const { data } = await request(`/v1/content/${encodeURIComponent(selectedKey)}/versions/${encodeURIComponent(currentVersion.version)}`, { method: 'PATCH', body: { displayName: draft.displayName, properties: { Body: draft.properties.Body } }, headers: { 'If-Match': etag } });
     await selectContent(selectedKey, data?.version || currentVersion.version);
   }
   notice('Draft saved locally.', 'success');

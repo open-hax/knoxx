@@ -5,7 +5,7 @@
 
 (def source {:key "article-1" :version "v1" :locale "en" :displayName "Title"
              :properties {:Body "Original" :Count 7}})
-(def provenance {:source-system "local" :key "article-1" :version "v1" :field "Body"
+(def provenance {:source-system "local" :source-id "store-a" :key "article-1" :version "v1" :field "Body"
                  :locale "en" :etag "\"source-1\"" :payload source})
 (def reviewed {:doc_id "doc1" :revision "r1" :title "Title" :content "Übersetzt"
                :metadata {:optimizely provenance}})
@@ -18,7 +18,7 @@
    :knoxx (fn [req] (swap! calls conj [:knoxx req])
             (p/resolved (if (= :get (:method req)) history-response
                             {:status 200 :headers {} :body (merge (select-keys (:body req) [:title :content :metadata :visibility]) {:doc_id "doc1" :revision "r1" :revision_heads ["r1"] :conflicted false})})))})
-(def vendor {:status 200 :headers {"etag" "\"source-1\""} :body source})
+(def vendor {:status 200 :headers {"etag" "\"source-1\"" "x-big-pi-source-id" "store-a"} :body source})
 (def import-request {:key "article-1" :version "v1" :field "Body" :source-system "local"})
 (def export-request {:document-id "doc1" :revision "r1" :target-locale "de" :field "Body"})
 
@@ -41,6 +41,7 @@
       (-> (bridge/export! (clients calls vendor {:status 200 :body history}) export-request)
           (p/then (fn [result]
                     (is (= "v2" (get-in result [:vendor :version])))
+                    (is (= "store-a" (get-in result [:source :source-id])))
                     (let [request (second (last @calls))]
                       (is (= :post (:method request)))
                       (is (= "/v1/content/article-1/versions" (:path request)))
@@ -60,11 +61,13 @@
                  {:history (update-in history [:revisions 0] dissoc :metadata) :vendor vendor}
                  {:history history :vendor (assoc-in vendor [:body :properties :Body] "mutated")}
                  {:history history :vendor (assoc-in vendor [:headers "etag"] "\"changed\"")}]]
-      (-> (p/all (map (fn [{:keys [history vendor]}]
-                        (let [calls (atom [])]
-                          (-> (bridge/export! (clients calls vendor {:status 200 :body history}) export-request)
-                              (p/then (fn [_] (is false "should reject")))
-                              (p/catch (fn [_] (is (not-any? #(= :post (get-in % [1 :method])) @calls))))))) cases))
+      (-> (reduce (fn [pending {:keys [history vendor]}]
+                    (p/then pending (fn [_]
+                      (let [calls (atom [])]
+                        (-> (bridge/export! (clients calls vendor {:status 200 :body history}) export-request)
+                            (p/then (fn [_] (is false "should reject")))
+                            (p/catch (fn [_] (is (not-any? #(= :post (get-in % [1 :method])) @calls)))))))))
+                  (p/resolved nil) cases)
           (p/finally done)))))
 
 (deftest import-rejects-structured-property
@@ -93,13 +96,14 @@
 
 (deftest reject-missing-etag-and-source-mismatch
   (async done
-    (-> (p/all
-         (map (fn [bad]
-                (let [calls (atom [])]
-                  (-> (bridge/import! (clients calls bad nil) import-request)
-                      (p/then (fn [_] (is false "must reject source")))
-                      (p/catch (fn [_] (is (= 1 (count @calls))))))))
-              [(assoc vendor :headers {}) (assoc-in vendor [:body :version] "v2")]))
+    (-> (reduce (fn [pending bad]
+                  (p/then pending (fn [_]
+                    (let [calls (atom [])]
+                      (-> (bridge/import! (clients calls bad nil) import-request)
+                          (p/then (fn [_] (is false "must reject source")))
+                          (p/catch (fn [_] (is (= 1 (count @calls))))))))))
+                (p/resolved nil)
+                [(assoc vendor :headers {}) (assoc-in vendor [:body :version] "v2")])
         (p/finally done))))
 
 (deftest rejects-intervening-head-before-export
@@ -186,3 +190,35 @@
       (-> (bridge/export! (clients calls vendor {:status 200 :body h}) (assoc export-request :revision rev))
           (p/then (fn [_] (is (every? #(not (clojure.string/includes? (get-in % [1 :path]) rev)) @calls)) (done)))
           (p/catch (fn [e] (is false (str e)) (done)))))))
+
+(deftest store-identity-must-match
+  (async done
+    (let [calls (atom [])
+          h (assoc-in history [:revisions 0 :metadata :optimizely :source-id] "store-a")
+          v (assoc-in vendor [:headers "x-big-pi-source-id"] "store-b")]
+      (-> (bridge/export! (clients calls v {:status 200 :body h}) export-request)
+          (p/then (fn [_] (is false "different stores must not share source authority")))
+          (p/catch (fn [e]
+                     (let [data (ex-data (or (ex-cause e) e))]
+                       (is (= :source-identity-mismatch (:code data)))
+                       (is (= 409 (:status data))))))
+          (p/finally (fn []
+                       (is (not-any? #(= :post (get-in % [1 :method])) @calls))
+                       (done)))))))
+
+(deftest source-identity-is-required
+  (async done
+    (let [calls (atom [])]
+      (-> (bridge/import! (clients calls (update vendor :headers dissoc "x-big-pi-source-id") nil) import-request)
+          (p/then (fn [_] (is false "missing source identity must not import")))
+          (p/catch (fn [_] (is (not-any? #(= :post (get-in % [1 :method])) @calls))))
+          (p/finally done)))))
+
+(deftest legacy-provenance-without-identity-cannot-export
+  (async done
+    (let [calls (atom [])
+          h (update-in history [:revisions 0 :metadata :optimizely] dissoc :source-id)]
+      (-> (bridge/export! (clients calls vendor {:status 200 :body h}) export-request)
+          (p/then (fn [_] (is false "legacy provenance cannot authorize export")))
+          (p/catch (fn [_] (is (not-any? #(= :post (get-in % [1 :method])) @calls))))
+          (p/finally done)))))

@@ -33,7 +33,7 @@
         (catch :default error
           (set! (.-failed store) true)
           (throw error))))
-    (clj->js (:response result))))
+    (clj->js (update (:response result) :headers assoc "X-Big-Pi-Source-Id" (.-identity store)))))
 
 (defn- response-map [raw]
   {:status (.-status raw) :headers (into {} (map (fn [[k v]] [(str/lower-case k) v]) (js->clj (.-headers raw))))

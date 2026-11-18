@@ -15,7 +15,7 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
   const port = 23000 + Math.floor(Math.random() * 10000), token = 'local-test-token';
   const base = `http://127.0.0.1:${port}`;
   const env = { ...process.env, BIG_PI_PORT: String(port), BIG_PI_TOKEN: token, BIG_PI_DATA_DIR: dir };
-  let child, client, stdio;
+  let child, client, stdio, sourceId;
   const start = async () => {
     child = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], { env, stdio: 'ignore' });
     for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/healthz`)).ok) return; } catch {} await pause(100); }
@@ -33,6 +33,8 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     assert.equal((await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' })).status, 400);
     let res = await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify({ key: 'sample', contentType: 'Article', initialVersion: { displayName: 'Hello', locale: 'en', properties: { title: 'Original' } } }) });
     assert.equal(res.status, 201); let etag = res.headers.get('etag');
+    sourceId = res.headers.get('x-big-pi-source-id');
+    assert.match(sourceId || '', /^[0-9a-f-]{36}$/, 'source store has a durable identity');
     assert.equal((await res.json()).status, 'draft');
     res = await request('/v1/content/sample/versions/1', { method: 'PATCH', headers: { 'content-type': 'application/merge-patch+json', 'if-match': '"stale"' }, body: '{"displayName":"Bad"}' });
     assert.equal(res.status, 412);
@@ -56,6 +58,7 @@ test('HTTP and SDK transports share authenticated durable draft state', async ()
     assert.notEqual(await new Promise(r => competing.once('exit', r)), 0, 'second writer must fail');
     await stop(); await start();
     res = await request('/v1/content/sample/versions/1');
+    assert.equal(res.headers.get('x-big-pi-source-id'), sourceId, 'identity survives restart');
     assert.equal((await res.json()).displayName, 'Edited');
     await stop();
     await writeFile(join(dir, 'state.edn'), '{:generation 0}');
@@ -91,10 +94,14 @@ test('configured bridge imports an exact source and exports only a draft to the 
   const post = (path, body) => fetch(base + path, { method: 'POST', headers: { authorization: 'Bearer local', 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify(body) });
   try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/healthz`)).ok) break; } catch {} await pause(100); }
-    assert.equal((await post('/v1/content', { key: 'source', contentType: 'Article', initialVersion: { displayName: 'Source', locale: 'en', properties: { title: 'Hello' } } })).status, 201);
+    const created = await post('/v1/content', { key: 'source', contentType: 'Article', initialVersion: { displayName: 'Source', locale: 'en', properties: { title: 'Hello' } } });
+    assert.equal(created.status, 201);
+    const sourceId = created.headers.get('x-big-pi-source-id');
     let response = await post('/big-pi/import', { key: 'source', version: '1', field: 'title', 'source-system': 'fixture' });
     assert.equal(response.status, 200, await response.clone().text());
-    assert.equal((await response.json()).document.doc_id, 'doc1');
+    const imported = await response.json();
+    assert.equal(imported.document.doc_id, 'doc1');
+    assert.equal(imported.document.metadata.optimizely['source-id'], sourceId);
     client = new Client({ name: 'bridge-update', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: 'Bearer local' } } }));
     const input = { key: 'source', version: '1', field: 'title', 'source-system': 'fixture', 'document-id': 'doc1' };
