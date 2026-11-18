@@ -25,16 +25,28 @@
                                  {:status 200 :headers {"etag" "\"1\"" "x-big-pi-source-id" "store-a"} :body source}
                                  {:status 201 :headers {} :body (merge (:body req) {:key "item-1" :version "2" :status "draft"})})))
           knoxx (fn [req]
-                  (if (= :post (:method req))
+                  (if (#{:post :patch} (:method req))
                     (let [incoming (fastify/request-body #js {:body (clj->js (:body req))})
                           checked (law/require-body! incoming)
-                          doc (merge checked {:doc_id "doc1" :revision "r1" :revision_heads ["r1"] :conflicted false})]
+                          previous @saved
+                          doc (merge checked {:metadata (or (:metadata checked) (:metadata previous) {})
+                                              :doc_id "doc1" :revision "r1" :revision_heads ["r1"] :conflicted false})]
+                      (when (= :patch (:method req))
+                        (is (not (contains? incoming :metadata)) "Never rewrite metadata through this lossy codec")
+                        (is (= (:metadata previous) (:metadata doc))))
                       (reset! saved doc)
                       (p/resolved {:status 200 :headers {} :body (wire doc)}))
                     (let [doc (assoc @saved :content "Übersetzt")]
                       (p/resolved {:status 200 :headers {} :body (wire {:document doc :revisions [doc]})}))))
           clients {:optimizely vendor :knoxx knoxx}]
       (-> (bridge/import! clients {:key "item-1" :version "1" :field "Body" :source-system "local"})
+          (p/then (fn [_]
+                    ;; The store can contain namespace keys that HTTP cannot
+                    ;; represent. Omitted PATCH metadata retains the parent's
+                    ;; map, matching domain.cms-document/record semantics.
+                    (swap! saved update :metadata assoc :legacy/visibility "public" :visibility "other")
+                    (bridge/import! clients {:key "item-1" :version "1" :field "Body" :source-system "local"
+                                             :document-id "doc1" :expected-revision "r1"})))
           (p/then (fn [_] (bridge/export! clients {:document-id "doc1" :revision "r1" :target-locale "de" :field "Body"})))
           (p/then (fn [result]
                     (is (= "2" (get-in result [:vendor :version])))

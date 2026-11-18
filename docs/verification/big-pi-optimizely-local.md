@@ -9,7 +9,9 @@ bash scripts/verify-big-pi-local.sh
 
 The verification script is the source of truth for its actual checks and exit status. The package also has `npm test --prefix packages/big-pi-optimizely` for domain and injected-client bridge tests and `npm run test:integration --prefix packages/big-pi-optimizely` for real loopback HTTP/MCP tests. Do not treat fixture bridge tests as verification against the Knoxx application or a vendor tenant.
 
-`npm run test:knoxx-contract --prefix packages/big-pi-optimizely` loads the repository's actual, unmodified `knoxx.backend.extern.fastify` request/response helpers and CMS body law. It verifies that the versioned provenance envelope survives that codec, including source keys containing slashes or spaces and nested nulls. This catches an incompatibility an ordinary JSON echo fixture cannot expose. It does not start Clio, authentication, organization isolation or the full Knoxx server.
+`npm run test:knoxx-contract --prefix packages/big-pi-optimizely` loads the repository's actual, unmodified `knoxx.backend.extern.fastify` request/response helpers and CMS body law. It verifies that the versioned provenance envelope survives that codec, including source keys containing slashes or spaces and nested nulls. It also verifies that updates omit metadata and retain the fixture's original namespaced metadata; the fixture follows the inspected `domain.cms-document/record` omission behavior. The complete domain module needs Malli and is not loaded by this NBB test. This catches an incompatibility an ordinary JSON echo fixture cannot expose. It does not start Clio, authentication, organization isolation or the full Knoxx server.
+
+The current API cannot losslessly return all existing metadata keys. The bridge therefore permits updates only when recorded source provenance is unchanged and leaves stored metadata untouched. Missing or changed provenance returns `source-rebind-required`; import to a new document instead. Lossless provenance replacement remains in the provider qualification story.
 
 ## Browser tour
 

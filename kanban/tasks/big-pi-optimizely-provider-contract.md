@@ -19,5 +19,6 @@ As a resource consumer, I can use the same repository operations regardless of p
 - Implement the existing parent fake/file contract first, then map a qualified Optimizely provider without consumers branching on provider identity.
 - Prove tenant authorization before existence disclosure, expected-version conflicts, immutable resource and provenance history, exact pinned transitive closures, cycle and missing-reference failures, and authorization receipts.
 - Prove linearizable multi-resource observation including exact absence and exact versions; prove crash safety and cross-process races to the guarantees in the parent cards. Refuse operations the upstream system cannot implement truthfully.
+- Provide a lossless CMS metadata read/update contract before replacing source provenance in an existing document. The initial bridge omits metadata on same-source updates; changed or missing provenance requires a new document because the current HTTP codec can flatten namespaced keys.
 
 **Evidence**: shared provider contract suite with concurrency, crash, closure and authorization cases against fake, file and the Optimizely adapter; documented unsupported provider obligations and live integration fixture.

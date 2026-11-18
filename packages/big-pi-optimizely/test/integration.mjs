@@ -106,7 +106,7 @@ test('configured bridge imports an exact source and exports only a draft to the 
       const body = JSON.parse(raw);
       if (JSON.stringify(body.parents) !== JSON.stringify([doc.revision])) { res.statusCode = 409; res.end('{}'); return; }
       const revision = `rev${revisions.length + 1}`;
-      doc = { ...body, doc_id: 'doc1', revision, revision_heads: [revision], conflicted: false }; revisions.push(doc);
+      doc = { ...body, metadata: body.metadata ?? doc.metadata, doc_id: 'doc1', revision, revision_heads: [revision], conflicted: false }; revisions.push(doc);
       res.end(JSON.stringify(doc));
     } else if (req.method === 'GET' && req.url === '/api/cms/documents/doc1/history') {
       res.end(JSON.stringify({ document: doc, revisions }));

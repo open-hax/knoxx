@@ -131,7 +131,13 @@ re-imported before export.
 
 The imported document has internal visibility. To update an existing imported
 document, provide its `document-id` and the `expected-revision` you observed.
-Existing metadata is preserved. Knoxx can represent concurrent saves as branches;
+Updates require the same recorded source identity, payload, ETag, field and label.
+They omit metadata from the PATCH so Knoxx retains the parent revision's exact
+stored metadata, including keys that its current HTTP codec cannot round-trip.
+Changing the recorded source or attaching provenance to an unrelated existing
+document is refused with `source-rebind-required`; import into a new document
+instead. Updating provenance in place needs a lossless CMS metadata contract and
+remains in the provider story. Knoxx can represent concurrent saves as branches;
 the bridge reports actual revision heads and conflicts instead of claiming CAS.
 
 After translation or review in the existing workflow, return a specific revision

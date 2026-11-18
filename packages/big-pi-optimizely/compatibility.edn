@@ -34,6 +34,8 @@
  :bridge {:source :exact-store-key-version-etag-payload :target :existing-knoxx-document-history
           :source-identity-header "X-Big-Pi-Source-Id" :caller-source-system :descriptive-label-only
           :provenance-encoding "big-pi-edn-v1"
+          :update :same-recorded-source-only :metadata-write :create-only
+          :source-rebind :requires-new-document
           :format :single-plain-string-field :return :draft-only
           :review-authority :mu :generic-resource-provider false
           :real-knoxx-verification :not-established

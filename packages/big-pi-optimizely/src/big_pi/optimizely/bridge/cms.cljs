@@ -7,7 +7,7 @@
 (defn- fail! [code message]
   (throw (ex-info message {:code code
                            :status (case code
-                                     (:stale-or-conflicted :stale-source :field-mismatch :source-identity-mismatch) 409
+                                     (:stale-or-conflicted :stale-source :field-mismatch :source-identity-mismatch :source-rebind-required) 409
                                      :outcome-uncertain 502
                                      :upstream-failure 502
                                      :source-identity-unavailable 502
@@ -123,7 +123,8 @@
 
 (defn import!
   "Import an explicit source version pinned with ETag into Knoxx. Optional updates
-   require the caller's expected revision; concurrent edits can still branch."
+   require the caller's expected revision and unchanged source provenance;
+   concurrent edits can still branch."
   [{:keys [optimizely knoxx]} {:keys [key version field source-system document-id expected-revision] :as request}]
   (p/let [_ (fields! request #{:key :version :field :source-system :document-id :expected-revision})
           _ (when (not= (some? document-id) (some? expected-revision))
@@ -145,12 +146,18 @@
                       :payload-edn payload-edn}
           _ (when-not (or (nil? (:metadata current)) (map? (:metadata current)))
               (fail! :invalid-payload "Existing CMS metadata is not a map"))
-          metadata (assoc (or (:metadata current) {}) :optimizely provenance)
+          _ (when (and document-id (not= provenance (get-in current [:metadata :optimizely])))
+              (fail! :source-rebind-required "Source provenance differs; import into a new document"))
+          ;; Current Knoxx HTTP can flatten namespace keys in existing metadata.
+          ;; Omit it on PATCH so domain.cms-document/record retains the exact
+          ;; parent metadata in storage. Rebinding needs a lossless CMS contract.
+          metadata (if document-id (:metadata current) {:optimizely provenance})
           _ (when-not (and (map? metadata) (<= (count (pr-str metadata)) 65536))
               (fail! :invalid-payload "Source provenance exceeds CMS metadata limit"))
           body (cond-> {:title (:displayName payload) :content (property payload field)
-                        :visibility "internal" :metadata metadata}
-                 document-id (assoc :parents [expected-revision]))
+                        :visibility "internal"}
+                 document-id (assoc :parents [expected-revision])
+                 (nil? document-id) (assoc :metadata metadata))
           response (p/catch
                     (p/then (p/resolved nil)
                             (fn [_] (knoxx {:method (if document-id :patch :post)
@@ -170,7 +177,7 @@
                    (boolean? (:conflicted document))
                    (= (:conflicted document) (> (count (:revision_heads document)) 1))
                    (= (:title body) (:title document)) (= (:content body) (:content document))
-                   (= (:metadata body) (:metadata document)) (= "internal" (:visibility document))
+                   (= metadata (:metadata document)) (= "internal" (:visibility document))
                    (or (nil? document-id) (= document-id (:doc_id document))))
       (fail! :outcome-uncertain "CMS write response is inconsistent; inspect CMS before retrying"))]
     {:document document}))

@@ -17,7 +17,7 @@
                                  {:status 201 :headers {} :body {:key "article-1" :version "v2" :locale "de" :status "draft" :properties (get-in req [:body :properties])}})))
    :knoxx (fn [req] (swap! calls conj [:knoxx req])
             (p/resolved (if (= :get (:method req)) history-response
-                            {:status 200 :headers {} :body (merge (select-keys (:body req) [:title :content :metadata :visibility]) {:doc_id "doc1" :revision "r1" :revision_heads ["r1"] :conflicted false})})))})
+                            {:status 200 :headers {} :body (merge {:metadata (get-in history-response [:body :document :metadata])} (select-keys (:body req) [:title :content :metadata :visibility]) {:doc_id "doc1" :revision "r1" :revision_heads ["r1"] :conflicted false})})))})
 (def vendor {:status 200 :headers {"etag" "\"source-1\"" "x-big-pi-source-id" "store-a"} :body source})
 (def import-request {:key "article-1" :version "v1" :field "Body" :source-system "local"})
 (def export-request {:document-id "doc1" :revision "r1" :target-locale "de" :field "Body"})
@@ -155,17 +155,34 @@
 (deftest updating-requires-observed-revision-and-preserves-metadata
   (async done
     (let [calls (atom [])
-          old (assoc-in history [:document :metadata] {:existing "keep"})
+          old (assoc-in history [:document :metadata] {:existing "keep" :optimizely provenance})
           c (clients calls vendor {:status 200 :body old})]
       (-> (bridge/import! c (assoc import-request :document-id "doc1" :expected-revision "r1"))
-          (p/then (fn [_]
+          (p/then (fn [result]
                     (let [request (second (last @calls))]
                       (is (= :patch (:method request)))
                       (is (= ["r1"] (get-in request [:body :parents])))
-                      (is (= "keep" (get-in request [:body :metadata :existing])))
+                      (is (not (contains? (:body request) :metadata)))
+                      (is (= "keep" (get-in result [:document :metadata :existing])))
                       (is (not-any? #(re-find #"(?i)publish" (get-in % [1 :path])) @calls)))
                     (done)))
           (p/catch (fn [e] (is false (str e)) (done)))))))
+
+(deftest update-cannot-replace-recorded-source-metadata
+  (async done
+    (-> (reduce (fn [pending metadata]
+                  (p/then pending
+                          (fn [_]
+                            (let [calls (atom []) h (assoc-in history [:document :metadata] metadata)]
+                              (-> (bridge/import! (clients calls vendor {:status 200 :body h})
+                                                 (assoc import-request :document-id "doc1" :expected-revision "r1"))
+                                  (p/then (fn [_] (is false "source rebinding must be refused")))
+                                  (p/catch (fn [_] (is (not-any? #(#{:post :patch} (get-in % [1 :method])) @calls)))))))))
+                (p/resolved nil)
+                [{:legacy/visibility "public"}
+                 {:optimizely (assoc provenance :etag "changed")}
+                 {:optimizely (assoc provenance :source-id "different-store")}])
+        (p/finally done))))
 
 (deftest update-stale-or-unknown-fields-refused
   (async done
