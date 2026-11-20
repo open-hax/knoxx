@@ -54,6 +54,11 @@
       (when (and (string? token) (not (str/blank? token)))
         token))))
 
+(defn provider-token-configured?
+  "Check that an environment reference resolves to a bearer without exposing its value."
+  [env-var]
+  (boolean (provider-token env-var)))
+
 ;; ─── Eta-mu runtime setup ────────────────────────────────────────────────────
 
 (defn ^:async setup-runtime!
@@ -115,9 +120,14 @@
   [session-manager thinking-level]
   (.appendThinkingLevelChange session-manager thinking-level))
 
+(defn find-exact-model
+  "Resolve only the given provider and model in the runtime registry."
+  [model-registry provider-id model-id]
+  (.find model-registry (str provider-id) model-id))
+
 (defn find-model
   [model-registry provider-id model-id fallback-model-id]
-  (or (.find model-registry (str provider-id) model-id)
+  (or (find-exact-model model-registry provider-id model-id)
       (.find model-registry "proxx" model-id)
       (.find model-registry "proxx" fallback-model-id)))
 
