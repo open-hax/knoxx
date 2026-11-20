@@ -20,9 +20,7 @@
      :actions/noop                — no-op, succeeds immediately"
   (:require [clojure.string :as str]
             [knoxx.backend.infra.agent.runtime :as agent-runtime]
-            [knoxx.backend.infra.agent.session :as agent-session]
             [knoxx.backend.infra.temp-memory :as temp-memory]
-            [knoxx.backend.shape.agent :refer [streaming?]]
             [knoxx.backend.shape.pipeline :as pipeline-shape]))
 
 ;; ── Rich Registry ──────────────────────────────────────────────────────
@@ -243,28 +241,19 @@
 (defn ^:async agent-control-handler
   "Steer or follow-up an active agent session. Parameterized by :kind."
   [ctx action]
-  (let [kind (or (get-in action [:action/with :kind]) "steer")
-        conversation-id (or (:conversation-id ctx)
-                            (get-in ctx [:event :event/payload :conversationId])
-                            (get-in ctx [:event :event/payload :conversation_id]))
-        message (or (get-in action [:action/with :message])
-                    (get-in ctx [:event :event/payload :content])
-                    (get-in ctx [:event :event/payload :text])
-                    "")
-        session (agent-session/active-agent-session conversation-id)]
-    (when-not session
-      (throw (js/Error. "No active session for conversation")))
-    (when-not (streaming? session)
-      (throw (js/Error. "No active running turn is available for live controls")))
-    (let [session-id (some-> session .-sessionId)
-          run-id (get-in ctx [:event :event/id])]
-      (await (agent-runtime/queue-agent-control!
-              nil nil
-              {:conversation-id conversation-id
-               :session-id session-id
-               :run-id run-id
-               :message message
-               :kind kind})))))
+  (let [payload (get-in ctx [:event :event/payload])
+        kind (or (get-in action [:action/with :kind]) "steer")
+        conversation-id (or (:conversation-id ctx) (:conversationId payload) (:conversation_id payload))
+        message (or (get-in action [:action/with :message]) (:content payload) (:text payload) "")]
+    (await (agent-runtime/queue-agent-control!
+            nil nil
+            {:conversation-id conversation-id
+             :session-id (or (:sessionId payload) (:session_id payload))
+             :run-id (or (:runId payload) (:run_id payload))
+             :metadata (when-let [event-id (get-in ctx [:event :event/id])]
+                         {:sourceEventId event-id})
+             :message message
+             :kind kind}))))
 
 ;; ── Built-in Action Registration ──────────────────────────────────────
 

@@ -4,6 +4,7 @@
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.infra.routes.admin :as admin-routes]
             [knoxx.backend.infra.routes.actors :as actor-routes]
+            [knoxx.backend.infra.agent.provider.native-subscription :as native-subscription]
             [knoxx.backend.infra.agent.hydration :refer [ensure-settings! settings-state*]]
             [knoxx.backend.infra.agent.runtime :refer [resolve-workspace-path]]
             [knoxx.backend.infra.agent.runner :as agent-runner]
@@ -76,15 +77,21 @@
     (catch :default err
       (error-response! reply err 429))))
 
+(defn ^:async admit-direct-turn!
+  [runtime config agent-ctx policy-model body accepted-response log-label]
+  (native-subscription/resolve-worker! config agent-ctx policy-model (:agent-spec body))
+  (await (validate-chat-policy! agent-ctx policy-model))
+  (send-agent-turn-best-effort! runtime config body log-label)
+  accepted-response)
+
 (defn ^:async queue-direct-start!
   [runtime config reply agent-ctx policy-model body accepted-response log-label]
   (try
-    (await (validate-chat-policy! agent-ctx policy-model))
-    (send-agent-turn-best-effort! runtime config body log-label)
-    (json-response! reply 202 accepted-response)
+    (json-response! reply 202
+                    (await (admit-direct-turn! runtime config agent-ctx policy-model
+                                               body accepted-response log-label)))
     (catch :default err
       (error-response! reply err 429))))
-
 
 (defn- compact-agent-spec-overrides
   [agent-spec]
@@ -767,27 +774,27 @@
           (.error js/console "Session status check failed" err)
           (await (queue-turn! "Async agent chat failed")))))))
 
-(defn ^:async handle-direct-start [runtime config reply ctx request]
-  (let [node-crypto crypto
-        parsed0 (normalize-chat-body (request-body request))
-        parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
+(defn direct-turn-request
+  [config ctx parsed]
+  (let [parsed (assoc parsed :agent-spec (merged-agent-spec config parsed))
         agent-ctx (effective-auth-context ctx parsed)
-        policy-model (or (:model parsed)
-                         (get-in parsed [:agent-spec :model])
+        policy-model (or (:model parsed) (get-in parsed [:agent-spec :model])
                          (:llmModel @settings-state*))
+        session-id (ensure-session-id (:session-id parsed))
+        conversation-id (or (:conversation-id parsed) (.randomUUID crypto))
+        run-id (or (:run-id parsed) (.randomUUID crypto))]
+    {:agent-ctx agent-ctx
+     :policy-model policy-model
+     :body (assoc parsed :session-id session-id :conversation-id conversation-id
+                         :run-id run-id :mode "direct" :auth-context agent-ctx)
+     :accepted-response {:ok true :queued true :run_id run-id :conversation_id conversation-id
+                         :session_id session-id :model policy-model}}))
+
+(defn ^:async handle-direct-start [runtime config reply ctx request]
+  (let [parsed (normalize-chat-body (request-body request))
+        {:keys [agent-ctx policy-model body accepted-response]} (direct-turn-request config ctx parsed)
         provided-session-id (:session-id parsed)
-        session-id (ensure-session-id provided-session-id)
-        conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
-        run-id (or (:run-id parsed) (.randomUUID node-crypto))
-        body (assoc parsed :session-id session-id :conversation-id conversation-id :run-id run-id :mode "direct" :auth-context agent-ctx)
-        accepted-response {:ok true
-                           :queued true
-                           :run_id run-id
-                           :conversation_id conversation-id
-                           :session_id (:session-id body)
-                           :model (or (:model body)
-                                      (get-in body [:agent-spec :model])
-                                      (:llmModel @settings-state*))}
+        {:keys [session-id conversation-id]} body
         queue-turn! (fn [log-label]
                       (queue-direct-start! runtime config reply agent-ctx policy-model
                                            body accepted-response log-label))]

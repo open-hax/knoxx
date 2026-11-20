@@ -43,13 +43,23 @@
 (defn- events-control-response [config]
   (let [live-config (or @runtime-state/config* config)
         control     (control-config/event-control-config live-config)
-        runtime     (event-dispatch/status-snapshot live-config)]
+        runtime     (assoc (event-dispatch/status-snapshot live-config)
+                           :running (event-runtime/running?)
+                           :disabled (event-runtime/disabled? live-config))]
     {:configured true
      :availableRoles (control-config/event-role-options live-config)
      :availableGeneratorKinds (control-config/event-generator-kind-options live-config)
      :availableTriggerKinds (control-config/event-trigger-kind-options)
      :control control
      :runtime runtime}))
+
+(defn mcp-events-status
+  "Return event runtime state and catalog identifiers without resource bodies."
+  [config]
+  (let [{:keys [control runtime configured]} (events-control-response config)]
+    {:configured configured
+     :runtime (select-keys runtime [:running :configured :disabled])
+     :control {:resources (update-vals (:resources control) #(mapv :id %))}}))
 
 (defn- failed-trigger-results
   [result]
@@ -67,6 +77,15 @@
   (-> body
       (dissoc :actorId :actor-id)
       (assoc :event/actor (authz/ctx-actor-id ctx))))
+
+(defn ^:async dispatch-operator-event!
+  "Apply the operator permission and actor binding to external dispatch."
+  [config ctx body]
+  (authz/ensure-permission! ctx "org.events.control")
+  (let [result (await (event-dispatch/dispatch-external! config (operator-dispatch-event ctx body)))
+        failures (failed-trigger-results result)]
+    (cond-> (assoc (select-keys result [:matchedTriggers :event :results]) :ok (empty? failures))
+      (seq failures) (assoc :detail "One or more trigger actions failed" :failures failures))))
 
 (defn- trigger-fire-response!
   [reply trigger-id result]
@@ -403,22 +422,9 @@
   "POST" "/api/admin/config/events/dispatch"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.events.control")
-    (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
-      (try
-        (let [result (await (event-dispatch/dispatch-external!
-                             config (operator-dispatch-event ctx body)))
-              failures (failed-trigger-results result)
-              failed? (seq failures)]
-          (json-response! reply (if failed? 500 202)
-                          (cond-> {:ok (not failed?)
-                                   :matchedTriggers (:matchedTriggers result)
-                                   :event (:event result)
-                                   :results (:results result)}
-                            failed? (assoc :detail "One or more trigger actions failed"
-                                           :failures failures))))
-        (catch :default err
-          (error-response! reply err))))
+    (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
+          result (await (dispatch-operator-event! config ctx body))]
+      (json-response! reply (if (:ok result) 202 500) result))
     (catch :default err
       (error-response! reply err))))
 

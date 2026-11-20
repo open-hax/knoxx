@@ -1,8 +1,6 @@
 (ns knoxx.backend.infra.routes.mcp
   "Serve Knoxx tools over MCP (Model Context Protocol) Streamable HTTP."
   (:require [clojure.string :as str]
-            [malli.core :as m]
-            [malli.error :as me]
             [knoxx.backend.shape.app-shapes :refer [route!]]
             [knoxx.backend.infra.actor.acting :as actor-acting]
             [knoxx.backend.infra.auth.authz :as authz]
@@ -10,7 +8,9 @@
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.routes.mcp.consent :as consent]
+            [knoxx.backend.infra.routes.mcp.controls :as controls]
             [knoxx.backend.infra.routes.mcp.params :as params]
+            [knoxx.backend.infra.routes.mcp.run-monitor :as run-monitor]
             [knoxx.backend.infra.routes.mcp.transport :as transport]
             [knoxx.backend.extern.mcp-token :as mcp-token]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
@@ -70,8 +70,6 @@
                          "protected resource metadata failed its contract")))
     payload))
 
-(defn- tool-execute! [^js tool params] (.execute tool "mcp" params nil nil nil))
-
 (defn- reply-header! [^js reply name value] (.header reply name value))
 
 (defn- ^:async browser-auth-ctx!
@@ -84,7 +82,11 @@
       (let [base (public-base-url config)
             current-path (or (some-> req (aget "raw") (aget "url")) "/api/mcp/oauth/authorize")
             login-url (js/URL. "/api/auth/login" base)]
-        (.set (.-searchParams login-url) "redirect" current-path)
+        ;; A new browser session must see the consent page before confirmation.
+        (.set (.-searchParams login-url) "redirect"
+              (str/replace-first current-path
+                                 #"^/api/mcp/oauth/authorize/confirm(?=\?|$)"
+                                 "/api/mcp/oauth/authorize"))
         {:redirect (.toString login-url)}))))
 
 (defn- require-browser-auth!
@@ -137,7 +139,10 @@
     (throw (params/http-error 400 error-code "redirect_uri not allowed for registered client"))))
 
 (defn- available-tools [runtime config auth-context]
-  (or (mcp-expose/create-knoxx-custom-tools-js runtime config auth-context) (js/Array.)))
+  (let [tools (or (mcp-expose/create-knoxx-custom-tools-js runtime config auth-context) (js/Array.))]
+    (if-let [monitor (run-monitor/tool auth-context)]
+      (.concat tools monitor)
+      tools)))
 
 (defn- tool-name-set [tools]
   (into #{} (keep (fn [t] (some-> (aget t "name") str str/trim not-empty))) (array-seq tools)))
@@ -567,13 +572,13 @@
    to: without it a credential read falls back to the process-global
    agent-context, and an actor-less token would borrow whatever actor a
    concurrent agent turn is running as. See actor-acting/run-as!."
-  [^js server z tools acting]
+  [^js server z tools acting runtime config]
   (doseq [^js tool (array-seq tools)]
     (when-let [name (some-> (aget tool "name") str str/trim not-empty)]
       (.registerTool server name
                      (tool-config-js z tool name)
                      (fn [params]
-                       (actor-acting/run-as! acting #(tool-execute! tool params)))))))
+                       (actor-acting/run-as! acting #(controls/execute! runtime config acting tool params)))))))
 
 (defn- granted-tools
   "The tools this token was granted, out of those its context can reach.
@@ -616,14 +621,15 @@
   [{:keys [config runtime policy-db McpServer StreamableHTTPServerTransport z
            request raw-req raw-res token-record]}]
   (let [token-ctx (await (resolve-token-context! policy-db token-record))
-        acting    {:actor-id (call-actor-id token-record token-ctx)
+        acting    {:auth-context token-ctx
+                   :actor-id (call-actor-id token-record token-ctx)
                    ;; From the resolved context, so a credential lookup names
                    ;; this token's owner exactly rather than searching by actor.
                    :org-id        (authz/ctx-org-id token-ctx)
                    :membership-id (authz/ctx-membership-id token-ctx)}
         server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
         transport (new StreamableHTTPServerTransport (transport/stateless-transport-options))]
-    (register-tools! server z (granted-tools runtime config token-ctx token-record) acting)
+    (register-tools! server z (granted-tools runtime config token-ctx token-record) acting runtime config)
     (await (.connect server transport))
     (close-when-response-ends! raw-res server)
     (transport/ensure-streamable-accept! request)

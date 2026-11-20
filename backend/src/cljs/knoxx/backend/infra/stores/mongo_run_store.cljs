@@ -76,6 +76,20 @@
         [])
       (domain/events-since state run-id since (:at-ms (sample store))))))
 
+(defn- ^:async read-tail! [store run-id limit assert-readable!]
+  (let [record (await (mongo/read! (:db store) run-id))
+        state (snapshot/restore record run-id)]
+    (when-let [run (domain/visible-run state run-id (:at-ms (sample store)))]
+      (assert-readable! run)
+      (if-let [chain (:event-chain record)]
+        (let [event-count (:last-sequence chain)
+              binding (get-in state [:bindings run-id])
+              cursor (max 0 (- event-count limit))]
+          {:run run
+           :events (await (events/replay! (:db store) binding chain cursor))
+           :event-count event-count})
+        (assoc (protocol/event-tail (get-in state [:events run-id] []) limit) :run run)))))
+
 (defn- ^:async directory! [store scope]
   (let [records (await (mongo/directory! (:db store) scope))
         at (:at-ms (sample store))]
@@ -103,6 +117,8 @@
   (append-event! [store event]
     (mutate! store {:kind :event :run-id (:run_id event) :event event :event-id (host/event-id event)}))
   (events-since [store id since] (events! store id since))
+  protocol/IRunEventTailStore
+  (read-event-tail [store id limit assert-readable!] (read-tail! store id limit assert-readable!))
   directory-port/IRunDirectoryStore
   (list-runs [store scope] (directory! store scope)))
 

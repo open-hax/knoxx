@@ -5,6 +5,7 @@
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.domain.action.run-state :refer [append-run-event!]]
             [knoxx.backend.domain.extension-runtime :as ext-runtime]
+            [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.infra.agent.session :refer [active-agent-session]]
             [knoxx.backend.shape.agent :refer [streaming? follow-up! steer!]]
             ["node:path" :as path]))
@@ -102,6 +103,35 @@
       (await (publish-control-event! control "failed" error))
       (throw error))))
 
+(defn- pinned-streaming-session
+  [conversation-id {:keys [session]}]
+  (when (and session
+             (identical? session (active-agent-session conversation-id))
+             (streaming? session))
+    session))
+
+(defn control-ready?
+  "Check whether the exact run and session still own the active provider session."
+  [conversation-id session-id run-id]
+  (let [active (turn-control/active-turn conversation-id)]
+    (boolean (and (some? run-id) (some? session-id)
+                  (= run-id (:run_id active))
+                  (= session-id (:session_id active))
+                  (pinned-streaming-session conversation-id active)))))
+
+(defn- ^:async deliver-active-control!
+  [{:keys [conversation-id session-id run-id] :as control}]
+  (let [{active-session-id :session_id active-run-id :run_id :as active}
+        (turn-control/active-turn conversation-id)]
+    (when (or (str/blank? active-session-id) (str/blank? active-run-id))
+      (throw (js/Error. "No active running turn is available for live controls")))
+    (when (or (and (some? session-id) (not= session-id active-session-id))
+              (and (some? run-id) (not= run-id active-run-id)))
+      (throw (js/Error. "Control target does not match the active run and session")))
+    (if-let [session (pinned-streaming-session conversation-id active)]
+      (await (deliver-control! session (assoc control :session-id active-session-id :run-id active-run-id)))
+      (throw (js/Error. "No active running turn is available for live controls")))))
+
 (defn ^:async queue-agent-control!
   "Publish and acknowledge live controls only after their audit event is durable."
   [_runtime _config {:keys [conversation-id message] :as control}]
@@ -113,8 +143,4 @@
     (js/Promise.reject (js/Error. "message is required for live controls"))
 
     :else
-    (if-let [session (active-agent-session conversation-id)]
-      (if-not (streaming? session)
-        (js/Promise.reject (js/Error. "No active running turn is available for live controls"))
-        (await (deliver-control! session control)))
-      (js/Promise.reject (js/Error. "Conversation is not active in the agent runtime")))))
+    (await (deliver-active-control! control))))

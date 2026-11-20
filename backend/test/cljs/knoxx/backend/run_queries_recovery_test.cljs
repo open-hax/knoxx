@@ -119,3 +119,26 @@
           (reset! clock "2026-09-12T14:00:00.000Z")
           (is (= [] (await (queries/list! ctx 100))))))
       (finally (fixture/remove! directory)))))
+
+(deftest ^:async monitoring-reads-bounded-durable-tail-after-restart
+  (let [directory (fixture/temporary-directory) options {:directory directory
+                                                       :clock! (constantly at)
+                                                       :instance-id "test"}
+        operations (atom [])]
+    (try
+      (let [provider (store/open! options)]
+        (await (persistence/put-run! provider run))
+        (doseq [number (range 25)]
+          (await (persistence/append-event! provider (assoc event :event_id (str "history-" number)))))
+        (with-redefs [registry/session-store* (atom (store/open! options))
+                      events/flush! (fn [id] (swap! operations conj [:flush id]))]
+          (is (= 401 (await (status #(queries/read-with-event-tail! nil "run-1" 20)))))
+          (is (= 403 (await (status #(queries/read-with-event-tail! (assoc ctx :org-id "other") "run-1" 20)))))
+          (is (= 404 (await (status #(queries/read-with-event-tail! ctx "unknown-run" 20)))))
+          (is (= 400 (await (status #(queries/read-with-event-tail! ctx "run-1" 101)))))
+          (let [observation (await (queries/read-with-event-tail! ctx "run-1" 20))]
+            (is (= "Durable answer" (get-in observation [:run :answer])))
+            (is (= 25 (:event-count observation)))
+            (is (= (vec (range 6 26)) (mapv :sequence (:events observation)))))
+          (is (empty? @operations) "A monitor only reads what has already been durably accepted")))
+      (finally (fixture/remove! directory)))))
