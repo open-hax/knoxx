@@ -4,7 +4,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isAlias, isScalar, LineCounter, parseDocument, visit } from "yaml";
+import { isAlias, isMap, isScalar, LineCounter, parseDocument } from "yaml";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const self = "scripts/check-deployment-boundary.mjs";
@@ -56,6 +56,10 @@ async function filesBelow(relativeRoot) {
     .sort();
 }
 
+function resolveAlias(doc, node) {
+  return isAlias(node) ? node.resolve(doc) : node;
+}
+
 function workflowViolations(relativePath, text) {
   const lineCounter = new LineCounter();
   const doc = parseDocument(text, { lineCounter });
@@ -67,21 +71,28 @@ function workflowViolations(relativePath, text) {
   }));
   if (found.length > 0) return found;
 
-  visit(doc, {
-    Pair(_, { key, value }) {
-      if (!isScalar(key) || key.value !== "uses") return;
-      const target = isAlias(value) ? value.resolve(doc) : value;
-      if (!isScalar(target) || typeof target.value !== "string") return;
-      const reference = target.value.trim();
-      if (!hostedDeployment.test(reference)) return;
-      found.push({
-        relativePath,
-        line: lineCounter.linePos(key.range[0]).line,
-        name: "hosted deploy called from the application repository",
-        source: reference,
-      });
-    },
-  });
+  const jobs = resolveAlias(doc, doc.get("jobs", true));
+  if (!isMap(jobs)) return found;
+
+  for (const { value } of jobs.items) {
+    const job = resolveAlias(doc, value);
+    if (!isMap(job)) continue;
+    const call = job.items.find(({ key }) => {
+      const resolved = resolveAlias(doc, key);
+      return isScalar(resolved) && resolved.value === "uses";
+    });
+    if (!call) continue;
+    const target = resolveAlias(doc, call.value);
+    if (!isScalar(target) || typeof target.value !== "string") continue;
+    const reference = target.value.trim();
+    if (!hostedDeployment.test(reference)) continue;
+    found.push({
+      relativePath,
+      line: lineCounter.linePos(call.key.range[0]).line,
+      name: "hosted deploy called from the application repository",
+      source: reference,
+    });
+  }
   return found;
 }
 
@@ -142,6 +153,7 @@ function selfTest() {
   for (const job of [
     "    uses: open-hax/services/.github/workflows/build-images.yml@main",
     `    steps:\n      - run: |\n          echo 'uses: ${deployRef}'`,
+    `    runs-on: ubuntu-latest\n    env:\n      uses: ${deployRef}\n    steps:\n      - run: true`,
   ]) {
     if (violations(workflowPath, workflow(job)).length !== 0) {
       failures.push(`rejected allowed workflow: ${job}`);
