@@ -7,8 +7,10 @@
             [knoxx.backend.infra.db.policy :as policy]
             [knoxx.backend.infra.http-server :as http]
             [knoxx.backend.infra.mongo-client :as mongo]
+            [knoxx.backend.infra.routes.app :as app-routes]
             [knoxx.backend.infra.routes.auth :as auth]
             [knoxx.backend.infra.stores.mongo-policy-invites :as invites]
+            [knoxx.backend.runtime.state :as runtime-state]
             ["node:fs" :as fs]
             ["node:path" :as path]))
 
@@ -42,6 +44,22 @@
       (await (session/create-session-from-context! reply "http://127.0.0.1" admin {}))
       @cookie)))
 
+(defn- ^:async prove-member-session!
+  [origin success]
+  (let [cookie (first (str/split (or (:cookie success) "") #";" 2))
+        anon (await (js/fetch (str origin "/api/auth/context")))
+        response (await (js/fetch (str origin "/api/auth/context")
+                                  #js {:headers #js {:cookie cookie}}))
+        context (js->clj (await (.json response)) :keywordize-keys true)]
+    (is (= 401 (.-status anon)))
+    (is (= 200 (.-status response)) "The issued cookie authenticates a subsequent request")
+    (is (= member-email (get-in context [:user :email])))
+    (is (= (get-in success [:body :membership :id]) (get-in context [:membership :id])))
+    (is (= (get-in success [:body :org :id]) (get-in context [:org :id])))
+    (is (= "active" (get-in context [:membership :status])))
+    (is (= ["basic-user"] (:roleSlugs context)))
+    (is (false? (:isSystemAdmin context)))))
+
 (defn- ^:async prove-current-invite!
   [origin db admin-cookie]
   (let [create-payload {:email member-email :send-email false}
@@ -60,14 +78,18 @@
     (let [first-redeem (request! origin "invite/redeem" payload nil)
           second-redeem (request! origin "invite/redeem" payload nil)
           attempts [(await first-redeem) (await second-redeem)]
-          success (first (filter #(= 200 (:status %)) attempts))]
+          success (first (filter #(= 200 (:status %)) attempts))
+          refused (first (filter #(= 400 (:status %)) attempts))
+          replay (await (request! origin "invite/redeem" payload nil))]
       (is (= [200 400] (sort (map :status attempts))) "One concurrent redemption wins")
       (is (= "redeemed" (get-in success [:body :invite :status])))
       (is (= member-email (get-in success [:body :user :email])))
       (is (str/starts-with? (or (:cookie success) "") "knoxx_session=")
           "Knoxx issued the normal session cookie")
-      (is (= 400 (:status (await (request! origin "invite/redeem" payload nil))))
-          "A replay cannot mint another session"))))
+      (is (nil? (:cookie refused)))
+      (is (= 400 (:status replay)) "A replay cannot mint another session")
+      (is (nil? (:cookie replay)))
+      (await (prove-member-session! origin success)))))
 
 (defn- ^:async prove-stored-expiries!
   [origin db org-id]
@@ -89,11 +111,26 @@
         (is (= status (:status (await (request! origin "invite/redeem" {:code code :email email} nil))))
             (str "Stored expiry case: " code))))))
 
+(defn- ^:async close-native-fixture!
+  [app {:keys [db] :as fixture} previous-contracts previous-policy]
+  (try
+    (await (http/close! app))
+    (finally
+      (reset! runtime-state/policy-context* previous-policy)
+      (when (identical? (mongo/get-db) db)
+        (await (session/set-db-session-store! previous-policy))
+        (reset! mongo/mongo-db* nil))
+      (if (some? previous-contracts)
+        (aset js/process.env "CONTRACTS_DIR" previous-contracts)
+        (js-delete js/process.env "CONTRACTS_DIR"))
+      (await (mongo-fixture/close! fixture)))))
+
 (defn- ^:async prove-native-invites!
   []
   (let [{:keys [db directory] :as fixture} (await (mongo-fixture/open!))
         env js/process.env
         previous-contracts (aget env "CONTRACTS_DIR")
+        previous-policy @runtime-state/policy-context*
         contracts (path/join directory "contracts")
         app (http/create-app!)]
     (try
@@ -102,20 +139,16 @@
       (fs/mkdirSync contracts)
       (aset env "CONTRACTS_DIR" contracts)
       (reset! mongo/mongo-db* db)
+      (reset! runtime-state/policy-context* {:mongo? true})
       (await (http/register-default-plugins! app))
+      (app-routes/api-auth-context! app nil nil app-routes/deps)
       (let [admin-cookie (await (prepare-admin! app))
             org (await (policy/find-org-by-slug nil "open-hax"))
             origin (await (http/listen! app "127.0.0.1" 0))]
         (await (prove-current-invite! origin db admin-cookie))
         (await (prove-stored-expiries! origin db (:id org))))
       (finally
-        (await (http/close! app))
-        (when (identical? (mongo/get-db) db)
-          (reset! mongo/mongo-db* nil))
-        (if (some? previous-contracts)
-          (aset env "CONTRACTS_DIR" previous-contracts)
-          (js-delete env "CONTRACTS_DIR"))
-        (await (mongo-fixture/close! fixture))))))
+        (await (close-native-fixture! app fixture previous-contracts previous-policy))))))
 
 (deftest ^:async native-invite-expiry-test
   (when (aget js/process.env "KNOXX_VERIFY_NATIVE_INVITES")

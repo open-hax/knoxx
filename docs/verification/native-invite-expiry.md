@@ -16,6 +16,7 @@ actor contracts, and listener when it exits.
 
 The HTTP checks cover authenticated invite creation, a refused unauthenticated
 request, email matching, successful redemption with a session cookie, and
-single use under concurrent requests. The normal writer creates an ISO string
-expiry. The isolated fixture also seeds a future BSON Date and expired and
-invalid values to check how previously stored rows behave.
+single use under concurrent requests. The winning cookie authenticates a fresh
+request as the invited member with the default role. The normal writer creates
+an ISO string expiry. The isolated fixture also seeds a future BSON Date,
+expired values, and invalid values to check how previously stored rows behave.
