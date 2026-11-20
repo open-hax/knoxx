@@ -142,18 +142,20 @@
 (defn loc-mutations
   [relative-path loc]
   (let [form (safe-sexpr loc)]
-    (when-not (= ::unreadable form)
-      (let [{:keys [line column]} (safe-position loc)]
+    (when-let [mutations (seq (form-mutations form))]
+      (let [{:keys [line column]} (safe-position loc)
+            source-text (z/string loc)]
         (mapv (fn [{:keys [operator replacement]}]
                 {:relative-path relative-path
                  :line line
                  :column column
                  :operator operator
+                 :source-text source-text
                  :original-form form
                  :replacement-form replacement
                  :original (pr-str form)
                  :replacement (pr-str replacement)})
-              (form-mutations form))))))
+              mutations)))))
 
 (defn mutants-in-source
   [relative-path source]
@@ -208,10 +210,11 @@
     (and (= line (:line mutant))
          (= column (:column mutant)))))
 
-(defn matching-mutation?
-  [mutant mutation]
-  (and (= (:operator mutant) (:operator mutation))
-       (= (:replacement-form mutant) (:replacement mutation))))
+(defn same-source?
+  "Match the original syntax. Reading #(...) again allocates fresh symbols."
+  [mutant loc]
+  (and (same-position? mutant loc)
+       (= (:source-text mutant) (z/string loc))))
 
 (defn apply-mutant-to-source
   [source mutant]
@@ -221,8 +224,8 @@
       (throw (ex-info "Mutant location no longer matches source"
                       {:mutant (select-keys mutant [:id :relative-path :line :column :operator])}))
 
-      (same-position? mutant loc)
-      (if-let [mutation (some #(when (matching-mutation? mutant %) %)
+      (same-source? mutant loc)
+      (if-let [mutation (some #(when (= (:operator mutant) (:operator %)) %)
                               (form-mutations (safe-sexpr loc)))]
         (z/root-string (z/replace loc (:replacement mutation)))
         (recur (z/next loc)))
