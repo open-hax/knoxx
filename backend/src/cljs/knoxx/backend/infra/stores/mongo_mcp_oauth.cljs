@@ -366,7 +366,7 @@
   ([member] (await (list-tokens-for-membership! nil member)))
   ([db member]
    (if-let [store (selected db)]
-     (mapv oauth-host/encode (await (oauth/oauth-read! store :oauth/tokens {:membership-id member :now (oauth-host/now-ms)})))
+     (await (oauth/oauth-read! store :oauth/tokens {:membership-id member :now (oauth-host/now-ms)}))
      (await (mongo-list-tokens-for-membership! (or db (mongo-client/get-db)) member)))))
 
 (defn ^:async exchange-code!

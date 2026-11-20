@@ -30,7 +30,7 @@
     (vec (for [row rows
                :let [id (token-id row)]
                :when (and id (revocation/credential-live? (mongo/instant-ms (:expiresAt row)) now))]
-           (codec/encode (assoc (select-keys (:token_data row) grant-fields) :tokenId id))))))
+           (assoc (select-keys (:token_data row) grant-fields) :tokenId id)))))
 
 (defn ^:async revoke-id!
   "Resolve a legacy digest within its member, then atomically recheck ownership.
