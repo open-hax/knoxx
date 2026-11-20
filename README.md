@@ -493,7 +493,8 @@ in Services on `main`. Select `scope: stack` and pass the full SHA of the
 merged Knoxx revision as `knoxx_ref`. The production chain requires
 exact-revision qualification before changing the host.
 
-Retiring the Knoxx workflow stops label-triggered testing and
-merge-triggered staging. To use those environments, Services needs its own
-caller for the [environment admission policy](https://github.com/open-hax/services/blob/main/docs/environments/promotion.md)
-and protected receiver access.
+For testing and staging, run **Deploy Service Environment** from Services on
+`main`. Select `service: knoxx`, choose the environment, and supply the Knoxx
+pull request number. The Services controller checks the testing label or the
+merged staging revision before deploying through the protected receiver. See
+the [environment admission policy](https://github.com/open-hax/services/blob/main/docs/environments/promotion.md#knoxx-dispatch-from-services).
