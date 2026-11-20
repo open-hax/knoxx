@@ -115,11 +115,30 @@
             :register-ws-routes
             :add-session-hook
             :register-http-routes
+            :start-persistence
             [:listen "127.0.0.1" 8123]
             :remember-app
             :install-shutdown
             :notify-ready
-            :log-listening
-            :start-persistence]
+            :log-listening]
            @events*))))
 
+
+(deftest ^:async persistence-rejection-prevents-listen-and-readiness-test
+  (let [events* (atom [])
+        failure (js/Error. "persistence unavailable")
+        noop (fn [& _] nil)
+        deps {:remember-runtime-context! noop
+              :create-app! (fn [] #js {:log #js {}})
+              :ensure-json-parser! noop :add-debug-hook! noop
+              :register-default-plugins! noop :register-ws-routes! noop
+              :add-session-hook! noop :register-http-routes! noop
+              :listen! (fn [& _] (swap! events* conj :listen))
+              :listening {:start-persistence! (fn [& _] (js/Promise.reject failure))
+                          :notify-ready! (fn [] (swap! events* conj :ready))}}]
+    (try
+      (await (bootstrap/start-http! #js {} {} {} false deps))
+      (is false "persistence failure must propagate")
+      (catch :default err
+        (is (identical? failure err))))
+    (is (empty? @events*) "failure precedes listener and readiness")))

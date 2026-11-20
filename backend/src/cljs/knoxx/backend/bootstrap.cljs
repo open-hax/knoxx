@@ -130,17 +130,14 @@
   (session-flush/start-periodic-flush! (:run-stale-flush-ms cfg)))
 
 (defn- ^:async start-session-persistence!
-  [runtime app cfg log]
+  [runtime app cfg _log]
   (if (persistence/mongo-required? cfg)
-    (try
-      (let [db (await (mongo-client/init-mongo!))]
+    (let [db (await (mongo-client/init-mongo!))]
         (when-not db
           (throw (ex-info "Selected Mongo persistence did not open"
                           {:code "persistence_mongo_unavailable"})))
         (await (persistence/install-mongo! cfg db))
         (start-recovery! runtime app cfg))
-      (catch :default error
-        (.error log "Selected Mongo persistence failed to initialize" error)))
     (start-recovery! runtime app cfg)))
 
 (defn- listening-deps
@@ -151,14 +148,12 @@
    :start-persistence! start-session-persistence!})
 
 (defn- handle-app-listening!
-  [runtime app cfg {:keys [remember-app! install-shutdown! notify-ready!
-                           start-persistence!]}]
+  [_runtime app cfg {:keys [remember-app! install-shutdown! notify-ready!]}]
   (remember-app! app)
   (install-shutdown! app cfg)
   (notify-ready!)
   (let [^js log (.-log app)]
     (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
-    (start-persistence! runtime app cfg log)
     app))
 
 (defn- http-start-deps
@@ -197,6 +192,7 @@
      (await (register-ws-routes! runtime app))
      (await (add-session-hook! app policy-context cookie-hook?))
      (await (register-http-routes! runtime app cfg policy-context))
+     (await ((:start-persistence! listening) runtime app cfg (.-log app)))
      (await (listen! app (:host cfg) (:port cfg)))
      (handle-app-listening! runtime app cfg listening))))
 
