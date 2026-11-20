@@ -10,6 +10,10 @@
 (defn create-app!
   []
   (Fastify #js {:logger true
+                ;; CMS identities combine an organization UUID, logical path
+                ;; digest and locale. The router's default 100-character bound
+                ;; rejects these valid identities before auth or the handler.
+                :routerOptions #js {:maxParamLength 512}
                 :bodyLimit (* 50 1024 1024)
                 :requestTimeout 600000
                 :connectionTimeout 600000

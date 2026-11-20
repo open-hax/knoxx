@@ -17,7 +17,7 @@ describe("novelAppendedText", () => {
     expect(novelAppendedText("ha", "haha")).toBe("ha");
   });
 
-  it("keeps a streamed assistant transcript monotonic across overlapping websocket chunks", () => {
+  it("keeps a transcript monotonic when reconciling explicit cumulative snapshots and replay", () => {
     let rendered = "";
     for (const incoming of ["The", "The answer", "answer is", " is stable.", "The answer is stable."]) {
       rendered = `${rendered}${novelAppendedText(rendered, incoming)}`;

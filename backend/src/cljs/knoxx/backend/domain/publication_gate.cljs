@@ -20,6 +20,7 @@
     :current-source-revision      [document] -> revision or nil
     :translated-revision?         [document garden locale revision] -> boolean
     :approved?                    [document garden locale revision] -> boolean
+    :publication-content-revision [document garden locale revision] -> output revision or nil
     :source-revision-superseded?  [intent revision] -> boolean
 
   Admissibility is deliberately split across two layers rather than duplicated.
@@ -52,33 +53,51 @@
     ((:current-source-revision facts) (:publication/document intent))
     (:publication/revision intent)))
 
+(defn- publication-blockers [intent facts revision output-bound? content-revision]
+  (let [document (:publication/document intent)
+        garden (:publication/garden intent)
+        locale (:publication/locale intent)]
+    (cond-> []
+      (and (translation-required? intent)
+           (not ((:translated-revision? facts) document garden locale revision)))
+      (conj :translation-missing)
+
+      (and output-bound? (nil? content-revision))
+      (conj :translation-output-revision-unresolved)
+
+      (and (= :required (:translation/review intent))
+           (not ((:approved? facts) document garden locale revision)))
+      (conj :translation-review-required)
+
+      ((:source-revision-superseded? facts) intent revision)
+      (conj :translation-stale))))
+
 (defn publication-evidence
   "THE evidence boundary. Resolves the revision selector once, then gathers
    blockers against that single concrete revision.
 
-   Returns `{:concrete-revision r :blockers [...]}`. An unresolvable selector
+   Returns `{:concrete-revision r :blockers [...]}` and, when supplied by the
+   translated-content lookup, the separately bound `:content-revision`.
+   An unresolvable selector
    short-circuits: no evidence lookup happens, because every lookup would be
    keyed by a revision that does not exist."
   [intent facts]
   (let [revision (resolve-concrete-revision intent facts)
         document (:publication/document intent)
         garden (:publication/garden intent)
-        locale (:publication/locale intent)]
+        locale (:publication/locale intent)
+        content-revision-for (:publication-content-revision facts)
+        output-bound? (and (translation-required? intent) (fn? content-revision-for))
+        content-revision (when (and revision output-bound?)
+                           (content-revision-for document garden locale revision))]
     (if (nil? revision)
       {:concrete-revision nil :blockers [:publication-revision-unresolved]}
-      {:concrete-revision revision
-       :blockers
-       (cond-> []
-         (and (translation-required? intent)
-              (not ((:translated-revision? facts) document garden locale revision)))
-         (conj :translation-missing)
-
-         (and (= :required (:translation/review intent))
-              (not ((:approved? facts) document garden locale revision)))
-         (conj :translation-review-required)
-
-         ((:source-revision-superseded? facts) intent revision)
-         (conj :translation-stale))})))
+      (cond-> {:concrete-revision revision
+               :blockers (publication-blockers intent facts revision
+                                                output-bound? content-revision)}
+        (some? content-revision)
+        (assoc :content-revision (law/assert-valid! :publication/content-revision
+                                                   law/ConcreteRevision content-revision))))))
 
 ;; ── Consumers of one evidence result ───────────────────────────────────────
 ;;

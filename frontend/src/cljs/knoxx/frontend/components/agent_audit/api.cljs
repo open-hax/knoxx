@@ -5,13 +5,15 @@
 
 (def ^:private active-run-limit 25)
 
-(defn list-active-agents [limit]
-  (-> (api/request (str "/api/knoxx/agents/active?limit=" limit))
-      (.then :runs)))
+(defn ^:async list-active-agents
+  "Return the caller-scoped active run rows from the REST response."
+  [limit]
+  (:runs (await (api/request (str "/api/knoxx/agents/active?limit=" limit)))))
 
-(defn list-admin-active-agents [limit]
-  (-> (api/request (str "/api/admin/agents/active?limit=" limit))
-      (.then :runs)))
+(defn ^:async list-admin-active-agents
+  "Return the operator-scoped active run rows from the REST response."
+  [limit]
+  (:runs (await (api/request (str "/api/admin/agents/active?limit=" limit)))))
 
 (defn list-operator-active-agents
   "Admin view of active runs, falling back to the caller-scoped list."

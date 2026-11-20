@@ -179,7 +179,6 @@
 {:role :library, :path "frontend/src/lib/nextApi.ts", :record/id "file:frontend/src/lib/nextApi.ts", :tests [], :disposition :port, :island :shared, :status :legacy, :kind :ts, :blocked-by []}
 {:role :library, :path "frontend/src/lib/storage.ts", :record/id "file:frontend/src/lib/storage.ts", :tests [], :disposition :port, :island :shared, :status :legacy, :kind :ts, :blocked-by []}
 {:role :library, :path "frontend/src/lib/types.ts", :record/id "file:frontend/src/lib/types.ts", :tests [], :disposition :port, :island :shared, :status :legacy, :kind :ts, :blocked-by []}
-{:role :library, :path "frontend/src/lib/ws.ts", :record/id "file:frontend/src/lib/ws.ts", :tests [], :disposition :port, :island :shared, :status :legacy, :kind :ts, :blocked-by []}
 {:role :route, :path "frontend/src/pages/AdminLayout.tsx", :record/id "file:frontend/src/pages/AdminLayout.tsx", :tests [], :disposition :port, :island :routes, :status :legacy, :kind :tsx, :blocked-by []}
 {:role :route, :path "frontend/src/pages/AgentsPage.tsx", :record/id "file:frontend/src/pages/AgentsPage.tsx", :tests [], :disposition :port, :island :agent-audit, :status :legacy, :kind :tsx, :blocked-by [:chat-workspace]}
 {:role :test, :path "frontend/src/pages/BroadcastStudioPage.test.tsx", :record/id "file:frontend/src/pages/BroadcastStudioPage.test.tsx", :tests [], :disposition :port, :island :broadcast-studio, :status :legacy, :kind :tsx, :blocked-by [:chat-workspace :audio-visualization-adapter]}

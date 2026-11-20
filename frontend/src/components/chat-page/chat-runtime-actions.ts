@@ -83,28 +83,41 @@ export function createChatRuntimeActions({
     setMessages((prev) => (prev.some((entry) => entry.id === message.id) ? prev : [...prev, message]));
   };
 
-  const loadRunDetail = async (runId: string, attempt = 0): Promise<void> => {
+  const loadRunDetail = async (
+    runId: string,
+    terminalEvent = false,
+    attempt = 0,
+    assistantMessageId = pendingAssistantIdRef.current,
+  ): Promise<void> => {
     try {
       const run = await getRun(runId);
       if (activeRunIdRef.current === runId) {
-        setLatestRun(run);
-        const pendingId = pendingAssistantIdRef.current;
-        if (pendingId) {
-          updateMessageById(pendingId, (message) => ({
-            ...message,
-            content:
-              typeof run.answer === 'string' && run.answer.length > 0
-                ? run.answer
-                : run.status === 'failed' && typeof run.error === 'string' && run.error.length > 0
-                  ? `Agent request failed.\n\n${run.error}`
-                  : message.content,
-            contentParts: run.contentParts ?? message.contentParts,
-            model: run.model ?? message.model,
-            sources: Array.isArray(run.sources) ? run.sources : message.sources,
-            runId,
-            status: run.status === 'completed' ? 'done' : run.status === 'failed' ? 'error' : message.status,
-          }));
-          if (run.status === 'completed' || run.status === 'failed') {
+        const terminal = run.status === 'completed' || run.status === 'failed';
+        // Overlapping GETs may return a running snapshot after terminal hydration.
+        setLatestRun((previous) => previous?.run_id === runId
+          && (previous.status === 'completed' || previous.status === 'failed') && !terminal ? previous : run);
+        if (assistantMessageId) {
+          updateMessageById(assistantMessageId, (message) => {
+            if ((message.status === 'done' || message.status === 'error') && !terminal) {
+              return message;
+            }
+            return {
+              ...message,
+              content:
+                typeof run.answer === 'string' && run.answer.length > 0
+                  ? run.answer
+                  : run.status === 'failed' && typeof run.error === 'string' && run.error.length > 0
+                    ? `Agent request failed.\n\n${run.error}`
+                    : message.content,
+              contentParts: run.contentParts ?? message.contentParts,
+              model: run.model ?? message.model,
+              sources: Array.isArray(run.sources) ? run.sources : message.sources,
+              runId,
+              status: run.status === 'completed' ? 'done' : run.status === 'failed' ? 'error' : message.status,
+            };
+          });
+          if (terminal
+            && pendingAssistantIdRef.current === assistantMessageId) {
             pendingAssistantIdRef.current = null;
           }
         }
@@ -114,9 +127,14 @@ export function createChatRuntimeActions({
       const runIsStillActive = activeRunIdRef.current === runId;
       if (runIsStillActive && message.includes('404') && attempt < 6) {
         window.setTimeout(() => {
-          void loadRunDetail(runId, attempt + 1);
+          void loadRunDetail(runId, terminalEvent, attempt + 1, assistantMessageId);
         }, 250 * (attempt + 1));
         return;
+      }
+      if (terminalEvent && runIsStillActive && assistantMessageId
+        && pendingAssistantIdRef.current === assistantMessageId) {
+        // The turn ended even when its final persisted detail is unavailable.
+        pendingAssistantIdRef.current = null;
       }
       appendConsoleLine(`[runs] failed to load ${runId}: ${message}`);
     }

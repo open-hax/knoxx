@@ -526,7 +526,7 @@
 
 (defn create-session-hook
   [_policy-context]
-  (fn session-hook [req reply]
+  (^:async fn session-hook [req reply]
     (when (protected-auth-path? req)
       (let [headers (.-headers req)
             header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
@@ -534,7 +534,7 @@
             cookie-token (some-> req (aget "cookies") (aget COOKIE-NAME))]
         (when (and (str/blank? header-email) (str/blank? header-mid) cookie-token)
           (when-let [session-id (:sid (verify-token cookie-token))]
-            (hydrate-session-headers! reply headers session-id cookie-token)))))))
+            (await (hydrate-session-headers! reply headers session-id cookie-token))))))))
 
 
 (defn resolve-auth-context
