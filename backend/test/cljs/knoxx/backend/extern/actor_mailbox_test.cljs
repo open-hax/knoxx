@@ -15,6 +15,7 @@
     (is (not (contains? decoded :org-id))) (is (= {} (:lineage decoded))))
   (is (= {:status "pending" :id "one" :content "body"}
          (select-keys (wire/entry-wire {:mailbox/id "one" :mailbox/status "pending" :mailbox/content "body"}) [:id :status :content])))
+  (is (= "delivery failed" (:lastError (wire/entry-wire {:mailbox/delivery {:last-error "delivery failed"}}))))
   (is (= 17 (:limit (wire/request-filters #js {:query #js {:limit "17"}})))))
 (defn- dependencies [current]
   {:route! (fn [app method path options] (.route app (js/Object.assign #js {:method method :url path} options)))

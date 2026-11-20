@@ -42,7 +42,7 @@
   (cond-> {:id (:mailbox/id entry) :orgId (:mailbox/org-id entry) :kind (:mailbox/kind entry) :status (:mailbox/status entry)
            :source (:mailbox/source entry) :target (:mailbox/target entry) :delivery (:mailbox/delivery entry)
            :contentRef (:mailbox/content-ref entry) :metadata (:mailbox/metadata entry) :preview (:mailbox/preview entry)
-           :lastError (:mailbox/last-error entry) :durable (true? (:mailbox/durable? entry))
+           :lastError (get-in entry [:mailbox/delivery :last-error]) :durable (true? (:mailbox/durable? entry))
            :createdAt (:mailbox/created-at entry) :updatedAt (:mailbox/updated-at entry)
            :deliveredAt (:mailbox/delivered-at entry) :acknowledgedAt (:mailbox/acknowledged-at entry) :expiresAt (:mailbox/expires-at entry)}
     (contains? entry :mailbox/content) (assoc :content (:mailbox/content entry))))
