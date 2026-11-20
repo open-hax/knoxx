@@ -70,7 +70,7 @@
        (invite-doc->row doc)))))
 
 (defn- pending-invite-query
-  [identifier now]
+  [identifier]
   ;; The native invite writer uses ISO strings. Older rows can hold BSON dates.
   (clj->js (assoc identifier
                  "status" "pending"
@@ -79,7 +79,7 @@
                                                         "to" "date"
                                                         "onError" nil
                                                         "onNull" nil}}
-                                          now]}]})))
+                                          "$$NOW"]}]})))
 
 (defn ^:async pending-by-code!
   "Find a pending, non-expired invite by code. Returns the row or nil.
@@ -87,7 +87,7 @@
   ([code] (pending-by-code! (mongo-client/get-db) code))
   ([db code]
    (let [coll (invites-coll db)
-         query (pending-invite-query {"code" code} (js/Date.))
+         query (pending-invite-query {"code" code})
          doc (keywordize (await (.findOne coll query)))]
      (invite-doc->row doc))))
 
@@ -97,10 +97,9 @@
   ([invite-id] (redeem-invite! (mongo-client/get-db) invite-id))
   ([db invite-id]
    (let [coll (invites-coll db)
-         now (js/Date.)
-         query (pending-invite-query {"invite_id" (str invite-id)} now)
+         query (pending-invite-query {"invite_id" (str invite-id)})
          doc (await (.findOneAndUpdate coll query
-                                      #js {"$set" #js {"status" "redeemed" "redeemed_at" now}}
+                                      #js [#js {"$set" #js {"status" "redeemed" "redeemed_at" "$$NOW"}}]
                                       #js {"returnDocument" "after"}))]
      (invite-doc->row (keywordize doc)))))
 

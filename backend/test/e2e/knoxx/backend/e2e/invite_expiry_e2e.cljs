@@ -65,7 +65,7 @@
 (defn- ^:async prove-stored-expiries!
   [{:keys [origin] :as owned}]
   (doseq [[expiry status] [[:future-date 200] [:expired-date 400] [:expired-string 400]
-                           [:invalid 400] [:null 400] [:missing 400] [:number 400]]]
+                           [:database-now 400] [:invalid 400] [:null 400] [:missing 400] [:number 400]]]
     (let [code (name expiry)
           email (str code "@example.invalid")]
       (await (fixture/seed-invite! owned {:code code :email email :expiry expiry}))

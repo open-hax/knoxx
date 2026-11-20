@@ -69,7 +69,8 @@
       (let [admin-cookie (await (prepare-admin! app))
             org (await (policy/find-org-by-slug nil "open-hax"))
             origin (await (http/listen! app "127.0.0.1" 0))]
-        (await (exercise! {:origin origin :db db :org-id (:id org) :admin-cookie admin-cookie})))
+        (await (exercise! {:origin origin :db db :org-id (:id org) :admin-cookie admin-cookie}))
+        (js/console.log "KNOXX_NATIVE_INVITE_PROOF_COMPLETED"))
       (finally
         (await (close-native-fixture! app fixture previous-contracts previous-policy))))))
 
@@ -87,11 +88,17 @@
                 :future-date future
                 :expired-date past
                 :expired-string (.toISOString past)
+                :database-now nil
                 :invalid "invalid expiry"
                 :null nil
                 :missing nil
                 :number (.getTime future))]
     (await (invites/insert-invite! db {:org-id org-id :code code :email email :expires-at value}))
-    (when (= :missing expiry)
+    (case expiry
+      :missing
       (await (.updateOne (.collection db invites/INVITES_COLLECTION)
-                         #js {:code code} #js {"$unset" #js {"expires_at" ""}})))))
+                         #js {:code code} #js {"$unset" #js {"expires_at" ""}}))
+      :database-now
+      (await (.updateOne (.collection db invites/INVITES_COLLECTION)
+                         #js {:code code} #js [#js {"$set" #js {"expires_at" "$$NOW"}}]))
+      nil)))
