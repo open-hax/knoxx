@@ -1,5 +1,6 @@
 (ns knoxx.backend.extern.openplanner-graph-test
-  (:require [cljs.test :refer [deftest is]]
+  (:require ["mongodb" :refer [ObjectId]]
+            [cljs.test :refer [deftest is]]
             [knoxx.backend.extern.openplanner-graph :as graph]
             [knoxx.backend.extern.openplanner-sdk :as sdk]
             [knoxx.backend.infra.clients.openplanner :as client]
@@ -50,3 +51,13 @@
   (with-redefs [sdk/graph-memory (fn [payload] (js/Promise.resolve {:query (:q payload) :mode "structural"}))]
     (is (= {:query "codex" :mode "structural"}
            (await (client/graph-memory! (mongo-client/client {} nil) {:q "codex"}))))))
+
+(deftest ^:async bson-values-are-normalized-at-the-mongo-boundary
+  (let [id (ObjectId. "507f1f77bcf86cd799439011")
+        calls (atom [])
+        events (collection calls (constantly [{:extra {:node_id "node"
+                                                       :provenance {:id id :at (js/Date. "2026-01-01T00:00:00Z")}}}]))
+        result (await (graph/query! #js {:events events} {:q "node" :edgeLimit 0}))
+        provenance (get-in result [:nodes 0 :data :provenance])]
+    (is (= {:$oid "507f1f77bcf86cd799439011"} (:id provenance)))
+    (is (= {:$date "2026-01-01T00:00:00Z"} (:at provenance)))))
