@@ -318,9 +318,11 @@
     (boolean (and (zero? exit-code) (not timed-out?) (pos? (or assertions 0))
                   (zero? failures) (zero? errors)))))
 
+(def ^:private compiler-warning-pattern #"\b([1-9][0-9]*) warnings")
+
 (defn compiled? [{:keys [exit-code timed-out? output]}]
   (and (zero? exit-code) (not timed-out?)
-       (not (re-find #"\b[1-9][0-9]* warnings" output))))
+       (not (re-find compiler-warning-pattern output))))
 
 (defn compile-mutant!
   [{:keys [shadow-build timeout-ms] :or {shadow-build default-shadow-build timeout-ms default-timeout-ms}}]
@@ -368,14 +370,15 @@
               (double (/ killed evaluated)))}))
 
 (defn write-report!
-  [{:keys [output-dir report-file baseline source-sha batch-index min-evaluated run?]
+  [{:keys [output-dir report-file baseline baseline-failure source-sha batch-index min-evaluated run?]
     :or {output-dir default-output-dir batch-index 0 min-evaluated 1}} results]
   (let [path (io/file (or report-file (str output-dir "/report.edn")))
         passed? (and run? (= :passed baseline) (>= (count results) min-evaluated)
                      (every? #(and (= :killed (:status %)) (= :test (:phase %))) results))
-        report {:summary (report-summary results) :mutants results
-                :source_sha source-sha :batch_index batch-index :baseline baseline
-                :status (if passed? :passed (if run? :failed :planned))}]
+        report (cond-> {:summary (report-summary results) :mutants results
+                        :source_sha source-sha :batch_index batch-index :baseline baseline
+                        :status (if passed? :passed (if run? :failed :planned))}
+                 baseline-failure (assoc :baseline_failure baseline-failure))]
     (when-let [parent (.getParentFile path)] (.mkdirs parent))
     (spit path (with-out-str (pprint/pprint report)))
     (spit (str path ".json") (json/write-str (update report :mutants #(mapv (fn [mutant] (select-keys mutant [:id :fingerprint :status :phase :result])) %))))
@@ -442,27 +445,58 @@
 (defn print-summary!
   [report]
   (let [{:keys [total planned evaluated killed survived score]} (:summary report)]
+    (when-let [failure (:baseline_failure report)]
+      (println "Mutation baseline failed:" (pr-str failure)))
     (println (format "Mutation summary: total=%d planned=%d evaluated=%d killed=%d survived=%d score=%s"
                      total planned evaluated killed survived (if score (format "%.2f" score) "n/a")))
     (doseq [{:keys [id status relative-path line column operator original replacement]} (:mutants report)]
       (println (format "%s %-9s %s:%s:%s %s %s => %s"
                        id (name status) relative-path line column (name operator) original replacement)))))
 
+(def ^:private baseline-output-signals
+  ;; Only fixed labels cross into GitHub output. Child text can contain test
+  ;; values, credentials, request payloads, or local configuration.
+  [[:memory-exhaustion #"(?i)OutOfMemoryError|heap out of memory"]
+   [:dependency-resolution #"(?i)Failed to (?:read artifact descriptor|collect dependencies)|Could not transfer artifact|Could not find artifact"]
+   [:module-load #"(?i)Cannot find (?:module|package)|(?:ERR_)?MODULE_NOT_FOUND"]])
+
+(defn- failed-baseline
+  [phase {:keys [exit-code timed-out? output]}]
+  (let [counters (when (= :test phase) (test-counters output))
+        warning (when (= :compile phase) (re-find compiler-warning-pattern output))
+        signals (into [] (keep (fn [[label pattern]] (when (re-find pattern output) label))) baseline-output-signals)
+        reason (cond
+                 timed-out? :timeout
+                 (and counters (or (pos? (:failures counters)) (pos? (:errors counters)))) :test-failures
+                 (not (zero? exit-code)) :nonzero-exit
+                 warning :compiler-warnings
+                 :else :missing-test-assertions)]
+    {:status :failed
+     :failure (cond-> {:phase phase :reason reason :exit-code exit-code :timed-out? timed-out?}
+                counters (assoc :test-counters counters)
+                warning (assoc :warning-count (parse-long (second warning)))
+                (seq signals) (assoc :signals signals))}))
+
 (defn baseline!
-  "An already-failing suite cannot be mutation evidence."
+  "Check the unmutated suite and keep only sanitized diagnostics on failure."
   [opts]
-  (if (and (compiled? (compile-mutant! opts)) (passed-tests? (run-mutant-tests! opts)))
-    :passed :failed))
+  (let [compile-result (compile-mutant! opts)]
+    (if (compiled? compile-result)
+      (let [test-result (run-mutant-tests! opts)]
+        (if (passed-tests? test-result)
+          {:status :passed}
+          (failed-baseline :test test-result)))
+      (failed-baseline :compile compile-result))))
 
 (defn run-suite! [opts]
   (when (:run? opts) (assert-clean-tree! opts))
-  (let [baseline (if (:run? opts) (baseline! opts) :not-run)
+  (let [{baseline :status baseline-failure :failure} (if (:run? opts) (baseline! opts) {:status :not-run})
         mutants (discover-mutants opts)
         results (cond (not (:run? opts)) (dry-run-results mutants)
                       (= :passed baseline) (mapv #(evaluate-mutant! opts %) mutants)
                       :else [])
         source-sha (str/trim (:out (shell/sh "git" "rev-parse" "HEAD")))
-        report (write-report! (assoc opts :baseline baseline :source-sha source-sha) results)]
+        report (write-report! (assoc opts :baseline baseline :baseline-failure baseline-failure :source-sha source-sha) results)]
     (print-summary! report)
     (when (and (:run? opts) (not= :passed (:status report)))
       (throw (ex-info "Mutation qualification failed: require a green baseline and enough completed test kills" {:summary (:summary report)})))
