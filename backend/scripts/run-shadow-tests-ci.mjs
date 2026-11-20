@@ -46,7 +46,8 @@ export function testCountersExitCode(output) {
 export function run(rawBuild) {
   const build = normalizeBuild(rawBuild);
   const cmd = process.platform === 'win32' ? 'shadow-cljs.cmd' : 'shadow-cljs';
-  const args = ['compile', build];
+  const nativeInviteProof = build === 'e2e' && process.env.KNOXX_VERIFY_NATIVE_INVITES === '1';
+  const args = nativeInviteProof ? ['--force-spawn', 'compile', build] : ['compile', build];
 
   const child = spawn(cmd, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -78,6 +79,12 @@ export function run(rawBuild) {
 
     if (code !== 0) {
       process.exit(code ?? 1);
+      return;
+    }
+
+    if (nativeInviteProof && !combined.split(/\r?\n/).includes('KNOXX_NATIVE_INVITE_PROOF_COMPLETED')) {
+      console.error('[knoxx] The requested native invite proof did not run to completion.');
+      process.exit(1);
       return;
     }
 
