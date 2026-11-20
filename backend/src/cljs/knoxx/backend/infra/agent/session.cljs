@@ -200,7 +200,7 @@
 
 (defn ^:async construct-session-and-ext-ctx!
   [runtime config conversation-id model-id auth-context thinking-level session-id agent-spec current-tool-signature life-cycle-event-name]
-  (let [config (if auth-context (planner-scope/scoped-config config auth-context) config)
+  (let [config (if (authz/ctx-org-id auth-context) (planner-scope/scoped-config config auth-context) config)
         next-session (await (create-session-manager! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec))
         ctx (ext-runtime/build-extension-ctx runtime config
                                              :conversation-id conversation-id
