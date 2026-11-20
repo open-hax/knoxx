@@ -42,6 +42,20 @@
     (is (str/includes? mutated "(if (not (= x 1)) (+ x 1) false)"))
     (is (str/includes? mutated "(ns demo.core)"))))
 
+(deftest apply-mutant-to-source-matches-anonymous-functions-after-rereading
+  (let [neighbor "(defn untouched [ready values] (if ready (map #(str %) values) []))\n"
+        source (str "(defn decide [ready values] (if ready (map #(str %) values) []))\n" neighbor)
+        mutant (->> (mutation/mutants-in-source "demo/core.cljs" source)
+                    mutation/assign-mutant-ids
+                    (filter #(= :if-test-negation (:operator %)))
+                    first)
+        changed-source (str/replace-first source "#(str %)" "#(name %)")
+        mutated (mutation/apply-mutant-to-source source mutant)]
+    (is (str/includes? mutated "(if (not ready)"))
+    (is (str/ends-with? mutated neighbor))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Mutant location no longer matches source"
+                          (mutation/apply-mutant-to-source changed-source mutant)))))
+
 (deftest with-mutated-source-mutates-in-place-then-restores
   (let [tmp-dir (.toFile (java.nio.file.Files/createTempDirectory "knoxx-mutation-test" (make-array java.nio.file.attribute.FileAttribute 0)))
         src-dir (io/file tmp-dir "src/cljs")
