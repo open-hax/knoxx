@@ -1,0 +1,7 @@
+{:contract/id "social_original_clock"
+ :contract/kind :generator
+ :generator/kind :schedule
+ :generator/driver :knoxx.schedule/runtime
+ :generator/actor "discord_automation"
+ :generator/emits [:schedule/social-original-cycle]
+ :enabled false}

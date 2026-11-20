@@ -1,8 +1,18 @@
 (ns knoxx.backend.infra.agent.session
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.bluesky.bluesky :as bluesky]
             [knoxx.backend.domain.models :refer [normalize-thinking-level effective-thinking-level resolve-model-contract]]
             [knoxx.backend.extern.eta-mu :as eta-mu-extern]
             [knoxx.backend.extern.extension :as extension-extern]
+            [knoxx.backend.extern.platform-action :as platform-action]
+            [knoxx.backend.extern.tools :as xtools]
+            [knoxx.backend.domain.social.action-admission :as action-domain]
+            [knoxx.backend.infra.actor.acting :as acting]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.agent.action-admission :as action-admission]
+            [knoxx.backend.infra.agent.social-delivery :as social-delivery]
+            [knoxx.backend.infra.agent.tool-context :as tool-context]
+            [knoxx.backend.infra.execution.client :as execution]
             [knoxx.backend.infra.agent.content-codec :as content-codec]
             [knoxx.backend.infra.agent.history :as history]
             [knoxx.backend.infra.agent.provider.eta-mu :as eta-mu-provider]
@@ -10,6 +20,7 @@
             [knoxx.backend.infra.agent.session-registry :as session-registry]
             [knoxx.backend.infra.agent.tool-catalog :as tool-catalog]
             [knoxx.backend.infra.http :refer [no-content?]]
+            [knoxx.backend.infra.social.bindings :as social-bindings]
             [knoxx.backend.infra.stores.composite-message-source :refer [->CompositeMessageSource]]
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
             [knoxx.backend.infra.stores.mongo-message-source :refer [->MongoMessageSource]]
@@ -34,29 +45,118 @@
     (agent-context/set-context! previous)
     (agent-context/clear-context!)))
 
+(defn- evidence-guard
+  [tool-name context]
+  (case tool-name
+    ("discord_send" "discord_publish") (get-in context [:delivery-guards :discord])
+    "bluesky_publish" (get-in context [:delivery-guards :bluesky])
+    "bluesky_repost" (some-> (get-in context [:delivery-guards :bluesky]) meta :amplify!)
+    nil))
+
+(defn- ^:async execute-platform-write!
+  [execute args admission reservation]
+  (let [execution (await (platform-action/execute! #(apply execute args)))
+        outcome ((:settle! admission) reservation execution)]
+    (if-let [error (:error execution)]
+      (throw (platform-action/failure-with-outcome error outcome))
+      (platform-action/result-with-outcome (:value execution) outcome))))
+
+(defn- capture-follow-run!
+  [context]
+  (when-not (:platform-admission context)
+    (throw (ex-info "Platform writes require an admitted actor-bound turn"
+                    {:code "platform_action_context_required" :phase :preflight})))
+  (:run_id (social-delivery/captured-run!
+            {:conversation-id (:conversation-id context) :actor-id (get-in context [:agent-spec :actor-id])}
+            "Bluesky follow")))
+
+(defn- ^:async canonical-follow-params!
+  [params context]
+  (let [input (:actor params)
+        resolve! (:resolve-bluesky-actor! context)
+        did (or (action-domain/canonical-follow-target input)
+                (when (and (string? input) (not (str/blank? input)) resolve!)
+                  (action-domain/canonical-follow-target (:did (await (resolve! input))))))]
+    (when-not did
+      (throw (ex-info "Bluesky follow needs a verified destination DID"
+                      {:code "platform_follow_target_unresolved" :phase :preflight})))
+    (assoc params :actor did)))
+
+(defn- ^:async invoke-context-tool!
+  [execute args tool-name context config]
+  (social-bindings/ensure-native-tool-allowed! config (get-in context [:agent-spec :actor-id]) tool-name)
+  (let [original-params (xtools/parameter-map (second args))
+        params (if (contains? #{"bluesky.follow" "bluesky_follow"} tool-name)
+                 (let [run-id (capture-follow-run! context)
+                       canonical (await (canonical-follow-params! original-params context))]
+                   (when-not (= run-id (capture-follow-run! context))
+                     (throw (ex-info "The original turn ended before the follow could be admitted"
+                                     {:code "platform_action_run_changed" :phase :preflight})))
+                   canonical)
+                 original-params)
+        args (if (= original-params params) args (xtools/replace-parameters args params))
+        intent (action-domain/native-intent tool-name params (get-in context [:agent-spec :actor-id]))
+        guard (evidence-guard tool-name context)
+        guard-params (cond
+                       (= "bluesky_repost" tool-name) {:text "" :replyTo (:uri params)}
+                       (and (= "discord" (:platform intent)) (= :publish (:effect intent)))
+                       (assoc params :channel_id (:target intent) :text (get-in intent [:arguments :text]))
+                       :else params)]
+    (when guard (guard guard-params))
+    (if intent
+      (let [admission (:platform-admission context)
+            _ (when-not admission
+                (throw (ex-info "Platform actions require an actor-bound conversation"
+                                {:code "platform_action_context_required"})))
+            reservation ((:reserve! admission) intent)]
+        (await (execute-platform-write! execute args admission reservation)))
+      (await (apply execute args)))))
+
+(defn- tool-acting-scope
+  [context]
+  (let [actor-id (get-in context [:agent-spec :actor-id])
+        inherited (when (= actor-id (acting/current-actor-id)) (acting/current-lookup-scope))
+        declared (:acting-scope context)]
+    (assoc (merge inherited (when (= actor-id (:actor-id declared)) declared)) :actor-id actor-id)))
+
 (defn- wrap-tool-execute-with-agent-context!
-  [tool context]
+  [tool context config]
   (when-let [execute (eta-mu-extern/tool-execute tool)]
-    (eta-mu-extern/set-tool-execute!
-     tool
-     (fn [& args]
-       (let [previous (agent-context/get-context)]
-         (agent-context/set-context! context)
-         (try
-           (eta-mu-extern/with-promise-finally
-            (apply execute args)
-            (fn [] (restore-agent-context! previous)))
-           (catch :default err
-             (restore-agent-context! previous)
-             (throw err)))))))
+    (let [name (eta-mu-extern/tool-runtime-name tool)]
+      (eta-mu-extern/set-tool-execute!
+       tool
+       (^:async fn [& args]
+         (let [previous (agent-context/get-context)]
+           (agent-context/set-context! context)
+           (try
+             (await (acting/run-as! (tool-acting-scope context)
+                                    (fn []
+                                      (if (:platform-admission context)
+                                        (tool-context/run-with! context #(invoke-context-tool! execute args name context config))
+                                        (invoke-context-tool! execute args name context config)))))
+             (finally (restore-agent-context! previous))))))))
   tool)
 
-(defn- wrap-custom-tools-with-agent-context!
-  [custom-tools context]
-  (when custom-tools
-    (doseq [tool (eta-mu-extern/tool-seq custom-tools)]
-      (wrap-tool-execute-with-agent-context! tool context)))
-  custom-tools)
+(defn wrap-custom-tools-with-agent-context!
+  "Bind one trusted context, shared action admission, and shared evidence guards
+   to the tool suite; native aliases cannot acquire independent reservations."
+  ([custom-tools context]
+   (wrap-custom-tools-with-agent-context! custom-tools context nil))
+  ([custom-tools context config]
+   (when custom-tools
+     (let [policy (:delivery-policy context)
+           captured {:conversation-id (:conversation-id context)
+                     :actor-id (get-in context [:agent-spec :actor-id])}
+           guard-context (assoc captured :policy policy)
+           context (if (and (seq (:actor-id captured)) (seq (:conversation-id captured)))
+                     (assoc context :platform-admission (action-admission/create captured)
+                            :delivery-guards {:discord (when policy (social-delivery/make-guard guard-context))
+                                              :bluesky (when (:bluesky-publish? policy)
+                                                         (social-delivery/make-bluesky-guard guard-context))})
+                     context)]
+       (doseq [tool (eta-mu-extern/tool-seq custom-tools)]
+         (wrap-tool-execute-with-agent-context! tool context config))))
+   custom-tools))
 
 (defn prune-session-messages
   [agent-spec messages]
@@ -128,10 +228,22 @@
   [runtime config tool-auth-context agent-spec allowed-tool-ids _model-id session-id conversation-id]
   (let [builtin-tools (tool-catalog/builtin-tools runtime config tool-auth-context agent-spec)
         custom-tools (wrap-custom-tools-with-agent-context!
-                      (tool-catalog/custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
+                      (tool-catalog/custom-tools runtime
+                                                 (assoc config :graph-actor-id (:actor-id agent-spec)
+                                                               :discord-self-message-context (get-in agent-spec [:context-policy :self-messages])
+                                                               :memory-search-exclude-session-ids
+                                                        (vec (remove str/blank? [session-id conversation-id])))
+                                                 tool-auth-context agent-spec allowed-tool-ids)
                       {:session-id session-id
                        :conversation-id conversation-id
-                       :agent-spec agent-spec})]
+                       :acting-scope (when (= (:actor-id agent-spec) (authz/ctx-actor-binding tool-auth-context))
+                                       {:actor-id (:actor-id agent-spec)
+                                        :org-id (authz/ctx-org-id tool-auth-context)
+                                        :membership-id (authz/ctx-membership-id tool-auth-context)})
+                       :delivery-policy (tool-catalog/social-delivery-policy config agent-spec)
+                       :resolve-bluesky-actor! (partial bluesky/bluesky-profile! runtime)
+                       :agent-spec agent-spec}
+                      config)]
     {:custom-tools custom-tools
      :tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)}))
 
@@ -145,7 +257,9 @@
   ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec]
    (if-let [selection (native-subscription/resolve-worker! config auth-context model-id agent-spec)]
      (native-subscription/create-session selection (:system-prompt agent-spec))
-     (let [{:keys [auth-storage model-registry settings-manager loader runtime-dir]} (await (ensure-eta-mu-runtime! runtime config))
+     (let [effective-config (execution/effective-config config agent-spec)
+           config (await (execution/workspace-config! effective-config auth-context (:actor-id agent-spec)))
+           {:keys [auth-storage model-registry settings-manager loader runtime-dir]} (await (ensure-eta-mu-runtime! runtime config))
            thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
                                                                         thinking-level
                                                                         (:agent-thinking-level config)
@@ -185,6 +299,7 @@
                                   :thinking-level thinking-level
                                   :tool-name-allowlist tool-name-allowlist
                                   :custom-tools custom-tools
+                                  :system-prompt (:system-prompt agent-spec)
                                   :tools-choice (:tools-choice agent-spec)
                                   :materialize! materialize!}))]
              (set-thinking-level! session thinking-level)

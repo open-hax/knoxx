@@ -1,0 +1,8 @@
+{:contract/id "duck_original_cycle"
+ :contract/kind :schedule
+ ;; Knoxx minute-interval dialect:1440minutes =24hours, not wall-clock cron.
+ :schedule/rule "*/1440 * * * *"
+ :schedule/generator "duck_original_clock"
+ :schedule/event {:event/type :schedule/duck-original-cycle
+                  :event/payload {:reason "One recurring original contribution or useful continuation; not a human request."}}
+ :enabled false}

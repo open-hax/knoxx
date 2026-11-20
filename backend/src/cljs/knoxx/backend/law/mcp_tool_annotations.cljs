@@ -21,8 +21,7 @@
      :openWorldHint   it reaches entities outside this system, e.g. the web")
 
 (def declared
-  "Tool name -> annotations, each justified by that tool's implementation in
-   knoxx.backend.infra.openplanner.tools."
+  "Tool name -> annotations, based on the registered implementation."
   {"read" {:readOnlyHint true :openWorldHint false}
    "write" {:readOnlyHint false :destructiveHint true :openWorldHint false}
    "bash" {:readOnlyHint false :destructiveHint true :openWorldHint true}
@@ -35,6 +34,37 @@
    ;; Reads, but of the open internet — openWorldHint stays true.
    "websearch"        {:readOnlyHint true  :openWorldHint true}
    "web.read"         {:readOnlyHint true  :openWorldHint true}
+   "browser.read"     {:readOnlyHint true  :openWorldHint true}
+   "multimodal.inspect" {:readOnlyHint true :openWorldHint true}
+
+   ;; Discovery uses a local pinned catalog. Authorized platform reads and
+   ;; vector search can cross the system boundary.
+   "social.features"  {:readOnlyHint true :openWorldHint false}
+   "social.describe"  {:readOnlyHint true :openWorldHint false}
+   "social.read"      {:readOnlyHint true :openWorldHint true}
+   "social.conversations" {:readOnlyHint true :openWorldHint false}
+   "knowledge.read"   {:readOnlyHint true :openWorldHint false}
+   "knowledge.search" {:readOnlyHint true :openWorldHint true}
+
+   ;; The execution policy admits creates and reactions only. Some calls post
+   ;; publicly, and a repeat across turns can create an additional post.
+   "social.request"   {:readOnlyHint false :destructiveHint false
+                       :idempotentHint false :openWorldHint true}
+
+   ;; Originals and relationship claims get new IDs. Record and remember
+   ;; await an embedding, while graph edges are excluded from vector indexing.
+   "social.remember"  {:readOnlyHint false :destructiveHint false
+                       :idempotentHint false :openWorldHint true}
+   "knowledge.record" {:readOnlyHint false :destructiveHint false
+                       :idempotentHint false :openWorldHint true}
+   "knowledge.link"   {:readOnlyHint false :destructiveHint false
+                       :idempotentHint false :openWorldHint false}
+
+   ;; Starting a worker can trigger work with its own tool grants. Status only
+   ;; reads the scoped run record.
+   "agent.dispatch"   {:readOnlyHint false :destructiveHint true
+                       :idempotentHint false :openWorldHint true}
+   "agent.dispatch.status" {:readOnlyHint true :openWorldHint false}
 
    ;; Writes that can replace existing state, so destructive. Both are
    ;; idempotent: repeating with the same arguments converges on the same end

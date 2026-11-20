@@ -1,0 +1,9 @@
+{:actor/id "codex_collaborator"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Codex collaborator"
+ :actor/roles [:role/memory-collaborator :role/social-collaborator]
+ :actor/default-agent "codex_social_collaborator"
+ :actor/metadata
+ {:execution/isolation-required true
+  :social/bindings-pending true}}

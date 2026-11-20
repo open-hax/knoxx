@@ -4,6 +4,13 @@
    in vertical domain slices under knoxx.backend.tools.<domain>."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.core-memory :refer [filter-authorized-memory-hits!]]
+            [knoxx.backend.extern.tools :as xtools]
+            [knoxx.backend.infra.agent.handoff :as handoff]
+            [knoxx.backend.infra.media.inspection :as inspection]
+            [knoxx.backend.infra.execution.browser :as browser]
+            [knoxx.backend.infra.execution.tools :as execution]
+            [knoxx.backend.infra.openplanner.knowledge :as knowledge]
+            [knoxx.backend.infra.social.api-tools :as social-api]
             [knoxx.backend.domain.contracts.sources :as sources]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search!]]
@@ -222,12 +229,18 @@
             (.concat (events/create-events-custom-tools runtime config auth-context))
             (.concat (actors/create-actors-custom-tools runtime config auth-context))
             (.concat (openplanner/create-openplanner-custom-tools runtime config auth-context))
+            (.concat (xtools/tool-array (execution/create-tools runtime config auth-context)))
+            (.concat (xtools/tool-array (browser/create-tools runtime config auth-context)))
+            (.concat (xtools/tool-array (knowledge/create-tools runtime config auth-context)))
+            (.concat (xtools/tool-array (social-api/create-tools runtime config auth-context)))
+            (.concat (xtools/tool-array (handoff/create-tools runtime config auth-context)))
             (.concat (publication-draft/create-publication-draft-tools runtime config auth-context))
             (.concat (music/create-music-custom-tools runtime config auth-context))
             (.concat (voice/create-voice-synth-custom-tools runtime config auth-context))
             (.concat (blaze/create-blaze-custom-tools runtime config auth-context))
             (.concat (bluesky/create-bluesky-custom-tools runtime config auth-context))
             (.concat (multimodal/create-multimodal-custom-tools runtime config auth-context))
+            (.concat (xtools/tool-array (inspection/create-inspection-tools runtime config auth-context)))
             (.concat (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
             (.concat (sandbox/create-sandbox-custom-tools runtime config auth-context))
             (.concat (mcp/create-mcp-custom-tools runtime config auth-context))
@@ -247,5 +260,7 @@
   ([runtime config auth-context agent-spec] (create-agent-custom-tools runtime config auth-context agent-spec nil))
   ([runtime config auth-context agent-spec allowed-tool-ids]
    (case (shared/agent-custom-tool-suite agent-spec)
-     :contract-librarian (contracts/create-contract-librarian-tools runtime config auth-context allowed-tool-ids)
+     :contract-librarian (xtools/append-tool-vector
+                          (contracts/create-contract-librarian-tools runtime config auth-context allowed-tool-ids)
+                          (execution/create-tools runtime config auth-context))
      (create-knoxx-custom-tools runtime config auth-context allowed-tool-ids))))

@@ -85,11 +85,23 @@ function createAgentSession(options) {
   return Promise.resolve({ session })
 }
 
+function toolDefinition(name, cwd) {
+  return {
+    name,
+    description: `Test ${name} in ${cwd}`,
+    execute() { throw new Error('Test SDK tool execution requires an injected port') }
+  }
+}
+
 module.exports = {
   AuthStorage,
   ModelRegistry,
   DefaultResourceLoader,
   SettingsManager,
   SessionManager,
-  createAgentSession
+  createAgentSession,
+  createReadToolDefinition: (cwd) => toolDefinition('read', cwd),
+  createWriteToolDefinition: (cwd) => toolDefinition('write', cwd),
+  createEditToolDefinition: (cwd) => toolDefinition('edit', cwd),
+  createBashToolDefinition: (cwd) => toolDefinition('bash', cwd)
 }

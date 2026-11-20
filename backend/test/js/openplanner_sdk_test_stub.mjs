@@ -227,8 +227,18 @@ export async function listCollectionsResponse() {
   record("listCollectionsResponse", null);
   return { ok: true, collections: [{ name: "events", count: 1, type: "collection" }] };
 }
-export async function queryCollectionResponse(_ctx, body) {
+export async function queryCollectionResponse(ctx, body) {
   record("queryCollectionResponse", body);
+  const db = ctx?.mongo?.db;
+  if (typeof db?.collection === "function") {
+    const collection = db.collection(body.collection);
+    const filter = body.filter ?? {};
+    const limit = body.limit ?? 50;
+    const skip = body.skip ?? 0;
+    const total = await collection.countDocuments(filter);
+    const rows = await collection.find(filter).sort(body.sort ?? { _id: -1 }).skip(skip).limit(limit).toArray();
+    return { ok: true, collection: body.collection, count: rows.length, total, skip, limit, rows };
+  }
   const rows = body.collection === "events"
     ? ingestedEvents.filter((event) => idMatches(event, body.filter?.id))
     : [];

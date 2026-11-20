@@ -8,11 +8,21 @@
  [{;; Trigger agreement: discord_automation may start the social replies agent
    ;; after observing a mention or keyword event in a home channel.
    :trigger/id :social-replies
+   :enabled false
+   :trigger/kind :event
+   :trigger/emitter "discord_automation"
    :trigger/listener "discord_automation"
    :trigger/events [:discord.message]
-   :trigger/condition (or (conditions/discord.mention event)
-                          (conditions/discord.keyword event ["frankie" "yap" "music" "song" "slop" "ussy"
-                                                             "beat" "loop" "track" "art" "create" "mix" "drop"]))
+   :trigger/condition
+   (and
+    (conditions/discord.channel event ["KNOXX_SOCIAL_BINDING_DISCORD_ID_7" "KNOXX_SOCIAL_BINDING_DISCORD_ID_5"])
+    (not (conditions/discord.author event ["KNOXX_SOCIAL_BINDING_DISCORD_ID_13"]))
+    (or (conditions/discord.mention event)
+        (and (conditions/discord.author event ["KNOXX_SOCIAL_BINDING_DISCORD_ID_11"])
+             (conditions/discord.keyword event ["sup" "hey" "hello" "what's up" "thoughts" "what do you think"]))
+        (and (not (true? (get-in event [:event/payload :authorIsBot])))
+             (conditions/discord.keyword event ["frankie" "yap" "music" "song" "slop" "ussy"
+                                                "beat" "loop" "track" "art" "create" "mix" "drop"]))))
    :trigger/action :actions/start-agent-session
    :trigger/with
    {:agent-id "ussyverse_social_replies"
