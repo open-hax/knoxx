@@ -122,7 +122,20 @@
    :openplanner-api-key (env "OPENPLANNER_API_KEY" "")
    ;; "mongo" = data plane in-process via @open-hax/openplanner-sdk (direct
    ;; MongoDB + self-sourced embeddings); "rest" = force the fetch client.
-   :openplanner-client-mode (env "KNOXX_OPENPLANNER_CLIENT_MODE" "mongo")})
+   :openplanner-client-mode (env "KNOXX_OPENPLANNER_CLIENT_MODE" "mongo")
+   :openplanner-directory (env "KNOXX_OPENPLANNER_DIRECTORY" nil)
+   :wiki-directory (env "KNOXX_WIKI_DIRECTORY" nil)
+   :embed-provider-base-url (env "EMBED_PROVIDER_BASE_URL" nil)
+   :embed-provider-model (env "EMBED_PROVIDER_MODEL" nil)
+   :embed-provider-dimensions (env-node-timeout-ms "EMBED_PROVIDER_DIMENSIONS" nil)
+   :wiki-model-provider (env "KNOXX_WIKI_MODEL_PROVIDER" nil)
+   :wiki-model (env "KNOXX_WIKI_MODEL" nil)
+   :wiki-model-base-url (env "KNOXX_WIKI_MODEL_BASE_URL" nil)
+   :wiki-model-api-key (env "KNOXX_WIKI_MODEL_API_KEY" nil)
+   :wiki-model-timeout-ms (env-node-timeout-ms "KNOXX_WIKI_MODEL_TIMEOUT_MS" nil)
+   :wiki-model-opencode-binary (env "KNOXX_WIKI_MODEL_OPENCODE_BINARY" nil)
+   :wiki-model-opencode-directory (env "KNOXX_WIKI_MODEL_OPENCODE_DIRECTORY" nil)
+   :wiki-model-opencode-models-path (env "KNOXX_WIKI_MODEL_OPENCODE_MODELS_PATH" nil)})
 
 (defn- publication-config
   []

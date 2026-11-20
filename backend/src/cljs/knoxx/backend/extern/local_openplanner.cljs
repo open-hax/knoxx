@@ -32,7 +32,9 @@
   [opts]
   (reduce (fn [result key]
             (if-let [value (get result key)]
-              (let [number (if (string? value) (js/Number value) value)]
+              (let [number (if (string? value)
+                             (when (re-matches #"[0-9]+" value) (js/Number value))
+                             value)]
                 (when-not (and (js/Number.isSafeInteger number) (not (neg? number)))
                   (throw (ex-info "Invalid OpenPlanner query number" {:status 400 :field key})))
                 (assoc result key number)) result))
