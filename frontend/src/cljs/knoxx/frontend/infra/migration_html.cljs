@@ -136,3 +136,11 @@
     (doseq [path paths]
       (assert-html! (node-path/relative root path) (fs/readFileSync path "utf8")
                     (get document-types (str/lower-case (node-path/extname path)))))))
+
+(defn assert-application-entrypoint!
+  "Require the governed application to retain its authored HTML entry."
+  [root]
+  (let [index (node-path/join root "frontend/index.html")]
+    (when-not (fs/existsSync index)
+      (throw (ex-info "Governed application HTML entry is missing" {:path index})))
+    (assert-entrypoints! root)))

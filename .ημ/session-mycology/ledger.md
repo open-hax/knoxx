@@ -147,3 +147,21 @@
   spore: none
   receipt-refs: 2026-08-30T00:57:53.346Z
   note: An installed logical decision is already-linearized history and must be compared and returned before current-head or quorum derivation; only an empty slot evaluates current evidence, while later head advancement forms a distinct unresolved conflict generation.
+- ts: 2026-11-02T23:38:15.617455085Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx369-local-repair
+  task: Knoxx 369 HTML build ownership
+  p-efficiency: 0.65
+  p-friction: 0.7
+  p-skill-candidate: 0.5
+  spore: none
+  receipt-refs: none
+  note: Application-only ownership must retain retired generic configurations and verify actual Vite output paths, including pre-existing symlinks.
+- ts: 2026-11-02T23:38:49.282895937Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx369-local-repair
+  task: Knoxx 369 verified HTML gate
+  p-efficiency: 0.7
+  p-friction: 0.6
+  p-skill-candidate: 0.5
+  spore: none
+  receipt-refs: 2026-11-02T23:38:15Z
+  note: Local compiled suite and manifest check support the candidate; live browser tour remains unproved.

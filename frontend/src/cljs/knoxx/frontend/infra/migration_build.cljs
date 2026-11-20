@@ -237,7 +237,7 @@
        :entries (if (or input library)
                   (entry-paths file frontend-root bindings input) [expected])})))
 
-(defn- assert-configuration! [frontend-root config-name expected]
+(defn- assert-configuration! [frontend-root config-name expected application?]
   (let [file (node-path/join frontend-root config-name)]
     (if (fs/existsSync file)
       (let [^js source (ts/createSourceFile file (fs/readFileSync file "utf8")
@@ -250,6 +250,15 @@
           (law/assert-vite-config-admission!
             (configuration-facts file bindings configuration))
           (assert-public-directory! file frontend-root bindings configuration)
+          (when (and application? (nil? expected))
+            (let [build (object-properties file (get configuration "build"))
+                  output (get build "outDir")]
+              (when (or (some build ["write" "ssr"])
+                        (and output
+                             (not= (node-path/resolve frontend-root "dist")
+                                   (node-path/resolve frontend-root
+                                                      (static-path file frontend-root bindings output)))))
+                (unsupported! file "Application HTML requires writable dist output"))))
           (let [aliases (assert-aliases! file frontend-root bindings configuration)]
             (if expected
               (assert-bridge! file frontend-root bindings expected configuration)
@@ -320,7 +329,7 @@
                   (unsupported! file (str "Unsupported production build phase: " phase)))))
           (str/split command #"&&" -1))))
 
-(defn- assert-shadow-bridge-builds! [frontend-root scripts]
+(defn- assert-shadow-bridge-builds! [frontend-root scripts html-owned?]
   (let [shadow-file (node-path/join frontend-root "shadow-cljs.edn")
         facts (-> (shadow-configuration-facts shadow-file)
                   law/assert-shadow-bridge-resolutions!
@@ -328,22 +337,23 @@
                   shadow-law/assert-build-hooks!
                   shadow-law/assert-javascript-inputs!)
         required-bridges (law/required-bridge-builds (set (map first (:resolutions facts))))]
-    (when (or (seq required-bridges) (contains? scripts "build"))
+    (when (or html-owned? (seq required-bridges) (contains? scripts "build"))
       (let [file (node-path/join frontend-root "package.json")]
         (law/assert-production-build!
           {:path file
            :available-scripts (set (keys scripts))
            :required-bridges required-bridges
+           :html-owned? html-owned?
            :phases (production-phases file (get scripts "build"))})))))
 
-(defn- assert-active-configs! [frontend-root]
+(defn- assert-active-configs! [frontend-root html-owned?]
   (let [file (node-path/join frontend-root "package.json")
         scripts (package-scripts file)
         bridges {"build:bridge" "vite.bridge.config.ts"
                  "build:app-bridge" "vite.app-bridge.config.ts"}
         allowed (set (map #(node-path/resolve frontend-root %)
                           (conj (vec (vals bridges)) "vite.config.ts")))]
-    (assert-shadow-bridge-builds! frontend-root scripts)
+    (assert-shadow-bridge-builds! frontend-root scripts html-owned?)
     (doseq [[script-name command] scripts]
       (let [configs (mapv #(node-path/resolve frontend-root %)
                           (script-configs file script-name command))]
@@ -353,14 +363,39 @@
                               (node-path/resolve frontend-root expected))
            :configs (mapv (fn [config] {:config-path config :exists? (fs/existsSync config)}) configs)})))))
 
-(defn assert-configs!
-  "Validate static Vite entries and return contained alias mappings without execution."
-  [root]
+(defn- inspect-configs! [root application?]
   (let [frontend-root (node-path/resolve root "frontend")]
-    (assert-active-configs! frontend-root)
+    (assert-active-configs! frontend-root application?)
     (reduce (fn [aliases [config-name expected]]
               (reduce-kv (partial merge-alias! config-name) aliases
-                         (assert-configuration! frontend-root config-name expected)))
+                         (assert-configuration! frontend-root config-name expected application?)))
             {} [["vite.config.ts" nil]
                 ["vite.bridge.config.ts" "src/bridge/index.ts"]
                 ["vite.app-bridge.config.ts" "src/bridge/app.ts"]])))
+
+(defn assert-configs!
+  "Validate generic static Vite configurations without requiring application ownership."
+  [root]
+  (inspect-configs! root false))
+
+(defn- output-stat [path]
+  (try (fs/lstatSync path)
+       (catch :default error
+         (if (= "ENOENT" (.-code error)) nil (throw error)))))
+
+(defn- assert-application-output! [root]
+  (let [directory (node-path/resolve root "frontend" "dist")
+        file (node-path/join directory "index.html")
+        directory-stat (output-stat directory)
+        file-stat (when directory-stat (output-stat file))]
+    (when (and directory-stat
+               (or (.isSymbolicLink directory-stat) (not (.isDirectory directory-stat))))
+      (unsupported! directory "Application dist must be a directory, not a symlink"))
+    (when (and file-stat (or (.isSymbolicLink file-stat) (not (.isFile file-stat))))
+      (unsupported! file "Application HTML output must be a regular file, not a symlink"))))
+
+(defn assert-application-configs!
+  "Require the governed application's HTML build before the Shadow build."
+  [root]
+  (assert-application-output! root)
+  (inspect-configs! root true))
