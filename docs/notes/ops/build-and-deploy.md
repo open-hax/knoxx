@@ -28,10 +28,18 @@ From the Knoxx repository root, run:
 backend/scripts/rebuild-image.sh
 ```
 
-The script builds the image named by `KNOXX_BACKEND_IMAGE`, which defaults to
-`knoxx-backend:latest`. For a workstation Compose project, set
-`KNOXX_BACKEND_COMPOSE_FILE` to its local file and
-`KNOXX_BACKEND_COMPOSE_SERVICE` to its backend service.
+For a build alone, `KNOXX_BACKEND_IMAGE` defaults to `knoxx-backend:latest`.
+To restart a workstation Compose project, pass the image explicitly, including
+when using the default tag. Compose files such as `compose.environment.yaml`
+require that variable. Use an absolute Compose file path because the helper
+changes into `backend` before invoking Compose.
+
+```bash
+KNOXX_BACKEND_IMAGE=knoxx-backend:latest \
+  KNOXX_BACKEND_COMPOSE_FILE=/absolute/path/to/workstation-compose.yaml \
+  KNOXX_BACKEND_COMPOSE_SERVICE=knoxx-backend \
+  backend/scripts/rebuild-image.sh
+```
 
 ## Manual local build
 
