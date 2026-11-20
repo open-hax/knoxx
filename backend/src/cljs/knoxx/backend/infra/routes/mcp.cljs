@@ -97,14 +97,19 @@
       (when result
         (.redirect reply (:redirect result) 302)))))
 
+(defn- ordinary-bearer?
+  [bearer]
+  (and (not (str/blank? bearer))
+       (not (law/reserved-subscription-credential? :bearer bearer))))
+
 (defn- require-bearer-token!
-  "Returns a Fastify preHandler hook that extracts bearer token onto request.bearerToken."
+  "Return a Fastify preHandler admitting an ordinary bearer to session lookup."
   [base]
   (fn [req reply done]
     (let [token (transport/bearer-token req)]
-      (if (str/blank? token)
-        (transport/challenge-unauthorized! reply base)
-        (do (aset req "bearerToken" token) (done))))))
+      (if (ordinary-bearer? token)
+        (do (aset req "bearerToken" token) (done))
+        (transport/challenge-unauthorized! reply base)))))
 
 ;; ──────────────────────────────────────────────────────────────
 ;; Business logic helpers
@@ -467,6 +472,8 @@
               (str/blank? code) (str/blank? code-verifier)
               (str/blank? client-id) (str/blank? redirect-uri))
       (throw (params/http-error 400 "invalid_request" "Missing required token exchange parameters")))
+    (when (law/reserved-subscription-credential? :authorization-code code)
+      (throw (params/http-error 400 "invalid_grant" "Unknown or expired code")))
     (let [client (await (get-registered-client client-id))]
       (ensure-redirect-uri-allowed! client redirect-uri "invalid_grant")
       ;; Validate against a peek, then claim. Single use is enforced by the
@@ -638,17 +645,16 @@
 (defn- ^:async resolve-post-token-record!
   "The token record this POST acts under, or nil to refuse it.
 
-   Which methods may answer here is the authentication contract's decision, not
-   this route's. :trusted-loopback is consulted first and only ever answers for
-   a request auth-methods already accepted under the guards the contract
-   declares. A bearer reaches the OAuth store only when the same contract
-   explicitly enables :oauth-bearer; removal and disablement both refuse it.
+   The reserved subscription namespace never reaches an ordinary verifier.
+   For other bearers, the authentication contract picks the allowed methods.
+   :trusted-loopback answers first under its configured guards. A bearer
+   reaches the OAuth store only when the same contract enables :oauth-bearer.
 
    A grant becomes an ordinary token record, so everything downstream — context
    resolution, granted-tools, actor scoping, the transport — cannot tell which
    method admitted the caller."
   [request runtime config bearer]
-  (when-not (str/blank? bearer)
+  (when (ordinary-bearer? bearer)
     (if-let [grant (auth-methods/trusted-loopback-grant
                     config auth-methods/mcp-surface request bearer)]
       (mcp-token/native-record

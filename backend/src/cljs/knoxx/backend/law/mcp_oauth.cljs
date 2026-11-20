@@ -27,6 +27,19 @@
 (def NonBlankString
   [:and string? [:fn {:error/message "must not be blank"} #(not (str/blank? %))]])
 
+(defn reserved-subscription-credential?
+  "Identify reserved credential text that ordinary authorization must refuse.
+
+   This is an exclusion rule. A match, including malformed text with the
+   marker, carries no authority. Only the isolated issuer can verify a private
+   grant. The bearer marker matches the trusted ingress routing contract."
+  [kind value]
+  (and (string? value)
+       (str/includes? (str/lower-case value)
+                      (case kind
+                        :bearer "knxsub1_"
+                        :authorization-code "knxsubc1_"))))
+
 (defn code-bound-to?
   "True when a claimed code was issued to this client and redirect URI.
 

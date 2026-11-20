@@ -8,6 +8,7 @@
             [knoxx.backend.e2e.harness :as harness]
             [knoxx.backend.e2e.mcp-client :as mcp]
             [knoxx.backend.infra.auth.method-config :as method-config]
+            [knoxx.backend.infra.mongo-client :as mongo-client]
             [knoxx.backend.law.auth-methods :as law]))
 
 (deftest ^:async trusted-loopback-admits-the-harness-test
@@ -68,6 +69,75 @@
         (is (= #{"semantic_query" "graph_query"} names)
             (str "the semantic/graph factory pair changed shape; got "
                  (pr-str names))))
+      (finally (await (harness/stop! started))))))
+
+(defn- ^:async exchange-status!
+  [base-url content-type code]
+  (let [fields {:grant_type "authorization_code"
+                :code code
+                :client_id "synthetic-client"
+                :redirect_uri "http://localhost/callback"
+                :code_verifier "synthetic-verifier"}
+        body (if (= "application/json" content-type)
+               (js/JSON.stringify (clj->js fields))
+               (str (js/URLSearchParams. (clj->js fields))))
+        response (await (js/fetch (str base-url "/api/mcp/oauth/token")
+                                  #js {:method "POST"
+                                       :headers #js {:content-type content-type}
+                                       :body body}))]
+    (await (.text response))
+    (.-status response)))
+
+(defn- ^:async mcp-method-status!
+  [base-url method bearer]
+  (let [response (await (js/fetch (str base-url "/mcp")
+                                  #js {:method method
+                                       :headers #js {:authorization (str "Bearer " bearer)}}))]
+    (await (.text response))
+    (.-status response)))
+
+(deftest ^:async private-subscription-credentials-do-not-enter-ordinary-authority-test
+  (let [{:keys [base-url] :as started} (await (harness/start!))
+        lookups* (atom [])
+        db #js {:collection
+                (fn [name]
+                  #js {:findOne
+                       (fn [filter]
+                         (swap! lookups* conj [name (js->clj filter)])
+                         (js/Promise.resolve nil))})}
+        private-bearer "knxsub1_synthetic-private-bearer"
+        private-code "knxsubc1_synthetic-private-authorization-code"
+        ordinary-bearer "synthetic-ordinary-oauth-bearer"
+        ordinary-code "synthetic-ordinary-authorization-code"]
+    (try
+      (with-redefs [mongo-client/get-db (constantly db)]
+        (testing "legacy loopback still initializes"
+          (is (= 200 (:status (await (mcp/initialize! (harness/client started)))))))
+
+        (testing "the reserved bearer cannot use loopback even if it matches the configured secret"
+          (aset js/process.env "KNOXX_E2E_LOOPBACK_TOKEN" private-bearer)
+          (let [init (await (mcp/initialize! (harness/client started private-bearer)))]
+            (is (= 401 (:status init)))))
+
+        (testing "a reserved bearer stays out of the legacy OAuth and session paths"
+          (let [init (await (mcp/initialize! (harness/client started "KNXSUB1_synthetic-unknown")))]
+            (is (= 401 (:status init))))
+          (is (empty? @lookups*))
+          (doseq [method ["GET" "DELETE"]]
+            (is (= 401 (await (mcp-method-status! base-url method private-bearer))) method)
+            (is (= 400 (await (mcp-method-status! base-url method ordinary-bearer))) method))
+          (is (= 401 (:status (await (mcp/initialize! (harness/client started ordinary-bearer))))))
+          (is (= [["knoxx_mcp_tokens" {"access_token" ordinary-bearer}]] @lookups*)))
+
+        (testing "private codes cannot be looked up via either native token exchange encoding"
+          (doseq [content-type ["application/json" "application/x-www-form-urlencoded"]]
+            (reset! lookups* [])
+            (is (= 400 (await (exchange-status! base-url content-type private-code))) content-type)
+            (is (empty? @lookups*))
+            (is (= 400 (await (exchange-status! base-url content-type ordinary-code))) content-type)
+            (is (= [["knoxx_mcp_clients" {"client_id" "synthetic-client"}]
+                    ["knoxx_mcp_codes" {"code" ordinary-code}]]
+                   @lookups*)))))
       (finally (await (harness/stop! started))))))
 
 ;; ── the shipped contract, read as data ──────────────────────────────────────
