@@ -1,7 +1,7 @@
 # Native invite verification
 
 Run this from the Knoxx checkout with the backend dependencies installed and a
-MongoDB 7 executable available. The script prints the checkout path and commit
+MongoDB 7 executable and `setsid` available. The script prints the checkout path and commit
 and compiles that checkout before testing.
 
 ```bash
