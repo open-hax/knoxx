@@ -129,36 +129,32 @@
   (agent-resume/start-periodic-recovery! runtime app cfg)
   (session-flush/start-periodic-flush! (:run-stale-flush-ms cfg)))
 
-(defn- ^:async start-session-persistence!
-  [runtime app cfg log]
-  (if (persistence/mongo-required? cfg)
-    (try
-      (let [db (await (mongo-client/init-mongo!))]
-        (when-not db
-          (throw (ex-info "Selected Mongo persistence did not open"
-                          {:code "persistence_mongo_unavailable"})))
-        (await (persistence/install-mongo! cfg db))
-        (start-recovery! runtime app cfg))
-      (catch :default error
-        (.error log "Selected Mongo persistence failed to initialize" error)))
-    (start-recovery! runtime app cfg)))
+(defn ^:async start-session-persistence!
+  "Install selected Mongo persistence before the listener becomes reachable."
+  [_runtime _app cfg _log]
+  (when (persistence/mongo-required? cfg)
+    (let [db (await (mongo-client/init-mongo!))]
+      (when-not db
+        (throw (ex-info "Selected Mongo persistence did not open"
+                        {:code "persistence_mongo_unavailable"})))
+      (await (persistence/install-mongo! cfg db)))))
 
 (defn- listening-deps
   []
   {:remember-app! lifecycle/remember-app!
    :install-shutdown! graceful-shutdown/install!
    :notify-ready! notify-ready!
-   :start-persistence! start-session-persistence!})
+   :start-persistence! start-session-persistence!
+   :start-recovery! start-recovery!})
 
 (defn- handle-app-listening!
-  [runtime app cfg {:keys [remember-app! install-shutdown! notify-ready!
-                           start-persistence!]}]
+  [runtime app cfg {:keys [remember-app! install-shutdown! notify-ready! start-recovery!]}]
   (remember-app! app)
   (install-shutdown! app cfg)
   (notify-ready!)
   (let [^js log (.-log app)]
     (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
-    (start-persistence! runtime app cfg log)
+    (start-recovery! runtime app cfg)
     app))
 
 (defn- http-start-deps
@@ -172,6 +168,7 @@
    :add-session-hook! add-session-hook!
    :register-http-routes! register-http-routes!
    :listen! http-server/listen!
+   :close-app! http-server/close!
    :listening (listening-deps)})
 
 (defn ^:async start-http!
@@ -186,19 +183,27 @@
   ([runtime cfg policy-context cookie-hook?
     {:keys [remember-runtime-context! create-app! ensure-json-parser!
             add-debug-hook! register-default-plugins! register-ws-routes!
-            add-session-hook! register-http-routes! listen! listening]}]
+            add-session-hook! register-http-routes! listen! close-app! listening]}]
    (when-not (map? policy-context)
      (throw (js/Error. "Knoxx policy context is required before HTTP composition")))
    (remember-runtime-context! runtime cfg policy-context)
    (let [app (create-app!)]
-     (ensure-json-parser! app)
-     (add-debug-hook! app)
-     (await (register-default-plugins! app))
-     (await (register-ws-routes! runtime app))
-     (await (add-session-hook! app policy-context cookie-hook?))
-     (await (register-http-routes! runtime app cfg policy-context))
-     (await (listen! app (:host cfg) (:port cfg)))
-     (handle-app-listening! runtime app cfg listening))))
+     (try
+       (ensure-json-parser! app)
+       (add-debug-hook! app)
+       (await (register-default-plugins! app))
+       (await (register-ws-routes! runtime app))
+       (await (add-session-hook! app policy-context cookie-hook?))
+       (await (register-http-routes! runtime app cfg policy-context))
+       (await ((:start-persistence! listening) runtime app cfg (.-log app)))
+       (await (listen! app (:host cfg) (:port cfg)))
+       (handle-app-listening! runtime app cfg listening)
+       (catch :default error
+         (try
+           (when close-app! (await (close-app! app)))
+           (catch :default close-error
+             (.error js/console "Failed to close app after startup failure" close-error)))
+         (throw error))))))
 
 (defn ^:async start-policy-http!
   "Create the policy context before allowing HTTP composition to begin.

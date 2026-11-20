@@ -36,6 +36,7 @@
 ;; ─── State ────────────────────────────────────────────────────────────
 
 (defonce interval-handle* (atom nil))
+(defonce startup-recovery-in-flight* (atom []))
 (defonce startup-resume-state* (atom {:attempted? false
                                       :skipped-reason nil}))
 
@@ -213,7 +214,7 @@
   []
   (js/Math.round (* 1000 (.uptime js/process))))
 
-(defn ^:async resume-on-startup!
+(defn- ^:async scan-on-startup!
   "Fire-and-forget scan of persisted running sessions on startup.
    At true process startup every running document was stamped by a previous
    system instance, so it is aborted (auto-resume off) or resumed
@@ -237,6 +238,33 @@
       (log-warn! app "[agent-resume] Thread provider unavailable; skipping startup scan")
       {:skipped true :reason "thread_provider_unavailable"})))
 
+(defn- ^:async run-startup-recovery!
+  [runtime app config token]
+  (try
+    (await (scan-on-startup! runtime app config))
+    (finally
+      (swap! startup-recovery-in-flight*
+             #(filterv (fn [entry] (not (identical? token (:token entry)))) %)))))
+
+(defn- in-flight-recovery
+  [runtime app config]
+  (some (fn [entry]
+          (when (and (identical? runtime (:runtime entry))
+                     (identical? app (:app entry))
+                     (identical? config (:config entry)))
+            (:result entry)))
+        @startup-recovery-in-flight*))
+
+(defn resume-on-startup!
+  "Share a running startup recovery; a later call starts a fresh scan."
+  [runtime app config]
+  (or (in-flight-recovery runtime app config)
+      (let [token (js-obj)
+            result (run-startup-recovery! runtime app config token)]
+        (swap! startup-recovery-in-flight* conj
+               {:runtime runtime :app app :config config :token token :result result})
+        result)))
+
 (defn resume-on-process-startup!
   "Run startup recovery once per Node process, not once per shadow-cljs reload.
 
@@ -248,11 +276,12 @@
   (let [uptime-ms (process-uptime-ms)]
     (cond
       (:attempted? @startup-resume-state*)
-      (do
+      (or (in-flight-recovery runtime app config)
+          (do
         (log-info! app (str "[agent-resume] startup scan skipped: already attempted in this Node process "
                             (pr-str @startup-resume-state*)))
         (js/Promise.resolve {:skipped true
-                             :reason "already_attempted"}))
+                             :reason "already_attempted"})))
 
       (> uptime-ms PROCESS_STARTUP_RESUME_WINDOW_MS)
       (do
