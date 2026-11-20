@@ -1,6 +1,8 @@
 (ns knoxx.backend.infra.agent.provider.native-subscription
   "Run host-local subscription workers for one explicitly enrolled membership and actor."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.models :as models]
+            [knoxx.backend.extern.eta-mu :as eta-mu-extern]
             [knoxx.backend.extern.native-subscription :as worker]
             [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.http :as http]
@@ -19,28 +21,47 @@
   [ctx]
   (vary-meta ctx assoc ::mcp-authorized? true))
 
+(defn- require-owner!
+  [config ctx agent-spec]
+  (let [binding (authz/ctx-actor-binding ctx)
+        principal {:org-id (authz/ctx-org-id ctx)
+                   :membership-id (authz/ctx-membership-id ctx)
+                   :actor-id binding}]
+    (when-not (and (::mcp-authorized? (meta ctx))
+                   (every? #(and (string? %) (not (str/blank? %))) (vals principal))
+                   (= (:native-subscription-owner config) principal)
+                   (= binding (authz/ctx-actor-id ctx))
+                   (= binding (or (:actor-id agent-spec) binding)))
+      (throw (http/http-error 403 "native_subscription_unavailable"
+                              "Subscription model is unavailable to this actor")))))
+
+(defn authorize-proxx-relay!
+  "Require the verified MCP owner before selecting the dedicated Proxx relay."
+  [config ctx provider-id agent-spec]
+  (when (= models/subscription-relay-provider-id provider-id)
+    (require-owner! config ctx agent-spec)
+    (when (or (str/blank? (get (:provider-base-urls config) provider-id))
+              (not (eta-mu-extern/provider-token-configured?
+                    (get (:provider-auth-tokens config) provider-id))))
+      (throw (http/http-error 503 "subscription_relay_not_configured"
+                              "The dedicated Proxx relay is not configured")))))
+
 (defn resolve-worker!
-  "Resolve a reserved model only for the configured, stored actor binding."
+  "Authorize subscription models and return the native worker selection when applicable."
   [config ctx model-id agent-spec]
-  (when (model-id? model-id)
-    (let [owner (:native-subscription-owner config)
-          binding (authz/ctx-actor-binding ctx)
-          principal {:org-id (authz/ctx-org-id ctx)
-                     :membership-id (authz/ctx-membership-id ctx)
-                     :actor-id binding}
-          home (:native-claude-home config)]
-      (when-not (and (= model-id claude-model-id)
-                     (::mcp-authorized? (meta ctx))
-                     (every? #(and (string? %) (not (str/blank? %))) (vals principal))
-                     (= owner principal)
-                     (= binding (authz/ctx-actor-id ctx))
-                     (= binding (or (:actor-id agent-spec) binding)))
+  (if (model-id? model-id)
+    (let [home (:native-claude-home config)]
+      (require-owner! config ctx agent-spec)
+      (when-not (= model-id claude-model-id)
         (throw (http/http-error 403 "native_subscription_unavailable"
                                 "Native subscription model is unavailable to this actor")))
       (when (str/blank? home)
         (throw (http/http-error 503 "native_claude_home_not_configured"
                                 "A dedicated Claude Code profile is required on this host")))
-      {:provider :claude :model "haiku" :home home})))
+      {:provider :claude :model "haiku" :home home})
+    (authorize-proxx-relay! config ctx
+                            (:provider (models/resolve-model-contract config model-id))
+                            agent-spec)))
 
 (defn- provider-prompt [system-prompt history text]
   (str (when (seq system-prompt) (str "Instructions:\n" system-prompt "\n\n"))

@@ -14,6 +14,8 @@
 (def ^:private eta-mu-registry-input-kinds
   #{"text" "image" "audio"})
 
+(def subscription-relay-provider-id "proxx-subscription")
+
 (defn- parse-prefix-allowlist
   [raw]
   (-> (str (or raw ""))

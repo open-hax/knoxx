@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.agent.session
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.models :refer [normalize-thinking-level effective-thinking-level resolve-model-contract]]
+            [knoxx.backend.domain.models :refer [normalize-thinking-level effective-thinking-level resolve-model-contract
+                                                subscription-relay-provider-id]]
             [knoxx.backend.extern.eta-mu :as eta-mu-extern]
             [knoxx.backend.extern.extension :as extension-extern]
             [knoxx.backend.infra.agent.content-codec :as content-codec]
@@ -145,14 +146,18 @@
   ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec]
    (if-let [selection (native-subscription/resolve-worker! config auth-context model-id agent-spec)]
      (native-subscription/create-session selection (:system-prompt agent-spec))
-     (let [{:keys [auth-storage model-registry settings-manager loader runtime-dir]} (await (ensure-eta-mu-runtime! runtime config))
+     (let [model-provider-id (or (:provider (resolve-model-contract config model-id)) "proxx")
+           _ (native-subscription/authorize-proxx-relay! config auth-context model-provider-id agent-spec)
+           provider-config (cond-> config
+                             (= subscription-relay-provider-id model-provider-id)
+                             (assoc :subscription-relay-selected? true))
+           {:keys [auth-storage model-registry settings-manager loader runtime-dir]}
+           (await (ensure-eta-mu-runtime! runtime provider-config))
            thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
                                                                         thinking-level
                                                                         (:agent-thinking-level config)
                                                                         "off"))
-           model-provider-id (or (some-> (resolve-model-contract config model-id) :provider)
-                                 "proxx")
-           provider (eta-mu-provider/eta-mu-provider runtime config)
+           provider (eta-mu-provider/eta-mu-provider runtime provider-config)
             model (eta-mu-provider/resolve-model provider
                                                  model-registry
                                                  model-provider-id
@@ -273,9 +278,19 @@
                                                                       (:agent-thinking-level config)
                                                                       "off"))
          native-selection (native-subscription/resolve-worker! config auth-context model-id agent-spec)
-         current-tool-signature (if native-selection
-                                  [session-id (:system-prompt agent-spec) (:native-subscription-owner config) native-selection]
-                                  (visible-session-signature runtime config auth-context agent-spec))
+         relay-provider (:provider (resolve-model-contract config model-id))
+         current-tool-signature
+         (cond
+           native-selection
+           [session-id (:system-prompt agent-spec) (:native-subscription-owner config) native-selection]
+
+           (= subscription-relay-provider-id relay-provider)
+           [relay-provider (:native-subscription-owner config)
+            (get (:provider-base-urls config) relay-provider)
+            (get (:provider-auth-tokens config) relay-provider)
+            (visible-session-signature runtime config auth-context agent-spec)]
+
+           :else (visible-session-signature runtime config auth-context agent-spec))
          construct-this-session! (partial construct-session-and-ext-ctx! runtime config conversation-id model-id
                                           auth-context thinking-level session-id agent-spec current-tool-signature)]
      (if-let [entry (active-session-entry conversation-id)]
