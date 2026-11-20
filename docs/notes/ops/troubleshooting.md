@@ -32,8 +32,28 @@ Common causes:
 
 ## Image not updating
 
+For production, open the successful Services **Deploy Stack** run and download
+the `digitalocean-deployment-production-knoxx-<attempt>` artifact. In its
+`report.json`, compare `sourceSha` to the requested Knoxx revision and check
+that both `health` and `postDeploy` are successful. On the production host,
+compare the running backend image reference to the report's `image` field.
+
 ```bash
-docker build --no-cache -t knoxx-backend:latest .   # 2026-09-30: default image name per backend/scripts/rebuild-image.sh
+cd /srv/open-hax/services/knoxx
+backend=$(docker compose --project-name knoxx --env-file .env ps -q knoxx-backend)
+test -n "$backend"
+docker inspect --format '{{.Config.Image}}' "$backend"
+```
+
+For testing or staging, compare the Services **Deploy Service Environment**
+run's admitted revision to `source_sha` in the slot's `deployment.json` under
+`/srv/open-hax/environments/<environment>/knoxx/`. Compare its `images` IDs
+to the running containers' `.Image` values.
+
+From the workstation backend build context and its local Compose project:
+
+```bash
+docker build --no-cache -t knoxx-backend:latest .
 docker compose up -d knoxx-backend --force-recreate
 ```
 

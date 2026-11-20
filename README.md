@@ -484,8 +484,17 @@ GPL-3.0-or-later; see `LICENSE`.
 
 ## Deployment ownership
 
-Knoxx owns application validation and portable packaging. Production image
-builds, host placement, deployment, and live verification are owned by the
-DigitalOcean stack in `open-hax/services`. A reviewed Services pull request
-carrying `deploy` at merge time authorizes that stack; Knoxx pull-request labels
-do not deploy a shared staging slot.
+Knoxx owns application validation and portable packaging.
+[OpenHax Services](https://github.com/open-hax/services) owns hosted image
+builds, deployment, and live verification.
+
+For production, run [Deploy Stack](https://github.com/open-hax/services/actions/workflows/deploy-stack.yml)
+in Services on `main`. Select `scope: stack` and pass the full SHA of the
+merged Knoxx revision as `knoxx_ref`. The production chain requires
+exact-revision qualification before changing the host.
+
+For testing and staging, run **Deploy Service Environment** from Services on
+`main`. Choose `testing` or `staging` and supply the Knoxx pull request number.
+The Services controller checks the testing label or the current merged staging
+revision before deploying through the protected receiver. See
+the [environment admission policy](https://github.com/open-hax/services/blob/main/docs/environments/promotion.md#knoxx-dispatch-from-services).

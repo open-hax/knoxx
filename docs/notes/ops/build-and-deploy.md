@@ -14,30 +14,40 @@ tags: [docker, shadow-cljs, pnpm, deployment]
 > image runs `node dist/server.js` (`backend/Dockerfile:48`). The old `:app` build
 > still exists (`backend/shadow-cljs.edn:9-11`) but is not the container entrypoint.
 
-## Quick Rebuild (from the Knoxx repository root)
+## Hosted deployments
+
+Use [Deployment ownership](../../../README.md#deployment-ownership) for
+the Services workflow and exact source revision. The commands below
+operate on a workstation checkout.
+
+## Quick local rebuild
+
+From the Knoxx repository root, run:
 
 ```bash
 backend/scripts/rebuild-image.sh
-# optional compose restart:
-KNOXX_BACKEND_COMPOSE_FILE=/path/to/compose.yml \
-KNOXX_BACKEND_COMPOSE_SERVICE=knoxx-backend \
+```
+
+For a build alone, `KNOXX_BACKEND_IMAGE` defaults to `knoxx-backend:latest`.
+To restart a workstation Compose project, pass the image explicitly, including
+when using the default tag. Compose files such as `compose.environment.yaml`
+require that variable. Use an absolute Compose file path because the helper
+changes into `backend` before invoking Compose.
+
+```bash
+KNOXX_BACKEND_IMAGE=knoxx-backend:latest \
+  KNOXX_BACKEND_COMPOSE_FILE=/absolute/path/to/workstation-compose.yaml \
+  KNOXX_BACKEND_COMPOSE_SERVICE=knoxx-backend \
   backend/scripts/rebuild-image.sh
 ```
 
-The script builds image `${KNOXX_BACKEND_IMAGE:-knoxx-backend:latest}` and only
-restarts compose when `KNOXX_BACKEND_COMPOSE_FILE` is set
-(`backend/scripts/rebuild-image.sh:1-20`).
-
-## Manual Steps
+## Manual local build
 
 ```bash
 cd backend
-pnpm install                          # install deps if needed
-pnpm run build                        # shadow-cljs release server -> dist/server.js
+pnpm install
+pnpm run build
 docker build -t knoxx-backend:latest .
-# then restart the knoxx-backend service in whichever compose file deploys it,
-# e.g. services/digitalocean/services/knoxx/compose.yaml in the Foresight
-# services repository (service `knoxx-backend`, image from KNOXX_BACKEND_IMAGE).
 ```
 
 ## Dev / Watch Mode

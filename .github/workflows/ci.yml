@@ -29,10 +29,15 @@ jobs:
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.20.0
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
+      - name: Install the workflow checker dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Reject retired deployment authority
         run: |
           node scripts/check-deployment-boundary.mjs --self-test
