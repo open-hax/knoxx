@@ -2,6 +2,7 @@
   "Exercise the native invite endpoints over HTTP against an owned Mongo process."
   (:require [clojure.string :as str]
             [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.extern.fetch :as fetch]
             [knoxx.backend.extern.mongo-run-native-fixture :as mongo-fixture]
             [knoxx.backend.infra.auth.session :as session]
             [knoxx.backend.infra.db.policy :as policy]
@@ -16,16 +17,13 @@
 
 (def ^:private member-email "invite-member@example.invalid")
 
-(defn- ^:async request!
+(defn- request!
   [origin endpoint payload cookie]
-  (let [response (await (js/fetch (str origin "/api/auth/" endpoint)
-                                  (clj->js {:method "POST"
-                                            :headers (cond-> {"content-type" "application/json"}
-                                                       cookie (assoc "cookie" cookie))
-                                            :body (js/JSON.stringify (clj->js payload))})))]
-    {:status (.-status response)
-     :cookie (.get (.-headers response) "set-cookie")
-     :body (js->clj (await (.json response)) :keywordize-keys true)}))
+  (fetch/json! fetch/default-client
+               {:url (str origin "/api/auth/" endpoint)
+                :method "POST"
+                :headers (when cookie {"cookie" cookie})
+                :json payload}))
 
 (defn- ^:async prepare-admin!
   [app]
@@ -46,19 +44,19 @@
 
 (defn- ^:async prove-member-session!
   [origin success]
-  (let [cookie (first (str/split (or (:cookie success) "") #";" 2))
-        anon (await (js/fetch (str origin "/api/auth/context")))
-        response (await (js/fetch (str origin "/api/auth/context")
-                                  #js {:headers #js {:cookie cookie}}))
-        context (js->clj (await (.json response)) :keywordize-keys true)]
-    (is (= 401 (.-status anon)))
-    (is (= 200 (.-status response)) "The issued cookie authenticates a subsequent request")
-    (is (= member-email (get-in context [:user :email])))
-    (is (= (get-in success [:body :membership :id]) (get-in context [:membership :id])))
-    (is (= (get-in success [:body :org :id]) (get-in context [:org :id])))
-    (is (= "active" (get-in context [:membership :status])))
-    (is (= ["basic-user"] (:roleSlugs context)))
-    (is (false? (:isSystemAdmin context)))))
+  (let [cookie (first (str/split (get-in success [:headers "set-cookie"] "") #";" 2))
+        url (str origin "/api/auth/context")
+        anon (await (fetch/json! fetch/default-client {:url url}))
+        {:keys [status body]} (await (fetch/json! fetch/default-client
+                                                 {:url url :headers {"cookie" cookie}}))]
+    (is (= 401 (:status anon)))
+    (is (= 200 status) "The issued cookie authenticates a subsequent request")
+    (is (= member-email (get-in body [:user :email])))
+    (is (= (get-in success [:body :membership :id]) (get-in body [:membership :id])))
+    (is (= (get-in success [:body :org :id]) (get-in body [:org :id])))
+    (is (= "active" (get-in body [:membership :status])))
+    (is (= ["basic-user"] (:roleSlugs body)))
+    (is (false? (:isSystemAdmin body)))))
 
 (defn- ^:async prove-current-invite!
   [origin db admin-cookie]
@@ -84,11 +82,11 @@
       (is (= [200 400] (sort (map :status attempts))) "One concurrent redemption wins")
       (is (= "redeemed" (get-in success [:body :invite :status])))
       (is (= member-email (get-in success [:body :user :email])))
-      (is (str/starts-with? (or (:cookie success) "") "knoxx_session=")
+      (is (str/starts-with? (get-in success [:headers "set-cookie"] "") "knoxx_session=")
           "Knoxx issued the normal session cookie")
-      (is (nil? (:cookie refused)))
+      (is (nil? (get-in refused [:headers "set-cookie"])))
       (is (= 400 (:status replay)) "A replay cannot mint another session")
-      (is (nil? (:cookie replay)))
+      (is (nil? (get-in replay [:headers "set-cookie"])))
       (await (prove-member-session! origin success)))))
 
 (defn- ^:async prove-stored-expiries!
