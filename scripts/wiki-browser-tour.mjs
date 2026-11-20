@@ -152,7 +152,8 @@ export async function tour(page, config) {
   await page.goto(new URL('/translations', baseUrl).href);
   await page.getByRole('heading', { name: 'Translation Review', exact: true }).waitFor();
   await shot('09-translation-workspace', 'The translation workspace is ready for the next review cycle.');
-  const result = { document, title, screenshots, sourceGateResult, translationResult, translationTourCompleted: true };
+  const result = { document, title, screenshots, sourceGateResult, translationResult, translationTourCompleted: true,
+    buildProvenance: 'unverified' };
   await fs.writeFile(path.join(outputDir, 'wiki-tour.json'), `${JSON.stringify(result, null, 2)}\n`);
   return result;
 }

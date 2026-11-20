@@ -15,7 +15,7 @@ the outstanding live publication cycles.
 
 The live CMS is `/cms`; `/cms/editor/*` mounts the same native Helix wiki. It reads real resource identities, saved source bytes and revision-bound review history. Humans invoke the same authenticated commands available to agents with their roles. A writing suggestion remains a proposal until a writer explicitly adopts and saves it.
 
-`scripts/wiki-browser-tour.mjs` exports `tour(page, config)` for the isolated stack supervisor. The supervisor must start the actual services, seed a disposable organization and active garden, authenticate the browser, verify which checkout is being served, and remove its fixtures and processes on success, failure or interruption. The stage does not provision its own permissions or replace HTTP responses.
+`scripts/wiki-browser-tour.mjs` exports `tour(page, config)` for the isolated stack supervisor. The supervisor must start the actual services, seed a disposable organization and active garden, authenticate the browser, verify which checkout is being served, and remove its fixtures and processes on success, failure or interruption. Source-to-build verification is not yet implemented; current runs are diagnostic and cannot establish that the observed checkout produced the served build. The stage does not provision its own permissions or replace HTTP responses.
 
 ```javascript
 await tour(page, {
@@ -32,7 +32,7 @@ await tour(page, {
 
 `agentCommand` receives either `{kind: 'review', document, action: 'comment', notes}` or `{kind: 'source', document, content}`. It must resolve the current source revision/history head and invoke the authorized shared command service. The browser waits for the actual SSE event to update the open view. Injecting a browser event would not prove that transport.
 
-`beforeSourceAcceptance(page, {document, snapshot, shot})` verifies the publication gate after concurrent source changes invalidate acceptance. `translationTour(page, {document, snapshot, shot})` performs real translation dispatch, correction, review, revision, learning, acceptance and publication. Both callbacks are required and their return values are retained in `wiki-tour.json`. Missing source-gate, translation, or canonical memory verification fails the full tour. Visiting the translation page does not establish publication.
+`beforeSourceAcceptance(page, {document, snapshot, shot})` verifies the publication gate after concurrent source changes invalidate acceptance. `translationTour(page, {document, snapshot, shot})` performs real translation dispatch, correction, review, revision, learning, acceptance and publication. Both callbacks are required and their return values are retained in `wiki-tour.json`. That sub-tour artifact records `buildProvenance: "unverified"`; its completion fields do not establish source-bound acceptance. Missing source-gate, translation, or canonical memory verification fails the full tour. Visiting the translation page does not establish publication.
 
 | Capture | Required evidence |
 | --- | --- |
@@ -67,6 +67,8 @@ The integrated reconstructed frontend passed the configured `clj-kondo` hooks wi
 One historical command remains independently broken: `pnpm -C frontend lint:size` imports the missing root `size-lint.config.mjs`. Recovery does not invent replacement thresholds. The configured CLJS file/function size hooks remain enabled in the actual lint check.
 
 ## Service and translation verification helpers
+
+The supervised tour requires a new, unused evidence directory; it refuses to reuse an earlier run's results. The supervised tour remains diagnostic until an owned source-to-build producer exists. It runs its available checks and cleanup, but records build provenance as unverified, leaves `completed` false, and exits nonzero even if the checks succeed. The observed Git HEAD and stable output hashes do not prove that source produced the artifacts; the separate `backend/dist-verification/wiki.js` verifier is also not covered by the build snapshot. A passing exact-checkout live browser proof remains outstanding.
 
 `scripts/wiki-stack-services.mjs` starts the built backend, Vite preview, pinned Qwen2.5 0.5B generation and MiniLM embeddings from the warmed offline cache. It selects the EDN providers, hashes build files before startup, verifies the served frontend bytes, and stops only its owned process groups and model handles. It never deletes fixture or evidence directories. The parent supervisor owns isolated contract fixtures, the manifest-only artifact server, browser accounts and interruption cleanup. Returned environment settings contain bootstrap credentials and must not be serialized.
 

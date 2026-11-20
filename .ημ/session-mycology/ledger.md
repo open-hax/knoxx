@@ -147,3 +147,30 @@
   spore: none
   receipt-refs: 2026-08-30T00:57:53.346Z
   note: An installed logical decision is already-linearized history and must be compared and returned before current-head or quorum derivation; only an empty slot evaluates current evidence, while later head advancement forms a distinct unresolved conflict generation.
+- ts: 2026-11-03T00:03:10.326428066Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx371-local-repair
+  task: Knoxx 371 source build provenance
+  p-efficiency: 0.7
+  p-friction: 0.6
+  p-skill-candidate: 0.5
+  spore: none
+  receipt-refs: 2026-11-03T00:03:10Z
+  note: Stable output digests and current HEAD do not establish provenance; require a controlled build producer and isolated owned outputs.
+- ts: 2026-11-03T00:08:56.471632358Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx371-local-repair
+  task: Knoxx 371 isolated build feasibility
+  p-efficiency: 0.75
+  p-friction: 0.55
+  p-skill-candidate: 0.4
+  spore: none
+  receipt-refs: 2026-11-03T00:08:56Z
+  note: Source provenance includes linked sibling packages and verification helpers, not only the served dist trees.
+- ts: 2026-11-03T05:19:54.179085660Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx371-local-repair
+  task: Knoxx owned build provenance reproduction
+  p-efficiency: 0.75
+  p-friction: 0.65
+  p-skill-candidate: 0.4
+  spore: none
+  receipt-refs: 2026-11-03T05:19:40Z
+  note: Exercise real launch boundary against synthetic stale bytes, pin exact code and inspect complete Git status; distinguish observed source and stable artifacts from run-owned build provenance.

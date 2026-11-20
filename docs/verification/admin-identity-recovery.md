@@ -20,7 +20,7 @@ pnpm -C backend typecheck
 
 The selected test compilation and direct guarded execution both passed 21 tests containing 98 assertions, with zero failures and errors. The test compiler reported zero warnings; integrated `pnpm -C backend typecheck` passed with 591 files and zero warnings. The direct guarded invocation must also succeed: Shadow can finish compilation successfully after its child test process reports an uncaught rejection. Never treat the compiler exit code alone as a test result. The focused selection covers the changed facade and adjacent identity/credential boundaries; the root stack verification owns the complete backend suite.
 
-For a live human walkthrough, run `node scripts/verify-wiki-stack.mjs`. It owns disposable services and fixtures, confirms the served checkout, executes `identity-browser-tour.mjs` and `admin-identity-browser-tour.mjs`, and writes annotated screenshots to its evidence directory. This recovery checkpoint does not yet claim a successful fresh browser run. External OAuth consent requires configured provider credentials; an unconfigured provider remains visibly unavailable.
+For a live human walkthrough, run `node scripts/verify-wiki-stack.mjs`. It owns disposable services and fixtures, checks served build bytes without proving source provenance, executes `identity-browser-tour.mjs` and `admin-identity-browser-tour.mjs`, and writes annotated screenshots to its evidence directory. This recovery checkpoint does not yet claim a successful fresh browser run. External OAuth consent requires configured provider credentials; an unconfigured provider remains visibly unavailable.
 
 ## Obstacles observed
 

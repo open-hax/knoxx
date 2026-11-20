@@ -8,7 +8,7 @@ import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {randomBytes, randomUUID} from 'node:crypto';
 import {startServices} from './wiki-stack-services.mjs';
-import {cleanupWikiStack} from './wiki-stack-cleanup.mjs';
+import {finishWikiStack, reserveEvidenceDirectory} from './wiki-stack-cleanup.mjs';
 import {annotatedScreenshot, tour} from './wiki-browser-tour.mjs';
 import {identityTour} from './identity-browser-tour.mjs';
 import {adminIdentityTour} from './admin-identity-browser-tour.mjs';
@@ -25,6 +25,7 @@ try { ({chromium} = require(path.join(modules, 'playwright-core'))); }
 catch (error) { throw new Error(`Cannot load playwright-core from ${modules}: ${error.message}`); }
 assert(typeof chromium?.launch === 'function', 'playwright-core must expose chromium.launch');
 const outputDir = path.resolve(process.env.WIKI_EVIDENCE_DIR || path.join(repo, 'docs/verification/screenshots', `wiki-${Date.now()}`));
+await reserveEvidenceDirectory(outputDir);
 const fixtureDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'knoxx-wiki-stack-'));
 const username = 'wiki-owner', email = 'owner@wiki.test', password = randomBytes(24).toString('base64url');
 const bootOnly = process.argv.includes('--boot-only');
@@ -127,10 +128,10 @@ let cleanupPromise;
 async function cleanup() {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = (async () => {
-    await cleanupWikiStack({evidence, fixtureDirectory, outputDir,
+    console.error('FAIL build provenance is unverified: stable build bytes do not identify their source');
+    process.exitCode = await finishWikiStack({evidence, fixtureDirectory, outputDir,
       close: [async()=>client?.close(), async()=>browser?.close(),
         async()=>artifactServer && new Promise(resolve=>artifactServer.close(resolve)), async()=>services?.stop()]});
-    if (evidence.failures.length) process.exitCode=1;
     console.log(`Evidence: ${outputDir}`);
   })();
   return cleanupPromise;
@@ -153,7 +154,6 @@ process.once('SIGINT', onInterrupt);
 process.once('SIGTERM', onTerminate);
 process.once('unhandledRejection', onFatal);
 try {
-  await fs.mkdir(outputDir, {recursive:true});
   await fs.writeFile(path.join(outputDir, 'fixture-owner.json'), `${JSON.stringify({fixtureDirectory, owner:'verify-wiki-stack', pid:process.pid})}\n`, {mode:0o600});
   await seedContracts();
   services = await startServices({repo, fixtureDirectory, outputDir, username, email, password,
@@ -173,7 +173,7 @@ try {
     const record = await annotatedScreenshot(page,outputDir,name,caption,selectors); evidence.screenshots.push(record); return record;
   };
   await login(page);
-  await shot('00-live-wiki', 'This is the current compiled Knoxx, authenticated by Axxium and backed by canonical Clio ledgers.');
+  await shot('00-live-wiki', 'The running Knoxx build is authenticated by Axxium and backed by Clio ledgers; its source provenance is unverified.');
   if (!bootOnly) {
     const openpgp = await import(pathToFileURL(require.resolve('openpgp')));
     const keys = await openpgp.generateKey({type:'ecc', curve:'ed25519Legacy', userIDs:[{name:'Disposable Wiki Owner', email}], format:'armored'});

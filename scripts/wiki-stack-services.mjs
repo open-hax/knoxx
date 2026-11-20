@@ -17,7 +17,7 @@ async function hashBuilds(repo) {
   const snapshot = await snapshotBuildFiles(repo);
   for (const file of required) assert(snapshot.files[file]?.bytes, `Build output is missing or empty: ${file}`);
   return Object.freeze({ ...snapshot,
-    sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim() });
+    buildProvenance: 'unverified', observedSourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim() });
 }
 
 function logStream(stream, destination, secrets) {

@@ -139,7 +139,7 @@ server artifact.
 ## Human verification still required
 
 The full-stack supervisor is `scripts/verify-wiki-stack.mjs`; it owns temporary
-data, source/artifact provenance checks, actual Axxium login and browser cleanup.
+data, build-byte stability checks, actual Axxium login and browser cleanup. Source-to-build provenance remains unverified.
 This mailbox checkpoint supplies the real endpoints for that stack. The existing
 `/mail` page is the human surface for compose, full-message reading, acknowledgement
 and live updates; its UI extension and browser helper are a coordinated frontend
