@@ -14,10 +14,11 @@
    Documents are stamped with :system_instance_id like other policy twins."
   (:require
     [clojure.string :as str]
+    [knoxx.backend.extern.mongo-invites :as mongo-invites]
     [knoxx.backend.infra.mongo-client :as mongo-client]
     [knoxx.backend.infra.system-instance :as system-instance]))
 
-(def INVITES_COLLECTION "knoxx_invites")
+(def INVITES_COLLECTION mongo-invites/collection-name)
 
 (defn- invites-coll [db] (.collection db INVITES_COLLECTION))
 
@@ -69,39 +70,19 @@
      (let [doc (keywordize (await (.findOne coll #js {"code" code})))]
        (invite-doc->row doc)))))
 
-(defn- pending-invite-query
-  [identifier]
-  ;; The native invite writer uses ISO strings. Older rows can hold BSON dates.
-  (clj->js (assoc identifier
-                 "status" "pending"
-                 "$expr" {"$and" [{"$in" [{"$type" "$expires_at"} ["date" "string"]]}
-                                  {"$gt" [{"$convert" {"input" "$expires_at"
-                                                        "to" "date"
-                                                        "onError" nil
-                                                        "onNull" nil}}
-                                          "$$NOW"]}]})))
-
 (defn ^:async pending-by-code!
   "Find a pending, non-expired invite by code. Returns the row or nil.
    Mirrors PG shape.db.invites/pending-by-code."
   ([code] (pending-by-code! (mongo-client/get-db) code))
   ([db code]
-   (let [coll (invites-coll db)
-         query (pending-invite-query {"code" code})
-         doc (keywordize (await (.findOne coll query)))]
-     (invite-doc->row doc))))
+   (invite-doc->row (await (mongo-invites/pending-by-code! db code)))))
 
 (defn ^:async redeem-invite!
   "Claim a pending, non-expired invite. Returns the updated row or nil.
    Mirrors PG shape.db.invites/redeem."
   ([invite-id] (redeem-invite! (mongo-client/get-db) invite-id))
   ([db invite-id]
-   (let [coll (invites-coll db)
-         query (pending-invite-query {"invite_id" (str invite-id)})
-         doc (await (.findOneAndUpdate coll query
-                                      #js [#js {"$set" #js {"status" "redeemed" "redeemed_at" "$$NOW"}}]
-                                      #js {"returnDocument" "after"}))]
-     (invite-doc->row (keywordize doc)))))
+   (invite-doc->row (await (mongo-invites/claim! db invite-id)))))
 
 (defn ^:async list-invites-by-org!
   "Return invites for an org, optionally filtered by status, ordered by created_at desc.
