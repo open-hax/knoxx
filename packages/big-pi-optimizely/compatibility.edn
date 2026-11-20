@@ -1,0 +1,45 @@
+{:profile "cms-saas-rest-v1-local-subset"
+ :classification :unofficial-local-model
+ :target {:reference "https://docs.optimizely.com/cms-saas/api/content"
+          :openapi-template "https://api.cms.optimizely.com/VERSION/docs/content-openapi.json"
+          :openapi-access :authenticated :pinned-spec nil
+          :content-operations 24
+          :operation-groups {:apps 5 :blueprints 5 :content 24 :contentSources 5
+                             :contentTypeBindings 5 :contentTypes 5 :displayTemplates 5
+                             :locales 5 :manifest 2 :propertyFormats 2 :propertyGroups 5}
+          :documented-models 75
+          :note "Model count is not a route count. Group counts describe the reference, not implemented coverage."}
+ :implemented-local
+ [{:methods [:get :post] :path "/v1/content" :note "GET is a local discovery extension; locale/status filters match any one version satisfying both."}
+  {:methods [:get :patch] :path "/v1/content/{key}" :note "Container mutation is not implemented."}
+  {:methods [:get :post] :path "/v1/content/{key}/versions"}
+  {:methods [:get :patch] :path "/v1/content/{key}/versions/{version}"}
+  {:methods [:get] :path "/v1/content/{key}/locales"}
+  {:methods [:get :post] :path "/v1/contenttypes"}
+  {:methods [:get :patch] :path "/v1/contenttypes/{key}"}
+  {:methods [:get :post] :path "/v1/locales"}
+  {:methods [:get :patch] :path "/v1/locales/{key}"}]
+ :local-extensions [{:methods [:get] :path "/v1/capabilities"}
+                    {:methods [:post] :path "/big-pi/import"}
+                    {:methods [:post] :path "/big-pi/export"}]
+ :mcp {:transports [:streamable-http :stdio]
+       :max-tool-input-elements 10000 :max-http-body-bytes 1048576
+       :tools ["big_pi_list_content" "big_pi_get_version" "big_pi_create_content"
+               "big_pi_create_draft" "big_pi_patch_draft" "big_pi_capabilities"
+               "big_pi_import_source" "big_pi_export_draft"]
+       :official-tool-parity false}
+ :semantics {:draft-only true :etag :local-model :merge-patch :partial
+             :tenant-oauth :not-implemented :graph :not-implemented
+             :cms12-delivery :not-implemented :cms13-rest :not-implemented
+             :publication :not-implemented :media :not-implemented :bindings :not-implemented}
+ :bridge {:source :exact-store-key-version-etag-payload :target :existing-knoxx-document-history
+          :source-identity-header "X-Big-Pi-Source-Id" :caller-source-system :descriptive-label-only
+          :provenance-encoding "big-pi-edn-v1"
+          :update :same-recorded-source-only :metadata-write :create-only
+          :source-rebind :requires-new-document
+          :format :single-plain-string-field :return :draft-only
+          :review-authority :mu :generic-resource-provider false
+          :real-knoxx-verification :not-established
+          :transaction :not-cross-system :retry :no-automatic-retry}
+ :evidence {:pure-tests :local :http-mcp :local :vendor-qualification :not-established
+            :knoxx-application-e2e :not-established}}

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Big Pi · Local content lab</title>
+  <link rel="stylesheet" href="/workbench.css">
+  <script src="/workbench.js" type="module"></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="mark">Π</span><div><strong>Big Pi</strong><span class="subtle">Content lab</span></div></div>
+    <span class="badge">LOCAL COMPATIBILITY PREVIEW</span>
+  </header>
+  <main>
+    <section class="intro">
+      <div><p class="eyebrow">AUTHOR · INSPECT · REVISE</p><h1>A place to get the words right.</h1>
+        <p>Work with content and language versions. Changes stay in this local draft workspace.</p></div>
+      <div class="profile"><span class="status-dot"></span><span>CMS SaaS v1 subset<br><small>Big Pi API + MCP</small></span></div>
+    </section>
+    <form id="connection" class="connection">
+      <label for="token">Local access token</label><input id="token" type="password" autocomplete="off" placeholder="Paste the token from the local server">
+      <button id="connect" type="submit">Connect</button><button id="disconnect" class="secondary" type="button" hidden>Disconnect</button>
+      <span id="connection-status" class="subtle">Not connected</span>
+    </form>
+    <div id="notice" role="status" aria-live="polite">Connect to browse and edit your local content.</div>
+    <section id="workspace" class="workspace" aria-label="Content workspace">
+      <aside>
+        <div class="section-head"><h2>Content</h2><button id="refresh" class="icon-button" title="Refresh content" aria-label="Refresh content" disabled>↻</button></div>
+        <div id="content-list" class="content-list"><p class="empty">Your documents will appear here.</p></div>
+        <button id="new" class="secondary wide" disabled>+ New document</button>
+        <button id="seed" class="text-button wide" disabled>Load a technical example</button>
+      </aside>
+      <article>
+        <div class="section-head"><div><p id="content-id" class="eyebrow">NEW DOCUMENT</p><h2 id="editor-heading">Draft editor</h2></div><span class="draft-label">DRAFT</span></div>
+        <form id="editor">
+          <div class="editor-controls"><label>Version<select id="versions" disabled><option>No version selected</option></select></label><label>Language<select id="locale" disabled><option value="en">English · en</option><option value="de">German · de</option><option value="es">Spanish · es</option></select></label></div>
+          <label for="title">Title</label><input id="title" maxlength="200" placeholder="Give this document a title" required disabled>
+          <label for="body">Content <span class="subtle">· Body field</span></label><textarea id="body" rows="12" placeholder="Write or revise the source text…" required disabled></textarea>
+          <div class="editor-footer"><p id="revision-note">Every save checks the version you loaded.</p><button id="save" type="submit" disabled>Create draft</button></div>
+        </form>
+        <div id="locale-actions" class="locale-actions" hidden><div><strong>Start a language version</strong><p>This copies the current draft for you to translate and review.</p></div><button id="new-locale" class="secondary">Create language draft</button></div>
+      </article>
+    </section>
+    <footer><span>Big Pi manages content. Mu owns expert review.</span><span>Local test data · No client tenant connected</span></footer>
+  </main>
+</body>
+</html>

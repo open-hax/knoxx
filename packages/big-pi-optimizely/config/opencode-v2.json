@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "big-pi-local": {
+        "type": "local",
+        "command": ["bash", "/ABSOLUTE/PATH/knoxx/scripts/start-big-pi-mcp.sh"],
+        "environment": { "BIG_PI_TOKEN": "{env:BIG_PI_TOKEN}" }
+      }
+    }
+  }
+}
