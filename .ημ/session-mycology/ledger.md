@@ -147,3 +147,48 @@
   spore: none
   receipt-refs: 2026-08-30T00:57:53.346Z
   note: An installed logical decision is already-linearized history and must be compared and returned before current-head or quorum derivation; only an empty slot evaluates current evidence, while later head advancement forms a distinct unresolved conflict generation.
+- ts: 2026-11-03T04:36:57.630744006Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx347-options-repair
+  task: Knoxx startup and voice ownership verification
+  p-efficiency: 0.7
+  p-friction: 0.65
+  p-skill-candidate: 0.4
+  spore: none
+  receipt-refs: 2026-11-03T04:36:43Z
+  note: Test native shared-handle behavior and review generation identity before treating local lifecycle fixes as safe; scope independent option validation separately.
+- ts: 2026-11-03T04:46:01.863314934Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx347-options-repair
+  task: Trace Knoxx stacked namespace and isolated verification
+  p-efficiency: 0.75
+  p-friction: 0.6
+  p-skill-candidate: 0.4
+  spore: none
+  receipt-refs: 2026-11-03T04:45:51Z
+  note: Distinguish exact branch failures from later-layer overlay results and execute integration subsets in network-isolated containers with explicit dependency provenance.
+- ts: 2026-11-03T04:54:11.952204533Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx347-options-repair
+  task: Classify Knoxx stack warnings and isolated tests
+  p-efficiency: 0.75
+  p-friction: 0.6
+  p-skill-candidate: 0.4
+  spore: none
+  receipt-refs: 2026-11-03T04:53:47Z
+  note: Compare warning blobs and incomplete full-suite failures to the exact parent in the same isolated assembly; preserve lockfile integrity and distinguish selected passes from full verification.
+- ts: 2026-11-03T05:01:52.668307008Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx347-options-repair
+  task: Diagnose isolated Knoxx subprocess fixture
+  p-efficiency: 0.85
+  p-friction: 0.5
+  p-skill-candidate: 0.4
+  spore: none
+  receipt-refs: 2026-11-03T05:01:42Z
+  note: Check noexec mount flags and spawn errno for repository-owned temporary executables before inferring a missing external service; compare candidate and parent under identical isolation.
+- ts: 2026-11-03T05:08:49.622367623Z
+  session: /home/err/Documents/Codex/2026-11-02/task-23/knoxx347-options-repair
+  task: Diagnose Knoxx MCP timeout and coherent stack tests
+  p-efficiency: 0.8
+  p-friction: 0.55
+  p-skill-candidate: 0.4
+  spore: none
+  receipt-refs: 2026-11-03T05:08:38Z
+  note: Instrument the actual response failure then compare exact candidate blobs in a genuine later stack; distinguish an assembled-tree pass from standalone-head qualification.
