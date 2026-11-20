@@ -1235,6 +1235,8 @@
           (when-not (= invite-email req-email)
             (throw (invite-error "Invite email does not match" 403)))
           (let [updated (await (mongo-invites/redeem-invite! db (:id invite)))]
+            (when-not updated
+              (throw (invite-error "Invalid or expired invite code" 400)))
             (await (create-user! pool nil nil
                                  {:email (:email updated)
                                   :display-name (:email updated)
