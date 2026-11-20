@@ -4,6 +4,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isAlias, isScalar, LineCounter, parseDocument, visit } from "yaml";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const self = "scripts/check-deployment-boundary.mjs";
@@ -14,11 +15,8 @@ const retiredEntryPoints = [
 ];
 const activeRoots = [".github/workflows", "scripts"];
 const currentContractFiles = ["README.md", "docs/auth-and-onboarding.md"];
+const hostedDeployment = /^open-hax\/services\/\.github\/workflows\/deploy-[\w-]+\.ya?ml@/i;
 const rules = [
-  [
-    "hosted deploy called from the application repository",
-    /^\s*(?:-\s+)?uses:\s*['"]?open-hax\/services\/\.github\/workflows\/deploy-[\w-]+\.ya?ml@/,
-  ],
   ["retired Services workflow", /deploy-promethean\.ya?ml/],
   ["retired testing workflow", /deploy-testing\.ya?ml/],
   ["legacy VPS address", /\b104\.130\.159\.19\b/],
@@ -58,8 +56,39 @@ async function filesBelow(relativeRoot) {
     .sort();
 }
 
+function workflowViolations(relativePath, text) {
+  const lineCounter = new LineCounter();
+  const doc = parseDocument(text, { lineCounter });
+  const found = doc.errors.map((error) => ({
+    relativePath,
+    line: error.linePos?.[0]?.line ?? 1,
+    name: "invalid workflow YAML",
+    source: error.code,
+  }));
+  if (found.length > 0) return found;
+
+  visit(doc, {
+    Pair(_, { key, value }) {
+      if (!isScalar(key) || key.value !== "uses") return;
+      const target = isAlias(value) ? value.resolve(doc) : value;
+      if (!isScalar(target) || typeof target.value !== "string") return;
+      const reference = target.value.trim();
+      if (!hostedDeployment.test(reference)) return;
+      found.push({
+        relativePath,
+        line: lineCounter.linePos(key.range[0]).line,
+        name: "hosted deploy called from the application repository",
+        source: reference,
+      });
+    },
+  });
+  return found;
+}
+
 function violations(relativePath, text) {
-  const found = [];
+  const found = /^\.github\/workflows\/[^/]+\.ya?ml$/.test(relativePath)
+    ? workflowViolations(relativePath, text)
+    : [];
   for (const [lineIndex, line] of text.split("\n").entries()) {
     for (const [name, pattern] of rules) {
       if (pattern.test(line)) {
@@ -74,9 +103,6 @@ function selfTest() {
   const bad = [
     "uses: open-hax/services/.github/workflows/deploy-promethean.yaml@main",
     "follow .github/workflows/deploy-testing.yml",
-    "    uses: open-hax/services/.github/workflows/deploy-service-environment.yml@0123456789abcdef",
-    "      - uses: 'open-hax/services/.github/workflows/deploy-stack-chain.yml@main'",
-    "    uses: open-hax/services/.github/workflows/deploy-knoxx-public-policy.yml@main",
     "ssh error@proxx.promethean.rest",
     "ssh error@104.130.159.19",
     "runtimeRoot: /home/error/devel/services/knoxx",
@@ -87,7 +113,6 @@ function selfTest() {
   ];
   const safe = [
     "Use https://github.com/open-hax/services/blob/main/.github/workflows/deploy-stack.yml",
-    "    uses: open-hax/services/.github/workflows/build-images.yml@main",
     "PROXX_PUBLIC_HOST=proxx.promethean.rest",
     "runtimeRoot: /srv/open-hax",
     "sshUser: deploy",
@@ -99,6 +124,28 @@ function selfTest() {
   }
   for (const sample of safe) {
     if (violations("safe", sample).length !== 0) failures.push(`rejected safe sample: ${sample}`);
+  }
+  const workflowPath = ".github/workflows/fixture.yml";
+  const deployRef = "open-hax/services/.github/workflows/deploy-service-environment.yml@main";
+  const workflow = (job) => `name: Fixture\non: workflow_dispatch\njobs:\n  fixture:\n${job}\n`;
+  for (const job of [
+    `    uses: ${deployRef}`,
+    `    "uses": '${deployRef}'`,
+    `    'uses' : >-\n      ${deployRef}`,
+    `    uses:\n      ${deployRef}`,
+    `    with:\n      target: &target ${deployRef}\n    uses: *target`,
+  ]) {
+    if (!violations(workflowPath, workflow(job)).some(({ source }) => source === deployRef)) {
+      failures.push(`missed hosted deploy workflow: ${job}`);
+    }
+  }
+  for (const job of [
+    "    uses: open-hax/services/.github/workflows/build-images.yml@main",
+    `    steps:\n      - run: |\n          echo 'uses: ${deployRef}'`,
+  ]) {
+    if (violations(workflowPath, workflow(job)).length !== 0) {
+      failures.push(`rejected allowed workflow: ${job}`);
+    }
   }
   if (failures.length > 0) {
     for (const failure of failures) console.error(failure);
