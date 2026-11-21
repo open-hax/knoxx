@@ -4,13 +4,28 @@
             [knoxx.backend.domain.agent.content :as content]
             [knoxx.backend.domain.agent.run-admission :as data]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
+            [knoxx.backend.domain.time :as time]
             [knoxx.backend.extern.agent-turn-node :as host]
             [knoxx.backend.infra.agent.provider.native-subscription :as subscription]
             [knoxx.backend.infra.agent.startup-settlement :as startup]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.infra.run-event-payload :refer [tool-event-payload]]
             [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]))
+
+(defn ^:async reserve-direct-run!
+  "Make a newly accepted MCP run observable before its turn begins."
+  [config {:keys [run-id session-id conversation-id mode agent-spec auth-context]} model-id]
+  (let [record (-> (data/build-initial-run run-id session-id conversation-id (time/now-iso)
+                                           model-id mode nil agent-spec (authz/auth-snapshot auth-context) [] config)
+                   (dissoc :events)
+                   (assoc :status "queued" :startup_token (get config startup/reservation-key)))
+        record (cond-> record (subscription/model-id? model-id) (assoc-in [:resources :provider] "claude-code"))
+        receipt (await (startup/prepare! @registry/session-store* run-id record))
+        attempted* (atom [])]
+    (await (startup/attempt! attempted* #(startup/claim! attempted* receipt)))
+    receipt))
 
 (defn- ^:async emit-action-task-rendered-event!
   [run-id conversation-id session-id agent-spec]

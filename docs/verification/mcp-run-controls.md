@@ -19,9 +19,12 @@ following.
 - A granted event reaches its listener with the caller actor, event type,
   generator kind, and payload intact. An actor event reaches its fixture
   recipient.
-- The returned run, session, and conversation IDs identify a live turn.
-  An exact steer or follow-up reaches that turn. A foreign, stale, or
-  replaced target receives no message.
+- A successful spawn returns run, session, and conversation IDs for a durable
+  queued run. Its owner can read it before the worker is ready. Steering stays
+  unavailable until the live turn is ready. An exact steer or follow-up then
+  reaches that turn. A foreign, stale, or replaced target receives no message.
+- If durable admission is refused, Knoxx starts no worker. If worker startup
+  fails after admission, the same run reports `failed`.
 - Run status reads the durable record and reports up to 20 event headers.
   Completed status and provider usage come from the persisted settlement.
 - The local password form preserves the OAuth request and rejects
@@ -71,6 +74,9 @@ credentials in the deployment's approved local configuration.
    the marker sent only through steer, a queued steering event, and
    positive provider usage. Check that the returned authorization binds
    the intended test actor. Revoke a purpose-created test grant when done.
+
+An abrupt backend exit before worker setup can leave the reserved record in
+`queued` until the run store's two-hour retention expires.
 
 ## Stage through Services
 
