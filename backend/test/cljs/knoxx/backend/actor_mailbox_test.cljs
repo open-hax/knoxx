@@ -1,6 +1,7 @@
 (ns knoxx.backend.actor-mailbox-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.domain.actor.mailbox :as mailbox]))
+            [knoxx.backend.domain.actor.mailbox :as mailbox]
+            [knoxx.backend.domain.actor.tools :as actor-tools]))
 
 (deftest mailbox-normalizers-keep-delivery-vocabulary-small
   (testing "message/followup aliases normalize to follow-up"
@@ -46,6 +47,34 @@
   (let [entry (await (mailbox/acknowledge-entry! nil "33333333-3333-3333-3333-333333333333"))]
     (is (= "acknowledged" (:mailbox/status entry)))
     (is (false? (:mailbox/durable? entry)))))
+
+(deftest ^:async refused-actor-steer-has-no-delivery-effects
+  (let [calls* (atom [])
+        target {:conversation-id "fixture-conversation" :session-id "fixture-session" :run-id "fixture-run"}
+        params #js {:target "session:fixture-session" :conversation_id "fixture-conversation"
+                    :run_id "fixture-run" :mode "steer" :content "synthetic steering message"}
+        refused (ex-info "Fixture authorizer refused the steer" {:status 403})
+        operations {:authorize! (fn [mode resolved]
+                                  (swap! calls* conj [:authorize mode (select-keys resolved (keys target))])
+                                  (js/Promise.reject refused))
+                    :control! (fn [_ _]
+                                (swap! calls* conj :control)
+                                (js/Promise.resolve #js {:ok true}))}]
+    (with-redefs [mailbox/create-entry! (fn [_ _]
+                                         (swap! calls* conj :mailbox-created)
+                                         (js/Promise.resolve {:mailbox/id "fixture-mailbox"}))
+                  mailbox/mark-delivered! (fn [_ _ _]
+                                            (swap! calls* conj :mailbox-delivered)
+                                            (js/Promise.resolve nil))
+                  mailbox/mark-failed! (fn [_ _ _]
+                                         (swap! calls* conj :mailbox-failed)
+                                         (js/Promise.resolve nil))]
+      (let [outcome (try
+                      (await (actor-tools/deliver-message! nil {} params nil {} operations))
+                      (catch :default error error))]
+        (is (identical? refused outcome) "The caller receives the authorization refusal")
+        (is (= [[:authorize "steer" target]] @calls*)
+            "The resolved run reaches authorization before any mailbox write or control call")))))
 
 (deftest retry-request-event-points-at-content-ref-not-content
   (let [event (mailbox/retry-request-event {:mailbox/id "44444444-4444-4444-4444-444444444444"
