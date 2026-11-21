@@ -14,10 +14,11 @@
    Documents are stamped with :system_instance_id like other policy twins."
   (:require
     [clojure.string :as str]
+    [knoxx.backend.extern.mongo-invites :as mongo-invites]
     [knoxx.backend.infra.mongo-client :as mongo-client]
     [knoxx.backend.infra.system-instance :as system-instance]))
 
-(def INVITES_COLLECTION "knoxx_invites")
+(def INVITES_COLLECTION mongo-invites/collection-name)
 
 (defn- invites-coll [db] (.collection db INVITES_COLLECTION))
 
@@ -74,26 +75,14 @@
    Mirrors PG shape.db.invites/pending-by-code."
   ([code] (pending-by-code! (mongo-client/get-db) code))
   ([db code]
-   (let [coll (invites-coll db)
-         now (js/Date.)
-         doc (keywordize (await (.findOne coll #js {"code" code
-                                                    "status" "pending"
-                                                    "expires_at" #js {"$gt" now}})))]
-     (invite-doc->row doc))))
+   (invite-doc->row (await (mongo-invites/pending-by-code! db code)))))
 
 (defn ^:async redeem-invite!
-  "Mark an invite as redeemed. Returns the updated row.
+  "Claim a pending, non-expired invite. Returns the updated row or nil.
    Mirrors PG shape.db.invites/redeem."
   ([invite-id] (redeem-invite! (mongo-client/get-db) invite-id))
   ([db invite-id]
-   (let [coll (invites-coll db)
-         now (js/Date.)]
-     (await (.updateOne coll
-                        #js {"invite_id" (str invite-id)}
-                        #js {"$set" (clj->js {:status     "redeemed"
-                                              :redeemed_at now})}))
-     (let [doc (keywordize (await (.findOne coll #js {"invite_id" (str invite-id)})))]
-       (invite-doc->row doc)))))
+   (invite-doc->row (await (mongo-invites/claim! db invite-id)))))
 
 (defn ^:async list-invites-by-org!
   "Return invites for an org, optionally filtered by status, ordered by created_at desc.
