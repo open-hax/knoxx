@@ -3,10 +3,13 @@
 
    Existing lower-level functions remain as compatibility wrappers while routes
    and tools migrate to this namespace."
-  (:require [knoxx.backend.infra.agent.recovery :as recovery]
+  (:require [knoxx.backend.extern.agent-turn-node :as host]
+            [knoxx.backend.infra.agent.recovery :as recovery]
+            [knoxx.backend.infra.agent.run-admission :as run-admission]
             [knoxx.backend.infra.agent.runner :as runner]
             [knoxx.backend.infra.agent.runtime :as runtime]
             [knoxx.backend.infra.agent.session :as session]
+            [knoxx.backend.infra.agent.startup-settlement :as startup]
             [knoxx.backend.infra.agent.turn :as turn]))
 
 (defprotocol IAgentService
@@ -144,6 +147,16 @@
 (defn send-agent-turn!
   [runtime config turn-request]
   (start-turn-runtime! runtime config turn-request))
+
+(defn ^:async admit-owned-direct-turn!
+  "Reserve a visible queued run before launching its one-off worker."
+  [runtime config turn-request model-id]
+  (let [config (assoc config startup/reservation-key (host/random-uuid!))
+        reservation (await (run-admission/reserve-direct-run! config turn-request model-id))
+        launch! #(send-agent-turn! runtime config turn-request)]
+    (record-async-spawn-error!
+     (startup/attempt! (atom [reservation]) launch!) turn-request)
+    nil))
 
 (defn queue-agent-control!
   [runtime config control-request]

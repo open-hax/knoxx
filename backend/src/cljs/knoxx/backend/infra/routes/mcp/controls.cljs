@@ -83,7 +83,7 @@
                                            :agent-spec (assoc (select-keys requested safe-keys)
                                                               :actor-id actor-id)})]
       (await (app-routes/admit-direct-turn! runtime config agent-ctx policy-model body
-                                 accepted-response "Async MCP agent start failed")))))
+                                 accepted-response "Async MCP agent start failed" :durable)))))
 
 (defn- event-status
   [config ctx]

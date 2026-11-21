@@ -8,7 +8,7 @@
             [knoxx.backend.infra.agent.hydration :refer [ensure-settings! settings-state*]]
             [knoxx.backend.infra.agent.runtime :refer [resolve-workspace-path]]
             [knoxx.backend.infra.agent.runner :as agent-runner]
-            [knoxx.backend.infra.agent.service :refer [active-agent-session queue-agent-control! resume-recovered-session! send-agent-turn!]]
+            [knoxx.backend.infra.agent.service :refer [active-agent-session admit-owned-direct-turn! queue-agent-control! resume-recovered-session! send-agent-turn!]]
             [knoxx.backend.shape.agent :refer [streaming? current-turn]]
             [knoxx.backend.infra.agent.policy :refer [validate-chat-policy!]]
             [knoxx.backend.infra.agent.turn :refer [ensure-conversation-access! ensure-session-id]]
@@ -78,10 +78,12 @@
       (error-response! reply err 429))))
 
 (defn ^:async admit-direct-turn!
-  [runtime config agent-ctx policy-model body accepted-response log-label]
+  [runtime config agent-ctx policy-model body accepted-response log-label & [admission]]
   (native-subscription/resolve-worker! config agent-ctx policy-model (:agent-spec body))
   (await (validate-chat-policy! agent-ctx policy-model))
-  (send-agent-turn-best-effort! runtime config body log-label)
+  (if (= :durable admission)
+    (await (admit-owned-direct-turn! runtime config body policy-model))
+    (send-agent-turn-best-effort! runtime config body log-label))
   accepted-response)
 
 (defn ^:async queue-direct-start!

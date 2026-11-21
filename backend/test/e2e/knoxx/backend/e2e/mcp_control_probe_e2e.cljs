@@ -8,7 +8,10 @@
             [knoxx.backend.e2e.harness :as harness]
             [knoxx.backend.e2e.mcp-client :as mcp]
             [knoxx.backend.extern.agent-turn-fixture :as fixture]
+            [knoxx.backend.extern.event-turn-admission :as admission]
+            [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.infra.agent.policy :as policy]
+            [knoxx.backend.infra.agent.runner :as runner]
             [knoxx.backend.infra.agent.service :as service]
             [knoxx.backend.infra.agent.session :as sessions]
             [knoxx.backend.infra.auth.authz :as authz]
@@ -20,6 +23,7 @@
             [knoxx.backend.infra.routes.tools :as tools]
             [knoxx.backend.infra.run-events :as run-events]
             [knoxx.backend.infra.stores.mongo-mcp-oauth :as oauth-store]
+            [knoxx.backend.infra.stores.session-store-registry :as registry]
             [knoxx.backend.runtime.state :as state]
             [knoxx.backend.shape.agent :as agent]
             [knoxx.backend.shape.app-shapes :as shapes]
@@ -136,8 +140,17 @@
                                       {:message "Fixture-only prompt."
                                        :model model}))
           accepted @accepted*
-          identifiers (select-keys (details reply) [:run_id :session_id :conversation_id])]
+          identifiers (select-keys (details reply) [:run_id :session_id :conversation_id])
+          args (select-keys identifiers [:run_id])
+          status (await (mcp/call-tool! client "agents_status" args))
+          other (await (mcp/call-tool! (assoc client :token "fixture-other-member") "agents_status" args))]
       (assert-ok! reply)
+      (assert-ok! status)
+      (is (= identifiers (select-keys (details status) [:run_id :session_id :conversation_id])))
+      (is (= "queued" (:status (details status))) "a started MCP call is observable before worker setup")
+      (is (false? (:can_steer (details status))))
+      (is (nil? (get @runs/runs* (:run_id identifiers))) "read is backed by the durable provider")
+      (is (= :tool-error (:status (mcp/call-outcome other))) "another membership cannot observe the queued run")
       (harness/report! (str "[mcp-control-probe] spawn model " model
                            "; response keys " (pr-str (keys (:result reply)))
                            "; turn principal " (pr-str (select-keys (:auth-context accepted)
@@ -148,6 +161,36 @@
                            :conversation_id (:conversation-id accepted)})
           "spawn returns the accepted run, session and conversation coordinates")
       (await (probe-messages! client accepted)))))
+
+(defn- ^:async probe-failed-admission! [client]
+  (let [calls* (atom 0)
+        args {:message "Fixture-only prompt." :model "openai/gpt-test"}]
+    (with-redefs [registry/session-store* (atom nil)
+                  service/send-agent-turn! (fn [_ _ _] (swap! calls* inc))]
+      (let [reply (await (mcp/call-tool! client "agents_spawn" args))]
+        (is (= :tool-error (:status (mcp/call-outcome reply))))
+        (is (nil? (:run_id (details reply))))
+        (is (zero? @calls*) "a refused reservation cannot start a worker")))))
+
+(defn- ^:async probe-failed-startup! [client]
+  (let [start (admission/gate)
+        settled (admission/gate)
+        fixture-error (ex-info "Fixture startup did not finish" {})
+        args {:message "Fixture-only prompt." :model "openai/gpt-test"}]
+    (with-redefs [service/send-agent-turn! (^:async fn [_ _ _] (throw (await (:promise start))))
+                  runner/log-and-record-async-spawn-error! (fn [_ _] ((:complete! settled) nil))]
+      (let [reply (try
+                    (await (promise/with-timeout-error (mcp/call-tool! client "agents_spawn" args)
+                                                       2000 (js/Error. "Spawn waited for its worker")))
+                    (finally ((:complete! start) fixture-error)))
+            coordinates (select-keys (details reply) [:run_id :session_id :conversation_id])]
+        (assert-ok! reply)
+        (await (promise/with-timeout-error (:promise settled) 2000 (js/Error. "Startup failure did not settle")))
+        (let [status (await (mcp/call-tool! client "agents_status" (select-keys coordinates [:run_id])))]
+          (assert-ok! status)
+          (is (= coordinates (select-keys (details status) [:run_id :session_id :conversation_id])))
+          (is (= "failed" (:status (details status))))
+          (is (false? (:can_steer (details status)))))))))
 
 (defn- ^:async probe-mailbox-event! [client observed*]
   (let [marker (.randomUUID crypto)
@@ -284,7 +327,15 @@
                           (filterv #(not= "agents_status" %) tool-grant)
                           tool-grant)})))))
 
-(deftest ^:async production-route-contract
+(defn- ^:async probe-control-tools! [client]
+  (let [catalog (await (mcp/list-tools! client))
+        names (mapv :name (get-in catalog [:result :tools]))]
+    (harness/report! (str "[mcp-control-probe] catalog " (pr-str names)))
+    (is (every? (set names) ["events_status" "events_dispatch" "agents_spawn" "actors_send-message"]))
+    (is (some #(re-find #"^(agents|runs)_(status|active|get|monitor|events)" %) names)
+        "OAuth actor can monitor exact run state through MCP")))
+
+(defn- ^:async probe-production-route-contract! []
   (let [accepted* (atom nil)
         observed* (atom {})
         client (await (start!))]
@@ -303,14 +354,17 @@
                                                (js/Promise.resolve nil))]
         (is (= 401 (:status (await (mcp/initialize! (dissoc client :token))))))
         (is (:ok (await (mcp/initialize! client))))
-        (let [catalog (await (mcp/list-tools! client))
-              names (mapv :name (get-in catalog [:result :tools]))]
-          (harness/report! (str "[mcp-control-probe] catalog " (pr-str names)))
-          (is (every? (set names) ["events_status" "events_dispatch" "agents_spawn" "actors_send-message"]))
-          (is (some #(re-find #"^(agents|runs)_(status|active|get|monitor|events)" %) names)
-              "OAuth actor can monitor exact run state through MCP"))
+        (await (probe-control-tools! client))
         (testing "event dispatch fidelity" (await (probe-events! client observed*)))
         (testing "spawn ascription and coordinates" (await (probe-spawn! client accepted*)))
+        (testing "failed durable admission" (await (probe-failed-admission! client)))
+        (testing "failure after acknowledged admission" (await (probe-failed-startup! client)))
         (testing "grant and permissions" (await (probe-boundaries! client accepted*)))
         (testing "mailbox event mode" (await (probe-mailbox-event! client observed*))))
       (finally (await (server/close! (:app client)))))))
+
+(deftest ^:async production-route-contract
+  (await (fixture/with-run!
+          {:run_id "fixture-seed-run" :session_id "fixture-seed-session"
+           :conversation_id "fixture-seed-conversation"}
+          probe-production-route-contract!)))
