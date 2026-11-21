@@ -2,7 +2,73 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [knoxx.mutation-test :as mutation]))
+            [knoxx.mutation-test :as mutation])
+  (:import [java.lang ProcessHandle]))
+
+(defn- process-alive? [^ProcessHandle handle]
+  (.isAlive handle))
+
+(deftest timed-out-process-returns-without-waiting-for-its-child
+  (let [started (System/nanoTime)
+        result (mutation/run-process!
+                 {:cmd ["sh" "-c" "sleep 6 & printf '%s' \"$!\"; wait"]
+                  :timeout-ms 500})
+        elapsed-ms (quot (- (System/nanoTime) started) 1000000)
+        child (ProcessHandle/of (parse-long (:output result)))]
+    (is (= {:exit-code 124 :timed-out? true}
+           (select-keys result [:exit-code :timed-out?])))
+    (is (< elapsed-ms 2500) (str "Timed-out subprocess returned after " elapsed-ms " ms"))
+    (is (or (.isEmpty child) (not (process-alive? (.get child)))))))
+
+(deftest completed-process-retains-merged-output-and-exit-code
+  (is (= {:exit-code 7 :timed-out? false :output "successfailure"}
+         (mutation/run-process!
+          {:cmd ["sh" "-c" "printf success; printf failure >&2; exit 7"]
+           :timeout-ms 2000}))))
+
+(deftest unconfirmed-cleanup-does-not-produce-a-process-result
+  (with-redefs-fn {#'mutation/stop-process-tree! (fn [^Process process]
+                                                 (.destroyForcibly process)
+                                                 (throw (ex-info "Synthetic cleanup failure" {})))}
+    #(is (thrown-with-msg? clojure.lang.ExceptionInfo #"Synthetic cleanup failure"
+                           (mutation/run-process! {:cmd ["sleep" "5"] :timeout-ms 50})))))
+
+(defn- wait-for-processes [file]
+  (let [deadline (+ (System/nanoTime) 2000000000)]
+    (loop []
+      (let [ids (re-matches #"(\d+) (\d+)\n" (slurp file))]
+        (cond
+          ids (mapv #(.orElse (ProcessHandle/of (parse-long %)) nil) (rest ids))
+          (< (System/nanoTime) deadline) (do (Thread/sleep 10) (recur))
+          :else (throw (ex-info "Synthetic subprocesses did not start" {})))))))
+
+(deftest interrupt-stops-the-owned-processes-and-preserves-interruption
+  (let [pids (java.io.File/createTempFile "knoxx-mutation-test-" ".pids")
+        handles (atom [])
+        result (promise)
+        worker (Thread.
+                ^Runnable
+                (fn []
+                  (try
+                    (deliver result
+                             (mutation/run-process!
+                              {:cmd ["sh" "-c" "sleep 8 & printf '%s %s\n' \"$$\" \"$!\" > \"$1\"; wait"
+                                     "mutation-interrupt-test" (.getPath pids)]
+                               :timeout-ms 5000}))
+                    (catch InterruptedException interrupted
+                      (deliver result {:interrupted? (.isInterrupted (Thread/currentThread))
+                                       :cleanup-failures (count (.getSuppressed interrupted))})))))]
+    (try
+      (.start worker)
+      (reset! handles (wait-for-processes pids))
+      (is (every? some? @handles) "both fixture process handles were captured before interruption")
+      (.interrupt worker)
+      (is (= {:interrupted? true :cleanup-failures 0} (deref result 2500 nil)))
+      (is (not-any? process-alive? (remove nil? @handles)))
+      (finally
+        (doseq [^ProcessHandle handle (remove nil? @handles)]
+          (.destroyForcibly handle))
+        (.delete pids)))))
 
 (deftest form-mutations-operate-on-s-expressions
   (testing "if, comparison, arithmetic, and literal operators are data rewrites"

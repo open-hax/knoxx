@@ -14,8 +14,11 @@
             [clojure.tools.reader.reader-types :as reader-types]
             [rewrite-clj.zip :as z])
   (:import [java.io File]
+           [java.lang ProcessHandle]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]
-           [java.util.concurrent TimeUnit]))
+           [java.util.concurrent CompletableFuture TimeUnit TimeoutException]))
 
 (def default-src-dir "src/cljs")
 (def default-output-dir "target/mutation")
@@ -283,20 +286,49 @@
    :timed-out? timed-out?
    :output output})
 
+(defn- stop-process-tree!
+  "Stop the wrapper and the descendants still attached when cleanup begins."
+  [^Process process]
+  (let [root (.toHandle process)
+        children (with-open [descendants (.descendants root)]
+                   (vec (iterator-seq (.iterator descendants))))]
+    (doseq [^ProcessHandle child (rseq children)]
+      (.destroyForcibly child))
+    (.destroyForcibly root)
+    (let [exits (into-array CompletableFuture
+                            (map (fn [^ProcessHandle handle] (.onExit handle)) (conj children root)))]
+      (try
+        (.get (CompletableFuture/allOf exits) 1 TimeUnit/SECONDS)
+        (catch TimeoutException cause
+          (throw (ex-info "Could not confirm timed-out mutation processes exited" {} cause)))))))
+
 (defn run-process!
   [{:keys [cmd timeout-ms]
     :or {timeout-ms default-timeout-ms}}]
-  (let [builder (doto (ProcessBuilder. ^java.util.List cmd)
-                  (.directory (io/file "."))
-                  (.redirectErrorStream true))
-        process (.start builder)
-        output-future (future (slurp (.getInputStream process)))
-        finished? (.waitFor process timeout-ms TimeUnit/MILLISECONDS)]
-    (if finished?
-      (process-result (.exitValue process) false @output-future)
-      (do
-        (.destroyForcibly process)
-        (process-result 124 true @output-future)))))
+  ;; A descendant can hold a pipe open after the CLI wrapper exits. Redirect to
+  ;; a private file so capturing diagnostics does not wait for pipe EOF.
+  (let [output (Files/createTempFile "knoxx-mutation-" ".log" (make-array FileAttribute 0))
+        output-file (.toFile output)]
+    (try
+      (let [builder (doto (ProcessBuilder. ^java.util.List cmd)
+                      (.directory (io/file "."))
+                      (.redirectErrorStream true)
+                      (.redirectOutput output-file))
+            process (.start builder)]
+        (try
+          (if (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
+            (process-result (.exitValue process) false (slurp output-file))
+            (do
+              (stop-process-tree! process)
+              (process-result 124 true (slurp output-file))))
+          (catch InterruptedException interrupted
+            (try
+              (stop-process-tree! process)
+              (catch Exception cleanup-failure
+                (.addSuppressed interrupted cleanup-failure))
+              (finally (.interrupt (Thread/currentThread))))
+            (throw interrupted))))
+      (finally (Files/deleteIfExists output)))))
 
 (defn test-counters [output]
   (let [counters (re-seq #"(?m)\b(\d+) failures?,\s*(\d+) errors?\." output)
