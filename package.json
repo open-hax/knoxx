@@ -24,6 +24,7 @@
     "@open-hax/uxx": "0.2.2"
   },
   "devDependencies": {
-    "agent-browser": "0.35.2"
+    "agent-browser": "0.35.2",
+    "yaml": "2.8.3"
   }
 }

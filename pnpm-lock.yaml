@@ -15,6 +15,9 @@ importers:
       agent-browser:
         specifier: 0.35.2
         version: 0.35.2
+      yaml:
+        specifier: 2.8.3
+        version: 2.8.3
 
 packages:
 
@@ -999,6 +1002,11 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
+
+  yaml@2.8.3:
+    resolution: {integrity: sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
@@ -2562,5 +2570,7 @@ snapshots:
       isexe: 3.1.5
 
   ws@8.21.0: {}
+
+  yaml@2.8.3: {}
 
   zwitch@2.0.4: {}
