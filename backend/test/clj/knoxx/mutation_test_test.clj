@@ -1,5 +1,6 @@
 (ns knoxx.mutation-test-test
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [knoxx.mutation-test :as mutation]))
@@ -107,3 +108,55 @@
       (is (not (mutation/killed? result)))
       (is (not (mutation/passed-tests? result)))))
   (is (not (mutation/compiled? {:exit-code 0 :timed-out? false :output "Build completed. 2 warnings"}))))
+
+(deftest baseline-check-preserves-phase-and-safe-counters
+  (let [green-build (mutation/process-result 0 false "Build completed. 0 warnings.")
+        green-tests (mutation/process-result 0 false "Ran 10 tests containing 40 assertions.\n0 failures, 0 errors.")
+        red-tests (mutation/process-result 1 false "Ran 10 tests containing 40 assertions.\n1 failures, 0 errors.")]
+    (with-redefs [mutation/compile-mutant! (constantly (mutation/process-result 0 false "Build completed. 2 warnings."))
+                  mutation/run-mutant-tests! (fn [_] (throw (ex-info "Tests must not run after a red compile" {})))]
+      (is (= {:status :failed
+              :failure {:phase :compile :reason :compiler-warnings :exit-code 0 :timed-out? false :warning-count 2}}
+             (mutation/baseline! {}))))
+    (with-redefs [mutation/compile-mutant! (constantly green-build)]
+      (doseq [[result expected] [[green-tests {:status :passed}]
+                                 [red-tests {:status :failed
+                                             :failure {:phase :test :reason :test-failures :exit-code 1
+                                                       :timed-out? false :test-counters {:assertions 40 :failures 1 :errors 0}}}]
+                                 [(mutation/process-result 0 false "Missing native summary")
+                                  {:status :failed
+                                   :failure {:phase :test :reason :missing-test-assertions :exit-code 0 :timed-out? false}}]
+                                 [(mutation/process-result 124 true "Synthetic private value")
+                                  {:status :failed
+                                   :failure {:phase :test :reason :timeout :exit-code 124 :timed-out? true}}]]]
+        (with-redefs [mutation/run-mutant-tests! (constantly result)]
+          (is (= expected (mutation/baseline! {}))))))))
+
+(deftest failed-baseline-report-stays-red-without-child-output
+  (let [directory (.toFile (java.nio.file.Files/createTempDirectory "knoxx-baseline-report" (make-array java.nio.file.attribute.FileAttribute 0)))
+        report-file (io/file directory "batch-2.edn")
+        json-file (io/file directory "batch-2.edn.json")
+        sentinel "SYNTHETIC_PRIVATE_CHILD_OUTPUT"
+        compile-result (mutation/process-result 1 false (str "Failed to read artifact descriptor " sentinel))]
+    (try
+      (with-redefs [mutation/assert-clean-tree! (constantly nil)
+                    mutation/discover-mutants (constantly [{:id "must-not-run"}])
+                    mutation/compile-mutant! (constantly compile-result)
+                    mutation/evaluate-mutant! (fn [_ _] (throw (ex-info "Mutation unexpectedly ran" {})))]
+        (let [output (with-out-str
+                       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Mutation qualification failed"
+                                             (mutation/run-suite! {:run? true :report-file (.getPath report-file)
+                                                                   :batch-index 2 :min-evaluated 250}))))
+              json-text (slurp json-file)
+              report (json/read-str json-text)
+              failure (get report "baseline_failure")]
+          (is (= ["failed" "failed" 2 []] (mapv report ["status" "baseline" "batch_index" "mutants"])))
+          (is (= 0 (get-in report ["summary" "evaluated"])))
+          (is (= {"phase" "compile" "reason" "nonzero-exit" "exit-code" 1 "timed-out?" false
+                  "signals" ["dependency-resolution"]}
+                 failure))
+          (is (str/includes? output "Mutation baseline failed:"))
+          (is (not-any? #(str/includes? % sentinel) [output json-text (slurp report-file)]))))
+      (finally
+        (doseq [file (reverse (file-seq directory))]
+          (.delete file))))))
