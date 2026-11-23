@@ -1,6 +1,6 @@
 (ns knoxx.backend.infra.agent.provider.eta-mu
   "Eta-mu provider adapter port for agent runtime session construction."
-  (:require [knoxx.backend.domain.models :refer [models-config]]
+  (:require [knoxx.backend.domain.models :refer [models-config subscription-relay-provider-id]]
             [knoxx.backend.extern.eta-mu :as eta-mu-extern]
             [knoxx.backend.infra.agent.provider :refer [fetch-proxx-model-ids!]]))
 
@@ -13,7 +13,15 @@
 
 (defn- ^:async ensure-runtime-impl!
   [config]
-  (let [model-ids (await (fetch-proxx-model-ids! config))]
+  (let [relay? (:subscription-relay-selected? config)
+        config (if relay?
+                 (update config :agent-dir str "/subscription-relay")
+                 (cond-> config
+                   (contains? (:provider-base-urls config) subscription-relay-provider-id)
+                   (update :provider-base-urls dissoc subscription-relay-provider-id)
+                   (contains? (:provider-auth-tokens config) subscription-relay-provider-id)
+                   (update :provider-auth-tokens dissoc subscription-relay-provider-id)))
+        model-ids (await (fetch-proxx-model-ids! config))]
     (eta-mu-extern/setup-runtime!
      config
      (models-config config model-ids)
@@ -27,7 +35,9 @@
     (ensure-runtime-impl! config))
 
   (resolve-model [_ model-registry model-provider-id model-id fallback-model-id]
-    (eta-mu-extern/find-model model-registry model-provider-id model-id fallback-model-id))
+    (if (= subscription-relay-provider-id model-provider-id)
+      (eta-mu-extern/find-exact-model model-registry model-provider-id model-id)
+      (eta-mu-extern/find-model model-registry model-provider-id model-id fallback-model-id)))
 
   (create-session! [_ session-request]
     (eta-mu-extern/create-session! session-request))

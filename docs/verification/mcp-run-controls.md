@@ -52,6 +52,25 @@ check the deployment's Proxx model catalog for `openai/gpt-6.1-sol` and
 verify that its intended, isolated provider account is available. After the
 run, match its provider and usage to Proxx's request record.
 
+A deployment with a shared Proxx service can bind this model's contract to
+the dedicated provider `proxx-subscription`. Set
+`KNOXX_PROVIDER_BASE_URLS=proxx-subscription=<private-relay-origin>` and
+`KNOXX_PROVIDER_AUTH_TOKENS=proxx-subscription=<relay-bearer-env-name>`.
+The bearer must come from protected deployment configuration. With this
+binding, the same verified MCP membership and actor required for Claude
+controls access to the relay. Only its admitted sessions load the relay
+credential. The relay should accept only the chosen subscription model
+and pin the intended Proxx account. The local MCP suite checks refusal
+before enqueue for another membership and for missing relay configuration,
+plus admission for the enrolled actor. Qualify real relay availability and
+usage on the deployed endpoint.
+
+This admission check applies to Knoxx requests. Run subscription workers
+and keep their credentials in an execution boundary that ordinary agent
+file and shell tools cannot enter. An actor policy or a separate model
+registry does not isolate files or environment variables from a tool
+running as the same OS user.
+
 For Claude, configure `KNOXX_NATIVE_SUBSCRIPTION_ORG_ID`,
 `KNOXX_NATIVE_SUBSCRIPTION_MEMBERSHIP_ID`, and
 `KNOXX_NATIVE_SUBSCRIPTION_ACTOR_ID` to bind one deployed Knoxx membership

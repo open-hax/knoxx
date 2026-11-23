@@ -96,6 +96,37 @@
               [:create {:session-id "session-1"}]]
              @calls*)))))
 
+(deftest subscription-relay-does-not-fall-back-to-the-shared-proxx
+  (let [provider (eta-mu-provider/eta-mu-provider :runtime {})
+        calls* (atom [])]
+    (with-redefs [eta-mu-extern/find-exact-model (fn [_ provider-id model-id]
+                                                   (swap! calls* conj [provider-id model-id])
+                                                   nil)
+                  eta-mu-extern/find-model (fn [& _] {:id "ordinary-fallback"})]
+      (is (nil? (eta-mu-provider/resolve-model provider :registry "proxx-subscription"
+                                               "openai/gpt-6.1-sol" "ordinary-fallback")))
+      (is (= [["proxx-subscription" "openai/gpt-6.1-sol"]] @calls*)))))
+
+(deftest ^:async ordinary-provider-runtime-does-not-load-the-private-relay
+  (let [config {:agent-dir "/fixture/run"
+                :provider-base-urls {"proxx-subscription" "http://relay.invalid"}
+                :provider-auth-tokens {"proxx-subscription" "PRIVATE_PROXX_BEARER"}}
+        captured* (atom [])]
+    (with-redefs [agent-provider/fetch-proxx-model-ids! (fn [_] (js/Promise.resolve []))
+                  eta-mu-extern/setup-runtime! (fn [runtime-config _ _]
+                                                 (swap! captured* conj runtime-config)
+                                                 (js/Promise.resolve {}))]
+      (await (eta-mu-provider/ensure-runtime! (eta-mu-provider/eta-mu-provider :runtime config)))
+      (await (eta-mu-provider/ensure-runtime!
+              (eta-mu-provider/eta-mu-provider :runtime (assoc config :subscription-relay-selected? true))))
+      (let [[ordinary scoped] @captured*]
+        (is (= "/fixture/run" (:agent-dir ordinary)))
+        (is (empty? (:provider-base-urls ordinary)))
+        (is (empty? (:provider-auth-tokens ordinary)))
+        (is (= "/fixture/run/subscription-relay" (:agent-dir scoped)))
+        (is (= (:provider-base-urls config) (:provider-base-urls scoped)))
+        (is (= (:provider-auth-tokens config) (:provider-auth-tokens scoped)))))))
+
 (deftest ^:async eta-mu-provider-adapter-requires-injected-send-and-subscribe-functions
   (let [provider (eta-mu-provider/eta-mu-provider :runtime {})
         send! (fn [session request]

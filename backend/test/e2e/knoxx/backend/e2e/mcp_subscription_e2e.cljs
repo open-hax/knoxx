@@ -2,11 +2,13 @@
   "Exercise subscription and Proxx provider sessions admitted and steered over local MCP."
   (:require [cljs.test :refer [deftest is]]
             [knoxx.backend.domain.action.run-state :as state]
+            [knoxx.backend.domain.models :as models]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.e2e.harness :as harness]
             [knoxx.backend.e2e.mcp-client :as mcp]
             [knoxx.backend.e2e.mcp-control-probe-e2e :as controls]
             [knoxx.backend.extern.agent-turn-fixture :as fixture]
+            [knoxx.backend.extern.eta-mu :as eta-mu-extern]
             [knoxx.backend.extern.native-subscription :as worker]
             [knoxx.backend.extern.provider-recovery-fixture :as disk]
             [knoxx.backend.infra.agent.provider.native-subscription :as native]
@@ -65,6 +67,31 @@
     (await (assert-native-admission-denied! enabled "fixture-other-member" [claude-model]))
     (await (assert-native-admission-denied! enabled "fixture-oauth-bearer"
                                             ["claude-code/unknown"]))))
+
+(deftest ^:async private-proxx-relay-admission-is-bound-to-the-mcp-owner
+  (let [config {:native-subscription-owner native-owner
+                :provider-base-urls {"proxx-subscription" "http://relay.invalid"}
+                :provider-auth-tokens {"proxx-subscription" "PRIVATE_PROXX_BEARER"}}
+        resolve-model models/resolve-model-contract]
+    (with-redefs [models/resolve-model-contract
+                  (fn [cfg model-id]
+                    (if (= proxx-model model-id)
+                      {:provider "proxx-subscription"}
+                      (resolve-model cfg model-id)))
+                  eta-mu-extern/provider-token-configured? #(= "PRIVATE_PROXX_BEARER" %)]
+      (await (assert-native-admission-denied! config "fixture-other-member" [proxx-model]))
+      (await (assert-native-admission-denied! (dissoc config :provider-base-urls)
+                                              "fixture-oauth-bearer" [proxx-model]))
+      (let [client (await (controls/start! config))
+            admitted* (atom [])]
+        (try
+          (with-redefs [oauth-store/get-token! fixture-token!
+                        service/send-agent-turn! (fn [_ _ request]
+                                                   (swap! admitted* conj (:model request))
+                                                   (js/Promise.resolve nil))]
+            (controls/assert-ok! (await (spawn! client proxx-model "Fixture relay admission")))
+            (is (= [proxx-model] @admitted*)))
+          (finally (await (server/close! (:app client)))))))))
 
 (defn- pause! []
   (js/Promise. (fn [resolve] (js/setTimeout resolve 25))))
