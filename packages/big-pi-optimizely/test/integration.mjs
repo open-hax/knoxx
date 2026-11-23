@@ -1,0 +1,198 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+
+const pause = ms => new Promise(r => setTimeout(r, ms));
+test('HTTP and SDK transports share authenticated durable draft state', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'big-pi-'));
+  const port = 23000 + Math.floor(Math.random() * 10000), token = 'local-test-token';
+  const base = `http://127.0.0.1:${port}`;
+  const env = { ...process.env, BIG_PI_PORT: String(port), BIG_PI_TOKEN: token, BIG_PI_DATA_DIR: dir };
+  let child, client, stdio, sourceId;
+  const start = async () => {
+    child = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], { env, stdio: 'ignore' });
+    for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/healthz`)).ok) return; } catch {} await pause(100); }
+    assert.fail('server did not start');
+  };
+  const stop = async () => { if (child && child.exitCode === null) { child.kill('SIGTERM'); await new Promise(r => child.once('exit', r)); } };
+  const request = (path, options = {}) => fetch(base + path, { ...options, headers: { authorization: `Bearer ${token}`, ...options.headers } });
+  try {
+    await start();
+    assert.equal((await fetch(`${base}/v1/content`)).status, 401);
+    assert.equal((await fetch(`${base}/mcp`, { method: 'POST' })).status, 401);
+    assert.equal((await request('/v1/content', { headers: { origin: 'https://evil.example' } })).status, 403);
+    assert.equal(await new Promise((resolve, reject) => { http.get(`${base}/v1/content`, { headers: { host: 'evil.example', authorization: `Bearer ${token}` } }, r => { r.resume(); resolve(r.statusCode); }).on('error', reject); }), 403);
+    assert.equal((await request('/v1/unknown')).status, 501);
+    assert.equal((await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' })).status, 400);
+    assert.equal((await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: '{"contentType":"Article","initialVersion":{"displayName":"Invalid number","locale":"en","properties":{"Body":"x","value":1e400}}}' })).status, 400);
+    assert.equal((await fetch(`${base}/healthz`)).status, 200, 'invalid input must not disable the store');
+    assert.equal((await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: '{"contentType":"Article","initialVersion":{"displayName":"Prototype key","locale":"en","properties":{"Body":"x","__proto__":{"value":"data"}}}}' })).status, 400, 'retain Fastify prototype-key rejection');
+    const properties = { title: 'Original', 'a/b': 'one', 'c/b': 'two', 'free form': 'kept', '': 'empty key',
+      nested: { 'a/b': null, 'c/b': 7, constructor: 1, values: [{ constructor: { value: 'data' } }] },
+      special: { toString: 'plain data' } };
+    let res = await request('/v1/content', { method: 'POST', headers: { 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify({ key: 'sample', contentType: 'Article', initialVersion: { displayName: 'Hello', locale: 'en', properties } }) });
+    assert.equal(res.status, 201); let etag = res.headers.get('etag');
+    sourceId = res.headers.get('x-big-pi-source-id');
+    assert.match(sourceId || '', /^[0-9a-f-]{36}$/, 'source store has a durable identity');
+    const createdBody = await res.json();
+    assert.equal(createdBody.status, 'draft');
+    assert.deepEqual(createdBody.properties, properties, 'arbitrary JSON field names survive transport');
+    const poisonPatch = await request('/v1/content/sample/versions/1', { method: 'PATCH',
+      headers: { 'content-type': 'application/merge-patch+json', 'if-match': etag },
+      body: '{"properties":{"__proto__":{"value":"data"}}}' });
+    assert.equal(poisonPatch.status, 400, 'merge patch uses the same prototype-key rejection');
+    assert.equal((await request('/v1/content/sample/versions/1')).headers.get('etag'), etag, 'rejected patch makes no state change');
+    const paged = await request('/v1/content?pageIndex=0&pageSize=1');
+    assert.equal(paged.status, 200, await paged.clone().text());
+    assert.equal((await paged.json()).totalCount, 1);
+    const filtered = await request('/v1/content/sample/versions?locales=en&statuses=draft');
+    assert.equal(filtered.status, 200, await filtered.clone().text());
+    assert.equal((await filtered.json()).items.length, 1);
+    const matchingContent = await request('/v1/content?locales=en&statuses=draft');
+    assert.equal(matchingContent.status, 200);
+    assert.deepEqual((await matchingContent.json()).items.map(item => item.key), ['sample']);
+    assert.equal((await request('/v1/contenttypes?locales=en')).status, 400);
+    assert.equal((await request('/v1/locales?statuses=draft')).status, 400);
+    res = await request('/v1/content/sample/versions/1', { method: 'PATCH', headers: { 'content-type': 'application/merge-patch+json', 'if-match': '"stale"' }, body: '{"displayName":"Bad"}' });
+    assert.equal(res.status, 412);
+    client = new Client({ name: 'integration', version: '1' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
+    const listed = await client.listTools();
+    assert.ok(listed.tools.some(t => t.name === 'big_pi_patch_draft'));
+    assert.ok(listed.tools.find(t => t.name === 'big_pi_import_source').inputSchema.properties['expected-revision']);
+    const queryResult = await client.callTool({ name: 'big_pi_list_content', arguments: { query: { locales: 'en', statuses: 'draft' } } });
+    assert.deepEqual(JSON.parse(queryResult.content[0].text).body.items.map(item => item.key), ['sample']);
+    const overBudget = await client.callTool({ name: 'big_pi_create_content', arguments: { body: {
+      contentType: 'Article', initialVersion: { displayName: 'Too many elements', locale: 'en', properties: { items: Array(10001).fill(1) } },
+    } } });
+    assert.equal(overBudget.isError, true, 'MCP rejects arguments beyond its element budget');
+    assert.equal((await (await request('/v1/content')).json()).totalCount, 1, 'rejected tool input cannot mutate state');
+    const read = await client.callTool({ name: 'big_pi_get_version', arguments: { id: 'sample', version: '1' } });
+    assert.equal(JSON.parse(read.content[0].text).body.displayName, 'Hello');
+    assert.deepEqual(JSON.parse(read.content[0].text).body.properties, properties);
+    const patch = await client.callTool({ name: 'big_pi_patch_draft', arguments: { id: 'sample', version: '1', etag, body: { displayName: 'Edited' } } });
+    assert.equal(patch.isError, undefined);
+    const invalid = await client.callTool({ name: 'big_pi_patch_draft', arguments: { id: 'sample', version: '1', etag, body: { status: 'published' } } });
+    assert.equal(invalid.isError, true);
+    stdio = new Client({ name: 'stdio-test', version: '1' });
+    await stdio.connect(new StdioClientTransport({ command: resolve('node_modules/.bin/nbb'), args: ['-cp', 'src', '-m', 'big-pi.optimizely.main', '--stdio'], env: { ...env, BIG_PI_BASE_URL: base }, stderr: 'pipe' }));
+    assert.ok((await stdio.listTools()).tools.some(t => t.name === 'big_pi_list_content'));
+    assert.equal(JSON.parse((await stdio.callTool({ name: 'big_pi_get_version', arguments: { id: 'sample', version: '1' } })).content[0].text).body.displayName, 'Edited');
+    assert.deepEqual(JSON.parse((await stdio.callTool({ name: 'big_pi_get_version', arguments: { id: 'sample', version: '1' } })).content[0].text).body.properties, properties);
+    await stdio.close(); stdio = null; await client.close(); client = null;
+    const competing = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], { env: { ...env, BIG_PI_PORT: String(port + 1) }, stdio: 'ignore' });
+    assert.notEqual(await new Promise(r => competing.once('exit', r)), 0, 'second writer must fail');
+    await stop(); await start();
+    res = await request('/v1/content/sample/versions/1');
+    assert.equal(res.headers.get('x-big-pi-source-id'), sourceId, 'identity survives restart');
+    const restored = await res.json();
+    assert.equal(restored.displayName, 'Edited');
+    assert.deepEqual(restored.properties, properties, 'JSON keys survive EDN persistence');
+    await stop();
+    await writeFile(join(dir, 'state.edn'), '{:generation 0}');
+    const corrupt = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], { env, stdio: 'ignore' });
+    assert.notEqual(await new Promise(r => corrupt.once('exit', r)), 0, 'corrupt state must fail startup');
+  } finally { await stdio?.close(); await client?.close(); await stop(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('configured bridge imports an exact source and exports only a draft to the local emulator', async () => {
+  const calls = [], revisions = []; let doc, client, stdio, dropWriteReply = false;
+  const fixture = http.createServer(async (req, res) => {
+    calls.push([req.method, req.url, req.headers.authorization]);
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    res.setHeader('content-type', 'application/json');
+    if (req.method === 'POST' && req.url === '/api/cms/documents') {
+      doc = { ...JSON.parse(raw), doc_id: 'doc1', revision: 'rev1', revision_heads: ['rev1'], conflicted: false }; revisions.push(doc);
+      if (dropWriteReply) { req.socket.destroy(); return; }
+      res.end(JSON.stringify(doc));
+    } else if (req.method === 'PATCH' && req.url === '/api/cms/documents/doc1') {
+      const body = JSON.parse(raw);
+      if (JSON.stringify(body.parents) !== JSON.stringify([doc.revision])) { res.statusCode = 409; res.end('{}'); return; }
+      const revision = `rev${revisions.length + 1}`;
+      doc = { ...body, metadata: body.metadata ?? doc.metadata, doc_id: 'doc1', revision, revision_heads: [revision], conflicted: false }; revisions.push(doc);
+      res.end(JSON.stringify(doc));
+    } else if (req.method === 'GET' && req.url === '/api/cms/documents/doc1/history') {
+      res.end(JSON.stringify({ document: doc, revisions }));
+    } else { res.statusCode = 404; res.end('{}'); }
+  });
+  await new Promise(r => fixture.listen(0, '127.0.0.1', r));
+  const dir = await mkdtemp(join(tmpdir(), 'big-pi-bridge-'));
+  const port = 33000 + Math.floor(Math.random() * 10000), base = `http://127.0.0.1:${port}`;
+  const env = { ...process.env, BIG_PI_PORT: String(port), BIG_PI_TOKEN: 'local', BIG_PI_DATA_DIR: dir, BIG_PI_KNOXX_URL: `http://127.0.0.1:${fixture.address().port}`, BIG_PI_KNOXX_TOKEN: 'fixture-token' };
+  const child = spawn(resolve('node_modules/.bin/nbb'), ['-cp', 'src', '-m', 'big-pi.optimizely.main'], { env, stdio: 'ignore' });
+  const post = (path, body) => fetch(base + path, { method: 'POST', headers: { authorization: 'Bearer local', 'content-type': 'application/json', prefer: 'return=representation' }, body: JSON.stringify(body) });
+  try {
+    for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/healthz`)).ok) break; } catch {} await pause(100); }
+    for (const field of ['title', '123', '-body']) {
+      calls.length = 0; revisions.length = 0;
+      const key = `source-${field}`;
+      const sourceProperties = { [field]: 'Hello', 'a/b': 'one', 'c/b': 'two', nested: { 'a/b': null } };
+      const created = await post('/v1/content', { key, contentType: 'Article', initialVersion: { displayName: 'Source', locale: 'en', properties: sourceProperties } });
+      assert.equal(created.status, 201);
+      const sourceId = created.headers.get('x-big-pi-source-id');
+      let response = await post('/big-pi/import', { key, version: '1', field, 'source-system': 'fixture' });
+      assert.equal(response.status, 200, await response.clone().text());
+      const imported = await response.json();
+      assert.equal(imported.document.doc_id, 'doc1');
+      assert.equal(imported.document.metadata.optimizely['source-id'], sourceId);
+      assert.equal(imported.document.metadata.optimizely['payload-format'], 'big-pi-edn-v1');
+      assert.equal(typeof imported.document.metadata.optimizely['payload-edn'], 'string');
+      client = new Client({ name: 'bridge-update', version: '1' });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: 'Bearer local' } } }));
+      const input = { key, version: '1', field, 'source-system': 'fixture', 'document-id': 'doc1' };
+      const stale = await client.callTool({ name: 'big_pi_import_source', arguments: { ...input, 'expected-revision': 'old' } });
+      assert.equal(stale.isError, true);
+      assert.equal(JSON.parse(stale.content[0].text).status, 409);
+      assert.equal(doc.revision, 'rev1');
+      const updated = await client.callTool({ name: 'big_pi_import_source', arguments: { ...input, 'expected-revision': 'rev1' } });
+      assert.equal(updated.isError, undefined);
+      assert.equal(JSON.parse(updated.content[0].text).body.document.revision, 'rev2');
+      const translation = await fetch(`${env.BIG_PI_KNOXX_URL}/api/cms/documents/doc1`, {
+        method: 'PATCH', headers: { authorization: 'Bearer fixture-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ title: doc.title, content: 'Hallo', visibility: 'internal', metadata: { ...doc.metadata, annotation: 'Internal reviewer note' }, parents: ['rev2'] }),
+      });
+      assert.equal(translation.status, 200);
+      response = await post('/big-pi/export', { 'document-id': 'doc1', revision: 'rev3', 'target-locale': 'de', field });
+      assert.equal(response.status, 200, await response.clone().text());
+      const result = await response.json(); assert.equal(result.vendor.status, 'draft'); assert.equal(result.vendor.locale, 'de');
+      assert.equal(result.vendor.properties[field], 'Hallo');
+      assert.deepEqual(result.vendor.properties, { ...sourceProperties, [field]: 'Hallo' });
+      assert.equal(JSON.stringify(result.vendor).includes('Internal reviewer note'), false);
+      assert.equal(calls.filter(([method]) => method === 'PATCH').length, 2);
+      assert.ok(calls.every(([, , auth]) => auth === 'Bearer fixture-token'));
+      await client.close(); client = undefined;
+    }
+    // The CMS accepted this write but its reply is lost: every transport must
+    // preserve uncertainty, rather than misreporting a rejected request.
+    dropWriteReply = true;
+    const before = calls.filter(([method]) => method === 'POST').length;
+    const operation = { name: 'big_pi_import_source', arguments: { key: 'source-title', version: '1', field: 'title', 'source-system': 'fixture' } };
+    client = new Client({ name: 'uncertain-http', version: '1' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: 'Bearer local' } } }));
+    const httpError = await client.callTool(operation);
+    assert.equal(httpError.isError, true);
+    const expected = JSON.parse(httpError.content[0].text);
+    assert.equal(expected.status, 502);
+    assert.equal(expected.body.code, 'outcome-uncertain');
+    stdio = new Client({ name: 'uncertain-stdio', version: '1' });
+    await stdio.connect(new StdioClientTransport({ command: resolve('node_modules/.bin/nbb'), args: ['-cp', 'src', '-m', 'big-pi.optimizely.main', '--stdio'], env: { ...env, BIG_PI_BASE_URL: base }, stderr: 'pipe' }));
+    const stdioError = await stdio.callTool(operation);
+    assert.equal(stdioError.isError, true);
+    assert.deepEqual(JSON.parse(stdioError.content[0].text), expected);
+    assert.equal(calls.filter(([method]) => method === 'POST').length - before, 2, 'one write per request; uncertain writes must not retry');
+  } finally {
+    await stdio?.close();
+    await client?.close();
+    if (child.exitCode === null) { child.kill('SIGTERM'); await new Promise(r => child.once('exit', r)); }
+    await new Promise(r => fixture.close(r)); await rm(dir, { recursive: true, force: true });
+  }
+});

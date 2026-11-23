@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "big-pi-local": {
+      "command": "bash",
+      "args": ["/ABSOLUTE/PATH/knoxx/scripts/start-big-pi-mcp.sh"],
+      "env": { "BIG_PI_TOKEN": "${BIG_PI_TOKEN}" }
+    }
+  }
+}

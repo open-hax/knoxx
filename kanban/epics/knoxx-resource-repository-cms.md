@@ -59,6 +59,8 @@ not assumed to be the only resource family.
 
 ## Children / board moves
 
+- `big-pi-optimizely-compatibility` — Big Pi local CMS/API/MCP integration and staged Optimizely compatibility workstream.
+
 - `knoxx-cms-contract-validation` — reframe around repository/provider laws and production verification instead of validating a legacy OpenPlanner REST dependency.
 - `knoxx-file-resource-repository-provider` — define and prove the EDN/file-backed read/write/list/version boundary.
 - `knoxx-resource-repository-snapshot-observation` — add one linearizable multi-resource
