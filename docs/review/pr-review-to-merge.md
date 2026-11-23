@@ -6,7 +6,30 @@ Once the user authorizes merging, the agent owns that outcome. The reusable
 policy. A review-only request, PR decomposition, or skill installation does not
 authorize a merge. Keep previously granted authorization across turns.
 
-## Keep one active merge candidate
+## Native agent swarm profile
+
+The user's 2026-11-03 direction permits the active harness to supply independent
+fresh-context reviewer and skeptic agents through the canonical `pr-flow` and
+`ultra-code` skills. Run independent PRs concurrently, with one coordinator
+per PR or dependent stack and one writer per branch or shared resource. Freeze
+the candidate before review; repeat review after repairs, and test/review the
+final integrated tree.
+
+This profile has no blanket five-round minimum or mandatory CodeRabbit/Codex
+roster. Optional hosted reviewers remain additional evidence sources; all
+actual findings still need disposition. The named-bot steps and table below
+describe the retained hosted-provider profile. If GitHub itself requires a
+named approval or check, satisfy it through its authorized producer. A native
+subagent's evidence cannot impersonate that producer.
+
+Before an authorized merge, verify actual current requirements, head/base and
+checks, settle findings and conversations, preserve integration evidence and
+use the exact-head merge guard. Unknown requirements remain unknown. This
+documentation does not change protections, publisher code, workflows or the
+existing OpenCode symlink. Native background work persists only for the
+lifetime supported by the actual harness.
+
+## Keep one active merge candidate per dependent stack (hosted profile)
 
 Use the existing epic/task tracker to record the ordered PRs and their intended
 bases. The first candidate must contain its real prerequisites and integrate
@@ -43,8 +66,9 @@ they do not replace thread replies. Ask for reviewer adjudication when disputing
 a finding. Resolve only after evidence verifies the fix or the reviewer accepts
 the disagreement. An outdated line alone is insufficient evidence.
 
-Any new head needs current-head follow-up from both bots and renewed applicable
-checks. A changed base also needs its actual diff and integration rechecked.
+In the hosted profile, any new head needs current-head follow-up from both bots.
+In the native profile, it needs renewed scoped reviewer/skeptic evidence.
+Both profiles require renewed applicable checks. A changed base also needs its actual diff and integration rechecked.
 Preserve repo-required backend tests, production compilation, warning gates,
 and live/browser verification for user-reachable changes. Missing tools, skipped
 tests and compile-only runs must remain visible; they cannot stand in for a
@@ -58,7 +82,7 @@ Immediately before merge, confirm all of these against fresh GitHub state:
 | --- | --- |
 | Authorization | The PR and intended target remain within the user's scope. |
 | Head and base | The reviewed head and qualified base are unchanged. |
-| Both bots | CodeRabbit and Codex completed review for the current head. |
+| Review | Native profile: complete current-head reviewer/skeptic evidence. Hosted profile: CodeRabbit and Codex completed review for the current head. Actual repository-required approvals apply to either profile. |
 | Findings | No actionable finding remains; disagreements have been adjudicated. |
 | Conversations | Every review conversation is resolved with evidence. |
 | Checks | Every required check passes, and required relevant suites ran. |
@@ -93,7 +117,8 @@ After confirmation, record the PR/merge commit, retarget the next authorized PR
 to the correct surviving base, inspect its actual diff, and repeat qualification.
 Do not assume retargeting alone removes predecessor changes after a squash:
 repair ancestry through an ordinary integration commit if necessary, then review
-the resulting diff. Keep exactly one active merge candidate.
+the resulting diff. Keep one active merge candidate per dependent stack;
+independent PRs and stacks may continue concurrently.
 
 ## Continue through waits without noise
 
