@@ -44,3 +44,8 @@
   "Promise.race for a CLJS collection of promises."
   [promises]
   (.race js/Promise (clj->js (vec promises))))
+
+(defn delay-ms
+  "Resolve after a bounded caller-selected timer delay."
+  [milliseconds]
+  (js/Promise. (fn [resolve _reject] (js/setTimeout resolve milliseconds))))

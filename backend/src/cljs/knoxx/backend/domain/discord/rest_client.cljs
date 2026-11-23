@@ -57,7 +57,9 @@
   (p/let [resp (xfetch/json! http-client {:url url :opts opts :timeout-ms timeout-ms})]
     (if (:ok resp)
       (:body resp)
-      (throw (js/Error. (str label " Discord API error " (:status resp) ": " (pr-str (:body resp))))))))
+      (throw (ex-info (str label " Discord API error " (:status resp) ": " (pr-str (:body resp)))
+                      {:code "discord_api_error" :phase :platform :platform "discord"
+                       :http-status (:status resp) :platform-code (get-in resp [:body :code])})))))
 
 (defrecord FetchDiscordRestClient [bot-token http-client timeout-ms user-agent]
   IDiscordRestClient

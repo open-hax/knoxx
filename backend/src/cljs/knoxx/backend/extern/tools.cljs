@@ -95,3 +95,23 @@
     (js->clj (.parse js/JSON text) :keywordize-keys true)
     (catch :default err
       (throw (js/Error. (str "Invalid JSON: " (.-message err)))))))
+
+(defn parameter-map
+  "Decode runtime tool parameters at the tool boundary; CLJS maps pass through."
+  [params]
+  (if (map? params) params (js->clj params :keywordize-keys true)))
+
+(defn replace-parameters
+  "Pass updated canonical arguments into an SDK tool's opaque call."
+  [args params]
+  (assoc (vec args) 1 (clj->js params)))
+
+(defn tool-array
+  "Encode a vector of opaque runtime tool handles for SDK tool-suite composition."
+  [tools]
+  (into-array tools))
+
+(defn append-tool-vector
+  "Append opaque definitions at the JS tool-array boundary."
+  [tools additions]
+  (.concat tools (into-array additions)))

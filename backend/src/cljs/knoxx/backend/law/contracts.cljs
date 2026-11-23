@@ -1,6 +1,7 @@
 (ns knoxx.backend.law.contracts
   (:require [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.law.publication :as publication]
+            [knoxx.backend.law.social-delivery :as social-delivery]
             [malli.core :as m]
             [malli.error :as me]))
 
@@ -84,6 +85,7 @@
    [:actor/roles {:optional true} [:sequential keyword?]]
    [:actor/capabilities {:optional true} [:sequential keyword?]]
    [:actor {:optional true} ActorCapSpec]
+   [:delivery/evidence {:optional true} social-delivery/Obligations]
    [:agent {:optional true} AgentSpec]
    [:prompts {:optional true} [:map {:closed false}
                                 [:system {:optional true} any?]

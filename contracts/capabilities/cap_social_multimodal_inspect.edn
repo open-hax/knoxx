@@ -1,0 +1,3 @@
+{:cap/id :cap/social-multimodal-inspect
+ :cap/tools [:multimodal.inspect]
+ :cap/description "Examines an uploaded artifact for an evidence-backed social response."}

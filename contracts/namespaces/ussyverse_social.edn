@@ -1,46 +1,24 @@
-{:namespace :ussyverse-social
+{:namespace :ussyverse-social,
  :resources
- [{:schedule/id :creative
-   :schedule/rule "*/30 * * * *"
-   :schedule/generator "knoxx_schedule"
-   :schedule/event {:event/type :schedule/ussyverse-social-creative
-                    :event/payload {:reason "schedule event: ussyverse social creative"}}
-   :enabled true}
-
-  {:trigger/id :creative-cron
-   :trigger/kind :event
-   :trigger/listener "discord_automation"
-   :trigger/events [:schedule/ussyverse-social-creative]
-   :trigger/action :actions/start-agent-session
+ [{:schedule/id :creative,
+   :schedule/rule "*/30 * * * *",
+   :schedule/generator "knoxx_schedule",
+   :schedule/event
+   #:event{:type :schedule/ussyverse-social-creative,
+           :payload
+           {:reason "schedule event: ussyverse social creative",
+            :channelId "KNOXX_SOCIAL_BINDING_DISCORD_ID_5",
+            :content "Scheduled creative exploration, not a human request. Home Discord channel is KNOXX_SOCIAL_BINDING_DISCORD_ID_5. Find a fresh outside author or work before choosing an experiment."}},
+   :enabled false}
+  {:trigger/id :creative-cron,
+   :trigger/kind :event,
+   :trigger/listener "discord_automation",
+   :trigger/events [:schedule/ussyverse-social-creative],
+   :trigger/action :actions/start-agent-session,
    :trigger/with
-   {:agent-id "ussyverse_social_creative"
-    :task "Inspect the current Ussyverse server conversation around the two home channels and the wider guild they belong to.
-
-If you have something genuinely fun, musical, witty, or socially catalytic to add, post as many messages as you want
- either 1494137016303095828 (frankie-infinite-yap) or 1444189585373663417 (errorcoded-slop).
-
-you may read any messages in the ussy guild (1444142672548986994):
-#general: 1444142673580658739
-#boring-dystopia:  1444503958696624158
-#devussy: 1444150910950576229
-#dungeonussy: 1494536176453816431
-
-
-
-Leverage your creative production skills
-(e.g., music-composition-arrangement, graphics-asset-production, animation-production)
-to ensure assets are high-fidelity and conceptually sharp.
-
-Read links with web.read when useful. Read attachment URLs when relevant.
-When responding to a specific message, use discord.send with the reply_to parameter set to that message's ID.
-You should include attachment_urls with discord.send
-
-BLUESKY is the preferred outlet when you have a concrete creative artifact or social reply worth publishing:
-- Use bluesky.timeline/search/author.feed only when it would materially improve the action.
-- Use bluesky.publish for real posts, replies, threads, or image posts; use replyTo only with a real AT-URI from a prior tool result.
-- Do not claim you checked Bluesky unless a Bluesky tool actually run.
-
-
-"}
-   :trigger/context {:reason "schedule event: ussyverse social creative"}
-   :enabled true}]}
+   {:agent-id "ussyverse_social_creative",
+    :task
+    "Take a creative working turn as OpenHax. This is a schedule, not a human request. Home Discord channel is KNOXX_SOCIAL_BINDING_DISCORD_ID_5. Read a fresh Bluesky feed/search, choose an outside author (not KNOXX_SOCIAL_BINDING_BLUESKY_HANDLE_2 or KNOXX_SOCIAL_BINDING_BLUESKY_DID_2), and inspect their actual thread and a worthwhile link or media item. Your own replies and repost captions are delivery history, not outside evidence. If the feed contains only your own work, search a different interest. Read home Discord before deciding whether to share. Make a small concrete experiment only when the inspected work suggests one; a new slogan, metric, or manifesto alone is not a finished artifact. Keep untested creative hypotheses private with tier provisional and evidence pointing to the actual outside source. Before sharing, search memory_search kind knoxx.tool_receipt for the exact source URL and compare it with recent Discord messages. At most one public Discord send, to KNOXX_SOCIAL_BINDING_DISCORD_ID_5. No placeholder channel IDs. Finish privately with the source, artifact if any, and actual success/error receipt. A failed send means not delivered; never congratulate yourself or report completion without its receipt. Abstain when no worthwhile new experiment or discovery emerges."},
+   :trigger/context
+   {:reason "schedule event: ussyverse social creative"},
+   :enabled false}]}

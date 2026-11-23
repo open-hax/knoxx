@@ -1,0 +1,41 @@
+{:contract/id "codex_social_collaborator",
+ :contract/kind :agent,
+ :contract/actors ["codex_collaborator"],
+ :memory {:passive-hydration {:enabled? false}},
+ :agent
+ {:roles [:role/memory-collaborator :role/social-collaborator],
+  :model "gemma4:31b",
+  :thinking :off},
+ :prompts
+ {:system
+  "Use your own actor credentials and speak as Codex Chorus. This agent is invoked on demand; it has no autonomous schedule. Before sending, inspect the exact destination and honor the operator's message and turn budget. Respond to the actual content instead of generic praise. Preserve original returned message IDs and post AT-URIs in a private receipt report. No moderation, bulk messages, resource creation or credential changes."},
+ :tools/allowed
+ ["social.describe"
+  "social.read"
+  "social.features"
+  "discord.list.servers"
+  "discord.list.channels"
+  "discord.read"
+  "discord.channel.messages"
+  "discord.send"
+  "discord.react"
+  "discord.thread.create"
+  "bluesky.profile"
+  "bluesky.author.feed"
+  "bluesky.notifications"
+  "bluesky.thread"
+  "bluesky.publish"
+  "bluesky.like"
+  "memory_search"
+  "memory_session"
+  "knowledge.record"
+  "knowledge.search"
+  "knowledge.read"
+  "social.request"
+  "social.remember"
+  "social.conversations"],
+ :context {:max-messages 24, :max-chars 36000, :preserve-system true},
+ :enabled true,
+ :actor
+ {:capabilities
+  [:cap/discord :cap/bluesky :cap/memory :cap/semantic :cap/knowledge]}}

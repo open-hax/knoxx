@@ -10,6 +10,8 @@
             [knoxx.backend.infra.control-config :as control-config]
             [knoxx.backend.infra.event-runtime :as event-runtime]
             [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.execution.client :as execution-client]
+            [knoxx.backend.law.execution :as execution-law]
             ["node:child_process" :refer [execFile]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]
@@ -17,6 +19,13 @@
             ["nodemailer" :default nodemailer]))
 
 (def ^:private exec-file-async (promisify execFile))
+
+(defn- ensure-local-tool-access!
+  [config auth-context]
+  (let [actor-id (authz/ctx-actor-binding auth-context)]
+    (when (execution-law/restricted? (execution-client/effective-config config {:actor-id actor-id}))
+      (throw (backend-http/http-error 503 "execution_worker_required"
+                                      "This identity cannot use backend file or shell execution")))))
 
 ;; ── Private helpers ─────────────────────────────────────────────────────────
 
@@ -197,6 +206,7 @@
   "POST" "/api/tools/read"
   [session-guard]
   (try
+    (ensure-local-tool-access! config ctx)
     (let [body    (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "read" agent-contract-id)
@@ -237,6 +247,7 @@
   "POST" "/api/tools/write"
   [session-guard]
   (try
+    (ensure-local-tool-access! config ctx)
     (let [body    (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write" agent-contract-id)
@@ -259,6 +270,7 @@
   "POST" "/api/tools/edit"
   [session-guard]
   (try
+    (ensure-local-tool-access! config ctx)
     (let [body    (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "edit" agent-contract-id)
@@ -307,6 +319,7 @@
   "POST" "/api/tools/bash"
   [session-guard]
   (try
+    (ensure-local-tool-access! config ctx)
     (let [body     (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role     (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "bash" agent-contract-id)

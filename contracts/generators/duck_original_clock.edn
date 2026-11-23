@@ -1,0 +1,7 @@
+{:contract/id "duck_original_clock",
+ :contract/kind :generator,
+ :generator/kind :schedule,
+ :generator/driver :knoxx.schedule/runtime,
+ :generator/actor "duckman",
+ :generator/emits [:schedule/duck-original-cycle],
+ :enabled false}

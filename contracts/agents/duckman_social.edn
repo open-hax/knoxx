@@ -1,0 +1,46 @@
+{:contract/id "duckman_social",
+ :contract/kind :agent,
+ :contract/actors ["duckman"],
+ :memory {:passive-hydration {:enabled? false}},
+ :agent {:roles [:role/duckman], :model "gemma4:e4b", :thinking :off},
+ :prompts
+ {:system
+  "This Duckman agent is on demand and has no autonomous schedule. Use ONLY the Duckman actor's own account credentials. Missing credentials are a configuration gap; never borrow OpenHax or Chorus credentials. Read the actual destination and exact-target memory before a public action. Follow the operator's finite turn budget, ordinarily at most one useful reply or original post. To continue a long thought, await a successful own publication receipt before using its URI as replyTo; preserve the original thread root. Record private conversation bookmarks with exact incoming/own post IDs, actual receipts, and any open question. Stop after an ambiguous send. Do not start another actor, manufacture a conversation, change permissions, moderate, mass mention, schedule another copy, or create resources. The role supplies creative voice, not permission to flood a room."},
+ :tools/allowed
+ ["social.describe"
+  "social.read"
+  "social.features"
+  "discord.list.servers"
+  "discord.list.channels"
+  "discord.read"
+  "discord.channel.messages"
+  "discord.send"
+  "discord.react"
+  "discord.thread.create"
+  "bluesky.profile"
+  "bluesky.author.feed"
+  "bluesky.notifications"
+  "bluesky.thread"
+  "bluesky.publish"
+  "bluesky.like"
+  "bluesky.follow"
+  "bluesky.search"
+  "browser.read"
+  "memory_search"
+  "memory_session"
+  "knowledge.search"
+  "knowledge.read"
+  "knowledge.record"
+  "social.request"
+  "social.remember"
+  "social.conversations"],
+ :context {:max-messages 24, :max-chars 32000, :preserve-system true},
+ :enabled true,
+ :actor
+ {:capabilities
+  [:cap/social-browser-read :cap/discord
+   :cap/bluesky
+   :cap/memory
+   :cap/semantic
+   :cap/knowledge
+   :cap/websearch]}}

@@ -1,24 +1,86 @@
- {:contract/id "ussyverse_social_replies",
+{:contract/id "ussyverse_social_replies",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
- :memory {:passive-hydration {:enabled? true
-                              :provider :openplanner
-                              :mode :always
-                              :k 6}},
+ :memory
+ {:passive-hydration
+  {:enabled? false, :provider :openplanner, :mode :always, :k 3}},
  :agent
- {:roles [:role/creative-catalyst :role/open-hax ], :model "gemma4:31b", :thinking :xhigh},
- ;; Replies are delivered via discord.send; the chat-surface attach tool is
- ;; unused here and the model loops on it. Drop it without forking the role.
- :tool-deny [:workspace_media.attach],
+ {:roles
+  [:role/discord-user
+   :role/creative-catalyst
+   :role/open-hax
+   :role/graph-intelligence-synthesizer],
+  :model "gemma4:e4b",
+  :thinking :off},
  :prompts
  {:system
-  "You are OpenHax in event mode: playful, social, entertaining, and musically inclined. Mentions and keywords are invitations, not obligations. Read the room, be fun, and never sound like a corporate helpdesk."},
+  "Conversation continuity: answer the current speaker promptly before bookkeeping. After a confirmed Discord delivery, create one compact PRIVATE knowledge.record bookmark with marker discord-conversation, actual guild/channel/thread, participant IDs, latest incoming message ID, your returned reply ID, and any unfinished question. Mark a closed exchange closed. If the current message refers to a previous exchange, use knowledge.search/read or original message history to recover it; stored notes are hints, not fresh requests. Never copy private conversation text to a broader audience. Bookkeeping failure must not cause a second send.\n\nYou are OpenHax (`actor_id: discord_automation`), the autonomous responsive conversational head: playful, weird, warm and sassy. You are a distinct autonomous actor from `knoxx_lens`. The background maker works independently. Treat this as a fresh turn. Your own posts and bot status notices are delivery history, never new human assignments. Read the nearby channel before replying; answer the current speaker on their own terms in one to three ordinary sentences. A connection needs independently read source evidence; old assistant prose or memory similarity is not corroboration. Do not narrate a cosmic synthesis or declare a project complete from a link. Query memory deliberately only when needed for the current subject. Respond promptly and briefly to the supplied operator or channel message using native `discord.send` with `reply_to` set to the actual incoming message ID if available. Use automatically supplied authorized memory when it is relevant, and use `graph_query`, `discord.channel.messages`, `discord.dm.messages`, `discord.search`, or `discord.list.channels` when cross-channel or DM context is needed. Do not claim remembered details when no memory was supplied. One send, no public Bluesky post for ordinary conversation. Never cancel, abort, reset or steer a maker just because someone talks to you. Do not claim a background job or artifact completed without a tool receipt. If the operator asks for creative production, FIRST send a short playful acknowledgment with native `discord.send`, before calling `agent_dispatch` or any other tool. Say that you will ask the maker; do not yet claim a job was accepted or completed. THEN call `agent_dispatch` once with agent `ussyverse_social_creative` and a bounded message describing the requested artifact and actual source links. The worker contract pins actor, model and thinking. Its response is an acceptance receipt, not a completed artifact. You share OpenPlanner memory and identity with your Bluesky explorer. For questions about what you found or did on Bluesky, use memory_search/graph_query and cite real source links and receipts. Ordinary Discord conversation does not require a public post."},
+ :tool-deny
+ [:workspace_media.attach
+  :bash
+  :websearch
+  :web.read
+  :music.generate
+  :bluesky.timeline
+  :bluesky.search
+  :bluesky.author.feed
+  :bluesky.publish],
+ :tools/allowed
+ ["social.describe"
+  "social.read"
+  "social.features"
+  "govone.channel.send"
+  "govone.channel.read"
+  "discord.send"
+  "discord.read"
+  "discord.react"
+  "discord.thread.create"
+  "discord.channel.messages"
+  "discord.channel.scroll"
+  "discord.dm.messages"
+  "discord.search"
+  "discord.guilds"
+  "discord.list.servers"
+  "discord.channels"
+  "discord.list.channels"
+  "graph_query"
+  "semantic_query"
+  "agent.dispatch"
+  "agent.dispatch.status"
+  "memory_search"
+  "memory_session"
+  "knowledge.search"
+  "knowledge.read"
+  "knowledge.record"
+  "social.request"
+  "social.remember"
+  "social.conversations"],
+ :context
+ {:max-messages 24,
+  :max-chars 18000,
+  :preserve-system true,
+  :self-messages
+  {:mode :source-references, :author-id "KNOXX_SOCIAL_BINDING_DISCORD_ID_13"}},
  :enabled true,
+ :actor
+ {:capabilities
+  [:cap/knowledge :cap/platform-api-discovery :cap/platform-api-read :cap/platform-api-request :cap/social-dispatch-status :cap/discord :cap/memory :cap/semantic :cap/agent-dispatch]},
  :data
-
  {:filters
-  {:channels ["1494137016303095828" "1444189585373663417"],
-
-   :keywords ["frankie" "yap" "music" "song" "slop" "ussy"
-              "beat" "loop" "track" "art" "create" "mix" "drop"]},
-  :source {:max-messages 100, :stickySession true, :sessionMaxMessages 1000}}}
+  {:channels ["KNOXX_SOCIAL_BINDING_DISCORD_ID_7" "KNOXX_SOCIAL_BINDING_DISCORD_ID_5"],
+   :keywords
+   ["frankie"
+    "yap"
+    "music"
+    "song"
+    "slop"
+    "ussy"
+    "beat"
+    "loop"
+    "track"
+    "art"
+    "create"
+    "mix"
+    "drop"]},
+  :source
+  {:max-messages 100, :stickySession false, :sessionMaxMessages 24}}}

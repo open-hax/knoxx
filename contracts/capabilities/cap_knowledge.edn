@@ -1,0 +1,15 @@
+#:cap{:id :cap/knowledge,
+      :tools
+      [:knowledge.record
+       :knowledge.search
+       :knowledge.read
+       :knowledge.link
+       :social.remember
+       :social.conversations],
+      :user-surfaces
+      [#:surface{:id :workspace/knowledge-memory,
+                 :label "Actor-owned graph knowledge",
+                 :kind :reader,
+                 :routes ["/"],
+                 :description
+                 "Explicit private and shared knowledge with authenticated actor ownership."}]}

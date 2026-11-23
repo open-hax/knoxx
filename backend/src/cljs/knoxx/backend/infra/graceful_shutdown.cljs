@@ -8,6 +8,7 @@
    - release timers/sockets so PM2 can restart cleanly"
   (:require [knoxx.backend.infra.agent.resume :as agent-resume]
             [knoxx.backend.domain.discord.gateway :as discord-gateway]
+            [knoxx.backend.extern.openplanner-sdk :as openplanner-sdk]
             [knoxx.backend.infra.event-runtime :as event-runtime]
             [knoxx.backend.domain.realtime :as realtime]
             [knoxx.backend.infra.db.policy :as policy-db]
@@ -71,6 +72,7 @@
     (await (.all js/Promise
                  (clj->js
                   [(svg-render/shutdown!)
+                   (openplanner-sdk/close-isolated-sdk!)
                    (when-let [policy-context (runtime-state/current-policy-db)]
                      (policy-db/close! policy-context))])))
     (log-info! app "[shutdown] graceful shutdown complete")

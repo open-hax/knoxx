@@ -1,0 +1,3 @@
+{:cap/id :cap/social-browser-read
+ :cap/tools [:browser.read]
+ :cap/description "Reads a source through the browser for social research and provenance."}
